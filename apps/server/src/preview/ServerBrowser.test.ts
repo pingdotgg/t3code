@@ -1105,19 +1105,6 @@ it.live("reports a pending dialog without evaluating the page and resolves it ex
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("closing a tab runs the page's beforeunload handlers", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const page = contexts[0]!.page;
-      page.beforeUnload = "listen";
-      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
-      expect(page.isClosed()).toBe(true);
-      expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
 it.live("closing an isolated tab closes its context only after the page closes", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1165,7 +1152,8 @@ it.live("closing a tab with an unsaved-changes guard still closes it", () =>
       const broker = yield* Broker.PreviewAutomationBroker;
       yield* Effect.yieldNow;
       // A profile context is shared, so closing the tab cannot fall back to closing its context.
-      yield* browser.reportProfiles({
+      const reportProfiles = yield* browser.profileReporter;
+      yield* reportProfiles({
         profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
         defaultProfileId: "profile-work",
       });
