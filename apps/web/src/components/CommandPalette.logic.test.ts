@@ -10,6 +10,8 @@ import {
   buildLinkedThreadActionItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
+  buildRootGroups,
+  RECENT_THREAD_LIMIT,
   reduceCommandPaletteUiState,
   resolveAddProjectEntry,
   createCommandPaletteSearchState,
@@ -163,6 +165,47 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("buildThreadActionItems", () => {
+  it("keeps main's empty-query actions and twelve recent threads in order", () => {
+    const items = buildThreadActionItems({
+      threads: Array.from({ length: 13 }, (_, index) =>
+        makeThread({
+          id: ThreadId.make(`daily-${index}`),
+          title: "Daily T3 Code trace hotspot check",
+          latestUserMessageAt: `2026-03-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+        }),
+      ),
+      projectByKey: new Map(),
+      icon: null,
+      runThread: async () => undefined,
+    });
+    const action = { ...items[0]!, value: "action:settings", title: "Open settings" };
+    const groups = filterCommandPaletteGroups({
+      activeGroups: buildRootGroups({
+        actionItems: [action],
+        recentThreadItems: items.slice(0, RECENT_THREAD_LIMIT),
+      }),
+      query: "",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: items,
+    });
+    expect(groups.flatMap((group) => group.items.map((item) => item.value))).toEqual([
+      action.value,
+      ...items.slice(0, 12).map((item) => item.value),
+    ]);
+    const matches = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "dail",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: items,
+      now: Date.parse("2026-03-14T00:00:00.000Z"),
+    });
+    expect(matches.flatMap((group) => group.items.map((item) => item.value))).toEqual(
+      items.toReversed().map((item) => item.value),
+    );
+  });
+
   it("keeps threads apart when two environments share a thread ID", async () => {
     const local = makeThread();
     const remote = makeThread({ environmentId: EnvironmentId.make("remote-copy") });
