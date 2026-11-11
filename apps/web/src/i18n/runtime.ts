@@ -6,7 +6,7 @@ import {
   updateClientSettings,
 } from "../hooks/useSettings";
 import { initializeI18n } from "./initializeI18n";
-import { DEFAULT_LOCALE, readSystemLocales, resolveLocale } from "./locales";
+import { DEFAULT_LOCALE, resolveLocale } from "./locales";
 
 type LocaleTranslations = Awaited<ReturnType<typeof getTranslationsSnapshot>>;
 
@@ -50,13 +50,9 @@ function activateLocale(locale: string): void {
 }
 
 function applyLanguageSetting(): void {
-  const locale = resolveLocale(getClientSettings().language, readSystemLocales());
-  requestedLocale = locale;
-  if (locale in loadedTranslations) {
-    activateLocale(locale);
-    return;
-  }
-  void loadLocale(locale).then(() => activateLocale(locale));
+  // Not desktopBridge.getSystemLocale(): that is the regional/time locale, not the UI language.
+  requestedLocale = resolveLocale(getClientSettings().language, navigator.languages);
+  void whenLocaleReady();
 }
 
 /** GT's own locale setters write the saved setting, which stays the only source of truth. */

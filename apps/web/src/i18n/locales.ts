@@ -35,8 +35,3 @@ export function resolveLocale(language: string, systemLocales: ReadonlyArray<str
   }
   return DEFAULT_LOCALE;
 }
-
-// Not desktopBridge.getSystemLocale(): that is the regional/time locale, not the UI language.
-export function readSystemLocales(): ReadonlyArray<string> {
-  return navigator.languages;
-}
