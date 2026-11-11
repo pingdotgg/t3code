@@ -27,8 +27,6 @@
       "entry": [
         // These fixture scripts are injected into a browser page by path.
         "fixtures/*/*.js",
-        // Manually invoked schema-valid evidence harness.
-        "fixtures/issue-15063/verify.mjs",
         "knip-schemas.ts",
         "linux-after-pack.ts",
         "mobile-behavior/run.ts",
