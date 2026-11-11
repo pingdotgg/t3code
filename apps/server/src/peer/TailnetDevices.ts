@@ -142,8 +142,7 @@ const REFUSAL_MESSAGES: Record<TailnetLinkRefusal, string> = {
   node_mismatch:
     "That machine's network knows this one as another Tailscale node, or needs it added again.",
   other_network: "That machine already belongs to another network.",
-  not_consented:
-    "That machine is in no network and has not allowed joining. Allow joining on it first.",
+  not_consented: "That machine has not allowed joining. Allow joining on it first.",
   revoked: "That machine revoked this one.",
   wrong_issuer: "That address answered as another machine.",
   unreachable: "That machine could not reach this one back over Tailscale.",
@@ -235,9 +234,9 @@ export class TailnetDevices extends Context.Service<
     ) => Effect.Effect<NetworkMember | null, TailnetDevicesError>;
     /**
      * Sets what a member may do on every machine in the network. `revoked` ends its sessions and
-     * refuses its handshakes; any other level restores it. Only a full-access member may. An agent
-     * may only narrow, and may not revoke `callerEnvironmentId`, the machine its own session comes
-     * from (where the user is); widening, restoring and that revocation are the user's call.
+     * refuses its handshakes; any other level restores it, except for a machine that left, which
+     * is added again instead. Only a full-access member may. An agent may only narrow, and never
+     * changes `callerEnvironmentId`, the machine its own session comes from (where the user is).
      */
     readonly setAccess: (
       environmentId: EnvironmentId,
@@ -271,6 +270,8 @@ export class TailnetDevices extends Context.Service<
     readonly inviteApp: (input: {
       readonly label?: string;
       readonly scopes: ReadonlyArray<AuthGrantScope>;
+      /** An app this one pairs again for: redeeming the code removes it everywhere. */
+      readonly replacesAppId?: string;
     }) => Effect.Effect<AuthPairingCredentialResult, TailnetDevicesError>;
     /**
      * Narrows or revokes an app of the network on every member, ending its sessions everywhere.
@@ -366,6 +367,13 @@ const make = Effect.gen(function* () {
     yield* links.unlink(environmentId);
   }, Effect.mapError(storageError));
 
+  /** Ends what a narrowed machine opened here for apps; it was minted for more. */
+  const cutBrokered = Effect.fn("TailnetDevices.cutBrokered")(function* (
+    environmentId: EnvironmentId,
+  ) {
+    yield* sessions.revokeBrokeredBy(environmentId);
+  }, Effect.mapError(storageError));
+
   /** Ends an app's sessions here, so it pairs again at its new access. */
   const cutApp = Effect.fn("TailnetDevices.cutApp")(function* (appId: string) {
     yield* sessions.revokeBySubject(`${NETWORK_APP_SUBJECT_PREFIX}${appId}`);
@@ -399,9 +407,9 @@ const make = Effect.gen(function* () {
           message: "A machine cannot change its own access.",
         });
       }
-      if (actor === "agent" && access === "revoked" && environmentId === callerEnvironmentId) {
+      if (actor === "agent" && environmentId === callerEnvironmentId) {
         return yield* forbidden(
-          "An agent cannot revoke the machine it is working from. Ask the user to do it in Settings, Connections.",
+          "An agent cannot change the access of the machine it is working from. Ask the user to do it in Settings, Connections.",
         );
       }
       yield* requireAdmin();
@@ -417,8 +425,14 @@ const make = Effect.gen(function* () {
           `Only the user can widen ${existing.value.label}'s access. Ask them to change it in Settings, Connections.`,
         );
       }
+      if (access !== "revoked" && Membership.hasLeft(existing.value)) {
+        return yield* forbidden(
+          `${existing.value.label} left the network; add it again. Allow joining on it first.`,
+        );
+      }
       const entry = yield* membership.put({ ...existing.value, access });
       if (access === "revoked") yield* cutOff(environmentId);
+      else if (widens(access, existing.value.access)) yield* cutBrokered(environmentId);
       yield* push;
       return entry;
     },
@@ -438,7 +452,12 @@ const make = Effect.gen(function* () {
           message: "That machine is not in the network.",
         });
       }
+      const before = yield* membership.accessOf(environmentId);
       yield* membership.setLimit(environmentId, access);
+      const after = yield* membership.accessOf(environmentId);
+      if (Option.isSome(before) && Option.isSome(after) && widens(after.value, before.value)) {
+        yield* cutBrokered(environmentId);
+      }
     },
   );
 
@@ -933,18 +952,22 @@ const make = Effect.gen(function* () {
   /**
    * Takes a member's hints and roster. Roster writes count only from a sender that is a
    * full-access member here, except its own revocation, which any member may send to leave. A
-   * member it revoked is cut off here too.
+   * member it revoked is cut off here too. `narrowOnly`, while this machine takes no part, keeps
+   * only revocations and narrowing, so what it already lets in can still shrink.
    */
   const mergeSync = Effect.fn("TailnetDevices.mergeSync")(function* (
     payload: TailnetDevicesSyncPayload,
     sender: EnvironmentId,
+    narrowOnly = false,
   ) {
     const self = yield* environment.getEnvironmentId;
-    yield* Effect.forEach(
-      payload.devices.filter((device) => device.environmentId !== self),
-      addHint,
-      { discard: true },
-    );
+    if (!narrowOnly) {
+      yield* Effect.forEach(
+        payload.devices.filter((device) => device.environmentId !== self),
+        addHint,
+        { discard: true },
+      );
+    }
     const access = yield* membership.accessOf(sender);
     if (Option.isNone(access) || access.value === "revoked") return;
     const leaving = payload.members.filter(
@@ -953,23 +976,24 @@ const make = Effect.gen(function* () {
     const cuts = yield* membership.merge(
       sender,
       access.value === "full-access" ? payload : { members: leaving, apps: [] },
+      { narrowOnly },
     );
     yield* Effect.forEach(cuts.revoked, cutOff, { discard: true });
+    yield* Effect.forEach(cuts.narrowed, cutBrokered, { discard: true });
     yield* Effect.forEach(cuts.appsCut, cutApp, { discard: true });
     yield* seedLimits(cuts.added);
   });
+
+  const notTakingPart = () =>
+    new TailnetDevicesUnauthorizedError({
+      message: "This machine is not taking part in your device network.",
+    });
 
   /** The member session a machine holds here; a pairing-code link is never one. */
   const authenticateMember = Effect.fn("TailnetDevices.authenticateMember")(function* (
     request: HttpServerRequest.HttpServerRequest,
     claimed: EnvironmentId,
   ) {
-    // A machine that opted out takes no roster writes and mints nothing, whoever asks.
-    if (!(yield* enabled)) {
-      return yield* new TailnetDevicesUnauthorizedError({
-        message: "This machine is not taking part in your device network.",
-      });
-    }
     const caller = yield* auth.authenticateMcpClient(request).pipe(Effect.option);
     if (
       Option.isNone(caller) ||
@@ -987,16 +1011,21 @@ const make = Effect.gen(function* () {
     "TailnetDevices.handleSync",
   )(function* (request, payload) {
     yield* authenticateMember(request, payload.from.environmentId);
-    yield* mergeSync(payload, payload.from.environmentId).pipe(
+    const takingPart = yield* enabled;
+    yield* mergeSync(payload, payload.from.environmentId, !takingPart).pipe(
       Effect.tapError((cause) => Effect.logWarning("Could not merge a member's sync", { cause })),
       Effect.ignore,
     );
+    // A machine that opted out still lets a revocation land, but shares nothing back.
+    if (!takingPart) return yield* notTakingPart();
     return yield* syncPayload;
   });
 
   const handleClientCredential: TailnetDevices["Service"]["handleClientCredential"] = Effect.fn(
     "TailnetDevices.handleClientCredential",
   )(function* (request, payload) {
+    // A machine that opted out mints nothing, whoever asks.
+    if (!(yield* enabled)) return yield* notTakingPart();
     const caller = yield* authenticateMember(request, payload.from);
     const self = yield* selfDescriptor;
     // The narrowest of the app's own access and what the relaying machine may do here.
@@ -1203,17 +1232,29 @@ const make = Effect.gen(function* () {
     function* (input) {
       yield* requireEnabled();
       yield* requireAdmin();
+      if (
+        input.replacesAppId !== undefined &&
+        !(yield* membership.apps).some((app) => app.appId === input.replacesAppId)
+      ) {
+        return yield* new TailnetDevicesError({
+          reason: "unknown_device",
+          message: "The app to pair again is not in your network.",
+        });
+      }
       const granted = new Set<AuthGrantScope>(input.scopes);
       const access = AuthStandardClientScopes.every((scope) => granted.has(scope))
         ? "full-access"
         : "read-only";
       const appId = yield* random.randomBytes(16).pipe(Effect.map(Base64Url.encode), Effect.orDie);
       // The roster entry is written when the code is redeemed (EnvironmentAuth), so an unused
-      // invitation leaves nothing behind.
+      // invitation leaves nothing behind, and the app it replaces stays until then.
       return yield* auth
         .issuePairingCredential(
           { scopes: clientScopesFor(access), label: input.label ?? "App" },
-          { subject: `${NETWORK_APP_SUBJECT_PREFIX}${appId}` },
+          {
+            subject: `${NETWORK_APP_SUBJECT_PREFIX}${appId}`,
+            ...(input.replacesAppId === undefined ? {} : { replacesAppId: input.replacesAppId }),
+          },
         )
         .pipe(
           Effect.mapError(
@@ -1475,7 +1516,10 @@ const make = Effect.gen(function* () {
       // owner allows joining here.
       const consented = yield* joinOpen;
       const rebinding = !local && known !== undefined && known.nodeId === null;
-      if (!local) {
+      if (local) {
+        // A link to one machine may replace one made by pairing code, so it always needs consent.
+        if (!consented) return yield* refuse("not_consented", admitter);
+      } else {
         if (others.length > 0 && known?.access !== "full-access") {
           return yield* refuse("other_network", admitter);
         }
@@ -1500,9 +1544,9 @@ const make = Effect.gen(function* () {
           Effect.tapError((cause) => Effect.logInfo("Could not take a local link", { cause })),
           Effect.option,
         );
-        return Option.isSome(linked)
-          ? ({ outcome: "granted" } satisfies TailnetLinkResult)
-          : yield* refuse("grant_rejected", admitter);
+        if (Option.isNone(linked)) return yield* refuse("grant_rejected", admitter);
+        yield* closeJoin;
+        return { outcome: "granted" } satisfies TailnetLinkResult;
       }
       if (rebinding) {
         yield* membership.bindNode(admitter.environmentId, proof.device.nodeId).pipe(Effect.ignore);
@@ -1558,6 +1602,7 @@ const make = Effect.gen(function* () {
       yield* closeJoin;
       return { outcome: "granted" } satisfies TailnetLinkResult;
     },
+    handshakes.withPermits(1),
     Effect.timeoutOption(HANDSHAKE_TIMEOUT),
     Effect.map(
       Option.getOrElse((): TailnetLinkResult => ({ outcome: "refused", reason: "unreachable" })),
@@ -1766,10 +1811,13 @@ const make = Effect.gen(function* () {
       const devices: Array<TailnetDevice> = [];
       for (const id of ids) {
         const environmentId = id as EnvironmentId;
-        const member = roster.find((candidate) => candidate.environmentId === id) ?? null;
-        // The user removed it here; it shows again if it is ever restored.
-        if (member?.access === "revoked" && hidden.members.has(id)) continue;
         const row = rows.find((candidate) => candidate.environment_id === id);
+        const listed = roster.find((candidate) => candidate.environmentId === id) ?? null;
+        // The user removed it here. Found on the tailnet again, it is offered to add like any
+        // machine; adding or restoring it shows it as a member again.
+        const removed = listed?.access === "revoked" && hidden.members.has(id);
+        if (removed && row === undefined) continue;
+        const member = removed ? null : listed;
         const link = linked.find((candidate) => candidate.environmentId === id);
         const localLink = localLinks.find((candidate) => candidate.environmentId === id);
         const localLimit = localLimits.get(environmentId) ?? null;

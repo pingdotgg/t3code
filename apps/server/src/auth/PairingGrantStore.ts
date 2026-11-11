@@ -39,6 +39,8 @@ export interface BootstrapGrant {
   readonly proofKeyThumbprint?: string;
   /** The member that asked for this credential on an app's behalf. */
   readonly brokeredBy?: EnvironmentId;
+  /** The app of the network this credential pairs again for. */
+  readonly replacesAppId?: string;
   readonly expiresAt: DateTime.DateTime;
 }
 
@@ -227,6 +229,7 @@ export class PairingGrantStore extends Context.Service<
       /** Issues a hidden `<LEVEL>-` code that only an agent sign-in at this level can spend. */
       readonly mcpApproval?: AuthMcpClientAccess;
       readonly brokeredBy?: EnvironmentId;
+      readonly replacesAppId?: string;
     }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialInternalError>;
     readonly listActive: () => Effect.Effect<
       ReadonlyArray<AuthPairingLink>,
@@ -435,6 +438,7 @@ const make = Effect.gen(function* () {
         createdAt: now,
         expiresAt: expiresAt,
         ...(input?.brokeredBy === undefined ? {} : { brokeredBy: input.brokeredBy }),
+        ...(input?.replacesAppId === undefined ? {} : { replacesAppId: input.replacesAppId }),
       })
       .pipe(
         Effect.mapError(
@@ -604,6 +608,7 @@ const make = Effect.gen(function* () {
             ? { proofKeyThumbprint: consumed.value.proofKeyThumbprint }
             : {}),
           ...(consumed.value.brokeredBy ? { brokeredBy: consumed.value.brokeredBy } : {}),
+          ...(consumed.value.replacesAppId ? { replacesAppId: consumed.value.replacesAppId } : {}),
           expiresAt: consumed.value.expiresAt,
         } satisfies BootstrapGrant;
       }

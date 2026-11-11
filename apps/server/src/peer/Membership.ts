@@ -50,6 +50,13 @@ const ACCESS_RANK: ReadonlyArray<string> = ["revoked", ...ACCESS_ORDER];
 /** `to` gives less than `from`: its sessions were minted for more than it may now do. */
 const narrows = (from: string, to: string) => ACCESS_RANK.indexOf(to) < ACCESS_RANK.indexOf(from);
 
+/**
+ * A member that revoked itself: it left, and its roster there is gone, so only adding it again
+ * (a join) brings it back. A restore would list a machine that takes no part.
+ */
+export const hasLeft = (member: NetworkMember) =>
+  member.access === "revoked" && member.updatedAt.node === member.environmentId;
+
 const ZERO_STAMP: TailnetHlc = { wallMs: 0, counter: 0, node: "" as EnvironmentId };
 
 /**
@@ -131,6 +138,8 @@ const decodeApp = Schema.decodeUnknownEffect(NetworkApp);
 export interface RosterCuts {
   /** Members newly revoked. */
   readonly revoked: ReadonlyArray<EnvironmentId>;
+  /** Members narrowed but not revoked, whose brokered sessions were minted for more. */
+  readonly narrowed: ReadonlyArray<EnvironmentId>;
   /** Apps narrowed or revoked, whose sessions were minted for more. */
   readonly appsCut: ReadonlyArray<string>;
   /** Machines that were not in the roster before. */
@@ -169,11 +178,15 @@ export class Membership extends Context.Service<
       readonly label: string;
       readonly access: TailnetDeviceAccess;
     }) => Effect.Effect<{ readonly app: NetworkApp; readonly cut: boolean }, TailnetDevicesError>;
-    /** Adds an app the first time its invitation is redeemed; a known app keeps its entry. */
+    /**
+     * Adds an app the first time its invitation is redeemed; a known app keeps its entry. With
+     * `replaces`, the app it was paired again for is revoked and hidden in the same write.
+     */
     readonly redeemApp: (input: {
       readonly appId: string;
       readonly label: string;
       readonly access: AuthMcpClientAccess;
+      readonly replaces?: string;
     }) => Effect.Effect<"added" | "known" | "revoked", TailnetDevicesError>;
     readonly member: (
       environmentId: EnvironmentId,
@@ -216,7 +229,8 @@ export class Membership extends Context.Service<
     /**
      * Takes a sender's roster. The caller has already checked the sender is a full-access member
      * on a member session. Entries naming the sender are dropped, so no machine sets its own
-     * access, except its own revocation: that is how a machine leaves.
+     * access, except its own revocation: that is how a machine leaves. `narrowOnly` takes only
+     * entries that narrow or revoke a member or app already here.
      */
     readonly merge: (
       sender: EnvironmentId,
@@ -224,6 +238,7 @@ export class Membership extends Context.Service<
         readonly members: ReadonlyArray<NetworkMember>;
         readonly apps: ReadonlyArray<NetworkApp>;
       },
+      options?: { readonly narrowOnly?: boolean },
     ) => Effect.Effect<RosterCuts, TailnetDevicesError>;
     /**
      * Takes entries without the sender rule: the roster a machine joining a network was offered,
@@ -459,7 +474,8 @@ const make = Effect.gen(function* () {
             node_id = excluded.node_id,
             access = excluded.access,
             stamp_json = excluded.stamp_json,
-            restores_json = excluded.restores_json
+            restores_json = excluded.restores_json,
+            hidden = CASE WHEN excluded.access = 'revoked' THEN network_members.hidden ELSE 0 END
         `,
       ),
       Effect.mapError(storageError),
@@ -498,10 +514,18 @@ const make = Effect.gen(function* () {
   );
 
   const redeemApp: Membership["Service"]["redeemApp"] = Effect.fn("Membership.redeemApp")(
-    function* (input) {
-      const before = (yield* apps).find((app) => app.appId === input.appId);
+    function* ({ replaces, ...input }) {
+      const current = yield* apps;
+      const before = current.find((app) => app.appId === input.appId);
       if (before !== undefined) return before.access === "revoked" ? "revoked" : "known";
       yield* writeApp({ ...input, updatedAt: yield* stamp });
+      const replaced = current.find((app) => app.appId === replaces);
+      if (replaced !== undefined) {
+        yield* writeApp({ ...replaced, access: "revoked", updatedAt: yield* stamp });
+        yield* sql`UPDATE network_apps SET hidden = 1 WHERE app_id = ${replaced.appId}`.pipe(
+          Effect.mapError(storageError),
+        );
+      }
       yield* changed("appRedeemed");
       return "added";
     },
@@ -580,10 +604,13 @@ const make = Effect.gen(function* () {
     const current = new Map(stored.map((entry) => [entry.environmentId, entry]));
     const next = mergeMembers(current, incoming);
     const revoked: Array<EnvironmentId> = [];
+    const narrowed: Array<EnvironmentId> = [];
     const added: Array<EnvironmentId> = [];
+    let wrote = false;
     for (const [environmentId, entry] of next) {
       const before = current.get(environmentId);
       if (before === entry) continue;
+      wrote = true;
       // A bound node is never dropped for an unbound copy. Restamped, so the binding spreads.
       if (entry.nodeId === null && before !== undefined && before.nodeId !== null) {
         yield* write({ ...entry, nodeId: before.nodeId, updatedAt: yield* stamp });
@@ -592,22 +619,35 @@ const make = Effect.gen(function* () {
       }
       if (before === undefined) added.push(environmentId);
       if (entry.access === "revoked" && before?.access !== "revoked") revoked.push(environmentId);
+      else if (before !== undefined && narrows(before.access, entry.access)) {
+        narrowed.push(environmentId);
+      }
     }
     yield* observe(incoming.map((entry) => entry.updatedAt));
-    return { revoked, added };
+    return { revoked, narrowed, added, wrote };
   });
 
   const merge: Membership["Service"]["merge"] = Effect.fn("Membership.merge")(
-    function* (sender, roster) {
-      const memberCuts = yield* applyRoster(
-        roster.members.filter(
-          (entry) => entry.environmentId !== sender || entry.access === "revoked",
-        ),
+    function* (sender, roster, options) {
+      let memberWrites = roster.members.filter(
+        (entry) => entry.environmentId !== sender || entry.access === "revoked",
       );
-      const appCuts = yield* applyApps(roster.apps);
-      if (memberCuts.revoked.length + memberCuts.added.length > 0 || appCuts.wrote) {
-        yield* changed();
+      let appWrites = roster.apps;
+      if (options?.narrowOnly === true) {
+        const knownMembers = new Map((yield* members).map((entry) => [entry.environmentId, entry]));
+        const knownApps = new Map((yield* apps).map((app) => [app.appId, app]));
+        memberWrites = memberWrites.filter((entry) => {
+          const known = knownMembers.get(entry.environmentId);
+          return known !== undefined && narrows(known.access, entry.access);
+        });
+        appWrites = appWrites.filter((app) => {
+          const known = knownApps.get(app.appId);
+          return known !== undefined && narrows(known.access, app.access);
+        });
       }
+      const { wrote, ...memberCuts } = yield* applyRoster(memberWrites);
+      const appCuts = yield* applyApps(appWrites);
+      if (wrote || appCuts.wrote) yield* changed();
       return { ...memberCuts, appsCut: appCuts.cut };
     },
     (effect) => writes.withPermits(1)(effect),

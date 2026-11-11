@@ -203,7 +203,12 @@ const serveDeviceOn = (
       ),
       Layer.provideMerge(Sqlite.layerMemory),
       Layer.provideMerge(ServerSecretStore.layer),
-      Layer.provideMerge(ServerEnvironment.layerIdentity),
+      // Roster stamps name the machine that wrote them, as in production.
+      Layer.provideMerge(
+        Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+          getEnvironmentId: Effect.succeed(descriptor.environmentId),
+        }),
+      ),
       Layer.provideMerge(
         Layer.succeed(ServerEnvironment.ServerEnvironment, {
           getEnvironmentId: Effect.succeed(descriptor.environmentId),
@@ -1199,41 +1204,54 @@ describe("revocation holds", () => {
     }),
   );
 
-  it.live("a machine with the switch off takes no roster writes and mints nothing", () =>
-    Effect.gen(function* () {
-      const { a, b } = yield* threeDevices;
-      const { token } = yield* a.links.resolve(studio.environmentId);
-      yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: false });
+  it.live(
+    "a machine with the switch off takes only revocations and narrowing, and mints nothing",
+    () =>
+      Effect.gen(function* () {
+        const { a, b, c } = yield* threeDevices;
+        const { token } = yield* a.links.resolve(studio.environmentId);
+        const boxToken = (yield* c.links.resolve(studio.environmentId)).token;
+        yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: false });
+        const stamp = { wallMs: Number.MAX_SAFE_INTEGER, counter: 0, node: laptop.environmentId };
 
-      const synced = yield* syncAs(b, token, {
-        from: { environmentId: laptop.environmentId, label: "Laptop", urls: [a.url] },
-        devices: [],
-        apps: [],
-        members: [
-          {
-            environmentId: box.environmentId,
-            label: "Box",
-            nodeId: null,
-            access: "read-only",
-            updatedAt: { wallMs: Number.MAX_SAFE_INTEGER, counter: 0, node: laptop.environmentId },
-          },
-        ],
-      }).pipe(Effect.flip);
-      const opened = yield* a.devices
-        .openDevice(studio.environmentId, {
-          scopes: AuthStandardClientScopes,
-          subject: "browser-session",
-        })
-        .pipe(Effect.flip);
+        const synced = yield* syncAs(b, token, {
+          from: { environmentId: laptop.environmentId, label: "Laptop", urls: [a.url] },
+          devices: [],
+          apps: [],
+          members: [
+            {
+              environmentId: box.environmentId,
+              label: "Box",
+              nodeId: null,
+              access: "revoked",
+              updatedAt: stamp,
+            },
+            {
+              environmentId: EnvironmentId.make("env-new"),
+              label: "New",
+              nodeId: null,
+              access: "full-access",
+              updatedAt: stamp,
+            },
+          ],
+        }).pipe(Effect.flip);
+        const opened = yield* a.devices
+          .openDevice(studio.environmentId, {
+            scopes: AuthStandardClientScopes,
+            subject: "browser-session",
+          })
+          .pipe(Effect.flip);
 
-      expect(synced._tag).toBe("TailnetDevicesUnauthorizedError");
-      expect(opened.reason).toBe("forbidden");
-      expect(yield* b.membership.accessOf(box.environmentId)).toEqual(Option.some("full-access"));
-      expect(yield* b.pairingLinks).toEqual([]);
-    }),
+        expect(synced._tag).toBe("TailnetDevicesUnauthorizedError");
+        expect(opened.reason).toBe("forbidden");
+        expect(yield* b.membership.accessOf(box.environmentId)).toEqual(Option.some("revoked"));
+        expect(Option.isNone(yield* Effect.option(b.authenticate(boxToken)))).toBe(true);
+        expect(yield* b.membership.accessOf(EnvironmentId.make("env-new"))).toEqual(Option.none());
+        expect(yield* b.pairingLinks).toEqual([]);
+      }),
   );
 
-  it.live("an agent cannot revoke the machine its own link comes from", () =>
+  it.live("an agent cannot revoke or narrow the machine its own link comes from", () =>
     Effect.gen(function* () {
       const b = yield* serveDevice(studio, yield* makeTailnet);
       yield* withRoster(b, [
@@ -1241,14 +1259,33 @@ describe("revocation holds", () => {
         [laptop, "full-access"],
       ]);
 
-      const refused = yield* b.devices
-        .setAccess(laptop.environmentId, "revoked", "agent", laptop.environmentId)
-        .pipe(Effect.flip);
-
-      expect(refused.reason).toBe("forbidden");
+      // Neither revoked nor narrowed: that is the user's call.
+      for (const access of ["revoked", "read-only"] as const) {
+        const refused = yield* b.devices
+          .setAccess(laptop.environmentId, access, "agent", laptop.environmentId)
+          .pipe(Effect.flip);
+        expect(refused.reason).toBe("forbidden");
+      }
       expect(yield* b.membership.accessOf(laptop.environmentId)).toEqual(
         Option.some("full-access"),
       );
+    }),
+  );
+
+  it.live("narrowing a machine ends the sessions it opened on other machines", () =>
+    Effect.gen(function* () {
+      const { b, c, a } = yield* threeDevices;
+      const opened = yield* a.devices.openDevice(studio.environmentId, {
+        scopes: AuthStandardClientScopes,
+        subject: "browser-session",
+      });
+      const { access_token } = yield* b.redeem(opened.credential);
+
+      // Narrowed on the box; the studio learns it by sync.
+      yield* c.devices.setAccess(laptop.environmentId, "read-only", "user");
+
+      expect(yield* b.membership.accessOf(laptop.environmentId)).toEqual(Option.some("read-only"));
+      expect(Exit.isFailure(yield* Effect.exit(b.sessions.verify(access_token)))).toBe(true);
     }),
   );
 });
@@ -1327,8 +1364,32 @@ describe("joining a network", () => {
       yield* tailnet.join(a.url);
       yield* tailnet.join(b.url);
       yield* find(tailnet, a, b, tailnet.nameOf(b.url));
+      // The studio already reaches the laptop by pairing code.
+      const paired = {
+        environmentId: laptop.environmentId,
+        label: "Laptop",
+        urls: [a.url],
+        access: "full-access" as const,
+        origin: "paired" as const,
+        linkedAt: yield* DateTime.now,
+        expiresAt: DateTime.add(yield* DateTime.now, { days: 30 }),
+        lastReachedAt: null,
+        lastError: null,
+      };
+      yield* b.links.store(paired, "pairing-token");
 
+      // Same account is not consent, even for a link to one machine.
+      const refused = yield* a.devices
+        .admit(studio.environmentId, "read-only", "local")
+        .pipe(Effect.flip);
+      expect(refused.message).toContain("has not allowed joining");
+      expect(Option.map(yield* b.links.get(laptop.environmentId), (link) => link.origin)).toEqual(
+        Option.some("paired"),
+      );
+
+      yield* b.devices.allowJoin;
       expect(yield* a.devices.admit(studio.environmentId, "read-only", "local")).toBeNull();
+      expect((yield* b.devices.list()).joinOpenUntil).toBeNull();
 
       // The studio holds a read-only link to the laptop; the laptop holds none to it.
       const { token } = yield* b.links.resolve(laptop.environmentId);
@@ -1466,6 +1527,40 @@ describe("app lifecycle", () => {
       expect(yield* b.membership.appAccessOf(app!.appId)).toEqual(Option.some("revoked"));
     }),
   );
+
+  it.live("pairing an app again replaces it on every member, at its new access", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* admit(tailnet, a, b);
+      const old = yield* pairApp(a, [b], { label: "Phone", scopes: AuthStandardClientScopes });
+      yield* a.devices.setAppAccess(old.appId, "read-only");
+      const oldSubject = `${NETWORK_APP_SUBJECT_PREFIX}${old.appId}`;
+      yield* a.sessions.issue({ subject: oldSubject });
+
+      const invitation = yield* a.devices.inviteApp({
+        label: "Phone",
+        scopes: AuthStandardClientScopes,
+        replacesAppId: old.appId,
+      });
+      // Nothing changes until the new code is redeemed.
+      expect(yield* a.membership.appAccessOf(old.appId)).toEqual(Option.some("read-only"));
+      yield* a.redeem(invitation.credential);
+      yield* until(b, (snapshot) => snapshot.apps.length === 2);
+
+      const listed = (yield* a.devices.list()).apps;
+      expect(listed.map((app) => [app.label, app.access])).toEqual([["Phone", "full-access"]]);
+      const replacement = listed[0]!.appId;
+      expect(yield* b.membership.appAccessOf(old.appId)).toEqual(Option.some("revoked"));
+      expect(yield* b.membership.appAccessOf(replacement)).toEqual(Option.some("full-access"));
+      expect(
+        (yield* a.sessions.listActive()).filter((session) => session.subject === oldSubject),
+      ).toEqual([]);
+    }),
+  );
 });
 
 describe("removing and leaving", () => {
@@ -1516,10 +1611,44 @@ describe("removing and leaving", () => {
       expect(yield* c.membership.members).toEqual([]);
       expect(yield* c.links.get(laptop.environmentId)).toEqual(Option.none());
 
-      // Its owner allows joining again, and the user adds it: an explicit restore.
+      // A restore runs no join, so it cannot bring back a machine that left.
+      const restored = yield* a.devices
+        .setAccess(box.environmentId, "full-access", "user")
+        .pipe(Effect.flip);
+      expect(restored.message).toContain("left the network");
+      expect(yield* a.membership.accessOf(box.environmentId)).toEqual(Option.some("revoked"));
+
+      // Its owner allows joining again, and the user adds it: a rejoin that outranks the leave.
       yield* c.devices.allowJoin;
       yield* a.devices.admit(box.environmentId, "full-access");
-      expect(yield* b.membership.accessOf(box.environmentId)).toEqual(Option.some("full-access"));
+      for (const device of [a, b, c]) {
+        expect(yield* device.membership.accessOf(box.environmentId)).toEqual(
+          Option.some("full-access"),
+        );
+      }
+      expect(Option.isSome(yield* c.links.get(laptop.environmentId))).toBe(true);
+    }),
+  );
+
+  it.live("a forgotten machine still on the tailnet can be added again", () =>
+    Effect.gen(function* () {
+      const { a, b } = yield* threeDevices;
+      yield* a.devices.forget(box.environmentId);
+
+      // Found again by the next scan, it is offered as a machine to add, not a member.
+      yield* a.devices.scan;
+      const found = (yield* a.devices.list()).devices.find(
+        (device) => device.environmentId === box.environmentId,
+      );
+      expect([found?.member, found?.access]).toEqual([null, null]);
+
+      yield* a.devices.admit(box.environmentId, "read-only");
+
+      const added = (yield* a.devices.list()).devices.find(
+        (device) => device.environmentId === box.environmentId,
+      );
+      expect(added?.member?.access).toBe("read-only");
+      expect(yield* b.membership.accessOf(box.environmentId)).toEqual(Option.some("read-only"));
     }),
   );
 
@@ -1577,6 +1706,55 @@ describe("limits and the live snapshot", () => {
       );
       yield* a.devices.setLimit(studio.environmentId, null);
       expect((yield* a.authenticate(token)).access).toBe("full-access");
+    }),
+  );
+
+  it.live("every roster change merged from another machine reaches subscribers", () =>
+    Effect.gen(function* () {
+      const b = yield* serveDevice(studio, yield* makeTailnet);
+      yield* withRoster(b, [
+        [studio, "full-access"],
+        [laptop, "full-access"],
+        [box, "full-access"],
+      ]);
+      const changes = yield* b.membership.subscribeChanges;
+      const seen = yield* changes.pipe(
+        Stream.takeUntil((change) => change === "appRedeemed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const boxAt = (access: "read-only" | "revoked" | "auto", wallMs: number) => ({
+        environmentId: box.environmentId,
+        label: "Box",
+        nodeId: `n-${box.environmentId}`,
+        access,
+        updatedAt: { wallMs, counter: 0, node: laptop.environmentId },
+        ...(access === "auto"
+          ? { restores: { wallMs: 3, counter: 0, node: laptop.environmentId } }
+          : {}),
+      });
+
+      // A narrowing, a revocation and a restore, each merged from the laptop.
+      for (const [access, wallMs] of [
+        ["read-only", 2],
+        ["revoked", 3],
+        ["auto", 4],
+      ] as const) {
+        yield* b.membership.merge(laptop.environmentId, {
+          members: [boxAt(access, wallMs)],
+          apps: [],
+        });
+      }
+      // A marker that always publishes, so the count above is exact.
+      yield* b.membership.redeemApp({ appId: "marker", label: "Marker", access: "read-only" });
+
+      expect(Array.from(yield* Fiber.join(seen))).toEqual([
+        "written",
+        "written",
+        "written",
+        "appRedeemed",
+      ]);
+      expect(yield* b.membership.accessOf(box.environmentId)).toEqual(Option.some("auto"));
     }),
   );
 

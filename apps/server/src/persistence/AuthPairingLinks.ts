@@ -36,6 +36,8 @@ export const AuthPairingLinkRecord = Schema.Struct({
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   /** The member that asked for this credential on an app's behalf. */
   brokeredBy: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
+  /** The app of the network this credential pairs again for. */
+  replacesAppId: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type AuthPairingLinkRecord = typeof AuthPairingLinkRecord.Type;
 
@@ -50,6 +52,7 @@ export const CreateAuthPairingLinkInput = Schema.Struct({
   createdAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
   brokeredBy: Schema.optionalKey(EnvironmentId),
+  replacesAppId: Schema.optionalKey(Schema.String),
 });
 export type CreateAuthPairingLinkInput = typeof CreateAuthPairingLinkInput.Type;
 
@@ -94,6 +97,7 @@ const AuthPairingLinkRawDbRow = Schema.Struct({
   consumedAt: Schema.Unknown,
   revokedAt: Schema.Unknown,
   brokeredBy: Schema.optionalKey(Schema.Unknown),
+  replacesAppId: Schema.optionalKey(Schema.Unknown),
 });
 
 const decodeAuthPairingLinkDbRow = Schema.decodeUnknownEffect(AuthPairingLinkRecord);
@@ -154,7 +158,8 @@ export const make = Effect.gen(function* () {
           expires_at,
           consumed_at,
           revoked_at,
-          brokered_by
+          brokered_by,
+          replaces_app_id
         )
         VALUES (
           ${input.id},
@@ -168,7 +173,8 @@ export const make = Effect.gen(function* () {
           ${input.expiresAt},
           NULL,
           NULL,
-          ${input.brokeredBy ?? null}
+          ${input.brokeredBy ?? null},
+          ${input.replacesAppId ?? null}
         )
       `,
   });
@@ -226,7 +232,8 @@ export const make = Effect.gen(function* () {
           expires_at AS "expiresAt",
           consumed_at AS "consumedAt",
           revoked_at AS "revokedAt",
-          brokered_by AS "brokeredBy"
+          brokered_by AS "brokeredBy",
+          replaces_app_id AS "replacesAppId"
       `,
   });
 

@@ -104,6 +104,7 @@ import ForkMigration015 from "./Migrations/fork/015_ThreadAutoArchiveIndex.ts";
 import ForkMigration016 from "./Migrations/fork/016_GuardThreadPayloadIndexes.ts";
 import ForkMigration017 from "./Migrations/fork/017_NetworkMembers.ts";
 import ForkMigration018 from "./Migrations/fork/018_NetworkLifecycle.ts";
+import ForkMigration019 from "./Migrations/fork/019_NetworkAppReplacement.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -210,6 +211,7 @@ const forkMigrationEntries = [
   [16, "GuardThreadPayloadIndexes", ForkMigration016, 80],
   [17, "NetworkMembers", ForkMigration017, 80],
   [18, "NetworkLifecycle", ForkMigration018, 80],
+  [19, "NetworkAppReplacement", ForkMigration019, 80],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(

@@ -136,7 +136,9 @@ trusted:
   as after an upgrade, is refused until the user adds it again; an inbound or
   first answer never binds one.
 - **A machine in no network joins only while its owner allows it** there
-  (`allowJoin`, ten minutes, in memory), and so does rebinding an unbound admin.
+  (`allowJoin`, ten minutes, in memory), and so do rebinding an unbound admin
+  and a link to that machine alone (`local`), which may replace a code-paired
+  link.
 
 The [roster](../../apps/server/src/peer/Membership.ts) of members and network
 apps is replicated and merged last-writer-wins by hybrid logical clock.
@@ -150,8 +152,17 @@ widen itself, even relayed through another. Each machine also keeps local
 limits that never replicate. Effective access is the narrower of the roster
 and the local limit. Each `/mcp` request narrows a member session's token to
 that, so a change applies without re-linking. Widening past what the token was
-minted with takes a new handshake. Agents may only narrow: widening and
-restoring are the user's.
+minted with takes a new handshake. Narrowing or revoking a member also ends the
+sessions it brokered for apps, which were minted for more. Agents may only
+narrow, and never change the machine their link comes from: widening and
+restoring are the user's. A machine with the switch off still takes revocations
+and narrowing from a member's sync, never widening, and mints nothing.
+
+A machine that leaves writes its own tombstone (stamped by itself) and clears
+its roster, so a restore would list a machine that takes no part: it is
+refused, and the user adds the machine again, a join whose write names the
+tombstone in `restores`. Forgetting hides a tombstone on one machine only; found
+on the tailnet again, the machine is offered to add like any other.
 
 An app opens another member through the server it is connected to, which asks
 that member over its member session for a one-time pairing credential. The
@@ -159,13 +170,18 @@ credential is capped at the app's own grant. For an app of the network
 (session subject `network-app:<id>`), it is also capped at that app's roster
 access, not the access of the machine relaying for it. Narrowing or revoking a
 network app ends its sessions on every member, because sessions cannot be
-re-scoped in place, so it pairs again. App sessions carry no agent mode
+re-scoped in place, so it pairs again; an invitation naming `replacesAppId`
+revokes and hides the old app when it is redeemed, in the same roster write. App sessions carry no agent mode
 ceiling, so anything below full access opens read-only. One table in contracts,
 `NETWORK_ACCESS_CEILING`, sets this and also caps member MCP sessions and agent
 calls relayed through a connected app (`McpGatewayBroker`). A relayed call is
-capped on every call by this machine's own roster access, and a member is
-relayed only by a network app's session, within that app's access, so a
-code-paired session cannot take a member's traffic. A phone needs one
+capped on every call by this machine's own roster access. A member is relayed
+only by this machine's own desktop app (its `desktop-bootstrap` session) or a
+network app's session, within that app's access; a code-paired session cannot
+take a member's traffic, nor an environment another session already relays.
+Each relayed call also carries the calling chat's modes, and the app answering
+it applies them against its own reads of the target, so a relaying server that
+was told a wrong thread mode cannot widen the call. A phone needs one
 reachable member to renew, and if every full-access member is lost, the
 network has to be started again from a fresh machine.
 

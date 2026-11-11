@@ -458,6 +458,8 @@ export const AuthCreatePairingCredentialInput = Schema.Struct({
   access: Schema.optionalKey(AuthMcpClientAccess),
   /** The app joins the whole network, so every member lets it in without another code. */
   network: Schema.optionalKey(Schema.Boolean),
+  /** With `network`: the app this pairs again for, removed everywhere once the code is redeemed. */
+  replacesAppId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 

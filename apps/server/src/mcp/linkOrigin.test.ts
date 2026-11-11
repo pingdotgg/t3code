@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  TailnetDevicesError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -167,7 +168,11 @@ const layerTools = Layer.mergeAll(
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
     Layer.provide(
       Layer.mock(TailnetDevices.TailnetDevices)({
-        setAccess: (environmentId, access) => Effect.succeed({ environmentId, access } as never),
+        // As the service does: an agent changes nothing about the machine it works from.
+        setAccess: (environmentId, access, _actor, callerEnvironmentId) =>
+          environmentId === callerEnvironmentId
+            ? Effect.fail(new TailnetDevicesError({ reason: "forbidden", message: "Not yours." }))
+            : Effect.succeed({ environmentId, access } as never),
       }),
     ),
     Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
@@ -215,7 +220,13 @@ const clientScope = (
   environmentId: EnvironmentId.make("environment:box"),
   requestNamespace: `client:${sessionId}`,
   thread: undefined,
-  client: { sessionId, label: `T3 Code · ${sessionId}`, access, linked },
+  client: {
+    sessionId,
+    label: `T3 Code · ${sessionId}`,
+    access,
+    linked,
+    ...(linked ? { peerEnvironmentId: EnvironmentId.make(`environment:${sessionId}`) } : {}),
+  },
   capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
   issuedAt: 0,
 });
@@ -429,6 +440,11 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
       assert.equal(
         failureCode(yield* setAccess(claudeCode, trusted.environmentId, "revoked")),
         "invalid_request",
+      );
+      // Nor narrowed by the link of the machine it would narrow.
+      assert.equal(
+        failureCode(yield* setAccess(trusted, "environment:trusted", "read-only")),
+        "capability_denied",
       );
       const narrowed = yield* setAccess(claudeCode, "environment:desk", "auto");
       assert.deepEqual(narrowed.structuredContent, {

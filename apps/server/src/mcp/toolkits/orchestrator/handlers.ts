@@ -264,19 +264,24 @@ export const layer = McpToolAccess.toLayer(
       t3_environment_device_access: McpToolAccess.writesEnvironment(({ environmentId, access }) =>
         Effect.gen(function* () {
           if (access === "revoked") yield* assertMayRevoke(environmentId);
+          const caller = yield* McpInvocationContext.McpInvocationContext;
           const devices = yield* TailnetDevices.TailnetDevices;
-          const entry = yield* devices.setAccess(environmentId, access, "agent").pipe(
-            Effect.mapError(
-              (error) =>
-                new OrchestratorMcpFailure({
-                  code:
-                    error.reason === "unknown_device" || error.reason === "self"
-                      ? "invalid_request"
-                      : "orchestration_error",
-                  message: error.message,
-                }),
-            ),
-          );
+          const entry = yield* devices
+            .setAccess(environmentId, access, "agent", caller.client?.peerEnvironmentId)
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new OrchestratorMcpFailure({
+                    code:
+                      error.reason === "unknown_device" || error.reason === "self"
+                        ? "invalid_request"
+                        : error.reason === "forbidden"
+                          ? "capability_denied"
+                          : "orchestration_error",
+                    message: error.message,
+                  }),
+              ),
+            );
           return { environmentId: entry.environmentId, access: entry.access };
         }),
       ),

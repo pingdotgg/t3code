@@ -420,6 +420,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly purpose?: "startup";
       readonly mcpApproval?: AuthMcpClientAccess;
       readonly brokeredBy?: EnvironmentId;
+      readonly replacesAppId?: string;
     }) => Effect.Effect<
       IssuedPairingLink,
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
@@ -427,10 +428,15 @@ export class EnvironmentAuth extends Context.Service<
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput,
       /**
-       * The redeemed session's subject (an app of the network passes its own), and the member that
-       * asked for it on an app's behalf, whose revocation ends the session.
+       * The redeemed session's subject (an app of the network passes its own), the member that
+       * asked for it on an app's behalf, whose revocation ends the session, and the app of the
+       * network it pairs again for, removed when it is redeemed.
        */
-      options?: { readonly subject?: string; readonly brokeredBy?: EnvironmentId },
+      options?: {
+        readonly subject?: string;
+        readonly brokeredBy?: EnvironmentId;
+        readonly replacesAppId?: string;
+      },
     ) => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
@@ -795,7 +801,10 @@ export const make = Effect.gen(function* () {
    * network becomes one when its invitation is first redeemed, so an unused code leaves no entry.
    */
   const admitRedeemed = Effect.fn("EnvironmentAuth.admitRedeemed")(function* (
-    grant: Pick<PairingGrantStore.BootstrapGrant, "scopes" | "subject" | "label" | "brokeredBy">,
+    grant: Pick<
+      PairingGrantStore.BootstrapGrant,
+      "scopes" | "subject" | "label" | "brokeredBy" | "replacesAppId"
+    >,
   ) {
     if (grant.brokeredBy !== undefined) {
       const broker = yield* membership.accessOf(grant.brokeredBy);
@@ -813,6 +822,7 @@ export const make = Effect.gen(function* () {
         access: AuthStandardClientScopes.every((scope) => grant.scopes.includes(scope))
           ? "full-access"
           : "read-only",
+        ...(grant.replacesAppId === undefined ? {} : { replaces: grant.replacesAppId }),
       })
       .pipe(
         Effect.mapError((cause) => new ServerAuthBootstrapCredentialValidationError({ cause })),
@@ -821,6 +831,13 @@ export const make = Effect.gen(function* () {
       return yield* new ServerAuthInvalidCredentialError({
         diagnostic: "This app was removed from the network.",
       });
+    }
+    if (redeemed === "added" && grant.replacesAppId !== undefined) {
+      yield* sessions
+        .revokeBySubject(`${NETWORK_APP_SUBJECT_PREFIX}${grant.replacesAppId}`)
+        .pipe(
+          Effect.mapError((cause) => new ServerAuthBootstrapCredentialValidationError({ cause })),
+        );
     }
   });
 
@@ -890,7 +907,7 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "scopes" | "subject" | "label" | "brokeredBy"
+    "scopes" | "subject" | "label" | "brokeredBy" | "replacesAppId"
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -1019,6 +1036,7 @@ export const make = Effect.gen(function* () {
         ...(input?.purpose ? { purpose: input.purpose } : {}),
         ...(input?.mcpApproval ? { mcpApproval: input.mcpApproval } : {}),
         ...(input?.brokeredBy ? { brokeredBy: input.brokeredBy } : {}),
+        ...(input?.replacesAppId ? { replacesAppId: input.replacesAppId } : {}),
       });
       return {
         id: issued.id,
@@ -1133,6 +1151,7 @@ export const make = Effect.gen(function* () {
       ...(input?.label ? { label: input.label } : {}),
       ...(input?.access ? { mcpApproval: input.access } : {}),
       ...(options?.brokeredBy ? { brokeredBy: options.brokeredBy } : {}),
+      ...(options?.replacesAppId ? { replacesAppId: options.replacesAppId } : {}),
     }).pipe(
       Effect.map((issued) => ({
         ...toPairingCredential(issued),

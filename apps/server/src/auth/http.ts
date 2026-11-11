@@ -457,6 +457,9 @@ export const layer = HttpApiBuilder.group(
               return yield* devices
                 .inviteApp({
                   ...(args.payload.label === undefined ? {} : { label: args.payload.label }),
+                  ...(args.payload.replacesAppId === undefined
+                    ? {}
+                    : { replacesAppId: args.payload.replacesAppId }),
                   scopes: delegatedScopes,
                 })
                 .pipe(
