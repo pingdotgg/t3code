@@ -77,6 +77,8 @@ import type {
  */
 const serverCheckedPermissions = { authorize: () => Effect.void };
 
+const withoutIconId = ({ iconId: _iconId, ...profile }: McpGatewayProfile) => profile;
+
 const gatewayRequest = <TTag extends EnvironmentUnaryRpcTag>(
   tag: TTag,
   input: EnvironmentRpcInput<TTag>,
@@ -533,6 +535,7 @@ export function createGatewayRuntimePort(
     rawEnvironmentId: string,
     mutate: (settings: ServerSettings) => ServerSettingsPatch,
     requiresResources = false,
+    requiresAgentFields = false,
   ) => {
     const operation = profileQueue.then(() =>
       run(
@@ -553,6 +556,12 @@ export function createGatewayRuntimePort(
             return yield* new EnvironmentRpcUnavailableError({
               environmentId,
               message: "Update T3 on this machine to import skill resources.",
+            });
+          }
+          if (requiresAgentFields && capabilities?.agentLibraryMutations !== true) {
+            return yield* new EnvironmentRpcUnavailableError({
+              environmentId,
+              message: "Update T3 on this machine to save agent icons and role tags.",
             });
           }
           yield* registry.run(environmentId, syncAgentLibraryBeforeUse());
@@ -582,10 +591,14 @@ export function createGatewayRuntimePort(
   const mutateProfiles = (
     environmentId: string,
     mutate: (profiles: ReadonlyArray<McpGatewayProfile>) => ReadonlyArray<McpGatewayProfile>,
+    input?: { readonly iconId?: unknown; readonly tags?: unknown },
   ) =>
-    mutateLibrary(environmentId, (settings) => ({
-      mcpGatewayProfiles: mutate(settings.mcpGatewayProfiles),
-    }));
+    mutateLibrary(
+      environmentId,
+      (settings) => ({ mcpGatewayProfiles: mutate(settings.mcpGatewayProfiles) }),
+      false,
+      input?.iconId !== undefined || input?.tags !== undefined,
+    );
   const decodeSkill = Schema.decodeUnknownSync(AgentSkill);
   const port: GatewayRuntimePort = {
     listSkills: async (environmentId) => {
@@ -758,28 +771,39 @@ export function createGatewayRuntimePort(
         createdAt: now,
         updatedAt: now,
       });
-      const settings = await mutateProfiles(environmentId, (profiles) => [...profiles, profile]);
+      const settings = await mutateProfiles(
+        environmentId,
+        (profiles) => [...profiles, profile],
+        input,
+      );
       return settings.mcpGatewayProfiles.find((item) => item.profileId === profileId)!;
     },
     updateProfile: async (environmentId, profileId, patch) => {
-      const settings = await mutateProfiles(environmentId, (profiles) => {
-        if (!profiles.some((profile) => profile.profileId === profileId))
-          throw new Error(`Agent ${profileId} was not found.`);
-        return profiles.map((profile) =>
-          profile.profileId === profileId
-            ? decodeProfile({
-                ...profile,
-                ...patch,
-                ...(patch.iconId !== undefined && patch.icon === undefined
-                  ? { icon: legacyAgentIcon(patch.iconId) }
-                  : {}),
-                ...(patch.providerLabel !== undefined || patch.modelLabel !== undefined
-                  ? { modelSelection: undefined }
-                  : {}),
-              })
-            : profile,
-        );
-      });
+      const settings = await mutateProfiles(
+        environmentId,
+        (profiles) => {
+          if (!profiles.some((profile) => profile.profileId === profileId))
+            throw new Error(`Agent ${profileId} was not found.`);
+          return profiles.map((profile) =>
+            profile.profileId === profileId
+              ? decodeProfile({
+                  // A legacy icon set alone is the user's pick, so the newer iconId stops overriding it.
+                  ...(patch.icon !== undefined && patch.iconId === undefined
+                    ? withoutIconId(profile)
+                    : profile),
+                  ...patch,
+                  ...(patch.iconId !== undefined && patch.icon === undefined
+                    ? { icon: legacyAgentIcon(patch.iconId) }
+                    : {}),
+                  ...(patch.providerLabel !== undefined || patch.modelLabel !== undefined
+                    ? { modelSelection: undefined }
+                    : {}),
+                })
+              : profile,
+          );
+        },
+        patch,
+      );
       return settings.mcpGatewayProfiles.find((profile) => profile.profileId === profileId)!;
     },
     deleteProfile: async (environmentId, profileId) => {
