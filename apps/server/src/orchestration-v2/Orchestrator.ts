@@ -1892,7 +1892,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (notification?.source.kind !== "delegated_task" || notification.outcome !== "updated")
       return false;
     const source = notification.source;
-    const task = projection.subagents.find((candidate) => source.taskIds.includes(candidate.id));
+    const threadId = projection.thread.id;
+    const task =
+      projection.subagents.find((candidate) => source.taskIds.includes(candidate.id)) ??
+      // Command projections omit settled tasks whose result was already handed over.
+      (yield* projectionStore
+        .getThreadRecords(threadId, ["subagents"], { subagentIds: source.taskIds })
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))))
+        .subagents[0];
     // An unknown task gives no evidence the question is obsolete.
     if (task === undefined) return false;
     const childThreadId = task.childThreadId;
@@ -1912,7 +1919,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (request) =>
         request.kind === "user_input" &&
         request.status === "pending" &&
-        messageId === `message:delegated-task-question:${projection.thread.id}:${request.id}`,
+        messageId === `message:delegated-task-question:${threadId}:${request.id}`,
     );
   });
 

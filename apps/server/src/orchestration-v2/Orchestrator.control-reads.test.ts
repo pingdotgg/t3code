@@ -1490,6 +1490,14 @@ it.effect.each([false, true])(
       });
       yield* reactor.handle(childCompleted);
       if (missedEvent) {
+        // An acknowledged result drops the task from the parent's command projection.
+        yield* orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make("ack-stale-question-task"),
+          parentThreadId,
+          taskId: task.id,
+          observedByRunId: parentRun.id,
+        });
         // Persisted terminal state can predate the reactor subscription after restart.
         yield* projections.apply({
           id: EventId.make("event:stale-question-parent-finished"),
