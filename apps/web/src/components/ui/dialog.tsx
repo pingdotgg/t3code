@@ -124,7 +124,11 @@ function DialogPopup({
     render: (
       <DialogPrimitive.Popup
         className={cn(
-          variant === "media" ? DIALOG_MEDIA_POPUP_CLASS : variant === "app" ? DIALOG_APP_POPUP_CLASS : DIALOG_POPUP_CLASS,
+          variant === "media"
+            ? DIALOG_MEDIA_POPUP_CLASS
+            : variant === "app"
+              ? DIALOG_APP_POPUP_CLASS
+              : DIALOG_POPUP_CLASS,
           variant === "app" ? "text-foreground" : "row-start-2 text-popover-foreground",
           variant === "default" && "max-h-full max-w-lg",
           bottomStickOnMobile && variant !== "app" && DIALOG_MOBILE_SHEET_CLASS,
