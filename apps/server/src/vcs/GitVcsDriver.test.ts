@@ -102,35 +102,54 @@ runVcsDriverContractSuite<GitVcsDriver.GitVcsDriver, GitContractError>({
   },
 });
 
-it.effect("lists the fetch and push URLs of a partial clone remote", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const cwd = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "t3-partial-clone-remotes-",
-    });
-    const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    yield* runGit(cwd, ["init"]);
-    yield* runGit(cwd, ["remote", "add", "origin", "https://github.com/pingdotgg/t3code.git"]);
-    yield* runGit(cwd, [
-      "remote",
-      "set-url",
-      "--push",
-      "origin",
-      "git@github.com:octocat/t3code.git",
-    ]);
-    yield* runGit(cwd, ["config", "remote.origin.promisor", "true"]);
-    yield* runGit(cwd, ["config", "remote.origin.partialclonefilter", "blob:none"]);
+it.effect.each([
+  {
+    fetchUrl: "https://github.com/pingdotgg/t3code.git",
+    pushUrl: "git@github.com:octocat/t3code.git",
+    lineEnding: "\n",
+  },
+  { fetchUrl: "../team repos/shared.git", pushUrl: "../team repos/push.git", lineEnding: "\n" },
+  {
+    fetchUrl: " ../team repos/shared (fetch) [blob:none].git ",
+    pushUrl: "../team repos/push (push).git\t",
+    lineEnding: "\r\n",
+  },
+])(
+  "lists the fetch and push URLs of a partial clone remote (%j)",
+  ({ fetchUrl, pushUrl, lineEnding }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-partial-clone-remotes-",
+      });
+      const process = yield* VcsProcess.VcsProcess;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            process.run(input).pipe(
+              Effect.map((result) => ({
+                ...result,
+                stdout: result.stdout.replace(/\r?\n/g, lineEnding),
+              })),
+            ),
+        }),
+      );
+      yield* runGit(cwd, ["init"]);
+      yield* runGit(cwd, ["remote", "add", "origin", fetchUrl]);
+      yield* runGit(cwd, ["remote", "set-url", "--push", "origin", pushUrl]);
+      yield* runGit(cwd, ["config", "remote.origin.promisor", "true"]);
+      yield* runGit(cwd, ["config", "remote.origin.partialclonefilter", "blob:none"]);
 
-    const result = yield* driver.listRemotes(cwd);
-    assert.deepEqual(result.remotes, [
-      {
-        name: "origin",
-        url: "https://github.com/pingdotgg/t3code.git",
-        pushUrl: Option.some("git@github.com:octocat/t3code.git"),
-        isPrimary: true,
-      },
-    ]);
-  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+      const result = yield* driver.listRemotes(cwd);
+      assert.deepEqual(result.remotes, [
+        {
+          name: "origin",
+          url: fetchUrl,
+          pushUrl: Option.some(pushUrl),
+          isPrimary: true,
+        },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 const makeCheckpointFixture = Effect.fn("makeCheckpointFixture")(function* (
