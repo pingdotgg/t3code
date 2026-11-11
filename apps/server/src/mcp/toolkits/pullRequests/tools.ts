@@ -792,7 +792,7 @@ export type RerunChecksResult = typeof RerunChecksResult.Type;
 
 const CheckLogsTool = Tool.make("ci_logs", {
   description:
-    "Read the end of a PR's failing check logs, or of one named check. Use instead of gh run view --log-failed.",
+    "Read the tail of a PR's failing check logs, or one named check's. Use instead of gh run view.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     check: Schema.optional(TrimmedNonEmptyString),
