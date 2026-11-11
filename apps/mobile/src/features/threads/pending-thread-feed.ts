@@ -6,6 +6,7 @@ import {
 import type { ThreadFeedEntry } from "../../lib/threadActivity";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { threadHasCaughtUpTo } from "@t3tools/client-runtime/state/threads";
+import { resolveUserMessageGrouping } from "@t3tools/client-runtime/user-message";
 import type {
   AcknowledgedThreadMessage,
   QueuedThreadMessage,
@@ -52,6 +53,50 @@ export function selectPendingAcknowledgedMessages(
 
 /** A row of the thread feed's list. */
 export type ThreadFeedRow = PendingThreadFeedEntry | GuestPendingFeedEntry;
+
+export type GroupedThreadFeedRow = ThreadFeedRow & {
+  readonly userMessageGrouping: ReturnType<typeof resolveUserMessageGrouping>;
+};
+
+export function createThreadFeedGrouping() {
+  const rows = new WeakMap<ThreadFeedRow, GroupedThreadFeedRow>();
+  const ungrouped = resolveUserMessageGrouping(undefined, undefined, undefined);
+  return (
+    feed: ReadonlyArray<ThreadFeedRow>,
+    options: { readonly workflowOpeningMessageId?: string; readonly setupAnchorIndex?: number },
+  ): ReadonlyArray<GroupedThreadFeedRow> => {
+    const groupingMessage = (index: number) => {
+      const entry = feed[index];
+      return entry?.type === "message" &&
+        entry.message.role === "user" &&
+        !isCompactionCommandFeedEntry(entry) &&
+        entry.message.id !== options.workflowOpeningMessageId
+        ? entry.message
+        : undefined;
+    };
+    return feed.map((entry, index) => {
+      const message = groupingMessage(index);
+      const grouping =
+        message === undefined
+          ? ungrouped
+          : resolveUserMessageGrouping(
+              message,
+              index - 1 === options.setupAnchorIndex ? undefined : groupingMessage(index - 1),
+              index === options.setupAnchorIndex ? undefined : groupingMessage(index + 1),
+            );
+      const previous = rows.get(entry);
+      if (
+        previous?.userMessageGrouping.groupedWithPrevious === grouping.groupedWithPrevious &&
+        previous.userMessageGrouping.groupedWithNext === grouping.groupedWithNext &&
+        previous.userMessageGrouping.continuesSteer === grouping.continuesSteer
+      )
+        return previous;
+      const row = { ...entry, userMessageGrouping: grouping };
+      rows.set(entry, row);
+      return row;
+    });
+  };
+}
 
 /** Waiting guest messages go after the transcript, oldest first. */
 export function appendGuestPendingMessages(

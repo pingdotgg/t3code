@@ -7,12 +7,15 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { prefersReducedMotion, useSpinner } from "./_terminal";
 import { yantraSvg } from "../../brand/yantra";
+import { prefersReducedMotion, useSpinner } from "./_terminal";
+import { AgentPane, EDIT_MS, EditorPane, LIVE_SPEED, LOCAL_MS } from "./LocalLoop";
 import "./PRLifecycle.css";
 
 /*
- * PR preview lifecycle, mirroring the CI workflow in the Cloudflare
+ * The full picture, from an edit to production. The first two steps run on
+ * your machine (see LocalLoop.tsx); the rest is the PR preview lifecycle,
+ * mirroring the CI workflow in the Cloudflare
  * tutorial (part 5): a pull request deploys `--stage pr-N` and tests it,
  * the stack posts the preview URL as a PR comment, and merging runs the
  * `prod` deploy and the preview cleanup in parallel.
@@ -25,14 +28,22 @@ import "./PRLifecycle.css";
  * can be jumped to directly from the tab bar.
  */
 
-type StepId = "open" | "deploy" | "test" | "merge";
+type StepId = "edit" | "local" | "open" | "deploy" | "test" | "merge";
 type Status = "queued" | "running" | "success";
 
 const STEPS: { id: StepId; label: string; ms: number }[] = [
+  { id: "edit", label: "Edit", ms: EDIT_MS },
+  { id: "local", label: "Iterate locally", ms: LOCAL_MS },
   { id: "open", label: "PR opened", ms: 2600 },
   { id: "deploy", label: "Deploy", ms: 14550 },
   { id: "test", label: "Test", ms: 10500 },
   { id: "merge", label: "Merge", ms: 11300 },
+];
+
+// The tab bar's headers. Each fills as the animation moves through its steps.
+const GROUPS = [
+  { label: "Your machine", steps: 2 },
+  { label: "CI/CD", steps: 4 },
 ];
 
 const PR = 147;
@@ -50,12 +61,7 @@ const PREVIEW_STEPS = [
   "Install dependencies",
   `alchemy deploy --stage ${STAGE}`,
 ];
-const TEST_STEPS = [
-  "Checkout",
-  "Setup runtime",
-  "Install dependencies",
-  "alchemy test",
-];
+const TEST_STEPS = ["Checkout", "Setup runtime", "Install dependencies", "alchemy test"];
 const PROD_STEPS = [
   "Checkout",
   "Setup runtime",
@@ -162,11 +168,48 @@ const BOT_LOGO = yantraSvg({ size: 16, theme: "dark" });
 
 type Phase = { at: number; label: string };
 /** The label of the latest phase that has started, or undefined. */
-const phaseAt = (phases: Phase[], t: number) =>
-  [...phases].reverse().find((p) => t >= p.at)?.label;
+const phaseAt = (phases: Phase[], t: number) => [...phases].reverse().find((p) => t >= p.at)?.label;
 /** Seconds since `from`, ticking so long waits visibly move. */
-const secs = (t: number, from: number) =>
-  `${Math.max(0, (t - from) / 1000).toFixed(1)}s`;
+const secs = (t: number, from: number) => `${Math.max(0, (t - from) / 1000).toFixed(1)}s`;
+
+/**
+ * How each step's timing relates to a real run, shown under the tab bar.
+ * The measured numbers come from one run of examples/cloudflare-preview-
+ * benchmark (see the constants above).
+ */
+const TIMING: Record<StepId, { badge: string; tone: "real" | "scaled" | "staged"; note: string }> =
+  {
+    edit: {
+      badge: "Staged",
+      tone: "staged",
+      note: "The agent's typing is staged. The type check itself answers in milliseconds.",
+    },
+    local: {
+      badge: `Measured · ${LIVE_SPEED}× speed`,
+      tone: "scaled",
+      note: "The live test replays a measured deploy (13.4s) and destroy (4.8s), played at double speed.",
+    },
+    open: {
+      badge: "Setup shortened",
+      tone: "staged",
+      note: "Checkout and install are sped up; they aren't part of what Alchemy does.",
+    },
+    deploy: {
+      badge: "Real time",
+      tone: "real",
+      note: "A measured preview deploy: 13.4s for three resources and a GitHub comment, then 0.9s until the URL answers.",
+    },
+    test: {
+      badge: `Real time · tests ${TEST_SLOWDOWN}× slower`,
+      tone: "scaled",
+      note: "A measured 4.8s run. The three tests take about 0.3s each, so they are slowed down to be readable.",
+    },
+    merge: {
+      badge: "Real time",
+      tone: "real",
+      note: "Measured: prod deploys as an update in 7.6s while the preview is destroyed in 4.8s.",
+    },
+  };
 
 /** While paused, spinners hold their frame like everything else. */
 const PausedContext = createContext(false);
@@ -184,9 +227,7 @@ export default function PRLifecycle() {
   const [reduced, setReduced] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
-  const [pill, setPill] = useState<{ left: number; width: number } | null>(
-    null,
-  );
+  const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
 
   // Slide the highlight under the active tab.
   useLayoutEffect(() => {
@@ -222,10 +263,9 @@ export default function PRLifecycle() {
     if (mq.matches) setPlaying(false);
     const el = rootRef.current;
     if (!el) return;
-    const obs = new IntersectionObserver(
-      ([e]) => setVisible(!!e?.isIntersecting),
-      { threshold: 0.25 },
-    );
+    const obs = new IntersectionObserver(([e]) => setVisible(!!e?.isIntersecting), {
+      threshold: 0.25,
+    });
     obs.observe(el);
     return () => obs.disconnect();
   }, []);
@@ -261,12 +301,9 @@ export default function PRLifecycle() {
   const onTabKey = (e: React.KeyboardEvent) => {
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
     e.preventDefault();
-    const next =
-      (step + (e.key === "ArrowRight" ? 1 : -1) + STEPS.length) % STEPS.length;
+    const next = (step + (e.key === "ArrowRight" ? 1 : -1) + STEPS.length) % STEPS.length;
     go(next);
-    rootRef.current
-      ?.querySelectorAll<HTMLButtonElement>(".prf-tab")
-      [next]?.focus();
+    rootRef.current?.querySelectorAll<HTMLButtonElement>(".prf-tab")[next]?.focus();
   };
 
   // Reduced motion: show each step's finished frame.
@@ -293,11 +330,7 @@ export default function PRLifecycle() {
         : "success";
   const merged = id === "merge" && t >= T_MERGED;
   const td = t - T_DESTROY_BASE;
-  const cleanupStatus: Status | null = !merged
-    ? null
-    : td >= T_DESTROYED
-      ? "success"
-      : "running";
+  const cleanupStatus: Status | null = !merged ? null : td >= T_DESTROYED ? "success" : "running";
   const showComment =
     (id === "deploy" && t >= T_COMMENT) ||
     id === "test" ||
@@ -305,50 +338,73 @@ export default function PRLifecycle() {
 
   return (
     <PausedContext.Provider value={!playing}>
-      <div
-        className={`prf ${playing ? "" : "is-paused"}`}
-        ref={rootRef}
-        data-nosnippet=""
-      >
+      <div className={`prf ${playing ? "" : "is-paused"}`} ref={rootRef} data-nosnippet="">
         <div className="prf-tabs-row">
-          <div
-            className="prf-tabs"
-            ref={tabsRef}
-            role="tablist"
-            aria-label="Pull request lifecycle"
-          >
-            {STEPS.map((s, i) => (
-              <button
-                key={s.id}
-                type="button"
-                role="tab"
-                id={`prf-tab-${s.id}`}
-                aria-controls="prf-panel"
-                aria-selected={i === step}
-                tabIndex={i === step ? 0 : -1}
-                className={`prf-tab ${i === step ? "is-active" : i < step ? "is-done" : ""}`}
-                onClick={() => go(i)}
-                onKeyDown={onTabKey}
-              >
-                <span className="prf-tab__num">{i + 1}</span>
-                <span className="prf-tab__label">{s.label}</span>
-              </button>
-            ))}
-            <span className="prf-tabs__track" aria-hidden>
-              <span
-                className="prf-tabs__progress"
-                style={{
-                  transform: `scaleX(${(step + Math.min(elapsed, dur) / dur) / STEPS.length})`,
-                }}
-              />
-            </span>
-            {pill && (
-              <span
-                className="prf-tabs__pill"
-                aria-hidden
-                style={{ left: pill.left, width: pill.width }}
-              />
-            )}
+          <div className="prf-tabs-col">
+            <div className="prf-groups" aria-hidden>
+              {GROUPS.map((g, gi) => {
+                const first = GROUPS.slice(0, gi).reduce((n, x) => n + x.steps, 0);
+                const done = Math.min(
+                  g.steps,
+                  Math.max(0, step + Math.min(elapsed, dur) / dur - first),
+                );
+                const active = step >= first && step < first + g.steps;
+                return (
+                  <span
+                    key={g.label}
+                    className={`prf-group ${active ? "is-active" : done >= g.steps ? "is-done" : ""}`}
+                    style={{ gridColumn: `span ${g.steps}` }}
+                  >
+                    {g.label}
+                    <span className="prf-group__track">
+                      <span
+                        className="prf-group__fill"
+                        style={{ transform: `scaleX(${done / g.steps})` }}
+                      />
+                    </span>
+                  </span>
+                );
+              })}
+            </div>
+            <div
+              className="prf-tabs"
+              ref={tabsRef}
+              role="tablist"
+              aria-label="From an edit to production"
+            >
+              {STEPS.map((s, i) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  role="tab"
+                  id={`prf-tab-${s.id}`}
+                  aria-controls="prf-panel"
+                  aria-selected={i === step}
+                  tabIndex={i === step ? 0 : -1}
+                  className={`prf-tab ${i === step ? "is-active" : i < step ? "is-done" : ""}`}
+                  onClick={() => go(i)}
+                  onKeyDown={onTabKey}
+                >
+                  <span className="prf-tab__num">{i + 1}</span>
+                  <span className="prf-tab__label">{s.label}</span>
+                </button>
+              ))}
+              <span className="prf-tabs__track" aria-hidden>
+                <span
+                  className="prf-tabs__progress"
+                  style={{
+                    transform: `scaleX(${(step + Math.min(elapsed, dur) / dur) / STEPS.length})`,
+                  }}
+                />
+              </span>
+              {pill && (
+                <span
+                  className="prf-tabs__pill"
+                  aria-hidden
+                  style={{ left: pill.left, width: pill.width }}
+                />
+              )}
+            </div>
           </div>
           <button
             type="button"
@@ -370,31 +426,50 @@ export default function PRLifecycle() {
           </button>
         </div>
 
-        <div
-          className="prf-stage"
-          id="prf-panel"
-          role="tabpanel"
-          aria-labelledby={`prf-tab-${id}`}
-        >
-          <div className="prf-side">
-            <PullRequest
-              id={id}
-              t={t}
-              merged={merged}
-              previewStatus={previewStatus}
-              testStatus={testStatus}
-              cleanupStatus={cleanupStatus}
-              showComment={showComment}
-              tab={
-                id === "test" && t >= T_TAB_OPEN && t < T_TAB_GONE
-                  ? { t, closing: t >= T_TAB_CLOSE }
-                  : null
-              }
-            />
-          </div>
-          <div className="prf-right">
-            <Actions id={id} t={t} />
-          </div>
+        <div className={`prf-timing prf-timing--${TIMING[id].tone}`}>
+          <span className="prf-timing__badge">
+            <span className="prf-timing__dot" aria-hidden />
+            {TIMING[id].badge}
+          </span>
+          {id === "deploy" && (
+            <span className="prf-timing__clock">{secs(Math.min(t, T_DEPLOYED), 0)}</span>
+          )}
+          <span className="prf-timing__note">{TIMING[id].note}</span>
+        </div>
+
+        <div className="prf-stage" id="prf-panel" role="tabpanel" aria-labelledby={`prf-tab-${id}`}>
+          {id === "edit" || id === "local" ? (
+            <>
+              <div className="prf-side">
+                <EditorPane id={id} t={t} />
+              </div>
+              <div className="prf-right">
+                <AgentPane id={id} t={t} paused={!playing} />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="prf-side">
+                <PullRequest
+                  id={id}
+                  t={t}
+                  merged={merged}
+                  previewStatus={previewStatus}
+                  testStatus={testStatus}
+                  cleanupStatus={cleanupStatus}
+                  showComment={showComment}
+                  tab={
+                    id === "test" && t >= T_TAB_OPEN && t < T_TAB_GONE
+                      ? { t, closing: t >= T_TAB_CLOSE }
+                      : null
+                  }
+                />
+              </div>
+              <div className="prf-right">
+                <Actions id={id} t={t} />
+              </div>
+            </>
+          )}
         </div>
       </div>
     </PausedContext.Provider>
@@ -419,15 +494,11 @@ function Win({
   return (
     <div className={`prf-win ${className}`}>
       <div className="prf-win__bar">
-        <span className="prf-dot" style={{ background: "var(--alc-danger)" }} />
-        <span className="prf-dot" style={{ background: "var(--alc-warn)" }} />
-        <span className="prf-dot" style={{ background: GREEN }} />
+        <span className="prf-dot" style={{ background: "var(--alc-dot-red)" }} />
+        <span className="prf-dot" style={{ background: "var(--alc-dot-yellow)" }} />
+        <span className="prf-dot" style={{ background: "var(--alc-dot-green)" }} />
         <span className="prf-win__title">{title}</span>
-        {badge && (
-          <span className={`prf-badge prf-badge--${badge.tone}`}>
-            {badge.text}
-          </span>
-        )}
+        {badge && <span className={`prf-badge prf-badge--${badge.tone}`}>{badge.text}</span>}
       </div>
       <div className="prf-win__body">{children}</div>
     </div>
@@ -460,9 +531,7 @@ function StatusIcon({ status }: { status: Status }) {
         {spin}
       </span>
     );
-  return (
-    <span className="prf-si prf-si--queued" role="img" aria-label="queued" />
-  );
+  return <span className="prf-si prf-si--queued" role="img" aria-label="queued" />;
 }
 
 /** Animates height between 0 and auto. */
@@ -483,10 +552,7 @@ function Log({ lines, rows }: { lines: ReactNode[]; rows: number }) {
   return (
     <div
       className="prf-log"
-      style={{
-        minHeight: `calc(${rows} * 1.7em + 20px)`,
-        boxSizing: "border-box",
-      }}
+      style={{ minHeight: `calc(${rows} * 1.7em + 20px)`, boxSizing: "border-box" }}
     >
       {lines.map((l, i) => (
         <div className="prf-log__line prf-enter" key={i}>
@@ -592,11 +658,7 @@ function Job({
 const ALL_DONE: Status[] = ["success", "success", "success", "success"];
 
 /** Setup steps finish at the given times, then the last step runs. */
-function stepStatuses(
-  t: number,
-  setupDone: number[],
-  lastDone: number,
-): Status[] {
+function stepStatuses(t: number, setupDone: number[], lastDone: number): Status[] {
   const starts = [0, ...setupDone];
   return [0, 1, 2, 3].map((i) =>
     i < 3
@@ -633,27 +695,15 @@ function Actions({ id, t }: { id: StepId; t: number }) {
           Infinity,
         ).map((s, i) => (i === 0 && t < T_JOB_START ? "queued" : s))
       : id === "deploy"
-        ? [
-            "success",
-            "success",
-            "success",
-            t < T_DEPLOYED ? "running" : "success",
-          ]
+        ? ["success", "success", "success", t < T_DEPLOYED ? "running" : "success"]
         : ALL_DONE;
-  const test: Status[] =
-    id === "test" ? stepStatuses(t, T_TEST_SETUP, T_TESTS_DONE) : ALL_DONE;
+  const test: Status[] = id === "test" ? stepStatuses(t, T_TEST_SETUP, T_TESTS_DONE) : ALL_DONE;
   const afterMerge = id === "merge" && t >= T_MERGED;
   const td = t - T_DESTROY_BASE;
   const m = t - T_MERGED;
   const prod: Status[] =
-    id === "merge"
-      ? stepStatuses(m, SETUP_DONE, T_PROD_DONE - T_MERGED)
-      : ALL_DONE;
-  const cleanup: Status[] = stepStatuses(
-    m,
-    SETUP_DONE,
-    T_DESTROYED + T_DESTROY_BASE - T_MERGED,
-  );
+    id === "merge" ? stepStatuses(m, SETUP_DONE, T_PROD_DONE - T_MERGED) : ALL_DONE;
+  const cleanup: Status[] = stepStatuses(m, SETUP_DONE, T_DESTROYED + T_DESTROY_BASE - T_MERGED);
 
   const badge =
     id === "open"
@@ -763,13 +813,7 @@ function ResourceLine({
       {(busy || done) && (
         <span style={{ color: tone }}>
           {" "}
-          {verb === "create"
-            ? done
-              ? "created"
-              : "creating"
-            : done
-              ? "deleted"
-              : "deleting"}
+          {verb === "create" ? (done ? "created" : "creating") : done ? "deleted" : "deleting"}
         </span>
       )}
       {busy && (
@@ -826,15 +870,7 @@ function DeployLog({ t }: { t: number }) {
     </>,
   ];
   if (t >= DEPLOY_PREP[0]!.at)
-    lines.push(
-      <PrepLine
-        t={t}
-        start={0}
-        end={T_PLAN}
-        phases={DEPLOY_PREP}
-        tone={GREEN}
-      />,
-    );
+    lines.push(<PrepLine t={t} start={0} end={T_PLAN} phases={DEPLOY_PREP} tone={GREEN} />);
   if (t >= T_PLAN) {
     lines.push(
       <>
@@ -940,13 +976,7 @@ function DestroyLog({ t }: { t: number }) {
   ];
   if (t >= DESTROY_PREP[0]!.at)
     lines.push(
-      <PrepLine
-        t={t}
-        start={T_EXPAND}
-        end={T_DESTROY_PLAN}
-        phases={DESTROY_PREP}
-        tone={RED}
-      />,
+      <PrepLine t={t} start={T_EXPAND} end={T_DESTROY_PLAN} phases={DESTROY_PREP} tone={RED} />,
     );
   if (t >= T_DESTROY_PLAN) {
     lines.push(
@@ -959,22 +989,14 @@ function DestroyLog({ t }: { t: number }) {
     );
     RESOURCES.forEach((r, i) =>
       lines.push(
-        <ResourceLine
-          r={r}
-          t={t}
-          span={T_DEL_ROWS[i]!}
-          verb="delete"
-          tone={RED}
-          spin={spin}
-        />,
+        <ResourceLine r={r} t={t} span={T_DEL_ROWS[i]!} verb="delete" tone={RED} spin={spin} />,
       ),
     );
   }
   if (t >= T_DESTROYED) {
     lines.push(
       <>
-        <span style={{ color: RED }}>✓ </span>destroyed in{" "}
-        <span className="prf-strong">5.1s</span>
+        <span style={{ color: RED }}>✓ </span>destroyed in <span className="prf-strong">5.1s</span>
         <span className="prf-muted"> · nothing left running</span>
       </>,
     );
@@ -987,11 +1009,7 @@ function DestroyLog({ t }: { t: number }) {
 /* ------------------------------------------------------------------ */
 
 function checkLabel(s: Status) {
-  return s === "queued"
-    ? "Queued"
-    : s === "running"
-      ? "In progress"
-      : "Successful";
+  return s === "queued" ? "Queued" : s === "running" ? "In progress" : "Successful";
 }
 
 function PullRequest({
@@ -1018,26 +1036,21 @@ function PullRequest({
   useEffect(() => {
     const el = feedRef.current;
     if (el)
-      el.scrollTo({
-        top: el.scrollHeight,
-        behavior: prefersReducedMotion() ? "auto" : "smooth",
-      });
+      el.scrollTo({ top: el.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" });
   }, [id, merged, showComment, testStatus, cleanupStatus, t >= T_MERGE_CLICK]);
 
   return (
     <div className="prf-win prf-pr">
       <div className="prf-win__bar prf-win__bar--tabs">
-        <span className="prf-dot" style={{ background: "var(--alc-danger)" }} />
-        <span className="prf-dot" style={{ background: "var(--alc-warn)" }} />
-        <span className="prf-dot" style={{ background: GREEN }} />
+        <span className="prf-dot" style={{ background: "var(--alc-dot-red)" }} />
+        <span className="prf-dot" style={{ background: "var(--alc-dot-yellow)" }} />
+        <span className="prf-dot" style={{ background: "var(--alc-dot-green)" }} />
         <span className={`prf-btab ${tab ? "" : "is-active"}`}>
           <PrIcon />
           Add image upload… #{PR}
         </span>
         {tab && (
-          <span
-            className={`prf-btab is-active is-new ${tab.closing ? "is-closing" : ""}`}
-          >
+          <span className={`prf-btab is-active is-new ${tab.closing ? "is-closing" : ""}`}>
             {tab.t < T_PAGE_LOADED && <span className="prf-btab__spin" />}
             Photos · {STAGE}
             <span className="prf-btab__x">×</span>
@@ -1048,13 +1061,10 @@ function PullRequest({
         <div className="prf-pr__url">github.com/acme/my-app/pull/{PR}</div>
         <div className="prf-pr__head">
           <div className="prf-pr__title">
-            Add image upload to /photos{" "}
-            <span className="prf-pr__num">#{PR}</span>
+            Add image upload to /photos <span className="prf-pr__num">#{PR}</span>
           </div>
           <div className="prf-pr__meta">
-            <span
-              className={`prf-state ${merged ? "prf-state--merged" : "prf-state--open"}`}
-            >
+            <span className={`prf-state ${merged ? "prf-state--merged" : "prf-state--open"}`}>
               {merged ? <MergeIcon /> : <PrIcon />}
               {merged ? "Merged" : "Open"}
             </span>
@@ -1068,10 +1078,8 @@ function PullRequest({
           <div className="prf-event">
             <span className="prf-event__icon prf-event__icon--you">you</span>
             <span>
-              opened this pull request{" "}
-              <span className="prf-muted">· 3 commits</span>{" "}
-              <span className="prf-add">+142</span>{" "}
-              <span className="prf-del">−8</span>
+              opened this pull request <span className="prf-muted">· 3 commits</span>{" "}
+              <span className="prf-add">+142</span> <span className="prf-del">−8</span>
             </span>
           </div>
 
@@ -1114,9 +1122,7 @@ function PullRequest({
               <span className="prf-check__name">
                 PR <span className="prf-muted">/ preview (pull_request)</span>
               </span>
-              <span className="prf-check__state">
-                {checkLabel(previewStatus)}
-              </span>
+              <span className="prf-check__state">{checkLabel(previewStatus)}</span>
             </div>
             {testStatus && (
               <div className="prf-check prf-enter">
@@ -1124,9 +1130,7 @@ function PullRequest({
                 <span className="prf-check__name">
                   PR <span className="prf-muted">/ test (pull_request)</span>
                 </span>
-                <span className="prf-check__state">
-                  {checkLabel(testStatus)}
-                </span>
+                <span className="prf-check__state">{checkLabel(testStatus)}</span>
               </div>
             )}
             {cleanupStatus && (
@@ -1135,9 +1139,7 @@ function PullRequest({
                 <span className="prf-check__name">
                   PR <span className="prf-muted">/ cleanup (closed)</span>
                 </span>
-                <span className="prf-check__state">
-                  {checkLabel(cleanupStatus)}
-                </span>
+                <span className="prf-check__state">{checkLabel(cleanupStatus)}</span>
               </div>
             )}
             {id === "merge" && !merged && (
@@ -1145,9 +1147,7 @@ function PullRequest({
                 <div className="prf-mergebox__ok">
                   <StatusIcon status="success" /> All checks have passed
                 </div>
-                <span
-                  className={`prf-mergebtn ${t >= T_MERGE_CLICK ? "is-pressed" : ""}`}
-                >
+                <span className={`prf-mergebtn ${t >= T_MERGE_CLICK ? "is-pressed" : ""}`}>
                   Merge pull request
                 </span>
               </div>
@@ -1224,20 +1224,12 @@ function SitePage({ t, closing }: { t: number; closing: boolean }) {
   const loaded = t >= T_PAGE_LOADED && !reloading;
   const [upA, upB] = T_TESTS[1]!;
   const progress = Math.min(1, Math.max(0, (t - upA) / (upB - upA - 40)));
-  const shown = loaded
-    ? Math.min(4, Math.floor((t - T_PAGE_LOADED) / 40) + 1)
-    : 0;
+  const shown = loaded ? Math.min(4, Math.floor((t - T_PAGE_LOADED) / 40) + 1) : 0;
   const active = T_TESTS.findIndex(([a, b]) => t >= a && t < b);
   return (
     <div className={`prf-tabpage ${closing ? "is-closing" : ""}`} aria-hidden>
       <div className="prf-tabwin__url">
-        <svg
-          viewBox="0 0 16 16"
-          width="10"
-          height="10"
-          aria-hidden
-          fill="currentColor"
-        >
+        <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden fill="currentColor">
           <path d="M5 7V5a3 3 0 0 1 6 0v2h.5A1.5 1.5 0 0 1 13 8.5v5A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-5A1.5 1.5 0 0 1 4.5 7Zm1.5 0h3V5a1.5 1.5 0 0 0-3 0Z" />
         </svg>
         {HOST}/photos
@@ -1260,9 +1252,7 @@ function SitePage({ t, closing }: { t: number; closing: boolean }) {
                   className="prf-site__tile prf-enter"
                   style={{
                     background:
-                      progress >= 1
-                        ? "linear-gradient(135deg,#8fb15e,#3f5a2a)"
-                        : undefined,
+                      progress >= 1 ? "linear-gradient(135deg,#8fb15e,#3f5a2a)" : undefined,
                   }}
                 >
                   {progress < 1 && (
@@ -1274,25 +1264,18 @@ function SitePage({ t, closing }: { t: number; closing: boolean }) {
                 </div>
               )}
               {PHOTOS.slice(0, shown).map((bg, i) => (
-                <div
-                  key={i}
-                  className="prf-site__tile prf-enter"
-                  style={{ background: bg }}
-                />
+                <div key={i} className="prf-site__tile prf-enter" style={{ background: bg }} />
               ))}
             </div>
             <div className="prf-site__foot">
               {active >= 0 ? (
                 <>
                   <span className="prf-site__pulse" /> {TESTS[active]!.name}
-                  <span className="prf-site__slow">
-                    {TEST_SLOWDOWN}× slower than real
-                  </span>
+                  <span className="prf-site__slow">{TEST_SLOWDOWN}× slower than real</span>
                 </>
               ) : (
                 <>
-                  <span className="prf-si prf-si--ok prf-site__ok">✓</span> 3
-                  tests passed
+                  <span className="prf-si prf-si--ok prf-site__ok">✓</span> 3 tests passed
                 </>
               )}
             </div>

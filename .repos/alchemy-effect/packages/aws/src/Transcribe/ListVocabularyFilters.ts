@@ -1,0 +1,37 @@
+import type * as transcribe from "@distilled.cloud/aws/transcribe";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `transcribe:ListVocabularyFilters` — list the vocabulary filters in the account.
+ *
+ * Amazon Transcribe batch actions have no resource-level IAM; the host is
+ * granted `transcribe:ListVocabularyFilters` on `*`.
+ *
+ * ### Vocabulary Filters
+ * **Example:** List Vocabulary Filters
+ * ```typescript
+ * // init
+ * const listVocabularyFilters = yield* AWS.Transcribe.ListVocabularyFilters();
+ *
+ * // runtime
+ * const { VocabularyFilters } = yield* listVocabularyFilters({ MaxResults: 10 });
+ * ```
+ *
+ * @binding
+ */
+export interface ListVocabularyFilters extends Binding.Service<
+  ListVocabularyFilters,
+  "AWS.Transcribe.ListVocabularyFilters",
+  () => Effect.Effect<
+    (
+      request?: transcribe.ListVocabularyFiltersRequest,
+    ) => Effect.Effect<
+      transcribe.ListVocabularyFiltersResponse,
+      transcribe.ListVocabularyFiltersError
+    >
+  >
+> {}
+export const ListVocabularyFilters = Binding.Service<ListVocabularyFilters>(
+  "AWS.Transcribe.ListVocabularyFilters",
+);

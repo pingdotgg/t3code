@@ -1,0 +1,36 @@
+import type * as personalize from "@distilled.cloud/aws/personalize";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `personalize:CreateSolution` — Creates a solution (a recipe + configuration to train models with)
+ * for a dataset group — set `performAutoTraining` to keep models fresh
+ * automatically.
+ * Provide the implementation with
+ * `Effect.provide(AWS.Personalize.CreateSolutionHttp)`.
+ *
+ * ### Retraining Loop
+ * **Example:** Create a Solution
+ * ```typescript
+ * // init
+ * const createSolution = yield* Personalize.CreateSolution();
+ *
+ * const { solutionArn } = yield* createSolution({
+ *   name: "user-personalization",
+ *   recipeArn: "arn:aws:personalize:::recipe/aws-user-personalization",
+ *   datasetGroupArn,
+ * });
+ * ```
+ *
+ * @binding
+ */
+export interface CreateSolution extends Binding.Service<
+  CreateSolution,
+  "AWS.Personalize.CreateSolution",
+  () => Effect.Effect<
+    (
+      request: personalize.CreateSolutionRequest,
+    ) => Effect.Effect<personalize.CreateSolutionResponse, personalize.CreateSolutionError>
+  >
+> {}
+export const CreateSolution = Binding.Service<CreateSolution>("AWS.Personalize.CreateSolution");
