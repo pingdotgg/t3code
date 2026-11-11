@@ -4177,6 +4177,125 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect.each([
+    { action: "commit_push", mode: "logical" },
+    { action: "commit_push_pr", mode: "logical" },
+    { action: "commit_push", mode: "failed-plan" },
+    { action: "commit_push_pr", mode: "failed-plan" },
+    { action: "commit_push", mode: "clean" },
+    { action: "commit_push", mode: "single" },
+    { action: "commit_push", mode: "custom" },
+    { action: "commit", mode: "single" },
+  ] as const)("uses logical commits for implicit publishing: $action / $mode", ({ action, mode }) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-publish-logical-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/logical"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.txt"), "alpha\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "beta.txt"), "beta\n");
+      if (mode === "clean") {
+        yield* runGit(repoDir, ["add", "."]);
+        yield* runGit(repoDir, ["commit", "-m", "Existing changes"]);
+      }
+      const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+      const events: GitActionProgressEvent[] = [];
+      let plans = 0;
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [
+            [],
+            [
+              {
+                number: 77,
+                title: "Add logical changes",
+                url: "https://github.com/acme/repo/pull/77",
+                baseRefName: "main",
+                headRefName: "feature/logical",
+              },
+            ],
+          ],
+        },
+        textGeneration: {
+          generateCommitPlan: (context) => {
+            plans++;
+            const ids = context.changeUnitSummary.split("\n").map((line) => line.split("\t")[0]!);
+            return Effect.succeed({
+              commits: ids.slice(0, mode === "failed-plan" ? 1 : undefined).map((id, index) => ({
+                subject: `Add concern ${index + 1}`,
+                body: "",
+                hunkIds: [id],
+              })),
+            });
+          },
+        },
+      });
+      const result = yield* runStackedAction(
+        manager,
+        {
+          cwd: repoDir,
+          action,
+          ...(mode === "single" && action !== "commit" ? { splitCommits: false } : {}),
+          ...(mode === "custom" ? { commitMessage: "Chosen message" } : {}),
+        },
+        {
+          progressReporter: {
+            publish: (event) =>
+              Effect.sync(() => {
+                events.push(event);
+              }),
+          },
+        },
+      ).pipe(Effect.result);
+      expect(events.length).toBeGreaterThan(0);
+      expect(events.every((event) => event.action === action)).toBe(true);
+      if (mode === "failed-plan") {
+        expect(Result.isFailure(result)).toBe(true);
+        expect(plans).toBe(2);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(headBefore);
+        expect(
+          (yield* runGit(
+            remoteDir,
+            ["--git-dir=.", "show-ref", "--verify", "refs/heads/feature/logical"],
+            true,
+          )).exitCode,
+        ).not.toBe(0);
+        expect(created(providerCalls)).toEqual([]);
+      } else {
+        expect(Result.isSuccess(result)).toBe(true);
+        expect(plans).toBe(mode === "logical" ? 1 : 0);
+        const expected =
+          mode === "logical"
+            ? ["Add concern 1", "Add concern 2"]
+            : [
+                mode === "clean"
+                  ? "Existing changes"
+                  : mode === "custom"
+                    ? "Chosen message"
+                    : "Implement stacked git actions",
+              ];
+        expect(
+          (yield* runGit(action === "commit" ? repoDir : remoteDir, [
+            ...(action === "commit" ? [] : ["--git-dir=."]),
+            "log",
+            "--reverse",
+            "--format=%s",
+            "main..refs/heads/feature/logical",
+          ])).stdout
+            .trim()
+            .split("\n"),
+        ).toEqual(expected);
+        if (Result.isSuccess(result))
+          expect(result.success.pr.status).toBe(
+            action === "commit_push_pr" ? "created" : "skipped_not_requested",
+          );
+        expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout.trim()).toBe("");
+      }
+    }),
+  );
+
   it.effect("splits change units into ordered logical commits", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

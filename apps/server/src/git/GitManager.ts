@@ -2647,18 +2647,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     branch: string | null,
     selectedFilePaths: readonly string[],
-    progressReporter?: GitActionProgressReporter,
-    actionId?: string,
   ) {
-    if (progressReporter && actionId)
-      yield* progressReporter.publish({
-        actionId,
-        cwd,
-        action: "commit",
-        kind: "phase_started",
-        phase: "commit",
-        label: "Planning logical commits...",
-      });
     const result = yield* performCommitWorkflow(
       {
         cwd,
@@ -4202,6 +4191,12 @@ export const make = Effect.gen(function* () {
             initialStatus.branch === null &&
             !initialStatus.hasWorkingTreeChanges);
         const wantsCommit = isCommitAction(input.action) && !branchOnly;
+        const useLogicalCommits =
+          wantsCommit &&
+          initialStatus.hasWorkingTreeChanges &&
+          (input.splitCommits ??
+            ((input.action === "commit_push" || input.action === "commit_push_pr") &&
+              input.commitMessage === undefined));
         const wantsPush =
           input.action === "push" ||
           input.action === "commit_push" ||
@@ -4220,7 +4215,7 @@ export const make = Effect.gen(function* () {
 
         if (
           input.splitCommits &&
-          (input.action !== "commit" || input.commitMessage !== undefined)
+          (!isCommitAction(input.action) || input.commitMessage !== undefined)
         ) {
           return yield* new GitManagerError({
             operation: "runStackedAction",
@@ -4327,19 +4322,24 @@ export const make = Effect.gen(function* () {
         const commitAction = wantsCommit && isCommitAction(input.action) ? input.action : null;
         const changeRequestTerms = wantsPr ? yield* changeRequestTermsFor(input.cwd) : null;
 
-        const commit = input.splitCommits
-          ? yield* Ref.set(currentPhase, Option.some("commit")).pipe(
-              Effect.flatMap(() =>
-                runSplitCommitStep(
-                  textGenerationSettings,
-                  input.cwd,
-                  currentBranch,
-                  input.filePaths ?? initialStatus.workingTree.files.map((file) => file.path),
-                  options?.progressReporter,
-                  progress.actionId,
+        const commit = useLogicalCommits
+          ? yield* progress
+              .emit({
+                kind: "phase_started",
+                phase: "commit",
+                label: "Planning logical commits...",
+              })
+              .pipe(
+                Effect.tap(() => Ref.set(currentPhase, Option.some("commit"))),
+                Effect.flatMap(() =>
+                  runSplitCommitStep(
+                    textGenerationSettings,
+                    input.cwd,
+                    currentBranch,
+                    input.filePaths ?? initialStatus.workingTree.files.map((file) => file.path),
+                  ),
                 ),
-              ),
-            )
+              )
           : commitAction
             ? yield* Ref.set(currentPhase, Option.some("commit")).pipe(
                 Effect.flatMap(() =>
