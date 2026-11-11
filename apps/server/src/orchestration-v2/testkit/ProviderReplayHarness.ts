@@ -283,6 +283,7 @@ export function layerWithRegistry<Error>(
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
     readonly managedPolicy?: ManagedPolicyDocument;
+    readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -314,6 +315,7 @@ export function layerWithRegistry<Error>(
       ServerSettings.layerTest(
         {
           responseStreamingMode: "turn",
+          ...options.serverSettings,
           ...(options.continueThreadsAfterServerUpdate === undefined
             ? {}
             : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),

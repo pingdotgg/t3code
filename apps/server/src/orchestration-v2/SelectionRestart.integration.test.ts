@@ -988,7 +988,9 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
           assert.deepEqual(resumes, [
             { instanceId: targetId, nativeId: originalThread.nativeThreadRef?.nativeId },
           ]);
-          assert.deepEqual(messages, ["first", "second"]);
+          const secondTurn =
+            "Note: this thread now runs on Provider 2 (`codex-shadow-account`), switched by the user from `codex-restart-test`.\n\nUser message:\nsecond";
+          assert.deepEqual(messages, ["first", secondTurn]);
           assert.equal((yield* Ref.get(state)).closedSessionCount, mode === "pooled" ? 0 : 1);
           if (mode === "pooled") {
             assert.isFalse(
@@ -1005,8 +1007,20 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
           assert.deepEqual(returnedThread.nativeThreadRef, originalThread.nativeThreadRef);
           assert.equal(returnedThread.providerInstanceId, providerInstanceId);
           assert.isEmpty(third.contextHandoffs);
-          assert.deepEqual(messages, ["first", "second", "third"]);
-        }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
+          assert.deepEqual(messages, [
+            "first",
+            secondTurn,
+            "Note: this thread now runs on `codex-restart-test`, switched by the user from Provider 2 (`codex-shadow-account`).\n\nUser message:\nthird",
+          ]);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry, {
+              serverSettings: {
+                providerInstances: { [targetId]: { driver: "codex", displayName: "Provider 2" } },
+              },
+            }),
+          ),
+        );
       }),
     ),
 );

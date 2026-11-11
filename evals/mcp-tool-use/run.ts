@@ -50,6 +50,7 @@ import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
+import { providerSwitchNote } from "../../apps/server/src/orchestration-v2/ProviderTurnStartService.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
@@ -319,6 +320,13 @@ export const McpToolUseCase = Schema.Struct({
     /** The thread is a side chat's first turn: T3 puts the parent's digest ahead of `prompt`. */
     sideChat: Schema.optional(
       Schema.Struct({ parentThreadId: Schema.String, digest: Schema.Array(Schema.String) }),
+    ),
+    /** The user moved the thread to another provider instance: T3 notes it ahead of `prompt`. */
+    providerSwitch: Schema.optional(
+      Schema.Struct({
+        from: Schema.Struct({ id: Schema.String, displayName: Schema.optional(Schema.String) }),
+        to: Schema.Struct({ id: Schema.String, displayName: Schema.optional(Schema.String) }),
+      }),
     ),
   }),
   /** Empty to resume a top-level thread without side-chat context after its last tool result. */
@@ -1021,8 +1029,14 @@ export const buildMessages = (sample: Sample) => {
     testCase.promptContext === undefined
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
-  const prompt =
-    sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
+  const providerSwitch = testCase.setup.providerSwitch;
+  const inlineContext = [
+    sideChatContext,
+    providerSwitch && providerSwitchNote(providerSwitch.from, providerSwitch.to),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const prompt = inlineContext === "" ? userText : withInlineContext(inlineContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
@@ -1126,8 +1140,7 @@ export const t3Default = (
             ...newThread(request, isRecord(request) ? request.prompt : undefined),
             createdBy: "agent",
             creationSource: "mcp",
-            providerInstanceId:
-              target.providerInstanceId ?? (sample.base.codex ? "codex" : "claudeAgent"),
+            providerInstanceId: target.providerInstanceId ?? inheritedInstance(sample),
             model: target.model ?? sample.base.model,
           };
         }),
@@ -1148,8 +1161,7 @@ export const t3Default = (
         status: "running",
         workState: "working",
         hasPendingChildRuns: false,
-        providerInstanceId:
-          target.providerInstanceId ?? (sample.base.codex ? "codex" : "claudeAgent"),
+        providerInstanceId: target.providerInstanceId ?? inheritedInstance(sample),
         model: target.model ?? sample.base.model,
         summary: null,
         hasPendingQuestion: false,
@@ -1286,6 +1298,16 @@ const EVAL_ENVIRONMENT_ID = EnvironmentId.make("eeeeeeee-eeee-4eee-8eee-eeeeeeee
 const unsavedSecretNote = (Contracts as Record<string, unknown>).SECRET_REQUEST_UNSAVED_NOTE as
   | Readonly<Record<string, string>>
   | undefined;
+
+/** The account a call without a target inherits: the case's capabilities mock, else the harness's. */
+const inheritedInstance = ({ base, testCase }: Sample) => {
+  const mocked = testCase.setup.mocks?.orchestrator_capabilities;
+  return isRecord(mocked) && typeof mocked.inheritedProviderInstanceId === "string"
+    ? mocked.inheritedProviderInstanceId
+    : base.codex
+      ? "codex"
+      : "claudeAgent";
+};
 
 /** Fields T3 adds to real thread and task results, applied to mocks and defaults alike. */
 const withProductFields = (name: string, value: unknown, child: boolean): unknown => {

@@ -62,12 +62,16 @@ import {
   GROK_MODEL_SELECTION,
 } from "./fixtures/shared.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import { withInlineContext } from "../ContextHandoffDelivery.ts";
+import { providerSwitchNote } from "../ProviderTurnStartService.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const threadId = ThreadId.make("thread:provider-switch");
+const switched = (from: string, to: string, text: string) =>
+  withInlineContext(providerSwitchNote({ id: from }, { id: to }), text);
 const projectId = ProjectId.make("project:provider-switch");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
@@ -1021,7 +1025,16 @@ describe("orchestration v2 provider switching", () => {
             );
           } else {
             assert.equal(handoff.delivery?.status, "injected");
-            assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.text, current);
+            assert.equal(
+              (yield* Ref.get(capturedTurns)).at(-1)!.text,
+              [
+                "large-current-input",
+                "screenshot-reported-capacity-native",
+                "screenshot-option-change-retry-native",
+              ].includes(scenario)
+                ? switched("codex", "claudeAgent", current)
+                : current,
+            );
             assert.include(
               yield* encodeJson(yield* Ref.get(injectedHistory)),
               "Original request with constraints",
@@ -1170,7 +1183,8 @@ describe("orchestration v2 provider switching", () => {
             yield* wait(3, "completed");
             const retried = yield* orchestrator.getThreadProjection(threadId);
             const lastTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
-            assert.equal(lastTurn.text, retryText);
+            // The failed target turn never reached the provider, so the retry carries the note.
+            assert.equal(lastTurn.text, switched("codex", "claudeAgent", retryText));
             if (failure !== "injection" && failure !== "exhausted-target-retry") {
               const delta = yield* encodeJson(
                 (yield* Ref.get(injectedHistory)).slice(historyBeforeRetry),
@@ -1749,7 +1763,10 @@ describe("orchestration v2 provider switching", () => {
           assert.include(deliveredHistory, partialResponse);
           assert.include(deliveredHistory, `run-status=${status}`);
           if (native) {
-            assert.equal(delivered.text, "Continue");
+            assert.equal(
+              delivered.text,
+              switched(sourceSelection.instanceId, targetSelection.instanceId, "Continue"),
+            );
             assert.notInclude(deliveredHistory, '"text":"Continue"');
             assert.include(deliveredHistory, '"role":"assistant"');
             assert.include(deliveredHistory, '"role":"user"');
@@ -2129,6 +2146,7 @@ describe("orchestration v2 provider switching", () => {
         const cwd = yield* checkpointWorkspace("queued-account-switch");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
         const alternateSelection: ModelSelection = {
           ...CODEX_MODEL_SELECTION,
           instanceId: ProviderInstanceId.make("codex-alternate"),
@@ -2146,6 +2164,7 @@ describe("orchestration v2 provider switching", () => {
             responseByRunOrdinal: {},
             capturedTurns,
             holdFirstTurn: started,
+            releaseFirstTurn: release,
           }),
           makeTestAdapter({
             instanceId: alternateSelection.instanceId,
@@ -2189,7 +2208,6 @@ describe("orchestration v2 provider switching", () => {
         const queuedThreadId = ThreadId.make("thread:queued-account-switch");
         const projection = yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const eventSink = yield* EventSink.EventSinkV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
           yield* orchestrator.dispatch({
             type: "thread.create",
@@ -2240,20 +2258,7 @@ describe("orchestration v2 provider switching", () => {
             (providerThread) => providerThread.id === queued.runs[0]?.providerThreadId,
           )?.nativeThreadRef;
           assert.isNotNull(sourceNativeRef);
-          const now = yield* DateTime.now;
-          yield* eventSink.write({
-            events: [
-              {
-                id: EventId.make("event:queued-account-switch:first-complete"),
-                type: "run.updated",
-                threadId: queuedThreadId,
-                runId: queued.runs[0]!.id,
-                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
-                occurredAt: now,
-                payload: { ...queued.runs[0]!, status: "completed", completedAt: now },
-              },
-            ],
-          });
+          yield* Deferred.succeed(release, undefined);
           yield* orchestrator.resumeQueuedRuns;
           yield* orchestrator.streamStoredEvents.pipe(
             Stream.filter(
@@ -2300,7 +2305,10 @@ describe("orchestration v2 provider switching", () => {
         assert.lengthOf(projection.contextHandoffs, 0);
         assert.deepEqual(
           (yield* Ref.get(capturedTurns)).map((turn) => turn.text),
-          ["First account turn", "Alternate account turn"],
+          [
+            "First account turn",
+            "Note: this thread now runs on `codex-alternate`, switched by the user from `codex`.\n\nUser message:\nAlternate account turn",
+          ],
         );
       }),
     ),
