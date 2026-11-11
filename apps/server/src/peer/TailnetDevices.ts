@@ -148,6 +148,8 @@ const REFUSAL_MESSAGES: Record<TailnetLinkRefusal, string> = {
   node_mismatch:
     "That machine's network knows this one as another Tailscale node, or needs it added again.",
   other_network: "That machine already belongs to another network.",
+  not_admin:
+    "Its network does not give this machine full access. Add it from a machine it gives full access, or give this one full access on it first.",
   not_consented: "That machine has not allowed joining. Allow joining on it first.",
   revoked: "That machine revoked this one.",
   wrong_issuer: "That address answered as another machine.",
@@ -1629,16 +1631,19 @@ const make = Effect.gen(function* () {
       if (known?.access === "revoked") return yield* refuse("revoked", admitter);
       const others = roster.filter((member) => member.environmentId !== self.environmentId);
       // Same account is not consent. A machine in a network takes changes only from its admins;
-      // one in no network, or one asked to bind an admin no proof has bound, only while its
-      // owner allows joining here.
+      // one in no network, or one asked to bind a member no proof has bound, only while its
+      // owner allows joining here. Binding names the member's node at the level it already has.
       const consented = yield* joinOpen;
       const rebinding = !local && known !== undefined && known.nodeId === null;
       if (local) {
         // A link to one machine may replace one made by pairing code, so it always needs consent.
         if (!consented) return yield* refuse("not_consented", admitter);
       } else {
-        if (others.length > 0 && known?.access !== "full-access") {
+        if (others.length > 0 && known === undefined) {
           return yield* refuse("other_network", admitter);
+        }
+        if (others.length > 0 && !rebinding && known?.access !== "full-access") {
+          return yield* refuse("not_admin", admitter);
         }
         if ((others.length === 0 || rebinding) && !consented) {
           return yield* refuse("not_consented", admitter);

@@ -1602,6 +1602,45 @@ describe("crossing the upgrade without trusting a claim", () => {
     }),
   );
 
+  // The old per-machine policy migrates into each roster, so the studio may list the laptop below
+  // full access while the laptop is an admin in its own.
+  it.live("the user re-adds a member whose roster lists the admitter below full access", () =>
+    Effect.gen(function* () {
+      const { tailnet, a, b, studioNode } = yield* upgradedPair;
+      yield* b.sql`UPDATE peer_environment_links SET expires_at = '2000-01-01T00:00:00.000Z'`;
+      yield* b.sql`UPDATE network_members SET access = 'read-only' WHERE environment_id = ${laptop.environmentId}`;
+      yield* b.devices.linkIfMine({ url: a.url }).pipe(Effect.ignore);
+      expect(yield* studioNode).toEqual(Option.some(null));
+      // The studio's owner still consents there.
+      yield* find(tailnet, a, b, tailnet.nameOf(b.url));
+      const refused = yield* a.devices.admit(studio.environmentId, "full-access").pipe(Effect.flip);
+      expect(refused.message).toContain("Allow joining on it first");
+
+      yield* admit(tailnet, a, b);
+
+      expect(yield* studioNode).toEqual(Option.some(tailnet.nodeIdOf(b.url)));
+      expect(yield* b.membership.member(laptop.environmentId)).toEqual(
+        Option.some(
+          expect.objectContaining({ nodeId: tailnet.nodeIdOf(a.url), access: "read-only" }),
+        ),
+      );
+    }),
+  );
+
+  it.live("a bound member below full access is told who can add the machine", () =>
+    Effect.gen(function* () {
+      const { tailnet, a, b } = yield* upgradedPair;
+      yield* b.sql`UPDATE network_members SET access = 'read-only', node_id = ${tailnet.nodeIdOf(a.url)} WHERE environment_id = ${laptop.environmentId}`;
+
+      const refused = yield* admit(tailnet, a, b).pipe(Effect.flip);
+
+      expect(refused.message).toContain("does not give this machine full access");
+      expect(yield* b.membership.member(laptop.environmentId)).toEqual(
+        Option.some(expect.objectContaining({ access: "read-only" })),
+      );
+    }),
+  );
+
   it.live("rebinds a member the laptop narrowed at its narrowed level", () =>
     Effect.gen(function* () {
       const { tailnet, a, b, studioNode } = yield* upgradedPair;
