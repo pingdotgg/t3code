@@ -626,6 +626,39 @@ describe("resolveChatShortcutCommand", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it("resolves terminal clipboard bindings without claiming shell keys or other fields", () => {
+    const bindings = compileResolvedKeybindingsConfig([
+      { key: "meta+c", command: "terminal.copy", when: "terminalFocus" },
+      { key: "meta+v", command: "terminal.paste", when: "terminalFocus" },
+    ]);
+    const options = { platform: "Linux", context: { terminalFocus: true } };
+
+    for (const [key, command] of [
+      ["c", "terminal.copy"],
+      ["v", "terminal.paste"],
+    ] as const) {
+      assert.strictEqual(
+        resolveShortcutCommand(event({ key, metaKey: true }), bindings, options),
+        command,
+      );
+      assert.isNull(resolveShortcutCommand(event({ key, ctrlKey: true }), bindings, options));
+      assert.isNull(
+        resolveShortcutCommand(event({ key, metaKey: true }), bindings, {
+          platform: "Linux",
+          context: { terminalFocus: false, editableFocus: true },
+        }),
+      );
+    }
+    const overridden = compileResolvedKeybindingsConfig([
+      { key: "meta+c", command: "terminal.copy", when: "terminalFocus" },
+      { key: "meta+c", command: "terminal.new", when: "terminalFocus" },
+    ]);
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "c", metaKey: true }), overridden, options),
+      "terminal.new",
+    );
+  });
+
   it("routes mod+w to the terminal while focused and to the right panel otherwise", () => {
     const closeEvent = event({ key: "w", metaKey: true });
     assert.strictEqual(
