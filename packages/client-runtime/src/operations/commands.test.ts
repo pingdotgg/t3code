@@ -28,6 +28,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/rpc";
 
 import {
@@ -399,6 +400,63 @@ describe("V2 environment commands", () => {
         "command-socket-killer",
       ]);
       expect(error._tag).toBe("RpcClientError");
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("gives a lost message back when no replacement session arrives", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const lostClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            yield* SubscriptionRef.set(supervisor.session, Option.none());
+            return yield* new RpcClientError.RpcClientError({
+              reason: new RpcClientError.RpcClientDefect({
+                message: "socket closed",
+                cause: new Error("socket closed"),
+              }),
+            });
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const send = (resendAfterSocketLoss: boolean) =>
+        Effect.gen(function* () {
+          yield* SubscriptionRef.set(
+            supervisor.session,
+            Option.some({ ...healthySession, client: lostClient }),
+          );
+          return yield* startThreadTurn({
+            commandId: CommandId.make(`command-host-gone-${resendAfterSocketLoss}`),
+            threadId: v2ThreadId,
+            message: {
+              messageId: MessageId.make(`message-host-gone-${resendAfterSocketLoss}`),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            resendAfterSocketLoss,
+          }).pipe(
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.flip,
+            Effect.forkChild,
+          );
+        });
+
+      const optedOut = yield* send(false);
+      expect((yield* Fiber.join(optedOut))._tag).toBe("RpcClientError");
+
+      const waiting = yield* send(true);
+      yield* TestClock.adjust("15 seconds");
+      expect((yield* Fiber.join(waiting))._tag).toBe("RpcClientError");
+      expect(commands.map((command) => command.commandId)).toEqual([
+        "command-host-gone-false",
+        "command-host-gone-true",
+      ]);
     }).pipe(Effect.provide(layerTestRandom)),
   );
 

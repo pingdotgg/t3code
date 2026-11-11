@@ -895,6 +895,7 @@ export function createThreadOutboxDelivery(): {
           interactionMode: sendSettings.interactionMode,
           createdAt: queuedMessage.createdAt,
           dispatchMode: "queue",
+          resendAfterSocketLoss: false,
         },
       });
       if (AsyncResult.isFailure(compactionResult) && !hasAccess()) return true;
@@ -935,6 +936,7 @@ export function createThreadOutboxDelivery(): {
         createdAt: queuedMessage.createdAt,
         dispatchMode: queuedMessage.dispatchMode ?? "start",
         ...(queuedMessage.freshContext ? { freshContext: true } : {}),
+        resendAfterSocketLoss: false,
       },
     });
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
