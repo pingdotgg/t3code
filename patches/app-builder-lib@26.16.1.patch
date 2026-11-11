@@ -14,7 +14,7 @@ index 8a3462b185b078a260483635e6d774e2ece6e269..105778c145ab63a26444179215c643a7
                  await nsisUtil_1.UninstallerReader.exec(installerPath, uninstallerPath);
              }
 diff --git a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
-index 7d08e55f5ddf70e51ebd965803d001561bca6d71..a5e466c48768ebd75b3c4d87c78c18c8ebd6b588 100644
+index 7d08e55f5ddf70e51ebd965803d001561bca6d71..4977fcfc35ba32e039f1211ca0ed05ccd20f38f1 100644
 --- a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
 +++ b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
 @@ -63,7 +63,8 @@
@@ -36,3 +36,48 @@ index 7d08e55f5ddf70e51ebd965803d001561bca6d71..a5e466c48768ebd75b3c4d87c78c18c8
    ${else}
      !ifdef INSTALL_MODE_PER_ALL_USERS
        nsExec::Exec `taskkill /IM "${_FILE}" /FI "PID ne $pid"`
+@@ -103,6 +104,9 @@
+ !macroend 
+ 
+ !macro _CHECK_APP_RUNNING
++  Var /GLOBAL appRunningMessage
++  Var /GLOBAL appClosingMessage
++  Var /GLOBAL appCannotBeClosedMessage
+   ${GetProcessInfo} 0 $pid $1 $2 $3 $4
+   ${if} $3 != "${APP_EXECUTABLE_FILENAME}"
+     ${if} ${isUpdated}
+@@ -112,17 +116,23 @@
+ 
+     !insertmacro FIND_PROCESS "${APP_EXECUTABLE_FILENAME}" $R0
+     ${if} $R0 == 0
++      StrCpy $appRunningMessage "$(appRunning)"
++      StrCpy $appClosingMessage "$(appClosing)"
++      StrCpy $appCannotBeClosedMessage "$(appCannotBeClosed)"
++      !ifmacrodef customAppRunningMessages
++        !insertmacro customAppRunningMessages
++      !endif
+       ${if} ${isUpdated}
+         # allow app to exit without explicit kill
+         Sleep 1000
+         Goto doStopProcess
+       ${endIf}
+-      MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "$(appRunning)" /SD IDOK IDOK doStopProcess
++      MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "$appRunningMessage" /SD IDOK IDOK doStopProcess
+       Quit
+ 
+       doStopProcess:
+ 
+-      DetailPrint "$(appClosing)"
++      DetailPrint "$appClosingMessage"
+ 
+       !insertmacro KILL_PROCESS "${APP_EXECUTABLE_FILENAME}" 0
+       # to ensure that files are not "in-use"
+@@ -153,7 +163,7 @@
+         # App likely running with elevated permissions.
+         # Ask user to close it manually
+         ${if} $R1 > 1
+-          MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY loop
++          MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$appCannotBeClosedMessage" /SD IDCANCEL IDRETRY loop
+           Quit
+         ${else}
+           Goto loop

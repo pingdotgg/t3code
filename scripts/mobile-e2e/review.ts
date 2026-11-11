@@ -41,6 +41,8 @@ export async function reviewPose(result: PoseResult, outputDirectory: string): P
     ``,
     `Report only real defects a user would notice: text clipped, truncated mid-word where it should wrap, or overlapping other content; controls overlapping, cut off, or under the status bar, notch, home indicator, or keyboard; content hidden behind navigation chrome; colours wrong for the ${pose.appearance} appearance or unreadable contrast; large unexplained empty areas or misaligned layout; error banners or red error screens.`,
     `Ignore: the fixture content itself, the status bar clock, a development-build badge, and anything that is plainly a deliberate design choice. Prefer no finding to a speculative one.`,
+    // Each of these has been confirmed as intended; the review kept reporting them.
+    `These are intended, never report them: content fading or showing through the header as it scrolls under it (the iOS scroll-edge blur); list rows scrolling under the floating glass tab bar; the search and filter buttons on the Settings header (search searches settings, the filter picks which environments settings apply to); Settings groups without a section header; chips or rows cut off at the edge of a list that scrolls; labels and rows wrapping onto more lines at the largest accessibility text size.`,
     `Use the exact step names above. Severity: high = broken or unusable, medium = clearly wrong, low = polish.`,
   ].join("\n");
   const { stdout } = await run(

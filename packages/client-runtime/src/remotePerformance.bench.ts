@@ -14,7 +14,7 @@ import { issueRemoteWebSocketTicket } from "./authorization/remote.ts";
 import { PrimaryConnectionTarget } from "./connection/model.ts";
 import { fetchRemoteEnvironmentDescriptor } from "./environment/descriptor.ts";
 import type { RemoteEnvironmentRequestError } from "./rpc/http.ts";
-import { fetchEnvironmentThreadSnapshot } from "./state/threadSnapshotHttp.ts";
+import { fetchEnvironmentBoundedThreadSnapshot } from "./state/boundedThreadSnapshotHttp.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./state/orchestrationV2Projection.ts";
 import { v2Projection, v2Now } from "./state/orchestrationV2TestFixtures.ts";
 
@@ -52,7 +52,13 @@ const responses = {
     capabilities: { repositoryIdentity: true },
   },
   "/api/auth/websocket-ticket": { ticket: "test-ticket", expiresAt: timestamp },
-  "/api/orchestration/threads/thread-v2": { snapshotSequence: 1, projection: thread },
+  "/api/orchestration/threads/thread-v2/bounded": {
+    snapshotSequence: 1,
+    projection: thread,
+    historyCursor: null,
+    hasMoreHistory: false,
+    latestLocalTurnOrdinal: null,
+  },
 };
 const httpClient = HttpClient.make((request) =>
   Effect.sync(() => {
@@ -71,7 +77,7 @@ const requests: Record<
     httpBaseUrl: target.httpBaseUrl,
     bearerToken: "test-token",
   }),
-  "load remote snapshot with 100 messages": fetchEnvironmentThreadSnapshot({
+  "load remote snapshot with 100 messages": fetchEnvironmentBoundedThreadSnapshot({
     prepared: {
       environmentId: target.environmentId,
       label: target.label,
