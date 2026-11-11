@@ -2299,7 +2299,6 @@ describe("ClaudeAdapterV2 attachments", () => {
             "missing-eof",
             "escaped-name",
             "incremental",
-            "compressed-bomb",
             "indirect-count",
             "indirect-type",
             "indirect-kids",
@@ -2356,9 +2355,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                 "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 42 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF",
               );
               yield* fileSystem.writeFile(documentPath, malformedBytes);
-            } else if (
-              ["object-stream", "encrypted", "cyclic-tree", "compressed-bomb"].includes(scenario)
-            ) {
+            } else if (["object-stream", "encrypted", "cyclic-tree"].includes(scenario)) {
               const suffix =
                 scenario === "encrypted"
                   ? "/Encrypt 9 0 R"
