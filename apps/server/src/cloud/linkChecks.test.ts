@@ -1,11 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { RelayLinkProofRequest } from "@t3tools/contracts/relay";
 
-import {
-  isSupportedLinkProviderKind,
-  linkProofScopes,
-  parseManagedEndpointLocalOrigin,
-} from "./linkChecks.ts";
+import { linkProofScopes, parseManagedEndpointLocalOrigin } from "./linkChecks.ts";
 
 describe("parseManagedEndpointLocalOrigin", () => {
   it.each([
@@ -52,12 +48,6 @@ describe("link proof provider kinds", () => {
       providerKind,
     },
     origin: { localHttpHost: "127.0.0.1", localHttpPort: 7331 },
-  });
-
-  it("accepts managed and manual endpoints but not t3_relay", () => {
-    expect(isSupportedLinkProviderKind(proofRequest("cloudflare_tunnel"))).toBe(true);
-    expect(isSupportedLinkProviderKind(proofRequest("manual"))).toBe(true);
-    expect(isSupportedLinkProviderKind(proofRequest("t3_relay"))).toBe(false);
   });
 
   it("only claims the managed-tunnel scope for tunnel links", () => {

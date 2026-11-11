@@ -15,6 +15,12 @@ export interface ThreadFilePathIndex {
   readonly directoriesByName: ReadonlyMap<string, ReadonlyArray<string>>;
 }
 
+type EvidenceType = "file_change" | "dynamic_tool" | "file_search" | "command_execution";
+/** Streaming-quiet item shapes qualify too; only these evidence types are read. */
+export type ThreadFilePathItem =
+  | Extract<OrchestrationV2TurnItem, { readonly type: EvidenceType }>
+  | { readonly type: Exclude<OrchestrationV2TurnItem["type"], EvidenceType> };
+
 const TOOL_INPUT_PATH_FIELDS = ["file_path", "notebook_path", "path", "filename", "fileName"];
 const LITERAL_PATH_PATTERN = /^[\w./\\:@+ -]+$/;
 
@@ -103,7 +109,7 @@ function commandPaths(input: string, cwd: string | null): string[] {
   return paths;
 }
 
-function turnItemPaths(item: OrchestrationV2TurnItem, cwd: string | null): string[] {
+function turnItemPaths(item: ThreadFilePathItem, cwd: string | null): string[] {
   switch (item.type) {
     case "file_change":
       return [item.fileName, ...(item.changes ?? []).map((change) => change.path)];
@@ -129,12 +135,12 @@ function turnItemPaths(item: OrchestrationV2TurnItem, cwd: string | null): strin
 
 // Projection updates retain immutable items, including large command inputs.
 const pathsByItem = new WeakMap<
-  OrchestrationV2TurnItem,
+  ThreadFilePathItem,
   { readonly cwd: string | null; readonly paths: ReadonlyArray<string> }
 >();
 
 export function collectThreadFilePaths(
-  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  items: ReadonlyArray<ThreadFilePathItem>,
   cwd: string | null,
 ): ReadonlyArray<string> {
   const paths = new Map<string, string>();

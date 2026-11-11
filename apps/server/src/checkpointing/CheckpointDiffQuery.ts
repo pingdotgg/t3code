@@ -7,11 +7,12 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { CHECKPOINT_DIFF_MAX_OUTPUT_BYTES } from "../vcs/VcsDriver.ts";
 import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
@@ -27,6 +28,7 @@ import { isGitImport, parseTurnDiffFilesFromNumstat, type TurnDiffFileSummary } 
 
 // Windows limits a command line to 32,767 characters. Leave room for the rest of git's arguments.
 const MAX_PATHSPEC_CHARS = 24_000;
+const DIFF_TRUNCATED_MARKER = "\n\n[truncated]";
 
 function batchFilePaths(files: ReadonlyArray<TurnDiffFileSummary>) {
   const batches: string[][] = [];
@@ -78,11 +80,11 @@ function buildTurnDiffResult(
   };
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -184,7 +186,7 @@ export const make = Effect.gen(function* () {
             : yield* checkpointRefForScopeOrdinal({
                 scopeId: firstScope.id,
                 ordinalWithinScope: 0,
-              }).pipe(Effect.provideService(Crypto.Crypto, crypto))
+              }).pipe(Effect.provideService(Digest.Digest, digest))
           : (
               parentCheckpoint ??
               readyCheckpoints.find(
@@ -219,19 +221,36 @@ export const make = Effect.gen(function* () {
             );
       const retainedFiles = files.filter((file) => !isGitImport(file, authoredPaths));
       // Select retained paths before generating a patch, so imported bulk cannot exhaust its output limit.
-      const diff =
-        retainedFiles.length === files.length
-          ? yield* checkpointStore
-              .diffCheckpoints(comparison)
-              .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"))
-          : (yield* Effect.forEach(
-              batchFilePaths(retainedFiles),
-              (filePaths) =>
-                checkpointStore
-                  .diffCheckpoints({ ...comparison, filePaths })
-                  .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints")),
-              { concurrency: 4 },
-            )).join("");
+      const pathBatches =
+        retainedFiles.length === files.length ? [undefined] : batchFilePaths(retainedFiles);
+      let diff = "";
+      let remainingBytes = CHECKPOINT_DIFF_MAX_OUTPUT_BYTES;
+      for (const filePaths of pathBatches) {
+        const patch = yield* checkpointStore
+          .diffCheckpoints({
+            ...comparison,
+            ...(filePaths === undefined ? {} : { filePaths }),
+            // One extra byte distinguishes an exact fit from a truncated patch.
+            maxOutputBytes: remainingBytes + 1,
+          })
+          .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
+        const patchBytes = Buffer.byteLength(patch);
+        diff += patch;
+        if (patchBytes > remainingBytes) {
+          // Reserve marker space only on overflow, which may trim an earlier batch.
+          // Streaming decode drops an incomplete final UTF-8 character at the byte boundary.
+          diff =
+            new TextDecoder().decode(
+              Buffer.from(diff).subarray(
+                0,
+                CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(DIFF_TRUNCATED_MARKER),
+              ),
+              { stream: true },
+            ) + DIFF_TRUNCATED_MARKER;
+          break;
+        }
+        remainingBytes -= patchBytes;
+      }
 
       const turnDiff = buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {

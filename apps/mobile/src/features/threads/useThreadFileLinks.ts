@@ -12,21 +12,12 @@ import {
 import { isAbsolutePath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { collectThreadFilePaths, createThreadFilePathIndex } from "@t3tools/shared/threadFilePaths";
 import { Atom } from "effect/reactivity";
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { environmentThreadDetails } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useThreadVisibleTurnItems } from "../../state/use-thread-detail";
 
 /** Encode a literal selected path once before giving it back to markdown parsers. */
 function fileLinkHref(target: string) {
@@ -43,7 +34,7 @@ function fileLinkHref(target: string) {
 }
 
 export function useThreadFileLinks(ref: ScopedThreadRef, cwd: string | null) {
-  const visible = useThreadVisibleTurnItems(ref);
+  const visible = useAtomValue(environmentThreadDetails.quietVisibleTurnItemsAtom(ref));
   const paths = collectThreadFilePaths(
     visible.map(({ item }) => item),
     cwd,
@@ -64,7 +55,7 @@ export function useThreadFileLinks(ref: ScopedThreadRef, cwd: string | null) {
   const { environmentId, threadId } = ref;
   useAtomValue(projectEnvironment.fileMetadataThread(ref));
   const checkpoints = useAtomValue(
-    environmentThreadDetails.threadAtom(ref),
+    environmentThreadDetails.quietThreadAtom(ref),
     (thread) => thread?.projection.checkpoints,
   );
   const invalidate = useAtomCommand(projectEnvironment.invalidateFileMetadata, {
@@ -76,6 +67,7 @@ export function useThreadFileLinks(ref: ScopedThreadRef, cwd: string | null) {
     cwd: string | null;
     checkpoints: OrchestrationV2ThreadProjection["checkpoints"];
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates retained file metadata for paths whose checkpoints changed
   useEffect(() => {
     if (!checkpoints) {
       previous.current = null;
@@ -91,10 +83,10 @@ export function useThreadFileLinks(ref: ScopedThreadRef, cwd: string | null) {
     )
       return;
     const oldById = new Map(before.checkpoints.map((checkpoint) => [checkpoint.id, checkpoint]));
-    const paths = new Set<string>();
+    const changed = new Set<string>();
     const addPath = (path: string) => {
-      if (cwd !== null || isAbsolutePath(path))
-        paths.add(cwd === null ? path : resolveWorkspaceFilePath(path, cwd));
+      if (cwd !== null) changed.add(resolveWorkspaceFilePath(path, cwd));
+      else if (isAbsolutePath(path)) changed.add(path);
     };
     for (const checkpoint of checkpoints) {
       const old = oldById.get(checkpoint.id);
@@ -105,48 +97,27 @@ export function useThreadFileLinks(ref: ScopedThreadRef, cwd: string | null) {
     }
     for (const checkpoint of oldById.values())
       for (const file of checkpoint.files) addPath(file.path);
-    if (paths.size > 0) void invalidate({ environmentId, input: { paths: [...paths] } });
+    if (changed.size > 0) void invalidate({ environmentId, input: { paths: [...changed] } });
   }, [environmentId, threadId, cwd, checkpoints, invalidate]);
-  const generation = useRef(0);
-  useLayoutEffect(
-    () => () => {
-      generation.current++;
-    },
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Leaving this scope invalidates delayed native actions.
-    [environmentId, threadId, cwd, connection, canRead, enabled],
+  // Rows re-render when this changes, so it keeps its identity across unrelated renders.
+  return useMemo(
+    () => ({ environmentId, threadId, cwd, enabled, index }),
+    [environmentId, threadId, cwd, enabled, index],
   );
-  const capture = () => {
-    const current = generation.current;
-    return () => generation.current === current;
-  };
-  const scope = useMemo(
-    () => ({ environmentId, threadId, cwd, connection, canRead, enabled }),
-    [environmentId, threadId, cwd, connection, canRead, enabled],
-  );
-  return { ...scope, index, capture, scope };
 }
 
 export const ThreadFileLinksContext = createContext<ReturnType<typeof useThreadFileLinks> | null>(
   null,
 );
 
-export function useThreadFileBindings(assets: ReadonlyArray<{ readonly url: string }>) {
+/** Maps each thread-evidenced href to its verified file; anything else keeps its href. */
+export function useThreadFileBindings(urls: ReadonlyArray<string>) {
   const context = useContext(ThreadFileLinksContext);
-  const scope = context?.scope;
-  const captureScope = context?.capture;
-  const ownerGeneration = useRef(0);
-  useLayoutEffect(
-    () => () => {
-      ownerGeneration.current++;
-    },
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A menu may outlive this document or its owner, but keeps its opening selection.
-    [scope],
-  );
   const bindingsAtom = Atom.make((get) => {
     const selected = new Map<string, string>();
     if (!context?.enabled) return selected;
     const { environmentId, threadId, cwd, index } = context;
-    for (const { url: href } of assets) {
+    for (const href of urls) {
       const candidate = resolveThreadFilePathCandidate(href, cwd, index);
       if (!candidate) continue;
       const root = resolveMarkdownFileLinkTarget(href, cwd ?? undefined);
@@ -171,37 +142,12 @@ export function useThreadFileBindings(assets: ReadonlyArray<{ readonly url: stri
     }
     return selected;
   });
-  const resolved = useAtomValue(bindingsAtom);
-  const selectedKey = JSON.stringify([...resolved]);
-  // The native image cache resets when its selected-path resolver changes identity.
-  const [binding, setBinding] = useState({ key: selectedKey, selected: resolved });
-  let selected = binding.selected;
-  if (binding.key !== selectedKey) {
-    selected = resolved;
-    setBinding({ key: selectedKey, selected });
-  }
-  const generation = useRef(0);
-  useLayoutEffect(
-    () => () => {
-      generation.current++;
-    },
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Selection changes invalidate image requests, while menus retain their opening target.
-    [scope, selectedKey],
-  );
-  const capture = () => {
-    const isScopeCurrent = scope && captureScope ? captureScope() : null;
-    const current = generation.current;
-    return () => generation.current === current && (isScopeCurrent?.() ?? true);
-  };
+  const selected = useAtomValue(bindingsAtom);
   const href = (url: string) => selected.get(url) ?? url;
+  // Without a root, an unverified relative path has nowhere honest to open.
   const unverifiedRootless = (url: string) =>
     context?.cwd === null &&
     !selected.has(url) &&
     resolveThreadFilePathCandidate(url, null, context.index) !== null;
-  const captureOwner = () => {
-    const isScopeCurrent = scope && captureScope ? captureScope() : null;
-    const current = ownerGeneration.current;
-    return () => ownerGeneration.current === current && (isScopeCurrent?.() ?? true);
-  };
-  return { href, unverifiedRootless, capture, captureOwner };
+  return { href, unverifiedRootless };
 }

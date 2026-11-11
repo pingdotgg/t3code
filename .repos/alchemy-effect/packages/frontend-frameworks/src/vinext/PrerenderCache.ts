@@ -93,14 +93,8 @@ export const buildVinextPrerenderKVPairs = async (
     let htmlPath: string;
     let rscPath: string;
     try {
-      htmlPath = resolveContainedFile(
-        prerenderDir,
-        getOutputPath(artifactPathname, trailingSlash),
-      );
-      rscPath = resolveContainedFile(
-        prerenderDir,
-        getRscOutputPath(artifactPathname),
-      );
+      htmlPath = resolveContainedFile(prerenderDir, getOutputPath(artifactPathname, trailingSlash));
+      rscPath = resolveContainedFile(prerenderDir, getRscOutputPath(artifactPathname));
     } catch (error) {
       warnings.push(
         `[vinext] Skipping prerender KV seed for ${artifactPathname}: ${formatUnknownError(error)}`,
@@ -110,16 +104,11 @@ export const buildVinextPrerenderKVPairs = async (
     if (!fs.existsSync(htmlPath)) continue;
 
     if (typeof route.revalidate === "number" && route.revalidate <= 0) continue;
-    const revalidateSeconds =
-      typeof route.revalidate === "number" ? route.revalidate : undefined;
-    const expireSeconds =
-      typeof route.expire === "number" ? route.expire : undefined;
+    const revalidateSeconds = typeof route.revalidate === "number" ? route.revalidate : undefined;
+    const expireSeconds = typeof route.expire === "number" ? route.expire : undefined;
     const staleSeconds =
-      typeof route.stale === "number" && route.stale >= 0
-        ? route.stale
-        : undefined;
-    const expirationTtl =
-      revalidateSeconds === undefined ? undefined : DEFAULT_KV_TTL_SECONDS;
+      typeof route.stale === "number" && route.stale >= 0 ? route.stale : undefined;
+    const expirationTtl = revalidateSeconds === undefined ? undefined : DEFAULT_KV_TTL_SECONDS;
     const tags = buildAppPageCacheTags(cachePathname, route.tags ?? []);
     const metadata = buildMetadata(tags);
     const htmlKey = appIsrCacheKey(cachePathname, "html", manifest.buildId);
@@ -171,10 +160,7 @@ export const buildVinextPrerenderKVPairs = async (
     const pathname = route.path ?? route.route;
     let artifactPath: string;
     try {
-      artifactPath = resolveContainedFile(
-        prerenderDir,
-        getAppRouteOutputPath(pathname),
-      );
+      artifactPath = resolveContainedFile(prerenderDir, getAppRouteOutputPath(pathname));
     } catch (error) {
       warnings.push(
         `[vinext] Skipping metadata prerender KV seed for ${pathname}: ${formatUnknownError(error)}`,
@@ -185,21 +171,12 @@ export const buildVinextPrerenderKVPairs = async (
 
     const cachePathname = normalizePregeneratedPathname(pathname);
     if (typeof route.revalidate === "number" && route.revalidate <= 0) continue;
-    const revalidateSeconds =
-      typeof route.revalidate === "number" ? route.revalidate : undefined;
-    const expireSeconds =
-      typeof route.expire === "number" ? route.expire : undefined;
+    const revalidateSeconds = typeof route.revalidate === "number" ? route.revalidate : undefined;
+    const expireSeconds = typeof route.expire === "number" ? route.expire : undefined;
     const staleSeconds =
-      typeof route.stale === "number" && route.stale >= 0
-        ? route.stale
-        : undefined;
-    const expirationTtl =
-      revalidateSeconds === undefined ? undefined : DEFAULT_KV_TTL_SECONDS;
-    const tags = buildAppRouteCacheTags(
-      cachePathname,
-      route.tags ?? [],
-      route.routeSegments ?? [],
-    );
+      typeof route.stale === "number" && route.stale >= 0 ? route.stale : undefined;
+    const expirationTtl = revalidateSeconds === undefined ? undefined : DEFAULT_KV_TTL_SECONDS;
+    const tags = buildAppRouteCacheTags(cachePathname, route.tags ?? [], route.routeSegments ?? []);
     const metadata = buildMetadata(tags);
     const routeKey = appIsrCacheKey(cachePathname, "route", manifest.buildId);
     pairs.push({
@@ -226,21 +203,12 @@ export const buildVinextPrerenderKVPairs = async (
   return { routeCount, pairs, warnings };
 };
 
-const resolveContainedFile = (
-  rootDir: string,
-  relativePath: string,
-): string => {
+const resolveContainedFile = (rootDir: string, relativePath: string): string => {
   const resolvedRoot = nodePath.resolve(rootDir);
   const resolvedFile = nodePath.resolve(resolvedRoot, relativePath);
   const relative = nodePath.relative(resolvedRoot, resolvedFile);
-  if (
-    relative === "" ||
-    relative.startsWith("..") ||
-    nodePath.isAbsolute(relative)
-  ) {
-    throw new Error(
-      `[vinext] Refusing to read prerender artifact outside ${resolvedRoot}`,
-    );
+  if (relative === "" || relative.startsWith("..") || nodePath.isAbsolute(relative)) {
+    throw new Error(`[vinext] Refusing to read prerender artifact outside ${resolvedRoot}`);
   }
   return resolvedFile;
 };
@@ -266,8 +234,7 @@ const buildCacheEntry = (
     value,
     tags,
     lastModified: now,
-    revalidateAt:
-      revalidateSeconds === undefined ? null : now + revalidateSeconds * 1000,
+    revalidateAt: revalidateSeconds === undefined ? null : now + revalidateSeconds * 1000,
     expireAt: expireSeconds === undefined ? null : now + expireSeconds * 1000,
     ...(cacheControl ? { cacheControl } : {}),
   });

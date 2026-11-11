@@ -1,8 +1,8 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import { ThreadFilePathsContext } from "../../threadFilePathsContext";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 
 export function FileMarkdownPreview(props: {
   readonly cwd: string;
@@ -24,16 +24,14 @@ export function FileMarkdownPreview(props: {
       : props.cwd;
 
   return (
-    <ThreadFilePathsContext value={null}>
-      <ChatMarkdown
-        text={props.text}
-        cwd={props.cwd}
-        imageBaseDir={imageBaseDir}
-        threadRef={props.threadRef}
-        workspaceMutationId={props.workspaceMutationId}
-        className="mx-auto max-w-4xl px-6 py-5"
-        onTaskListChange={props.onTaskListChange}
-      />
-    </ThreadFilePathsContext>
+    <ChatMarkdown
+      text={maskMarkdownFrontmatter(props.text)}
+      cwd={props.cwd}
+      imageBaseDir={imageBaseDir}
+      threadRef={props.threadRef}
+      workspaceMutationId={props.workspaceMutationId}
+      className="mx-auto max-w-4xl px-6 py-5"
+      onTaskListChange={props.onTaskListChange}
+    />
   );
 }

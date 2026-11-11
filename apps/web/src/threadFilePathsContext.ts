@@ -1,15 +1,15 @@
 import { createContext, useState } from "react";
-import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import {
   collectThreadFilePaths,
   createThreadFilePathIndex,
   type ThreadFilePathIndex,
+  type ThreadFilePathItem,
 } from "@t3tools/shared/threadFilePaths";
 
 export const ThreadFilePathsContext = createContext<ThreadFilePathIndex | null>(null);
 
 export function useThreadFilePathIndex(
-  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  items: ReadonlyArray<ThreadFilePathItem>,
   cwd: string | null,
 ) {
   const paths = collectThreadFilePaths(items, cwd);
