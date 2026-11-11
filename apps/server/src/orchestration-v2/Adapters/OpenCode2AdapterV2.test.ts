@@ -49,7 +49,6 @@ import {
   t3McpServerName,
 } from "@t3tools/provider-opencode/testing";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { makeProviderEventRoutingState, routeProviderEvent } from "../RunExecutionService.ts";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 import {
   makeProviderReplayGate,
@@ -325,6 +324,7 @@ const resumed = (
   options?: {
     readonly version?: "2.2.1" | "2.2.5" | "2.2.6";
     readonly shellRecovery?: ReadonlyArray<ProviderReplayEntry>;
+    readonly lastRunOrdinal?: number;
     readonly goal?: OrchestrationV2ProviderThread["goal"];
     readonly external?: boolean;
     readonly supervised?: boolean;
@@ -384,6 +384,9 @@ const resumed = (
     const thread = yield* runtime.resumeThread({
       providerThread: {
         ...providerThread(yield* DateTime.now),
+        ...(options?.lastRunOrdinal === undefined
+          ? {}
+          : { lastRunOrdinal: options.lastRunOrdinal }),
         ...(options?.goal === undefined ? {} : { goal: options.goal }),
       },
       threadId,
@@ -901,11 +904,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       return { attached: Deferred.await(attached), terminal: Fiber.join(terminal) };
     });
-  it.effect.each([false, true, "thread", "failed", "burst"] as const)(
+  it.effect.each([false, true, "thread", "failed", "burst", "poll"] as const)(
     "tracks native background shells through launch, retained output, stop=%s",
     (stop) =>
       Effect.gen(function* () {
-        const stopped = stop === true || stop === "thread";
+        const stopped = stop === true || stop === "thread" || stop === "poll";
         const exitCode = stop === "failed" ? 7 : 0;
         const shellID = "sh_background";
         const tool = {
@@ -942,6 +945,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               location: { directory: WORK },
               data: { output: "retained\n", cursor: 9, size: 9, truncated: false },
             }),
+            ...(stop === "poll"
+              ? [out("shell.output", "<any>"), reply("shell.output", "<hang>")]
+              : []),
             event("session.execution.succeeded", { sessionID: SESSION }),
             ...(stopped
               ? []
@@ -984,10 +990,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           { replayGate: gate },
         );
         const items: Array<import("@t3tools/contracts").OrchestrationV2TurnItem> = [];
+        const shellStarted = yield* Deferred.make<void>();
         const terminal = yield* runtime.events.pipe(
           Stream.tap((e) =>
-            Effect.sync(() => {
-              if (e.type === "turn_item.updated") items.push(e.turnItem);
+            Effect.gen(function* () {
+              if (e.type !== "turn_item.updated") return;
+              items.push(e.turnItem);
+              if (e.turnItem.type === "command_execution" && e.turnItem.output === "retained\n")
+                yield* Deferred.succeed(shellStarted, undefined);
             }),
           ),
           Stream.filter((e) => e.type === "turn.terminal"),
@@ -995,6 +1005,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           Effect.forkScoped,
         );
         yield* runtime.startTurn(withLineage(thread));
+        if (stop === "poll") {
+          yield* Deferred.await(shellStarted);
+          yield* TestClock.adjust("2 seconds");
+        }
         yield* Fiber.join(terminal);
         assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
         const settled = yield* runtime.events.pipe(
@@ -1031,156 +1045,173 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect.each(["shell", "job", "fallback", "descendant", "settled"] as const)(
-    "recovers only owned native shells using %s inventory",
-    (discovery) =>
-      Effect.gen(function* () {
-        const id = "sh_recovered";
-        const info = {
-          id,
-          command: "sleep 600",
-          status: discovery === "settled" ? "exited" : "running",
-          ...(discovery === "settled" ? { exit: 0 } : {}),
-          cwd: WORK,
-          shell: "/bin/sh",
-          file: "/remote/output",
-          metadata: { sessionID: SESSION },
-          time: { started: 1 },
-        };
-        const response = (data: unknown) => ({ location: { directory: WORK }, data });
-        const inventory: Array<ProviderReplayEntry> =
-          discovery === "shell"
-            ? []
-            : [
-                out("job.list", { sessionID: SESSION, kind: "shell", descendants: "true" }),
-                reply(
-                  "job.list",
-                  discovery === "fallback"
-                    ? { status: 404, body: {} }
-                    : {
-                        data: [
-                          {
-                            kind: "shell",
-                            shellID: id,
-                            sessionID: discovery === "descendant" ? "ses_descendant" : SESSION,
-                            command: info.command,
-                            status: discovery === "settled" ? "completed" : "running",
-                          },
-                        ],
-                      },
-                ),
-              ];
-        if (discovery === "shell" || discovery === "fallback")
-          inventory.push(
-            out("shell.list", "<any>"),
-            reply(
-              "shell.list",
-              response([info, { ...info, id: "sh_other", metadata: { sessionID: "ses_other" } }]),
-            ),
-          );
+  it.effect.each([
+    "shell",
+    "job",
+    "fallback",
+    "descendant",
+    "settled",
+    "exited",
+    "anchored",
+  ] as const)("recovers only owned native shells using %s inventory", (discovery) =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocator.IdAllocatorV2.pipe(Effect.provide(IdAllocator.layer));
+      const id = "sh_recovered";
+      const info = {
+        id,
+        command: "sleep 600",
+        status: discovery === "settled" ? "exited" : "running",
+        ...(discovery === "settled" ? { exit: 0 } : {}),
+        cwd: WORK,
+        shell: "/bin/sh",
+        file: "/remote/output",
+        metadata: { sessionID: SESSION },
+        time: { started: 1 },
+      };
+      const response = (data: unknown) => ({ location: { directory: WORK }, data });
+      const inventory: Array<ProviderReplayEntry> =
+        discovery === "shell"
+          ? []
+          : [
+              out("job.list", { sessionID: SESSION, kind: "shell", descendants: "true" }),
+              reply(
+                "job.list",
+                discovery === "fallback"
+                  ? { status: 404, body: {} }
+                  : {
+                      data: [
+                        {
+                          kind: "shell",
+                          shellID: id,
+                          sessionID: discovery === "descendant" ? "ses_descendant" : SESSION,
+                          command: info.command,
+                          status: discovery === "settled" ? "completed" : "running",
+                        },
+                      ],
+                    },
+              ),
+            ];
+      if (discovery === "shell" || discovery === "fallback")
         inventory.push(
-          out("shell.get", { id }),
-          reply("shell.get", response(info)),
-          out("shell.output", { id, cursor: "0" }),
+          out("shell.list", "<any>"),
           reply(
-            "shell.output",
-            response({ output: "retained", cursor: 8, size: 8, truncated: false }),
+            "shell.list",
+            response([info, { ...info, id: "sh_other", metadata: { sessionID: "ses_other" } }]),
           ),
         );
-        const { runtime, thread } = yield* resumed(
-          [
-            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-            promptAccepted,
-            event("session.execution.started", { sessionID: SESSION }),
-            event("session.execution.succeeded", { sessionID: SESSION }),
-            ...(discovery === "settled"
-              ? []
-              : [
-                  out("shell.output", { id, cursor: "8" }),
-                  reply(
-                    "shell.output",
-                    response({ output: "", cursor: 8, size: 8, truncated: false }),
-                  ),
-                  out("shell.remove", { id }),
-                  reply("shell.remove", null),
-                ]),
-          ],
-          {
-            version: discovery === "shell" ? "2.2.1" : "2.2.6",
-            shellRecovery: inventory,
-            external: true,
-          },
+      inventory.push(
+        out("shell.get", { id }),
+        reply("shell.get", response(info)),
+        out("shell.output", { id, cursor: "0" }),
+        reply(
+          "shell.output",
+          response({ output: "retained", cursor: 8, size: 8, truncated: false }),
+        ),
+      );
+      const gate = makeProviderReplayGate(["recovered-exit"]);
+      const { runtime, thread } = yield* resumed(
+        discovery === "settled"
+          ? []
+          : [
+              ...(discovery === "exited"
+                ? [event("shell.exited", { id, exit: 0, status: "exited" }, "recovered-exit")]
+                : []),
+              out("shell.output", { id, cursor: "8" }),
+              reply(
+                "shell.output",
+                response({
+                  output: discovery === "exited" ? " finished" : "",
+                  cursor: discovery === "exited" ? 17 : 8,
+                  size: discovery === "exited" ? 17 : 8,
+                  truncated: false,
+                }),
+              ),
+              ...(discovery === "exited"
+                ? []
+                : [out("shell.remove", { id }), reply("shell.remove", null)]),
+            ],
+        {
+          version: discovery === "shell" ? "2.2.1" : "2.2.6",
+          shellRecovery: inventory,
+          external: true,
+          ...(discovery === "anchored" ? { lastRunOrdinal: 7 } : {}),
+          replayGate: gate,
+        },
+      );
+      const items: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const shellEnded = yield* Deferred.make<void>();
+      const rosterEnded = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            if (
+              event.type === "provider_thread.updated" &&
+              event.sessionScoped === true &&
+              event.providerThread.pendingBackgroundTasks?.length === 0
+            )
+              yield* Deferred.succeed(rosterEnded, undefined);
+            if (event.type !== "turn_item.updated" || event.turnItem.type !== "command_execution")
+              return;
+            items.push(event);
+            if (event.turnItem.status !== "running") yield* Deferred.succeed(shellEnded, undefined);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      assert.deepEqual(
+        thread.pendingBackgroundTasks ?? [],
+        discovery === "settled" ? [] : [{ taskId: id, kind: "command", description: info.command }],
+      );
+      assert.equal(
+        yield* runtime.hasPendingBackgroundWorkForThread!(thread),
+        discovery !== "settled",
+      );
+      yield* runtime.stopTask!({ providerThread: thread, taskId: "sh_other" });
+      assert.equal(
+        yield* runtime.hasPendingBackgroundWorkForThread!(thread),
+        discovery !== "settled",
+      );
+      if (discovery === "exited") gate.release("recovered-exit");
+      else yield* runtime.stopTask!({ providerThread: thread, taskId: id });
+      yield* Deferred.await(shellEnded);
+      yield* Deferred.await(rosterEnded);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      const item = items;
+      const projected = item.at(0);
+      const stopped = item.at(-1);
+      if (stopped?.type === "turn_item.updated" && stopped.turnItem.type === "command_execution") {
+        assert.equal(
+          stopped.turnItem.status,
+          discovery === "settled" || discovery === "exited" ? "completed" : "interrupted",
         );
-        const items: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-        const rootEnded = yield* Deferred.make<void>();
-        const shellEnded = yield* Deferred.make<void>();
-        yield* runtime.events.pipe(
-          Stream.runForEach((event) =>
-            Effect.gen(function* () {
-              if (event.type === "turn.terminal") yield* Deferred.succeed(rootEnded, undefined);
-              if (event.type !== "turn_item.updated" || event.turnItem.type !== "command_execution")
-                return;
-              items.push(event);
-              if (event.turnItem.status !== "running")
-                yield* Deferred.succeed(shellEnded, undefined);
-            }),
+        assert.equal(
+          stopped.turnItem.output,
+          discovery === "exited" ? "retained finished" : "retained",
+        );
+        assert.equal(
+          stopped.turnItem.id,
+          projected?.type === "turn_item.updated" ? projected.turnItem.id : undefined,
+        );
+      }
+      assert.equal(projected?.type, "turn_item.updated");
+      if (projected?.type === "turn_item.updated") {
+        assert.isTrue(
+          item.every(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.runId ===
+                (discovery === "anchored"
+                  ? idAllocator.derive.run({ threadId, ordinal: 7 })
+                  : null),
           ),
-          Effect.forkScoped,
         );
-        assert.deepEqual(
-          thread.pendingBackgroundTasks ?? [],
-          discovery === "settled"
-            ? []
-            : [{ taskId: id, kind: "command", description: info.command }],
-        );
-        assert.equal(
-          yield* runtime.hasPendingBackgroundWorkForThread!(thread),
-          discovery !== "settled",
-        );
-        yield* runtime.startTurn(withLineage(thread));
-        yield* Deferred.await(rootEnded);
-        yield* runtime.stopTask!({ providerThread: thread, taskId: "sh_other" });
-        assert.equal(
-          yield* runtime.hasPendingBackgroundWorkForThread!(thread),
-          discovery !== "settled",
-        );
-        yield* runtime.stopTask!({ providerThread: thread, taskId: id });
-        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-        yield* Deferred.await(shellEnded);
-        const item = items;
-        const projected = item.at(0);
-        const stopped = item.at(-1);
-        if (stopped?.type === "turn_item.updated") {
-          assert.equal(
-            stopped.turnItem.status,
-            discovery === "settled" ? "completed" : "interrupted",
-          );
-          assert.equal(
-            stopped.turnItem.id,
-            projected?.type === "turn_item.updated" ? projected.turnItem.id : undefined,
-          );
-        }
-        assert.equal(projected?.type, "turn_item.updated");
-        if (projected?.type === "turn_item.updated") {
-          const input = turnInput(thread);
-          const identity = {
-            threadId: input.threadId,
-            runId: input.runId,
-            attemptId: input.attemptId,
-            providerThreadId: thread.id,
-          };
-          const routing = makeProviderEventRoutingState({ identity, providerTurnId: null });
-          assert.isTrue(
-            item.every((event) => routeProviderEvent(event, identity, routing)[0]),
-            "recovered output and terminal state must pass server event routing",
-          );
-          assert.deepInclude(projected.turnItem, {
-            type: "command_execution",
-            input: info.command,
-            output: "retained",
-          });
-        }
-      }).pipe(Effect.scoped),
+        assert.deepInclude(projected.turnItem, {
+          type: "command_execution",
+          input: info.command,
+          output: "retained",
+        });
+      }
+    }).pipe(Effect.scoped),
   );
 
   it.effect.each(["remove", "lookup", "output"] as const)(
