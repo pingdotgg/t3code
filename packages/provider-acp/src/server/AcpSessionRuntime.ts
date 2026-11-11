@@ -1619,7 +1619,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     Effect.uninterruptible(terminateOwnedProcessGroupImpl),
   );
   if (options.ownDetachedProcessGroup === true) {
-    const hostPlatform = yield* HostProcess.Platform;
     const forceTerminateOwnedProcessGroup =
       hostPlatform === "win32"
         ? terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(

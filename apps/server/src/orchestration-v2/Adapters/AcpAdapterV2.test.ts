@@ -568,17 +568,12 @@ it.live("does not detach an owned Windows ACP process and retains PID tree clean
     if (runtime.terminateProcessGroup === undefined)
       return yield* Effect.die("Missing tree cleanup");
     yield* runtime.terminateProcessGroup;
-    assert.deepEqual(terminated, [spawnedPid]);
     assert.isAbove(spawnedPid, 0);
+    assert.deepEqual(terminated, [spawnedPid]);
   }).pipe(
     Effect.provide(layerTest),
     Effect.scoped,
-    Effect.tap(() =>
-      Effect.sync(() => {
-        assert.isAbove(spawnedPid, 0);
-        assert.equal(finalizerPid, spawnedPid);
-      }),
-    ),
+    Effect.tap(() => Effect.sync(() => assert.equal(finalizerPid, spawnedPid))),
   );
 });
 
