@@ -420,6 +420,10 @@ export interface ShellSnapshotOptions {
    * subagent trees. The thread may be deleted: forks keep a deleted source's root.
    */
   readonly familyOf?: ThreadId;
+  /** Direct side-chat children of these parents (`lineage.sideChat` + `parentThreadId`). */
+  readonly sideChatChildrenOf?: ReadonlyArray<ThreadId>;
+  /** Restrict to threads with a pending non-auth runtime request. */
+  readonly pendingRuntimeRequestOnly?: boolean;
   readonly worktreePath?: string;
   readonly threadIds?: ReadonlyArray<ThreadId>;
 }
@@ -6205,6 +6209,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         projectId,
         unsettledOnly = false,
         familyOf,
+        sideChatChildrenOf,
+        pendingRuntimeRequestOnly = false,
         worktreePath,
         threadIds,
         listedOnly = false,
@@ -6416,6 +6422,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     FROM orchestration_v2_projection_threads member
                     WHERE member.thread_id = ${familyOf}
                   )`
+            }${
+              sideChatChildrenOf === undefined
+                ? sql``
+                : sql` AND json_extract(t.payload_json, '$.lineage.sideChat') = 1
+                    AND json_extract(t.payload_json, '$.lineage.parentThreadId') IN (
+                      SELECT value FROM json_each(${encodeIdList(sideChatChildrenOf)})
+                    )`
+            }${
+              pendingRuntimeRequestOnly
+                ? sql` AND EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+                    WHERE request.thread_id = t.thread_id
+                      AND request.status = 'pending'
+                      AND request.kind <> 'auth_refresh'
+                  )`
+                : sql``
             }${
               worktreePath === undefined
                 ? sql``
@@ -7139,8 +7161,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const { returnedRows, rollupRows, providerThreadRows, pendingTurnItemRows, sequenceRows } =
           yield* sql.withTransaction(
             Effect.gen(function* () {
-              // Rollup reads include unlisted children; returned rows stay listed (or the
-              // exact requested thread) so callers keep their existing snapshot shape.
+              // Returned rows stay listed (or the exact requested thread). Side-chat rollup
+              // loads only direct pending children by parentThreadId — never the whole family.
               const returnedRows =
                 threadId === undefined
                   ? yield* selectShellThreadRows(undefined, {
@@ -7148,19 +7170,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       listedOnly: true,
                     })
                   : yield* selectShellThreadRows(threadId);
-              const familyRows =
+              const rollupParentIds =
                 threadId === undefined
-                  ? null
-                  : yield* selectShellThreadRows(undefined, {
-                      familyOf: threadId,
-                      location: "active",
+                  ? returnedRows.map((row) => ThreadId.make(row.thread_id))
+                  : yield* Effect.gen(function* () {
+                      const row = returnedRows[0];
+                      if (row === undefined) return [] as Array<ThreadId>;
+                      const thread = yield* decodeThreadPayload(row.payload_json);
+                      return isListedThreadLineage(thread.lineage)
+                        ? [ThreadId.make(row.thread_id)]
+                        : [];
                     });
               const rollupRows =
-                threadId === undefined
-                  ? yield* selectShellThreadRows(undefined, { location: "active" })
-                  : familyRows !== null && familyRows.length > 0
-                    ? familyRows
-                    : returnedRows;
+                rollupParentIds.length === 0
+                  ? []
+                  : yield* selectShellThreadRows(undefined, {
+                      location: "active",
+                      sideChatChildrenOf: rollupParentIds,
+                      pendingRuntimeRequestOnly: true,
+                    });
               const ids = [
                 ...new Set(
                   [...returnedRows, ...rollupRows].map((row) => ThreadId.make(row.thread_id)),

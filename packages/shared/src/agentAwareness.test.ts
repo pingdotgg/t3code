@@ -31,6 +31,7 @@ describe("projectThreadAwarenessV2", () => {
         | "pendingRuntimeRequest"
         | "lineage"
         | "settledOverride"
+        | "updatedAt"
       >
     > = {},
   ) => ({
@@ -304,9 +305,68 @@ describe("projectThreadAwarenessV2", () => {
         createdAt: updatedAt,
       },
     });
-    expect(rollupListedThreadAwarenessPending([root, inputChat]).get(root.id)).toBe("user_input");
-    expect(rollupListedThreadAwarenessPending([root, approvalChat, inputChat]).get(root.id)).toBe(
-      "approval",
-    );
+    expect(rollupListedThreadAwarenessPending([root, inputChat]).get(root.id)).toMatchObject({
+      kind: "user_input",
+      updatedAt,
+    });
+    expect(
+      rollupListedThreadAwarenessPending([root, approvalChat, inputChat]).get(root.id),
+    ).toMatchObject({ kind: "approval", updatedAt });
+  });
+
+  it("advances parent updatedAt when a second side-chat wait arrives", () => {
+    const root = v2Thread({
+      id: "root" as ThreadId,
+      status: "completed",
+      updatedAt: DateTime.makeUnsafe("2026-05-22T11:00:00.000Z"),
+    });
+    const firstWait = DateTime.makeUnsafe("2026-05-22T12:00:00.000Z");
+    const secondWait = DateTime.makeUnsafe("2026-05-22T13:00:00.000Z");
+    const firstChat = v2Thread({
+      id: "side-first" as ThreadId,
+      status: "waiting",
+      updatedAt: firstWait,
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        relationshipToParent: "fork",
+        sideChat: true,
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("ask-first"),
+        kind: "user_input",
+        createdAt: firstWait,
+      },
+    });
+    const secondChat = v2Thread({
+      id: "side-second" as ThreadId,
+      status: "waiting",
+      updatedAt: secondWait,
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        relationshipToParent: "fork",
+        sideChat: true,
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("ask-second"),
+        kind: "user_input",
+        createdAt: secondWait,
+      },
+    });
+    const rolled = rollupListedThreadAwarenessPending([root, firstChat, secondChat]).get(root.id);
+    expect(rolled).toMatchObject({ kind: "user_input", updatedAt: secondWait });
+    expect(rolled).toBeDefined();
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: root,
+        descendantPendingRequest: rolled ?? null,
+      }),
+    ).toMatchObject({
+      phase: "waiting_for_input",
+      updatedAt: "2026-05-22T13:00:00.000Z",
+    });
   });
 });

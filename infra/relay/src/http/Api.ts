@@ -1228,6 +1228,9 @@ export const layerServerApi = HttpApiBuilder.group(
             threadId: params.threadId,
             state: payload.state,
             suppressAlerts: payload.suppressAlerts === true,
+            ...(payload.suppressAlertUserIds !== undefined
+              ? { suppressAlertUserIds: payload.suppressAlertUserIds }
+              : {}),
           });
         },
         mapErrorTags({

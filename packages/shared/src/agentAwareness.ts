@@ -20,7 +20,13 @@ export type AgentAwarenessPhase =
   | "failed"
   | "stale";
 
-export type AgentAwarenessDescendantPendingRequest = "approval" | "user_input";
+export type AgentAwarenessDescendantPendingRequestKind = "approval" | "user_input";
+
+export interface AgentAwarenessDescendantPendingRequest {
+  readonly kind: AgentAwarenessDescendantPendingRequestKind;
+  /** The side-chat child's update time; alert ids key on phase + time. */
+  readonly updatedAt: DateTime.Utc;
+}
 
 export interface SubagentRequestAwareness {
   readonly requestId: RuntimeRequestId;
@@ -96,9 +102,10 @@ export function projectThreadAwarenessV2(
   const { environmentId, project, thread } = input;
   if (!isListedThreadLineage(thread.lineage)) return null;
   const subagentRequest = input.pendingSubagentRequest ?? null;
+  const descendantPendingRequest = input.descendantPendingRequest ?? null;
   const phase = resolveThreadAwarenessPhaseV2(
     thread,
-    input.descendantPendingRequest ?? null,
+    descendantPendingRequest,
     subagentRequest !== null,
   );
   if (phase === null) {
@@ -119,6 +126,9 @@ export function projectThreadAwarenessV2(
       : phase === "failed"
         ? "The agent run failed."
         : undefined;
+  // A child's request leaves the parent's own timestamp alone. Alerts are
+  // keyed by phase and time, so a second wait needs the child's time.
+  const childUpdatedAt = subagentRequest?.updatedAt ?? descendantPendingRequest?.updatedAt ?? null;
   return {
     environmentId,
     threadId: thread.id,
@@ -128,25 +138,27 @@ export function projectThreadAwarenessV2(
     headline: headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
-    // A child's request leaves the parent's own timestamp alone. Alerts are
-    // keyed by phase and time, so a second wait needs the child's time.
     updatedAt: DateTime.formatIso(
-      subagentRequest === null
-        ? thread.updatedAt
-        : DateTime.max(thread.updatedAt, subagentRequest.updatedAt),
+      childUpdatedAt === null ? thread.updatedAt : DateTime.max(thread.updatedAt, childUpdatedAt),
     ),
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
   };
 }
 
-function descendantRequestKind(
-  thread: Pick<ProjectThreadAwarenessV2Input["thread"], "pendingRuntimeRequest" | "lineage">,
+function descendantRequest(
+  thread: Pick<
+    ProjectThreadAwarenessV2Input["thread"],
+    "pendingRuntimeRequest" | "lineage" | "updatedAt"
+  >,
 ): AgentAwarenessDescendantPendingRequest | null {
   const kind = thread.pendingRuntimeRequest?.kind;
   if (kind === undefined || kind === "auth_refresh") return null;
   // Subagent approvals use pendingSubagentRequest / relay tracking.
   if (thread.lineage.sideChat !== true) return null;
-  return kind === "user_input" ? "user_input" : "approval";
+  return {
+    kind: kind === "user_input" ? "user_input" : "approval",
+    updatedAt: thread.updatedAt,
+  };
 }
 
 /**
@@ -155,17 +167,25 @@ function descendantRequestKind(
  */
 export function rollupListedThreadAwarenessPending(
   threads: ReadonlyArray<
-    Pick<ProjectThreadAwarenessV2Input["thread"], "id" | "lineage" | "pendingRuntimeRequest">
+    Pick<
+      ProjectThreadAwarenessV2Input["thread"],
+      "id" | "lineage" | "pendingRuntimeRequest" | "updatedAt"
+    >
   >,
 ): ReadonlyMap<ThreadId, AgentAwarenessDescendantPendingRequest> {
   const requests = new Map<ThreadId, AgentAwarenessDescendantPendingRequest>();
   for (const child of threads) {
-    const request = descendantRequestKind(child);
+    const request = descendantRequest(child);
     if (request === null) continue;
     const parentId = child.lineage.parentThreadId;
-    if (parentId !== null && requests.get(parentId) !== "approval") {
-      requests.set(parentId, request);
-    }
+    if (parentId === null) continue;
+    const current = requests.get(parentId);
+    const stronger =
+      current === undefined ||
+      (request.kind === "approval" && current.kind !== "approval") ||
+      (request.kind === current.kind &&
+        DateTime.isGreaterThan(request.updatedAt, current.updatedAt));
+    if (stronger) requests.set(parentId, request);
   }
   return requests;
 }
@@ -182,8 +202,8 @@ function resolveThreadAwarenessPhaseV2(
   ) {
     return "waiting_for_approval";
   }
-  if (descendantPendingRequest === "user_input") return "waiting_for_input";
-  if (descendantPendingRequest === "approval" || childAwaitsApproval) {
+  if (descendantPendingRequest?.kind === "user_input") return "waiting_for_input";
+  if (descendantPendingRequest?.kind === "approval" || childAwaitsApproval) {
     return "waiting_for_approval";
   }
   switch (thread.activityRunStatus ?? thread.status) {

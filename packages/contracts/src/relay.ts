@@ -276,7 +276,11 @@ export const RelayAgentActivityPublishRequest = Schema.Struct({
   }),
   suppressAlerts: Schema.optionalKey(Schema.Boolean).annotate({
     description:
-      "When true, deliver Live Activity / ongoing card updates without audible banners. Used when a web or desktop client is actively using this environment.",
+      "When true, deliver Live Activity / ongoing card updates without audible banners for every delivery user. Prefer suppressAlertUserIds when suppression should be scoped per user.",
+  }),
+  suppressAlertUserIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)).annotate({
+    description:
+      "Cloud user ids that should receive Live Activity / ongoing card updates without audible banners. Other linked delivery users still get alerts.",
   }),
 }).annotate({ description: "Publishes a signed agent-awareness update from an environment." });
 export type RelayAgentActivityPublishRequest = typeof RelayAgentActivityPublishRequest.Type;

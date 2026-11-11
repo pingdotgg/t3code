@@ -42,6 +42,7 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import {
+  CLOUD_LINKED_USER_ID,
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -539,7 +540,14 @@ export const make = Effect.gen(function* () {
         reason: input.reason,
       });
 
-      const suppressAlerts = yield* backgroundPolicy.shouldSuppressMobileNotificationAlerts;
+      // Local auth sessions are not mapped to arbitrary paired browsers' cloud
+      // accounts; presence only suppresses the environment's linked CloudLink user.
+      const [presentSessionIds, linkedCloudUserId] = yield* Effect.all([
+        backgroundPolicy.presentWebOrDesktopSessionIds,
+        readSecretString(CLOUD_LINKED_USER_ID),
+      ]);
+      const suppressAlertUserIds =
+        presentSessionIds.length > 0 && linkedCloudUserId !== null ? [linkedCloudUserId] : [];
       const response = yield* relayClient.server
         .publishAgentActivity({
           params: {
@@ -549,7 +557,7 @@ export const make = Effect.gen(function* () {
           payload: {
             state: input.state,
             proof,
-            ...(suppressAlerts ? { suppressAlerts: true } : {}),
+            ...(suppressAlertUserIds.length > 0 ? { suppressAlertUserIds } : {}),
           },
         })
         .pipe(Effect.timeout("10 seconds"));

@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
+  AuthSessionId,
   EnvironmentId,
   EventId,
   MessageId,
@@ -33,6 +34,7 @@ import * as EnvironmentKeys from "../cloud/environmentKeys.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import {
+  CLOUD_LINKED_USER_ID,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
@@ -123,6 +125,7 @@ function waitingChild(
 const PublishPayload = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   suppressAlerts: Schema.optionalKey(Schema.Boolean),
+  suppressAlertUserIds: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 const decodePublishPayload = Schema.decodeUnknownSync(Schema.fromJsonString(PublishPayload));
 const unused = () => Effect.die("Unexpected test dependency call");
@@ -283,8 +286,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly authorization: string | null;
     readonly state: RelayAgentActivityState | null;
     readonly suppressAlerts: boolean;
+    readonly suppressAlertUserIds: ReadonlyArray<string>;
   }> = [];
-  const shouldSuppressMobileNotificationAlerts = yield* Ref.make(false);
+  const presentWebOrDesktopSessionIds = yield* Ref.make<ReadonlyArray<AuthSessionId>>([]);
   const fetch: typeof globalThis.fetch = Object.assign(
     (
       input: Parameters<typeof globalThis.fetch>[0],
@@ -302,6 +306,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
         authorization: new Headers(init?.headers).get("authorization"),
         state: payload.state,
         suppressAlerts: payload.suppressAlerts === true,
+        suppressAlertUserIds: payload.suppressAlertUserIds ?? [],
       });
       return Promise.resolve(
         options.respond?.(publications.length) ?? Response.json({ ok: true, deliveries: [] }),
@@ -345,7 +350,10 @@ const makeTestRelay = Effect.fnUntraced(function* (
         reportClientActivity: () => Effect.void,
         removeRpcClient: () => Effect.void,
         snapshot: Effect.die("unused background snapshot"),
-        shouldSuppressMobileNotificationAlerts: Ref.get(shouldSuppressMobileNotificationAlerts),
+        shouldSuppressMobileNotificationAlerts: Ref.get(presentWebOrDesktopSessionIds).pipe(
+          Effect.map((sessionIds) => sessionIds.length > 0),
+        ),
+        presentWebOrDesktopSessionIds: Ref.get(presentWebOrDesktopSessionIds),
         shouldRunScopeWork: () => Effect.succeed(false),
         shouldRunOpportunisticWork: Effect.succeed(false),
       }),
@@ -357,11 +365,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
     relay,
     secrets,
     secretReads,
+    presentWebOrDesktopSessionIds,
     currentShell,
     shellReads,
     publications,
     catchUp,
-    shouldSuppressMobileNotificationAlerts,
   };
 });
 
@@ -535,16 +543,17 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("asks relay to suppress banners while someone is actively present on web/desktop", () =>
+  it.effect("asks relay to suppress banners only for the linked CloudLink user while present", () =>
     Effect.gen(function* () {
-      const { relay, currentShell, publications, shouldSuppressMobileNotificationAlerts } =
+      const { relay, currentShell, publications, presentWebOrDesktopSessionIds, secrets } =
         yield* makeTestRelay();
       yield* relay.publishThread(THREAD_ID);
-      assert.equal(publications[0]?.suppressAlerts, false);
-      yield* Ref.set(shouldSuppressMobileNotificationAlerts, true);
+      assert.deepEqual(publications[0]?.suppressAlertUserIds, []);
+      yield* secrets.set(CLOUD_LINKED_USER_ID, new TextEncoder().encode("cloud-user-1"));
+      yield* Ref.set(presentWebOrDesktopSessionIds, [AuthSessionId.make("session-web")]);
       yield* Ref.set(currentShell, shell({ title: "Still working" }));
       yield* relay.publishThread(THREAD_ID);
-      assert.equal(publications.at(-1)?.suppressAlerts, true);
+      assert.deepEqual(publications.at(-1)?.suppressAlertUserIds, ["cloud-user-1"]);
       assert.equal(publications.at(-1)?.state?.threadTitle, "Still working");
     }),
   );
@@ -608,7 +617,10 @@ describe("AgentAwarenessRelay", () => {
       const sideChatId = ThreadId.make("relay-side-chat");
       const parentWithAttention = {
         ...shell({ status: "completed" }),
-        descendantPendingRequest: "user_input" as const,
+        descendantPendingRequest: {
+          kind: "user_input" as const,
+          updatedAt: DateTime.makeUnsafe(NOW),
+        },
       };
       const parentClear = shell({ status: "completed" });
       const sideChat = shell({
@@ -661,7 +673,10 @@ describe("AgentAwarenessRelay", () => {
         const sideChatId = ThreadId.make("relay-side-chat-untracked");
         const parentWithAttention = {
           ...shell({ status: "completed" }),
-          descendantPendingRequest: "user_input" as const,
+          descendantPendingRequest: {
+            kind: "user_input" as const,
+            updatedAt: DateTime.makeUnsafe(NOW),
+          },
         };
         const parentClear = shell({ status: "completed" });
         const sideChat = shell({

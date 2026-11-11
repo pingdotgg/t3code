@@ -103,6 +103,7 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
   const { tracer, statements, queryTransactions } = traceSqlStatements();
   const activity = yield* store.getAgentAwarenessSnapshot().pipe(Effect.withTracer(tracer));
   assert.equal(activity.snapshotSequence, snapshot.snapshotSequence);
+  // Shell snapshots omit side-chat rollup; clear it so this covers shape, not rollup.
   const awareness = (
     thread: Parameters<typeof projectThreadAwarenessV2>[0]["thread"] & {
       readonly descendantPendingRequest?: Parameters<
@@ -114,7 +115,7 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
       environmentId: EnvironmentId.make("test"),
       project: { title: "Test" },
       thread,
-      descendantPendingRequest: thread.descendantPendingRequest ?? null,
+      descendantPendingRequest: null,
     });
   assert.deepEqual(
     activity.threads.map(awareness),
@@ -6764,6 +6765,170 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
       }
     }),
+  );
+
+  it.effect("rolls pending side-chat requests into listed awareness without family scans", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const later = DateTime.add(now, { minutes: 5 });
+      const projectId = ProjectId.make("project:awareness-side-chat-rollup");
+      const parentId = ThreadId.make("thread:awareness-side-chat-rollup:parent");
+      const pendingSideChatId = ThreadId.make("thread:awareness-side-chat-rollup:pending");
+      const idleSideChatId = ThreadId.make("thread:awareness-side-chat-rollup:idle");
+      const rootNodeId = NodeId.make("node:awareness-side-chat-rollup");
+      const createListed = (threadId: ThreadId, updatedAt: DateTime.Utc) =>
+        projectionStore.apply({
+          id: EventId.make(`event:${threadId}:created`),
+          type: "thread.created",
+          threadId,
+          occurredAt: updatedAt,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId,
+            title: threadId,
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
+            forkedFrom: null,
+            createdAt: updatedAt,
+            updatedAt,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      const createSideChat = (threadId: ThreadId, updatedAt: DateTime.Utc) =>
+        projectionStore.apply({
+          id: EventId.make(`event:${threadId}:created`),
+          type: "thread.created",
+          threadId,
+          occurredAt: updatedAt,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId,
+            title: threadId,
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: parentId,
+              relationshipToParent: "fork",
+              rootThreadId: parentId,
+              sideChat: true,
+            },
+            forkedFrom: {
+              type: "run",
+              threadId: parentId,
+              runId: RunId.make("run:awareness-side-chat-rollup:parent"),
+            },
+            createdAt: updatedAt,
+            updatedAt,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+
+      yield* createListed(parentId, now);
+      yield* createSideChat(pendingSideChatId, later);
+      yield* createSideChat(idleSideChatId, now);
+      yield* projectionStore.apply({
+        id: EventId.make("event:awareness-side-chat-rollup:request"),
+        type: "runtime-request.updated",
+        threadId: pendingSideChatId,
+        nodeId: rootNodeId,
+        driver,
+        occurredAt: later,
+        payload: {
+          id: RuntimeRequestId.make("request:awareness-side-chat-rollup"),
+          nodeId: rootNodeId,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: later,
+          resolvedAt: null,
+        },
+      });
+
+      const { tracer, statements } = traceSqlStatements();
+      const full = yield* projectionStore
+        .getAgentAwarenessSnapshot()
+        .pipe(Effect.withTracer(tracer));
+      const parent = full.threads.find((thread) => thread.id === parentId);
+      assert.deepEqual(parent?.descendantPendingRequest, {
+        kind: "user_input",
+        updatedAt: later,
+      });
+      assert.isUndefined(
+        full.threads.find(
+          (thread) => thread.id === pendingSideChatId || thread.id === idleSideChatId,
+        ),
+      );
+      // Family scans join on rootThreadId via a member subquery; rollup uses json_each parents.
+      assert.isFalse(
+        statements.some((statement) =>
+          /FROM orchestration_v2_projection_threads member/.test(statement),
+        ),
+      );
+      assert.isTrue(statements.some((statement) => /json_each\(/.test(statement)));
+      assert.isTrue(
+        statements.some((statement) =>
+          /orchestration_v2_projection_runtime_requests/.test(statement),
+        ),
+      );
+
+      statements.length = 0;
+      const targetedParent = yield* projectionStore
+        .getAgentAwarenessSnapshot(parentId)
+        .pipe(Effect.withTracer(tracer));
+      assert.deepEqual(targetedParent.threads[0]?.descendantPendingRequest, {
+        kind: "user_input",
+        updatedAt: later,
+      });
+      assert.isFalse(
+        statements.some((statement) =>
+          /FROM orchestration_v2_projection_threads member/.test(statement),
+        ),
+      );
+      assert.isTrue(statements.some((statement) => /json_each\(/.test(statement)));
+
+      statements.length = 0;
+      const targetedSideChat = yield* projectionStore
+        .getAgentAwarenessSnapshot(pendingSideChatId)
+        .pipe(Effect.withTracer(tracer));
+      assert.equal(targetedSideChat.threads[0]?.id, pendingSideChatId);
+      assert.isUndefined(targetedSideChat.threads[0]?.descendantPendingRequest);
+      // Unlisted targets skip the rollup child query (no family member scan).
+      assert.isFalse(
+        statements.some((statement) =>
+          /FROM orchestration_v2_projection_threads member/.test(statement),
+        ),
+      );
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("counts history inherited by fork shells, but not by side chats", () =>

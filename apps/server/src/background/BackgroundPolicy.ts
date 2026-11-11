@@ -39,6 +39,8 @@ export class BackgroundPolicy extends Context.Service<
      * Live Activities may still update. Idle, lock, suspend, or stale interaction clears this.
      */
     readonly shouldSuppressMobileNotificationAlerts: Effect.Effect<boolean>;
+    /** Auth sessions with an actively present web/desktop lease on this machine. */
+    readonly presentWebOrDesktopSessionIds: Effect.Effect<ReadonlyArray<AuthSessionId>>;
     readonly shouldRunScopeWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     readonly shouldRunOpportunisticWork: Effect.Effect<boolean>;
   }
@@ -290,19 +292,25 @@ export const make = Effect.fn("background.policy.make")(function* () {
     (current) => current.shouldRunOpportunisticWork,
   );
 
-  const shouldSuppressMobileNotificationAlerts = Effect.gen(function* () {
+  const presentWebOrDesktopSessionIds = Effect.gen(function* () {
     const [leases, hostPower, now] = yield* Effect.all([
       Ref.get(leasesRef),
       hostPowerMonitor.snapshot,
       DateTime.now,
     ]);
+    const sessionIds = new Set<AuthSessionId>();
     for (const lease of leases.values()) {
       if (isActivelyPresentWebOrDesktopLease(lease, hostPower, now)) {
-        return true;
+        sessionIds.add(lease.sessionId);
       }
     }
-    return false;
+    return [...sessionIds];
   });
+
+  const shouldSuppressMobileNotificationAlerts = Effect.map(
+    presentWebOrDesktopSessionIds,
+    (sessionIds) => sessionIds.length > 0,
+  );
 
   yield* Effect.forever(
     Effect.sleep("15 seconds").pipe(
@@ -327,6 +335,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
     reportClientActivity,
     removeRpcClient,
     shouldSuppressMobileNotificationAlerts,
+    presentWebOrDesktopSessionIds,
     snapshot,
     shouldRunScopeWork,
     shouldRunOpportunisticWork,

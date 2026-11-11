@@ -40,6 +40,7 @@ export class AgentActivityPublisher extends Context.Service<
       readonly threadId: string;
       readonly state: RelayAgentActivityState | null;
       readonly suppressAlerts?: boolean;
+      readonly suppressAlertUserIds?: ReadonlyArray<string>;
     }) => Effect.Effect<RelayPublishResponse, AgentActivityPublishError>;
     readonly replayForLiveActivityRegistration: (input: {
       readonly userId: string;
@@ -234,9 +235,11 @@ const make = Effect.gen(function* () {
         environmentPublicKey: input.environmentPublicKey,
       });
       const now = yield* DateTime.now;
-      const suppressAlerts = input.suppressAlerts === true;
+      const suppressAlertUserIds = new Set(input.suppressAlertUserIds ?? []);
+      const suppressAllAlerts = input.suppressAlerts === true;
       yield* Effect.annotateCurrentSpan({
-        "relay.agent_activity.suppress_alerts": suppressAlerts,
+        "relay.agent_activity.suppress_alerts": suppressAllAlerts,
+        "relay.agent_activity.suppress_alert_user_count": suppressAlertUserIds.size,
       });
       const deliveriesByUser = yield* Effect.forEach(
         deliveryUsers,
@@ -245,7 +248,7 @@ const make = Effect.gen(function* () {
             deliveryUser,
             state: input.state,
             nowMs: now.epochMilliseconds,
-            suppressAlerts,
+            suppressAlerts: suppressAllAlerts || suppressAlertUserIds.has(deliveryUser.userId),
           }),
         { concurrency: 4 },
       );
