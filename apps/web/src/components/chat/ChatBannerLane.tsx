@@ -25,6 +25,7 @@ import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 export function useChatBannerLane(input: {
   readonly environmentId: EnvironmentId;
   readonly activeProviderStatus: ServerProvider | null;
+  readonly selectedModel: string | undefined;
   readonly providerStatuses: ReadonlyArray<ServerProvider>;
   readonly usageLimitSources: UsageLimitSourceSnapshots;
   readonly canSwitchProvider: boolean;
@@ -72,6 +73,10 @@ export function useChatBannerLane(input: {
     providerStatuses,
     usageLimitSources,
     environmentId,
+    input.selectedModel ??
+      (activeProviderStatus
+        ? getDefaultServerModel([activeProviderStatus], activeProviderStatus.driver)
+        : undefined),
   );
   const lowLimitVisible = lowLimitSignal !== null && !isLowLimitDismissed(lowLimitSignal.key);
   const lowLimitSwitchTarget =
