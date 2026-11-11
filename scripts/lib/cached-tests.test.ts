@@ -30,6 +30,13 @@ describe("cachedTestTasks", () => {
       );
     }
   });
+  it("matches mixed-case file and directory filters when case is ignored", () => {
+    const file = "apps/server/src/auth/Utils.test.ts";
+    for (const filter of ["Apps/Server/src/auth/utils.test.ts", "Apps/Server"]) {
+      expect(matchesTestPath(file, [filter], true)).toBe(true);
+      expect(matchesTestPath(file, [filter], false)).toBe(false);
+    }
+  });
   it("keeps a file's cache task stable when unrelated tests are added", () => {
     const first = cachedTestTasks(JSON.stringify({ files: ["src/b.test.ts"], groupSize: 1 }));
     const second = cachedTestTasks(
