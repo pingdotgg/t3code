@@ -58,6 +58,7 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
+import { outputInstructions } from "./runOutput.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -933,7 +934,7 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
+      const messageText = projectComposerContextForProvider({
         text: providerMessage.text,
         records: providerMessage.context?.records ?? [],
       });
@@ -943,6 +944,11 @@ export const layer: Layer.Layer<
         session.driver === "claudeAgent" ||
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
       const goalCommand = goalDriver && parseGoalCommand(providerMessage) !== null;
+      // Part of the user text, so every way a turn starts carries it, after the user's own words.
+      const userText =
+        run.outputSchema === undefined || goalCommand
+          ? messageText
+          : `${messageText}\n\n${outputInstructions(run.outputSchema)}`;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,
