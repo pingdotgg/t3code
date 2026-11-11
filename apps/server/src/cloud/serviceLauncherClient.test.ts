@@ -49,34 +49,33 @@ const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
     Effect.provideService(HostProcess.Environment, host.env),
   );
 
-it.effect("waits for the launcher to durably commit the trial update ID", () =>
-  Effect.gen(function* () {
-    const pending = {
-      id: "update-1",
-      fromVersion: "1.0.0",
-      targetVersion: "1.1.0",
-      dbPath: "/tmp/state.sqlite",
-      status: "pending" as const,
-    };
-    const host = new FakeLauncherProcess({
-      protocol: SERVICE_LAUNCHER_PROTOCOL,
-      childVersion: "1.1.0",
-      update: pending,
-    });
-    const client = yield* makeClient(host, "1.1.0");
-    const prepared = yield* Effect.forkChild(client.prepareTrial, { startImmediately: true });
-    yield* Effect.yieldNow;
-    expect(host.sent).toEqual([{ type: "prepared", updateId: "update-1" }]);
+// regression: #34502 a remote update never replaces the launcher, so an installed one stays protocol 3
+it.effect.each([3, SERVICE_LAUNCHER_PROTOCOL])(
+  "waits for a protocol-%i launcher to durably commit the trial update ID",
+  (protocol) =>
+    Effect.gen(function* () {
+      const pending = {
+        id: "update-1",
+        fromVersion: "1.0.0",
+        targetVersion: "1.1.0",
+        dbPath: "/tmp/state.sqlite",
+        status: "pending" as const,
+      };
+      const host = new FakeLauncherProcess({ protocol, childVersion: "1.1.0", update: pending });
+      const client = yield* makeClient(host, "1.1.0");
+      const prepared = yield* Effect.forkChild(client.prepareTrial, { startImmediately: true });
+      yield* Effect.yieldNow;
+      expect(host.sent).toEqual([{ type: "prepared", updateId: "update-1" }]);
 
-    const committed = {
-      id: pending.id,
-      fromVersion: pending.fromVersion,
-      targetVersion: pending.targetVersion,
-      status: "committed" as const,
-    };
-    host.emit({ type: "committed", updateId: committed.id });
-    expect(yield* Fiber.join(prepared)).toEqual(committed);
-  }),
+      const committed = {
+        id: pending.id,
+        fromVersion: pending.fromVersion,
+        targetVersion: pending.targetVersion,
+        status: "committed" as const,
+      };
+      host.emit({ type: "committed", updateId: committed.id });
+      expect(yield* Fiber.join(prepared)).toEqual(committed);
+    }),
 );
 
 it.effect("returns the launcher-generated ID only after update acceptance", () =>
