@@ -528,6 +528,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             }
             return {
               account: { account, requiresOpenaiAuth: true },
+              nativeUsage: !skipNativeUsage && account?.type === "chatgpt",
               ...(!skipNativeUsage && account?.type === "chatgpt"
                 ? {
                     rateLimits: {

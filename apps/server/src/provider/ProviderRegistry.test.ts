@@ -368,6 +368,7 @@ it.layer(
               assert.strictEqual(input.skipNativeUsage, skipUsage ? true : undefined);
               return Effect.succeed(
                 makeCodexProbeSnapshot({
+                  nativeUsage: !skipUsage,
                   skills: [
                     {
                       name: "github:gh-fix-ci",
