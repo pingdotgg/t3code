@@ -177,6 +177,19 @@ export function buildMenuItems(
   ];
 }
 
+export function hasUsableGitMenuContent(input: {
+  readonly menuItems: readonly GitActionMenuItem[];
+  readonly canWriteSourceControl: boolean;
+  readonly canPublishRepository: boolean;
+  readonly hasNotice: boolean;
+}): boolean {
+  return (
+    input.canPublishRepository ||
+    input.hasNotice ||
+    (input.canWriteSourceControl && input.menuItems.some((item) => !item.disabled))
+  );
+}
+
 export function resolveQuickAction(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,
