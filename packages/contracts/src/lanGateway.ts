@@ -23,6 +23,8 @@ export type LanGatewayPeerSummary = typeof LanGatewayPeerSummary.Type;
 export const LanGatewayAddInput = Schema.Struct({
   /** Private, loopback, or Tailscale base URL of a peer environment. */
   url: TrimmedNonEmptyString,
+  /** Fails with `environment_mismatch` when `url` answers as a different environment. */
+  expectedEnvironmentId: Schema.optionalKey(EnvironmentId),
 });
 export type LanGatewayAddInput = typeof LanGatewayAddInput.Type;
 
@@ -42,6 +44,7 @@ export class LanGatewayError extends Schema.TaggedError<LanGatewayError>()("LanG
   reason: Schema.Literals([
     "unreachable",
     "not_a_t3_environment",
+    "environment_mismatch",
     "not_private",
     "self",
     "storage",

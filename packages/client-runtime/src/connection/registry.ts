@@ -402,9 +402,10 @@ export const make = Effect.gen(function* () {
     });
     const addSucceeded = new Set<EnvironmentId>();
     for (const peer of plan.add) {
-      const outcome = yield* client[WS_METHODS.lanGatewayAdd]({ url: peer.url }).pipe(
-        Effect.result,
-      );
+      const outcome = yield* client[WS_METHODS.lanGatewayAdd]({
+        url: peer.url,
+        expectedEnvironmentId: peer.environmentId,
+      }).pipe(Effect.result);
       if (Result.isSuccess(outcome)) {
         addSucceeded.add(peer.environmentId);
         continue;

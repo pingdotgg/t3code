@@ -72,7 +72,18 @@ it.effect("rejects a public hostname on add", () =>
 it.effect("adds a private peer after probing its descriptor", () =>
   Effect.gen(function* () {
     const gateway = yield* LanGateway.LanGateway;
-    const peer = yield* gateway.add({ url: "http://192.168.1.20:13773" });
+    const mismatch = yield* gateway
+      .add({
+        url: "http://192.168.1.20:13773",
+        expectedEnvironmentId: EnvironmentId.make("env_other"),
+      })
+      .pipe(Effect.flip);
+    expect(mismatch.reason).toBe("environment_mismatch");
+    expect(yield* gateway.list).toEqual([]);
+    const peer = yield* gateway.add({
+      url: "http://192.168.1.20:13773",
+      expectedEnvironmentId: EnvironmentId.make("env_peer"),
+    });
     expect(peer).toEqual({
       environmentId: EnvironmentId.make("env_peer"),
       label: "Peer",

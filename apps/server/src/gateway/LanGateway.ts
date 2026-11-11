@@ -182,6 +182,15 @@ const make = Effect.gen(function* () {
       });
     }
     const peer = descriptor.value;
+    if (
+      input.expectedEnvironmentId !== undefined &&
+      peer.environmentId !== input.expectedEnvironmentId
+    ) {
+      return yield* new LanGatewayError({
+        reason: "environment_mismatch",
+        message: `${origin} answered as a different T3 Code environment.`,
+      });
+    }
     const self = yield* environment.getDescriptor;
     if (peer.environmentId === self.environmentId) {
       return yield* new LanGatewayError({
