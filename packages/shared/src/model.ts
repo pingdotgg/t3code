@@ -339,20 +339,27 @@ export function buildProviderOptionSelectionsFromDescriptors(
   return nextSelections.length > 0 ? nextSelections : undefined;
 }
 
-/** Preserve secondary model choices only when explicitly picked. */
+/**
+ * Preserve secondary model choices only when explicitly picked. Saved options
+ * no descriptor lists stay as saved; dispatch decides whether they are sent.
+ */
 export function buildProviderOptionSelectionsAfterChange(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
   changedId: string,
   savedSelections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
 ): Array<ProviderOptionSelection> | undefined {
   const pickedIds = new Set([changedId, ...(savedSelections ?? []).map(({ id }) => id)]);
-  return buildProviderOptionSelectionsFromDescriptors(
-    descriptors.filter(
-      (descriptor) =>
-        descriptor.type !== "select" ||
-        descriptor.selectsModel !== true ||
-        pickedIds.has(descriptor.id),
+  return withUndescribedSelections(
+    descriptors,
+    buildProviderOptionSelectionsFromDescriptors(
+      descriptors.filter(
+        (descriptor) =>
+          descriptor.type !== "select" ||
+          descriptor.selectsModel !== true ||
+          pickedIds.has(descriptor.id),
+      ),
     ),
+    savedSelections,
   );
 }
 

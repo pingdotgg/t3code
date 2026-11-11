@@ -158,6 +158,13 @@ describe("descriptor helpers", () => {
       { id: "mode", value: "act" },
       autoApprove,
     ]);
+    // A model that has not run borrows tuning options only; its saved model survives an edit.
+    const borrowed = createModelCapabilities({ optionDescriptors: tuning });
+    expect(changed([...saved, autoApprove], "auto_approve", saved, borrowed)).toEqual([
+      ...saved,
+      { id: "mode", value: "act" },
+      autoApprove,
+    ]);
   });
 
   it("dispatches an old Ultracode effort as Extra High with the Ultracode toggle", () => {
