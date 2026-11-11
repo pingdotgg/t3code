@@ -352,7 +352,12 @@ export const make = Effect.gen(function* () {
               continue;
             if (input.state === "all" || normalized.state === input.state) results.push(normalized);
           }
-          if (items.length === 0) break;
+          // Older Forgejo ignores `head`; reading on would scan every pull request in the repository.
+          if (
+            items.length === 0 ||
+            items.some((item) => item.head.ref !== branch && item.head.label !== branch)
+          )
+            break;
         }
         return results.slice(0, limit);
       },
