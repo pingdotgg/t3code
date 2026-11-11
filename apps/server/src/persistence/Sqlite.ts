@@ -5,6 +5,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { T3_LEARN_COMMAND, T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3LearnIdentity";
 
 import { hasPendingMigrations, runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
@@ -18,7 +19,7 @@ export class ServerOwnsDatabaseError extends Schema.TaggedError<ServerOwnsDataba
   { stateDir: Schema.String },
 ) {
   override get message(): string {
-    return `Another T3 Code process, usually a running server, owns ${this.stateDir}, and this CLI would change its database schema. Use the \`t3\` that matches the running server, or stop that server, then retry. The database was not changed.`;
+    return `Another ${T3_LEARN_PRODUCT_NAME} process, usually a running server, owns ${this.stateDir}, and this CLI would change its database schema. Use the \`${T3_LEARN_COMMAND}\` that matches the running server, or stop that server, then retry. The database was not changed.`;
   }
 }
 

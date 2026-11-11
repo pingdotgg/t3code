@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../../test/render";
 import type { TimelineEntry } from "../../session-logic";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
+import { APP_BASE_NAME } from "~/branding";
 
 const run = RunId.make("run-1");
 const at = "2026-01-01T00:00:00.000Z";
@@ -129,9 +130,9 @@ describe("ThreadActivityAnnouncer", () => {
 
     expect(heard).toEqual([
       ["Working", ""],
-      ["Working", "T3 Code: Checking the repo"],
-      ["Needs approval", "T3 Code: Checking the repo"],
-      ["Needs approval", "T3 Code: Checking the repo"],
+      ["Working", `${APP_BASE_NAME}: Checking the repo`],
+      ["Needs approval", `${APP_BASE_NAME}: Checking the repo`],
+      ["Needs approval", `${APP_BASE_NAME}: Checking the repo`],
       ["Needs approval", "Running rg"],
     ]);
   });
@@ -151,7 +152,9 @@ describe("ThreadActivityAnnouncer", () => {
       }),
     );
 
-    await expect.element(detail).toHaveTextContent("T3 Code: Checking the repo. Needs approval");
+    await expect
+      .element(detail)
+      .toHaveTextContent(`${APP_BASE_NAME}: Checking the repo. Needs approval`);
     await expect.element(status).toHaveTextContent("Working");
   });
 });
