@@ -12,9 +12,7 @@ export type Plugin<Api = never> = WithApi<
   Api
 >;
 
-type WithApi<T, Api> = [Api] extends [never]
-  ? Simplify<T>
-  : Simplify<T & { readonly api: Api }>;
+type WithApi<T, Api> = [Api] extends [never] ? Simplify<T> : Simplify<T & { readonly api: Api }>;
 
 export interface PluginConfig {
   readonly services?: Array<WorkerdConfig.Service>;
@@ -32,9 +30,7 @@ export interface PluginConfig {
    * Resources and tasks acquired here are released before the next process
    * starts. Replay any state held only inside workerd from this hook.
    */
-  readonly start?: (
-    ports: Workerd.WorkerdPorts,
-  ) => Effect.Effect<void, RuntimeError, Scope.Scope>;
+  readonly start?: (ports: Workerd.WorkerdPorts) => Effect.Effect<void, RuntimeError, Scope.Scope>;
 }
 
 export interface Middleware {
@@ -48,8 +44,7 @@ export type PluginBuilder<Api = never> =
   | Plugin<Api>
   | Effect.Effect<Plugin<Api>, RuntimeError, PluginContext>;
 
-export type PluginIdentifier<T extends string = string> =
-  `cloudflare-runtime/plugin/${T}`;
+export type PluginIdentifier<T extends string = string> = `cloudflare-runtime/plugin/${T}`;
 
 /**
  * When true, simulator services backed by Durable Objects (KV, R2, ...)
@@ -88,5 +83,4 @@ export const use = <Self, Identifier extends PluginIdentifier, Api, A, E, R>(
 export const useSync = <Self, Identifier extends PluginIdentifier, Api, A>(
   plugin: PluginService<Self, Identifier, Api>,
   f: (plugin: Plugin<Api>) => A,
-): ConfigHook<A, never, Self> =>
-  use(plugin, (plugin) => Effect.succeed(f(plugin)));
+): ConfigHook<A, never, Self> => use(plugin, (plugin) => Effect.succeed(f(plugin)));

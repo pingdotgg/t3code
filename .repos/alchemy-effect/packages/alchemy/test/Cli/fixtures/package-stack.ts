@@ -16,9 +16,7 @@ export default Alchemy.Stack(
           nodeEnv: process.env.NODE_ENV,
           home: process.env.HOME,
           credentialVariables: Object.keys(process.env).filter((name) =>
-            /TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY|ACCESS_KEY|AWS_PROFILE/i.test(
-              name,
-            ),
+            /TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY|ACCESS_KEY|AWS_PROFILE/i.test(name),
           ),
           cwd: process.cwd(),
           entry: process.argv[1],

@@ -80,7 +80,8 @@ export const readThemeFileGuarded = (filePath: string, maxBytes: number): string
       if (read <= 0) break;
       offset += read;
     }
-    return contents.subarray(0, offset).toString("utf8");
+    // Unlike Buffer#toString, TextDecoder drops a UTF-8 BOM, which JSON.parse rejects.
+    return new TextDecoder().decode(contents.subarray(0, offset));
   } catch {
     return null;
   } finally {

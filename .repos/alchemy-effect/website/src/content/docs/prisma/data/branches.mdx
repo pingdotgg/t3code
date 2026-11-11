@@ -17,7 +17,7 @@ Promoting a preview branch changes `isDefault`; it does not change
 that branch's role.
 
 ```typescript
-import * as Prisma from "alchemy/Prisma";
+import * as Prisma from "@alchemy.run/prisma";
 
 const branch = yield* Prisma.Branch("preview", { project });
 ```

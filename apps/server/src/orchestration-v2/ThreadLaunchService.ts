@@ -166,6 +166,19 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
   }
 }
 
+export class ThreadLaunchNotRepositoryError extends Schema.TaggedError<ThreadLaunchNotRepositoryError>()(
+  "ThreadLaunchNotRepositoryError",
+  {
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    workspaceRoot: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Project "${this.projectTitle}" (${this.workspaceRoot}) is not a Git repository.`;
+  }
+}
+
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
@@ -178,7 +191,7 @@ export class ThreadLaunchService extends Context.Service<
     /** Check before creation for early errors; launch otherwise accepts and reports base failures inside the thread. */
     readonly checkWorktreeBase: (
       input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
-    ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
+    ) => Effect.Effect<void, ThreadLaunchBaseRefError | ThreadLaunchNotRepositoryError>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -263,13 +276,27 @@ const make = Effect.gen(function* () {
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
     const strategy = input.workspaceStrategy;
+    // launch() turns a Scratch worktree request into a root launch.
+    if (strategy.type !== "worktree" || (yield* managedFolders.isScratchProject(input.projectId)))
+      return;
+    const project = Option.getOrUndefined(
+      yield* projects.getById(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
+    );
+    if (project === undefined) return;
+    const cwd = project.workspaceRoot;
+    const repositoryRoot = yield* git
+      .repositoryRoot(cwd)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (repositoryRoot === null)
+      return yield* new ThreadLaunchNotRepositoryError({
+        projectId: project.id,
+        projectTitle: project.title,
+        workspaceRoot: cwd,
+      });
     // `:/text` is a commit search, which cannot be asked for a commit type.
-    if (strategy.type !== "worktree" || strategy.baseRef.startsWith(":")) return;
+    if (strategy.baseRef.startsWith(":")) return;
     const { baseRef } = strategy;
     const unresolved = yield* Effect.gen(function* () {
-      const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
-      if (project === undefined) return undefined;
-      const cwd = project.workspaceRoot;
       // `git worktree add` reads `-` as the previous checkout.
       if (yield* git.hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef }))
         return undefined;
@@ -310,6 +337,7 @@ const make = Effect.gen(function* () {
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
     let createdWorktreePath: string | null = null;
+    let createdBranch: string | null = null;
     let setupTerminalId: string | null = null;
     let workspaceRecorded = false;
     let runReleased = false;
@@ -360,6 +388,7 @@ const make = Effect.gen(function* () {
               attachments: message.attachments,
               ...(message.context ? { context: message.context } : {}),
               modelSelection,
+              projectId: input.projectId,
             })
             .pipe(
               Effect.map((result) => ({
@@ -448,6 +477,7 @@ const make = Effect.gen(function* () {
                 onWorktreeClaimed: (path) =>
                   Effect.sync(() => {
                     createdWorktreePath = path;
+                    createdBranch = branch;
                   }),
                 onCheckoutProgress: (progress) =>
                   setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
@@ -458,6 +488,7 @@ const make = Effect.gen(function* () {
         worktreePath = worktree.worktree.path;
         branch = worktree.worktree.refName;
         createdWorktreePath = worktreePath;
+        createdBranch = branch;
         yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
         yield* setupTracker.stageStatus(threadId, "checkout", "done");
       }
@@ -487,12 +518,22 @@ const make = Effect.gen(function* () {
         const worktreeCwd = worktreePath;
         branchRename = yield* generateBranchNameFor(worktreeCwd, initialMessage).pipe(
           Effect.flatMap(({ branch: newBranch, exactName }) =>
-            git.renameBranch({
-              cwd: worktreeCwd,
-              oldBranch,
-              newBranch,
-              ...(exactName ? { exactName: true } : {}),
-            }),
+            git
+              .renameBranch({
+                cwd: worktreeCwd,
+                oldBranch,
+                newBranch,
+                ...(exactName ? { exactName: true } : {}),
+              })
+              .pipe(
+                // A cancel must see the renamed branch, or its cleanup deletes the old name.
+                Effect.tap((renamed) =>
+                  Effect.sync(() => {
+                    createdBranch = renamed.branch;
+                  }),
+                ),
+                Effect.uninterruptible,
+              ),
           ),
           Effect.flatMap((renamed) =>
             Effect.gen(function* () {
@@ -680,10 +721,22 @@ const make = Effect.gen(function* () {
           ) {
             if (branchRename !== null) yield* Fiber.interrupt(branchRename);
             const removedPath = createdWorktreePath;
+            const removedBranch = createdBranch;
             // Forget worktrees only after removal succeeds; failed removals must not reuse partially written checkouts.
             yield* git
               .removeWorktree({ cwd: project.workspaceRoot, path: removedPath, force: true })
               .pipe(
+                Effect.andThen(
+                  removedBranch === null
+                    ? Effect.void
+                    : git
+                        .deleteLocalBranch({
+                          cwd: project.workspaceRoot,
+                          refName: removedBranch,
+                          force: true,
+                        })
+                        .pipe(Effect.ignoreCause({ log: true })),
+                ),
                 Effect.andThen(
                   threads
                     .dispatch({
