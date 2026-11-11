@@ -510,14 +510,15 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
           yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined));
     if (target === undefined) continue;
     // A runtime's own entry, on the macOS service PATH or recorded by an earlier prune, is no launcher.
-    // It is named as `versions/<version>/t3` and is not itself a link.
-    const parent = path.dirname(path.dirname(path.resolve(launcher)));
-    if (platform !== "win32" && (parent === versionsDir || parent === realVersionsDir)) {
-      const unlinked = yield* fs.realPath(path.dirname(launcher)).pipe(
-        Effect.map((directory) => path.join(directory, path.basename(launcher))),
-        Effect.orElseSucceed(() => undefined),
-      );
-      if (unlinked === target) continue;
+    // It is named as `versions/<version>/t3`, and neither it nor its directory is a link.
+    const entryDir = path.dirname(path.resolve(launcher));
+    const parent = path.dirname(entryDir);
+    if (
+      platform !== "win32" &&
+      (parent === versionsDir || parent === realVersionsDir) &&
+      target === path.join(realVersionsDir, path.basename(entryDir), path.basename(launcher))
+    ) {
+      continue;
     }
     targets.push(target);
     if (inVersionsDir(target) && !recorded.includes(launcher) && !unrecorded.includes(launcher)) {

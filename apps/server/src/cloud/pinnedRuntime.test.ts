@@ -565,6 +565,10 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
   it.effect.each([
     { name: "a launcher inside the versions directory", via: "bin" as const },
     { name: "a PATH directory linked to its version directory", via: "linked dir" as const },
+    {
+      name: "a PATH directory in the versions directory linked to its version directory",
+      via: "linked versions dir" as const,
+    },
   ])("keeps a runtime $name names", ({ via }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -581,7 +585,7 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
           `${path.join(binDir, "t3")}\n`,
         );
       } else {
-        const linkedDir = path.join(baseDir, "current");
+        const linkedDir = path.join(via === "linked dir" ? baseDir : versionsDir, "current");
         yield* fs.symlink(path.join(versionsDir, "1.0.0"), linkedDir);
         pathDirs = `${linkedDir}:${pathDirs}`;
       }
