@@ -111,6 +111,7 @@ import {
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import { MAX_SPLIT_CHATS, useSplitChatStore } from "../splitChatStore";
 import { resolveProjectExpanded, useUiStateStore } from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
@@ -1774,7 +1775,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const threads = contextDragThreads();
     const threadRef = parseScopedThreadKey(contextDragKeyRef.current ?? "");
     const title = (threadRef && readThreadShell(threadRef)?.title.trim()) || "Thread";
-    moveThreadContextDragGhost(point, { title, count: threads.length });
+    moveThreadContextDragGhost(point, { title, count: threads.length, threads });
     return true;
   };
   const dropThreadContextDrag = (point: { x: number; y: number }) => {
@@ -2654,6 +2655,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              showOpenToSide: true,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2682,6 +2684,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "open-to-side": {
+            // With no chat open there is no workspace to split, so open the thread itself.
+            if (routeTarget === null) {
+              void navigateToThread(threadRef);
+              return;
+            }
+            const opened = useSplitChatStore
+              .getState()
+              .openToSide({ kind: "server", threadRef }, routeTarget);
+            if (!opened) {
+              toastManager.add({
+                type: "info",
+                title: "Split chat limit reached",
+                description: `You can open up to ${MAX_SPLIT_CHATS} chats simultaneously.`,
+              });
+            }
+            return;
+          }
           case "filter-by-project":
             if (threadProjectGroup) {
               setProjectScopeKeys(

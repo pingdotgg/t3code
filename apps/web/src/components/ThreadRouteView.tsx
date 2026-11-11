@@ -20,6 +20,7 @@ import {
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentShellStatus } from "../state/shell";
 import { environmentThreadShells, threadFamilies, useEnvironmentThread } from "../state/threads";
+import { cn } from "../lib/utils";
 import {
   buildThreadRouteParams,
   isThreadRouteSnapshotAuthoritative,
@@ -54,9 +55,17 @@ function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean
 export function ThreadRouteView({
   target,
   background = false,
+  asPane = false,
+  ownsRoute = true,
+  className,
+  onTargetUnavailable,
 }: {
   target: ThreadRouteTarget;
   background?: boolean;
+  asPane?: boolean;
+  ownsRoute?: boolean;
+  className?: string;
+  onTargetUnavailable?: (() => void) | undefined;
 }) {
   const navigate = useNavigate();
   const draftId = target.kind === "draft" ? target.draftId : null;
@@ -148,11 +157,19 @@ export function ThreadRouteView({
     if (renderState === "missing") {
       const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
       clearPendingFileDropsForThread(target.threadRef);
-      if (environmentHasAnyThreads && !background) {
+      if (environmentHasAnyThreads && !background && !onTargetUnavailable) {
         void navigate({ to: "/", replace: true });
       }
     }
-  }, [background, bootstrapComplete, environmentHasAnyThreads, navigate, renderState, target]);
+  }, [
+    background,
+    bootstrapComplete,
+    environmentHasAnyThreads,
+    navigate,
+    onTargetUnavailable,
+    renderState,
+    target,
+  ]);
 
   let view: React.ReactNode = null;
   let redirect: React.ReactNode = null;
@@ -224,9 +241,32 @@ export function ThreadRouteView({
     );
   }
 
+  const unavailable =
+    (view === null && redirect !== null) ||
+    (target.kind === "server" && bootstrapComplete && renderState === "missing");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- removes a split pane after its thread is confirmed missing or its draft is no longer available
+  useEffect(() => {
+    if (!background && unavailable) onTargetUnavailable?.();
+  }, [background, unavailable, onTargetUnavailable]);
+
+  if (asPane) {
+    return (
+      <div
+        className={cn(
+          "relative flex h-full w-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background surface-grain",
+          className,
+        )}
+        inert={background}
+      >
+        <BackgroundThreadContext value={background}>{view}</BackgroundThreadContext>
+        {background || !ownsRoute || (unavailable && onTargetUnavailable) ? null : redirect}
+      </div>
+    );
+  }
+
   return (
     <SidebarInset
-      className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
+      className={cn("h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh", className)}
       inert={background}
     >
       <BackgroundThreadContext value={background}>{view}</BackgroundThreadContext>

@@ -2,6 +2,7 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
+  | "open-to-side"
   | "find"
   | "new-thread-on-branch"
   | "filter-by-project"
@@ -95,11 +96,14 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Sidebar-only: the sidebar is the one place that handles this action, so other menus don't offer it. */
+  readonly showOpenToSide?: boolean;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
+    "open-to-side",
     "find",
     "new-thread-on-branch",
     "project-settings",
@@ -119,6 +123,9 @@ export function buildThreadActionMenuItems(
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.canFind
       ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
+      : []),
+    ...(state.showOpenToSide
+      ? [{ id: "open-to-side" as const, label: "Open to the side", icon: "columns-2" }]
       : []),
     ...(state.branch
       ? [

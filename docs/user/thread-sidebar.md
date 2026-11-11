@@ -3,6 +3,23 @@
 Use a new thread for a separate task. Choose **New worktree** when its code changes
 need a separate branch and working directory.
 
+## Work with threads side by side
+
+On web and desktop, choose **Open to the side** from a thread's menu in the sidebar,
+or drag one thread from the sidebar into the chat area. The highlighted area
+shows where it will open. You can keep up to four chats open together.
+Each app launch starts with a single chat. Adding or closing a chat redistributes
+the space among the remaining chats without leaving empty slots.
+
+Drag a chat's grip onto another open chat to swap their positions. You can also
+focus the grip and use the arrow keys to move it. Dropping a sidebar thread into
+the composer still adds it as context. Press Escape to cancel a drag.
+
+Resize chats with the dividers. With four chats, switch between independent row
+widths and independent column heights. Maximizing a chat preserves the split
+sizes for when you restore it. Closing a pane keeps the thread and its running
+work available in the sidebar.
+
 ## Start a thread
 
 On web and desktop, **New thread** opens the project picker when you have more than one

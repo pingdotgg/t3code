@@ -1,0 +1,20 @@
+@keyframes split-chat-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+[data-split-workspace] > [data-split-pane-index],
+[data-split-workspace] > [data-split-drop-preview] {
+  animation: split-chat-appear 0ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-split-workspace] > [data-split-pane-index],
+  [data-split-workspace] > [data-split-drop-preview] {
+    animation: none;
+  }
+}

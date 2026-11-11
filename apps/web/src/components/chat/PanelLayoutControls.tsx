@@ -5,9 +5,10 @@ import {
   Maximize2Icon,
   Minimize2Icon,
 } from "lucide-react";
-import { memo, type ReactNode } from "react";
+import { memo, use, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { SplitChatPaneControlsContext } from "./splitChatPaneContext";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
@@ -190,9 +191,15 @@ export function WorkspaceTitlebarControls(props: {
   readonly onToggleMaximized: () => void;
   readonly children: ReactNode;
 }) {
+  const inSplitPane = use(SplitChatPaneControlsContext) !== null;
   return (
     <div
-      className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      className={cn(
+        "pointer-events-none z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        inSplitPane
+          ? "absolute top-0 right-3"
+          : "fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)]",
+      )}
       data-workspace-titlebar-controls
     >
       {props.showMaximizeControl ? (
