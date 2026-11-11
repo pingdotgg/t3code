@@ -217,7 +217,8 @@ describe("followNetworkRoster", () => {
         appId: app,
         reports: [],
       });
-      yield* catalog.follow([other, off, pairing, appRevoked]);
+      // A host revoking this app is a positive signal; see "old network revoke then new join".
+      yield* catalog.follow([other, off, pairing]);
       expect(catalog.records()).toEqual([record(laptop, studio)]);
       expect(catalog.forgotten).toEqual([]);
 
@@ -261,6 +262,75 @@ describe("followNetworkRoster", () => {
       expect(yield* Fiber.join(pairing)).toBe(true);
       yield* Fiber.join(following);
       expect(catalog.records()).toEqual([]);
+    }),
+  );
+});
+
+describe("leaving a network", () => {
+  const appNew = "app-new";
+  const withApps = (
+    host: EnvironmentId,
+    devices: ReadonlyArray<TailnetDevice>,
+    callerAppId: string,
+    appAccess: TailnetDeviceAccess | null,
+  ) =>
+    report(host, devices, {
+      callerAppId,
+      apps:
+        appAccess === null
+          ? []
+          : [
+              {
+                appId: callerAppId,
+                label: "Phone",
+                access: appAccess,
+                updatedAt: { wallMs: 1, counter: 0, node: host },
+              },
+            ],
+    });
+
+  it.effect("old network revoke then new join", () =>
+    Effect.gen(function* () {
+      const catalog = yield* makeCatalog([record(laptop, studio), record(vps, studio)]);
+      // The box was paired by hand; it is no record, only a saved connection.
+      catalog.saved.add(studio).add(laptop).add(box);
+      const third = EnvironmentId.make("env-third");
+
+      yield* catalog.follow([
+        withApps(studio, [device(laptop), device(vps), device(box)], app, "revoked"),
+        withApps(third, [device(box), device(laptop)], appNew, "full-access"),
+      ]);
+
+      expect(catalog.records()).toEqual([
+        { environmentId: laptop, label: laptop, via: third, appId: appNew },
+      ]);
+      expect(
+        followedNetwork(catalog.records(), [withApps(third, [], appNew, "full-access")]),
+      ).toMatchObject({ appId: appNew });
+      // Neither the hand-paired box nor the opened laptop's saved connection is forgotten.
+      expect(catalog.forgotten).toEqual([]);
+      expect([...catalog.saved]).toEqual([studio, laptop, box]);
+    }),
+  );
+
+  it.effect("host leave", () =>
+    Effect.gen(function* () {
+      const catalog = yield* makeCatalog([record(laptop, studio), record(vps, studio)]);
+      catalog.saved.add(studio).add(box);
+      // What the server reports after `leave`: no roster and no apps, the switch untouched.
+      const left = withApps(studio, [], app, null);
+      const afterLeave = { ...left, roster: { ...left.roster, selfMember: null } };
+
+      // Offline, switched off, or itself revoked while still listing this app: nothing clears.
+      yield* catalog.follow([]);
+      yield* catalog.follow([{ ...afterLeave, roster: { ...afterLeave.roster, enabled: false } }]);
+      yield* catalog.follow([report(studio, [], { selfMember: member(studio, "revoked") })]);
+      expect(ids(catalog.records())).toEqual([laptop, vps]);
+
+      yield* catalog.follow([afterLeave]);
+      expect(catalog.records()).toEqual([]);
+      expect(catalog.forgotten).toEqual([]);
+      expect([...catalog.saved]).toEqual([studio, box]);
     }),
   );
 });

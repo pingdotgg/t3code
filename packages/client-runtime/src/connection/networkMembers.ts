@@ -74,6 +74,36 @@ export function followedNetwork(
 }
 
 /**
+ * Drops the followed network's records once it has disowned this client: a host still calling it
+ * by its app id lists that app revoked or not at all (revoke, forget, or the host left), and no
+ * such host still takes it. Offline or switched-off hosts never clear it. Returns `records` itself
+ * otherwise; a later follow then binds to whichever network a host reports.
+ */
+function releaseDisownedNetwork(
+  records: ReadonlyArray<NetworkMemberRecord>,
+  reports: ReadonlyArray<NetworkRosterReport>,
+): ReadonlyArray<NetworkMemberRecord> {
+  const appId = records.find((record) => record.appId !== undefined)?.appId;
+  if (appId === undefined) return records;
+  const ours = reports.filter(
+    (report) => report.roster.enabled && report.roster.callerAppId === appId,
+  );
+  const disowning = new Set(
+    ours.flatMap((report) =>
+      report.roster.apps.some((app) => app.appId === appId && app.access !== "revoked")
+        ? []
+        : [report.host],
+    ),
+  );
+  if (disowning.size === 0 || ours.some((report) => callerAppIdOf(report.roster) === appId)) {
+    return records;
+  }
+  return records.filter((record) =>
+    record.appId === undefined ? !disowning.has(record.via) : record.appId !== appId,
+  );
+}
+
+/**
  * A member any followed host reports revoked is dropped. Otherwise a record goes only when no
  * followed host lists it (a host vouching for itself counts) and its `via` host is followed and
  * omits it: an offline, switched-off or foreign host says nothing. `userSaved` environments never
@@ -237,13 +267,15 @@ export const followNetworkRoster = Effect.fn("NetworkMembers.follow")(function* 
       const saved = yield* input.savedEnvironmentIds;
       // Saved members that are records stay managed; only the user's own entries are skipped.
       const managed = new Set(current.map((record) => record.environmentId));
-      const next = followRoster(current, {
+      // Released records are only unmanaged; their saved connections stay with the user.
+      const released = releaseDisownedNetwork(current, input.reports);
+      const next = followRoster(released, {
         reports: input.reports,
         userSaved: new Set([...saved].filter((id) => !managed.has(id))),
       });
       if (next === current) return current;
       const remaining = new Set(next.map((record) => record.environmentId));
-      for (const record of current) {
+      for (const record of released) {
         if (remaining.has(record.environmentId) || !saved.has(record.environmentId)) continue;
         yield* input.forget(record.environmentId).pipe(
           Effect.catchCause((cause) =>
