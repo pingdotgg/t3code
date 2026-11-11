@@ -1,5 +1,4 @@
 import type { OrchestrationV2SearchThreadInput } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as MutableHashMap from "effect/MutableHashMap";
@@ -8,7 +7,6 @@ import * as Option from "effect/Option";
 const MAX_CACHE_BYTES = 16 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 1024 * 1024;
 const MAX_ENTRIES = 8192;
-const TIME_TO_LIVE_MS = 60_000;
 
 export class TextKey extends Data.Class<{
   text: string;
@@ -23,7 +21,6 @@ interface Entry {
   readonly key: TextKey;
   readonly segments: readonly string[];
   readonly bytes: number;
-  readonly expiresAt: number;
 }
 
 function entryBytes(key: TextKey, segments: readonly string[]) {
@@ -41,7 +38,6 @@ function entryBytes(key: TextKey, segments: readonly string[]) {
 export const makeThreadFindTextCache = Effect.fn("makeThreadFindTextCache")(function* (
   parse: (key: TextKey) => readonly string[],
 ) {
-  const clock = yield* Clock.Clock;
   const entries = MutableHashMap.empty<TextKey, Entry>();
   const recency = new Set<Entry>();
   let retainedBytes = 0;
@@ -53,16 +49,11 @@ export const makeThreadFindTextCache = Effect.fn("makeThreadFindTextCache")(func
   return {
     get: (key: TextKey) =>
       Effect.sync(() => {
-        const now = clock.currentTimeMillisUnsafe();
         const cached = MutableHashMap.get(entries, key);
         if (Option.isSome(cached)) {
-          const entry = cached.value;
-          if (entry.expiresAt > now) {
-            recency.delete(entry);
-            recency.add(entry);
-            return entry.segments;
-          }
-          remove(entry);
+          recency.delete(cached.value);
+          recency.add(cached.value);
+          return cached.value.segments;
         }
         const segments = parse(key);
         const bytes = entryBytes(key, segments);
@@ -71,7 +62,7 @@ export const makeThreadFindTextCache = Effect.fn("makeThreadFindTextCache")(func
           if (retainedBytes + bytes <= MAX_CACHE_BYTES && recency.size < MAX_ENTRIES) break;
           remove(oldest);
         }
-        const entry = { key, segments, bytes, expiresAt: now + TIME_TO_LIVE_MS };
+        const entry = { key, segments, bytes };
         MutableHashMap.set(entries, key, entry);
         recency.add(entry);
         retainedBytes += bytes;

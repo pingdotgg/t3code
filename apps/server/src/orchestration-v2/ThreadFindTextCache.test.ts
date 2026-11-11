@@ -1,6 +1,5 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as TestClock from "effect/testing/TestClock";
 
 import { makeThreadFindTextCache, TextKey } from "./ThreadFindTextCache.ts";
 
@@ -76,7 +75,7 @@ it.effect("includes display context and parsed expansion in the retention budget
   }),
 );
 
-it.effect("reuses equal keys until expiry and keeps display variants distinct", () =>
+it.effect("reuses equal keys and keeps display variants distinct", () =>
   Effect.gen(function* () {
     let parses = 0;
     const cache = yield* makeThreadFindTextCache((input) => [String(++parses), input.text]);
@@ -92,9 +91,7 @@ it.effect("reuses equal keys until expiry and keeps display variants distinct", 
     ]) {
       assert.notStrictEqual(yield* cache.get(key("needle", overrides)), original);
     }
-    yield* TestClock.adjust("1 minute");
-    assert.notStrictEqual(yield* cache.get(key("needle")), original);
-    assert.equal(parses, 8);
+    assert.equal(parses, 7);
   }),
 );
 
