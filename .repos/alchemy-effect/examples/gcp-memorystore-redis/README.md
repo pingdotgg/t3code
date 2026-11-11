@@ -50,7 +50,7 @@ instance's AUTH string, so the binding grants the runtime service
 account no role. At deploy time Alchemy reads the instance's private IP,
 port, and AUTH string (`instances.getAuthString`, with the deployer's
 credentials) and carries the URL to the service through its runtime
-context. The client is `alchemy/Redis`, so `get`, `set`, `incr`,
+context. The client is `@alchemy.run/redis`, so `get`, `set`, `incr`,
 `expire`, `pipeline`, and `send` behave the same as on any other Redis
 provider. `GCP.Redis.ReadRedis` / `WriteRedis` (with `*Http` layers) are
 the narrower clients.

@@ -552,8 +552,17 @@ export const PreviewAutomationSnapshot = Schema.Struct({
     width: Schema.Int,
     height: Schema.Int,
   }),
+  /** The capture before `screenshot` was capped for the agent, when requested and larger. */
+  fullScreenshot: Schema.optional(
+    Schema.Struct({ data: Schema.String, width: Schema.Int, height: Schema.Int }),
+  ),
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
+
+export const PreviewAutomationSnapshotInput = Schema.Struct({
+  fullScreenshot: Schema.optional(Schema.Boolean),
+});
+export type PreviewAutomationSnapshotInput = typeof PreviewAutomationSnapshotInput.Type;
 
 export const PreviewAutomationRecordingStatus = Schema.Struct({
   tabId: PreviewTabId,
@@ -766,11 +775,12 @@ export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAut
   {
     ...PreviewAutomationRequestErrorFields,
     ...PreviewAutomationOptionalRemoteDiagnosticFields,
+    reason: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
     const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
-    return summary;
+    return this.reason === undefined ? summary : `${summary} ${this.reason}`;
   }
 }
 
