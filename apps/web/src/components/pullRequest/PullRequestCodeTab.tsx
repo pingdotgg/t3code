@@ -1593,14 +1593,11 @@ function PullRequestCodeTab({
     return withToolbar(rawSlicesView);
   }
 
-  if (items.length === 0 && nextCursor === null) {
+  // Filtered-empty still needs the conversation rail; only a real empty diff bails here.
+  if (items.length === 0 && nextCursor === null && loadedFiles.length === 0) {
     return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
-        {loadedFiles.length > 0
-          ? "All changed files are hidden by the file filters."
-          : commit === null
-            ? `This ${term} has no file changes.`
-            : "This commit has no file changes."}
+        {commit === null ? `This ${term} has no file changes.` : "This commit has no file changes."}
       </p>,
     );
   }
@@ -1697,23 +1694,29 @@ function PullRequestCodeTab({
             }
           }}
         >
-          {/* The viewer must own its scroll element to position virtual rows within it. */}
-          <FileViewedToggleContext value={fileViewedToggle}>
-            <StyledDiffCodeView<ReviewAnnotationGroup>
-              className="@container h-full overflow-auto [scrollbar-gutter:stable]"
-              containerRef={scrollerRef}
-              viewerRef={codeViewReveal.attach}
-              items={items}
-              selectedLines={selectedLines}
-              onSelectedLinesChange={setSelectedLines}
-              options={diffViewOptions}
-              renderCodeViewFooter={renderCodeViewFooter}
-              renderHeaderPrefix={renderHeaderPrefix}
-              renderHeaderMetadata={renderHeaderMetadata}
-              renderAnnotation={renderAnnotation}
-              unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
-            />
-          </FileViewedToggleContext>
+          {items.length === 0 && loadedFiles.length > 0 ? (
+            <p className="px-4 py-5 text-sm text-muted-foreground">
+              All changed files are hidden by the file filters.
+            </p>
+          ) : (
+            // The viewer must own its scroll element to position virtual rows within it.
+            <FileViewedToggleContext value={fileViewedToggle}>
+              <StyledDiffCodeView<ReviewAnnotationGroup>
+                className="@container h-full overflow-auto [scrollbar-gutter:stable]"
+                containerRef={scrollerRef}
+                viewerRef={codeViewReveal.attach}
+                items={items}
+                selectedLines={selectedLines}
+                onSelectedLinesChange={setSelectedLines}
+                options={diffViewOptions}
+                renderCodeViewFooter={renderCodeViewFooter}
+                renderHeaderPrefix={renderHeaderPrefix}
+                renderHeaderMetadata={renderHeaderMetadata}
+                renderAnnotation={renderAnnotation}
+                unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
+              />
+            </FileViewedToggleContext>
+          )}
         </div>
         {fileTreeOpen ? (
           <FileExplorerPane
