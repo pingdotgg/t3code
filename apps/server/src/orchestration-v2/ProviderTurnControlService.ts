@@ -69,6 +69,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
     readonly messageId: MessageId;
+    readonly modelSelection?: ModelSelection;
   }) => Effect.Effect<void, ProviderTurnControlError>;
   /** Best effort: a turn that ended or moved sessions picks the selection up when it next starts. */
   readonly applyModelSelection: (input: {
@@ -406,6 +407,9 @@ export const layer: Layer.Layer<
               runId: run.id,
               providerThread: loaded.providerThread,
               providerTurnId: loaded.providerTurn.id,
+              ...(input.modelSelection === undefined
+                ? {}
+                : { modelSelection: input.modelSelection }),
               message: {
                 messageId: message.id,
                 text: projectComposerContextForProvider({
