@@ -303,7 +303,7 @@ function makeRestartAdapter(
 
 // An agent that switches its own thread's model through MCP is the running
 // turn the switch interrupts, so the configure call must leave behind a
-// continuation of the unfinished request (#15300).
+// continuation of the unfinished request.
 it.live("t3_thread_configure from the running turn continues the user request", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -460,7 +460,7 @@ it.live("t3_thread_configure from the running turn continues the user request", 
       }).pipe(
         Effect.provide(
           McpHttpServer.layerThreadToolkit.pipe(
-            Layer.provideMerge(McpServer.McpServer.layer),
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
             Layer.provide(NodeCrypto.layer),
             Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
             Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
