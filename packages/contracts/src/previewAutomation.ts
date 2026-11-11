@@ -463,11 +463,6 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
     .check(Schema.isNonEmpty())
     .check(Schema.isMaxLength(64_000)),
   awaitPromise: Schema.optional(Schema.Boolean.annotate({ description: "Default true." })),
-  returnByValue: Schema.optional(
-    Schema.Boolean.annotate({
-      description: "False returns a ref. Default true.",
-    }),
-  ),
 });
 export type PreviewAutomationEvaluateInput = typeof PreviewAutomationEvaluateInput.Type;
 

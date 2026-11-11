@@ -1,3 +1,5 @@
+import { PreviewAutomationEvaluateInput } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import {
   chromium,
   type Browser,
@@ -17,6 +19,8 @@ import {
 } from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
+
+const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
 
 describe("server browser element refs", () => {
   let browser: Browser;
@@ -286,6 +290,15 @@ describe("server browser element refs", () => {
       5_000,
     );
     expect(result).toBe("Ready");
+  });
+
+  it("returns object contents even when a legacy caller asks for a remote reference", async () => {
+    const input = decodeEvaluateInput({
+      expression: "({ answer: 42, nested: { ready: true } })",
+      returnByValue: false,
+    });
+    const result = await ServerBrowserPage.evaluate(cdp, input, 5_000);
+    expect(result).toEqual({ answer: 42, nested: { ready: true } });
   });
 
   it("still awaits the promise an async function returns", async () => {
