@@ -1,13 +1,12 @@
-import { SquareMenuIcon } from "lucide-react";
 import {
-  Maximize2,
-  Minimize2,
-  PanelBottom,
-  PanelBottomClose,
-  PanelRight,
-  PanelRightClose,
-} from "lucide";
-import { MorphIcon } from "~/components/MorphIcon";
+  PanelBottomCloseIcon,
+  PanelBottomIcon,
+  PanelRightCloseIcon,
+  PanelRightIcon,
+  SquareMenuIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+} from "lucide-react";
 import { memo, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -103,7 +102,11 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               size="icon-sm"
               disabled={!terminalAvailable}
             >
-              <MorphIcon className="size-4" icon={terminalOpen ? PanelBottomClose : PanelBottom} />
+              {terminalOpen ? (
+                <PanelBottomCloseIcon className="size-4" />
+              ) : (
+                <PanelBottomIcon className="size-4" />
+              )}
             </Button>
           </TooltipTrigger>
           <TooltipPopup side="bottom">
@@ -126,7 +129,11 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               size="icon-sm"
               disabled={!rightPanelAvailable}
             >
-              <MorphIcon className="size-4" icon={rightPanelOpen ? PanelRightClose : PanelRight} />
+              {rightPanelOpen ? (
+                <PanelRightCloseIcon className="size-4" />
+              ) : (
+                <PanelRightIcon className="size-4" />
+              )}
             </Button>
           </TooltipTrigger>
           <TooltipPopup side="bottom">
@@ -160,7 +167,11 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
             variant="ghost"
             size="sm"
           >
-            <MorphIcon className="size-4" icon={maximized ? Minimize2 : Maximize2} />
+            {maximized ? (
+              <Minimize2Icon className="size-4" />
+            ) : (
+              <Maximize2Icon className="size-4" />
+            )}
           </Toggle>
         }
       />
