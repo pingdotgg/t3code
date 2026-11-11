@@ -252,45 +252,82 @@ function renderArtifactTemplate(node: MarkdownAstNode, source: string): void {
   delete node.url;
 }
 
-function webCitationReplacement(space: string, text: string, markerEnd: number): string {
-  DROPS_PRECEDING_SPACE.lastIndex = markerEnd;
+function webCitationReplacement(
+  space: string,
+  text: string,
+  contentStart: number | undefined,
+): string {
+  if (contentStart === undefined) return "";
+  DROPS_PRECEDING_SPACE.lastIndex = contentStart;
   return DROPS_PRECEDING_SPACE.test(text) ? "" : space;
 }
 
-// A marker that ends `text` is judged by the source past `textEnd`.
-function removeWebCitationMarkers(text: string, source = "", textEnd = 0): string {
+// The inline node after `node.children[childIndex]`, looking past closing syntax up to the block.
+function followingInline(
+  node: MarkdownAstNode,
+  childIndex: number,
+  following: MarkdownAstNode | undefined,
+): MarkdownAstNode | undefined {
+  const next = node.children?.[childIndex + 1];
+  if (next !== undefined) return next;
+  return node.type === "paragraph" || node.type === "heading" || node.type === "tableCell"
+    ? undefined
+    : following;
+}
+
+// Opening syntax is not content: `:codex-followup[blue]` starts with "b", not ":".
+function inlineContentStart(node: MarkdownAstNode | undefined): number | undefined {
+  let leaf = node;
+  while (leaf?.children?.[0] !== undefined) leaf = leaf.children[0];
+  return leaf?.position?.start.offset;
+}
+
+function removeWebCitationMarkers(text: string, source = "", following?: MarkdownAstNode): string {
   return text.replace(WEB_CITATION_MARKER, (marker, space: string, offset: number) => {
     const markerEnd = offset + marker.length;
     return markerEnd < text.length
       ? webCitationReplacement(space, text, markerEnd)
-      : webCitationReplacement(space, source, textEnd);
+      : webCitationReplacement(space, source, inlineContentStart(following));
   });
 }
 
+// A kept space for a marker that ends its text goes after any closing syntax: `**red** blue`.
 function collectWebCitationMarkers(
   source: string,
   start: number,
   end: number,
   matches: DirectiveMatch[],
+  following?: MarkdownAstNode,
 ): void {
   for (const marker of source.slice(start, end).matchAll(WEB_CITATION_MARKER)) {
     const markerStart = start + marker.index;
     const markerEnd = markerStart + marker[0].length;
-    matches.push({
-      start: markerStart,
-      end: markerEnd,
-      markdown: webCitationReplacement(marker[1] ?? "", source, markerEnd),
-    });
+    const space = marker[1] ?? "";
+    if (markerEnd < end) {
+      matches.push({
+        start: markerStart,
+        end: markerEnd,
+        markdown: webCitationReplacement(space, source, markerEnd),
+      });
+      continue;
+    }
+    matches.push({ start: markerStart, end: markerEnd, markdown: "" });
+    const insertAt = following?.position?.start.offset;
+    const separator = webCitationReplacement(space, source, inlineContentStart(following));
+    if (separator && insertAt !== undefined) {
+      matches.push({ start: insertAt, end: insertAt, markdown: separator });
+    }
   }
 }
 
-function transformCodexDirectives(node: MarkdownAstNode, source: string, insideLink = false): void {
+function transformCodexDirectives(
+  node: MarkdownAstNode,
+  source: string,
+  insideLink = false,
+  following?: MarkdownAstNode,
+): void {
   if (node.type === "text" && node.value?.includes(WEB_CITATION_OPEN)) {
-    node.value = removeWebCitationMarkers(
-      node.value,
-      source,
-      node.position?.end.offset ?? source.length,
-    );
+    node.value = removeWebCitationMarkers(node.value, source, following);
     return;
   }
   // GFM autolinks take a marker that directly follows a bare URL into the href.
@@ -313,8 +350,13 @@ function transformCodexDirectives(node: MarkdownAstNode, source: string, insideL
   }
 
   const childrenInsideLink = insideLink || node.type === "link" || node.type === "linkReference";
-  for (const child of node.children ?? []) {
-    transformCodexDirectives(child, source, childrenInsideLink);
+  for (const [childIndex, child] of (node.children ?? []).entries()) {
+    transformCodexDirectives(
+      child,
+      source,
+      childrenInsideLink,
+      followingInline(node, childIndex, following),
+    );
   }
 }
 
@@ -351,12 +393,13 @@ function collectDirectiveMatches(
   node: MarkdownAstNode,
   source: string,
   matches: DirectiveMatch[],
+  following?: MarkdownAstNode,
 ): void {
   const start = node.position?.start.offset;
   const end = node.position?.end.offset;
   if (start !== undefined && end !== undefined) {
     if (node.type === "text") {
-      collectWebCitationMarkers(source, start, end, matches);
+      collectWebCitationMarkers(source, start, end, matches, following);
       return;
     }
     if (node.data?.codexFileCitationMarkdown !== undefined) {
@@ -380,7 +423,9 @@ function collectDirectiveMatches(
       );
     }
   }
-  for (const child of node.children ?? []) collectDirectiveMatches(child, source, matches);
+  for (const [childIndex, child] of (node.children ?? []).entries()) {
+    collectDirectiveMatches(child, source, matches, followingInline(node, childIndex, following));
+  }
 }
 
 function renderDirectiveMatches(
@@ -390,7 +435,9 @@ function renderDirectiveMatches(
   const matches: DirectiveMatch[] = [];
   collectDirectiveMatches(parseCodexMarkdown(markdown), markdown, matches);
   let rendered = markdown;
-  for (const match of matches.sort((left, right) => right.start - left.start)) {
+  for (const match of matches.sort(
+    (left, right) => right.start - left.start || right.end - left.end,
+  )) {
     const replacement = replacementFor(match);
     if (replacement !== undefined) {
       rendered = rendered.slice(0, match.start) + replacement + rendered.slice(match.end);
