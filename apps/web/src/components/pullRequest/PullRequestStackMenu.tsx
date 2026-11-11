@@ -216,7 +216,9 @@ export function PullRequestStackMenu({
                 <MenuSeparator />
                 {canMerge ? (
                   <MenuItem disabled={mergeDisabled} onClick={() => setConfirmation("merge")}>
-                    <PullRequestGlyph.merged aria-hidden />
+                    <span className="flex size-4 shrink-0 items-center">
+                      <PullRequestGlyph.merged aria-hidden className="size-4" />
+                    </span>
                     Merge stack ({mergeLayers.length})
                   </MenuItem>
                 ) : null}
@@ -225,7 +227,9 @@ export function PullRequestStackMenu({
                     disabled={rebaseDisabled}
                     onClick={() => setConfirmation("update-branch")}
                   >
-                    <RefreshCwIcon aria-hidden />
+                    <span className="flex size-4 shrink-0 items-center">
+                      <RefreshCwIcon aria-hidden className="size-4" />
+                    </span>
                     Rebase stack
                   </MenuItem>
                 ) : null}
