@@ -52,6 +52,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
@@ -3738,6 +3739,25 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
             {
               type: "emit_inbound",
+              label: "error/retry/waiting-for-network",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: {
+                    message: "Reconnecting... waiting for network",
+                    additionalDetails: "Connection failed: error sending request",
+                    codexErrorInfo: {
+                      responseStreamDisconnected: { httpStatusCode: null },
+                    },
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
               label: "item/started/after-retry",
               frame: {
                 method: "item/started",
@@ -3819,7 +3839,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ? [event.turnItem]
             : [],
         );
-        assert.lengthOf(retryItems, 2);
+        assert.lengthOf(retryItems, 3);
         assert.equal(retryItems[0]?.status, "running");
         assert.equal(retryItems[0]?.failure.code, "responseStreamDisconnected");
         assert.deepEqual(retryItems[0]?.retry, {
@@ -3827,9 +3847,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           maxAttempts: 5,
           retryDelayMs: null,
         });
-        assert.equal(retryItems[1]?.id, retryItems[0]?.id);
-        assert.equal(retryItems[1]?.status, "completed");
-        assert.equal(retryItems[1]?.title, "Provider recovered");
+        assert.deepEqual(retryItems[1]?.retry, {
+          attempt: 3,
+          maxAttempts: null,
+          retryDelayMs: null,
+        });
+        assert.equal(retryItems[2]?.id, retryItems[0]?.id);
+        assert.equal(retryItems[2]?.status, "completed");
+        assert.equal(retryItems[2]?.title, "Provider recovered");
 
         const recoveredIndex = harness.events.findIndex(
           (event) =>
@@ -10253,7 +10278,13 @@ describe("CodexAdapterV2 app-server process", () => {
           } catch {}
         };
         yield* Effect.addFinalizer(() => Effect.sync(killGroup));
-        yield* child.stdout.pipe(Stream.take(1), Stream.runDrain);
+        // Stop it only once its SIGTERM trap is set; an early exit would pass without testing it.
+        const firstLine = yield* child.stdout.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runHead,
+        );
+        assert.deepStrictEqual(firstLine, Option.some("ready"));
         // Scope.close cannot be interrupted, so a regression is ended by this rescue instead of
         // hanging the test; the deadline under test must make it unnecessary.
         let rescued = false;
