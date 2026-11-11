@@ -1,5 +1,5 @@
 import type { ThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "./haptics";
 
 import { writeComposerContextClipboard } from "./composerContextClipboard";
 import { tryCopyTextWithHaptic } from "./copyTextWithHaptic";

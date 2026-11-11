@@ -1,6 +1,6 @@
 import * as Hash from "effect/Hash";
 import { File, Paths } from "expo-file-system";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../lib/haptics";
 import type { DiagramType } from "pele/lazy";
 import { Suspense, use, useRef, useState } from "react";
 import { PixelRatio, Platform, Pressable, StyleSheet, Text, View } from "react-native";
