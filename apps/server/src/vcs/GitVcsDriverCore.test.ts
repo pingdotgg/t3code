@@ -1259,6 +1259,8 @@ it.effect("follows a checkout made outside the driver after refs were cached", (
 
     // A provider's own `git switch` bypasses the driver's cache invalidation.
     yield* git(cwd, ["switch", "feature/agent"]);
+    yield* writeTextFile(cwd, "subdir/file.txt", "nested\n");
+    yield* driver.listRefs({ cwd: NodePath.join(cwd, "subdir") });
     const refs = yield* driver.listRefs({ cwd });
     const initialRef = refs.refs.find((ref) => ref.name === initialBranch);
     assert.isNull(initialRef?.worktreePath);
