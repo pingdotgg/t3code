@@ -1557,6 +1557,10 @@ describe("crossing the upgrade without trusting a claim", () => {
       b.sql`UPDATE peer_environment_links SET expires_at = '2000-01-01T00:00:00.000Z'`,
     "the laptop no longer answers at the studio's stored address": (_a: Device, b: Device) =>
       b.sql`UPDATE peer_environment_links SET urls_json = '["http://127.0.0.1:9"]'`,
+    "the laptop holds no link to the studio": (a: Device) =>
+      a.sql`DELETE FROM peer_environment_links`,
+    "the laptop's link to the studio was paired by code": (a: Device) =>
+      a.sql`UPDATE peer_environment_links SET origin = 'paired'`,
     "the studio no longer answers at the laptop's stored address": (a: Device) =>
       a.sql`UPDATE peer_environment_links SET urls_json = '["http://127.0.0.1:9"]'`,
   };
