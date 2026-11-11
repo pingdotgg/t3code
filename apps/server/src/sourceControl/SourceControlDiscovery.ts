@@ -13,7 +13,11 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ServerConfig from "../config.ts";
 import { refreshPathFromLoginShell } from "../os-jank.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { detailFromCause, firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery";
+import {
+  detailFromCause,
+  firstNonEmptyLine,
+  unavailableInstallHint,
+} from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 interface DiscoveryProbe {
@@ -67,7 +71,7 @@ export class SourceControlDiscovery extends Context.Service<
   }
 >()("t3/sourceControl/SourceControlDiscovery") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const process = yield* VcsProcess.VcsProcess;
@@ -82,22 +86,10 @@ export const make = Effect.gen(function* () {
   );
 
   const probe = <Kind extends VcsDriverKind>(
-    input: DiscoveryProbe & { readonly kind: Kind },
+    input: VcsProbe & { readonly kind: Kind },
   ): Effect.Effect<DiscoveryProbeResult<Kind>> => {
     const executable = input.executable;
     const versionArgs = input.versionArgs;
-
-    if (!executable || !versionArgs) {
-      return Effect.succeed({
-        kind: input.kind,
-        label: input.label,
-        implemented: input.implemented,
-        status: "missing" as const,
-        version: Option.none<string>(),
-        installHint: input.installHint,
-        detail: Option.some(input.installHint),
-      } satisfies DiscoveryProbeResult<Kind>);
-    }
 
     return process
       .run({
@@ -126,16 +118,19 @@ export const make = Effect.gen(function* () {
             }) satisfies DiscoveryProbeResult<Kind>,
         ),
         Effect.catch((cause) =>
-          Effect.succeed({
-            kind: input.kind,
-            label: input.label,
-            executable,
-            implemented: input.implemented,
-            status: "missing" as const,
-            version: Option.none<string>(),
-            installHint: input.installHint,
-            detail: detailFromCause(cause),
-          } satisfies DiscoveryProbeResult<Kind>),
+          Effect.gen(function* () {
+            const installHint = yield* unavailableInstallHint(executable, input.installHint, cause);
+            return {
+              kind: input.kind,
+              label: input.label,
+              executable,
+              implemented: input.implemented,
+              status: "missing" as const,
+              version: Option.none<string>(),
+              installHint,
+              detail: detailFromCause(cause),
+            } satisfies DiscoveryProbeResult<Kind>;
+          }),
         ),
       );
   };
