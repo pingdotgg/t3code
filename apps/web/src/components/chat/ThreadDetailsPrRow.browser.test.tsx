@@ -282,7 +282,12 @@ async function setup() {
   });
   state.prepareThread.mockReset().mockResolvedValue({
     _tag: "Success",
-    value: { branch: "feature", worktreePath: "/workspace/pr", isOnPullRequestHead: true },
+    value: {
+      branch: "feature",
+      worktreePath: "/workspace/pr",
+      isOnPullRequestHead: true,
+      pullRequest: { url: "https://github.com/owner/repo/pull/1" },
+    },
   });
   state.addToast.mockReset().mockReturnValue("checkout-toast");
   state.updateToast.mockReset();
