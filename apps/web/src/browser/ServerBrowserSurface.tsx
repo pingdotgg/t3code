@@ -133,7 +133,13 @@ function offerPageCopy({ text, host }: PreviewStreamCopyOffer) {
       children: "Copy",
       onClick: () => {
         toastManager.close(id);
-        void writeTextToClipboard(text).catch(() => undefined);
+        void writeTextToClipboard(text).catch((cause: unknown) =>
+          toastManager.add({
+            type: "error",
+            title: "Could not copy the text",
+            description: cause instanceof Error ? cause.message : undefined,
+          }),
+        );
       },
     },
   });

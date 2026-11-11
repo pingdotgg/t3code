@@ -74,7 +74,7 @@ async function renderSurface(controller: PreviewStreamControl["controller"]) {
 const keys = () => mocks.sent.filter((input) => input.type === "key");
 
 describe("ServerBrowserSurface clipboard commands", () => {
-  it("copies an offered value only on acceptance when the Clipboard API is unavailable", async () => {
+  it("copies an offered value only on acceptance, or says it could not, without the Clipboard API", async () => {
     setup();
     const { screen } = await renderSurface("you");
     await using _screen = screen;
@@ -96,6 +96,11 @@ describe("ServerBrowserSurface clipboard commands", () => {
     await userEvent.click(page.getByRole("button", { name: "Copy", exact: true }));
     expect(copied).toEqual(["offered value"]);
     expect(keys()).toEqual([]);
+
+    using _refused = vi.spyOn(document, "execCommand").mockReturnValue(false);
+    await act(() => handlers.onCopyOffer?.({ text: "refused value", host: "copy.example" }));
+    await userEvent.click(page.getByRole("button", { name: "Copy", exact: true }));
+    await expect.element(page.getByText("Could not copy the text")).toBeVisible();
   });
 
   it("sends a native Copy or Cut menu command to the page once", async () => {

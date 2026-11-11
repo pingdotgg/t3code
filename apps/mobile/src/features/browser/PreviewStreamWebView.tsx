@@ -94,7 +94,11 @@ async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean)
 function offerPageCopy({ text, host }: PreviewStreamCopyOffer) {
   Dialog.alert(`${host || "This page"} wants to copy text`, undefined, [
     { text: "Not now", style: "cancel" },
-    { text: "Copy", onPress: () => void Clipboard.setStringAsync(text).catch(() => undefined) },
+    {
+      text: "Copy",
+      onPress: () =>
+        void Clipboard.setStringAsync(text).catch(() => Dialog.alert("Could not copy the text")),
+    },
   ]);
 }
 
