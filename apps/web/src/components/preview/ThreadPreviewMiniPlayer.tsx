@@ -201,8 +201,10 @@ export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer }: Props) {
 
 function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly tabId: string }) {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
-  const { serverEpoch, snapshot, desktopOverlay, serverTab, sourceSize } =
-    useBrowserMiniPlayerSource(threadRef, tabId);
+  const { serverEpoch, snapshot, desktopOverlay, serverTab } = useBrowserMiniPlayerSource(
+    threadRef,
+    tabId,
+  );
   const runtimeTabId = previewRuntimeTabId(threadRef, serverEpoch, tabId);
   const recordingTabIds = useActiveBrowserRecordingTabIds();
   const recording =
@@ -260,7 +262,6 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
     <MiniPlayerShell
       threadRef={threadRef}
       miniPlayer={miniPlayer}
-      sourceSize={sourceSize}
       label="Floating browser preview"
       recording={recording}
       onOpenInPanel={openInPanel}
@@ -350,8 +351,6 @@ function DeviceMiniPlayer({
 }: Props & { readonly source: Extract<PreviewMiniPlayerSource, { kind: "device" }> }) {
   const { state: deviceState } = useDeviceState(threadRef.environmentId);
   const viewId = miniPlayerDeviceViewId(threadRef, source);
-  const screen = useAtomValue(deviceStreamScreenAtom(viewId));
-  const sourceSize = resolveDeviceMiniPlayerSourceSize(source.platform, screen);
   const device = deviceState.devices.find(
     (entry) => entry.hostId === source.hostId && entry.id === source.deviceId,
   );
@@ -374,7 +373,6 @@ function DeviceMiniPlayer({
     <MiniPlayerShell
       threadRef={threadRef}
       miniPlayer={miniPlayer}
-      sourceSize={sourceSize}
       label="Floating device preview"
       onOpenInPanel={openInPanel}
       cornerRadius={cornerRadius}
@@ -405,7 +403,6 @@ function DeviceMiniPlayer({
 function MiniPlayerShell({
   threadRef,
   miniPlayer,
-  sourceSize,
   label,
   onOpenInPanel,
   pillActions,
@@ -415,7 +412,6 @@ function MiniPlayerShell({
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly miniPlayer: PreviewMiniPlayerState;
-  readonly sourceSize: PreviewMiniPlayerSize;
   readonly label: string;
   readonly onOpenInPanel: () => void;
   readonly pillActions?: ReactNode;
@@ -464,6 +460,7 @@ function MiniPlayerShell({
     gesture.finish(container, commitGesture);
   };
   const handleBlur = useEffectEvent(finishGesture);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window blur listener ends a gesture whose pointerup lands outside the window
   useEffect(() => {
     window.addEventListener("blur", handleBlur);
     return () => window.removeEventListener("blur", handleBlur);
