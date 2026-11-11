@@ -47,7 +47,9 @@ its usage identity when T3 home is persisted. Set `T3CODE_HOST_ID` to choose the
 explicitly.
 
 When your app and server support different providers, usage totals may cover only the providers
-your app understands. Update the app to include newly supported providers.
+your app understands. Update the app to include newly supported providers. Codex totals include
+archived sessions; an environment running an older server leaves its Codex usage out until you
+update that server.
 
 On web and desktop, use the environment dropdown to filter costs, tokens, and limits. All
 environments are selected by default. The dropdown shows which environments are still scanning;

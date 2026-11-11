@@ -442,7 +442,6 @@ describe("mergeUsage", () => {
           ["codex", 70],
         ]);
     }
-    expect(USAGE_CONTRACT_VERSION).toBe(7);
   });
 
   it("keeps known usage when newer providers and bucket variants cannot be decoded", () => {

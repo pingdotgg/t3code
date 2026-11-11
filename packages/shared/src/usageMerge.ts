@@ -269,6 +269,8 @@ function bucketTokens(bucket: UsageBucket): number {
   );
 }
 
+const CODEX_HOME_SOURCES_SINCE = 7;
+
 function isCompatibleUsageContractVersion(version: number, expected: number): boolean {
   return version >= USAGE_MERGE_COMPATIBLE_SINCE && version <= expected;
 }
@@ -284,10 +286,10 @@ export function getUsageContractMismatch(
       contractVersion,
     };
   }
-  // Version 7 identifies Codex sources by home; older directory fingerprints cannot deduplicate them.
+  // Older servers fingerprint Codex by its sessions directory, which cannot deduplicate against a home.
   if (
-    expected >= 7 &&
-    contractVersion < 7 &&
+    expected >= CODEX_HOME_SOURCES_SINCE &&
+    contractVersion < CODEX_HOME_SOURCES_SINCE &&
     (summary.sources.some((source) => source.fingerprint.provider === "codex") ||
       summary.buckets.some((bucket) => bucket.provider === "codex"))
   ) {
@@ -333,12 +335,12 @@ export function mergeUsage(
   const contractMismatches: UsageContractMismatch[] = [];
   for (const environment of environments) {
     const mismatch = getUsageContractMismatch(environment.summary, expectedContractVersion);
-    if (mismatch !== undefined) {
-      contractMismatches.push({ environmentId: environment.environmentId, ...mismatch });
-    }
     if (mismatch === undefined) {
       current.push(environment);
-    } else if (mismatch.provider === "codex") {
+      continue;
+    }
+    contractMismatches.push({ environmentId: environment.environmentId, ...mismatch });
+    if (mismatch.provider === "codex") {
       current.push({
         ...environment,
         summary: {
