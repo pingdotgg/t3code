@@ -1,12 +1,6 @@
-import { useLayoutEffect, type PointerEvent as ReactPointerEvent } from "react";
+import { type PointerEvent as ReactPointerEvent } from "react";
 import { type SensorProps } from "@dnd-kit/core";
 import { getOwnerDocument, getWindow } from "@dnd-kit/utilities";
-
-// Search unmounts the drag context while its owning Sidebar remains mounted.
-export function SidebarDragLifecycle({ onUnmount }: { onUnmount: () => void }) {
-  useLayoutEffect(() => onUnmount, [onUnmount]);
-  return null;
-}
 
 type Options = {
   distance: number;
