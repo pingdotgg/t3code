@@ -10,7 +10,12 @@ import {
 
 import { useClientSettings, useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
-import { useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
+import {
+  resolveEnvironmentIdentificationPillLabel,
+  useEnvironmentStageLabel,
+  useSidebarStageBackdropVariant,
+} from "../SidebarStageBackdrop";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -55,7 +60,11 @@ export function SidebarThreadHeader({
   const inTitleBar = useClientSettings((settings) => settings.sidebarSearchInTitleBar);
   const [searchFocusExpanded, setSearchExpanded] = useState(false);
   const searchExpanded = inTitleBar && searchFocusExpanded;
-  const onBackdrop = useSidebarStageBackdropVariant(useEnvironmentIdentificationMode()) !== null;
+  const identificationMode = useEnvironmentIdentificationMode();
+  const stageLabel = useEnvironmentStageLabel();
+  const pillLabel =
+    identificationMode === "pill" ? resolveEnvironmentIdentificationPillLabel(stageLabel) : null;
+  const onBackdrop = useSidebarStageBackdropVariant(identificationMode) !== null;
   const resultsVisible = isSearching && searchResultCount > 0;
   // Shrinking results can remove the active option; never leave aria-activedescendant pointing at it.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
@@ -87,6 +96,11 @@ export function SidebarThreadHeader({
         onClick={inTitleBar ? () => searchInputRef.current?.focus() : undefined}
       >
         <SearchIcon className="size-4 shrink-0 text-(--sidebar-icon-color)" />
+        {inTitleBar && pillLabel ? (
+          <Badge data-environment-identification="pill" size="sm" variant="secondary">
+            {pillLabel}
+          </Badge>
+        ) : null}
         <SidebarInput
           ref={searchInputRef}
           nativeInput
@@ -105,9 +119,7 @@ export function SidebarThreadHeader({
             }
             onSearchKeyDown(event);
           }}
-          onFocus={(event) => {
-            if (event.currentTarget.clientWidth === 0) setSearchExpanded(true);
-          }}
+          onFocus={() => setSearchExpanded(true)}
           onBlur={() => setSearchExpanded(false)}
           placeholder="Search"
           aria-label="Search threads"
