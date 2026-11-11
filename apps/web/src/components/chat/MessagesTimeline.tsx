@@ -1,3 +1,4 @@
+import { ViewedImagesTimelineRow } from "./TimelineWorkEntryRow";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
@@ -1702,7 +1703,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                       row.kind === "event" ||
                       row.kind === "attempt-fold" ||
                       row.kind === "html-render" ||
-                      row.kind === "mcp-app"
+                      row.kind === "mcp-app" ||
+                      row.kind === "viewed-images"
                     ? "pb-2"
                     : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
@@ -1761,6 +1763,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
+      {row.kind === "viewed-images" ? <ViewedImagesTimelineRow row={row} /> : null}
       {row.kind === "mcp-app" ? <McpAppTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}

@@ -31,8 +31,16 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ChevronLeft, ChevronRight, EllipsisIcon, Files, Plus } from "lucide-react";
-import { Volume2, VolumeOff } from "lucide";
+import {
+  ChevronLeft,
+  ChevronRight,
+  EllipsisIcon,
+  Files,
+  Plus,
+  Volume2Icon,
+  VolumeOffIcon,
+} from "lucide-react";
+
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -49,7 +57,6 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
@@ -586,7 +593,11 @@ function RightPanelTab(
                       .catch(() => undefined);
                   }}
                 >
-                  <MorphIcon className="size-3" icon={audio === "muted" ? VolumeOff : Volume2} />
+                  {audio === "muted" ? (
+                    <VolumeOffIcon className="size-3" />
+                  ) : (
+                    <Volume2Icon className="size-3" />
+                  )}
                 </button>
               }
             />
@@ -938,12 +949,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (!viewport) return;
 
     const update = () => updateTabScrollState(viewport);
+    // Only a vertical mouse wheel is translated. Horizontal input scrolls natively, since
+    // consuming it keeps Chromium from starting the gesture scroll that swipe navigation tracks.
     const handleWheel = (event: WheelEvent) => {
-      if (event.ctrlKey) return;
-      let delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      let delta = event.deltaY;
       if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
       if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= viewport.clientWidth;
-      if (delta === 0) return;
 
       const previousScrollLeft = viewport.scrollLeft;
       viewport.scrollLeft += delta;

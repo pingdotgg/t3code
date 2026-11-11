@@ -17,14 +17,15 @@ import {
   Trash2Icon,
   WrapTextIcon,
   XIcon,
+  CheckIcon,
+  CopyIcon,
 } from "lucide-react";
-import { Check, Copy } from "lucide";
+
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
-import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -438,7 +439,7 @@ export function AttachmentFilePreview(props: {
                 );
             }}
           >
-            <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+            {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
           </FileSurfaceAction>
         ) : null}
         {url ? (
