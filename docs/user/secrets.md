@@ -14,6 +14,10 @@ work everywhere.
 signed in on the machine that runs the T3 Code server. When you use T3 Code on another machine or
 from your phone, that is the remote machine, not the device in front of you.
 
+A desktop sign-in asks for approval on that machine, which a remote user cannot answer. On a remote
+or headless server, sign `op` in with a [service account](./secrets-1password-service-account.md) or a
+[Connect server](./secrets-1password-connect.md) instead.
+
 To add one, open **Settings → Secrets**, select **Add provider**, and enter a name and the
 1Password account: the shorthand, sign-in address (without `https://`), or ID that
 `op account list` shows. Secret providers belong to the environment you are connected to. Each
