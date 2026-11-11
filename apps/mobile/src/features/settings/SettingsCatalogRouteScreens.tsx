@@ -29,6 +29,7 @@ import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilt
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { useSettingsWriter } from "./useSettingsWriter";
 import {
+  managedSettingReason,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
   uniformMobileSetting,
@@ -134,14 +135,15 @@ export function SettingsDiffsRouteScreen() {
 
 export function SettingsBrowserRouteScreen() {
   const page = useServerSettingsPage();
+  const managedBrowser = managedSettingReason(page.targets, "enableAgentBrowserAccess");
   return (
     <SettingsCatalogPage title="Browser">
       <SettingsSection title="Agent access">
         <SettingsSwitchRow
           label="Allow agent browser"
-          subtitle="Let agents open and control a browser on the environment."
+          subtitle={managedBrowser ?? "Let agents open and control a browser on the environment."}
           value={page.uniform("enableAgentBrowserAccess")}
-          disabled={!page.canWrite || page.pending}
+          disabled={!page.canWrite || page.pending || managedBrowser !== undefined}
           onValueChange={(enabled) => void page.write({ enableAgentBrowserAccess: enabled })}
         />
       </SettingsSection>
@@ -156,21 +158,25 @@ export function SettingsBrowserRouteScreen() {
 export function SettingsDevicesRouteScreen() {
   const page = useServerSettingsPage();
   const hub = page.uniform("enableDeviceSupport");
+  const managedHub = managedSettingReason(page.targets, "enableDeviceSupport");
+  const managedAgent = managedSettingReason(page.targets, "enableAgentDeviceAccess");
   return (
     <SettingsCatalogPage title="Devices">
       <SettingsSection title="Device hub">
         <SettingsSwitchRow
           label="Enable device support"
-          subtitle="Let this environment talk to simulators, emulators, and device hosts."
+          subtitle={
+            managedHub ?? "Let this environment talk to simulators, emulators, and device hosts."
+          }
           value={hub}
-          disabled={!page.canWrite || page.pending}
+          disabled={!page.canWrite || page.pending || managedHub !== undefined}
           onValueChange={(enabled) => void page.write({ enableDeviceSupport: enabled })}
         />
         <SettingsSwitchRow
           label="Allow agent device access"
-          subtitle="Let agents drive devices through the Device panel tools."
+          subtitle={managedAgent ?? "Let agents drive devices through the Device panel tools."}
           value={page.uniform("enableAgentDeviceAccess")}
-          disabled={!page.canWrite || page.pending || hub === false}
+          disabled={!page.canWrite || page.pending || hub === false || managedAgent !== undefined}
           onValueChange={(enabled) => void page.write({ enableAgentDeviceAccess: enabled })}
         />
       </SettingsSection>

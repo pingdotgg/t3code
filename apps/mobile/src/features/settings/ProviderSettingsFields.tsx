@@ -23,6 +23,8 @@ export function ProviderSettingsFields(props: {
   readonly definition: SettingsFormDefinition;
   readonly value: unknown;
   readonly disabled?: boolean;
+  /** Config keys the managed policy pins, with the reason shown on those rows. */
+  readonly managed?: { readonly keys: ReadonlySet<string>; readonly reason: string };
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
 }) {
   const fields = deriveProviderSettingsFields(props.definition, props.value);
@@ -38,13 +40,15 @@ export function ProviderSettingsFields(props: {
           field={field}
           value={props.value}
           disabled={props.disabled}
+          managedReason={props.managed?.keys.has(field.key) ? props.managed.reason : undefined}
           onChange={props.onChange}
         />
       ))}
       {isLocalAcp ? (
         <ProviderCommandArguments
           value={props.value}
-          disabled={props.disabled}
+          disabled={props.disabled || props.managed?.keys.has("commandArgs") === true}
+          managedReason={props.managed?.keys.has("commandArgs") ? props.managed.reason : undefined}
           onChange={props.onChange}
         />
       ) : null}
@@ -79,6 +83,7 @@ function configuredCommandArgs(value: unknown): ReadonlyArray<string> {
 function ProviderCommandArguments(props: {
   readonly value: unknown;
   readonly disabled?: boolean;
+  readonly managedReason?: string;
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
 }) {
   const args = configuredCommandArgs(props.value);
@@ -101,7 +106,7 @@ function ProviderCommandArguments(props: {
     <View className="gap-2 border-b border-border-subtle px-4 py-3">
       <Text className="text-base text-foreground">Arguments</Text>
       <Text className="text-sm text-foreground-muted">
-        One literal argument per row, in launch order.
+        {props.managedReason ?? "One literal argument per row, in launch order."}
       </Text>
       {rows.map((argument, index) => (
         <View key={argument.id} className="flex-row items-center gap-2">
@@ -154,14 +159,17 @@ function ProviderSettingsField(props: {
   readonly field: ProviderSettingsFieldModel;
   readonly value: unknown;
   readonly disabled?: boolean;
+  readonly managedReason?: string;
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
 }) {
-  const { field, value, disabled, onChange } = props;
+  const { field, value, onChange } = props;
+  const disabled = props.disabled === true || props.managedReason !== undefined;
+  const description = props.managedReason ?? field.description;
   if (field.control === "switch") {
     return (
       <SettingsSwitchRow
         label={field.label}
-        subtitle={field.description}
+        subtitle={description}
         value={readProviderConfigFieldBoolean(value, field.key, field.defaultBooleanValue)}
         disabled={disabled}
         onValueChange={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
@@ -175,9 +183,7 @@ function ProviderSettingsField(props: {
     return (
       <View className="gap-1 border-b border-border-subtle px-4 py-3">
         <Text className="text-base text-foreground">{field.label}</Text>
-        {field.description ? (
-          <Text className="text-sm text-foreground-muted">{field.description}</Text>
-        ) : null}
+        {description ? <Text className="text-sm text-foreground-muted">{description}</Text> : null}
         <View className="mt-2 gap-1">
           {options.map((option) => (
             <ListChoiceRow
@@ -205,6 +211,7 @@ function ProviderSettingsField(props: {
       field={field}
       value={value}
       disabled={disabled}
+      description={description}
       secure={field.control === "password" || field.secret === true}
       multiline={field.control === "textarea"}
       onChange={onChange}
@@ -216,6 +223,7 @@ function TextSettingsField(props: {
   readonly field: ProviderSettingsFieldModel;
   readonly value: unknown;
   readonly disabled?: boolean;
+  readonly description?: string;
   readonly secure?: boolean;
   readonly multiline?: boolean;
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
@@ -233,8 +241,8 @@ function TextSettingsField(props: {
   return (
     <View className="gap-1 border-b border-border-subtle px-4 py-3">
       <Text className="text-base text-foreground">{props.field.label}</Text>
-      {props.field.description ? (
-        <Text className="text-sm text-foreground-muted">{props.field.description}</Text>
+      {props.description ? (
+        <Text className="text-sm text-foreground-muted">{props.description}</Text>
       ) : null}
       <TextInput
         accessibilityLabel={props.field.label}

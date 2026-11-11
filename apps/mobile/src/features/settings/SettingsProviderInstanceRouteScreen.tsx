@@ -1,4 +1,5 @@
 import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
+import { managedInstanceLocks } from "@t3tools/client-runtime/settings/managed-policy";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -76,6 +77,10 @@ function ProviderInstanceEditor(props: {
   const managed =
     environment.serverConfig.managedPolicy &&
     isManagedSettingPath(environment.serverConfig.managedPolicy, `providerInstances.${instanceId}`);
+  const instanceLocks = managedInstanceLocks(
+    environment.serverConfig.managedPolicy,
+    provider.driver,
+  );
   const { run, pending, error } = useProviderInstanceMutation(environment);
   const [nameDraft, setNameDraft] = useState(provider.displayName ?? "");
   const canRemove = permitted && !managed;
@@ -173,6 +178,11 @@ function ProviderInstanceEditor(props: {
             definition={definition}
             value={instance?.config}
             disabled={!permitted || managed || pending}
+            managed={
+              instanceLocks
+                ? { keys: instanceLocks.configKeys, reason: instanceLocks.reason }
+                : undefined
+            }
             onChange={(config) => patchInstance({ config })}
           />
         ) : null}
