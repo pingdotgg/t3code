@@ -258,47 +258,37 @@ export const make = Effect.gen(function* () {
       );
 
   // A `.bare` container (`.git` points at a repo inside the root) makes git see the repo metadata
-  // and sibling worktrees as changes. A checkout with its separate git dir inside looks the same
-  // on disk, so only a registered worktree inside the root rejects it.
+  // and sibling worktrees as changes. A primary checkout with its separate git dir inside looks
+  // the same, but has an index; a bare repository never gets one.
   const rejectBareRepositoryContainer = Effect.fn("ProjectService.rejectBareRepositoryContainer")(
     function* (projectId: ProjectId, workspaceRoot: string) {
-      const isInsideRoot = (candidate: string) => {
-        const relative = path.relative(workspaceRoot, candidate);
-        return (
-          relative !== "" &&
-          relative !== ".." &&
-          !relative.startsWith(`..${path.sep}`) &&
-          !path.isAbsolute(relative)
-        );
-      };
-      const readGitdirFile = (file: string) =>
-        fileSystem.readFileString(file).pipe(
-          Effect.map(parseGitdirFile),
-          Effect.orElseSucceed(() => undefined),
-        );
-      const target = yield* readGitdirFile(path.join(workspaceRoot, ".git"));
+      const realPath = (candidate: string) =>
+        fileSystem.realPath(candidate).pipe(Effect.orElseSucceed(() => undefined));
+      const target = yield* fileSystem.readFileString(path.join(workspaceRoot, ".git")).pipe(
+        Effect.map(parseGitdirFile),
+        Effect.orElseSucceed(() => undefined),
+      );
       if (target === undefined) return;
-      const gitDir = path.resolve(workspaceRoot, target);
-      if (!isInsideRoot(gitDir)) return;
-      const worktreesDir = path.join(gitDir, "worktrees");
-      const worktrees = yield* fileSystem
-        .readDirectory(worktreesDir)
-        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-      for (const name of worktrees) {
-        // `worktrees/<name>/gitdir` holds the path of that worktree's `.git` file.
-        const registered = yield* fileSystem
-          .readFileString(path.join(worktreesDir, name, "gitdir"))
-          .pipe(Effect.orElseSucceed(() => ""));
-        const dotGitPath = registered.trim();
-        if (dotGitPath === "") continue;
-        const worktreeRoot = path.dirname(path.resolve(worktreesDir, name, dotGitPath));
-        if (isInsideRoot(worktreeRoot)) {
-          return yield* new ProjectInvalidError({
-            projectId,
-            detail: `${workspaceRoot} holds a bare repository and its worktrees. Add an individual worktree as the project instead.`,
-          });
-        }
+      const root = yield* realPath(workspaceRoot);
+      const gitDir = yield* realPath(path.resolve(workspaceRoot, target));
+      if (root === undefined || gitDir === undefined) return;
+      const relative = path.relative(root, gitDir);
+      if (
+        relative === "" ||
+        relative === ".." ||
+        relative.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relative)
+      ) {
+        return;
       }
+      const hasIndex = yield* fileSystem
+        .exists(path.join(gitDir, "index"))
+        .pipe(Effect.orElseSucceed(() => true));
+      if (hasIndex) return;
+      return yield* new ProjectInvalidError({
+        projectId,
+        detail: `${workspaceRoot} holds a bare repository and its worktrees. Add an individual worktree as the project instead.`,
+      });
     },
   );
 

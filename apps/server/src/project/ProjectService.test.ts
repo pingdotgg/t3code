@@ -513,10 +513,13 @@ it.layer(layerTest)("ProjectService", (it) => {
     () =>
       Effect.gen(function* () {
         const service = yield* ProjectService.ProjectService;
-        const fixture = yield* Effect.acquireRelease(
+        const realFixture = yield* Effect.acquireRelease(
           Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bare-root-"))),
           (dir) => Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
         );
+        // Reach the fixture through a symlink, as macOS does for its tmpdir; git records realpaths.
+        const fixture = NodePath.join(realFixture, "link");
+        NodeFS.symlinkSync(realFixture, fixture);
         const git = (cwd: string, ...args: Array<string>) =>
           NodeChildProcess.execFileSync(
             "git",
@@ -564,12 +567,14 @@ it.layer(layerTest)("ProjectService", (it) => {
           assert.equal(worktree.workspaceRoot, worktreeRoot);
         }
 
-        // A primary checkout may keep its git dir inside itself; worktrees elsewhere are fine.
+        // A primary checkout may keep its git dir and linked worktrees inside itself.
         const checkout = NodePath.join(fixture, "separate-git-dir");
         NodeFS.mkdirSync(checkout);
         git(checkout, "init", "-b", "develop", "--separate-git-dir", ".metadata", checkout);
-        git(checkout, "commit", "--allow-empty", "-m", "init");
-        git(checkout, "worktree", "add", NodePath.join(fixture, "external"), "-b", "external");
+        NodeFS.writeFileSync(NodePath.join(checkout, ".gitignore"), ".metadata/\nworktrees/\n");
+        git(checkout, "add", ".gitignore");
+        git(checkout, "commit", "-m", "init");
+        git(checkout, "worktree", "add", "worktrees/feature", "-b", "feature");
         const primary = yield* service.create({
           commandId: CommandId.make("command:bare-root:separate-git-dir"),
           projectId: ProjectId.make("project:bare-root:separate-git-dir"),
