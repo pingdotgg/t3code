@@ -1393,6 +1393,7 @@ function ProviderInstanceRow({
       headerAction={
         mode === "editor" && isDefault && isDirty ? (
           <SettingResetButton
+            compact
             label={`${resetLabel} provider settings`}
             onClick={() => actions.resetDefaultInstance(driver)}
           />
