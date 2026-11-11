@@ -137,7 +137,8 @@ describe("deviceNetworkView", () => {
     const studioHost = host(studio, {
       devices: [device(box), found(laptop, { status: "offline" }), found(vps)],
     });
-    const boxHost = host(box, { devices: [device(studio), found(laptop)] });
+    // Forgotten on the box: still revoked there, but offered again as a machine to add.
+    const boxHost = host(box, { devices: [device(studio), found(laptop, { access: "revoked" })] });
     // Not in a network; it finds both members, which it could not add.
     const vpsHost = host(vps, { self: null, devices: [found(studio), found(box), found(laptop)] });
     expect(shape([vpsHost, boxHost, studioHost])).toEqual([

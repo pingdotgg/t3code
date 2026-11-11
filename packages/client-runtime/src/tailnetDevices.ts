@@ -200,7 +200,10 @@ const compareCurrent = (a: MachineEntry, b: MachineEntry) =>
 
 const kindOf = (entry: MachineEntry): MachineKind | null => {
   if (entry.member !== null) return "member";
-  if (entry.links.length > 0 || entry.views.some((view) => view.device.access !== null)) {
+  // A forgotten member is listed revoked so relays stay capped, but is offered again to add.
+  const holdsAccess = (device: TailnetDevice) =>
+    device.access !== null && !(device.member === null && device.access === "revoked");
+  if (entry.links.length > 0 || entry.views.some((view) => holdsAccess(view.device))) {
     return "linked";
   }
   // Only a machine with an address can be proven and added.

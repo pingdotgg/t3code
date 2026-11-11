@@ -1713,7 +1713,7 @@ describe("app lifecycle", () => {
 });
 
 describe("removing and leaving", () => {
-  it.live("forgetting a member revokes it everywhere and hides it here", () =>
+  it.live("forgetting a member revokes it everywhere and drops it from the members here", () =>
     Effect.gen(function* () {
       const { a, b } = yield* threeDevices;
 
@@ -1721,15 +1721,22 @@ describe("removing and leaving", () => {
 
       expect(yield* b.membership.accessOf(box.environmentId)).toEqual(Option.some("revoked"));
       expect(yield* a.links.get(box.environmentId)).toEqual(Option.none());
+      // No longer a member in this view, but still revoked here.
       const listed = (device: Device) =>
         device.devices
           .list()
-          .pipe(Effect.map((snapshot) => snapshot.devices.map((row) => row.environmentId)));
-      expect(yield* listed(a)).not.toContain(box.environmentId);
-      expect(yield* listed(b)).toContain(box.environmentId);
-      // Each other machine that still lists it forgets it too, harmlessly.
+          .pipe(
+            Effect.map((snapshot) =>
+              snapshot.devices
+                .filter((row) => row.environmentId === box.environmentId)
+                .map((row) => [row.member?.access ?? null, row.access]),
+            ),
+          );
+      expect(yield* listed(a)).toEqual([[null, "revoked"]]);
+      expect(yield* listed(b)).toEqual([["revoked", "revoked"]]);
+      // Each other machine that still lists it as a member forgets it too, harmlessly.
       yield* b.devices.forget(box.environmentId);
-      expect(yield* listed(b)).not.toContain(box.environmentId);
+      expect(yield* listed(b)).toEqual([[null, "revoked"]]);
       // Forgetting what is already gone is a no-op.
       yield* a.devices.forget(box.environmentId);
     }),
@@ -1783,13 +1790,18 @@ describe("removing and leaving", () => {
     Effect.gen(function* () {
       const { a, b } = yield* threeDevices;
       yield* a.devices.forget(box.environmentId);
+      const listed = (yield* a.devices.list()).devices.find(
+        (device) => device.environmentId === box.environmentId,
+      );
+      // Still listed as revoked, so a client capping what it relays from there sees it.
+      expect([listed?.member, listed?.access]).toEqual([null, "revoked"]);
 
       // Found again by the next scan, it is offered as a machine to add, not a member.
       yield* a.devices.scan;
       const found = (yield* a.devices.list()).devices.find(
         (device) => device.environmentId === box.environmentId,
       );
-      expect([found?.member, found?.access]).toEqual([null, null]);
+      expect([found?.member, found?.access, found?.urls.length]).toEqual([null, "revoked", 1]);
 
       yield* a.devices.admit(box.environmentId, "read-only");
 

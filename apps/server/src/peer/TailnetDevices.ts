@@ -1846,10 +1846,9 @@ const make = Effect.gen(function* () {
         const environmentId = id as EnvironmentId;
         const row = rows.find((candidate) => candidate.environment_id === id);
         const listed = roster.find((candidate) => candidate.environmentId === id) ?? null;
-        // The user removed it here. Found on the tailnet again, it is offered to add like any
-        // machine; adding or restoring it shows it as a member again.
+        // The user removed it here: offered to add like any found machine, but still listed as
+        // revoked so clients keep it capped. Adding or restoring it shows it as a member again.
         const removed = listed?.access === "revoked" && hidden.members.has(id);
-        if (removed && row === undefined) continue;
         const member = removed ? null : listed;
         const link = linked.find((candidate) => candidate.environmentId === id);
         const localLink = localLinks.find((candidate) => candidate.environmentId === id);
@@ -1867,8 +1866,9 @@ const make = Effect.gen(function* () {
             .find((session) => session.peerEnvironmentId === id)
             ?.client.label?.replace(/^T3 Code · /u, "") ??
           id;
-        const access: TailnetDeviceAccess | null =
-          member === null
+        const access: TailnetDeviceAccess | null = removed
+          ? "revoked"
+          : member === null
             ? (localLink?.access ?? (link?.origin === "paired" ? link.access : null))
             : member.access === "revoked" || localLimit === null
               ? member.access
