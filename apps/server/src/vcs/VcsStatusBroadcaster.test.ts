@@ -21,6 +21,7 @@ import type {
   BackgroundScope,
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
+  VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
 import { GitCommandError, GitManagerError } from "@t3tools/contracts";
