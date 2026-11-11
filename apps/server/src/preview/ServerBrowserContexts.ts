@@ -1,17 +1,11 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - Owns Playwright resources outside the Effect runtime.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Owns Playwright resources and their idle timer outside the Effect runtime.
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type {
-  Browser,
-  BrowserContext,
-  BrowserContextOptions,
-  CDPSession,
-  Cookie,
-} from "playwright-core";
+import type { Browser, BrowserContext, CDPSession, Cookie } from "playwright-core";
 
 import { sandboxDisabled } from "./PreviewBrowserHost.ts";
 
@@ -23,8 +17,17 @@ const loadPlaywright = () =>
 interface Options {
   readonly profilesDir: string;
   readonly executable: () => Promise<string>;
+  /**
+   * A path that starts `executable`, such as one that moves Chrome out of the server's cgroup.
+   * Released after the whole launch call, since Playwright retries the same path after a glibc race.
+   */
+  readonly launcher?: (
+    executable: string,
+  ) => Promise<{ readonly path: string; readonly release: () => Promise<void> } | undefined>;
   readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
+  /** Closes the shared browser once it holds no context, and a profile once it has no page, for this long. */
+  readonly idleBrowserMs?: number;
   readonly onContextClose?: (context: BrowserContext) => void;
 }
 
@@ -73,48 +76,31 @@ export const presentAsChrome = async (
   if (identity) await cdp.send("Emulation.setUserAgentOverride", identity);
 };
 
-const HOST_IDLE_GRACE_MS = 60_000;
-
-/** Calls `close` once a host has stayed idle for a whole grace; each `touch` restarts the wait. */
-const idleCloser = (isIdle: () => boolean, close: () => void) => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let stopped = false;
-  return {
-    touch: () => {
-      clearTimeout(timer);
-      if (stopped) return;
-      timer = setTimeout(() => {
-        if (isIdle()) close();
-      }, HOST_IDLE_GRACE_MS);
-    },
-    stop: () => {
-      stopped = true;
-      clearTimeout(timer);
-    },
-  };
-};
-type IdleCloser = ReturnType<typeof idleCloser>;
-
 export class ServerBrowserContexts {
   private readonly options: Options;
   private readonly contexts = new Map<string, Promise<BrowserContext>>();
   private readonly clearing = new Map<string, Promise<void>>();
-  private readonly idle = new Map<string, IdleCloser>();
+  /** Profile clears among `clearing`, which a concurrent clear joins instead of repeating. */
+  private readonly wipes = new WeakSet<Promise<void>>();
+  /** Restarts an open profile's idle wait. */
+  private readonly profileIdle = new Map<string, () => void>();
   /** Session cookies of idle-closed profiles, re-added on relaunch; a server restart drops them. */
   private readonly sessionCookies = new Map<string, Cookie[]>();
-  private browser: Promise<{ readonly browser: Browser; readonly idle: IdleCloser }> | undefined;
+  private browser: Promise<Browser> | undefined;
   private sharedClosing: Promise<void> | undefined;
   private closing: Promise<void> | undefined;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private pendingSharedContexts = 0;
 
   constructor(options: Options) {
     this.options = options;
   }
 
   private async launchOptions() {
-    const executablePath = await this.options.executable();
+    const executable = await this.options.executable();
     const env = this.options.env ?? process.env;
     return {
-      executablePath,
+      executable,
       env,
       args: [
         "--disable-gpu",
@@ -128,31 +114,30 @@ export class ServerBrowserContexts {
     };
   }
 
-  private async launch<A>(options: { readonly executablePath: string }, start: () => Promise<A>) {
+  private async launch<A>(executable: string, start: (executablePath: string) => Promise<A>) {
+    let release: (() => Promise<void>) | undefined;
     try {
-      return await start();
+      const launcher = await this.options.launcher?.(executable);
+      release = launcher?.release;
+      return await start(launcher?.path ?? executable);
     } catch (cause) {
-      throw (await this.options.diagnose?.(options.executablePath, cause)) ?? cause;
+      throw (await this.options.diagnose?.(executable, cause)) ?? cause;
+    } finally {
+      await release?.().catch(constVoid);
     }
   }
 
   private sharedBrowser() {
     if (!this.browser) {
-      const launched = this.launchOptions().then(async (options) => {
+      const launched = this.launchOptions().then(async ({ executable, ...options }) => {
         const { chromium } = loadPlaywright();
-        const browser = await this.launch(options, () => chromium.launch(options));
-        const idle = idleCloser(
-          () => browser.contexts().length === 0,
-          () => {
-            if (this.browser === launched) this.browser = undefined;
-            this.sharedClosing = browser.close().catch(constVoid);
-          },
+        const browser = await this.launch(executable, (executablePath) =>
+          chromium.launch({ ...options, executablePath }),
         );
         browser.on("disconnected", () => {
-          idle.stop();
           if (this.browser === launched) this.browser = undefined;
         });
-        return { browser, idle };
+        return browser;
       });
       this.browser = launched;
       void launched.catch(() => {
@@ -162,12 +147,36 @@ export class ServerBrowserContexts {
     return this.browser;
   }
 
-  private async sharedContext(options?: BrowserContextOptions) {
-    const { browser, idle } = await this.sharedBrowser();
-    idle.touch();
-    const context = await browser.newContext(options);
-    context.on("close", idle.touch);
-    return context;
+  private async sharedContext(options?: Parameters<Browser["newContext"]>[0]) {
+    clearTimeout(this.idleTimer);
+    this.pendingSharedContexts++;
+    const launched = this.sharedBrowser();
+    try {
+      const context = await (await launched).newContext(options);
+      context.on("close", () => this.retireWhenIdle(launched));
+      return context;
+    } finally {
+      this.pendingSharedContexts--;
+      this.retireWhenIdle(launched);
+    }
+  }
+
+  private retireWhenIdle(launched: Promise<Browser>) {
+    const delay = this.options.idleBrowserMs;
+    if (delay === undefined || this.closing || this.pendingSharedContexts > 0) return;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => void this.retireShared(launched), delay);
+    this.idleTimer.unref();
+  }
+
+  private async retireShared(launched: Promise<Browser>) {
+    const browser = await launched.catch(() => undefined);
+    if (!browser || this.browser !== launched || this.pendingSharedContexts > 0) return;
+    if (browser.contexts().length > 0) return;
+    // Cleared first, so a request during the close launches a fresh browser.
+    this.browser = undefined;
+    this.sharedClosing = browser.close().catch(constVoid);
+    await this.sharedClosing;
   }
 
   contextFor(profileId: string, isolationKey?: string): Promise<BrowserContext> {
@@ -175,7 +184,7 @@ export class ServerBrowserContexts {
     const key = JSON.stringify([profileId, isolationKey ?? null]);
     const cached = this.contexts.get(key);
     if (cached) {
-      this.idle.get(key)?.touch();
+      this.profileIdle.get(key)?.();
       return cached;
     }
     const persistent = isolationKey === undefined && profileId !== INCOGNITO_BROWSER_PROFILE_ID;
@@ -195,7 +204,7 @@ export class ServerBrowserContexts {
           await context.close().catch(constVoid);
           throw new Error("The preview browser is closed.");
         }
-        if (persistent) this.closeWhenIdle(key, pending, context);
+        if (persistent) this.closeProfileWhenIdle(key, pending, context);
         return context;
       });
     this.contexts.set(key, pending);
@@ -205,38 +214,50 @@ export class ServerBrowserContexts {
     return pending;
   }
 
-  private closeWhenIdle(key: string, pending: Promise<BrowserContext>, context: BrowserContext) {
-    const idle = idleCloser(
-      () => context.pages().length === 0,
-      () => {
-        if (this.contexts.get(key) !== pending) return;
-        void this.retire(key, {
-          before: async () => {
-            const cookies = await context.cookies().catch(() => []);
-            const session = cookies.filter((cookie) => cookie.expires === -1);
-            if (session.length > 0) this.sessionCookies.set(key, session);
-          },
-        }).catch(constVoid);
-      },
-    );
-    this.idle.set(key, idle);
-    context.on("page", (page) => page.on("close", idle.touch));
+  private closeProfileWhenIdle(
+    key: string,
+    pending: Promise<BrowserContext>,
+    context: BrowserContext,
+  ) {
+    const delay = this.options.idleBrowserMs;
+    if (delay === undefined) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const retireIfIdle = () => {
+      if (context.pages().length > 0 || this.contexts.get(key) !== pending) return;
+      void this.retireProfile(key, async () => {
+        const cookies = await context.cookies().catch(() => []);
+        const session = cookies.filter((cookie) => cookie.expires === -1);
+        if (session.length > 0) this.sessionCookies.set(key, session);
+      }).catch(constVoid);
+    };
+    const touch = () => {
+      clearTimeout(timer);
+      if (this.closing) return;
+      timer = setTimeout(retireIfIdle, delay);
+      timer.unref();
+    };
+    this.profileIdle.set(key, touch);
+    context.on("page", (page) => page.on("close", touch));
     context.on("close", () => {
-      idle.stop();
-      if (this.idle.get(key) === idle) this.idle.delete(key);
+      clearTimeout(timer);
+      if (this.profileIdle.get(key) === touch) this.profileIdle.delete(key);
     });
-    idle.touch();
+    touch();
   }
 
   private async createContext(profileId: string, persistent: boolean) {
     const contextOptions = { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 };
     if (!persistent) return this.sharedContext(contextOptions);
     const directory = this.profileDirectory(profileId);
-    const options = await this.launchOptions();
-    const { chromium } = loadPlaywright();
     await NodeFSP.mkdir(directory, { recursive: true });
-    return this.launch(options, () =>
-      chromium.launchPersistentContext(directory, { ...options, ...contextOptions }),
+    const { executable, ...options } = await this.launchOptions();
+    const { chromium } = loadPlaywright();
+    return this.launch(executable, (executablePath) =>
+      chromium.launchPersistentContext(directory, {
+        ...options,
+        ...contextOptions,
+        executablePath,
+      }),
     );
   }
 
@@ -270,28 +291,27 @@ export class ServerBrowserContexts {
   async clearProfile(profileId: string) {
     if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return;
     const key = JSON.stringify([profileId, null]);
-    await this.retire(key, {
-      after: async () => {
-        this.sessionCookies.delete(key);
-        await NodeFSP.rm(this.profileDirectory(profileId), { recursive: true, force: true });
-      },
+    const existing = this.clearing.get(key);
+    if (existing && this.wipes.has(existing)) return existing;
+    const clearing = this.retireProfile(key, undefined, async () => {
+      this.sessionCookies.delete(key);
+      await NodeFSP.rm(this.profileDirectory(profileId), { recursive: true, force: true });
     });
+    this.wipes.add(clearing);
+    return clearing;
   }
 
-  /** Runs `before`, closes the profile's context, runs `after`; a reopen waits for all of it. */
-  private retire(
-    key: string,
-    steps: { readonly before?: () => Promise<void>; readonly after?: () => Promise<void> } = {},
-  ) {
+  /** Runs `before`, closes the profile's context, then runs `after`; a reopen waits for all of it. */
+  private retireProfile(key: string, before?: () => Promise<void>, after?: () => Promise<void>) {
     const previous = this.clearing.get(key)?.catch(constVoid);
     const pending = this.contexts.get(key);
     this.contexts.delete(key);
     const retiring = (async () => {
       await previous;
       const context = await pending?.catch(() => undefined);
-      await steps.before?.();
+      await before?.();
       await context?.close();
-      await steps.after?.();
+      await after?.();
     })();
     this.clearing.set(key, retiring);
     void retiring.catch(constVoid).finally(() => {
@@ -306,15 +326,14 @@ export class ServerBrowserContexts {
   }
 
   private async dispose() {
-    for (const idle of this.idle.values()) idle.stop();
+    clearTimeout(this.idleTimer);
     await Promise.allSettled([
       ...[...this.contexts.values()].map(async (pending) => (await pending).close()),
       ...this.clearing.values(),
       this.sharedClosing,
     ]);
-    const shared = await this.browser?.catch(() => undefined);
-    shared?.idle.stop();
-    await shared?.browser.close().catch(constVoid);
+    const browser = await this.browser?.catch(() => undefined);
+    await browser?.close().catch(constVoid);
     this.contexts.clear();
   }
 }
