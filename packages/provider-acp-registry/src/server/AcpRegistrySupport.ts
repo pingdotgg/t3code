@@ -38,6 +38,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { sha256 } from "@noble/hashes/sha2";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect Path follows the host; Windows commands need win32 resolution.
+import * as NodePath from "node:path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -1720,6 +1722,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     },
   );
 
+  // Node fs resolved a relative command from process.cwd(); on POSIX, normalizing `..` could pick another file past a symlink.
+  const anchorToProcessCwd = (command: string) =>
+    platform === "win32"
+      ? NodePath.win32.resolve(command)
+      : path.isAbsolute(command)
+        ? command
+        : `${process.cwd()}${path.sep}${command}`;
+
   const validateLocalExecutable = (command: string) =>
     platform === "win32" && /\.(?:cmd|bat)$/iu.test(command)
       ? Effect.fail(
@@ -1859,13 +1869,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           });
         }
         const env = environment ?? hostEnvironment;
-        const command = resolveExecutable(executable, platform, env);
-        if (command === undefined) {
+        const resolvedExecutable = resolveExecutable(executable, platform, env);
+        if (resolvedExecutable === undefined) {
           return yield* new AcpRegistryError({
             reason: "runner_unavailable",
             detail: "Local ACP executable is not available on this environment's PATH.",
           });
         }
+        const command = anchorToProcessCwd(resolvedExecutable);
         yield* validateLocalExecutable(command);
         return {
           distribution: "local",
@@ -1896,7 +1907,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             detail: `ACP Registry agent ${agent.id} requires '${commandOverride}', but it is not available on this provider instance's PATH.`,
           });
         }
-        command = resolvedOverride;
+        command = anchorToProcessCwd(resolvedOverride);
         args = distribution.args;
       } else if (distribution.kind === "npx" || distribution.kind === "uvx") {
         const installed = yield* withInstallPermit(agent.id)(
@@ -1907,7 +1918,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             effectiveEnvironment,
           ),
         );
-        command = installed.executablePath;
+        command = anchorToProcessCwd(installed.executablePath);
         args = distribution.args;
         commandBinDirectory = installed.binDirectory;
       } else {
