@@ -826,10 +826,8 @@ function PullRequestCodeTab({
   const revealFile = (path: string, range?: SelectedLineRange) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
-    // Unfold only: a second reveal before the unfold renders must not fold the file again.
-    if (item.collapsed === true) {
-      setFoldChoices((current) => withFileDiffFold(current, item.id, false));
-    }
+    // Record the unfold even when already open, so a Viewed mark that loads later cannot fold it.
+    setFoldChoices((current) => withFileDiffFold(current, item.id, false));
     if (range) setSelectedLines({ id: item.id, range });
     codeViewReveal.request(item.id, range);
   };
