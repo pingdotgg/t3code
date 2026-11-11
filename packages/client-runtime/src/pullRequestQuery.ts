@@ -29,6 +29,11 @@ function splitQualifierList(raw: string): string[] {
     .filter((part) => part.length > 0);
 }
 
+/** `me` and `@me` both name the viewer; logins are case-insensitive. */
+function authorKey(login: string): string {
+  return login.toLowerCase().replace(/^@me$/, "me");
+}
+
 function boundedNames(names: ReadonlyArray<string>): string[] {
   return names
     .slice(0, MAX_QUALIFIER_VALUES)
@@ -44,7 +49,8 @@ export function parsePullRequestQuery(raw: string): {
   const labels: string[][] = [];
   const excludedLabels: string[] = [];
   const excludedAuthors: string[] = [];
-  let author: string | undefined;
+  // `null` once two different logins are named: GitHub ORs them, the contract carries one.
+  let author: string | null | undefined;
   let draft: PullRequestListFilters["draft"];
   let review: PullRequestListFilters["review"];
   let excludedReview: PullRequestListFilters["review"];
@@ -62,13 +68,16 @@ export function parsePullRequestQuery(raw: string): {
         else labels.push(names);
         continue;
       }
-      case "author":
-        if (negated) excludedAuthors.push(value.slice(0, MAX_QUALIFIER_LENGTH).trim());
-        else author = value.slice(0, MAX_QUALIFIER_LENGTH).trim();
+      case "author": {
+        const login = value.slice(0, MAX_QUALIFIER_LENGTH).trim();
+        if (negated) excludedAuthors.push(login);
+        else if (author === undefined) author = login;
+        else if (author === null || authorKey(author) !== authorKey(login)) author = null;
         continue;
+      }
       case "draft":
-        if (negated || (value.toLowerCase() !== "true" && value.toLowerCase() !== "false")) break;
-        draft = value.toLowerCase() === "true" ? "only" : "hide";
+        if (value.toLowerCase() !== "true" && value.toLowerCase() !== "false") break;
+        draft = (value.toLowerCase() === "true") !== negated ? "only" : "hide";
         continue;
       case "review": {
         const decision = REVIEW_VALUES[value.toLowerCase()];
@@ -85,6 +94,15 @@ export function parsePullRequestQuery(raw: string): {
         else checks = state;
         continue;
       }
+      // GitHub's own search qualifiers, not labels: the list sets scope and order itself.
+      case "is":
+      case "archived":
+      case "state":
+      case "repo":
+      case "org":
+      case "user":
+      case "sort":
+        continue;
       case "":
         break;
       default:
@@ -109,7 +127,7 @@ export function parsePullRequestQuery(raw: string): {
       ...(excludedLabels.length === 0
         ? {}
         : { excludedLabels: excludedLabels.slice(0, MAX_QUALIFIER_VALUES) }),
-      ...(author === undefined ? {} : { author }),
+      ...(typeof author === "string" ? { author } : {}),
       ...(excludedAuthors.length === 0
         ? {}
         : { excludedAuthors: excludedAuthors.slice(0, MAX_QUALIFIER_VALUES) }),
