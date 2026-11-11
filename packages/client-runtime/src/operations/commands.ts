@@ -31,9 +31,10 @@ import {
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
@@ -300,11 +301,13 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   for (let resends = 0; ; resends += 1) {
     const attemptSession = yield* SubscriptionRef.get(supervisor.session);
-    const result = yield* dispatch(command).pipe(Effect.result);
-    if (Result.isSuccess(result)) return result.success;
-    if (!isRpcClientError(result.failure) || resends >= MAX_LOST_TRANSPORT_RESENDS) {
-      return yield* result.failure;
-    }
+    const exit = yield* Effect.exit(dispatch(command));
+    if (Exit.isSuccess(exit)) return exit.value;
+    // Closing the session interrupts the request, which can beat the protocol error.
+    const lostTransport =
+      Cause.hasInterruptsOnly(exit.cause) ||
+      exit.cause.reasons.some((reason) => reason._tag === "Fail" && isRpcClientError(reason.error));
+    if (!lostTransport || resends >= MAX_LOST_TRANSPORT_RESENDS) return yield* exit;
     const replacement = yield* Effect.raceFirst(
       SubscriptionRef.changes(supervisor.session).pipe(
         Stream.filter(
@@ -320,7 +323,7 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
         Effect.as(Option.none()),
       ),
     );
-    if (Option.isNone(replacement)) return yield* result.failure;
+    if (Option.isNone(replacement)) return yield* exit;
   }
 });
 

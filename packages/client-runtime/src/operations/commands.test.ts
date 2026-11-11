@@ -20,6 +20,7 @@ import {
   type ProjectMutation,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -305,7 +306,20 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestRandom)),
   );
 
-  it.effect("retries a message dispatch lost to a socket close with the same command id", () =>
+  // A dead socket reaches the caller as a protocol error, or as an interrupt when
+  // the supervisor closes the session before the protocol reports the error.
+  it.effect.each([
+    [
+      "protocol error",
+      new RpcClientError.RpcClientError({
+        reason: new RpcClientError.RpcClientDefect({
+          message: "socket closed",
+          cause: new Error("socket closed"),
+        }),
+      }),
+    ],
+    ["session close", Effect.failCause(Cause.interrupt())],
+  ] as const)("retries a message dispatch lost to a %s with the same command id", ([, loss]) =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
       const supervisor = yield* makeSupervisor({ commands, projects: [] });
@@ -318,12 +332,7 @@ describe("V2 environment commands", () => {
             commands.push(command);
             yield* SubscriptionRef.set(supervisor.session, Option.none());
             yield* Deferred.succeed(firstAttemptLost, undefined);
-            return yield* new RpcClientError.RpcClientError({
-              reason: new RpcClientError.RpcClientDefect({
-                message: "socket closed",
-                cause: new Error("socket closed"),
-              }),
-            });
+            return yield* loss;
           }),
       } as unknown as WsRpcProtocolClient;
       yield* SubscriptionRef.set(
