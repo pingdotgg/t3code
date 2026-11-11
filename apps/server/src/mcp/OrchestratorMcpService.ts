@@ -2965,18 +2965,22 @@ const make = Effect.gen(function* () {
     ),
     findOrOpenSpecialist: Effect.fn("OrchestratorMcpService.findOrOpenSpecialist")(
       function* (callerScope, input) {
-        const { parent: listParent } = yield* loadCaller(callerScope, []);
+        const { parent: listParent, limits } = yield* loadCaller(callerScope, ["runs"]);
         const projectId = yield* resolveProjectTarget(
           listParent,
           input.projectId,
           "Pass projectId: this MCP client is not running inside a T3 thread.",
         );
-        const label = input.label ?? input.key;
-        const specialist: ThreadSpecialist = {
-          key: input.key,
-          label,
-          ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
-        };
+        const key = yield* requestKey(input.clientRequestId);
+        // Same identity as the create path so a retry cannot fall into resume and re-send.
+        const createCommandId = stableCommandId({
+          scope: callerScope,
+          requestKey: key,
+          operation: "create-specialist",
+        });
+        const createThreadId = stableThreadId({ scope: callerScope, requestKey: key, index: 0 });
+        const isCreateRetry = yield* threadManagement.hasReceipt(createCommandId);
+
         const snapshot = yield* threadManagement
           .getShellSnapshot({ projectId })
           .pipe(
@@ -3000,12 +3004,46 @@ const make = Effect.gen(function* () {
               DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
           )[0];
 
-        const key = yield* requestKey(input.clientRequestId);
-
-        if (existing !== undefined) {
+        if (existing !== undefined && !(isCreateRetry && existing.id === createThreadId)) {
+          const prior = existing.specialist;
+          const specialist: ThreadSpecialist = {
+            key: input.key,
+            label: input.label ?? prior?.label ?? input.key,
+            ...(input.instructions !== undefined
+              ? { instructions: input.instructions }
+              : prior?.instructions !== undefined
+                ? { instructions: prior.instructions }
+                : {}),
+          };
           const needsRebind =
-            existing.specialist?.label !== specialist.label ||
-            existing.specialist?.instructions !== specialist.instructions;
+            prior?.label !== specialist.label || prior?.instructions !== specialist.instructions;
+          const prompt = input.prompt;
+          if (needsRebind || prompt !== undefined || existing.archivedAt !== null) {
+            const target = yield* loadTargetThread(existing.id);
+            yield* assertLiveCallerForOtherThread(callerScope, listParent, target);
+            yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
+            yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
+          }
+          if (existing.archivedAt !== null) {
+            yield* threadManagement
+              .dispatch({
+                type: "thread.unarchive",
+                commandId: stableCommandId({
+                  scope: callerScope,
+                  requestKey: key,
+                  operation: "unarchive-specialist",
+                }),
+                threadId: existing.id,
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  failure(
+                    "orchestration_error",
+                    `Unable to reopen archived specialist: ${errorMessage(error)}`,
+                  ),
+                ),
+              );
+          }
           if (needsRebind) {
             yield* threadManagement
               .dispatch({
@@ -3030,7 +3068,7 @@ const make = Effect.gen(function* () {
           let runId: RunId | null = existing.latestRunId;
           let status: OrchestratorMcpFindOrOpenSpecialistResult["status"] =
             existing.activityRunStatus ?? existing.status;
-          if (input.prompt !== undefined) {
+          if (prompt !== undefined) {
             const sent = yield* threadManagement
               .sendToThread({
                 projectId,
@@ -3046,7 +3084,7 @@ const make = Effect.gen(function* () {
                   requestKey: key,
                   operation: "specialist-send",
                 }),
-                text: input.prompt,
+                text: prompt,
                 attachments: [],
                 mode: "auto",
                 createdBy: "agent",
@@ -3076,6 +3114,11 @@ const make = Effect.gen(function* () {
           } satisfies OrchestratorMcpFindOrOpenSpecialistResult;
         }
 
+        const specialist: ThreadSpecialist = {
+          key: input.key,
+          label: input.label ?? input.key,
+          ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+        };
         const { scope, parent } = yield* loadThreadCaller(callerScope, "find_or_open_specialist");
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
         const parentRun = ThreadManagementService.latestActiveRun(parent);
@@ -3096,16 +3139,9 @@ const make = Effect.gen(function* () {
           );
         }
         const providers = yield* loadProviders;
-        const commandId = stableCommandId({
-          scope,
-          requestKey: key,
-          operation: "create-specialist",
-        });
-        const threadId = stableThreadId({ scope, requestKey: key, index: 0 });
-        const isRetryOfAcceptedCreation = yield* threadManagement.hasReceipt(commandId);
-        const committedThread = isRetryOfAcceptedCreation
+        const committedThread = isCreateRetry
           ? yield* threadManagement
-              .getThreadShell(threadId)
+              .getThreadShell(createThreadId)
               .pipe(Effect.mapError(threadManagementFailure))
           : null;
         const target = yield* resolveTargetRechecking({
@@ -3118,7 +3154,7 @@ const make = Effect.gen(function* () {
                   providerInstanceId: committedThread.modelSelection.instanceId,
                 },
           providers,
-          skipProjectEnablementFilter: isRetryOfAcceptedCreation,
+          skipProjectEnablementFilter: isCreateRetry,
         });
         const runtimeMode = yield* resolveRuntimeMode(
           parent.thread.runtimeMode,
@@ -3129,11 +3165,11 @@ const make = Effect.gen(function* () {
           parent.thread.interactionMode,
           input.interactionMode,
         );
-        yield* assertTargetEnabledForProject(parent, commandId, target);
+        yield* assertTargetEnabledForProject(parent, createCommandId, target);
         const title = threadTitle({
           parentTitle: parent.thread.title,
           prompt: input.prompt,
-          title: input.title ?? label,
+          title: input.title ?? specialist.label,
           index: 0,
         });
         if (committedThread === null) {
@@ -3142,8 +3178,8 @@ const make = Effect.gen(function* () {
               type: "thread.create",
               createdBy: "agent",
               creationSource: "mcp",
-              commandId,
-              threadId,
+              commandId: createCommandId,
+              threadId: createThreadId,
               projectId,
               title,
               modelSelection: target.modelSelection,
@@ -3168,11 +3204,11 @@ const make = Effect.gen(function* () {
           .dispatch({
             type: "thread.specialist.set",
             commandId: stableCommandId({
-              scope,
+              scope: callerScope,
               requestKey: key,
               operation: "bind-specialist",
             }),
-            threadId,
+            threadId: createThreadId,
             specialist,
           })
           .pipe(
@@ -3181,7 +3217,7 @@ const make = Effect.gen(function* () {
             ),
           );
         const resolvedModelSelection = (yield* threadManagement
-          .getThreadRecords(threadId, [])
+          .getThreadRecords(createThreadId, [])
           .pipe(Effect.mapError(threadManagementFailure))).thread.modelSelection;
         if (input.prompt !== undefined) {
           yield* threadManagement
@@ -3190,14 +3226,14 @@ const make = Effect.gen(function* () {
               createdBy: "agent",
               creationSource: "mcp",
               commandId: stableCommandId({
-                scope,
+                scope: callerScope,
                 requestKey: key,
                 operation: "dispatch-specialist",
               }),
-              threadId,
+              threadId: createThreadId,
               senderThreadId: scope.thread.threadId,
               messageId: stableMessageId({
-                scope,
+                scope: callerScope,
                 requestKey: key,
                 index: 0,
               }),
@@ -3217,20 +3253,20 @@ const make = Effect.gen(function* () {
               ),
             );
         }
-        const projection = yield* loadThreadRecords(threadId, ["runs"]);
+        const projection = yield* loadThreadRecords(createThreadId, ["runs"]);
         const run = projection.runs.at(-1);
         yield* threadManagement
           .dispatch({
             type: "thread.created.record",
             commandId: stableCommandId({
-              scope,
+              scope: callerScope,
               requestKey: key,
               operation: "record-specialist",
             }),
             parentThreadId: scope.thread.threadId,
             parentRunId: parentRun.id,
             parentNodeId: parentRun.rootNodeId,
-            targetThreadId: threadId,
+            targetThreadId: createThreadId,
             targetRunId: run?.id ?? null,
           })
           .pipe(
@@ -3242,9 +3278,9 @@ const make = Effect.gen(function* () {
             ),
           );
         return {
-          threadId,
+          threadId: createThreadId,
           link: formatThreadLink(
-            { environmentId: scope.environmentId, threadId },
+            { environmentId: scope.environmentId, threadId: createThreadId },
             projection.thread.title,
           ),
           created: true,
