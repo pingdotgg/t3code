@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
@@ -121,6 +122,27 @@ const reserve = (
     ),
   );
 
+const getOverride = (override?: number) =>
+  Effect.gen(function* () {
+    const limits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
+    return yield* limits.getOverride({ userId: "user-1" });
+  }).pipe(
+    Effect.provide(
+      ManagedTunnelLimits.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            RelayDb.RelayDb,
+            makeFakeDb({
+              otherSlots: () => 0,
+              ...(override === undefined ? {} : { override }),
+            }),
+          ),
+        ),
+        Layer.provide(t3ChatLayer("free")),
+      ),
+    ),
+  );
+
 describe("ManagedTunnelLimits", () => {
   it.effect("rejects concurrent reservations past the limit", () => {
     const reserved: Array<string> = [];
@@ -166,7 +188,10 @@ describe("ManagedTunnelLimits", () => {
         Effect.promise(() => PGlite.create()),
         (client) => Effect.promise(() => client.close()),
       );
-      const migrationsDir = new URL("../../migrations/postgres/", import.meta.url).pathname;
+      const path = yield* Path.Path;
+      const migrationsDir = yield* path.fromFileUrl(
+        new URL("../../migrations/postgres/", import.meta.url),
+      );
       const migrations = (yield* fs.readDirectory(migrationsDir)).toSorted();
       const applyMigrations = (names: ReadonlyArray<string>) =>
         Effect.forEach(names, (name) =>
@@ -383,7 +408,9 @@ describe("ManagedTunnelLimits", () => {
           reserve({ override, activeTunnels: override, plan: "premier", lookups }),
         );
         expect(error).toMatchObject({ _tag: "ManagedTunnelLimitExceeded", maxTunnels: override });
+        expect(yield* getOverride(override)).toBe(override);
       }
+      expect(yield* getOverride()).toBeNull();
       expect(lookups).toEqual([]);
     }),
   );

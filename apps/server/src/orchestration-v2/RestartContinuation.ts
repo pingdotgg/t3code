@@ -2,6 +2,7 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
   latestProviderTurnForAttempt,
   MessageId,
   type OrchestrationV2Run,
@@ -19,6 +20,7 @@ import {
   awaitingProviderThreadId,
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
+  continuationFailedBeforePrompt,
   isAwaitedWork,
   isRestartContinuationSource,
   cancelledBeforeStart,
@@ -28,7 +30,8 @@ import {
   restartContinuationNote,
 } from "./RestartBackgroundNote.ts";
 
-const CONTINUE_PROMPT = "Continue where you left off.";
+const CONTINUE_PROMPT =
+  "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.";
 
 const MAX_CONTINUATION_CHAIN = 3;
 const CONTINUATION_LOOP_WINDOW_MS = 5 * 60 * 1_000;
@@ -200,7 +203,10 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
     if (
       !source ||
-      !isRestartContinuationSource(source, projection.providerTurns) ||
+      !(
+        isRestartContinuationSource(source, projection.providerTurns) ||
+        continuationFailedBeforePrompt(source, projection.providerTurns)
+      ) ||
       restartContinuationBlocked(
         projection,
         source,
@@ -255,6 +261,32 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       )
     )
       return;
+    // A parent's Stop reaches its open delegated tasks through an effect a restart can cut short.
+    const { lineage, forkedFrom } = projection.thread;
+    const taskId =
+      source.delegatedTaskId ?? (forkedFrom?.type === "node" ? forkedFrom.nodeId : undefined);
+    if (
+      lineage.relationshipToParent === "subagent" &&
+      lineage.parentThreadId !== null &&
+      taskId !== undefined
+    ) {
+      const task = (yield* threads.getThreadRecords(lineage.parentThreadId, ["subagents"], {
+        subagentIds: [taskId],
+      })).subagents.find((candidate) => candidate.id === taskId);
+      // A settled task no longer owns later work in its thread.
+      const parentRunId =
+        task !== undefined && task.result === null && isOrchestrationV2WorkActive(task.status)
+          ? task.runId
+          : null;
+      if (
+        parentRunId !== null &&
+        (yield* threads.getThreadRecords(lineage.parentThreadId, ["turnItems"], {
+          turnItemTypes: ["run_interrupt_request"],
+          turnItemRunIds: [parentRunId],
+        })).turnItems.length > 0
+      )
+        return;
+    }
     const sourceMessage = sourceRecords.messages.find(
       (message) => message.id === source.userMessageId,
     );
@@ -296,7 +328,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         restartContinuationOfRunId: input.sourceRunId,
       })
       .pipe(
-        // Disabled instances cannot resume; still run success cleanup so delegated children recover without futile retries.
+        // Disabled instances, and threads above a policy ceiling, cannot resume; still run success
+        // cleanup so delegated children recover without futile retries.
         Effect.catchTags({
           ThreadManagementProviderInstanceDisabledError: (error) =>
             Effect.logInfo("orchestration-v2.restart-continuation.instance-disabled", {
@@ -304,6 +337,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
               sourceRunId: input.sourceRunId,
               projectId: error.projectId,
               instanceId: error.instanceId,
+            }),
+          OrchestratorRuntimeModeAboveCeilingError: () =>
+            Effect.logInfo("orchestration-v2.restart-continuation.above-ceiling", {
+              threadId: input.threadId,
+              sourceRunId: input.sourceRunId,
             }),
         }),
       );
