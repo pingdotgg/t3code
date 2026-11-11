@@ -312,6 +312,14 @@ export function useComposerContextImport(input: {
       // re-minted under a fresh id so both survive the paste.
       const record = asKnownContextRecord(candidate);
       if (!record) continue;
+      if (
+        questionAttachmentTarget !== null &&
+        (record.kind === "pull-request" ||
+          record.kind === "jira" ||
+          record.kind === "figma" ||
+          record.kind === "issue")
+      )
+        continue;
       // A reminted annotation needs its screenshot under the new annotation id.
       const existing = dependentAttachmentLocalIds.has(record.contextId)
         ? undefined

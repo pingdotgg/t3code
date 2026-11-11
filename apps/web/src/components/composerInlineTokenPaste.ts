@@ -98,9 +98,9 @@ export function importPastedComposerText(
   const fragment = importContextFragment ? readPastedComposerContext(clipboardData, options) : null;
   const rewrittenIds =
     fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
-  if (!rewrittenIds || rewrittenIds.size === 0) return pastedText;
+  if (!fragment) return pastedText;
   const nextId = (contextId: string) => {
-    const id = rewrittenIds.get(contextId);
+    const id = rewrittenIds?.get(contextId);
     return id ? ComposerContextId.make(id) : undefined;
   };
   const text = replaceComposerContextReferences(pastedText, (occurrence) => {
@@ -111,7 +111,19 @@ export function importPastedComposerText(
           contextId,
           kind: occurrence.kind === "element" ? "preview-annotation" : occurrence.kind,
         })
-      : occurrence.source;
+      : (() => {
+          const record = fragment.records.find(
+            (record) => record.contextId === occurrence.contextId,
+          );
+          return record &&
+            "url" in record &&
+            (record.kind === "pull-request" ||
+              record.kind === "jira" ||
+              record.kind === "figma" ||
+              record.kind === "issue")
+            ? record.url
+            : occurrence.source;
+        })();
   });
   // A thread the import refused, on a machine this agent cannot read, stays the link it was.
   const withThreads = threadLinkContextReferences(

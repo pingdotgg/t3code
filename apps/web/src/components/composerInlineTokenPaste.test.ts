@@ -56,6 +56,19 @@ describe("importPastedComposerText", () => {
     );
     expect(text).toBe(pasted);
     expect(imported.map((fragment) => fragment.records)).toEqual([[record]]);
+    const rejected = importPastedComposerText(
+      clipboard({
+        "text/plain": pasted,
+        [COMPOSER_CONTEXT_CLIPBOARD_MIME]: encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: thread.environmentId },
+          records: [record],
+        })!,
+      }),
+      () => new Map(),
+      { rewriteExternalLinks: true },
+    );
+    expect(rejected).toBe(record.url);
   });
   it("pastes a copied thread link back as the chip it was copied from", () => {
     const target = threadChipCopyTarget(thread, "Fix the login flow");

@@ -128,11 +128,12 @@ it.effect("loadScope retains a newer published scope over a concurrent stale dis
     const store = KeyValueStore.makeStringOnly({
       get: (key) =>
         Effect.gen(function* () {
+          const valueAtReadStart = disk.get(key);
           if (gateScopeReads && key === `scope:${scopeKey}`) {
             yield* Deferred.succeed(readStarted, undefined);
             yield* Deferred.await(allowRead);
           }
-          return disk.get(key);
+          return valueAtReadStart;
         }),
       set: (key, value) =>
         Effect.sync(() => {

@@ -568,17 +568,19 @@ export function projectComposerContextForProvider(input: {
     if (occurrence.url !== undefined) return recordsByUrl.get(occurrence.url.trim());
     return undefined;
   };
-  const body = expandAssistantCitationsForProvider(replaceComposerContextReferences(input.text, (occurrence) => {
-    const record = lookupRecord(occurrence);
-    // Draft already stores a real URL, or the record can supply one — keep/re-emit the link.
-    if (occurrence.url !== undefined) return occurrence.source;
-    return formatComposerContextProviderMarker(
-      record?.kind ?? occurrence.kind,
-      occurrence.label,
-      occurrence.contextId,
-      record,
-    );
-  }));
+  const body = expandAssistantCitationsForProvider(
+    replaceComposerContextReferences(input.text, (occurrence) => {
+      const record = lookupRecord(occurrence);
+      // Draft already stores a real URL, or the record can supply one — keep/re-emit the link.
+      if (occurrence.url !== undefined) return occurrence.source;
+      return formatComposerContextProviderMarker(
+        record?.kind ?? occurrence.kind,
+        occurrence.label,
+        occurrence.contextId,
+        record,
+      );
+    }),
+  );
   const seen = new Set<ComposerContextId>();
   const entries: string[] = [];
   for (const occurrence of occurrences) {

@@ -5,6 +5,9 @@ import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { fileBasename } from "@t3tools/shared/path";
 import {
   CircleDashedIcon,
+  CircleDotIcon,
+  LinkIcon,
+  PaintbrushIcon,
   ImageIcon,
   MessageCircleIcon,
   MessagesSquareIcon,
@@ -25,6 +28,7 @@ import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { ContextChipShell } from "../contextChipParts";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { SkillChipIcon } from "./SkillInlineText";
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 
 type Theme = "light" | "dark";
 
@@ -40,6 +44,10 @@ const CONTEXT_REFERENCE_ICONS: Record<
   "review-comment": () => <MessageCircleIcon />,
   thread: () => <MessagesSquareIcon />,
   environment: () => <MonitorIcon />,
+  "pull-request": () => <PullRequestGlyph.pullRequest />,
+  jira: () => <LinkIcon />,
+  figma: () => <PaintbrushIcon />,
+  issue: () => <CircleDotIcon />,
 };
 
 // Mirrors the editor's chip: only a draft record of the same kind resolves a reference.
@@ -97,7 +105,11 @@ export function CollapsedComposerPromptPreview(props: {
         return entry ? (
           <ContextChipShell
             key={key}
-            kind={entry.kind}
+            kind={
+              entry.kind === "jira" || entry.kind === "figma" || entry.kind === "issue"
+                ? "file"
+                : entry.kind
+            }
             icon={CONTEXT_REFERENCE_ICONS[entry.kind](segment.label, props.theme)}
             label={segment.label}
           />
