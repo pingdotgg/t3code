@@ -463,11 +463,6 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
     .check(Schema.isNonEmpty())
     .check(Schema.isMaxLength(64_000)),
   awaitPromise: Schema.optional(Schema.Boolean.annotate({ description: "Default true." })),
-  returnByValue: Schema.optional(
-    Schema.Boolean.annotate({
-      description: "False returns a ref. Default true.",
-    }),
-  ),
 });
 export type PreviewAutomationEvaluateInput = typeof PreviewAutomationEvaluateInput.Type;
 
@@ -552,8 +547,17 @@ export const PreviewAutomationSnapshot = Schema.Struct({
     width: Schema.Int,
     height: Schema.Int,
   }),
+  /** The capture before `screenshot` was capped for the agent, when requested and larger. */
+  fullScreenshot: Schema.optional(
+    Schema.Struct({ data: Schema.String, width: Schema.Int, height: Schema.Int }),
+  ),
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
+
+export const PreviewAutomationSnapshotInput = Schema.Struct({
+  fullScreenshot: Schema.optional(Schema.Boolean),
+});
+export type PreviewAutomationSnapshotInput = typeof PreviewAutomationSnapshotInput.Type;
 
 export const PreviewAutomationRecordingStatus = Schema.Struct({
   tabId: PreviewTabId,

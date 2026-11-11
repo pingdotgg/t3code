@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import type { ColorValue } from "react-native";
-import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
 import type { AppSymbolName } from "./AppSymbol";
 
 export interface AppBarAction {
@@ -16,6 +15,8 @@ export interface AppBarAction {
   readonly destructive?: boolean;
   /** Android: always in the overflow menu, never a toolbar button. */
   readonly overflowOnly?: boolean;
+  /** iOS: false shares one glass capsule with neighbouring items. Defaults to true. */
+  readonly separateBackground?: boolean;
 }
 
 export type AppBarMenuItem =
@@ -28,6 +29,7 @@ export type AppBarMenuItem =
       readonly subtitle?: string;
       readonly disabled?: boolean;
       readonly selected?: boolean;
+      readonly destructive?: boolean;
       readonly onPress: () => void;
     }
   | {
@@ -44,6 +46,13 @@ export interface AppBarMenu {
   readonly status?: string;
   readonly separateBackground?: boolean;
   readonly items: ReadonlyArray<AppBarMenuItem>;
+}
+
+export interface AppBarConfirm {
+  readonly label: string;
+  readonly onPress: () => void;
+  readonly disabled?: boolean;
+  readonly loading?: boolean;
 }
 
 export interface AppBarSearch {
@@ -74,11 +83,35 @@ export interface AppBarProps {
   readonly menus?: ReadonlyArray<AppBarMenu>;
   readonly search?: AppBarSearch;
   readonly onBack?: () => void;
+  /** Back runs `onBack` and swipe-back is off, so a `usePreventRemove` guard sees it first. */
+  readonly guardBack?: boolean;
+  /**
+   * Back for a page whose parent is the workspace list. Hidden in split view, where the list is
+   * beside the page; shown even when the page opened with nothing beneath it.
+   */
+  readonly onBackToList?: () => void;
+  /**
+   * iOS: a labelled compose button beside the sidebar button in split view. The Duo's column bar
+   * and Android's sidebar compose on their own, so they ignore it.
+   */
+  readonly onCompose?: () => void;
+  /**
+   * The bar of a sheet or modal: a close button leads the bar in place of Back and the sidebar
+   * button, on both platforms.
+   */
+  readonly onClose?: () => void;
+  /** Defaults to "Close". */
+  readonly closeAccessibilityLabel?: string;
+  /** A sheet's confirm button, last in the bar. */
+  readonly confirm?: AppBarConfirm;
   /** Android: replaces the sidebar button at the start of the bar. */
   readonly leading?: ReactNode;
-  /** Leaves route options to the screen: in-screen bars, and screens that set their own. iOS draws nothing. */
+  /**
+   * Workspace shell only: a second bar inside a route whose own bar is drawn elsewhere, such as
+   * a workspace tab pane. Leaves route options alone; iOS draws nothing. Screens never set it.
+   */
   readonly embedded?: boolean;
-  /** An embedded bar at the top of a sheet. */
+  /** A bar at the top of a sheet that is not a route (routed sheets are detected). */
   readonly sheet?: boolean;
   readonly backInSplitView?: {
     readonly accessibilityLabel: string;
@@ -87,10 +120,7 @@ export interface AppBarProps {
     readonly onPress?: () => void;
   };
   readonly hideBottomBorder?: boolean;
-  /** Android: one title row with the subtitle inline. iOS ignores it. */
-  readonly compact?: boolean;
   readonly trailing?: ReactNode;
   readonly matchSearchSurface?: boolean;
-  readonly options?: AppNativeStackNavigationOptions;
   readonly optionsVersion?: unknown;
 }
