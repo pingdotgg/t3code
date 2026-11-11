@@ -29,7 +29,6 @@ describe("long active tool groups", () => {
         runningRunId: runId,
         activeTurnStartedAt: createdAt,
         turnDiffSummaries: [],
-        runs: [],
         supportsConversationRollback: false,
         expandedWorkGroupIds: new Set(expanded ? ["work-group:work-entry-0"] : []),
       });

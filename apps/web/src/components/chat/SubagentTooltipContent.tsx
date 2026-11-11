@@ -11,6 +11,7 @@ import {
   resolveSubagentMetadata,
   subagentDetailPreview,
 } from "@t3tools/client-runtime/state/subagent-display";
+import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/client-runtime/state/thread-execution";
 import { getModelSelectionStringOptionValue, resolveSelectableModel } from "@t3tools/shared/model";
 import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
 import type { ReactNode } from "react";
@@ -29,7 +30,6 @@ import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../providerInstances";
 
-/** Geometry and preview limits stay identical in lineage and timeline tooltips. */
 export function SubagentTooltipContent(props: {
   title: string;
   model: string | null;
@@ -50,16 +50,16 @@ export function SubagentTooltipContent(props: {
   result?: string | null | undefined;
   progress?: string | null | undefined;
 }) {
-  const { modelLabel, workspace: metadata } = resolveSubagentMetadata(props);
-  const preview = subagentDetailPreview(props);
-  const model = props.model?.trim();
-  const modelSlug = props.provider
-    ? resolveSelectableModel(props.provider.driver, model, props.provider.models)
-    : model;
-  const providerModel = props.provider?.models.find((candidate) => candidate.slug === modelSlug);
   const childSelection =
     props.modelSelection ??
     (props.origin === "app_owned" ? props.childThread?.modelSelection : undefined);
+  const {
+    modelLabel,
+    modelSlug,
+    workspace: metadata,
+  } = resolveSubagentMetadata({ ...props, modelSelection: childSelection });
+  const preview = subagentDetailPreview(props);
+  const providerModel = props.provider?.models.find((candidate) => candidate.slug === modelSlug);
   const childModel = props.provider
     ? (resolveSelectableModel(
         props.provider.driver,
@@ -69,12 +69,12 @@ export function SubagentTooltipContent(props: {
     : childSelection?.model.trim();
   const provider = props.provider;
   const matchingSelection =
-    childModel === (modelSlug ?? model) && childSelection?.instanceId === props.providerInstanceId
+    childModel === modelSlug && childSelection?.instanceId === props.providerInstanceId
       ? childSelection
       : undefined;
-  const effort = ["reasoningEffort", "effort", "reasoning", "variant"]
-    .map((id) => getModelSelectionStringOptionValue(matchingSelection, id))
-    .find(Boolean);
+  const effort = REASONING_EFFORT_OPTION_IDS.map((id) =>
+    getModelSelectionStringOptionValue(matchingSelection, id),
+  ).find(Boolean);
   const speed = provider
     ? providerModel?.capabilities?.optionDescriptors
         ?.map((descriptor) => {
@@ -84,19 +84,18 @@ export function SubagentTooltipContent(props: {
             descriptor.type === "boolean" &&
             typeof saved?.value === "boolean"
           ) {
-            return getTraitsSpeedDisplay(provider.driver, {
+            return getTraitsSpeedDisplay({
               ...descriptor,
               currentValue: saved.value,
             });
           }
           if (
-            provider.driver === "codex" &&
             descriptor.id === "serviceTier" &&
             descriptor.type === "select" &&
             typeof saved?.value === "string" &&
             descriptor.options.some((option) => option.id === saved.value)
           ) {
-            return getTraitsSpeedDisplay(provider.driver, {
+            return getTraitsSpeedDisplay({
               ...descriptor,
               currentValue: saved.value,
             });

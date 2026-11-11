@@ -8,7 +8,6 @@ import type {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
-import { useEffect } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -26,20 +25,27 @@ import {
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { WizardPopup } from "../ui/wizard";
+import { findRevertCheckpoint } from "../../session-logic";
+import { registerThreadOverlay } from "./threadOverlayRetention";
 
 /**
  * Open state for overlays the chat view hosts. It lives in atoms rather than
  * ChatView state so opening or closing one renders only its host, not the
  * whole chat chrome. Each entry carries the thread it was opened for; a host
- * shows only its own thread's entry and drops it when the thread changes.
+ * shows only its own thread's entry, and leaving that thread's route drops it.
  */
 type ThreadOverlayAtom<T> = Atom.Writable<{ readonly threadKey: string; readonly value: T } | null>;
 
 function makeThreadOverlayAtom<T>(label: string): ThreadOverlayAtom<T> {
-  return Atom.make<{ readonly threadKey: string; readonly value: T } | null>(null).pipe(
+  const atom = Atom.make<{ readonly threadKey: string; readonly value: T } | null>(null).pipe(
     Atom.keepAlive,
     Atom.withLabel(`chat:${label}`),
   );
+  registerThreadOverlay((threadKey) => {
+    const entry = appAtomRegistry.get(atom);
+    if (entry !== null && entry.threadKey !== threadKey) closeThreadOverlay(atom);
+  });
+  return atom;
 }
 
 function closeThreadOverlay<T>(atom: ThreadOverlayAtom<T>): void {
@@ -48,12 +54,6 @@ function closeThreadOverlay<T>(atom: ThreadOverlayAtom<T>): void {
 
 function useThreadOverlay<T>(atom: ThreadOverlayAtom<T>, threadKey: string | null): T | null {
   const entry = useAtomValue(atom);
-  useEffect(
-    () => () => {
-      if (appAtomRegistry.get(atom)?.threadKey === threadKey) closeThreadOverlay(atom);
-    },
-    [atom, threadKey],
-  );
   return threadKey !== null && entry?.threadKey === threadKey ? entry.value : null;
 }
 
@@ -194,16 +194,13 @@ export function openRevertConfirm(threadKey: string, pending: PendingRevert): vo
 
 export function RevertConfirmHost(props: {
   readonly threadKey: string;
-  readonly checkpoints?: OrchestrationV2ThreadProjection["checkpoints"] | undefined;
+  readonly checkpoints: OrchestrationV2ThreadProjection["checkpoints"] | undefined;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
-  const target = props.checkpoints?.findLast((checkpoint) =>
-    pending?.turnCount === 0
-      ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
-      : checkpoint.appRunOrdinal === pending?.turnCount,
-  );
-  const canRestoreFiles = target?.status === "ready";
+  const canRestoreFiles =
+    pending !== null &&
+    findRevertCheckpoint(props.checkpoints ?? [], pending.turnCount)?.status === "ready";
   const confirm = (restoreFiles: boolean) => {
     if (pending === null || (restoreFiles && !canRestoreFiles)) return;
     closeThreadOverlay(revertConfirmAtom);
@@ -221,11 +218,16 @@ export function RevertConfirmHost(props: {
           <AlertDialogTitle>Edit from here?</AlertDialogTitle>
           <AlertDialogDescription>
             Rewind chat to before this message. Your prompt and attachments return to the composer.
+            “Revert files too” also undoes your own edits.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button variant="destructive" disabled={!canRestoreFiles} onClick={() => confirm(true)}>
+          <Button
+            variant="destructive-outline"
+            disabled={!canRestoreFiles}
+            onClick={() => confirm(true)}
+          >
             Revert files too
           </Button>
           <Button onClick={() => confirm(false)}>Revert and keep changes</Button>

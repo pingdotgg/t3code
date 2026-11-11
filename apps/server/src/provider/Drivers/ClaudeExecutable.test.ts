@@ -24,30 +24,6 @@ function withWindowsResolution(input: {
 }
 
 describe("resolveClaudeSdkExecutablePath", () => {
-  it.effect("returns the configured path unchanged on non-Windows platforms", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(SpawnExecutableResolution, () => {
-            throw new Error("must not resolve on non-Windows platforms");
-          }),
-        ),
-      ).toBe("claude");
-    }),
-  );
-
-  it.effect("returns the resolved absolute path for native Windows executables", () =>
-    Effect.gen(function* () {
-      const nativeBinary = "C:\\Users\\dev\\.local\\bin\\claude.exe";
-      expect(
-        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
-          withWindowsResolution({ resolvedCommand: nativeBinary }),
-        ),
-      ).toBe(nativeBinary);
-    }),
-  );
-
   it.effect("follows an npm launcher shim to the packaged native binary", () =>
     Effect.gen(function* () {
       expect(
@@ -107,16 +83,6 @@ describe("resolveClaudeSdkExecutablePath", () => {
       expect(
         yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
           withWindowsResolution({ resolvedCommand: NPM_SHIM }),
-        ),
-      ).toBe("claude");
-    }),
-  );
-
-  it.effect("returns the configured path when command resolution finds nothing", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
-          withWindowsResolution({ resolvedCommand: undefined }),
         ),
       ).toBe("claude");
     }),

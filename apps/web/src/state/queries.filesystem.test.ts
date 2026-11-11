@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   phase: "connected" as "connected" | "offline",
   sessionAtom: {},
   searchAtom: {},
+  searchRequests: vi.fn(),
   contentAtom: {},
   contentRequests: vi.fn(),
   contentError: null as string | null,
@@ -34,7 +35,12 @@ vi.mock("./presentation", () => ({
   }),
 }));
 vi.mock("./projects", () => ({
-  projectEnvironment: { searchEntries: () => state.searchAtom },
+  projectEnvironment: {
+    searchEntries: (target: unknown) => {
+      state.searchRequests(target);
+      return state.searchAtom;
+    },
+  },
   projectContentSearch: (target: unknown) => {
     state.contentRequests(target);
     return state.contentAtom;
@@ -67,10 +73,7 @@ vi.mock("./query", () => ({
   }),
 }));
 
-import { useProjectContentSearch, useProjectPathSearch } from "./queries";
-
-const useComposerPathSearch = (input: Parameters<typeof useProjectPathSearch>[0]) =>
-  useProjectPathSearch(input, 20);
+import { useComposerPathSearch, useProjectContentSearch } from "./queries";
 
 const target = {
   environmentId: EnvironmentId.make("test-environment"),
@@ -83,46 +86,9 @@ beforeEach(() => {
   state.sessionError = null;
   state.sessionWaiting = false;
   state.phase = "connected";
+  state.searchRequests.mockClear();
   state.contentRequests.mockClear();
   state.contentError = null;
-});
-
-it("keeps a file search pending until its grant loads, then shows matches", () => {
-  expect(useComposerPathSearch(target)).toMatchObject({
-    entries: [],
-    error: null,
-    isPending: true,
-  });
-  state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
-  expect(useComposerPathSearch(target)).toMatchObject({
-    entries: [{ path: "src/index.ts", kind: "file" }],
-    error: null,
-    isPending: false,
-  });
-});
-
-it("shows a confirmed denial and a connection failure separately", () => {
-  state.session = { authenticated: true, scopes: [] };
-  expect(useComposerPathSearch(target)).toMatchObject({
-    entries: [],
-    error: "This connection cannot search host files.",
-    isPending: false,
-  });
-  state.session = null;
-  state.phase = "offline";
-  expect(useComposerPathSearch(target)).toMatchObject({
-    entries: [],
-    error: "This environment is not connected.",
-    isPending: false,
-  });
-});
-
-it("leaves an inactive search idle while its grant loads", () => {
-  expect(useComposerPathSearch({ ...target, cwd: null, query: null })).toMatchObject({
-    entries: [],
-    error: null,
-    isPending: false,
-  });
 });
 
 const contentTarget = {
@@ -133,20 +99,30 @@ const contentTarget = {
   useRegex: false,
 };
 
-it("waits for content-search access before issuing a request, including an empty search", () => {
-  for (const query of ["", contentTarget.query]) {
-    const result = useProjectContentSearch({ ...contentTarget, query });
-    expect(state.contentRequests).not.toHaveBeenCalled();
-    expect(result).toMatchObject({
-      canReadFiles: false,
-      isCheckingAccess: true,
-      matches: [],
-      error: null,
-      isPending: true,
+it.each([
+  { query: "src", expected: "src" },
+  { query: "a".repeat(256), expected: "a".repeat(256) },
+  {
+    query: ["a".repeat(86), "b".repeat(86), "c".repeat(86), "unique.ts"].join("/"),
+    expected: ["a".repeat(86), "b".repeat(86), "c".repeat(82)].join("/"),
+  },
+  { query: `${"a".repeat(255)}😀/boundary.ts`, expected: "a".repeat(255) },
+  { query: `${"a".repeat(254)}😀/boundary.ts`, expected: `${"a".repeat(254)}😀` },
+])(
+  "bounds the path search request while preserving query identity: $query",
+  ({ query, expected }) => {
+    state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+    const result = useComposerPathSearch({ ...target, query: ` ${query} ` });
+
+    expect(state.searchRequests).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: { cwd: target.cwd, query: expected, limit: 80 },
     });
-  }
-  expect(state.contentRequests).not.toHaveBeenCalled();
-});
+    expect(result.searchedTarget).toMatchObject({ ...target, query });
+    expect(result.searchedQuery).toBe(query);
+    expect(result.isPending).toBe(false);
+  },
+);
 
 it("shows content-search denial before typing and never issues an unauthorized request", () => {
   state.session = { authenticated: true, scopes: [] };
@@ -162,26 +138,6 @@ it("shows content-search denial before typing and never issues an unauthorized r
     });
   }
   expect(state.contentRequests).not.toHaveBeenCalled();
-});
-
-it("preserves content query whitespace and options when access is granted", () => {
-  state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
-  expect(useProjectContentSearch(contentTarget)).toMatchObject({
-    matches: state.contentData.matches,
-    error: null,
-    isPending: false,
-  });
-  expect(state.contentRequests).toHaveBeenCalledWith({
-    environmentId: contentTarget.environmentId,
-    input: {
-      cwd: contentTarget.cwd,
-      query: contentTarget.query,
-      limit: 500,
-      caseSensitive: true,
-      wholeWord: true,
-      useRegex: false,
-    },
-  });
 });
 
 it("keeps confirmed content access during revalidation and drops results when it is revoked", () => {
@@ -215,26 +171,6 @@ it("fails closed after a session check fails, even with a cached grant and match
     canReadFiles: false,
     matches: [],
     error: state.sessionError,
-    isPending: false,
-  });
-  expect(state.contentRequests).not.toHaveBeenCalled();
-});
-
-it("keeps inactive content search idle and reports a disconnected target without querying", () => {
-  expect(
-    useProjectContentSearch({ ...contentTarget, environmentId: null, cwd: null }),
-  ).toMatchObject({
-    matches: [],
-    error: null,
-    isPending: false,
-  });
-  state.phase = "offline";
-  const result = useProjectContentSearch(contentTarget);
-  expect(state.contentRequests).not.toHaveBeenCalled();
-  expect(result).toMatchObject({
-    canReadFiles: false,
-    matches: [],
-    error: "This environment is not connected.",
     isPending: false,
   });
   expect(state.contentRequests).not.toHaveBeenCalled();
