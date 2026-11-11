@@ -3,24 +3,26 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import {
   type CardPurpose,
+  cardAnswerVerdictLength,
   cardReplyProblem,
   foldCardReply,
   quizCardProblem,
   readQuestionCard,
   readQuizCard,
+  withoutCardAnswerTag,
 } from "@t3tools/shared/quizCard";
 
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { readThread } from "../../threadAccess.ts";
 import { QuizToolkit } from "./tools.ts";
 
-const QUIZ_CARD_SHOWN = `Shown to the learner as a card. Don't repeat the question or options. If this turn's teaching still owes its picture, draw it now (html_preview then html_render, or animation_render); then end your turn. Their pick, confidence and thinking arrive as their next message. Then:
+const QUIZ_CARD_SHOWN = `Shown to the learner as a card. Don't repeat the question or options. Draw nothing now. When they answer, give the verdict as text, then draw the picture this turn's teaching owes before any new teaching; then end your turn. Their pick, confidence and thinking arrive as their next message. Then:
 - Say whether it was right, and why, in one or two lines. For a wrong pick, name the wrong idea that option stands for, so the lure is not learned.
 - Read confidence with the verdict. Right and sure: step up a level. Right but unsure: one more item at this level. Wrong and sure: a real misconception; re-teach it, then retest the same wrong idea in a new setting. Wrong and unsure, or "don't know": a gap; a short fix is enough.
 - Two right in a row with high confidence means the items are too easy: go up.`;
 
 const QUESTION_CARD_SHOWN =
-  "Shown to the learner as a card. Don't repeat the question. If this turn's teaching still owes its picture, draw it now (html_preview then html_render, or animation_render); then end your turn. Their answer arrives as their next message. For blanks and numbers, the app already marked each answer right or wrong; confirm and explain. Grade open text strictly against the answer you wrote before asking: say plainly what holds and what is missing or wrong, never soften a wrong idea.";
+  "Shown to the learner as a card. Don't repeat the question. Draw nothing now. When they answer, give the verdict as text, then draw the picture this turn's teaching owes before any new teaching; then end your turn. Their answer arrives as their next message. For blanks and numbers, the app already marked each answer right or wrong; confirm and explain. Grade open text strictly against the answer you wrote before asking: say plainly what holds and what is missing or wrong, never soften a wrong idea.";
 
 // Card replies are appended after other messages and queued sends sit in delivery order, so sort by time.
 export const shownTutorText = (
@@ -35,12 +37,19 @@ export const shownTutorText = (
     (a, b) => DateTime.toEpochMillis(a.createdAt) - DateTime.toEpochMillis(b.createdAt),
   );
   const lastUser = ordered.findLastIndex((message) => message.role === "user");
+  const lastUserWasCardAnswer =
+    lastUser !== -1 && withoutCardAnswerTag(ordered[lastUser]!.text) !== ordered[lastUser]!.text;
+  let verdictPending = lastUserWasCardAnswer;
   return ordered
     .slice(lastUser + 1)
     .filter(
       (message) => message.role === "assistant" && !/(?::|%3A)thinking(?::|%3A)/iu.test(message.id),
     )
-    .reduce((total, message) => total + message.text.length, 0);
+    .reduce((total, message) => {
+      if (!verdictPending || /:reply$/u.test(message.id)) return total + message.text.length;
+      verdictPending = false;
+      return total + message.text.length - cardAnswerVerdictLength(message.text);
+    }, 0);
 };
 
 const readShownTutorText = readThread(undefined, ["messages"]).pipe(

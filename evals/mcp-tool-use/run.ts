@@ -52,12 +52,14 @@ import {
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   type CardPurpose,
+  cardAnswerVerdictLength,
   cardReplyProblem,
   foldCardReply,
   replyCoverage,
   quizCardProblem,
   readQuestionCard,
   readQuizCard,
+  withoutCardAnswerTag,
 } from "@t3tools/shared/quizCard";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
@@ -878,6 +880,7 @@ type Sample = {
   readonly said: Array<string>;
   /** Real tutor text shown since the learner's last message. */
   shownSinceLastUser: number;
+  verdictPending: boolean;
   /** Root Claude text held until the next tool in lesson cases. */
   readonly heldLessonText: Array<string>;
   lessonCardSeen: boolean;
@@ -928,6 +931,11 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     priorResults: new Map(),
     said: [],
     shownSinceLastUser: 0,
+    verdictPending: (() => {
+      const answer =
+        testCase.prompt || [...prior].findLast((turn) => turn.role === "user")?.text || "";
+      return withoutCardAnswerTag(answer) !== answer;
+    })(),
     heldLessonText: [],
     lessonCardSeen: false,
     lessonCardReplies: [],
@@ -2300,6 +2308,24 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         )
       );
     };
+    // Mirrors the adapter's stripLessonNarration.
+    const stripLessonNarration = (value: string) =>
+      value
+        .split("\n")
+        .map((line) =>
+          line
+            .split(/(?<=[.!?])\s+/u)
+            .filter(
+              (sentence) =>
+                !/^(?:I(?:['’](?:m|ll|ve|d)\b| (?!is\b)[a-z])|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u.test(
+                  sentence.trimStart(),
+                ),
+            )
+            .join(" "),
+        )
+        .join("\n")
+        .replace(/\n{3,}/gu, "\n\n")
+        .trim();
     const leadRemainder = (use: typeof ToolUse.Type, text: string) => {
       const reply = isRecord(use.input) ? use.input.reply : undefined;
       if (typeof reply !== "string") return undefined;
@@ -2341,6 +2367,11 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       }
       if (isToolUse(block)) {
         const held = sample.heldLessonText.splice(0);
+        const heldBefore = held.join("\n");
+        if (lesson && normalizeToolName(block.name) === "ToolSearch") {
+          sample.heldLessonText.push(...held);
+          continue;
+        }
         const isCard =
           normalizeToolName(block.name) === "quiz_card" ||
           normalizeToolName(block.name) === "question_card";
@@ -2368,12 +2399,25 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
             isRecord(block.input) && typeof block.input.reply === "string" ? block.input.reply : "",
           );
         }
+        const thinking = response.content[index - 1];
+        if (isThinking(thinking) && isThinking(response.content[index - 2])) {
+          if (lesson) {
+            if (!isCard) continue;
+            const words = (value: string) => value.replace(/\s+/gu, " ").trim();
+            let lead = thinking.thinking;
+            if (heldBefore && replyCoverage(lead, heldBefore) >= 0.6) continue;
+            if (heldBefore && words(lead).includes(words(heldBefore)))
+              lead = lead.includes(heldBefore.trim())
+                ? lead.replace(heldBefore.trim(), "").trim()
+                : words(lead).replace(words(heldBefore), "").trim();
+            const shown = stripLessonNarration(leadRemainder(block, lead) ?? lead);
+            if (shown !== "") texts.push(shown);
+          } else if (!repeats(block, thinking.thinking)) {
+            texts.push(thinking.thinking);
+          }
+        }
         continue;
       }
-      if (lesson || !isThinking(block) || !isThinking(response.content[index - 1])) continue;
-      const next = response.content[index + 1];
-      if (!isToolUse(next)) continue;
-      if (!repeats(next, block.thinking)) texts.push(block.thinking);
     }
     if (lesson && response.stop_reason !== "tool_use" && sample.heldLessonText.length > 0) {
       const joined = sample.heldLessonText.join("\n");
@@ -2385,7 +2429,12 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       sample.heldLessonText.length = 0;
     }
     said.push(...texts);
-    sample.shownSinceLastUser += texts.reduce((total, text) => total + text.length, 0);
+    let shown = texts.reduce((total, text) => total + text.length, 0);
+    if (sample.verdictPending && texts.length > 0) {
+      shown -= cardAnswerVerdictLength(texts[0]!);
+      sample.verdictPending = false;
+    }
+    sample.shownSinceLastUser += shown;
     const uses = response.content.filter(isToolUse);
     calls.push(...ranCalls(sample, step, uses));
     if (response.stop_reason !== "tool_use") {

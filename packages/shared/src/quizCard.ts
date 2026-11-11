@@ -15,7 +15,7 @@ export function cardReplyProblem(input: {
   ) {
     return undefined;
   }
-  return "The learner sees only real message text and this reply; thinking, plans, and anything you wrote while thinking are summarized away and never shown. Give the verdict on the learner's last answer if there is one, then write out the teaching this card tests in full in reply, and call the card again. If this card is the opening check or an explain-back request, set purpose instead.";
+  return "The learner sees only real message text and this reply; thinking, plans, and anything you wrote while thinking are summarized away and never shown. Give any verdict as visible text before the card, write out the teaching this card tests in full in reply, then call the card again. If this card is the opening check or an explain-back request, set purpose instead.";
 }
 
 export interface QuestionCard {
@@ -382,6 +382,12 @@ export function parseCardAnswer(text: string): ParsedCardAnswer | undefined {
     }),
   );
   return answers.length > 0 ? { kind: "blanks", answers } : undefined;
+}
+
+export function cardAnswerVerdictLength(text: string) {
+  const trimmed = text.trimStart();
+  const paragraphEnd = trimmed.indexOf("\n\n");
+  return paragraphEnd === -1 ? text.length : text.length - trimmed.length + paragraphEnd;
 }
 
 // The card's item id rides in the answer text so every client, after reloads, knows which card it answered.

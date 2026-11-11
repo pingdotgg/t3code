@@ -13,7 +13,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 // First, so the model writes the reply before the question.
 const reply = Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(2000)).annotate({
   description:
-    "Your words to the learner, shown as your message text just above the card; they never see your thinking. A short reply is refused unless purpose is set. Except when purpose is set, the reply itself must be one tight paragraph: give the verdict on the learner's last answer, if there is one, then teach what this card tests with its facts (rules, numbers, definitions) written out here, never just a pointer to a table or text above. When purpose is set, the reply may be one short framing sentence.",
+    "Your words to the learner, shown as your message text just above the card; they never see your thinking. A short reply is refused unless purpose is set. When a picture is owed, give the verdict in visible text first; keep this card's reply for its new teaching. Otherwise, the reply must teach what this card tests with its facts (rules, numbers, definitions) written out here, never just a pointer to a table or text above. When purpose is set, the reply may be one short framing sentence.",
 });
 const source = Schema.String.pipe(Schema.check(Schema.isMaxLength(500))).annotate({
   description:
