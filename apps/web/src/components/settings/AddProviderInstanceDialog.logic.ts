@@ -39,21 +39,6 @@ export function updateProviderIdentityDraft(
   };
 }
 
-export function deriveAvailableInstanceId(
-  derive: (label: string) => string,
-  label: string,
-  existing: ReadonlySet<string>,
-): string {
-  const base = derive(label);
-  if (!base || !existing.has(base)) return base;
-
-  for (let suffix = 2; ; suffix += 1) {
-    const suffixText = `_${suffix}`;
-    const candidate = `${base.slice(0, 64 - suffixText.length)}${suffixText}`;
-    if (!existing.has(candidate)) return candidate;
-  }
-}
-
 export function isConfiguredAcpRegistryAgent(
   instances: Readonly<Record<string, { readonly driver: string; readonly config?: unknown }>>,
   agentId: string,
