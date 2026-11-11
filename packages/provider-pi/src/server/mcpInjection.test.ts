@@ -1,4 +1,4 @@
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
 import {
@@ -7,7 +7,18 @@ import {
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
 } from "./mcpExtensionSource.ts";
-import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
+import * as NodePath from "effect/Path";
+import * as NodeFS from "effect/FileSystem";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  buildPiRpcLaunch,
+  materializePiT3McpExtension,
+  resolvePiLaunchArgs,
+} from "./mcpInjection.ts";
+import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 
 const threadId = ThreadId.make("thread-pi-t3-mcp");
 
@@ -144,4 +155,54 @@ describe("pi T3 MCP injection", () => {
     assert.isTrue(resolvePiLaunchArgs("--provider openrouter --model=deepseek/v4").ok);
     assert.isTrue(resolvePiLaunchArgs("--model deepseek/v4").ok);
   });
+});
+
+describe("materializePiT3McpExtension", () => {
+  // A pi launch concurrent with the materialize reads the extension file from
+  // disk; a truncate-then-write exposes an empty or partial file mid-write and
+  // the launch loads a broken extension.
+  it.live("never exposes a torn extension file to a concurrent reader", () =>
+    Effect.gen(function* () {
+      const fs = yield* NodeFS.FileSystem;
+      const path = yield* NodePath.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pi-atomic-" });
+      const anomalies: Array<string> = [];
+      const stopAfter = 120;
+      const writer = yield* Effect.forkChild(
+        Effect.gen(function* () {
+          for (let index = 0; index < stopAfter; index += 1) {
+            yield* fs
+              .remove(path.join(directory, "pi-t3-mcp-extension.ts"), { force: true })
+              .pipe(Effect.ignore);
+            yield* Effect.all(
+              [materializePiT3McpExtension(directory), materializePiT3McpExtension(directory)],
+              { concurrency: "unbounded" },
+            );
+          }
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+      const reader = yield* Effect.forkChild(
+        Effect.forever(
+          Effect.gen(function* () {
+            const text = yield* fs
+              .readFileString(path.join(directory, "pi-t3-mcp-extension.ts"))
+              .pipe(Effect.option);
+            if (Option.isNone(text)) return; // Missing between writes: legitimate.
+            // A read that SUCCEEDS must return the full extension: an empty or
+            // partial read means the writer truncated the file mid-write.
+            if (text.value.length === 0) {
+              anomalies.push("empty: truncated mid-write");
+            } else if (text.value.length !== PI_T3_MCP_EXTENSION_SOURCE.length) {
+              anomalies.push(
+                `partial: ${text.value.length} of ${PI_T3_MCP_EXTENSION_SOURCE.length} chars`,
+              );
+            }
+          }),
+        ),
+      );
+      yield* Fiber.join(writer);
+      yield* Fiber.interrupt(reader);
+      expect(anomalies).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
