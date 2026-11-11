@@ -59,28 +59,12 @@ it("drops a prompt the desktop ended, whether it is on screen or still waiting",
 });
 
 it("shows a prompt that arrived before the dialog mounted", async () => {
-  const listeners: Array<(request: DesktopSshPasswordPromptRequest) => void> = [];
-  using _bridge = stubGlobal("desktopBridge", {
-    onSshPasswordPrompt: (listener: (request: DesktopSshPasswordPromptRequest) => void) => {
-      listeners.push(listener);
-      return () => listeners.splice(listeners.indexOf(listener), 1);
-    },
-    onSshPasswordPromptSettled: () => () => undefined,
-    resolveSshPasswordPrompt: async () => undefined,
-  });
+  using bridge = stubPromptBridge();
   const stopQueue = startSshPasswordPromptQueue();
   using _queue = { [Symbol.dispose]: stopQueue };
 
   // The desktop asks while the app is still on a page without the dialog (pairing, sign-in).
-  for (const listener of listeners) {
-    listener({
-      requestId: "ssh-1",
-      destination: "devbox",
-      username: "julius",
-      prompt: "julius@devbox's password:",
-      expiresAt: "2999-01-01T00:00:00.000Z",
-    });
-  }
+  bridge.prompt("ssh-1", "devbox");
 
   await using screen = await render(<SshPasswordPromptDialog />);
   await expect.element(screen.getByText("SSH verification required")).toBeVisible();
