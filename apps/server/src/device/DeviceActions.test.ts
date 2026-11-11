@@ -155,6 +155,18 @@ describe("runDeviceAction", () => {
 });
 
 describe("readDeviceDetail", () => {
+  it.effect("reads the smallest iOS text size as small", () =>
+    Effect.gen(function* () {
+      const { ready } = makeReady((call) =>
+        call.args.join(" ").endsWith("ui SIM-1 content_size")
+          ? { stdout: "extra-small\n" }
+          : { code: 1 },
+      );
+      const detail = yield* readDeviceDetail(ready, "ios", udid);
+      expect(detail.settings.textSize).toBe("small");
+    }),
+  );
+
   it.effect("reads iOS settings from simctl and the accessibility helper", () =>
     Effect.gen(function* () {
       const { ready } = makeReady((call) => {

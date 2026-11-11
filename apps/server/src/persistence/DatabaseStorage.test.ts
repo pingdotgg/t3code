@@ -5,13 +5,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
-import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
 import * as DatabaseStorage from "./DatabaseStorage.ts";
 import * as Sqlite from "./Sqlite.ts";
 
@@ -28,7 +29,6 @@ const storageLayer = <E>(
 ) =>
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),
-    Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
     Layer.provideMerge(Sqlite.layerMemory),
     Layer.provideMerge(config),
     Layer.provide(NodeServices.layer),
@@ -54,14 +54,12 @@ it.effect("a new database returns freed pages online without losing data", () =>
 );
 
 const compactionLayer = (
-  compactEventStore: ProjectionMaintenance.ProjectionMaintenanceV2["Service"]["compactEventStore"],
+  pruneEventStore: ProjectionMaintenance.ProjectionMaintenanceV2["Service"]["pruneEventStore"],
 ) =>
   DatabaseStorage.layer.pipe(
     Layer.provide(
       Layer.succeed(ProjectionMaintenance.ProjectionMaintenanceV2, {
-        compactEventStore,
-        verify: Effect.die("unexpected verification"),
-        rebuild: Effect.die("unexpected rebuild"),
+        pruneEventStore,
       }),
     ),
     Layer.provide(Sqlite.layerMemory),
@@ -113,4 +111,73 @@ it.effect("remembers completion only after the paced pass finishes", () =>
       }),
     );
   }).pipe(Effect.provide(testConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+// NONE is a database from before automatic shrinking, which the repair converts.
+const reclaimLayer = (
+  restart: Effect.Effect<void> | null,
+  autoVacuum: "NONE" | "FULL" | "INCREMENTAL" = "NONE",
+) =>
+  DatabaseStorage.layer.pipe(
+    Layer.provide(ProjectionMaintenance.layer),
+    Layer.provide(Layer.succeed(DatabaseStorage.ServerRestart, restart)),
+    Layer.provide(
+      Layer.effectDiscard(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql.unsafe(`PRAGMA auto_vacuum = ${autoVacuum}`);
+          yield* sql`VACUUM`;
+        }),
+      ).pipe(Layer.provideMerge(Sqlite.layerMemory)),
+    ),
+  );
+
+it.effect(
+  "a reclaim from Settings saves its request, then restarts the server after replying",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const files = DatabaseMaintenance.reclaimFiles(path, config.dbPath);
+      const request = Effect.flatMap(
+        DatabaseStorage.DatabaseStorage,
+        (storage) => storage.requestReclaim,
+      );
+      const restarted = yield* Deferred.make<void>();
+      const restart = Deferred.succeed(restarted, undefined).pipe(Effect.asVoid);
+
+      // Nothing starts a server run by hand again, so it keeps pointing at the command.
+      const unsupervised = yield* request.pipe(Effect.flip, Effect.provide(reclaimLayer(null)));
+      assert.equal(unsupervised._tag, "DatabaseReclaimError");
+      // A database that already shrinks on its own (or a stale dialog after another client's
+      // repair) has nothing to reclaim, so it must not restart.
+      for (const autoVacuum of ["FULL", "INCREMENTAL"] as const) {
+        const refused = yield* request.pipe(
+          Effect.flip,
+          Effect.provide(reclaimLayer(restart, autoVacuum)),
+        );
+        assert.equal(refused._tag, "DatabaseReclaimError", autoVacuum);
+      }
+      assert.isFalse(yield* fs.exists(files.request));
+
+      yield* fs.writeFileString(files.failure, "an earlier failure");
+      yield* Effect.gen(function* () {
+        const storage = yield* DatabaseStorage.DatabaseStorage;
+        const shownFailure = storage.status.pipe(
+          Stream.filter((status) => status !== null),
+          Stream.runHead,
+          Effect.map((status) => Option.getOrThrow(status)?.reclaimFailure),
+        );
+        assert.equal(yield* shownFailure, "an earlier failure");
+        yield* storage.requestReclaim;
+        // The retry clears it at once, so Settings shows the restart, not the old failure.
+        assert.isUndefined(yield* shownFailure);
+      }).pipe(Effect.provide(reclaimLayer(restart)));
+      assert.isTrue(yield* fs.exists(files.request));
+      assert.isFalse(yield* fs.exists(files.failure));
+      assert.isFalse(yield* Deferred.isDone(restarted), "the reply must go out before the restart");
+      yield* TestClock.adjust(500);
+      yield* Deferred.await(restarted);
+    }).pipe(Effect.provide(testConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
