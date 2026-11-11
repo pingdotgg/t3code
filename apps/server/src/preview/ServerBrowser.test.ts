@@ -1073,60 +1073,6 @@ it.live("reports a pending dialog without evaluating the page and resolves it ex
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("asks for HTTP Basic credentials as a pending dialog that can be cancelled", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      yield* broker.invoke({
-        scope,
-        tabId,
-        operation: "navigate",
-        input: { url: "http://localhost:18914/" },
-      });
-      const session = contexts[0]!.sessions[0]!;
-      // Without handleAuthRequests, Chromium renders the 401 body and never asks for credentials.
-      expect(session.send).toHaveBeenCalledWith(
-        "Fetch.enable",
-        expect.objectContaining({ handleAuthRequests: true }),
-      );
-      session.emit("Fetch.authRequired", {
-        requestId: "auth-1",
-        frameId: "main",
-        resourceType: "Document",
-        request: { url: "http://localhost:18914/", method: "GET", headers: {} },
-        authChallenge: {
-          source: "Server",
-          origin: "http://localhost:18914",
-          scheme: "basic",
-          realm: "test",
-        },
-      });
-      const status = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "status",
-        input: {},
-      });
-      expect(status.dialog).toMatchObject({
-        message: expect.stringContaining("http://localhost:18914"),
-      });
-      expect(status.dialog?.message).toContain("test");
-      yield* broker.invoke({ scope, tabId, operation: "dialog", input: { accept: false } });
-      expect(session.send).toHaveBeenCalledWith("Fetch.continueWithAuth", {
-        requestId: "auth-1",
-        authChallengeResponse: { response: "CancelAuth" },
-      });
-      const cancelled = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "status",
-        input: {},
-      });
-      expect(cancelled.dialog).toBeNull();
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
 const basicChallenge = {
   requestId: "auth-1",
   frameId: "main",
@@ -1163,6 +1109,21 @@ it.live("signs in to an HTTP Basic challenge without holding the action queue", 
         .invoke<void>({ scope, tabId, operation: "evaluate", input: { expression: "1" } })
         .pipe(Effect.flip);
       expect(blocked).toMatchObject({ reason: "dialogPending" });
+      // Without handleAuthRequests, Chromium renders the 401 body and never asks for credentials.
+      expect(session.send).toHaveBeenCalledWith(
+        "Fetch.enable",
+        expect.objectContaining({ handleAuthRequests: true }),
+      );
+      const pending = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(pending.dialog).toMatchObject({
+        type: "auth",
+        message: "http://localhost:18914 asks you to sign in. It says: test",
+      });
       const status = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         tabId,
