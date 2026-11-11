@@ -1172,6 +1172,12 @@ it.effect("reads the branch's PR only once the agent has opened it", () =>
       output: "",
     });
     assert.equal(yield* layerPr("b4"), first);
+    // The simulated host shows what the agent changed through T3's tools.
+    const [machine] =
+      shellRequest(sample, { tool: "Bash", input: { command: "gh pr list" } }, "claude-haiku-5-5")
+        .messages[0]?.content ?? [];
+    assert.include(machine?.text, "made these changes through T3's tools");
+    assert.include(machine?.text, "pull_request_create");
 
     // A case that mocks the create still opens the PR it names.
     const url = "https://github.com/acme/app/pull/125";
