@@ -399,6 +399,14 @@ const readCodexModelsCacheFetchedAt = Effect.fn("readCodexModelsCacheFetchedAt")
   );
 });
 
+// Discovery gets its own budget from `initialize`, so a slow start still lists models, and must
+// finish before the outer timeout can discard the account result.
+export const codexDiscoveryDeadlineMs = (spawnedAtMs: number, initializedAtMs: number) =>
+  Math.min(
+    spawnedAtMs + CODEX_APP_SERVER_PROBE_TIMEOUT_MS,
+    initializedAtMs + CODEX_DISCOVERY_BUDGET_MS,
+  ) - CODEX_DISCOVERY_MARGIN_MS;
+
 const withCodexDiscoveryDeadline = Effect.fnUntraced(function* <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   deadlineMs: number,
@@ -553,12 +561,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  // Optional discovery must finish before the outer timeout can discard the account result.
-  const deadlineMs =
-    Math.min(
-      spawnedAtMs + CODEX_APP_SERVER_PROBE_TIMEOUT_MS,
-      initializedAtMs + CODEX_DISCOVERY_BUDGET_MS,
-    ) - CODEX_DISCOVERY_MARGIN_MS;
+  const deadlineMs = codexDiscoveryDeadlineMs(spawnedAtMs, initializedAtMs);
   const [skillsResponse, models, serviceTier, rateLimits] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),

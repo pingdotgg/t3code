@@ -1,6 +1,22 @@
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  codexDiscoveryDeadlineMs,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
+
+it("counts the Codex discovery budget from initialize, capped by the probe timeout (#27230)", () => {
+  // [initialized after spawn, deadline after spawn]
+  const cases = [
+    [500, 20_250],
+    [25_000, 44_750],
+    [50_000, 59_750],
+  ] as const;
+  for (const [initializedAtMs, expected] of cases) {
+    assert.strictEqual(codexDiscoveryDeadlineMs(0, initializedAtMs), expected);
+  }
+});
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
