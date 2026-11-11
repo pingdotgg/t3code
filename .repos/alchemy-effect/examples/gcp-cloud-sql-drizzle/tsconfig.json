@@ -11,6 +11,9 @@
   "references": [
     {
       "path": "../../packages/alchemy/tsconfig.json"
-    }
+    },
+    { "path": "../../packages/sql/tsconfig.json" },
+    { "path": "../../packages/gcp/tsconfig.json" },
+    { "path": "../../packages/drizzle/tsconfig.json" }
   ]
 }

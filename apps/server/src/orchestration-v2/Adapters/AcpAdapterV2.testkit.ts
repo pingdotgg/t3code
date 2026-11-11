@@ -15,7 +15,7 @@ import {
 import type * as DateTime from "effect/DateTime";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -202,7 +202,7 @@ export function makeAcpReplayRuntime(input: {
 ) => Effect.Effect<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
+  SecureRandom.SecureRandom | Scope.Scope
 > {
   // Transcripts exceed the kernel's 128 KiB per-environment-variable limit.
   const transcriptPath = `${input.statusPath}.transcript.json`;
