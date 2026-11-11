@@ -175,21 +175,28 @@ it.each([
 });
 
 it.each([
-  { key: "i", expected: "ship it **n*X*ow** done" },
-  { key: "e", expected: "ship it **n`X`ow** done" },
-])("Mod+$key inside a bold word styles the next typed text", async ({ key, expected }) => {
-  await using screen = await mountEditor("ship it **now** done");
-  const { editor } = screen;
-  const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
-  await act(async () => {
-    editor.commands.focus();
-    editor.commands.setTextSelection(10);
-  });
-  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
-  await userEvent.keyboard(`{${mod}>}${key}{/${mod}}`);
-  await userEvent.keyboard("X");
-  await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(expected));
-});
+  { key: "i", caret: 10, expected: "ship it **n*X*ow** done" },
+  { key: "e", caret: 10, expected: "ship it **n`X`ow** done" },
+  { key: "i", caret: 9, expected: "ship it *X***now** done" },
+  { key: "i", caret: "{ArrowLeft>5/}", expected: "ship it **now***X* done" },
+  { key: "e", caret: "{ArrowLeft>5/}", expected: "ship it **now**`X` done" },
+])(
+  "Mod+$key at $caret in a bold word styles the next typed text",
+  async ({ key, caret, expected }) => {
+    await using screen = await mountEditor("ship it **now** done");
+    const { editor } = screen;
+    const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await act(async () => {
+      if (typeof caret === "number") editor.commands.focus(caret);
+      else editor.commands.focus("end");
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    if (typeof caret === "string") await userEvent.keyboard(caret);
+    await userEvent.keyboard(`{${mod}>}${key}{/${mod}}`);
+    await userEvent.keyboard("X");
+    await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(expected));
+  },
+);
 
 it.each([
   { word: "ship", prefix: "", source: ["**ship**"] },

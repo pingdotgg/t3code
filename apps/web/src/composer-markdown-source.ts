@@ -554,11 +554,15 @@ export const ComposerMarkdownSourceExtension = TiptapMark.create({
       const touched = sourceRegions(state.doc, this.type).some((region) => {
         if (!touches(selection, region)) return false;
         if (!selection.empty) return true;
-        // Typing next to a marker would land in the markers. Elsewhere Tiptap's own
-        // toggle nests the style inside the source correctly.
+        // Turning a style off just inside its own markers would type into them.
+        // Everywhere else Tiptap's own toggle styles the typed text correctly.
         const { units } = regionUnits(state.doc, region);
         const offset = selection.from - region.from;
-        return units[offset - 1] === null || units[offset] === null;
+        const [before, after] = [units[offset - 1], units[offset]];
+        return (
+          (before === null && after?.includes(name) === true) ||
+          (after === null && before?.includes(name) === true)
+        );
       });
       if (!touched) return false;
       return this.editor.chain().command(collapseShownMarkdownSource).toggleMark(name).run();
