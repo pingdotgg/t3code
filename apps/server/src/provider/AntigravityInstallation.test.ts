@@ -813,6 +813,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         source: "override",
         managedVersionDirectory: null,
       });
+      const quoted = yield* writeLauncher(
+        "quoted.cmd",
+        `set "PATH=C:\\Program Files (x86)\\SDK;%PATH%"\r\n"${runtimeExecutable}"`,
+      );
+      expect(yield* installation.resolve(quoted)).toMatchObject({
+        executablePath: quoted,
+        harnessPath: runtimeHarness,
+      });
       const relative = yield* writeLauncher(
         "relative.BAT",
         `"%~dp0../runtime (x64)/agy_acp_server.exe"`,
@@ -857,6 +865,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           `rem setup & "${managed.executablePath}"\r\n"${runtimeExecutable}"`,
         ],
         ["chained.cmd", `"${runtimeExecutable}" --version && "%AGY_TARGET%"`],
+        ["unquoted-parens.cmd", `set PATH=C:\\Program Files (x86)\\SDK\r\n"${runtimeExecutable}"`],
+        [
+          "quoted-chained.cmd",
+          `set "PATH=C:\\Program Files (x86)" & "${managed.executablePath}"\r\n"${runtimeExecutable}"`,
+        ],
+        ["quoted-redirect.cmd", `set "AGY_MODE=1" > nul\r\n"${runtimeExecutable}"`],
+        ["quoted-block.cmd", `(set "AGY_MODE=1")\r\n"${runtimeExecutable}"`],
+        ["quoted-expansion.cmd", `set Q="\r\nset "X=%Q%&exit /b&rem ()"\r\n"${runtimeExecutable}"`],
       ] as const) {
         const uncertain = yield* writeLauncher(name, launch);
         expect(yield* installation.resolve(uncertain).pipe(Effect.flip)).toMatchObject({

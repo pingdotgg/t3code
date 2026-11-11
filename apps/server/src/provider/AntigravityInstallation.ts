@@ -47,7 +47,7 @@ const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
 const LAUNCHER_SETUP =
-  /^[\s@]*(?:|::[^&|<>]*|rem(?:\s[^&|<>]*|$)|(?:echo|set|setlocal|endlocal)(?:\s[^&|<>()]*)?)$/iu;
+  /^[\s@]*(?:|::[^&|<>]*|rem(?:\s[^&|<>]*|$)|set\s+"[^"=&|<>]+=[^"&|<>]*"\s*|(?:echo|set|setlocal|endlocal)(?:\s[^&|<>()]*)?)$/iu;
 const LAUNCHER_COMMAND =
   /^[\s@]*(?:"([^"]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe))(?:\s[^&|<>()]*)?$/iu;
 
