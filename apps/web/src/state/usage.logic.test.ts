@@ -35,7 +35,6 @@ function environment(
     canReadDiagnostics: true,
     isConnected: true,
     error: null,
-    needsCursorKeychainAccess: false,
     readByDay: false,
     offline: false,
     savedAt: null,
