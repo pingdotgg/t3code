@@ -66,6 +66,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     userInfoAt?: number;
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
+    /** Read on every probe; defaults to the ACP executable, which stores its token in the profile. */
+    credentialsInProfile?: Effect.Effect<boolean, string>;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -132,6 +134,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const usage = yield* makeAntigravityUsageProbe({
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
+    credentialsInProfile: options.credentialsInProfile ?? Effect.succeed(true),
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
   return { ...usage, requests, writeToken, tokenPath };
 });
@@ -661,6 +664,61 @@ describe("Antigravity subscription limits", () => {
         expect((yield* probe).unavailable?.reason).toBe("unsupported");
         expect(requests).toEqual([]);
       }
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  // Oracle: only the ACP executable writes the profile token; a leftover one is another account's.
+  it.effect("ignores a leftover profile token while the runtime is the agy CLI", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      // "unresolved" stands for a runtime that no longer resolves, such as a launcher mid-update.
+      let credentialsInProfile: boolean | "unresolved" = false;
+      let tokenPath: string | undefined;
+      const cliTokenAccesses: Array<string> = [];
+      const watched = (operation: string, file: string) => {
+        if (file === tokenPath && credentialsInProfile !== true) cliTokenAccesses.push(operation);
+      };
+      const { probe, requests, ...usage } = yield* fixture({
+        credentialsInProfile: Effect.suspend(() =>
+          credentialsInProfile === "unresolved"
+            ? Effect.fail("unresolved")
+            : Effect.succeed(credentialsInProfile),
+        ),
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          exists: (file) => Effect.suspend(() => (watched("exists", file), fs.exists(file))),
+          readFileString: (file, encoding) =>
+            Effect.suspend(() => (watched("read", file), fs.readFileString(file, encoding))),
+        }),
+      );
+      tokenPath = usage.tokenPath;
+      const cli = {
+        windows: [],
+        unavailable: {
+          reason: "unsupported",
+          message: "Antigravity limits are unavailable when using the agy CLI.",
+        },
+      };
+      expect(yield* probe).toMatchObject(cli);
+      credentialsInProfile = "unresolved";
+      expect(yield* probe).toMatchObject(cli);
+      expect(requests).toEqual([]);
+
+      credentialsInProfile = true;
+      expect((yield* probe).credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
+      credentialsInProfile = false;
+      const limits = yield* probe;
+      expect(limits).toMatchObject(cli);
+      expect(limits.credentialFingerprint).toBeUndefined();
+      credentialsInProfile = true;
+      yield* probe;
+      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(2);
+      expect(cliTokenAccesses).toEqual([]);
+
+      // A runtime that never resolved keeps the profile path, so a removed ACP runtime keeps its limits.
+      const neverResolved = yield* fixture({ credentialsInProfile: Effect.fail("unresolved") });
+      expect((yield* neverResolved.probe).windows).toHaveLength(4);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });

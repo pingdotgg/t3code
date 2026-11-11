@@ -140,6 +140,7 @@ is refused while the runtime is in use.
 Open **Usage > Limits** to see the remaining Gemini and shared Claude/GPT allowances
 for Google sign-ins. Each group has separate five-hour and weekly limits and reset
 times. Limits refresh with provider status and include usage outside T3 Code.
+Limits are not shown when the binary path is the `agy` CLI.
 
 A server restart keeps your Google sign-in. The provider shows the saved account
 until a session, a refresh, or a sign-out reports something new.
