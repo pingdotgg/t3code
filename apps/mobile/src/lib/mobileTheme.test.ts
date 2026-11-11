@@ -193,6 +193,28 @@ describe("mobile themes", () => {
               `${appearance}: ${role} on Android header`,
             ).toBeGreaterThanOrEqual(4.5);
           }
+          if (appearance === "dark") {
+            for (const surface of [variables["--color-screen"], header]) {
+              expect(
+                contrastRatio(group, surface),
+                `dark grouped surface on Android ${surface}`,
+              ).toBeGreaterThanOrEqual(1.2);
+            }
+          }
+        }
+        const selected = variables["--color-thread-selected"];
+        expect(
+          contrastRatio(selected, flattenThemeColor(variables["--color-drawer"], sheet)),
+          `${platform} ${appearance}: selected row on drawer`,
+        ).toBeGreaterThanOrEqual(1.2);
+        for (const role of [
+          "--color-thread-selected-foreground",
+          "--color-thread-selected-foreground-muted",
+        ] as const) {
+          expect(
+            contrastRatio(variables[role], selected),
+            `${platform} ${appearance}: ${role} on selected row`,
+          ).toBeGreaterThanOrEqual(4.5);
         }
         expect(
           contrastRatio(variables["--color-foreground-muted"], variables["--color-secondary"]),
