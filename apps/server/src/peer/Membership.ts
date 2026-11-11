@@ -6,6 +6,10 @@ import {
   TailnetDeviceAccess,
   TailnetDevicesError,
   TailnetHlc,
+  compareNetworkApps,
+  compareNetworkMembers,
+  compareTailnetHlc,
+  narrowsAccess,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -22,17 +26,6 @@ import * as Stream from "effect/Stream";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
-const compareStamps = (a: TailnetHlc, b: TailnetHlc): number =>
-  a.wallMs !== b.wallMs
-    ? a.wallMs - b.wallMs
-    : a.counter !== b.counter
-      ? a.counter - b.counter
-      : a.node < b.node
-        ? -1
-        : a.node > b.node
-          ? 1
-          : 0;
-
 const ACCESS_ORDER: ReadonlyArray<AuthMcpClientAccess> = [
   "read-only",
   "approval-required",
@@ -44,40 +37,6 @@ const ACCESS_ORDER: ReadonlyArray<AuthMcpClientAccess> = [
 /** The narrower of two access levels. */
 export const narrowerAccess = (a: AuthMcpClientAccess, b: AuthMcpClientAccess) =>
   ACCESS_ORDER.indexOf(a) <= ACCESS_ORDER.indexOf(b) ? a : b;
-
-const ACCESS_RANK: ReadonlyArray<string> = ["revoked", ...ACCESS_ORDER];
-
-/** `to` gives less than `from`: its sessions were minted for more than it may now do. */
-const narrows = (from: string, to: string) => ACCESS_RANK.indexOf(to) < ACCESS_RANK.indexOf(from);
-
-/**
- * A member that revoked itself: it left, and its roster there is gone, so only adding it again
- * (a join) brings it back. A restore would list a machine that takes no part.
- */
-export const hasLeft = (member: NetworkMember) =>
-  member.access === "revoked" && member.updatedAt.node === member.environmentId;
-
-const ZERO_STAMP: TailnetHlc = { wallMs: 0, counter: 0, node: "" as EnvironmentId };
-
-/**
- * Member writes are totally ordered so every machine converges on one entry. A revocation ranks
- * by its own stamp; any other write by the latest revocation it names in `restores`. So a write
- * made without knowing a revocation never outranks it, however late it is stamped, and only a
- * restore made after seeing the tombstone (always the user's) replaces it.
- */
-const compareMembers = (a: NetworkMember, b: NetworkMember): number => {
-  const epoch = (entry: NetworkMember) =>
-    entry.access === "revoked" ? entry.updatedAt : (entry.restores ?? ZERO_STAMP);
-  const byEpoch = compareStamps(epoch(a), epoch(b));
-  if (byEpoch !== 0) return byEpoch;
-  const kind = (entry: NetworkMember) => (entry.access === "revoked" ? 0 : 1);
-  return kind(a) - kind(b) || compareStamps(a.updatedAt, b.updatedAt);
-};
-
-/** Apps are only ever narrowed, so the narrower write wins whatever its stamp. */
-const compareApps = (a: NetworkApp, b: NetworkApp): number =>
-  ACCESS_RANK.indexOf(b.access) - ACCESS_RANK.indexOf(a.access) ||
-  compareStamps(a.updatedAt, b.updatedAt);
 
 const mergeBy = <K, A>(
   current: ReadonlyMap<K, A>,
@@ -97,10 +56,10 @@ const mergeBy = <K, A>(
 export const mergeMembers = (
   current: ReadonlyMap<EnvironmentId, NetworkMember>,
   incoming: ReadonlyArray<NetworkMember>,
-) => mergeBy(current, incoming, (entry) => entry.environmentId, compareMembers);
+) => mergeBy(current, incoming, (entry) => entry.environmentId, compareNetworkMembers);
 
 const mergeApps = (current: ReadonlyMap<string, NetworkApp>, incoming: ReadonlyArray<NetworkApp>) =>
-  mergeBy(current, incoming, (app) => app.appId, compareApps);
+  mergeBy(current, incoming, (app) => app.appId, compareNetworkApps);
 
 interface MemberRow {
   readonly environment_id: string;
@@ -416,7 +375,8 @@ const make = Effect.gen(function* () {
   const observe = (stamps: ReadonlyArray<TailnetHlc>) =>
     Ref.update(lastStamp, (last) =>
       stamps.reduce<TailnetHlc | null>(
-        (latest, stamp) => (latest === null || compareStamps(stamp, latest) > 0 ? stamp : latest),
+        (latest, stamp) =>
+          latest === null || compareTailnetHlc(stamp, latest) > 0 ? stamp : latest,
         last,
       ),
     );
@@ -508,7 +468,7 @@ const make = Effect.gen(function* () {
       const app: NetworkApp = { ...input, updatedAt: yield* stamp };
       yield* writeApp(app);
       yield* changed();
-      return { app, cut: before !== undefined && narrows(before.access, app.access) };
+      return { app, cut: before !== undefined && narrowsAccess(before.access, app.access) };
     },
     (effect) => writes.withPermits(1)(effect),
   );
@@ -591,7 +551,7 @@ const make = Effect.gen(function* () {
       if (before === app) continue;
       yield* writeApp(app);
       wrote = true;
-      if (before !== undefined && narrows(before.access, app.access)) cut.push(appId);
+      if (before !== undefined && narrowsAccess(before.access, app.access)) cut.push(appId);
     }
     yield* observe(incoming.map((app) => app.updatedAt));
     return { cut, wrote };
@@ -619,7 +579,7 @@ const make = Effect.gen(function* () {
       }
       if (before === undefined) added.push(environmentId);
       if (entry.access === "revoked" && before?.access !== "revoked") revoked.push(environmentId);
-      else if (before !== undefined && narrows(before.access, entry.access)) {
+      else if (before !== undefined && narrowsAccess(before.access, entry.access)) {
         narrowed.push(environmentId);
       }
     }
@@ -638,11 +598,11 @@ const make = Effect.gen(function* () {
         const knownApps = new Map((yield* apps).map((app) => [app.appId, app]));
         memberWrites = memberWrites.filter((entry) => {
           const known = knownMembers.get(entry.environmentId);
-          return known !== undefined && narrows(known.access, entry.access);
+          return known !== undefined && narrowsAccess(known.access, entry.access);
         });
         appWrites = appWrites.filter((app) => {
           const known = knownApps.get(app.appId);
-          return known !== undefined && narrows(known.access, app.access);
+          return known !== undefined && narrowsAccess(known.access, app.access);
         });
       }
       const { wrote, ...memberCuts } = yield* applyRoster(memberWrites);

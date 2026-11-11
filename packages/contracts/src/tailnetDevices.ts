@@ -55,6 +55,54 @@ export const NetworkApp = Schema.Struct({
 });
 export type NetworkApp = typeof NetworkApp.Type;
 
+/** Roster stamps in total order; positive when `a` is later. Node ids break ties bytewise. */
+export const compareTailnetHlc = (a: TailnetHlc, b: TailnetHlc): number =>
+  a.wallMs - b.wallMs || a.counter - b.counter || (a.node < b.node ? -1 : a.node > b.node ? 1 : 0);
+
+/** Access levels from none to most; `revoked` ranks lowest. */
+const ACCESS_RANK: ReadonlyArray<TailnetDeviceAccess> = [
+  "revoked",
+  ...AuthMcpClientAccess.literals,
+];
+
+/** `to` gives less than `from`. */
+export const narrowsAccess = (from: TailnetDeviceAccess, to: TailnetDeviceAccess) =>
+  ACCESS_RANK.indexOf(to) < ACCESS_RANK.indexOf(from);
+
+/**
+ * A member that revoked itself: it left, and its roster there is gone, so only adding it again
+ * (a join) brings it back. A restore would list a machine that takes no part.
+ */
+export const hasLeftNetwork = (member: NetworkMember) =>
+  member.access === "revoked" && member.updatedAt.node === member.environmentId;
+
+/**
+ * The one order every machine and client merges members by; positive when `a` wins. A
+ * revocation ranks by its own stamp, any other write by the latest revocation it names in
+ * `restores`, so a write made without knowing a revocation never outranks it, however late.
+ */
+export const compareNetworkMembers = (a: NetworkMember, b: NetworkMember): number => {
+  const epoch = (entry: NetworkMember) =>
+    entry.access === "revoked" ? entry.updatedAt : entry.restores;
+  const epochA = epoch(a);
+  const epochB = epoch(b);
+  const byEpoch =
+    epochA === undefined
+      ? epochB === undefined
+        ? 0
+        : -1
+      : epochB === undefined
+        ? 1
+        : compareTailnetHlc(epochA, epochB);
+  const kind = (entry: NetworkMember) => (entry.access === "revoked" ? 0 : 1);
+  return byEpoch || kind(a) - kind(b) || compareTailnetHlc(a.updatedAt, b.updatedAt);
+};
+
+/** Apps are only ever narrowed, so the narrower entry wins whatever its stamp. */
+export const compareNetworkApps = (a: NetworkApp, b: NetworkApp): number =>
+  ACCESS_RANK.indexOf(b.access) - ACCESS_RANK.indexOf(a.access) ||
+  compareTailnetHlc(a.updatedAt, b.updatedAt);
+
 /** How this environment's outgoing link to a peer was made. */
 export const PeerLinkOrigin = Schema.Literals(["tailnet", "paired"]);
 export type PeerLinkOrigin = typeof PeerLinkOrigin.Type;

@@ -34,6 +34,8 @@ import {
   type TailnetLinkRefusal,
   type TailnetLinkRequest,
   type TailnetLinkResult,
+  hasLeftNetwork,
+  narrowsAccess,
 } from "@t3tools/contracts";
 import type { Tailnet, TailnetWhois } from "@t3tools/tailscale";
 import * as Clock from "effect/Clock";
@@ -170,16 +172,7 @@ const clientScopesFor = (access: AuthMcpClientAccess): ReadonlyArray<AuthGrantSc
 
 const isGrantScope = Schema.is(AuthGrantScope);
 
-const ACCESS_RANK: ReadonlyArray<TailnetDeviceAccess> = [
-  "revoked",
-  "read-only",
-  "approval-required",
-  "auto-accept-edits",
-  "auto",
-  "full-access",
-];
-const widens = (from: TailnetDeviceAccess, to: TailnetDeviceAccess) =>
-  ACCESS_RANK.indexOf(to) > ACCESS_RANK.indexOf(from);
+const widens = (from: TailnetDeviceAccess, to: TailnetDeviceAccess) => narrowsAccess(to, from);
 
 /**
  * The most an agent session's scopes allow. Only scopes are stored, so a supervised-or-wider
@@ -425,7 +418,7 @@ const make = Effect.gen(function* () {
           `Only the user can widen ${existing.value.label}'s access. Ask them to change it in Settings, Connections.`,
         );
       }
-      if (access !== "revoked" && Membership.hasLeft(existing.value)) {
+      if (access !== "revoked" && hasLeftNetwork(existing.value)) {
         return yield* forbidden(
           `${existing.value.label} left the network; add it again. Allow joining on it first.`,
         );

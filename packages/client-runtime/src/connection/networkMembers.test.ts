@@ -340,7 +340,9 @@ describe("leaving a network", () => {
     }),
   );
 
-  it.effect("a stale revoke of this app does not disown it", () =>
+  // Apps are only ever narrowed: a revoked app id stays revoked on every server, and widening
+  // pairs a new id. So a revocation disowns it whatever its stamp, as the servers converge.
+  it.effect("a revocation of this app disowns it however it is stamped", () =>
     Effect.gen(function* () {
       const catalog = yield* makeCatalog([record(vps, studio)]);
       catalog.saved.add(studio).add(box);
@@ -358,7 +360,8 @@ describe("leaving a network", () => {
       };
 
       yield* catalog.follow([stale, newer]);
-      expect(catalog.records()).toEqual([record(vps, studio), record(laptop, studio)]);
+      expect(catalog.records()).toEqual([]);
+      // Saved connections stay with the user.
       expect(catalog.forgotten).toEqual([]);
     }),
   );

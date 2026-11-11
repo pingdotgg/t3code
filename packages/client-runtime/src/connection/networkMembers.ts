@@ -4,7 +4,8 @@ import {
   type NetworkMember,
   type TailnetDeviceClientCredential,
   type TailnetDevicesSnapshot,
-  type TailnetHlc,
+  compareNetworkApps,
+  compareNetworkMembers,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -43,43 +44,14 @@ export interface NetworkRosterReport {
   readonly roster: NetworkRoster;
 }
 
-const compareStamps = (a: TailnetHlc, b: TailnetHlc): number =>
-  a.wallMs - b.wallMs || a.counter - b.counter || (a.node < b.node ? -1 : a.node > b.node ? 1 : 0);
-
-/**
- * The server's roster order (`Membership.ts`): a revocation outranks any entry that does not name
- * it in `restores`, and an entry naming it outranks it. Positive when `a` is newer.
- */
-function compareMembers(a: NetworkMember, b: NetworkMember): number {
-  const epoch = (entry: NetworkMember) =>
-    entry.access === "revoked" ? entry.updatedAt : (entry.restores ?? null);
-  const epochA = epoch(a);
-  const epochB = epoch(b);
-  const byEpoch =
-    epochA === null
-      ? epochB === null
-        ? 0
-        : -1
-      : epochB === null
-        ? 1
-        : compareStamps(epochA, epochB);
-  const kind = (entry: NetworkMember) => (entry.access === "revoked" ? 0 : 1);
-  return byEpoch || kind(a) - kind(b) || compareStamps(a.updatedAt, b.updatedAt);
-}
-
-/** The newest entry for each app id across hosts that take part; a revocation wins a tie. */
+/** Each app id's winning entry across hosts that take part, in the servers' merge order. */
 function newestApps(reports: ReadonlyArray<NetworkRosterReport>): ReadonlyMap<string, NetworkApp> {
   const apps = new Map<string, NetworkApp>();
   for (const { roster } of reports) {
     if (!roster.enabled) continue;
     for (const app of roster.apps) {
       const current = apps.get(app.appId);
-      const order =
-        current === undefined
-          ? 1
-          : compareStamps(app.updatedAt, current.updatedAt) ||
-            (app.access === "revoked" ? 1 : 0) - (current.access === "revoked" ? 1 : 0);
-      if (order > 0) apps.set(app.appId, app);
+      if (current === undefined || compareNetworkApps(app, current) > 0) apps.set(app.appId, app);
     }
   }
   return apps;
@@ -183,7 +155,7 @@ function followRoster(
   const newest = new Map<EnvironmentId, NetworkMember>();
   const offer = (entry: NetworkMember) => {
     const current = newest.get(entry.environmentId);
-    if (current === undefined || compareMembers(entry, current) > 0) {
+    if (current === undefined || compareNetworkMembers(entry, current) > 0) {
       newest.set(entry.environmentId, entry);
     }
   };

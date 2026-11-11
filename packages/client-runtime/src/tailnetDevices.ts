@@ -14,6 +14,7 @@ import type {
   TailnetDeviceStatus,
   TailnetDevicesSnapshot,
 } from "@t3tools/contracts";
+import { compareNetworkApps, compareNetworkMembers, hasLeftNetwork } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 /** A connected environment that offers the network, as this client sees it. */
@@ -79,8 +80,6 @@ const isLiveMember = (member: NetworkMember | null | undefined): member is Netwo
   member != null && member.access !== "revoked";
 
 /** A member that revoked itself: it left, and comes back only by being added again. */
-const hasLeft = (member: NetworkMember | null): boolean =>
-  member !== null && member.access === "revoked" && member.updatedAt.node === member.environmentId;
 
 /**
  * The server opens members for an app of the network on `orchestration:read`, and for any other
@@ -114,11 +113,9 @@ function sameNetwork(a: DeviceNetworkHost, b: DeviceNetworkHost): boolean {
   return appId !== null && appId === (b.snapshot?.callerAppId ?? null);
 }
 
-const compareHlc = (a: NetworkMember["updatedAt"], b: NetworkMember["updatedAt"]) =>
-  a.wallMs - b.wallMs || a.counter - b.counter || a.node.localeCompare(b.node);
-
-const newer = <T extends { readonly updatedAt: NetworkMember["updatedAt"] }>(a: T | null, b: T) =>
-  a === null || compareHlc(b.updatedAt, a.updatedAt) > 0 ? b : a;
+/** The entry that wins under the order the servers merge by. */
+const winner = <T>(a: T | null, b: T, compare: (a: T, b: T) => number) =>
+  a === null || compare(b, a) > 0 ? b : a;
 
 /** Hosts split into networks; a host with no snapshot joins a network that lists it. */
 function groupHosts(hosts: ReadonlyArray<DeviceNetworkHost>) {
@@ -229,7 +226,7 @@ function groupMachines(
   };
   const takeMember = (draft: Draft, member: NetworkMember | null) => {
     if (member === null) return;
-    draft.member = newer(draft.member, member);
+    draft.member = winner(draft.member, member, compareNetworkMembers);
     draft.label = draft.member.label;
     draft.nodeId ??= member.nodeId;
   };
@@ -294,7 +291,7 @@ function mergeApps(hosts: ReadonlyArray<DeviceNetworkHost>): Array<NetworkApp> {
   const apps = new Map<string, NetworkApp>();
   for (const host of hosts) {
     for (const app of host.snapshot?.apps ?? []) {
-      apps.set(app.appId, newer(apps.get(app.appId) ?? null, app));
+      apps.set(app.appId, winner(apps.get(app.appId) ?? null, app, compareNetworkApps));
     }
   }
   return [...apps.values()].sort((a, b) => a.label.localeCompare(b.label));
@@ -413,7 +410,7 @@ export function machineControls(
   // The server refuses a member it holds no node for until it is added again.
   const needsReadd =
     member && isLiveMember(entry.member) && entry.views.some((view) => isUnbound(view.device));
-  const left = member && hasLeft(entry.member);
+  const left = member && entry.member !== null && hasLeftNetwork(entry.member);
   const live = member && isLiveMember(entry.member) && !needsReadd;
   const manages = authority !== null && authority !== entry.environmentId;
   const forgetHosts = member
