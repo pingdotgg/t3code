@@ -523,6 +523,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--app-scrollbar-width) 100%;
 }
 
+/* The composer overlay spans the timeline, so stop short of its scrollbar lane. */
+@utility composer-overlay-fade {
+  background: linear-gradient(to bottom, transparent, var(--background) 50%) left /
+    calc(100% - var(--app-scrollbar-width)) 100% no-repeat;
+}
+
 /* Stage-channel art needs a mask and pseudo-element gradient, so keep the
    behavior composable without tying it to the global components layer. */
 @utility sidebar-stage-backdrop {
