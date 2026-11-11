@@ -122,6 +122,10 @@ export const WINDOWS_POLICY_VALUES = {
   { readonly type: "string" | "json" | "boolean"; readonly path: ReadonlyArray<string> }
 >;
 
+// Values older templates wrote for features since removed: accepted and ignored, so a deployed
+// Group Policy keeps loading. Not in the template any more.
+const RETIRED_WINDOWS_POLICY_VALUES = new Set(["connect"]);
+
 /** Subkeys of checkboxes: every value set to 1 is one entry of the list at `path`. */
 export const WINDOWS_POLICY_LISTS = {
   Clients: ["limits", "clients"],
@@ -425,6 +429,7 @@ function windowsPolicyDocument(
       continue;
     }
     if (Object.hasOwn(WINDOWS_POLICY_GROUPS, value.name)) continue;
+    if (RETIRED_WINDOWS_POLICY_VALUES.has(value.name.toLowerCase())) continue;
     if (!Object.hasOwn(WINDOWS_POLICY_VALUES, value.name)) {
       return { error: `${value.name} is not a T3 Code policy value` };
     }

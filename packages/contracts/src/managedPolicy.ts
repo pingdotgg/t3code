@@ -81,6 +81,8 @@ export const ManagedPolicyLimits = Schema.Struct({
   browserCookieImport: Schema.optionalKey(Schema.Boolean),
   providers: Schema.optionalKey(ManagedProviderLimits),
   updates: Schema.optionalKey(ManagedUpdatesPolicy),
+  /** Retired with T3 Connect. Still accepted so existing policies load; nothing reads it. */
+  connect: Schema.optionalKey(Schema.Boolean),
 });
 export type ManagedPolicyLimits = typeof ManagedPolicyLimits.Type;
 

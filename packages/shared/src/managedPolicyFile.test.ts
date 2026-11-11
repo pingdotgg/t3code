@@ -152,6 +152,12 @@ describe("readManagedPolicy", () => {
         yield* read("darwin", { [managedPolicyPath("darwin")]: typo }),
         '["limits"]["maxRuntimeMod"]',
       );
+      // Policies written while T3 Connect existed still load; the retired key changes nothing.
+      const retiredConnect = JSON.stringify({ ...settings, limits: { connect: false } });
+      assert.equal(
+        yield* read("darwin", { [managedPolicyPath("darwin")]: retiredConnect }),
+        managedPolicyPath("darwin"),
+      );
       assert.isUndefined(yield* read("darwin", {}));
       assert.include(
         yield* read("darwin", { ...profile, ...file }, plutil),
@@ -232,6 +238,8 @@ describe("readManagedPolicy", () => {
               // Registry names ignore case.
               text("maxRuntimeMode", "auto-accept-edits"),
               dword("Telemetry", 0),
+              // Retired with T3 Connect: older templates still write it, and it is ignored.
+              dword("Connect", 0),
               text("Settings", '{"enableAgentBrowserAccess": {"value": false, "locked": true}}'),
               text("UpdatesMode", "off"),
               dword("AllowNightly", 1),
