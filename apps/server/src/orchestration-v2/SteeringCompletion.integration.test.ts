@@ -25,6 +25,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -1208,6 +1209,13 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline"] as cons
           yield* worker.drain();
           const pending = yield* orchestrator.getThreadProjection(threadId);
           const queued = pending.runs.find((run) => run.id !== first.runId);
+          const effects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+            CommandId.make("steer"),
+          );
+          assert.deepEqual(
+            effects.map((effect) => [effect.request.type, effect.status]),
+            [["provider-turn.steer", "succeeded"]],
+          );
           assert.equal(started.length, 1);
           if (timing === "stop-before-decline") {
             assert.isUndefined(queued);
