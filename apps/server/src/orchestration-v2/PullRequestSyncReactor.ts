@@ -749,6 +749,9 @@ export const make = Effect.gen(function* () {
             ended.add(item.id);
             return Effect.andThen(linked, refreshUnmergedLinks(event.threadId));
           }
+          // Settled threads are not swept, so read their links once to settle with fresh status.
+          case "thread.settled":
+            return refreshUnmergedLinks(event.threadId);
           case "run.updated":
             return isTerminalRunStatus(event.payload.status) && closeCommands.delete(event.threadId)
               ? refreshUnmergedLinks(event.threadId)
