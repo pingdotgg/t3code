@@ -116,7 +116,7 @@ const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
 const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
 const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
-const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
+export const NON_INTERACTIVE_GIT_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
   GIT_TERMINAL_PROMPT: "0",
@@ -1379,7 +1379,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         // healthy writer. A separate safety limit prevents a hung transport from
         // occupying its worker slot indefinitely.
         const started = yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
-          env: STATUS_UPSTREAM_REFRESH_ENV,
+          env: NON_INTERACTIVE_GIT_ENV,
           fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
           timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
         }).pipe(
@@ -4693,7 +4693,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchRemote = Effect.fn("fetchRemote")(function* (input: GitVcsDriver.GitFetchRemoteInput) {
     const args = ["fetch", "--quiet", "--", input.remoteName];
     const options = {
-      env: STATUS_UPSTREAM_REFRESH_ENV,
+      env: NON_INTERACTIVE_GIT_ENV,
       fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
     };
     // Another fetch in the same repository, such as the background status

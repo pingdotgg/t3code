@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import type * as Path from "effect/Path";
+import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { SCAN_CACHE_FILE_NAME } from "./usage/usageScanCache.ts";
@@ -652,6 +652,72 @@ it.live("removes clean submodules recursively, including deinitialized repositor
       expect(report.counts).toEqual({ removed: 1, kept: 0, failed: 0 });
       expect(yield* fs.exists(worktree)).toBe(false);
       expect(yield* fs.exists(admin)).toBe(false);
+    }),
+  ),
+);
+
+it.live("removes submodules whose tags match the remote's tags off every remote branch", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, submodule, command } = yield* submoduleCleanupFixture();
+      const head = (yield* command(submodule, ["rev-parse", "HEAD"])).stdout.trim();
+      const tree = (yield* command(submodule, ["rev-parse", "HEAD^{tree}"])).stdout.trim();
+      const release = (yield* command(repo, [
+        "commit-tree",
+        tree,
+        "-p",
+        head,
+        "-m",
+        "release",
+      ])).stdout.trim();
+      yield* command(repo, ["tag", "v0.9.1", release]);
+      yield* command(submodule, ["fetch", "origin", "tag", "v0.9.1"]);
+      // Pinning the submodule at the release puts the tag's commit in HEAD and the reflog.
+      yield* command(submodule, ["checkout", "--detach", "v0.9.1"]);
+      yield* command(worktree, ["commit", "-am", "pin module release"]);
+      const { relative } = yield* Path.Path;
+      yield* command(submodule, ["config", "remote.origin.url", relative(submodule, repo)]);
+      const report = yield* service.runNow;
+      expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+        outcome: "removed",
+        reason: expect.not.stringContaining("remote-tracking"),
+      });
+      expect(yield* fs.exists(worktree)).toBe(false);
+    }),
+  ),
+);
+
+it.live("keeps submodules whose tags the remote lacks or has at another commit", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, submodule, command } = yield* submoduleCleanupFixture();
+      const commitOff = (cwd: string, message: string, parent = "HEAD") =>
+        Effect.gen(function* () {
+          const tree = (yield* command(cwd, ["rev-parse", "HEAD^{tree}"])).stdout.trim();
+          return (yield* command(cwd, [
+            "commit-tree",
+            tree,
+            "-p",
+            parent,
+            "-m",
+            message,
+          ])).stdout.trim();
+        });
+      yield* command(repo, ["tag", "v0.9.1", yield* commitOff(repo, "release")]);
+      const local = yield* commitOff(submodule, "local release");
+      for (const tag of ["local-only", "v0.9.1"]) {
+        yield* command(submodule, ["tag", tag, local]);
+        expect(
+          (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+        ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("remote-tracking") });
+        yield* command(submodule, ["tag", "-d", tag]);
+      }
+      yield* command(submodule, ["fetch", "origin", "tag", "v0.9.1"]);
+      yield* command(submodule, ["branch", "work", yield* commitOff(submodule, "work", "v0.9.1")]);
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("remote-tracking") });
+      expect(yield* fs.exists(worktree)).toBe(true);
     }),
   ),
 );
