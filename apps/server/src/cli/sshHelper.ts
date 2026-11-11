@@ -18,8 +18,7 @@ const canBind = (port: number) =>
     });
   });
 
-// macOS lets the bind above succeed while another process listens on
-// *:<port>, so also skip any port that already answers on loopback.
+// macOS permits this bind over a wildcard listener, so also check loopback connectivity.
 const answersOnLoopback = (port: number) =>
   new Promise<boolean>((resolve) => {
     const socket = NodeNet.connect({ port, host: "127.0.0.1" });
@@ -99,7 +98,7 @@ const runtimePort = Command.make("runtime-port", {
   Command.withHandler(({ runtimeFile }) =>
     Effect.sync(() => {
       try {
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - mirrors the shell snippet's loose parse.
+        // @effect-diagnostics-next-line globalJsonInEffect:off - mirrors the shell snippet's loose parse.
         const runtime = JSON.parse(NodeFS.readFileSync(runtimeFile, "utf8")) as {
           pid?: unknown;
           port?: unknown;

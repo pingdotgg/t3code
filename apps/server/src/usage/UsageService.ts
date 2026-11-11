@@ -1,5 +1,3 @@
-import * as NodeOS from "node:os";
-
 import {
   type ProviderInstanceConfig,
   ProviderInstanceId,
@@ -30,6 +28,7 @@ import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import { formatMalformedUsageWarning } from "@t3tools/shared/usageFormat";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { BUILT_IN_USAGE_DRIVERS, type BuiltInUsageReadersEnv } from "../provider/builtInDrivers.ts";
@@ -40,7 +39,7 @@ import type {
   TranscriptUsageFormat,
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -67,10 +66,7 @@ const RATES_TTL_MS = 24 * 60 * 60 * 1000;
 
 const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 
-/**
- * Files are filtered by mtime before opening. The slack covers a session whose
- * last write lands just before local midnight on the window's first day.
- */
+// mtime slack includes writes just before local midnight on the window's first day.
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -102,14 +98,10 @@ const RatesCacheFile = Schema.Struct({
   fetchedAtMs: Schema.Number,
   document: Schema.Unknown,
 });
-const decodeRatesCache = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
-);
-const encodeRatesCache = Schema.encodeEffect(
-  Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
-);
+const decodeRatesCache = Schema.decodeUnknownEffect(Schema.fromJsonString(RatesCacheFile));
+const encodeRatesCache = Schema.encodeEffect(Schema.fromJsonString(RatesCacheFile));
 
-const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
+const ScanCacheJson = Schema.fromJsonString(Schema.Unknown);
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeUsageRecordKey = Schema.encodeSync(ScanCacheJson);
 const CachedSource = Schema.Struct({ dir: Schema.String, volumeId: Schema.String });
@@ -124,11 +116,7 @@ const sharedSessionProviders: ReadonlySet<UsageProviderKind> = new Set(
   ),
 );
 
-/**
- * Only these need cross-file dedupe keys: within one file the occurrence count
- * already keeps every key unique, so keying the rest would only build and hash
- * a string for each of their records.
- */
+// Only shared sessions need cross-file dedupe; per-file occurrence counts make other keys unique.
 function sharedSessions(
   files: readonly { readonly records: readonly UsageRecord[] }[],
 ): ReadonlySet<string> {
@@ -159,32 +147,6 @@ export class UsageService extends Context.Service<
   }
 >()("t3/usage/UsageService") {}
 
-const EMPTY_PRICING: UsagePricing = {
-  status: "unavailable",
-  source: LITELLM_RATES_URL,
-  fetchedAt: null,
-  knownModels: 0,
-};
-
-const layerTest = Layer.succeed(
-  UsageService,
-  UsageService.of({
-    readSummary: (input) =>
-      Effect.succeed({
-        contractVersion: USAGE_CONTRACT_VERSION,
-        readAt: "1970-01-01T00:00:00.000Z",
-        timeZone: input.timeZone,
-        sinceDay: input.sinceDay,
-        untilDay: input.untilDay,
-        buckets: [],
-        sources: [],
-        pricing: EMPTY_PRICING,
-        scanDurationMs: 0,
-      }),
-    refreshRates: Effect.succeed(EMPTY_PRICING),
-  }),
-);
-
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -192,6 +154,7 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcess.Environment;
+  const hostname = yield* HostProcess.Hostname;
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
@@ -214,6 +177,37 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
+  const hostIdPath = path.join(config.baseDir, "usage-host-id");
+  const explicitHostId = hostEnvironment["T3CODE_HOST_ID"]?.trim();
+  const hostId =
+    explicitHostId ||
+    (yield* fileSystem.readFileString(hostIdPath).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              yield* fileSystem.makeDirectory(config.baseDir, { recursive: true });
+              const tempDirectory = yield* fileSystem.makeTempDirectoryScoped({
+                directory: config.baseDir,
+                prefix: "usage-host-id.",
+              });
+              const tempFile = path.join(tempDirectory, "identity");
+              yield* fileSystem.writeFileString(tempFile, `${hostname}\n`);
+              // Publish complete contents without replacing another initializer's identity.
+              yield* fileSystem.link(tempFile, hostIdPath).pipe(
+                Effect.catchIf(
+                  (error) => error.reason._tag === "AlreadyExists",
+                  () => Effect.void,
+                ),
+              );
+              return yield* fileSystem.readFileString(hostIdPath);
+            }),
+          ),
+      ),
+      Effect.map((value) => value.trim() || hostname),
+      Effect.orElseSucceed(() => hostname),
+    ));
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesLastFailedAtMs: number | null = null;
@@ -383,11 +377,7 @@ export const make = Effect.gen(function* () {
     return dirs;
   });
 
-  /**
-   * `Effect.cached` makes concurrent first readers await the same load rather
-   * than each seeing a "loaded" flag set before the read finished and cold
-   * scanning against an empty cache.
-   */
+  // Share first loads so concurrent readers cannot scan against a still-empty cache.
   const ensureScanCacheLoaded = yield* Effect.cached(
     Effect.gen(function* () {
       const readDocument = (filePath: string) =>
@@ -414,13 +404,10 @@ export const make = Effect.gen(function* () {
   );
 
   const writeScanCache = makeScanCacheWriter();
-  // Scans with different windows can finish together; serializing the writes
-  // keeps an older snapshot from landing after a newer one.
+  // Serialize writes so concurrently finished window scans cannot overwrite newer snapshots.
   const persistLock = yield* Semaphore.make(1);
 
-  // The dirty flag is cleared before encoding, so a change while the write is
-  // in flight marks it dirty again. A failed write restores the flag, so the
-  // next persist retries instead of leaving disk stale.
+  // Clear dirty before encoding to retain concurrent changes; restore it on failure for retry.
   const persistCaches = Effect.gen(function* () {
     if (cacheDirty) {
       cacheDirty = false;
@@ -447,16 +434,15 @@ export const make = Effect.gen(function* () {
   const awaitPersisted = Effect.suspend(() => Fiber.awaitAll([...pendingPersists])).pipe(
     Effect.asVoid,
   );
-  // A write still running when the service shuts down finishes first, so the
-  // next start does not lose the last scan.
   yield* Effect.addFinalizer(() => awaitPersisted);
 
   /**
    * Reads run concurrently, and the caller stores updates in walk order rather
    * than completion order: saved records of deleted transcripts aggregate in
-   * cache order, where the first copy of a duplicate wins.
+   * cache order, where the first copy of a duplicate wins. Untraced: a scan
+   * reads thousands of files, so scanTranscriptDir records the counts instead.
    */
-  const readFileRecords = Effect.fn("UsageService.readFileRecords")(function* (
+  const readFileRecords = Effect.fnUntraced(function* (
     filePath: string,
     size: number,
     mtimeMs: number,
@@ -560,7 +546,6 @@ export const make = Effect.gen(function* () {
     readonly hostId?: string;
     readonly status?: UsageSource["status"];
     readonly message?: string;
-    readonly action?: UsageSource["action"];
     readonly files:
       | readonly {
           readonly path: string;
@@ -612,6 +597,10 @@ export const make = Effect.gen(function* () {
       return { path, records, malformedRecords };
     });
     const unread = failedPaths + read.filter((file) => file.failed).length;
+    yield* Effect.annotateCurrentSpan({
+      "usage.files": files.length,
+      "usage.files_parsed": read.filter((file) => file.update !== undefined).length,
+    });
     return {
       provider,
       dir,
@@ -639,36 +628,31 @@ export const make = Effect.gen(function* () {
     const scans = Effect.forEach(
       scanReaders,
       ({ driver, reader }) =>
-        usageInstances(driver, settings)
-          .pipe(
-            Effect.flatMap((instances) =>
-              reader.scan({ instances, settings, windowStartMs, retentionCutoffMs, awaitRefresh }),
-            ),
-          )
-          .pipe(
-            Effect.flatMap((sources) =>
-              Effect.forEach(sources, ({ volumeId, ...source }) =>
-                Effect.map(
-                  volumeId === undefined
-                    ? Effect.promise(() => readDirectoryVolumeId(source.dir))
-                    : Effect.succeed(volumeId),
-                  (resolved): ScannedDir => ({
-                    ...source,
-                    files: source.files?.map((file) => ({ ...file, malformedRecords: 0 })) ?? null,
-                    provider: reader.provider,
-                    volumeId: resolved,
-                  }),
-                ),
+        usageInstances(driver, settings).pipe(
+          Effect.flatMap((instances) =>
+            reader.scan({ instances, settings, windowStartMs, retentionCutoffMs, awaitRefresh }),
+          ),
+          Effect.flatMap((sources) =>
+            Effect.forEach(sources, ({ volumeId, ...source }) =>
+              Effect.map(
+                volumeId === undefined
+                  ? Effect.promise(() => readDirectoryVolumeId(source.dir))
+                  : Effect.succeed(volumeId),
+                (resolved): ScannedDir => ({
+                  ...source,
+                  files: source.files?.map((file) => ({ ...file, malformedRecords: 0 })) ?? null,
+                  provider: reader.provider,
+                  volumeId: resolved,
+                }),
               ),
             ),
-            Effect.provideContext(readerContext),
           ),
+          Effect.provideContext(readerContext),
+        ),
       { concurrency: "unbounded" },
     );
 
-    // Independent sources scan together. Transcript directories go one at a
-    // time, so open files stay at `TRANSCRIPT_READ_CONCURRENCY`. The result
-    // keeps this order, since aggregation keeps the first copy of a duplicate.
+    // Scan independent sources together, directories sequentially to bound open files; preserve order for first-copy dedupe.
     const [transcripts, scanDirs] = yield* Effect.all(
       [Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs)), scans],
       { concurrency: "unbounded" },
@@ -715,7 +699,6 @@ export const make = Effect.gen(function* () {
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureScanCacheLoaded;
 
-    const hostId = NodeOS.hostname();
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({
@@ -745,12 +728,12 @@ export const make = Effect.gen(function* () {
       rates,
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
       modelAliases: resolveModelAliases(settings.usageModelAliases),
+      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     });
 
     const sources: UsageSource[] = [];
 
-    // Cleanup may remove transcripts, but the usage we already saved still
-    // contributes to its source through the normal aggregation and dedupe path.
+    // Deleted transcripts' saved usage still aggregates and deduplicates normally.
     const retainedSinceMs = Math.max(windowStartMs, retentionCutoffMs);
     const filesByDir = scannedDirs.map(({ provider, dir, files }) => {
       const retainedFiles = [...(files ?? [])];
@@ -818,7 +801,7 @@ export const make = Effect.gen(function* () {
 
     for (const [
       index,
-      { provider, dir, volumeId, files, status, message, action, refreshing, hostId: sourceHostId },
+      { provider, dir, volumeId, files, status, message, refreshing, hostId: sourceHostId },
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
@@ -842,8 +825,7 @@ export const make = Effect.gen(function* () {
             sharedSessionProviders.has(record.provider) &&
             crossFileSessions.has(record.sessionId)
           ) {
-            // Match moved copies without collapsing repeated equal events
-            // within one file (timestamps can have only second precision).
+            // Dedupe moved copies but retain repeated equal events within a file, including second-precision timestamps.
             const key = encodeUsageRecordKey([
               record.provider,
               record.sessionId,
@@ -879,14 +861,10 @@ export const make = Effect.gen(function* () {
         distinctSessions: sessionIds.size,
         message:
           malformedRecords > 0
-            ? [
-                sourceMessage,
-                `${malformedRecords} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`,
-              ]
+            ? [sourceMessage, formatMalformedUsageWarning(malformedRecords)]
                 .filter(Boolean)
                 .join(" ")
             : sourceMessage,
-        ...(action ? { action } : {}),
         ...(refreshing ? { refreshing } : {}),
       });
     }
@@ -908,6 +886,7 @@ export const make = Effect.gen(function* () {
       sources,
       pricing: pricing(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
+      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     } satisfies UsageSummary;
   });
 
@@ -923,9 +902,15 @@ export const make = Effect.gen(function* () {
       input.untilTime ?? null,
       settings,
       input.awaitRefresh === true,
+      input.modelFilter ?? null,
     ]);
 
-  const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+  const readSummary = Effect.fn("UsageService.readSummary")(function* (
+    requested: UsageSummaryInput,
+  ) {
+    const { modelFilter: requestedFilter, ...unfiltered } = requested;
+    const modelFilter = canonicalModelFilter(requestedFilter);
+    const input = modelFilter === undefined ? unfiltered : { ...unfiltered, modelFilter };
     const settings = yield* readSettings;
     const key = scanKey(input, settings);
     const deferred = yield* Effect.uninterruptible(
@@ -933,14 +918,11 @@ export const make = Effect.gen(function* () {
         const existing = inflightScans.get(key);
         if (existing !== undefined) return existing;
 
-        // Enrollment and detached-fiber creation must be atomic. Otherwise a
-        // canceled first caller can leave a Deferred with no scan to finish it.
+        // Register and fork atomically so cancellation cannot leave a Deferred without a scan.
         const created = Deferred.makeUnsafe<UsageSummary, UsageReadError>();
         inflightScans.set(key, created);
-        // Detached so one departing client cannot tear the scan out from under
-        // the fibers awaiting it; a finished scan warms the cache either way.
-        // The cache write is registered before the waiters resume, so they
-        // can await it, but its fiber starts after they have the summary.
+        // Detach so caller departure cannot cancel shared scans; finished scans warm the cache.
+        // Register writes before releasing waiters, but start writing after delivering their summary.
         yield* scanSummary(input, settings).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
