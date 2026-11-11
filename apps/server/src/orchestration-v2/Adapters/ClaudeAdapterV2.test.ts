@@ -2533,7 +2533,9 @@ describe("ClaudeAdapterV2 native fork", () => {
             forkSession: (input) =>
               Effect.gen(function* () {
                 forkCalls.push(input);
-                return yield* realRunner.forkSession(input);
+                return input.options.upToMessageId === sourceCursor
+                  ? yield* realRunner.forkSession(input)
+                  : { sessionId: "unused-fork-session" };
               }),
             sessionMessageIds: () => Effect.succeed([]),
             subagentLaunchToolUseId: () => Effect.succeed(null),
@@ -2599,6 +2601,7 @@ describe("ClaudeAdapterV2 native fork", () => {
             options: {
               upToMessageId: sourceCursor,
             },
+            cwd: "/workspace",
             environment: { CLAUDE_CONFIG_DIR: configDir },
             threadId: targetThreadId,
             providerSessionId,
@@ -2648,7 +2651,7 @@ describe("ClaudeAdapterV2 native fork", () => {
           providerTurnId,
           targetThreadId: ThreadId.make("thread-claude-fork-after-compact-rollback"),
         });
-        assert.equal(forkCalls[1]?.sessionId, "source-native-session");
+        assert.equal(forkCalls[1]?.sessionId, sourceSessionId);
         assert.equal(forkCalls[1]?.options.upToMessageId, "recovered-head-cursor");
 
         yield* runtime.startTurn({
@@ -2795,7 +2798,7 @@ describe("ClaudeAdapterV2 rollback past compaction", () => {
         assert.deepEqual(
           yield* historyRunner.sessionMessageIds({
             sessionId: sourceSessionId,
-            dir: sessionDir,
+            cwd: sessionDir,
             environment: { CLAUDE_CONFIG_DIR: NodePath.join(configDir, "other-instance") },
           }),
           [],

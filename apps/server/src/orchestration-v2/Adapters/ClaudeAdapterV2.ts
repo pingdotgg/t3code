@@ -682,7 +682,7 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
   readonly sessionMessageIds: (input: {
     readonly sessionId: string;
-    readonly dir: string | null;
+    readonly cwd: string | null;
     readonly environment: NodeJS.ProcessEnv;
   }) => Effect.Effect<ReadonlyArray<string>, ClaudeAgentSdkQueryRunnerError>;
   readonly assertComplete: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
@@ -696,6 +696,7 @@ export class ClaudeAgentSdkQueryRunner extends Context.Service<
 export interface ClaudeAgentSdkSessionForkInput {
   readonly sessionId: string;
   readonly options: ForkSessionOptions;
+  readonly cwd?: string | null;
   readonly environment: NodeJS.ProcessEnv;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
@@ -1111,6 +1112,7 @@ const runClaudeWorker = Effect.fn("runClaudeWorker")(function* (input: {
   readonly method: "forkSession" | "getSessionMessageIds";
   readonly sessionId: string;
   readonly options?: ForkSessionOptions;
+  readonly cwd?: string | null;
   readonly environment: NodeJS.ProcessEnv;
 }) {
   const path = yield* Path.Path;
@@ -1134,10 +1136,17 @@ const runClaudeWorker = Effect.fn("runClaudeWorker")(function* (input: {
       executablePath,
       [...workerArguments, input.method, input.sessionId, encodeClaudeJson(input.options ?? {})],
       {
-        // A relative CLAUDE_CONFIG_DIR resolves against the session cwd, as in the CLI.
-        ...(input.options?.dir === undefined ? {} : { cwd: input.options.dir }),
         env: {
           ...input.environment,
+          // A relative CLAUDE_CONFIG_DIR resolves against the session cwd, as in the CLI.
+          ...(input.environment.CLAUDE_CONFIG_DIR === undefined
+            ? {}
+            : {
+                CLAUDE_CONFIG_DIR: path.resolve(
+                  input.cwd ?? "",
+                  input.environment.CLAUDE_CONFIG_DIR,
+                ),
+              }),
           ELECTRON_RUN_AS_NODE: "1",
         },
       },
@@ -1639,20 +1648,19 @@ export const layerQueryRunner: Layer.Layer<
         function* (input) {
           const hostEnvironment = yield* HostProcess.Environment;
           const homeDirectory = yield* HostProcess.HomeDirectory;
-          const options = input.dir === null ? {} : { dir: input.dir };
           const ids: Effect.Effect<ReadonlyArray<string>, unknown> = claudeConfigDirOf(
             path,
             input.environment,
             homeDirectory,
           ) === claudeConfigDirOf(path, hostEnvironment, homeDirectory)
             ? Effect.tryPromise({
-                try: () => getSessionMessages(input.sessionId, options),
+                try: () => getSessionMessages(input.sessionId),
                 catch: (cause) => queryRunnerError(cause, "sessionMessageIds"),
               }).pipe(Effect.map((messages) => messages.map((message) => message.uuid)))
             : runClaudeWorker({
                 method: "getSessionMessageIds",
                 sessionId: input.sessionId,
-                options,
+                cwd: input.cwd,
                 environment: input.environment,
               }).pipe(
                 Effect.flatMap(decodeClaudeHistoryMessageIds),
@@ -12401,7 +12409,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 const resumableIds = yield* queryRunner
                   .sessionMessageIds({
                     sessionId: sourceSessionId,
-                    dir: input.runtimePolicy.cwd,
+                    cwd: input.runtimePolicy.cwd,
                     environment: adapterOptions.environment,
                   })
                   .pipe(
@@ -12432,10 +12440,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ) {
                   const forked = yield* queryRunner.forkSession({
                     sessionId: sourceSessionId,
-                    options: {
-                      ...(input.runtimePolicy.cwd === null ? {} : { dir: input.runtimePolicy.cwd }),
-                      upToMessageId: resumeSessionAt,
-                    },
+                    options: { upToMessageId: resumeSessionAt },
+                    cwd: input.runtimePolicy.cwd,
                     environment: adapterOptions.environment,
                     threadId: input.threadId,
                     providerSessionId: input.providerSessionId,
@@ -12552,6 +12558,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const forked = yield* queryRunner.forkSession({
                 sessionId: sourceNativeThreadId,
                 options: forkOptions,
+                cwd: input.runtimePolicy.cwd,
                 environment: adapterOptions.environment,
                 threadId: forkInput.targetThreadId,
                 providerSessionId: input.providerSessionId,
