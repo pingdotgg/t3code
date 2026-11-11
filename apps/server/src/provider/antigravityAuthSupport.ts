@@ -9,8 +9,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
@@ -521,8 +521,7 @@ export const serveAntigravityAuthorizationUrlSink = Effect.fn(
   function* (
     onAuthorizationUrl: (authorizationUrl: string) => Effect.Effect<void, AcpErrors.AcpError>,
   ) {
-    const crypto = yield* Crypto.Crypto;
-    const token = yield* crypto.randomUUIDv4();
+    const token = yield* (yield* SecureRandom.SecureRandom).uuidV4();
     const context = yield* Layer.build(
       NodeHttpServer.layer(NodeHttp.createServer, {
         host: "127.0.0.1",
