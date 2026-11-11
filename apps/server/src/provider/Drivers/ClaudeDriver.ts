@@ -144,10 +144,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         ? configDir
         : undefined,
     );
-    const resetCreditsCacheFile = yield* ClaudeResetCredits.claudeResetCreditsCacheFile(
+    const resetCreditsCacheFile = ClaudeResetCredits.claudeResetCreditsCacheFile(
+      path,
       stateDir,
       configDir,
-    ).pipe(Effect.provideService(Path.Path, path));
+    );
     const stampIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
@@ -398,6 +399,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             cause,
           }),
       ),
+      // A failed claim may still have spent the reset.
+      Effect.tapError(() => invalidateUsageCache),
       Effect.tap((outcome) =>
         ResetCreditCoordinator.refreshAfterRedemption({
           outcome,
@@ -429,7 +432,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       accentColor,
       enabled,
       snapshot,
-      invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
+      invalidateCaches: invalidateUsageCache,
       workspaceRescans: Stream.fromQueue(workspaceRescans),
       snapshotForCwd: (cwd: string) =>
         snapshot.getSnapshot.pipe(

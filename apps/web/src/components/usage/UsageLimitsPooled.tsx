@@ -350,11 +350,7 @@ function SegmentTriggers({
   const timeLeft = paceRemainingPercent(window, now);
   const [segmentRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
-  const { count: credits, scope } = resetCreditsForWindow(
-    account.limits.resetCredits,
-    account.limits.windows,
-    window.id,
-  );
+  const { count: credits, scope } = resetCreditsForWindow(account.limits.resetCredits, window.id);
   return (
     <>
       <PopoverTrigger
@@ -460,11 +456,7 @@ function LegendRow({
   const { account, window } = payload;
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const { count: credits, scope } = resetCreditsForWindow(
-    account.limits.resetCredits,
-    account.limits.windows,
-    window.id,
-  );
+  const { count: credits, scope } = resetCreditsForWindow(account.limits.resetCredits, window.id);
   return (
     <PopoverTrigger
       handle={popover}

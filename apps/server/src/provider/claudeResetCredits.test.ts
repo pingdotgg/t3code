@@ -83,7 +83,7 @@ describe("claudeResetCreditsToContract", () => {
           grant({ id: "weekly_a", clears: ["seven_day"], ends_at: "2026-12-10T22:00:00Z" }),
           grant({
             id: "fable_a",
-            clears: ["seven_day_overage_included"],
+            clears: ["five_hour", "seven_day_overage_included"],
             gives_back_weekly: true,
             ends_at: "2027-03-09T07:59:00Z",
           }),
@@ -94,6 +94,11 @@ describe("claudeResetCreditsToContract", () => {
             type: "weekly",
           }),
           grant({ id: "session_a", type: "session" }),
+          grant({
+            id: "full_a",
+            type: "full",
+            clears: ["seven_day", "seven_day_overage_included", ""],
+          }),
           grant({ id: "spent", clears: ["seven_day"], resets_left: 0 }),
         ],
       },
@@ -101,18 +106,20 @@ describe("claudeResetCreditsToContract", () => {
       "Fable",
     );
     expect(
-      credits?.options?.map(({ creditId, label, availableCount, clearsWindowIds }) => [
+      credits?.options?.map(({ creditId, label, availableCount, clearsWindowIds, scope }) => [
         creditId,
         label,
         availableCount,
         clearsWindowIds,
+        scope,
       ]),
     ).toEqual([
-      ["session_a", "5-hour reset", 1, undefined],
-      ["weekly_a", "Weekly reset", 1, ["seven_day"]],
-      ["fable_a", "Fable reset", 2, ["seven_day_fable"]],
+      ["session_a", "5-hour reset", 1, ["five_hour"], undefined],
+      ["weekly_a", "Weekly reset", 1, ["seven_day"], undefined],
+      ["fable_a", "Fable reset", 2, ["seven_day_fable"], "Fable"],
+      ["full_a", "Full reset", 1, ["seven_day"], undefined],
     ]);
-    expect(credits).toMatchObject({ availableCount: 4, nextCreditId: "weekly_a" });
+    expect(credits).toMatchObject({ availableCount: 5, nextCreditId: "weekly_a" });
   });
 
   it("offers nothing to redeem without a usable next grant or an eligible account", () => {
@@ -168,18 +175,18 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
   it.effect("serves a recent read from disk until it is forgotten or expires", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
-      const cacheFile = yield* ClaudeResetCredits.claudeResetCreditsCacheFile(configDir, configDir);
+      const cacheFile = ClaudeResetCredits.claudeResetCreditsCacheFile(
+        yield* Path.Path,
+        configDir,
+        configDir,
+      );
       let requests = 0;
+      let body: unknown = {
+        cedar_ember: { eligible: true, next_grant_id: "grant_a", grants: [grant({})] },
+      };
       const client = HttpClient.make((request) => {
         requests += 1;
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            Response.json({
-              cedar_ember: { eligible: true, next_grant_id: "grant_a", grants: [grant({})] },
-            }),
-          ),
-        );
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
       });
       const read = (version = "2.1.0") =>
         ClaudeResetCredits.readClaudeResetCredits(configDir, version, undefined, cacheFile).pipe(
@@ -198,6 +205,11 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
       yield* TestClock.adjust("2 minutes");
       yield* read("2.2.0");
       expect(requests).toBe(4);
+      body = {};
+      yield* TestClock.adjust("2 minutes");
+      yield* read("2.2.0");
+      yield* read("2.2.0");
+      expect(requests).toBe(5);
     }),
   );
 

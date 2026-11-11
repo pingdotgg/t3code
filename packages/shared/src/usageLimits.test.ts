@@ -1840,70 +1840,45 @@ describe("ChatGPT sharing presentation", () => {
 });
 
 describe("reset credits per window", () => {
-  const windows = [
-    window,
-    { ...window, id: "seven_day", kind: "weekly", label: "Weekly" },
-    { ...window, id: "seven_day_fable", kind: "weekly", label: "Weekly · Fable" },
-    { id: "monthly_spend", kind: "monthly", label: "Monthly spend", usedPercent: 10 },
-  ] as const;
-  const option = (creditId: string, availableCount: number, clearsWindowIds?: string[]) => ({
+  const option = (
+    creditId: string,
+    availableCount: number,
+    clearsWindowIds?: string[],
+    scope?: string,
+  ) => ({
     creditId,
     label: creditId,
     description: creditId,
     availableCount,
     ...(clearsWindowIds ? { clearsWindowIds } : {}),
+    ...(scope ? { scope } : {}),
   });
   const credits = {
     availableCount: 4,
     nextCreditId: "fable",
     options: [
-      option("fable", 1, ["five_hour", "seven_day_fable"]),
-      option("weekly", 2, ["seven_day"]),
-      option("everything", 1, ["five_hour", "seven_day", "seven_day_fable"]),
+      option("fable", 2, ["seven_day_fable"], "Fable"),
+      option("weekly", 1, ["seven_day"]),
+      option("full", 1, ["five_hour", "seven_day"]),
     ],
   };
 
   it("counts each reset only on the windows it clears", () => {
-    expect(resetCreditsForWindow(credits, windows, "seven_day")).toEqual({
-      count: 3,
-      scope: undefined,
-    });
-    expect(resetCreditsForWindow(credits, windows, "five_hour")).toEqual({
-      count: 1,
-      scope: undefined,
-    });
-    expect(
-      resetCreditsForWindow(
-        { ...credits, options: credits.options.slice(0, 2) },
-        windows,
-        "seven_day_fable",
-      ),
-    ).toEqual({ count: 1, scope: "Fable" });
-    const mixed = {
-      ...credits,
-      options: [
-        option("full", 1, ["seven_day", "seven_day_fable"]),
-        option("fable", 2, ["seven_day_fable"]),
-      ],
-    };
-    expect(resetCreditsForWindow(mixed, windows, "seven_day").count).toBe(1);
-    expect(resetCreditsForWindow(mixed, windows, "seven_day_fable")).toEqual({
+    expect(resetCreditsForWindow(credits, "seven_day")).toEqual({ count: 2, scope: undefined });
+    expect(resetCreditsForWindow(credits, "five_hour")).toEqual({ count: 1, scope: undefined });
+    expect(resetCreditsForWindow(credits, "seven_day_fable")).toEqual({
       count: 2,
       scope: "Fable",
     });
-    expect(resetCreditsForWindow(mixed, windows, "five_hour").count).toBe(0);
-    const withoutWeekly = windows.filter((shown) => shown.id !== "seven_day");
-    expect(resetCreditsForWindow(credits, withoutWeekly, "five_hour").count).toBe(1);
   });
 
   it("counts resets without clears details against every window", () => {
     expect(
-      resetCreditsForWindow({ availableCount: 2, nextCreditId: "grant_a" }, windows, "seven_day"),
+      resetCreditsForWindow({ availableCount: 2, nextCreditId: "grant_a" }, "seven_day"),
     ).toEqual({ count: 2, scope: undefined });
     expect(
       resetCreditsForWindow(
         { availableCount: 1, options: [option("grant_a", 1)] },
-        windows,
         "seven_day_fable",
       ),
     ).toEqual({ count: 1, scope: undefined });

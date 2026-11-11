@@ -1035,31 +1035,13 @@ export interface WindowResetCredits {
 /** Resets without a clears list count against every window. */
 export function resetCreditsForWindow(
   credits: ServerProviderResetCredits | undefined,
-  windows: ReadonlyArray<ServerProviderUsageWindow>,
   windowId: string,
 ): WindowResetCredits {
   if (!credits?.options) return { count: credits?.availableCount ?? 0, scope: undefined };
-  const resettable = windows.filter((window) => window.kind !== "monthly");
-  const scopeOf = (window: ServerProviderUsageWindow) => window.label.split(" · ")[1];
-  let count = 0;
-  const scopes = new Set<string | undefined>();
-  for (const option of credits.options) {
-    const clears = option.clearsWindowIds;
-    let scope: string | undefined;
-    if (clears) {
-      const listed = resettable.filter((window) => clears.includes(window.id));
-      // An id with no window shown may be the all-models Weekly, so it rules out a model scope.
-      const modelOnly = clears.every((id) =>
-        listed.some((window) => window.id === id && (scopeOf(window) || window.kind === "session")),
-      );
-      scope = modelOnly ? listed.map(scopeOf).find(Boolean) : undefined;
-      // Claude lists the shared Session in a model-scoped reset's clears, but redeeming leaves it.
-      // A model's row only counts that model's own resets, though a full reset clears it too.
-      const cleared = listed.filter((window) => scopeOf(window) === scope);
-      if (!cleared.some((window) => window.id === windowId)) continue;
-    }
-    count += option.availableCount;
-    scopes.add(scope);
-  }
+  const counted = credits.options.filter(
+    (option) => option.clearsWindowIds?.includes(windowId) ?? true,
+  );
+  const count = counted.reduce((sum, option) => sum + option.availableCount, 0);
+  const scopes = new Set(counted.map((option) => option.scope));
   return { count, scope: scopes.size === 1 ? [...scopes][0] : undefined };
 }
