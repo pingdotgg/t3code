@@ -4,6 +4,7 @@ import type {
   TailnetDeviceClientCredential,
 } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -58,6 +59,12 @@ export interface BearerConnectionUpdateInput {
   readonly httpBaseUrl: string;
 }
 
+export interface OpenedDevice {
+  readonly environmentId: EnvironmentId;
+  /** The saved session ends then; sessions are fixed-length and nothing extends them. */
+  readonly sessionExpiresAt: number;
+}
+
 export class ConnectionOnboarding extends Context.Service<
   ConnectionOnboarding,
   {
@@ -72,6 +79,13 @@ export class ConnectionOnboarding extends Context.Service<
       device: TailnetDeviceClientCredential,
     ) => Effect.Effect<
       EnvironmentId,
+      ConnectionAttemptError | Persistence.ConnectionPersistenceError
+    >;
+    /** `registerDevice`, also returning when the session it saved expires (epoch ms). */
+    readonly openDevice: (
+      device: TailnetDeviceClientCredential,
+    ) => Effect.Effect<
+      OpenedDevice,
       ConnectionAttemptError | Persistence.ConnectionPersistenceError
     >;
     readonly registerSsh: (
@@ -113,6 +127,12 @@ function differentMachineError(label: string) {
 export const preparePairingRegistration = Effect.fn(
   "clientRuntime.connection.onboarding.preparePairingRegistration",
 )(function* (input: PairingConnectionInput) {
+  return (yield* preparePairing(input)).registration;
+});
+
+const preparePairing = Effect.fn("clientRuntime.connection.onboarding.preparePairing")(function* (
+  input: PairingConnectionInput,
+) {
   const target = yield* resolvePairingTarget(input);
   const presentation = yield* ClientCapabilities.ClientPresentation;
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
@@ -156,18 +176,32 @@ export const preparePairingRegistration = Effect.fn(
     clientMetadata: presentation.metadata,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
 
-  return new BearerConnectionRegistration({
-    ...route,
-    credential: new BearerConnectionCredential({
-      token: access.access_token,
+  const issuedAt = yield* Clock.currentTimeMillis;
+  return {
+    registration: new BearerConnectionRegistration({
+      ...route,
+      credential: new BearerConnectionCredential({
+        token: access.access_token,
+      }),
     }),
-  });
+    sessionExpiresAt: issuedAt + access.expires_in * 1000,
+  };
 });
 
 const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
-  const registration = yield* preparePairingRegistration(input);
+  return (yield* registerPairingSession(input)).environmentId;
+});
+
+const registerPairingSession = Effect.fn(
+  "clientRuntime.connection.onboarding.registerPairingSession",
+)(function* (input: PairingConnectionInput) {
+  const { registration, sessionExpiresAt } = yield* preparePairing(input);
+  const opened: OpenedDevice = {
+    environmentId: registration.target.environmentId,
+    sessionExpiresAt,
+  };
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const knownAddressOnly = input.expectedEnvironmentId === undefined;
   const register = registry.register(registration, { knownAddressOnly });
@@ -175,12 +209,12 @@ const registerPairingConnection = Effect.fn(
   const registered = knownAddressOnly
     ? yield* releaseNetworkMember(registration.target.environmentId, register)
     : yield* register;
-  if (!registered) return registration.target.environmentId;
+  if (!registered) return opened;
   yield* registry.setCompatibility(registration.target.environmentId, null);
   yield* registry
     .setEnabled(registration.target.environmentId, true)
     .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
-  return registration.target.environmentId;
+  return opened;
 });
 
 const registerDeviceConnection = Effect.fn(
@@ -193,7 +227,7 @@ const registerDeviceConnection = Effect.fn(
       Effect.orElseSucceed(() => false),
     ),
   );
-  return yield* registerPairingConnection({
+  return yield* registerPairingSession({
     host: Option.getOrElse(answering, () => device.urls[0] ?? ""),
     pairingCode: device.credential,
     expectedEnvironmentId: device.environmentId,
@@ -353,6 +387,15 @@ export const make = Effect.gen(function* () {
       Effect.provideService(HttpClient.HttpClient, httpClient),
     ),
     registerDevice: Effect.fnUntraced(
+      function* (device) {
+        return (yield* registerDeviceConnection(device)).environmentId;
+      },
+      Effect.provideService(NetworkMembers, networkMembers),
+      Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+      Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    ),
+    openDevice: Effect.fnUntraced(
       function* (device) {
         return yield* registerDeviceConnection(device);
       },

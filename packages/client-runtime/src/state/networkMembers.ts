@@ -19,6 +19,8 @@ import {
   followedNetworks,
   makeNetworkMemberRenewals,
   openNetworkMember,
+  type OpeningHost,
+  networkMemberStatus,
   openingHosts,
   unboundMembers,
 } from "../connection/networkMembers.ts";
@@ -116,9 +118,34 @@ export function createNetworkMemberAtoms<R, E, EO>(
     const presentations = get(options.presentationsAtom);
     const unbound = unboundMembers(get(reportsAtom));
     return get(recordsAtom).filter(
-      (record) => !presentations.has(record.environmentId) && !unbound.has(record.environmentId),
+      (record) =>
+        record.left !== true &&
+        !presentations.has(record.environmentId) &&
+        !unbound.has(record.environmentId),
     );
   }).pipe(Atom.withLabel("network-members:unopened"));
+
+  /** Each record's state: open, to open (again), or left with a session that runs out. */
+  const statusAtom = Atom.make((get) => {
+    const presentations = get(options.presentationsAtom);
+    return new Map(
+      get(recordsAtom).map((record) => {
+        const saved = presentations.get(record.environmentId);
+        return [
+          record.environmentId,
+          {
+            record,
+            status: networkMemberStatus(
+              record,
+              saved === undefined
+                ? undefined
+                : { needsPairing: saved.connection.needsPairing === true },
+            ),
+          },
+        ] as const;
+      }),
+    );
+  }).pipe(Atom.withLabel("network-members:status"));
 
   /** Connected hosts of the networks this client follows. */
   const followedHostsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> =>
@@ -132,24 +159,29 @@ export function createNetworkMemberAtoms<R, E, EO>(
   ).pipe(Atom.withLabel("network-members:followed-hosts"));
 
   /** The connected hosts asked to open a member, in the order they are asked. */
-  const openingHostsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> =>
+  const openingHostsAtom = Atom.make((get): ReadonlyArray<OpeningHost> =>
     reuseSame(
-      get.self<ReadonlyArray<EnvironmentId>>(),
+      get.self<ReadonlyArray<OpeningHost>>(),
       openingHosts(get(reportsAtom), (host) =>
         get(options.tailnetDevices.setAccess.permissionAtom(host)),
       ),
-      (left, right) => left === right,
+      (left, right) => left.host === right.host && left.appId === right.appId,
     ),
   ).pipe(Atom.withLabel("network-members:opening-hosts"));
 
   const renewalsAtom = Atom.make((get): ReadonlyArray<NetworkMemberRenewal> => {
     const presentations = get(options.presentationsAtom);
     const hosts = get(openingHostsAtom);
-    const hostsKey = [...hosts].sort().join(",");
+    const hostsKey = hosts
+      .map((candidate) => candidate.host)
+      .sort()
+      .join(",");
     const due =
       hosts.length === 0
         ? []
         : get(recordsAtom).flatMap((record) =>
+            // A member that left cannot be renewed through the network; its session runs out.
+            record.left !== true &&
             presentations.get(record.environmentId)?.connection.needsPairing === true
               ? [
                   {
@@ -191,8 +223,13 @@ export function createNetworkMemberAtoms<R, E, EO>(
     atomRegistry: AtomRegistry.AtomRegistry,
   ) {
     const onboarding = yield* ConnectionOnboarding.ConnectionOnboarding;
+    const listed = atomRegistry
+      .get(reportsAtom)
+      .flatMap((report) => report.roster.devices)
+      .find((device) => device.environmentId === environmentId);
     return yield* openNetworkMember({
       environmentId,
+      ...(listed === undefined ? {} : { label: listed.label }),
       hosts: atomRegistry.get(openingHostsAtom),
       mint: (via, target) =>
         Effect.promise(() =>
@@ -207,7 +244,7 @@ export function createNetworkMemberAtoms<R, E, EO>(
               : Effect.failCause(result.cause),
           ),
         ),
-      register: onboarding.registerDevice,
+      register: onboarding.openDevice,
     });
   });
 
@@ -232,6 +269,7 @@ export function createNetworkMemberAtoms<R, E, EO>(
   return {
     recordsAtom,
     unopenedAtom,
+    statusAtom,
     reportsAtom,
     followedHostsAtom,
     openingHostsAtom,

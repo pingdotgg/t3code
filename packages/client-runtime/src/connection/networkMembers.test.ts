@@ -22,6 +22,7 @@ import {
   followedNetworks,
   makeNetworkMemberRenewals,
   makeNetworkMembers,
+  networkMemberStatus,
   openNetworkMember,
   openingHosts,
   releaseNetworkMember,
@@ -33,13 +34,15 @@ const box = EnvironmentId.make("env-box");
 const laptop = EnvironmentId.make("env-laptop");
 const vps = EnvironmentId.make("env-vps");
 const app = "app-phone";
+const admin = EnvironmentId.make("env-admin");
 
 const member = (environmentId: EnvironmentId, access: TailnetDeviceAccess): NetworkMember => ({
   environmentId,
   label: environmentId,
   nodeId: `node-${environmentId}`,
   access,
-  updatedAt: { wallMs: 1, counter: 0, node: environmentId },
+  // A revocation stamped by the member itself reads as leaving; these are an admin's.
+  updatedAt: { wallMs: 1, counter: 0, node: access === "revoked" ? admin : environmentId },
 });
 const device = (
   environmentId: EnvironmentId,
@@ -86,6 +89,7 @@ const record = (environmentId: EnvironmentId, via: EnvironmentId): NetworkMember
   via,
   appId: app,
 });
+const opened = (environmentId: EnvironmentId) => ({ environmentId, sessionExpiresAt: 30 });
 const credential = (environmentId: EnvironmentId): TailnetDeviceClientCredential => ({
   environmentId,
   urls: [`https://${environmentId}.ts.net`],
@@ -376,8 +380,8 @@ describe("leaving a network", () => {
 
       yield* catalog.follow([repaired]);
       expect(catalog.records()).toEqual([
-        { ...record(laptop, studio), appId: appNew },
-        { ...record(vps, studio), appId: appNew },
+        { ...record(laptop, studio), appId: appNew, openedAs: app },
+        { ...record(vps, studio), appId: appNew, openedAs: app },
       ]);
       expect(followedNetworks([repaired])).toEqual([{ appId: appNew, reports: [repaired] }]);
       expect(catalog.forgotten).toEqual([]);
@@ -418,16 +422,21 @@ describe("round 4", () => {
       const catalog = yield* makeCatalog();
       const desktop = report(studio, [device(laptop)], { callerAppId: null, apps: [] });
       const minted: Array<EnvironmentId> = [];
-      const opened = yield* openNetworkMember({
+      const environmentId = yield* openNetworkMember({
         environmentId: laptop,
+        label: "Laptop",
         hosts: openingHosts([desktop], (host) => host === studio),
-        mint: (via, environmentId) =>
-          Effect.sync(() => void minted.push(via)).pipe(Effect.as(credential(environmentId))),
-        register: (value) => Effect.succeed(value.environmentId),
+        mint: (via, target) =>
+          Effect.sync(() => void minted.push(via)).pipe(Effect.as(credential(target))),
+        register: (value) => Effect.succeed(opened(value.environmentId)),
       }).pipe(Effect.provideService(NetworkMembers, catalog.members));
 
-      expect(opened).toBe(laptop);
+      expect(environmentId).toBe(laptop);
       expect(minted).toEqual([studio]);
+      // The open is a record keyed by the relaying host, so it is renewed and its state shown.
+      expect(catalog.records()).toEqual([
+        { environmentId: laptop, label: "Laptop", via: studio, sessionExpiresAt: 30 },
+      ]);
       // Without write access the same session is not asked.
       expect(openingHosts([desktop], () => false)).toEqual([]);
     }),
@@ -448,7 +457,7 @@ describe("round 4", () => {
       // The laptop moved to the foreign network: only it follows there.
       yield* catalog.follow([inOther(third, [device(laptop), device(desk)])]);
       expect(catalog.records()).toEqual([
-        { ...record(laptop, third), appId: appOther },
+        { ...record(laptop, third), appId: appOther, openedAs: app },
         record(vps, studio),
         { ...record(desk, third), appId: appOther },
       ]);
@@ -485,6 +494,66 @@ describe("round 4", () => {
   );
 });
 
+describe("round 5", () => {
+  const third = EnvironmentId.make("env-third");
+  const leftLaptop = {
+    ...device(laptop, "revoked"),
+    member: { ...member(laptop, "revoked"), updatedAt: { wallMs: 2, counter: 0, node: laptop } },
+  };
+
+  it.effect("a member that left keeps its saved session and is no longer managed", () =>
+    Effect.gen(function* () {
+      const catalog = yield* makeCatalog([{ ...record(laptop, studio), sessionExpiresAt: 30 }]);
+      catalog.saved.add(studio).add(laptop);
+
+      yield* catalog.follow([report(studio, [leftLaptop])]);
+      yield* catalog.follow([report(studio, [])]);
+      expect(catalog.records()).toEqual([
+        { ...record(laptop, studio), sessionExpiresAt: 30, left: true },
+      ]);
+      expect(catalog.forgotten).toEqual([]);
+
+      // Added again, it is listed live and managed once more.
+      yield* catalog.follow([report(studio, [device(laptop)])]);
+      expect(catalog.records()).toEqual([{ ...record(laptop, studio), sessionExpiresAt: 30 }]);
+    }),
+  );
+
+  it("shows a saved member whose session was refused as one to open again", () => {
+    const opened = record(laptop, studio);
+    expect(networkMemberStatus(opened, undefined)).toBe("unopened");
+    expect(networkMemberStatus(opened, { needsPairing: false })).toBe("open");
+    expect(networkMemberStatus(opened, { needsPairing: true })).toBe("reopen");
+    expect(networkMemberStatus({ ...opened, left: true }, { needsPairing: true })).toBe("left");
+  });
+
+  it.effect(
+    "a record repinned to another network is not forgotten when that network drops it",
+    () =>
+      Effect.gen(function* () {
+        const catalog = yield* makeCatalog([record(laptop, studio)]);
+        catalog.saved.add(laptop);
+        const other = (devices: ReadonlyArray<TailnetDevice>) =>
+          report(third, devices, { callerAppId: "app-other" });
+        const revoked = {
+          ...device(laptop, "revoked"),
+          member: {
+            ...member(laptop, "revoked"),
+            updatedAt: { wallMs: 2, counter: 0, node: third },
+          },
+        };
+
+        yield* catalog.follow([other([device(laptop)])]);
+        expect(catalog.records()).toEqual([
+          { ...record(laptop, third), appId: "app-other", openedAs: app },
+        ]);
+        yield* catalog.follow([other([revoked])]);
+        expect(catalog.records()).toEqual([]);
+        expect(catalog.forgotten).toEqual([]);
+      }),
+  );
+});
+
 describe("openNetworkMember", () => {
   it.effect("asks another followed host when the one that listed it is unreachable", () =>
     Effect.gen(function* () {
@@ -495,7 +564,7 @@ describe("openNetworkMember", () => {
       const open = (hosts: ReadonlyArray<EnvironmentId>) =>
         openNetworkMember({
           environmentId: laptop,
-          hosts,
+          hosts: hosts.map((host) => ({ host, appId: app })),
           mint: (via, environmentId) =>
             Effect.sync(() => minted.push([via, environmentId])).pipe(
               Effect.andThen(
@@ -506,7 +575,7 @@ describe("openNetworkMember", () => {
             ),
           register: (value) =>
             Effect.sync(() => registered.push(value.environmentId)).pipe(
-              Effect.as(value.environmentId),
+              Effect.as(opened(value.environmentId)),
             ),
         }).pipe(Effect.provideService(NetworkMembers, catalog.members));
 
@@ -518,7 +587,10 @@ describe("openNetworkMember", () => {
       ]);
       // Only the member asked for is minted, and the one that answered is asked first next time.
       expect(registered).toEqual([laptop]);
-      expect(catalog.records()).toEqual([record(laptop, third), record(vps, studio)]);
+      expect(catalog.records()).toEqual([
+        { ...record(laptop, third), openedAs: app, sessionExpiresAt: 30 },
+        record(vps, studio),
+      ]);
 
       const unreachable = yield* Effect.flip(open([laptop]));
       expect(unreachable).toBeInstanceOf(ConnectionBlockedError);

@@ -6,6 +6,7 @@ import {
   type TailnetDevicesSnapshot,
   compareNetworkApps,
   compareNetworkMembers,
+  hasLeftNetwork,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -29,6 +30,15 @@ export const NetworkMemberRecord = Schema.Struct({
   via: EnvironmentId,
   /** This client's app id in the network that listed it. Absent on records saved before it. */
   appId: Schema.optionalKey(Schema.String),
+  /** The app id its saved credential was minted under; absent when opened without one. */
+  openedAs: Schema.optionalKey(Schema.String),
+  /** When the session it was opened with ends (epoch ms). Nothing extends a session. */
+  sessionExpiresAt: Schema.optionalKey(Schema.Number),
+  /**
+   * It left the network by its own act. Its kept session lasts until `sessionExpiresAt`; it is
+   * never renewed or forgotten, and is managed again once a followed network lists it live.
+   */
+  left: Schema.optionalKey(Schema.Literal(true)),
 });
 export type NetworkMemberRecord = typeof NetworkMemberRecord.Type;
 
@@ -107,16 +117,24 @@ export function followedNetworks(
 export function openingHosts(
   reports: ReadonlyArray<NetworkRosterReport>,
   mayWrite: (host: EnvironmentId) => boolean,
-): ReadonlyArray<EnvironmentId> {
+): ReadonlyArray<OpeningHost> {
   const followed = followedNetworks(reports).flatMap((network) =>
-    network.reports.map((report) => report.host),
+    network.reports.map((report) => ({ host: report.host, appId: network.appId })),
   );
   const writers = reports.flatMap(({ host, roster }) =>
     roster.enabled && roster.callerAppId === null && isLive(roster.selfMember) && mayWrite(host)
-      ? [host]
+      ? [{ host, appId: null }]
       : [],
   );
-  return [...new Set([...followed, ...writers])];
+  return [...followed, ...writers].filter(
+    (candidate, index, all) => all.findIndex((other) => other.host === candidate.host) === index,
+  );
+}
+
+/** A connected host that may open members, and this client's app id there (null for none). */
+export interface OpeningHost {
+  readonly host: EnvironmentId;
+  readonly appId: string | null;
 }
 
 /** Live members no machine can open yet: from before the update and not bound to a node. */
@@ -220,7 +238,7 @@ function rebindNetwork(
     const successor = successorOf(record.environmentId);
     if (successor !== undefined) {
       changed = true;
-      return [{ ...record, appId: successor }];
+      return [{ ...record, appId: successor, openedAs: record.openedAs ?? record.appId }];
     }
     if (disowned.has(record.appId)) {
       changed = true;
@@ -240,6 +258,7 @@ function followRoster(
   records: ReadonlyArray<NetworkMemberRecord>,
   input: {
     readonly networks: ReadonlyArray<FollowedNetwork>;
+    readonly saved: ReadonlySet<EnvironmentId>;
     readonly userSaved: ReadonlySet<EnvironmentId>;
   },
 ): ReadonlyArray<NetworkMemberRecord> {
@@ -266,20 +285,36 @@ function followRoster(
     }
     const { appId, view } = network;
     const entry = view.listed.get(record.environmentId);
+    const newest = view.newest.get(record.environmentId);
+    // A member that left keeps the session the server kept for the app that asked it to leave.
+    if (newest !== undefined && hasLeftNetwork(newest) && input.saved.has(record.environmentId)) {
+      changed ||= record.left !== true;
+      next.push(record.left === true ? record : { ...record, left: true });
+      continue;
+    }
     if (
       revoked(view, record.environmentId) ||
-      (entry === undefined && !view.hosts.has(record.environmentId) && view.hosts.has(record.via))
+      (entry === undefined &&
+        record.left !== true &&
+        !view.hosts.has(record.environmentId) &&
+        view.hosts.has(record.via))
     ) {
       changed = true;
       continue;
     }
-    const updated: NetworkMemberRecord = {
-      environmentId: record.environmentId,
-      label: entry?.label ?? record.label,
-      via: entry === undefined || entry.hosts.includes(record.via) ? record.via : entry.hosts[0]!,
-      appId,
-    };
+    // Listed live again after leaving: it rejoined, so the network manages it once more.
+    const { left: _left, ...rest } = record;
+    const updated: NetworkMemberRecord =
+      entry === undefined
+        ? { ...record, appId }
+        : {
+            ...rest,
+            label: entry.label,
+            via: entry.hosts.includes(record.via) ? record.via : entry.hosts[0]!,
+            appId,
+          };
     if (
+      updated.left !== record.left ||
       updated.label !== record.label ||
       updated.via !== record.via ||
       updated.appId !== record.appId
@@ -395,12 +430,15 @@ export const followNetworkRoster = Effect.fn("NetworkMembers.follow")(function* 
       const released = rebindNetwork(current, input.reports, networks);
       const next = followRoster(released, {
         networks,
+        saved,
         userSaved: new Set([...saved].filter((id) => !managed.has(id))),
       });
       if (next === current) return current;
       const remaining = new Set(next.map((record) => record.environmentId));
       for (const record of released) {
         if (remaining.has(record.environmentId) || !saved.has(record.environmentId)) continue;
+        // A credential minted under another app id is not this network's to delete.
+        if ((record.openedAs ?? record.appId) !== record.appId) continue;
         yield* input.forget(record.environmentId).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Could not forget a member that left the network.", {
@@ -417,57 +455,95 @@ export const followNetworkRoster = Effect.fn("NetworkMembers.follow")(function* 
 
 /**
  * Opens a member: asks a connected host for a one-time credential and saves the member with it.
- * The one it came `via` is asked first, then the other `hosts`, so renewal still works while that
- * one is offline. The one that answered becomes `via`.
+ * The one it came `via` is asked first, then the other `hosts`. Every open becomes a record
+ * keyed by the host that answered, so it is renewed and its state shown however it was opened.
  */
 export const openNetworkMember = Effect.fn("NetworkMembers.open")(function* <EM, ER>(input: {
   readonly environmentId: EnvironmentId;
+  /** Shown until a roster names it. */
+  readonly label?: string;
   /** Connected hosts that may open it (`openingHosts`). */
-  readonly hosts: ReadonlyArray<EnvironmentId>;
+  readonly hosts: ReadonlyArray<OpeningHost>;
   readonly mint: (
     via: EnvironmentId,
     environmentId: EnvironmentId,
   ) => Effect.Effect<TailnetDeviceClientCredential, EM>;
   readonly register: (
     credential: TailnetDeviceClientCredential,
-  ) => Effect.Effect<EnvironmentId, ER>;
+  ) => Effect.Effect<
+    { readonly environmentId: EnvironmentId; readonly sessionExpiresAt: number },
+    ER
+  >;
 }) {
   const members = yield* NetworkMembers;
   const record = (yield* members.read).find(
     (candidate) => candidate.environmentId === input.environmentId,
   );
   const hosts = [
-    ...(record !== undefined && input.hosts.includes(record.via) ? [record.via] : []),
+    ...input.hosts.filter((candidate) => candidate.host === record?.via),
     ...input.hosts,
-  ].filter((host, index, all) => host !== input.environmentId && all.indexOf(host) === index);
-  const label = record?.label ?? "this machine";
+  ].filter(
+    (candidate, index, all) =>
+      candidate.host !== input.environmentId &&
+      all.findIndex((other) => other.host === candidate.host) === index,
+  );
+  const label = record?.label ?? input.label ?? "this machine";
   // A client with no reachable member cannot reach the network: only a new pairing code helps.
   let failure: EM | ConnectionBlockedError = new ConnectionBlockedError({
     reason: "authentication",
     detail: `None of your machines that can open ${label} is connected. Pair with it again using a code.`,
   });
-  for (const host of hosts) {
+  for (const { host, appId } of hosts) {
     const minted = yield* Effect.result(input.mint(host, input.environmentId));
     if (minted._tag === "Failure") {
       failure = minted.failure;
       continue;
     }
-    const environmentId = yield* input.register(minted.success);
-    if (record !== undefined && record.via !== host) {
-      yield* members
-        .update((current) =>
-          Effect.succeed(
-            current.map((candidate) =>
-              candidate.environmentId === environmentId ? { ...candidate, via: host } : candidate,
-            ),
-          ),
-        )
-        .pipe(Effect.ignore);
-    }
-    return environmentId;
+    const opened = yield* input.register(minted.success);
+    const { left: _left, openedAs: _openedAs, appId: _appId, ...kept } = record ?? {};
+    const next: NetworkMemberRecord = {
+      ...kept,
+      environmentId: opened.environmentId,
+      label,
+      via: host,
+      sessionExpiresAt: opened.sessionExpiresAt,
+      ...(appId === null ? {} : { appId, openedAs: appId }),
+    };
+    yield* members
+      .update((current) =>
+        Effect.succeed(
+          current.some((candidate) => candidate.environmentId === opened.environmentId)
+            ? current.map((candidate) =>
+                candidate.environmentId === opened.environmentId ? next : candidate,
+              )
+            : [...current, next],
+        ),
+      )
+      .pipe(Effect.ignore);
+    return opened.environmentId;
   }
   return yield* Effect.fail(failure);
 });
+
+/** What the client can show and do for a member it holds a record of. */
+export type NetworkMemberStatus =
+  /** Not saved here yet: Open. */
+  | "unopened"
+  /** Saved with a session the host accepts. */
+  | "open"
+  /** Saved, but its session expired or was cut (its relay revoked): Open again. */
+  | "reopen"
+  /** It left the network; the kept session lasts until `sessionExpiresAt`, then pair by code. */
+  | "left";
+
+export function networkMemberStatus(
+  record: NetworkMemberRecord,
+  saved: { readonly needsPairing: boolean } | undefined,
+): NetworkMemberStatus {
+  if (record.left === true) return "left";
+  if (saved === undefined) return "unopened";
+  return saved.needsPairing ? "reopen" : "open";
+}
 
 /**
  * Runs `claim` (the user saving the member themselves) under the catalog's lock, then hands the
