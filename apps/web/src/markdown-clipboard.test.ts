@@ -357,14 +357,20 @@ describe("copying rendered Markdown tables", () => {
     });
   });
 
-  it("copies a code block in a cell without its internal markers", () => {
+  it("copies code and diagrams in cells without markers or unescaped pipes", () => {
     const code = new FakeElement("PRE").append(
       new FakeElement("CODE").append(new FakeText("a  b")),
     );
+    const diagram = new FakeElement("DIV", [], {
+      "data-markdown-mermaid": "",
+      "data-markdown-copy": serializeCodeBlockToMarkdown("A -->|hi| B", "mermaid"),
+    });
     expect(
       serializeTableElementToMarkdown(
-        asNode(renderedTable([new FakeText("Command")], [code])) as Element,
+        asNode(
+          renderedTable([new FakeText("Command"), new FakeText("Diagram")], [code, diagram]),
+        ) as Element,
       ),
-    ).toBe("| Command |\n| --- |\n| a  b |");
+    ).toBe("| Command | Diagram |\n| --- | --- |\n| a  b | ```mermaid A -->\\|hi\\| B ``` |");
   });
 });

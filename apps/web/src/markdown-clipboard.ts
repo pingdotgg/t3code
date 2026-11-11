@@ -224,7 +224,7 @@ function serializeNode(node: Node, inTableCell = false): string {
   if (markdownCopy !== null) {
     // A diagram copies as its fenced source, which is code too.
     if (element.hasAttribute("data-markdown-mermaid")) {
-      return verbatimBlock(markdownCopy.replace(/\n+$/, ""));
+      return verbatimBlock(escapeTablePipes(markdownCopy.replace(/\n+$/, ""), inTableCell));
     }
     return element.hasAttribute("data-markdown-math")
       ? markdownCopy
