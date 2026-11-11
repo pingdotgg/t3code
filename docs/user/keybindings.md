@@ -174,6 +174,9 @@ shortcut; assign one in **Settings → Keybindings**.
 `thread.regenerateTitle` generates a new title for the focused thread, like
 **Regenerate title** in the thread menu. It has no default shortcut.
 
+`thread.fork` forks the focused thread from its latest response that can be forked,
+like **Fork from this response** on that message. It has no default shortcut.
+
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
 bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a
 draft. Consecutive

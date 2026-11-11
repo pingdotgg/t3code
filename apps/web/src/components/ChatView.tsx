@@ -41,6 +41,7 @@ import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -232,6 +233,7 @@ import { collectInlineContextIds } from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQueryRefresh } from "../state/query";
+import { readV2ItemSupport } from "../state/v2ItemSupport";
 import { useEnvironmentScope } from "~/state/session";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
@@ -2314,6 +2316,7 @@ export default function ChatView(props: ChatViewProps) {
           linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
           hostedAppUrl: configuredHostedAppUrl(),
         });
+  const forkShortcutPendingRef = useRef(false);
   const copyActiveThreadReference = () => {
     if (activeThreadReferenceCopyTarget === null) return;
     void copyThreadReference(activeThreadReferenceCopyTarget);
@@ -2704,6 +2707,27 @@ export default function ChatView(props: ChatViewProps) {
       ...threadLifecycleShortcuts,
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
+      },
+      "thread.fork": ({ event }) => {
+        if (event.repeat || forkShortcutPendingRef.current) return;
+        const latest = serverVisibleTurnItems.findLast(
+          (projectedItem) =>
+            projectedItem.item.type === "assistant_message" &&
+            canForkProjectedAssistantItem({
+              projectedItem,
+              capabilities: readV2ItemSupport({
+                environmentId,
+                sourceThreadId: projectedItem.sourceThreadId,
+                sourceItemId: projectedItem.sourceItemId,
+              }).providerSession?.capabilities,
+            }),
+        );
+        const runId = latest?.item.runId;
+        if (latest === undefined || runId == null) return false;
+        forkShortcutPendingRef.current = true;
+        void onForkFromRunStable({ sourceThreadId: latest.sourceThreadId, runId }).finally(() => {
+          forkShortcutPendingRef.current = false;
+        });
       },
       "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
