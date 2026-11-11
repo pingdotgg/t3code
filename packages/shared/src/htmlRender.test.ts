@@ -112,6 +112,11 @@ describe("readHtmlRenderImageRequest", () => {
       src: "https://example.com/a.png",
       name: "Image",
     });
+    const boundaryImage = readHtmlRenderImageRequest(
+      image({ src: "https://example.com/a.png", name: "a".repeat(199) + "😀" }),
+    );
+    expect(boundaryImage?.name.isWellFormed()).toBe(true);
+    expect(boundaryImage?.name).toBe("a".repeat(199));
     expect(readHtmlRenderImageRequest(image({ src: "javascript:alert(1)" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "data:text/html,<p>" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "blob:null/1" }))).toBeUndefined();
