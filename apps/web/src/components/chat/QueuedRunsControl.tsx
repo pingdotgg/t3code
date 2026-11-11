@@ -101,6 +101,8 @@ export function QueuedRunsControl({
   readonly editBlockedReason: string | null;
   readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
   readonly onCancelEdit: () => void;
+  /** Withdraws a message the server has not saved yet, so it never goes out. */
+  readonly onRemovePending: (messageId: MessageId) => void;
   readonly timestampFormat: TimestampFormat;
   readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
   readonly onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -171,7 +173,7 @@ export function QueuedRunsControl({
       key: message.id,
       message: undefined,
       runId: null,
-      messageId: null,
+      messageId: message.id,
       freshContext: false,
       serverIndex: null,
       text: message.text,
@@ -334,7 +336,7 @@ export function QueuedRunsControl({
               aria-current={isEditing ? "true" : undefined}
               className={cn(
                 "group/queued flex min-h-7 w-full min-w-0 items-center gap-1 rounded-control px-1 text-dim-foreground hover:bg-foreground/5 hover:text-muted-foreground focus-within:text-muted-foreground",
-                draggedRunId === item.runId && "bg-foreground/8 shadow-md",
+                draggedRunId !== null && draggedRunId === item.runId && "bg-foreground/8 shadow-md",
               )}
               onDragOver={(event) => {
                 if (drag && item.runId !== drag.runId) {
@@ -480,9 +482,11 @@ export function QueuedRunsControl({
                             variant="ghost-muted"
                             aria-label="Remove queued message"
                             className="-me-1 sm:-me-[3px]"
-                            disabled={item.runId === null || busyRunId !== null}
+                            disabled={item.runId !== null && busyRunId !== null}
                             onClick={() => {
                               if (item.runId !== null) void remove(item.runId);
+                              else if (item.messageId !== null)
+                                props.onRemovePending(item.messageId);
                             }}
                           />
                         }

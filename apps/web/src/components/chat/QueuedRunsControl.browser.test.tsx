@@ -114,6 +114,7 @@ const baseProps = {
   timestampFormat: "locale",
   onOpenThread: () => undefined,
   onImageExpand: () => undefined,
+  onRemovePending: () => undefined,
 } satisfies ComponentProps<typeof QueuedRunsControl>;
 
 async function renderQueue(props: Partial<ComponentProps<typeof QueuedRunsControl>> = {}) {
@@ -484,4 +485,33 @@ it("tells the user why Send now was rejected", async () => {
 
   await page.getByRole("button", { name: "Steer" }).click();
   await vi.waitFor(() => expect(page.getByText(reason).element()).toBeVisible());
+});
+
+it("lets a message that is still saving be removed, on the same fill as a saved one", async () => {
+  setup();
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    queuedRuns: [
+      {
+        run: { id: "run:saved", userMessageId: "message:saved" },
+        text: "Saved",
+        attachments: [],
+      },
+    ],
+  };
+  const onRemovePending = vi.fn();
+  await using screen = await renderQueue({
+    optimisticMessages: [
+      { id: MessageId.make("message:saving"), inputIntent: "queued_turn", text: "Saving one" },
+    ],
+    onRemovePending,
+  });
+
+  const [saved, saving] = screen.getByRole("listitem").elements();
+  expect(getComputedStyle(saving!).backgroundColor).toBe(getComputedStyle(saved!).backgroundColor);
+  const remove = screen.getByRole("button", { name: "Remove queued message" }).nth(1);
+  await expect.element(remove).toBeEnabled();
+  await remove.click();
+  expect(onRemovePending).toHaveBeenCalledExactlyOnceWith("message:saving");
 });
