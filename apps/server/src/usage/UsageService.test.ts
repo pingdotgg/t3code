@@ -2723,6 +2723,54 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("narrows a summary to one conversation's sessions from when it began", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      // A fork's transcript repeats the source's history under the fork's id, then adds its own turn.
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 3, "orbit-1", "source") +
+            claudeLine(2, 5, "orbit-1", "fork") +
+            claudeLine(3, 7, "orbit-1", "fork").replace("T10:00:00Z", "T12:00:00Z"),
+        ),
+      );
+      const forkFilter = { sessionIds: ["fork", "unknown"], sinceTime: "2026-08-01T11:00:00Z" };
+      const outputTokens = (summary: UsageSummary) =>
+        summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        // Same service, concurrent reads: the in-flight key must keep these scans apart.
+        const [all, source, fork, invalid] = yield* Effect.all(
+          [
+            service.readSummary(WINDOW),
+            service.readSummary({ ...WINDOW, sessionFilter: { sessionIds: ["source"] } }),
+            service.readSummary({ ...WINDOW, sessionFilter: forkFilter }),
+            service
+              .readSummary({
+                ...WINDOW,
+                sessionFilter: { sessionIds: ["fork"], sinceTime: "yesterday" },
+              })
+              .pipe(Effect.flip),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        assert.strictEqual(outputTokens(all), 15);
+        assert.strictEqual(outputTokens(source), 3);
+        assert.strictEqual(outputTokens(fork), 7);
+        assert.strictEqual(fork.sources[0]?.distinctSessions, 1);
+        assert.strictEqual(invalid.reason, "invalidWindow");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({ prefix: "usage-service-session-filter-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

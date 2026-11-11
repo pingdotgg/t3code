@@ -1,4 +1,11 @@
-import type { EnvironmentId, UsageModelFilter, UsageSummaryInput } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ProviderThread,
+  UsageModelFilter,
+  UsageSummaryInput,
+} from "@t3tools/contracts";
+import { makeWindow } from "@t3tools/shared/usageFormat";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -15,6 +22,33 @@ export function usageSummaryInput(
   modelFilter: UsageModelFilter | undefined,
 ): UsageSummaryInput {
   return modelFilter === undefined ? input : { ...input, modelFilter };
+}
+
+/**
+ * The usage query for one thread: every provider conversation it has held, from when it was
+ * created. Null until a provider has started one. Ask only servers with `usageSessionFilter`.
+ */
+export function threadUsageSummaryInput(input: {
+  readonly providerThreads: ReadonlyArray<Pick<OrchestrationV2ProviderThread, "nativeThreadRef">>;
+  readonly createdAt: DateTime.Utc;
+  readonly now?: DateTime.Utc;
+}): UsageSummaryInput | null {
+  const sessionIds = [
+    ...new Set(input.providerThreads.flatMap((thread) => thread.nativeThreadRef?.nativeId ?? [])),
+  ].sort();
+  if (sessionIds.length === 0) return null;
+  const { untilDay, timeZone } = makeWindow(
+    1,
+    input.now === undefined ? undefined : DateTime.toDateUtc(input.now),
+  );
+  const createdDay = makeWindow(1, DateTime.toDateUtc(input.createdAt)).untilDay;
+  return {
+    // A viewer whose clock trails the server's can see a thread created "tomorrow".
+    sinceDay: createdDay < untilDay ? createdDay : untilDay,
+    untilDay,
+    timeZone,
+    sessionFilter: { sessionIds, sinceTime: DateTime.formatIso(input.createdAt) },
+  };
 }
 
 const limitsRefreshAfter = new Map<EnvironmentId, number>();

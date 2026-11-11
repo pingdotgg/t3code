@@ -126,6 +126,14 @@ export const UsageModelFilter = Schema.Struct({
 });
 export type UsageModelFilter = typeof UsageModelFilter.Type;
 
+/** Narrows usage to one conversation, such as a thread: its provider sessions, from when it began. */
+export const UsageSessionFilter = Schema.Struct({
+  sessionIds: Schema.Array(TrimmedNonEmptyString),
+  /** A forked session repeats its source's earlier records; this instant leaves them out. */
+  sinceTime: Schema.optional(TrimmedNonEmptyString),
+});
+export type UsageSessionFilter = typeof UsageSessionFilter.Type;
+
 export const UsageSummaryInput = Schema.Struct({
   sinceDay: UsageDay,
   untilDay: UsageDay,
@@ -138,6 +146,7 @@ export const UsageSummaryInput = Schema.Struct({
   /** Accept an immediate answer from the last scan; its sources are marked refreshing. */
   provisional: Schema.optional(Schema.Boolean),
   modelFilter: Schema.optional(UsageModelFilter),
+  sessionFilter: Schema.optional(UsageSessionFilter),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
