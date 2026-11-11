@@ -22,7 +22,10 @@ const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
 const otherProjectId = ProjectId.make("other-project");
 
-function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environmentId]) {
+function makeHarness(
+  environmentIds: ReadonlyArray<EnvironmentId> = [environmentId],
+  hiddenTags: ReadonlyArray<string> | null = null,
+) {
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<OrchestrationV2ShellSnapshot | null>(v2ShellSnapshot),
   );
@@ -51,7 +54,7 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
     threads: createEnvironmentThreadShellAtoms({
       catalogValueAtom,
       snapshotAtom,
-      hiddenThreadTagsAtom: () => Atom.make(null),
+      hiddenThreadTagsAtom: () => Atom.make(hiddenTags),
     }),
   };
 }
@@ -635,13 +638,14 @@ describe("v2 thread shell lists", () => {
   });
 
   it("delivers one quiet shell list per snapshot update that changes several threads", () => {
-    const harness = makeHarness();
+    const harness = makeHarness([environmentId], ["private"]);
     const snapshot: OrchestrationV2ShellSnapshot = {
       ...v2ShellSnapshot,
-      threads: ["a", "b", "c", "d"].map((id) => ({
+      threads: ["a", "b", "c", "d", "hidden"].map((id) => ({
         ...v2ThreadShell,
         id: ThreadId.make(id),
         title: id,
+        tags: id === "hidden" ? ["private"] : [],
       })),
     };
     harness.registry.set(harness.snapshotAtom(environmentId), snapshot);
