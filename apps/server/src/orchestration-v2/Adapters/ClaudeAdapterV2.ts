@@ -7967,6 +7967,33 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           subagentToolCalls.clear();
         });
 
+        const offerHeldSteers = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          query: ClaudeAgentSdkQuerySession,
+        ) {
+          // A steer sent while these go out joins the queue behind them.
+          for (
+            let steer = context.heldSteers.shift();
+            steer !== undefined;
+            steer = context.heldSteers.shift()
+          ) {
+            const { pdfReservation } = steer;
+            yield* query
+              .offer(steer.message, () => {
+                pdfReservation.commit();
+              })
+              .pipe(
+                Effect.onExit((exit) =>
+                  Effect.sync(() => {
+                    if (Exit.isSuccess(exit)) pdfReservation.commit();
+                    else pdfReservation.release();
+                  }).pipe(Effect.andThen(persistAttachmentBudget(context.nativeThreadId))),
+                ),
+              );
+          }
+          context.promptStreamed = true;
+        });
+
         const finalizeActiveTurn = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly status: Extract<
@@ -8270,14 +8297,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
-          const dropped = input.context.heldSteers.splice(0);
-          if (dropped.length > 0) {
-            for (const steer of dropped) steer.pdfReservation.release();
-            yield* Effect.logWarning("orchestration-v2.claude-held-steers-dropped", {
-              providerTurnId: input.context.providerTurnId,
-              status: input.status,
-              count: dropped.length,
-            });
+          // The steer already reported success, so a turn that ends before the prompt
+          // streams (a local command, an early API error) still hands it to Claude.
+          const steerQuery = yield* Ref.get(queryContext);
+          if (steerQuery !== null && steerQuery.nativeThreadId === input.context.nativeThreadId) {
+            yield* offerHeldSteers(input.context, steerQuery.query);
+          } else {
+            for (const steer of input.context.heldSteers.splice(0)) steer.pdfReservation.release();
           }
           if (input.status === "completed") {
             settledTurnByNativeThread.set(input.context.nativeThreadId, input.context);
@@ -10252,27 +10278,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? echoed.includes(context.promptUuid)
                 : liveQuery.promptEchoMode !== "early"
             ) {
-              // A steer sent while these go out joins the queue behind them.
-              for (
-                let steer = context.heldSteers.shift();
-                steer !== undefined;
-                steer = context.heldSteers.shift()
-              ) {
-                const { pdfReservation } = steer;
-                yield* input.query
-                  .offer(steer.message, () => {
-                    pdfReservation.commit();
-                  })
-                  .pipe(
-                    Effect.onExit((exit) =>
-                      Effect.sync(() => {
-                        if (Exit.isSuccess(exit)) pdfReservation.commit();
-                        else pdfReservation.release();
-                      }).pipe(Effect.andThen(persistAttachmentBudget(context.nativeThreadId))),
-                    ),
-                  );
-              }
-              context.promptStreamed = true;
+              yield* offerHeldSteers(context, input.query);
             }
           }
           if (

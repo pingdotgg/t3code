@@ -12413,6 +12413,60 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("offers a held steer when the turn ends before its prompt streams", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attemptId = RunAttemptId.make("attempt-claude-held-steer-unstreamed");
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "/goal",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(input);
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-held-steer-unstreamed"),
+            text: "Now inspect the failing tests.",
+            attachments: [],
+          },
+        });
+        assert.lengthOf(harness.offeredMessages, 1);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000d01", result: "No goal." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        assert.lengthOf(harness.offeredMessages, 2);
+        assert.match(
+          String(harness.offeredMessages[1]?.message.content),
+          /Now inspect the failing tests\./,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   // regression: #17531 a mod that holds a tool behind a focused pane must fail the turn, not hang it
   it.effect.each([
     { case: "fails a turn whose mod requests focus for a pane T3 cannot show", focus: true },
