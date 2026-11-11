@@ -86,6 +86,40 @@ describe("buildTurnDiffTree", () => {
     ]);
   });
 
+  it("marks created and deleted files and gives binary files no line stat", () => {
+    const tree = buildTurnDiffTree([
+      { path: "assets/logo.png", kind: "modified", additions: 0, deletions: 0, binary: true },
+      { path: "assets/notes.md", kind: "added", additions: 2, deletions: 0 },
+      { path: "assets/old.md", kind: "deleted", additions: 0, deletions: 3 },
+    ]);
+
+    expect(tree).toEqual([
+      {
+        kind: "directory",
+        name: "assets",
+        path: "assets",
+        stat: { additions: 2, deletions: 3 },
+        children: [
+          { kind: "file", name: "logo.png", path: "assets/logo.png", stat: null },
+          {
+            kind: "file",
+            name: "notes.md",
+            path: "assets/notes.md",
+            stat: { additions: 2, deletions: 0 },
+            change: "added",
+          },
+          {
+            kind: "file",
+            name: "old.md",
+            path: "assets/old.md",
+            stat: { additions: 0, deletions: 3 },
+            change: "deleted",
+          },
+        ],
+      },
+    ]);
+  });
+
   it("compacts only single-directory chains and stops at branch points", () => {
     expect(
       buildTurnDiffTree([

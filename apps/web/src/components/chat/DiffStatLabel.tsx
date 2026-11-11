@@ -20,8 +20,9 @@ export function formatCompactDiffCount(value: number): string {
 }
 
 export const DiffStatLabel = memo(function DiffStatLabel(props: {
-  additions: number;
-  deletions: number;
+  /** Omit a side that does not apply, such as deletions for a created file. */
+  additions: number | undefined;
+  deletions: number | undefined;
   className?: string;
   layout?: "aligned" | "inline";
 }) {
@@ -29,7 +30,12 @@ export const DiffStatLabel = memo(function DiffStatLabel(props: {
   return (
     <span
       role="group"
-      aria-label={`${additions} additions, ${deletions} deletions`}
+      aria-label={[
+        additions === undefined ? null : `${additions} additions`,
+        deletions === undefined ? null : `${deletions} deletions`,
+      ]
+        .filter((part) => part !== null)
+        .join(", ")}
       className={cn(
         layout === "inline"
           ? "inline-flex items-center gap-1 tabular-nums align-middle"
@@ -38,10 +44,10 @@ export const DiffStatLabel = memo(function DiffStatLabel(props: {
       )}
     >
       <span aria-hidden="true" className="font-mono text-diff-addition-foreground">
-        +{formatCompactDiffCount(additions)}
+        {additions === undefined ? null : `+${formatCompactDiffCount(additions)}`}
       </span>
       <span aria-hidden="true" className="font-mono text-diff-deletion-foreground">
-        -{formatCompactDiffCount(deletions)}
+        {deletions === undefined ? null : `-${formatCompactDiffCount(deletions)}`}
       </span>
     </span>
   );

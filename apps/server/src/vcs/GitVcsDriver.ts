@@ -1495,7 +1495,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           "-c",
           "diff.suppressBlankEmpty=false",
           "diff",
-          ...(input.format === "numstat" ? ["--numstat", "-z"] : ["--patch"]),
+          ...(input.format === "numstat" ? ["--raw", "--numstat", "-z"] : ["--patch"]),
           "--no-color",
           "--no-ext-diff",
           "--no-textconv",
@@ -1510,7 +1510,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             : []),
         ],
         allowNonZeroExit: true,
-        maxOutputBytes: input.maxOutputBytes ?? VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+        maxOutputBytes:
+          input.maxOutputBytes ??
+          (input.format === "numstat"
+            ? VcsDriver.CHECKPOINT_NUMSTAT_MAX_OUTPUT_BYTES
+            : VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES),
         outputMode: input.format === "numstat" ? "error" : "truncate",
       });
 

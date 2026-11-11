@@ -23,6 +23,8 @@ export interface VcsRestoreCheckpointInput {
 }
 
 export const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+// `--raw` adds a status record per file that repeats its path, so numstat needs a larger allowance.
+export const CHECKPOINT_NUMSTAT_MAX_OUTPUT_BYTES = 3 * CHECKPOINT_DIFF_MAX_OUTPUT_BYTES;
 
 export interface VcsDiffCheckpointsInput {
   readonly cwd: string;
