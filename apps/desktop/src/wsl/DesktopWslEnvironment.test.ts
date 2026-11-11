@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { afterAll, expect } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
@@ -396,7 +397,9 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
             if (!ChildProcess.isStandardCommand(command) || command.command !== "wsl.exe") {
               return local.spawn(command);
             }
-            const args = [...command.args];
+            const args = command.args.map((word) =>
+              Redacted.isRedacted(word) ? Redacted.value(word) : word,
+            );
             while (args.length > 0) {
               const flag = args[0];
               if (flag === "-d" || flag === "--distribution" || flag === "--cd") {
