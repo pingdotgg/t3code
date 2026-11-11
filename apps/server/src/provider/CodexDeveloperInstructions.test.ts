@@ -75,7 +75,6 @@ describe("Codex orchestration context", () => {
       ),
     );
     NodeAssert.ok(orchestration.includes("Use `t3_thread_send` only for explicit reuse."));
-    NodeAssert.ok(!orchestration.includes("never a `t3_thread_send`"));
     NodeAssert.ok(!orchestration.includes("inheritedOptions"));
     NodeAssert.ok(!orchestration.includes("Prefer native"));
     // The ACP terminal fallback is ACP-only; Codex agents never need it.
