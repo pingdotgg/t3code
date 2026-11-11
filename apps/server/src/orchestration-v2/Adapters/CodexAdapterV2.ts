@@ -188,6 +188,13 @@ function codexFileChangeApprovalPrompt(input: {
   return input.grantRoot?.trim() || undefined;
 }
 
+export function normalizeCodexThreadLoadModelSelection(selection: ModelSelection): ModelSelection {
+  // Codex applies effort on turn/start; resume discards its pinned request effort.
+  const { options, ...rest } = selection;
+  const loadOptions = options?.filter((option) => option.id !== "reasoningEffort");
+  return { ...rest, ...(loadOptions?.length ? { options: loadOptions } : {}) };
+}
+
 // Reasoning-effort changes preserve the tokenizer and context window; other changes need fresh telemetry.
 export function canReuseCodexContextUsage(previous: ModelSelection, next: ModelSelection): boolean {
   return modelSelectionsEqual(
@@ -1485,6 +1492,9 @@ const decodeCodexChildThread = Schema.decodeUnknownEffect(
   }),
 );
 
+// Without a deadline the spawner waits indefinitely for a process that ignores SIGTERM.
+const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds";
+
 export const makeCodexAppServerSpawnCommand = Effect.fn(
   "CodexAdapterV2.makeCodexAppServerSpawnCommand",
 )(function* (input: {
@@ -1512,6 +1522,7 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
     shell: spawnCommand.shell,
+    forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
   });
 });
 
@@ -4881,7 +4892,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const progress = parseCodexRetryProgress(payload.error.message);
             const retry: OrchestrationV2ProviderRetry = {
               attempt: progress?.attempt ?? (previous?.retry.attempt ?? 0) + 1,
-              maxAttempts: progress?.maxAttempts ?? previous?.retry.maxAttempts ?? null,
+              // Codex drops the count once it starts waiting for the network, which has no limit.
+              maxAttempts: progress?.maxAttempts ?? null,
               retryDelayMs: null,
             };
             const code = codexErrorInfoCode(payload.error.codexErrorInfo);
@@ -7351,6 +7363,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           canReuseContextUsage: canReuseCodexContextUsage,
+          normalizeThreadLoadModelSelection: normalizeCodexThreadLoadModelSelection,
           // Idle release can beat delayed subagent resumes: Codex reports them completed between turns with no resume-expected signal.
           hasPendingBackgroundWork: Effect.gen(function* () {
             for (const items of (yield* Ref.get(runningCommandItemsByTurn)).values()) {

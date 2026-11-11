@@ -106,9 +106,23 @@ const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 /** A dialog blocks page script, so a desktop size read gives up after this. */
 const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
+// A revealed tab's client opens the panel and attaches its stream a few round trips later, remote ones included.
+const REVEAL_VIEWER_WAIT_MS = 1000;
 
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
+
+const awaitViewer = async (tab: ServerTab, timeoutMs: number) => {
+  const attached = (tab.viewerAttached ??= Promise.withResolvers());
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    attached.promise,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, Math.max(0, timeoutMs));
+    }),
+  ]);
+  clearTimeout(timer);
+};
 
 const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
   let element = document.elementFromPoint(x, y);
@@ -303,6 +317,7 @@ interface ServerTab {
   readonly createdAt: number;
   usedAt: number;
   readonly viewers: Set<ViewerState>;
+  viewerAttached: PromiseWithResolvers<void> | null;
   readonly consoleEntries: Array<PreviewAutomationConsoleEntry>;
   readonly networkEntries: Array<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: Array<PreviewAutomationActionEvent>;
@@ -755,6 +770,7 @@ const make = Effect.gen(function* () {
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
     tab.closing = true;
+    tab.viewerAttached?.resolve();
     clearAbortedNavigation(tab);
     // A desktop page outlives the connection unless its session closed with it.
     const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
@@ -880,6 +896,7 @@ const make = Effect.gen(function* () {
       createdAt: Date.now(),
       usedAt: Date.now(),
       viewers: new Set(),
+      viewerAttached: null,
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
@@ -1624,6 +1641,27 @@ const make = Effect.gen(function* () {
     return reported && { ...reported, url: ServerBrowserPage.withoutDataPayload(reported.url) };
   };
 
+  const assertNavigationSucceeded = (tab: ServerTab) => {
+    const failure = loadErrorOf(tab);
+    if (failure) {
+      const diagnosticUrl = URL.parse(failure.url);
+      if (diagnosticUrl) {
+        diagnosticUrl.username = "";
+        diagnosticUrl.password = "";
+        diagnosticUrl.search = "";
+        diagnosticUrl.hash = "";
+      }
+      const url = diagnosticUrl
+        ? ServerBrowserPage.withoutDataPayload(diagnosticUrl.href)
+        : "the requested page";
+      throw new ServerBrowserPage.ServerBrowserOperationError({
+        tag: "PreviewAutomationExecutionError",
+        message: `Navigation to ${url} failed: ${failure.description}`,
+        detail: { ...failure, url },
+      });
+    }
+  };
+
   const statusWithTitle = async (
     tab: ServerTab | undefined,
     agentSessionId?: string,
@@ -1646,7 +1684,7 @@ const make = Effect.gen(function* () {
       available: true,
       visible: isVisible(tab),
       tabId: tab.tabId,
-      url: url === "about:blank" ? null : url,
+      url: loadError?.url ?? (url === "about:blank" ? null : url),
       title: null,
       loading: tab.loading,
       ...(loadError ? { loadError } : {}),
@@ -1668,7 +1706,8 @@ const make = Effect.gen(function* () {
           url:
             candidate.page.url() === "about:blank"
               ? null
-              : ServerBrowserPage.withoutDataPayload(candidate.page.url()),
+              : (loadErrorOf(candidate)?.url ??
+                ServerBrowserPage.withoutDataPayload(candidate.page.url())),
           ...(candidate.openerTabId === undefined ? {} : { openerTabId: candidate.openerTabId }),
           owner: tabOwner(candidate),
           ownedByCaller: candidate.control.agentId === agentSessionId,
@@ -1732,6 +1771,7 @@ const make = Effect.gen(function* () {
       }
       throw ServerBrowserPage.toOperationError(cause, timeout);
     });
+    assertNavigationSucceeded(tab);
   };
 
   const withCaptureLock = <A>(tab: ServerTab, operation: () => Promise<A>): Promise<A> => {
@@ -1842,6 +1882,25 @@ const make = Effect.gen(function* () {
         await recording.session.send("Page.stopScreencast").catch(constVoid);
         await Promise.all(recording.framesInFlight);
         await recording.session.detach().catch(constVoid);
+        // A screencast can miss the last paint when the page goes idle.
+        if (!tab.closing && !tab.dialog) {
+          const finalFrame = await ServerBrowserPage.captureFinalRecordingFrame(
+            tab.cdp,
+            RECORDING_SCREENCAST.quality,
+          );
+          if (finalFrame !== undefined) {
+            await recording.encoder
+              .evaluate(
+                ([data, width]) =>
+                  (globalThis as unknown as EncoderWindow).__t3Recorder.frame(data, width),
+                [
+                  finalFrame,
+                  tab.page.viewportSize()?.width ?? UNATTACHED_FILL_VIEWPORT.width,
+                ] as const,
+              )
+              .catch(constVoid);
+          }
+        }
         const stopped = await recording.encoder.evaluate(() =>
           (globalThis as unknown as EncoderWindow).__t3Recorder.stop(),
         );
@@ -2092,17 +2151,27 @@ const make = Effect.gen(function* () {
               if (url) await navigate(tab, url, "load", navigationTimeout);
             } else {
               // A failed open returns no tabId; a leftover hidden tab would block later reuse.
-              await tab.initialNavigation?.catch(async (cause: unknown) => {
-                // Playwright rejects downloads too; their tab must survive to save the file.
-                if (cause instanceof Error && cause.message.includes("Download is starting")) {
+              await Promise.resolve(tab.initialNavigation)
+                .then(async () => {
+                  if (url) {
+                    await tab.page
+                      .waitForLoadState("load", { timeout: navigationTimeout })
+                      .catch(constVoid);
+                  }
+                  assertNavigationSucceeded(tab);
+                })
+                .catch(async (cause: unknown) => {
+                  // Playwright rejects downloads too; their tab must survive to save the file.
+                  if (cause instanceof Error && cause.message.includes("Download is starting")) {
+                    throw cause;
+                  }
+                  await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
+                  dropTab(tab, false);
                   throw cause;
-                }
-                await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
-                dropTab(tab, false);
-                throw cause;
-              });
+                });
             }
             const reveal = open.open ?? open.show;
+            let shown: Promise<void> | undefined;
             if (reveal !== false) {
               await runPromise(
                 manager.requestReveal({
@@ -2111,12 +2180,14 @@ const make = Effect.gen(function* () {
                   force: reveal === true,
                 }),
               );
+              // Only an explicit show is sure to reach a client; desktop tabs are visible without a viewer.
+              if (reveal === true && tab.viewers.size === 0 && tab.desktop === null)
+                shown = awaitViewer(
+                  tab,
+                  Math.min(REVEAL_VIEWER_WAIT_MS, deadlineMs - performance.now()),
+                );
             }
-            if (!existing && url) {
-              await tab.page
-                .waitForLoadState("load", { timeout: navigationTimeout })
-                .catch(constVoid);
-            }
+            await shown;
             return statusWithTitle(tab, request.agentSessionId);
           },
           deadlineMs,
@@ -2270,7 +2341,7 @@ const make = Effect.gen(function* () {
           }),
         );
         const loadError = loadErrorOf(tab);
-        return loadError ? { ...snapshot, loadError } : snapshot;
+        return loadError ? { ...snapshot, url: loadError.url, loadError } : snapshot;
       }
       case "click": {
         const clickInput = input as PreviewAutomationClickInput;
@@ -2641,6 +2712,8 @@ const make = Effect.gen(function* () {
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         tab.viewers.add(viewer);
+        tab.viewerAttached?.resolve();
+        tab.viewerAttached = null;
         reportLiveTabs();
       }),
       () =>
