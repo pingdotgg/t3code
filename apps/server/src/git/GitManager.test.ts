@@ -91,6 +91,8 @@ interface FakeProviderScenario {
   prListOtherwise?: ReadonlyArray<FakeChangeRequest>;
   defaultBranch?: string;
   pullRequest?: FakeChangeRequest;
+  /** The answer to a bare-number lookup in the checkout's own repository; null is not found. */
+  pullRequestInCheckout?: FakeChangeRequest | null;
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
   failWith?: string;
   failCause?: unknown;
@@ -492,7 +494,22 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
         ),
       getChangeRequest: (input) =>
         record(input.cwd, { operation: "getChangeRequest", reference: input.reference }).pipe(
-          Effect.map(() => toChangeRequest(pullRequest())),
+          Effect.flatMap(() => {
+            const inCheckout =
+              /^\d+$/.test(input.reference) && scenario.pullRequestInCheckout !== undefined
+                ? scenario.pullRequestInCheckout
+                : pullRequest();
+            return inCheckout === null
+              ? Effect.fail(
+                  new SourceControlProviderFailure({
+                    provider: kind,
+                    operation: "getChangeRequest",
+                    cwd: input.cwd,
+                    detail: "Not found.",
+                  }),
+                )
+              : Effect.succeed(toChangeRequest(inCheckout));
+          }),
         ),
       getRepositoryCloneUrls: (input) =>
         record(input.cwd, {
@@ -5304,6 +5321,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               state: "open",
               isCrossRepository: false,
             },
+            pullRequestInCheckout: null,
           },
         });
 
@@ -5344,6 +5362,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             state: "open",
             isCrossRepository: false,
           },
+          pullRequestInCheckout: null,
         },
       });
 
@@ -5357,6 +5376,57 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         "Pull request #5 belongs to forge.test/team/repo, and this project is not a checkout of it.",
       );
       expect(gitCommands.filter((command) => command.startsWith("fetch"))).toEqual([]);
+    }),
+  );
+
+  it.effect.each([
+    "https://github.com/acme/old-name/pull/7",
+    "https://github.com/acme/new-name/pull/7",
+    "feature/renamed",
+  ])("prepares a PR thread from %s in a checkout under a repository's old name", (reference) =>
+    Effect.gen(function* () {
+      // The host redirects the old name, so only it knows the checkout is of the renamed repository.
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/acme/old-name.git",
+        remoteDir,
+      );
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/renamed"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "renamed.txt"), "renamed\n");
+      yield* runGit(repoDir, ["add", "renamed.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Renamed repository PR branch"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/renamed"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/renamed"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          pullRequest: {
+            number: 7,
+            title: "Renamed repository PR",
+            url: "https://github.com/acme/new-name/pull/7",
+            baseRefName: "main",
+            headRefName: "feature/renamed",
+            state: "open",
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "acme/new-name",
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference,
+        mode: "local",
+      });
+
+      expect(result.branch).toBe("feature/renamed");
     }),
   );
 
@@ -5734,6 +5804,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           headRepositoryNameWithOwner: "octocat/codething-mvp",
           headRepositoryOwnerLogin: "octocat",
         },
+        pullRequestInCheckout: null,
       };
       const gitCommands: string[] = [];
       const { manager } = yield* makeManager({

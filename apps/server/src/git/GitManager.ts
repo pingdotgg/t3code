@@ -2987,6 +2987,16 @@ export const make = Effect.gen(function* () {
     for (const [remoteUrl, remoteName] of remotes) {
       if (yield* servedFromWeb(remoteUrl, remoteName)) return;
     }
+    // The host knows this checkout's repository under any spelling, such as a pre-rename name.
+    const inCheckout = yield* provider
+      .getChangeRequest({ cwd, reference: String(pullRequest.number) })
+      .pipe(Effect.option);
+    if (
+      Option.isSome(inCheckout) &&
+      sourceControlDefinitions.isSameChangeRequest(inCheckout.value.url, pullRequest.url)
+    ) {
+      return;
+    }
     return yield* new GitManagerError({
       operation: "preparePullRequestThread",
       cwd,
