@@ -701,6 +701,51 @@ describe("ssh tunnel scripts", () => {
       }),
   );
 
+  it.effect("releases local forwards without stopping their remote servers", () =>
+    Effect.gen(function* () {
+      let tunnels = 0;
+      let tunnelKills = 0;
+      let stops = 0;
+      const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-G")) return makeSuccessfulProcess("");
+          if (args.includes("-N")) {
+            tunnels += 1;
+            return makeRunningProcess(() => {
+              tunnelKills += 1;
+            });
+          }
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }
+          stops += 1;
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        yield* manager.ensureEnvironment(target);
+        yield* manager.releaseLocalTunnels;
+        assert.equal(tunnelKills, 1);
+        assert.equal(stops, 0);
+        // The next connect opens a new forward instead of reusing the released one.
+        yield* manager.ensureEnvironment(target);
+        assert.equal(tunnels, 2);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
   it.live("concurrent launches on one remote home record the server that owns it", () =>
     // The second row's server never publishes server-runtime.json.
     Effect.forEach([1_500, null], (publishDelayMs) =>

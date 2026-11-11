@@ -163,6 +163,11 @@ export interface SshEnvironmentManagerShape {
   readonly disconnectEnvironment: (
     target: DesktopSshEnvironmentTarget,
   ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
+  /**
+   * Stops every local forward and leaves remote servers running, for a quit that exits before
+   * this manager's scope can close.
+   */
+  readonly releaseLocalTunnels: Effect.Effect<void>;
 }
 
 const RemoteLaunchResult = Schema.Struct({
@@ -1902,7 +1907,19 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
   });
 
-  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
+  // No target lock: a connect waiting on a password prompt must not hold up the quit.
+  const releaseLocalTunnels = Effect.suspend(() => {
+    const entries = [...tunnels.values()];
+    // Dropped from the map first, so each entry's finalizer only kills its local ssh process.
+    tunnels.clear();
+    return Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded", discard: true });
+  }).pipe(Effect.uninterruptible, Effect.withSpan("ssh/tunnel.releaseLocalTunnels"));
+
+  return SshEnvironmentManager.of({
+    ensureEnvironment,
+    disconnectEnvironment,
+    releaseLocalTunnels,
+  });
 });
 
 /**

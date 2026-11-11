@@ -34,6 +34,7 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
+import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
@@ -372,6 +373,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const policy = yield* DesktopUpdatePolicy.DesktopUpdatePolicy;
+  const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
   // Any user can set the mock flag, so it never replaces an administrator's update source.
   const mockUpdates = config.mockUpdates && policy.message === null;
 
@@ -824,6 +826,8 @@ export const make = Effect.gen(function* () {
               instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
             { concurrency: "unbounded" },
           );
+          // For the same reason: a forward left running outlives the app and is never reused.
+          yield* sshEnvironment.releaseLocalTunnels;
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
             isForceRunAfter: true,

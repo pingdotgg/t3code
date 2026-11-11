@@ -220,6 +220,8 @@ const layerDesktopApplication = Layer.mergeAll(
       Layer.provide(DesktopUpdatePolicy.layer),
       // The same layer as the foundation's, so the policy is still read once.
       Layer.provide(DesktopManagedPolicy.layer),
+      // The same layer as the application's, so there is one SSH manager.
+      Layer.provide(layerDesktopSsh),
     ),
   ),
   Layer.provideMerge(layerDesktopWslBackend),
