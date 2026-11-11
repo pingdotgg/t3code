@@ -24,7 +24,12 @@ import { useRef, useState, type RefObject, type SetStateAction } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { getUploadedAttachments, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
+import {
+  getUploadedAttachments,
+  refreshExpiredAttachmentUploads,
+  useAttachmentUploadStore,
+} from "../../lib/attachmentUploadQueue";
+import { composerDraftContentChanged } from "./composerSend.logic";
 import {
   buildPendingUserInputAnswers,
   setPendingUserInputCustomAnswer,
@@ -306,59 +311,101 @@ export function usePendingThreadRequests(input: {
     if (!pendingInput || pendingInput.responseCapability === "not_resumable") return;
     const responseKey = JSON.stringify([environmentId, activeThreadId, requestId]);
     if (userInputResponsesInFlight.current.has(responseKey)) return;
-    const attachmentsByQuestionId = new Map<string, UserInputAttachments[string]>();
-    const providerAnswers = { ...answers };
-    for (const question of pendingInput.questions) {
-      const target = questionAttachmentDraftId(
-        environmentId,
-        activeThreadId,
-        requestId,
-        question.id,
-      );
-      if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
-      const draft = useComposerDraftStore.getState().getComposerDraft(target);
-      providerAnswers[question.id] = projectPendingUserInputAnswer(
-        answers[question.id],
-        draft?.threadContexts ?? [],
-      );
-      const attachments = draft ? [...draft.images, ...draft.files] : [];
-      if (attachments.length === 0) continue;
-      const uploaded = getUploadedAttachments({ environmentId, images: attachments });
-      if (!uploaded) {
-        setThreadError(
-          activeThreadId,
-          "Wait for attachments to finish uploading, or remove failed uploads.",
-        );
-        return;
-      }
-      attachmentsByQuestionId.set(question.id, uploaded as UserInputAttachments[string]);
-    }
     userInputResponsesInFlight.current.add(responseKey);
-
+    const answerDraftKey = userInputDraftKey(environmentId, activeThreadId, requestId);
+    const answerDraftBeforePreparation = usePendingUserInputAnswers.getState()[answerDraftKey];
     setRespondingUserInputRequestIds((existing) =>
       existing.includes(requestId) ? existing : [...existing, requestId],
     );
-    const result = await respondToThreadUserInput({
-      environmentId,
-      input: {
-        threadId: activeThreadId,
-        requestId,
-        answers: providerAnswers,
-        ...(attachmentsByQuestionId.size > 0
-          ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
-          : {}),
-      },
+    const prepareAndRespond = async () => {
+      const attachmentsByQuestionId = new Map<string, UserInputAttachments[string]>();
+      const providerAnswers = { ...answers };
+      const questionDrafts = pendingInput.questions.map((question) => {
+        const target = questionAttachmentDraftId(
+          environmentId,
+          activeThreadId,
+          requestId,
+          question.id,
+        );
+        const draft = useComposerDraftStore.getState().getComposerDraft(target);
+        return { question, target, draft };
+      });
+      for (const { question, target, draft } of questionDrafts) {
+        if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
+        providerAnswers[question.id] = projectPendingUserInputAnswer(
+          answers[question.id],
+          draft?.threadContexts ?? [],
+        );
+        const attachments = draft ? [...draft.images, ...draft.files] : [];
+        if (attachments.length === 0) continue;
+        await refreshExpiredAttachmentUploads({
+          environmentId,
+          images: attachments,
+          draftTarget: target,
+        });
+        if (
+          composerDraftContentChanged(
+            draft,
+            useComposerDraftStore.getState().getComposerDraft(target),
+          )
+        ) {
+          setThreadError(
+            activeThreadId,
+            "Answer changed while preparing attachments. Review it and send again.",
+          );
+          return;
+        }
+        const uploaded = getUploadedAttachments({ environmentId, images: attachments });
+        if (!uploaded) {
+          setThreadError(
+            activeThreadId,
+            "Wait for attachments to finish uploading, or remove failed uploads.",
+          );
+          return;
+        }
+        attachmentsByQuestionId.set(question.id, uploaded as UserInputAttachments[string]);
+      }
+      if (
+        usePendingUserInputAnswers.getState()[answerDraftKey] !== answerDraftBeforePreparation ||
+        questionDrafts.some(
+          ({ target, draft }) =>
+            (useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0 ||
+            composerDraftContentChanged(
+              draft,
+              useComposerDraftStore.getState().getComposerDraft(target),
+            ),
+        )
+      ) {
+        setThreadError(
+          activeThreadId,
+          "Answer changed while preparing attachments. Review it and send again.",
+        );
+        return;
+      }
+      const result = await respondToThreadUserInput({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          requestId,
+          answers: providerAnswers,
+          ...(attachmentsByQuestionId.size > 0
+            ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
+            : {}),
+        },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThreadId,
+          error instanceof Error ? error.message : "Failed to submit user input.",
+        );
+      }
+      return result;
+    };
+    return prepareAndRespond().finally(() => {
+      userInputResponsesInFlight.current.delete(responseKey);
+      setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
     });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      setThreadError(
-        activeThreadId,
-        error instanceof Error ? error.message : "Failed to submit user input.",
-      );
-    }
-    userInputResponsesInFlight.current.delete(responseKey);
-    setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
-    return result;
   };
 
   const onDismissUserInput = async (requestId: RuntimeRequestId) => {

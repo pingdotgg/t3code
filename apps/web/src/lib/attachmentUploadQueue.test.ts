@@ -57,6 +57,7 @@ import {
   awaitAttachmentUploads,
   getUploadedAttachments,
   readAttachmentUpload,
+  refreshExpiredAttachmentUploads,
   releaseAttachmentUpload,
   releaseDraftAttachment,
   releaseDraftAttachments,
@@ -208,6 +209,205 @@ describe("attachmentUploadQueue", () => {
       releaseAttachmentUpload(imageId);
     }
     vi.unstubAllGlobals();
+  });
+
+  it("reuploads an expired image while retaining other ready images", async () => {
+    const images = [makeImage("first"), makeImage("second")].map((image) => ({
+      ...image,
+      name: "image.png",
+    }));
+    let minted = 0;
+    mocks.runAtomCommand.mockImplementation(async (_registry, command) => {
+      if (command !== mocks.createUploadUrl) return { _tag: "Success", value: undefined };
+      const attachmentId = `pending-test-${++minted}`;
+      return {
+        _tag: "Success",
+        value: {
+          attachmentId,
+          relativeUrl: `/api/attachments/upload/${attachmentId}`,
+          expiresAt: 1,
+        },
+      };
+    });
+    for (const image of images) startAttachmentUpload({ environmentId: firstEnvironment, image });
+    await Promise.resolve();
+    const initial = awaitAttachmentUploads(images.map((image) => image.id));
+    TestXmlHttpRequest.requests.forEach((request) => request.complete());
+    await initial;
+    mocks.executeAtomQuery.mockImplementation(
+      async (_registry, target: { input: { resource: { attachmentId: string } } }) =>
+        target.input.resource.attachmentId === "pending-test-1"
+          ? { _tag: "Failure", error: { _tag: "AssetAttachmentNotFoundError" } }
+          : { _tag: "Success", value: {} },
+    );
+    const refreshing = refreshExpiredAttachmentUploads({ environmentId: firstEnvironment, images });
+    await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(3));
+    TestXmlHttpRequest.requests[2]!.complete();
+    await refreshing;
+    expect(
+      getUploadedAttachments({ environmentId: firstEnvironment, images })?.map((image) => image.id),
+    ).toEqual(["pending-test-3", "pending-test-2"]);
+    expect(TestXmlHttpRequest.requests).toHaveLength(3);
+  });
+
+  it("reuploads local file bytes after its persisted upload is known to be missing", async () => {
+    const file = {
+      ...makeFile("expired-saved-file"),
+      uploadedAttachmentId: "pending-expired",
+      uploadEnvironmentId: firstEnvironment,
+    };
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [file.id]: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-expired",
+        },
+      },
+    });
+    mocks.executeAtomQuery
+      .mockResolvedValueOnce({
+        _tag: "Failure",
+        error: { _tag: "AssetAttachmentNotFoundError" },
+      })
+      .mockResolvedValue({ _tag: "Failure", error: new Error("Connection interrupted") });
+    let uploadStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      uploadStarted = resolve;
+    });
+    const runCommand = mocks.runAtomCommand.getMockImplementation()!;
+    mocks.runAtomCommand.mockImplementation(async (...args) => {
+      const result = await runCommand(...args);
+      if (args[1] === mocks.createUploadUrl) uploadStarted();
+      return result;
+    });
+    const refresh = refreshExpiredAttachmentUploads({
+      environmentId: firstEnvironment,
+      images: [file],
+    });
+    expect(await Promise.race([started.then(() => "upload"), refresh.then(() => "settled")])).toBe(
+      "upload",
+    );
+    expect(TestXmlHttpRequest.requests).toHaveLength(1);
+    TestXmlHttpRequest.requests[0]!.complete();
+    await refresh;
+    expect(mocks.executeAtomQuery).toHaveBeenCalledTimes(1);
+    expect(
+      getUploadedAttachments({ environmentId: firstEnvironment, images: [file] }),
+    ).toMatchObject([{ id: "pending-environment-1-expired-saved-file.pdf" }]);
+  });
+
+  it.each([false, true])(
+    "retains cleanup identity after verification fails (retry: %s)",
+    async (retry) => {
+      const image = makeImage("connection-failure");
+      useAttachmentUploadStore.setState({
+        uploadsByImageId: {
+          [image.id]: {
+            status: "ready",
+            environmentId: firstEnvironment,
+            attachmentId: "pending-original",
+          },
+        },
+      });
+      mocks.executeAtomQuery.mockRejectedValueOnce(new Error("offline"));
+      await refreshExpiredAttachmentUploads({ environmentId: firstEnvironment, images: [image] });
+      expect(readAttachmentUpload(image.id)).toMatchObject({ status: "failed" });
+      expect(
+        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
+      ).toBeNull();
+      expect(TestXmlHttpRequest.requests).toHaveLength(0);
+      if (retry) retryAttachmentUpload({ environmentId: firstEnvironment, image });
+      releaseAttachmentUpload(image.id);
+      expect(readAttachmentUpload(image.id)).toBeUndefined();
+      expect(mocks.runAtomCommand).toHaveBeenCalledExactlyOnceWith(
+        expect.anything(),
+        mocks.removeUpload,
+        { environmentId: firstEnvironment, input: { attachmentId: "pending-original" } },
+        expect.anything(),
+      );
+    },
+  );
+
+  it("reuploads local bytes for a connection without read permission", async () => {
+    const image = makeImage("operate-only");
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [image.id]: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-original",
+        },
+      },
+    });
+    mocks.readEnvironmentScope.mockImplementation(
+      (_environmentId, scope) => scope !== "orchestration:read",
+    );
+    const refresh = refreshExpiredAttachmentUploads({
+      environmentId: firstEnvironment,
+      images: [image],
+    });
+    await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(1));
+    TestXmlHttpRequest.requests[0]!.complete();
+    await refresh;
+    expect(readAttachmentUpload(image.id)).toMatchObject({
+      status: "ready",
+      attachmentId: "pending-environment-1-operate-only.png",
+    });
+    expect(mocks.executeAtomQuery).not.toHaveBeenCalled();
+  });
+
+  it("blocks a saved upload without read permission or local bytes", async () => {
+    const file = { ...makeFile("operate-only-saved"), file: null };
+    const previous = {
+      status: "ready" as const,
+      environmentId: firstEnvironment,
+      attachmentId: "pending-original",
+    };
+    useAttachmentUploadStore.setState({ uploadsByImageId: { [file.id]: previous } });
+    mocks.readEnvironmentScope.mockImplementation(
+      (_environmentId, scope) => scope !== "orchestration:read",
+    );
+    await refreshExpiredAttachmentUploads({ environmentId: firstEnvironment, images: [file] });
+    expect(readAttachmentUpload(file.id)).toMatchObject({ status: "failed", previous });
+    expect(getUploadedAttachments({ environmentId: firstEnvironment, images: [file] })).toBeNull();
+    expect(mocks.executeAtomQuery).not.toHaveBeenCalled();
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+    releaseAttachmentUpload(file.id);
+    expect(mocks.runAtomCommand).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      mocks.removeUpload,
+      { environmentId: firstEnvironment, input: { attachmentId: "pending-original" } },
+      expect.anything(),
+    );
+  });
+
+  it("does not resurrect an image removed while its upload is being checked", async () => {
+    const image = makeImage("removed-during-verification");
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [image.id]: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-original",
+        },
+      },
+    });
+    let finish!: (value: unknown) => void;
+    mocks.executeAtomQuery.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const refresh = refreshExpiredAttachmentUploads({
+      environmentId: firstEnvironment,
+      images: [image],
+    });
+    releaseAttachmentUpload(image.id);
+    finish({ _tag: "Failure", error: { _tag: "AssetAttachmentNotFoundError" } });
+    await refresh;
+    expect(readAttachmentUpload(image.id)).toBeUndefined();
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
   });
 
   it("keeps an attachment local until its own environment grants write access", async () => {
