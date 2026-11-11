@@ -77,6 +77,8 @@ export type VoiceInputControllerDependencies = {
   readonly configureRecording: () => Promise<void>;
   readonly releaseRecording: () => Promise<void>;
   readonly deleteRecording: (uri: string) => void;
+  /** Runs once the microphone is ready and before capture starts, so a start cue stays out of the audio. */
+  readonly beforeRecord?: () => Promise<void>;
   /** Keep a recording whose transcription failed so the next start retries it without recording again. */
   readonly retryFailedRecording?: boolean;
   /**
@@ -330,6 +332,8 @@ export class VoiceInputController {
       this.recordingConfigured = true;
       if (!this.isCurrent(operationToken)) return;
       await this.dependencies.recorder.prepareToRecordAsync(abortController.signal);
+      if (!this.isCurrent(operationToken)) return;
+      await this.dependencies.beforeRecord?.();
       if (!this.isCurrent(operationToken)) return;
       this.recordingUri = this.dependencies.recorder.uri;
       this.rememberRecordingUri(this.recordingUri);

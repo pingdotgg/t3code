@@ -427,11 +427,16 @@ describe("VoiceInputController", () => {
   );
 
   it("uses the native five-minute cap and commits one final transcript", async () => {
-    const harness = createHarness();
+    const beforeRecord = vi.fn(async () => undefined);
+    const harness = createHarness({ beforeRecord });
     await harness.controller.start();
     expect(harness.recorder.record).toHaveBeenCalledWith({
       forDuration: VOICE_RECORDING_LIMIT_SECONDS,
     });
+    // The start cue plays in this hook, so it must finish before capture begins.
+    expect(beforeRecord.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.recorder.record.mock.invocationCallOrder[0] ?? 0,
+    );
     await harness.controller.handleRecorderStatus({
       isFinished: true,
       hasError: false,

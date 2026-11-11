@@ -41,6 +41,7 @@ import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant, useAudioChoice } from "./voiceConsent";
+import { playRecordingCue, preloadRecordingCue } from "./recordingCue";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
@@ -378,6 +379,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       configureRecording: async () => undefined,
       releaseRecording: async () => platform.cancelRecording(),
       deleteRecording: platform.deleteRecording,
+      beforeRecord: async () => {
+        const { speechRecordingCue, speechRecordingCueSound } = latestRef.current.clientSettings;
+        if (speechRecordingCue) await playRecordingCue(speechRecordingCueSound);
+      },
       postProcess,
       onPostProcessingError: () =>
         toastManager.add({
@@ -394,6 +399,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       onStateChange: (value) => {
         if (disposed) return;
         if (value.phase === "error") pendingSubmissionRef.current = null;
+        const { speechRecordingCue, speechRecordingCueSound } = latestRef.current.clientSettings;
+        if (speechRecordingCue && value.phase === "preparing")
+          preloadRecordingCue(speechRecordingCueSound);
         setControllerState({ prepared, grantId, value });
         if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
       },
