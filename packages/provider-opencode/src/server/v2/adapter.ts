@@ -666,6 +666,7 @@ const modelRef = (selection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSe
 };
 const malformedModel = (model: string) =>
   `OpenCode model '${model}' must use provider/model format`;
+// OpenCode 2 reports a session created without a variant as variant "default".
 const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
   left.providerID === right?.providerID &&
   left.id === right?.id &&
