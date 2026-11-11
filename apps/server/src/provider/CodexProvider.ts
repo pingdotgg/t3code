@@ -643,7 +643,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
             !input.skipNativeUsage &&
             config !== undefined &&
             codexRoutesSpendNativeQuota(accountResponse, config.config);
-          return (nativeUsage ? readCodexRateLimits(client, deadlineMs) : Effect.undefined).pipe(
+          const readUsage: Effect.Effect<CodexRateLimitsProbe | undefined> = nativeUsage
+            ? readCodexRateLimits(client, deadlineMs)
+            : Effect.undefined;
+          return readUsage.pipe(
             Effect.map((rateLimits) => ({
               serviceTier: config?.config.service_tier ?? undefined,
               nativeUsage,
