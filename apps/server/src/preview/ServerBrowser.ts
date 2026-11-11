@@ -21,6 +21,7 @@ import {
   type PreviewAutomationDragInput,
   type PreviewAutomationEvaluateInput,
   type PreviewAutomationHoverInput,
+  type PreviewAutomationLoadError,
   type PreviewAutomationNavigateInput,
   type PreviewAutomationNetworkEntry,
   type PreviewAutomationOpenInput,
@@ -272,7 +273,8 @@ interface ViewerState {
   scrolledAt: number;
   /** Counts presses; a newer one stops an older click's copy offer. */
   clicks: number;
-  leftPress: { click: number; generation: number } | null;
+  /** The clean left press whose copies may be offered, and when it was sent. */
+  leftPress: { click: number; generation: number; since: number } | null;
 
   requestedSize: { width: number; height: number; order: number } | null;
 }
@@ -299,6 +301,10 @@ interface ServerTab {
   readonly page: Page;
   readonly cdp: CDPSession;
   readonly frameSessions: Map<Frame, CDPSession>;
+  /** Copy reads run in key order, outside the input queue. */
+  copyReads: Promise<void>;
+  /** When the last copy or cut key was acknowledged; the next one starts after it. */
+  copyKeyedUntil: number;
   readonly createdAt: number;
   usedAt: number;
   readonly viewers: Set<ViewerState>;
@@ -333,6 +339,7 @@ interface ServerTab {
   /** A read queued behind `desktopViewportRead`, shared by every caller that waits for it. */
   desktopViewportNext: Promise<ServerTab["desktopViewport"]> | null;
   loading: boolean;
+  loadError: PreviewAutomationLoadError | undefined;
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
@@ -437,8 +444,9 @@ const CLICK_COPY_READS_MS = [0, 250, 1_000, 2_500, CLICK_COPY_MS];
 const CLIPBOARD_SCRIPT = `(() => {
   let keying = false;
   let clickedAt = -Infinity;
-  let keyCopy = "";
-  let clickCopy = "";
+  // One entry per copy or cut key, oldest first, so a later key cannot overwrite an unread copy.
+  const keyCopies = [];
+  let clickCopy = null;
   let pending = null;
   // The same Ctrl or Cmd + C or X that editingCommand sends as copy or cut.
   addEventListener("keydown", (event) => {
@@ -446,7 +454,7 @@ const CLIPBOARD_SCRIPT = `(() => {
     const key = event.key.toLowerCase();
     if (key !== "c" && key !== "x") return;
     keying = true;
-    keyCopy = "";
+    keyCopies.push({ at: Date.now(), text: "" });
     setTimeout(() => { keying = false; });
   }, true);
   for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
@@ -463,14 +471,12 @@ const CLIPBOARD_SCRIPT = `(() => {
       return field.value.slice(field.selectionStart, field.selectionEnd ?? field.selectionStart);
     return String(document.getSelection() ?? "");
   };
-  const record = (text, key) => {
-    const value = String(text ?? "").slice(0, ${CLIPBOARD_TEXT_LIMIT});
-    if (key) keyCopy = value;
-    else clickCopy = value;
+  const record = (copy, text) => {
+    if (copy) copy.text = String(text ?? "").slice(0, ${CLIPBOARD_TEXT_LIMIT});
   };
   const settle = () => {
     if (!pending) return;
-    if (pending.event.defaultPrevented) record(pending.data ?? "", pending.key);
+    if (pending.event.defaultPrevented) record(pending.copy, pending.data ?? "");
     pending = null;
   };
   // Capturing at window runs before page handlers can stop the event, and
@@ -479,8 +485,9 @@ const CLIPBOARD_SCRIPT = `(() => {
     if (!event.isTrusted) return;
     settle();
     if (!keying && !canClickCopy()) return;
-    pending = { event, key: keying, data: undefined };
-    record(selection(), pending.key);
+    const copy = keying ? keyCopies.at(-1) : (clickCopy = { at: Date.now(), text: "" });
+    pending = { event, copy, data: undefined };
+    record(copy, selection());
     setTimeout(settle);
   };
   for (const type of ["copy", "cut"]) {
@@ -492,15 +499,22 @@ const CLIPBOARD_SCRIPT = `(() => {
   }, true);
   addEventListener("${CLIPBOARD_WRITE_EVENT}", (event) => {
     if (!keying && canClickCopy() && typeof event.detail === "string") {
-      if (pending?.key === false) pending = null;
-      record(event.detail, false);
+      clickCopy = { at: Date.now(), text: "" };
+      record(clickCopy, event.detail);
     }
   }, true);
-  globalThis.takeCopy = (click) => {
+  // Copies made before since are stale. A key's copy was made between its dispatch and
+  // acknowledgement (until). A click's read takes only what was copied before it started.
+  globalThis.takeCopy = (click, since, until) => {
     settle();
-    const text = click ? clickCopy : keyCopy;
-    if (click) clickCopy = "";
-    else keyCopy = "";
+    let copy = null;
+    if (click) {
+      if (clickCopy && clickCopy.at < until) [copy, clickCopy] = [clickCopy, null];
+    } else {
+      while (keyCopies.length > 0 && keyCopies[0].at < since) keyCopies.shift();
+      if (keyCopies[0] && keyCopies[0].at <= until) copy = keyCopies.shift();
+    }
+    const text = copy && copy.at >= since ? copy.text : "";
     return { text, host: URL.canParse(globalThis.origin) ? new URL(globalThis.origin).host : "" };
   };
 })();`;
@@ -608,8 +622,13 @@ export const recordCopies = async (cdp: CDPSession) => {
   });
 };
 
-/** Reads and clears what each frame copied during real copy keys, or after real clicks. */
-export const takeSessionCopies = async (cdp: CDPSession, click = false) => {
+/** Takes what each frame copied during a real copy key, or after a real click, from since to until. */
+export const takeSessionCopies = async (
+  cdp: CDPSession,
+  click: boolean,
+  since: number,
+  until: number,
+) => {
   const tree = await cdp.send("Page.getFrameTree").catch(() => null);
   if (!tree) return [];
   const frameIds = (node: typeof tree.frameTree): Array<string> => [
@@ -623,7 +642,7 @@ export const takeSessionCopies = async (cdp: CDPSession, click = false) => {
         .then(({ executionContextId }) =>
           cdp.send("Runtime.evaluate", {
             contextId: executionContextId,
-            expression: `globalThis.takeCopy?.(${click})`,
+            expression: `globalThis.takeCopy?.(${click}, ${since}, ${until})`,
             returnByValue: true,
           }),
         )
@@ -1040,6 +1059,8 @@ const make = Effect.gen(function* () {
       page,
       cdp,
       frameSessions: new Map(),
+      copyReads: Promise.resolve(),
+      copyKeyedUntil: 0,
       createdAt: Date.now(),
       usedAt: Date.now(),
       viewers: new Set(),
@@ -1068,6 +1089,7 @@ const make = Effect.gen(function* () {
       desktopViewportRead: Promise.resolve(null),
       desktopViewportNext: null,
       loading: false,
+      loadError: undefined,
       closing: false,
       recording: null,
       recordingStart: null,
@@ -1104,6 +1126,7 @@ const make = Effect.gen(function* () {
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
       tab.loading = true;
+      tab.loadError = undefined;
       report(tab, {
         _tag: "Loading",
         url: ServerBrowserPage.withoutDataPayload(request.url()).slice(0, 2048),
@@ -1159,13 +1182,9 @@ const make = Effect.gen(function* () {
       }
       tab.loading = false;
       const { code, description } = ServerBrowserPage.parseNetError(errorText);
-      report(tab, {
-        _tag: "LoadFailed",
-        url: ServerBrowserPage.withoutDataPayload(request.url()).slice(0, 2048),
-        title: "",
-        code,
-        description,
-      });
+      const url = ServerBrowserPage.withoutDataPayload(request.url()).slice(0, 2048);
+      tab.loadError = { url, code, description };
+      report(tab, { _tag: "LoadFailed", url, title: "", code, description });
     });
     page.on("response", (response) => {
       pushBounded(tab.networkEntries, {
@@ -1466,9 +1485,11 @@ const make = Effect.gen(function* () {
     await recordCopies(cdp).catch(constVoid);
   };
 
-  const takeCopy = async (tab: ServerTab, click = false) => {
+  const takeCopy = async (tab: ServerTab, click: boolean, since: number, until: number) => {
     const copies = await Promise.all(
-      [tab.cdp, ...tab.frameSessions.values()].map((cdp) => takeSessionCopies(cdp, click)),
+      [tab.cdp, ...tab.frameSessions.values()].map((cdp) =>
+        takeSessionCopies(cdp, click, since, until),
+      ),
     );
     return copies.flat().find((copy) => copy !== null && copy.text.length > 0);
   };
@@ -1490,7 +1511,7 @@ const make = Effect.gen(function* () {
       await new Promise((resolve) => setTimeout(resolve, at - waited));
       waited = at;
       if (!current()) return;
-      const copied = await takeCopy(tab, true);
+      const copied = await takeCopy(tab, true, press.since, Date.now());
       if (!current()) return;
       if (copied) {
         viewer.push({ _tag: "copyOffer", ...copied });
@@ -1764,6 +1785,35 @@ const make = Effect.gen(function* () {
     });
   };
 
+  const loadErrorOf = (tab: ServerTab): PreviewAutomationLoadError | undefined => {
+    if (!tab.page.url().startsWith("chrome-error://")) return undefined;
+    // A desktop failure from before CDP attached is superseded by any navigation we observe.
+    if (tab.loadError || !tab.desktop || tab.navigationGeneration > 0) return tab.loadError;
+    const reported = desktopChannel.loadFailure({ threadId: tab.threadId, tabId: tab.tabId });
+    return reported && { ...reported, url: ServerBrowserPage.withoutDataPayload(reported.url) };
+  };
+
+  const assertNavigationSucceeded = (tab: ServerTab) => {
+    const failure = loadErrorOf(tab);
+    if (failure) {
+      const diagnosticUrl = URL.parse(failure.url);
+      if (diagnosticUrl) {
+        diagnosticUrl.username = "";
+        diagnosticUrl.password = "";
+        diagnosticUrl.search = "";
+        diagnosticUrl.hash = "";
+      }
+      const url = diagnosticUrl
+        ? ServerBrowserPage.withoutDataPayload(diagnosticUrl.href)
+        : "the requested page";
+      throw new ServerBrowserPage.ServerBrowserOperationError({
+        tag: "PreviewAutomationExecutionError",
+        message: `Navigation to ${url} failed: ${failure.description}`,
+        detail: { ...failure, url },
+      });
+    }
+  };
+
   const statusWithTitle = async (
     tab: ServerTab | undefined,
     agentSessionId?: string,
@@ -1781,13 +1831,15 @@ const make = Effect.gen(function* () {
     }
     const url = ServerBrowserPage.withoutDataPayload(tab.page.url());
     const viewport = tab.desktop ? await layoutSize(tab) : tab.page.viewportSize();
+    const loadError = loadErrorOf(tab);
     const status = {
       available: true,
       visible: isVisible(tab),
       tabId: tab.tabId,
-      url: url === "about:blank" ? null : url,
+      url: loadError?.url ?? (url === "about:blank" ? null : url),
       title: null,
       loading: tab.loading,
+      ...(loadError ? { loadError } : {}),
       control: {
         owner: tabOwner(tab),
         ownedByCaller: tab.control.agentId === agentSessionId,
@@ -1806,7 +1858,8 @@ const make = Effect.gen(function* () {
           url:
             candidate.page.url() === "about:blank"
               ? null
-              : ServerBrowserPage.withoutDataPayload(candidate.page.url()),
+              : (loadErrorOf(candidate)?.url ??
+                ServerBrowserPage.withoutDataPayload(candidate.page.url())),
           ...(candidate.openerTabId === undefined ? {} : { openerTabId: candidate.openerTabId }),
           owner: tabOwner(candidate),
           ownedByCaller: candidate.control.agentId === agentSessionId,
@@ -1870,6 +1923,7 @@ const make = Effect.gen(function* () {
       }
       throw ServerBrowserPage.toOperationError(cause, timeout);
     });
+    assertNavigationSucceeded(tab);
   };
 
   const withCaptureLock = <A>(tab: ServerTab, operation: () => Promise<A>): Promise<A> => {
@@ -2230,15 +2284,24 @@ const make = Effect.gen(function* () {
               if (url) await navigate(tab, url, "load", navigationTimeout);
             } else {
               // A failed open returns no tabId; a leftover hidden tab would block later reuse.
-              await tab.initialNavigation?.catch(async (cause: unknown) => {
-                // Playwright rejects downloads too; their tab must survive to save the file.
-                if (cause instanceof Error && cause.message.includes("Download is starting")) {
+              await Promise.resolve(tab.initialNavigation)
+                .then(async () => {
+                  if (url) {
+                    await tab.page
+                      .waitForLoadState("load", { timeout: navigationTimeout })
+                      .catch(constVoid);
+                  }
+                  assertNavigationSucceeded(tab);
+                })
+                .catch(async (cause: unknown) => {
+                  // Playwright rejects downloads too; their tab must survive to save the file.
+                  if (cause instanceof Error && cause.message.includes("Download is starting")) {
+                    throw cause;
+                  }
+                  await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
+                  dropTab(tab, false);
                   throw cause;
-                }
-                await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
-                dropTab(tab, false);
-                throw cause;
-              });
+                });
             }
             const reveal = open.open ?? open.show;
             if (reveal !== false) {
@@ -2249,11 +2312,6 @@ const make = Effect.gen(function* () {
                   force: reveal === true,
                 }),
               );
-            }
-            if (!existing && url) {
-              await tab.page
-                .waitForLoadState("load", { timeout: navigationTimeout })
-                .catch(constVoid);
             }
             return statusWithTitle(tab, request.agentSessionId);
           },
@@ -2400,13 +2458,15 @@ const make = Effect.gen(function* () {
         return { tabId: tab.tabId, colorScheme };
       }
       case "snapshot": {
-        return withScreencastsPaused(tab, () =>
+        const snapshot = await withScreencastsPaused(tab, () =>
           ServerBrowserPage.snapshot({
             ...tab,
             renderScale: tab.desktop ? "display" : RENDER_SCALE,
             fullScreenshot: (input as PreviewAutomationSnapshotInput | undefined)?.fullScreenshot,
           }),
         );
+        const loadError = loadErrorOf(tab);
+        return loadError ? { ...snapshot, url: loadError.url, loadError } : snapshot;
       }
       case "click": {
         const clickInput = input as PreviewAutomationClickInput;
@@ -2570,9 +2630,8 @@ const make = Effect.gen(function* () {
           viewer.clicks++;
           viewer.leftPress =
             offers && viewer.pressedButtons.size === 0
-              ? { click: viewer.clicks, generation: tab.control.generation }
+              ? { click: viewer.clicks, generation: tab.control.generation, since: Date.now() }
               : null;
-          if (offers) await takeCopy(tab, true);
         }
         await session.send("Input.dispatchMouseEvent", {
           type,
@@ -2620,7 +2679,10 @@ const make = Effect.gen(function* () {
         const copying =
           !tab.desktop && (command?.commands[0] === "copy" || command?.commands[0] === "cut");
 
-        if (copying) await takeCopy(tab);
+        // Copy keys get disjoint millisecond windows so each frame's copy belongs to one key.
+        if (copying)
+          while (Date.now() <= tab.copyKeyedUntil) await sleepUntil(tab.copyKeyedUntil + 1);
+        const since = Date.now();
         await session.send("Input.dispatchKeyEvent", {
           type: text ? "keyDown" : "rawKeyDown",
           key,
@@ -2634,11 +2696,16 @@ const make = Effect.gen(function* () {
           ),
         });
         viewer.pressedKeys.set(code || key, { key, code });
-        if (copying) {
-          const copied = await takeCopy(tab);
+        if (!copying) return;
+        const until = Date.now();
+        tab.copyKeyedUntil = until;
+        // A busy frame answers late; its read must not hold later input.
+        const read = tab.copyReads.then(async () => {
+          const copied = await takeCopy(tab, false, since, until);
           if (copied) viewer.push({ _tag: "clipboard", text: copied.text });
-        }
-        return;
+        });
+        tab.copyReads = read;
+        return () => read;
       }
       case "text":
         if (typeof message.text === "string" && message.text.length > 0) {
@@ -2896,8 +2963,9 @@ const make = Effect.gen(function* () {
                   : {}),
               });
             } else {
-              const dispatch = (input: Record<string, unknown>) =>
-                dispatchViewerInput(tab, session, viewer, input);
+              const dispatch = async (input: Record<string, unknown>) => {
+                await dispatchViewerInput(tab, session, viewer, input);
+              };
               if (
                 message.type === "mouse" &&
                 message.action === "move" &&
@@ -2924,7 +2992,10 @@ const make = Effect.gen(function* () {
                   }),
                 );
               } else {
-                await tab.control.human(viewer.id, () => dispatch(message));
+                const copyRead = await tab.control.human(viewer.id, () =>
+                  dispatchViewerInput(tab, session, viewer, message),
+                );
+                await copyRead?.();
               }
             }
           } catch {

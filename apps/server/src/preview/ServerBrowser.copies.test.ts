@@ -46,8 +46,14 @@ describe("server browser page copies", () => {
     await context.close();
   });
 
-  const takeCopy = async (click: boolean) =>
-    (await ServerBrowser.takeSessionCopies(cdp, click)).find((copy) => copy && copy.text.length > 0)
+  const takeCopies = (
+    session: CDPSession,
+    click: boolean,
+    since = 0,
+    until = Number.MAX_SAFE_INTEGER,
+  ) => ServerBrowser.takeSessionCopies(session, click, since, until);
+  const takeCopy = async (click: boolean, since?: number, until?: number) =>
+    (await takeCopies(cdp, click, since, until)).find((copy) => copy && copy.text.length > 0)
       ?.text ?? "";
   const inPage = async (expression: string) =>
     (await cdp.send("Runtime.evaluate", { expression, returnByValue: true })).result.value;
@@ -77,6 +83,53 @@ describe("server browser page copies", () => {
     });
     expect(await takeCopy(true)).toBe("");
     expect(await takeCopy(false)).toBe("selected");
+  });
+
+  it("takes each copy only inside its own press's window", async () => {
+    const { frameTree } = await cdp.send("Page.getFrameTree");
+    const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
+      frameId: frameTree.frame.id,
+      worldName: "t3-preview-clipboard",
+    });
+    const recordAt = (now: number) =>
+      cdp.send("Runtime.evaluate", {
+        contextId: executionContextId,
+        expression: `Date.now = () => ${now}`,
+      });
+
+    await recordAt(100);
+    await page.locator("#exec").click();
+    // A click's read leaves a copy from its own start onwards to the next read.
+    expect(await takeCopy(true, 100, 100)).toBe("");
+    expect(await takeCopy(true, 100, 101)).toBe("executed");
+    await page.locator("#exec").click();
+    expect(await takeCopy(true, 101, 200)).toBe("");
+    expect(await takeCopy(true)).toBe("");
+
+    for (const [now, text] of [
+      [100, "first"],
+      [200, "second"],
+    ] as const) {
+      await recordAt(now);
+      await inPage(`document.getElementById("text").textContent = "${text}"`);
+      await page.locator("#text").selectText();
+      await cdp.send("Input.dispatchKeyEvent", {
+        type: "rawKeyDown",
+        key: "c",
+        code: "KeyC",
+        modifiers: 4,
+        commands: ["copy"],
+      });
+      await cdp.send("Input.dispatchKeyEvent", {
+        type: "keyUp",
+        key: "c",
+        code: "KeyC",
+        modifiers: 4,
+      });
+    }
+    expect(await takeCopy(false, 150, 150)).toBe("");
+    expect(await takeCopy(false, 200, 200)).toBe("second");
+    expect(await takeCopy(false)).toBe("");
   });
 
   it.each([
@@ -309,12 +362,12 @@ describe("server browser page copies", () => {
     const session = await context.newCDPSession(child).catch(() => cdp);
     await ServerBrowser.recordCopies(session);
     await frame.locator("#exec").click();
-    const copies = await ServerBrowser.takeSessionCopies(session, true);
+    const copies = await takeCopies(session, true);
     expect(copies.find((copy) => copy && copy.text.length > 0)).toEqual({ text: "executed", host });
     if (kind !== "opaque") {
       await frame.locator("#cached").click();
       await frame.locator("body[data-cached=yes]").waitFor();
-      const cached = await ServerBrowser.takeSessionCopies(session, true);
+      const cached = await takeCopies(session, true);
       expect(cached.find((copy) => copy && copy.text.length > 0)).toEqual({ text: "cached", host });
     }
     expect(await takeCopy(false)).toBe("");
@@ -335,7 +388,7 @@ describe("server browser page copies", () => {
     await ServerBrowser.recordCopies(session);
     await popup.locator("#cached").click();
     await popup.locator("body[data-cached=yes]").waitFor();
-    const copies = await ServerBrowser.takeSessionCopies(session, true);
+    const copies = await takeCopies(session, true);
     expect(copies.find((copy) => copy && copy.text.length > 0)).toEqual({
       text: "cached",
       host: "other.example",
