@@ -63,6 +63,12 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
         packageName: GROK_NPM_PACKAGE,
       });
     }
+    const mise = yield* resolveMiseProviderMaintenance(
+      { provider: DRIVER_KIND, packageName: GROK_NPM_PACKAGE },
+      { tool: "grok" },
+      context,
+    );
+    if (mise) return mise;
     if ([context.resolvedCommandPath, context.realCommandPath].some(isNixStoreCommandPath)) {
       return makeManualOnlyProviderMaintenanceCapabilities({
         provider: DRIVER_KIND,
@@ -70,12 +76,6 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
         installPath: context.realCommandPath,
       });
     }
-    const mise = yield* resolveMiseProviderMaintenance(
-      { provider: DRIVER_KIND, packageName: GROK_NPM_PACKAGE },
-      { tool: "grok" },
-      context,
-    );
-    if (mise) return mise;
     const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
     // Only a cask is Grok's: a formula keg such as `node` holding an npm global is not.
     if (homebrew?.kind === "cask") {
