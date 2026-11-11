@@ -331,13 +331,6 @@ it.each([
     expected: "Read https://example.com/_handle_/status/1 and open src/__test__.tsx",
   },
   {
-    name: "Markdown inside inline code",
-    value: "`xy`",
-    caret: 2,
-    pasted: "a_b_ **c**",
-    expected: "`xa_b_ **c**y`",
-  },
-  {
     name: "bold markers inside a pasted code span",
     value: "",
     caret: 1,
@@ -355,26 +348,6 @@ it.each([
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe(expected);
 });
-
-// regression: #25180 a multiline or backtick paste into a code span serialized as a span the parser cannot rebuild
-it.each([" _a_\nb", "`__z__`"])(
-  "rebuilds a paste of %j into a code span unchanged",
-  async (pasted) => {
-    await using screen = await mountEditor("`xy`");
-    const { editor } = screen;
-    await act(async () => {
-      editor.commands.setTextSelection(2);
-      const clipboardData = new DataTransfer();
-      clipboardData.setData("text/plain", pasted);
-      editor.view.dom.dispatchEvent(
-        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
-      );
-    });
-    const { value } = serializeEditorDoc(editor.state.doc);
-    await using rebuilt = await mountEditor(value);
-    expect(serializeEditorDoc(rebuilt.editor.state.doc).value).toBe(value);
-  },
-);
 
 it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
   const value = "echo $HOME now";

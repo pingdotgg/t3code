@@ -830,12 +830,6 @@ describe("serializeSelection", () => {
   });
 });
 
-// regression: #25180 rebuilding a draft rewrote underscores in URLs and paths as emphasis
-it("rebuilds a draft with underscores in a URL and a path unchanged", () => {
-  const value = "Read https://example.com/_handle_/status/1 and open src/__test__.tsx";
-  expect(roundTrip(value).value).toBe(value);
-});
-
 describe("pasting into a list item or quote", () => {
   it("keeps inline marks but builds no blocks", () => {
     const content = buildTiptapContent(

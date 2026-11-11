@@ -19,8 +19,8 @@ interface SourcePiece {
   marks: RichTextMark[];
 }
 
-/** Words containing a slash or ending in a file extension are URLs, paths, or filenames. */
-const LITERAL_UNDERSCORE_WORD = /\/|\.[a-z][a-z0-9]*\W*$/i;
+/** Words with a slash or a file extension (optionally `:line:col`) are URLs, paths, or filenames. */
+const LITERAL_UNDERSCORE_WORD = /\/|\.[a-z][a-z0-9]*(?::\d+){0,2}\W*$/i;
 
 function sameMarks(left: readonly RichTextMark[], right: readonly RichTextMark[]): boolean {
   return left.length === right.length && left.every((mark, index) => mark === right[index]);
@@ -82,7 +82,15 @@ function parseInlineMarkdownPieces(text: string): SourcePiece[] {
     if (char === "_") {
       let word = literalWords[literalWord];
       while (word && word.index + word[0].length <= index) word = literalWords[++literalWord];
-      if (word && word.index <= index) {
+      const top = stack.at(-1);
+      // A run ending the word may still close emphasis opened before it, as in `_see src/a.ts_`.
+      const closesOpenSpan =
+        canClose &&
+        top !== undefined &&
+        text.startsWith(top.delimiter, index) &&
+        word !== undefined &&
+        /^\W*$/.test(text.slice(end, word.index + word[0].length));
+      if (word && word.index <= index && !closesOpenSpan) {
         push(index, end);
         index = end;
         continue;
