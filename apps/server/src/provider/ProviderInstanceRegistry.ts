@@ -299,7 +299,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         ...createResult.success,
         orchestrationAdapter: yield* withSensitiveEnvironment(
           createResult.success.orchestrationAdapter,
-          entry.environment ?? [],
+          secrets.environment,
         ),
       },
       scope: childScope,

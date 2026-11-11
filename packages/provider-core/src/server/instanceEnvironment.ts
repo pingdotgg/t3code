@@ -1,4 +1,7 @@
-import type { ProviderInstanceEnvironment } from "@t3tools/contracts";
+import type {
+  ProviderInstanceEnvironment,
+  ResolvedProviderInstanceEnvironment,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -231,7 +234,10 @@ export function makeInjectedSecrets(): (typeof InjectedSecrets)["Service"] {
 
 /** Sessions keep redacting the values they launched with, even after the instance is reconfigured. */
 export const withSensitiveEnvironment = Effect.fn("instanceEnvironment.withSensitiveEnvironment")(
-  function* (adapter: ProviderAdapterV2["Service"], environment: ProviderInstanceEnvironment) {
+  function* (
+    adapter: ProviderAdapterV2["Service"],
+    environment: ResolvedProviderInstanceEnvironment,
+  ) {
     // Like the merge, the last entry for a name wins.
     const effective = [
       ...new Map(environment.map((variable) => [variable.name, variable])).values(),

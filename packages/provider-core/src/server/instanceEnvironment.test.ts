@@ -139,9 +139,7 @@ describe("makeInjectedSecrets", () => {
     expect(second).toEqual({ emit: "[redacted KEY]\nnext ", pending: "s3" });
     expect(secrets.redactChunk(second.pending, "x")).toEqual({ emit: "s3x", pending: "" });
   });
-});
 
-describe("makeInjectedSecrets matching", () => {
   it("prefers the longest value whether or not it is split across chunks", () => {
     const secrets = makeInjectedSecrets();
     secrets.put("instance", [
