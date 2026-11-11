@@ -1217,7 +1217,12 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
         assertOptions(opened[0]!);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),
