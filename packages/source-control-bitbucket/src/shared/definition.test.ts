@@ -7,6 +7,11 @@ const parse = (url: string) => definition.parseChangeRequestUrl(new URL(url));
 
 describe("Bitbucket change request URLs", () => {
   it("reads a pull request on Bitbucket hosts", () => {
+    expect(
+      definition.isChangeRequestReference(
+        "https://bitbucket.org/workspace/repo/pull-requests/5/diff",
+      ),
+    ).toBe(true);
     expect(parse("https://bitbucket.org/workspace/repo/pull-requests/5/diff")).toEqual({
       host: "bitbucket.org",
       repository: "workspace/repo",
@@ -21,6 +26,14 @@ describe("Bitbucket change request URLs", () => {
 
   it("leaves other hosts alone", () => {
     expect(parse("https://scm.example.test/workspace/repo/pull-requests/5")).toBeNull();
+    expect(
+      definition.isChangeRequestReference(
+        "https://scm.example.test/workspace/repo/pull-requests/5",
+      ),
+    ).toBe(false);
+    expect(
+      definition.isChangeRequestReference("https://bitbucket.org/workspace/repo/src/main"),
+    ).toBe(false);
   });
 
   it("builds pull request URLs below the repository", () => {
