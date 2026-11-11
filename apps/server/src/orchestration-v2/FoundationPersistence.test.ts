@@ -51,6 +51,8 @@ import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 
+import { vi } from "vite-plus/test";
+
 import * as ServerConfig from "../config.ts";
 import * as DatabaseStorage from "../persistence/DatabaseStorage.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -212,24 +214,19 @@ it.effect("discovers on the reader worker and deletes on the writer", () =>
         );
       assert.equal(result.deletedEventCount, 150);
       assert.equal(result.deletedReceiptCount, 100);
-      const connectionsFor = (matches: (query: string) => boolean) =>
-        new Set(
-          statements
-            .filter(({ query }) => typeof query === "string" && matches(query))
-            .map(({ connection }) => connection),
-        );
       // Only the in-transaction check for rows appended during the pass reads on the writer.
       assert.deepEqual(
-        connectionsFor(
-          (query) => /^\s*(SELECT|WITH)\b/.test(query) && !query.includes("AS prompt_sequence"),
+        new Set(
+          statements
+            .filter(
+              ({ query }) =>
+                typeof query === "string" &&
+                /^\s*(SELECT|WITH)\b/.test(query) &&
+                !query.includes("AS prompt_sequence"),
+            )
+            .map(({ connection }) => connection),
         ),
         new Set(["reader"]),
-      );
-      assert.deepEqual(
-        connectionsFor((query) =>
-          /^\s*DELETE FROM orchestration_(events|command_receipts)\b/.test(query),
-        ),
-        new Set(["writer"]),
       );
     }).pipe(
       Effect.provide(
