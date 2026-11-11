@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 
 import {
+  formatHostedThreadLink,
   formatThreadLink,
   guessThreadLinkRef,
+  hostedThreadLink,
   parseThreadLinkHref,
   relabelThreadLinks,
   threadLinkCandidates,
@@ -102,6 +104,31 @@ describe("thread links", () => {
     ).toBe("[There](t3-thread://v2/there/t1) and [Here](t3-thread://v2/local/t1)");
   });
 
+  it("reads an angle-bracketed destination as the labeled link, not an autolink", () => {
+    const title = titlesIn({ local: { t1: "Here" }, there: { t1: "There" } });
+    expect(
+      relabelThreadLinks(
+        "[old](<t3-thread://v2/there/t1>) and [older](<t3-thread://v2/local/t1>)",
+        local,
+        title,
+      ),
+    ).toBe("[There](t3-thread://v2/there/t1) and [Here](t3-thread://v2/local/t1)");
+    expect(
+      relabelThreadLinks("[Kept label](<t3-thread://v2/local/t1>)", local, () => undefined),
+    ).toBe("Kept label");
+    expect(threadLinkRefs("[a](<t3-thread://v2/there/t2>)", local)).toEqual([ref("there", "t2")]);
+    for (const threadId of ["mcp:launch:qa(1)", "mcp:launch:qa)"]) {
+      const thread = ref("there", threadId);
+      const link = formatThreadLink(thread, "Original");
+      expect(link).toBe(`[Original](<t3-thread://v2/there/${threadId}>)`);
+      expect(threadLinkRefs(link, local)).toEqual([thread]);
+      expect(relabelThreadLinks(link, local, () => "Renamed")).toBe(
+        `[Renamed](<t3-thread://v2/there/${threadId}>)`,
+      );
+      expect(relabelThreadLinks(link, local, () => undefined)).toBe("Original");
+    }
+  });
+
   it("turns a v2 link it cannot resolve into plain text, never the raw link", () => {
     expect(
       relabelThreadLinks(
@@ -172,5 +199,66 @@ describe("thread links", () => {
       "[Fix ci build](t3-thread://v2/e/t1)",
     );
     expect(formatThreadLink(ref("e", "t1"), " ] ")).toBe("<t3-thread://v2/e/t1>");
+  });
+});
+
+describe("hosted thread links", () => {
+  it("escapes every id character a sentence or path could claim, and reads it back", () => {
+    const thread = ref("env.1", "thread:delegated/mcp%3A1.");
+    const link = hostedThreadLink(thread);
+    expect(link).toBe("https://app.t3.codes/threads/env%2E1/thread%3Adelegated%2Fmcp%253A1%2E");
+    expect(parseThreadLinkHref(link)).toEqual(thread);
+    expect(hostedThreadLink(thread, "https://preview.t3.codes/")).toMatch(
+      /^https:\/\/preview\.t3\.codes\/threads\//,
+    );
+  });
+
+  it("reads only a bare thread path on the hosted app", () => {
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1")).toEqual(
+      ref("env-1", "thread-1"),
+    );
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1?prompt=go")).toBeNull();
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1/extra")).toBeNull();
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1")).toBeNull();
+    expect(parseThreadLinkHref("https://app.t3.codes/env-1/thread-1")).toBeNull();
+    expect(parseThreadLinkHref("https://evil.test/threads/env-1/thread-1")).toBeNull();
+  });
+
+  it("writes a copied link a reader can follow, labeled when it has a title", () => {
+    expect(formatHostedThreadLink(ref("e", "t1"), "Fix [ci]")).toBe(
+      "[Fix ci](https://app.t3.codes/threads/e/t1)",
+    );
+    expect(formatHostedThreadLink(ref("e", "t1"), " ")).toBe("https://app.t3.codes/threads/e/t1");
+  });
+
+  it("titles hosted links in every Markdown form and writes them as v2 links", () => {
+    const title = titlesIn({ there: { t1: "There" } });
+    expect(
+      relabelThreadLinks(
+        [
+          "See https://app.t3.codes/threads/there/t1.",
+          "[old](https://app.t3.codes/threads/there/t1)",
+          "<https://app.t3.codes/threads/there/t1>",
+          "`https://app.t3.codes/threads/there/t1`",
+          "https://app.t3.codes/threads/there/t1?prompt=go",
+        ].join("\n"),
+        local,
+        title,
+      ),
+    ).toBe(
+      [
+        "See [There](t3-thread://v2/there/t1).",
+        "[There](t3-thread://v2/there/t1)",
+        "[There](t3-thread://v2/there/t1)",
+        "`https://app.t3.codes/threads/there/t1`",
+        "https://app.t3.codes/threads/there/t1?prompt=go",
+      ].join("\n"),
+    );
+    expect(
+      relabelThreadLinks("https://app.t3.codes/threads/there/t1", local, () => undefined),
+    ).toBe("Thread on another machine");
+    expect(threadLinkRefs("Open https://app.t3.codes/threads/there/t%3A1", local)).toEqual([
+      ref("there", "t:1"),
+    ]);
   });
 });

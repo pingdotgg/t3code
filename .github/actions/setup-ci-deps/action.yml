@@ -13,6 +13,10 @@ inputs:
     description: Arguments for `vp install`, such as filters. Empty installs the whole workspace.
     required: false
     default: ""
+  save-pnpm-store:
+    description: Set to "false" when a concurrent job with the same install args saves the pnpm store
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -123,10 +127,14 @@ runs:
         key: ${{ steps.pnpm_verified.outputs.cache-primary-key }}
 
     # A filtered install that started from the current full store adds nothing
-    # worth a second copy of it.
+    # worth a second copy of it. A stacked PR, based on a branch other than the
+    # default, saves a ~1 GB store only its own reruns can read, so it only restores.
+    # Concurrent jobs with the same install args reserve one key, so the losers
+    # compress the store for nothing; all but one pass save-pnpm-store: false.
     - name: Save pnpm store
       if: >-
-        inputs.install == 'true' &&
+        inputs.install == 'true' && inputs.save-pnpm-store == 'true' &&
+        (github.event_name != 'pull_request' || github.base_ref == github.event.repository.default_branch) &&
         steps.pnpm_cache.outputs.cache-hit != 'true' &&
         (steps.pnpm_store.outputs.namespace == 'full' ||
           steps.pnpm_cache.outputs.cache-matched-key != format('pnpm-full-v1-{0}-{1}-{2}', runner.os, runner.arch, hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json')))

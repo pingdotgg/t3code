@@ -56,15 +56,27 @@ describe("semver helpers", () => {
   it("supports comparison comparators", () => {
     expect(satisfiesSemverRange("24.9.0", ">=24.0 <24.10")).toBe(true);
     expect(satisfiesSemverRange("24.10.0", ">=24.0 <24.10")).toBe(false);
+    for (const gap of [" ", "\t", "\n"]) {
+      const range = `>=${gap}24.0 <${gap}24.10`;
+      expect(satisfiesSemverRange("24.9.0", range)).toBe(true);
+      expect(satisfiesSemverRange("24.10.0", range)).toBe(false);
+      expect(satisfiesSemverRange("22.16.0", `^${gap}22.16 || >=${gap}24.10`)).toBe(true);
+    }
   });
 
   it("honors caret range upper bounds for zero-major versions", () => {
+    expect(satisfiesSemverRange("0.5.0", "^0")).toBe(true);
+    expect(satisfiesSemverRange("0.0.4", "^0.0")).toBe(true);
+    expect(satisfiesSemverRange("1.0.0", "^0")).toBe(false);
+    expect(satisfiesSemverRange("0.1.0", "^0.0")).toBe(false);
     expect(satisfiesSemverRange("0.2.3", "^0.2.3")).toBe(true);
     expect(satisfiesSemverRange("0.2.9", "^0.2.3")).toBe(true);
     expect(satisfiesSemverRange("0.3.0", "^0.2.3")).toBe(false);
     expect(satisfiesSemverRange("0.5.0", "^0.2.3")).toBe(false);
     expect(satisfiesSemverRange("0.0.3", "^0.0.3")).toBe(true);
     expect(satisfiesSemverRange("0.0.4", "^0.0.3")).toBe(false);
+    expect(satisfiesSemverRange("0.0.0", "^0.0.0")).toBe(true);
+    expect(satisfiesSemverRange("0.0.1", "^0.0.0")).toBe(false);
   });
 
   it("keeps the range checker stringifiable and executable as plain JavaScript", () => {
@@ -74,6 +86,8 @@ describe("semver helpers", () => {
     expect(source).toContain("function satisfiesSemverRange");
     expect(source).not.toContain(": string");
     expect(source).not.toContain(": boolean");
+    expect(recreated("0.5.0", "^0")).toBe(true);
+    expect(recreated("0.0.4", "^0.0")).toBe(true);
     expect(recreated("24.10.0", ">=24.10")).toBe(true);
     expect(recreated("24.9.9", ">=24.10")).toBe(false);
   });

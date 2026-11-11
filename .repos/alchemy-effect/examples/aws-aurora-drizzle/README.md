@@ -43,7 +43,7 @@ The bootstrap creates the initial schema and restricted login. Later schema chan
 ## Live test
 
 ```sh
-AWS_TEST_SLOW=1 ALCHEMY_PROFILE=testing bun test test/integ.test.ts
+ALCHEMY_PROFILE=testing bun test test/integ.test.ts
 ```
 
 Creates real AWS resources and destroys them afterward. Setup and cleanup can each take several minutes.
