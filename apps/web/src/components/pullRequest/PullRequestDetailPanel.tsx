@@ -667,10 +667,13 @@ export function PullRequestDetailPanel({
   );
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const [isInvalidating, setIsInvalidating] = useState(false);
+  const [refreshRequested, setRefreshRequested] = useState(false);
+  if (refreshRequested && !isInvalidating && !detailQuery.isPending) setRefreshRequested(false);
   // Background reads repaint in place; only a refresh the user asked for shows motion.
-  const refreshing = isInvalidating;
+  const refreshing = isInvalidating || (refreshRequested && detailQuery.isPending);
   /** Resolves whether the host cache was invalidated before the refetch. */
   const refetchFromHost = async () => {
+    setRefreshRequested(true);
     setIsInvalidating(true);
     // Atom commands settle without throwing, so reset always runs.
     const invalidated = await invalidate({ environmentId, input: { reference } });
