@@ -155,6 +155,10 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(
       resolveUsageLimitsAfterProbe({ published: revoked, probed: granted })?.continuesOnCredits,
     ).toBe(false);
+    const revokedDuringRecovery = { ...revoked, unavailable: { reason: "probeFailed" as const } };
+    expect(
+      resolveUsageLimitsAfterProbe({ published: revokedDuringRecovery, probed: granted }),
+    ).toEqual({ ...granted, continuesOnCredits: false });
     const newer = { ...granted, checkedAt: "2026-09-03T12:00:06.000Z" };
     expect(resolveUsageLimitsAfterProbe({ published: revoked, probed: newer })).toBe(newer);
   });
