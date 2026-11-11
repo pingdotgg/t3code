@@ -5276,225 +5276,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
 
-  it.effect("shows a prompt another client sent into the session in its continuation turn", () =>
-    Effect.gen(function* () {
-      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-      const offered = yield* Deferred.make<void>();
-      const { runtime, thread } = yield* resumed([
-        event("session.inbox.enqueued", {
-          inboxID: "msg_external",
-          sessionID: SESSION,
-          item: { type: "user", payload: { text: "qwe!", files: [] }, delivery: "steer" },
-        }),
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_external" }),
-        event("session.text.ended", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_external_reply",
-          ordinal: 0,
-          text: "Hello!",
-        }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-      ]).pipe(
-        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
-          offer: (request) =>
-            Effect.sync(() => void offers.push(request)).pipe(
-              Effect.andThen(Deferred.succeed(offered, undefined)),
-              Effect.asVoid,
-            ),
-          take: Effect.never,
-        }),
-      );
-      const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-      const ended = yield* Deferred.make<void>();
-      yield* runtime.events.pipe(
-        Stream.tap((event) =>
-          Effect.gen(function* () {
-            collected.push(event);
-            if (event.type === "turn.terminal") yield* Deferred.succeed(ended, undefined);
-          }),
-        ),
-        Stream.runDrain,
-        Effect.forkScoped,
-      );
-      yield* Deferred.await(offered);
-      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
-      yield* Deferred.await(ended);
-      const continuationId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
-        driver: OPENCODE_PROVIDER,
-        nativeTurnId: `${SESSION}:attempt:attempt:opencode2-adapter:wake`,
-      });
-      const shown = (entries: ReadonlyArray<string>) =>
-        entries.filter((entry, index) => entries.indexOf(entry) === index);
-      assert.deepEqual(
-        shown(
-          collected.flatMap((event) =>
-            event.type === "message.updated"
-              ? [`${event.message.role}: ${event.message.text}`]
-              : [],
-          ),
-        ),
-        ["user: qwe!", "assistant: Hello!"],
-      );
-      assert.deepEqual(
-        shown(
-          collected.flatMap((event) =>
-            event.type === "turn_item.updated" &&
-            event.turnItem.providerTurnId === continuationId &&
-            (event.turnItem.type === "user_message" || event.turnItem.type === "assistant_message")
-              ? [`${event.turnItem.type}: ${event.turnItem.text}`]
-              : [],
-          ),
-        ),
-        ["user_message: qwe!", "assistant_message: Hello!"],
-      );
-    }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
-  );
-
-  it.effect("does not show T3's own prompt that OpenCode admitted after its turn ended", () =>
-    Effect.gen(function* () {
-      const late = `msg_t3_turn_${SESSION}:attempt:late`;
-      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-      const offered = yield* Deferred.make<void>();
-      const { runtime, thread } = yield* resumed([
-        event("session.inbox.enqueued", {
-          inboxID: late,
-          sessionID: SESSION,
-          item: { type: "user", payload: { text: "mine", files: [] }, delivery: "steer" },
-        }),
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.inbox.delivered", { sessionID: SESSION, inboxID: late }),
-        event("session.text.ended", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_late_reply",
-          ordinal: 0,
-          text: "Hello!",
-        }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-      ]).pipe(
-        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
-          offer: (request) =>
-            Effect.sync(() => void offers.push(request)).pipe(
-              Effect.andThen(Deferred.succeed(offered, undefined)),
-              Effect.asVoid,
-            ),
-          take: Effect.never,
-        }),
-      );
-      const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-      const ended = yield* Deferred.make<void>();
-      yield* runtime.events.pipe(
-        Stream.tap((event) =>
-          Effect.gen(function* () {
-            collected.push(event);
-            if (event.type === "turn.terminal") yield* Deferred.succeed(ended, undefined);
-          }),
-        ),
-        Stream.runDrain,
-        Effect.forkScoped,
-      );
-      yield* Deferred.await(offered);
-      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
-      yield* Deferred.await(ended);
-      assert.deepEqual(
-        collected.flatMap((event) =>
-          event.type === "message.updated" && event.message.role === "user"
-            ? [event.message.text]
-            : [],
-        ),
-        [],
-      );
-    }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
-  );
-
-  it.effect("reverts OpenCode at another client's prompt when rewinding its continuation", () =>
-    Effect.gen(function* () {
-      const kept = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`;
-      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-      const offered = yield* Deferred.make<void>();
-      const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        event("session.inbox.enqueued", {
-          inboxID: "msg_external",
-          sessionID: SESSION,
-          item: { type: "user", payload: { text: "qwe!", files: [] }, delivery: "steer" },
-        }),
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_external" }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        out("message.list", "<any>"),
-        reply("message.list", {
-          data: [
-            { id: "msg_external", time: { created: 2 }, text: "qwe!", type: "user" },
-            { id: kept, time: { created: 1 }, text: "hi", type: "user" },
-          ],
-          cursor: {},
-        }),
-        out("session.revert.stage", {
-          sessionID: SESSION,
-          messageID: "msg_external",
-          files: false,
-        }),
-        replyData("session.revert.stage", { messageID: "msg_external", files: [] }),
-        out("session.revert.commit", { sessionID: SESSION }),
-        reply("session.revert.commit", null),
-        out("message.list", "<any>"),
-        reply("message.list", {
-          data: [{ id: kept, time: { created: 1 }, text: "hi", type: "user" }],
-          cursor: {},
-        }),
-      ]).pipe(
-        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
-          offer: (request) =>
-            Effect.sync(() => void offers.push(request)).pipe(
-              Effect.andThen(Deferred.succeed(offered, undefined)),
-              Effect.asVoid,
-            ),
-          take: Effect.never,
-        }),
-      );
-      const turns: Array<OrchestrationV2ProviderTurn> = [];
-      const firstEnded = yield* Deferred.make<void>();
-      const bothEnded = yield* Deferred.make<void>();
-      yield* runtime.events.pipe(
-        Stream.tap((event) =>
-          Effect.gen(function* () {
-            if (event.type === "provider_turn.updated" && event.providerTurn.status !== "running") {
-              turns.push(event.providerTurn);
-              if (turns.length === 1) yield* Deferred.succeed(firstEnded, undefined);
-              if (turns.length === 2) yield* Deferred.succeed(bothEnded, undefined);
-            }
-          }),
-        ),
-        Stream.runDrain,
-        Effect.forkScoped,
-      );
-      yield* runtime.startTurn(turnInput(thread));
-      yield* Deferred.await(firstEnded);
-      yield* Deferred.await(offered);
-      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
-      yield* Deferred.await(bothEnded);
-      const [first, continuation] = turns;
-      const snapshot = yield* runtime.rollbackThread({
-        providerThread: thread,
-        target: {
-          type: "provider_turn",
-          checkpointId: CheckpointId.make("checkpoint:first"),
-          appRunOrdinal: 1,
-          providerTurn: first!,
-        },
-        providerThreadTurns: [first!, continuation!],
-      });
-      assert.deepEqual(
-        snapshot.providerTurns.map((turn) => turn.id),
-        [first!.id],
-      );
-    }).pipe(Effect.scoped),
-  );
-
   it.effect(
     "reverts a report's continuation at its report after a Stop dropped another client's prompt",
     () =>
@@ -5761,9 +5542,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           sessionID: SESSION,
           item: { type: "user", payload: { text, files: [] }, delivery: "steer" },
         });
+      // T3's own prompt can be admitted after a failed submit ended its turn.
+      const late = `msg_t3_turn_${SESSION}:attempt:late`;
       const { runtime, thread } = yield* resumed([
+        prompt(late, "mine"),
         prompt("msg_external_a", "first?"),
         event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: late }),
         event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_external_a" }),
         prompt("msg_external_b", "second?"),
         event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_external_b" }),
@@ -5815,6 +5600,18 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             : [],
         ),
         ["user_message: first?", "user_message: second?", "assistant_message: Both!"],
+      );
+      assert.deepEqual(
+        [
+          ...new Set(
+            collected.flatMap((event) =>
+              event.type === "message.updated"
+                ? [`${event.message.role}: ${event.message.text}`]
+                : [],
+            ),
+          ),
+        ],
+        ["user: first?", "user: second?", "assistant: Both!"],
       );
     }).pipe(Effect.scoped),
   );

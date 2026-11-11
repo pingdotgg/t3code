@@ -1085,10 +1085,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       inboxId: string,
       text: string,
     ) {
-      // Like a wake's first report, the first prompt is where its history begins for fork and rollback.
-      if (isWakeTurn(turn.providerTurn)) {
-        turn.providerTurn = { ...turn.providerTurn, nativeTurnRef: ref(inboxId, "weak") };
-      }
       const now = yield* DateTime.now;
       const base = {
         ...itemBase(state, turn, inboxId, "completed", now, now, now),
