@@ -19,6 +19,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import type {
   BackgroundScope,
+  VcsBranchStatus,
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
   VcsStatusStreamEvent,
@@ -106,6 +107,7 @@ function layerTestFor(state: {
               Effect.as(state.currentLocalStatus),
             );
           }),
+        repositoryRoot: () => Effect.sync(() => (state.currentLocalStatus.isRepo ? "/repo" : null)),
         currentBranch: () =>
           state.branchRead
             ? state.branchRead()
@@ -233,14 +235,17 @@ describe("VcsStatusBroadcaster", () => {
       return Effect.gen(function* () {
         const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
         const branches = yield* Stream.toPull(broadcaster.streamBranchStatus({ cwd: "/repo" }));
-        assert.deepEqual(yield* branches, [{ refName: baseLocalStatus.refName }]);
+        assert.deepEqual(yield* branches, [{ refName: baseLocalStatus.refName, isRepo: true }]);
         assert.equal(state.localStatusCalls, 0);
         state.currentLocalStatus = { ...baseLocalStatus, refName: "external" };
         yield* broadcaster.refreshBranchStatus({ cwd: "/repo" });
-        assert.deepEqual(yield* branches, [{ refName: "external" }]);
+        assert.deepEqual(yield* branches, [{ refName: "external", isRepo: true }]);
         state.currentLocalStatus = { ...baseLocalStatus, refName: null };
         yield* broadcaster.refreshBranchStatus({ cwd: "/repo" });
-        assert.deepEqual(yield* branches, [{ refName: null }]);
+        assert.deepEqual(yield* branches, [{ refName: null, isRepo: true }]);
+        state.currentLocalStatus = { ...baseLocalStatus, isRepo: false, refName: null };
+        yield* broadcaster.refreshBranchStatus({ cwd: "/repo" });
+        assert.deepEqual(yield* branches, [{ refName: null, isRepo: false }]);
         assert.equal(state.localStatusCalls, 0);
         const detailScope = yield* Scope.make();
         const details = yield* Stream.toPull(
@@ -265,7 +270,7 @@ describe("VcsStatusBroadcaster", () => {
         assert.deepEqual(yield* details, [
           { _tag: "localUpdated", local: state.currentLocalStatus },
         ]);
-        assert.deepEqual(yield* branches, [{ refName: "changed" }]);
+        assert.deepEqual(yield* branches, [{ refName: "changed", isRepo: true }]);
         const secondScope = yield* Scope.make();
         const secondDetails = yield* Stream.toPull(
           broadcaster.streamStatus({ cwd: "/alias", includeRemote: false }),
@@ -303,7 +308,7 @@ describe("VcsStatusBroadcaster", () => {
         assert.deepEqual(yield* reopened, [
           { _tag: "localUpdated", local: state.currentLocalStatus },
         ]);
-        assert.deepEqual(yield* branches, [{ refName: null }]);
+        assert.deepEqual(yield* branches, [{ refName: null, isRepo: false }]);
         assert.equal(state.remoteStatusCalls, 0);
       }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
     },
@@ -1439,7 +1444,10 @@ it.effect("publishes overlapping branch reads in checkout order", () => {
     yield* Deferred.succeed(resume, undefined);
     yield* Fiber.join(older);
     yield* Fiber.join(newer);
-    assert.deepEqual(yield* branches, [{ refName: "old" }, { refName: "new" }]);
+    assert.deepEqual(yield* branches, [
+      { refName: "old", isRepo: true },
+      { refName: "new", isRepo: true },
+    ]);
   }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
 });
 
@@ -1449,7 +1457,7 @@ it.effect("does not replay older queued branches after a new subscriber snapshot
     const b = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
     const entered = yield* Deferred.make<void>();
     const resume = yield* Deferred.make<void>();
-    const values = yield* Queue.unbounded<{ readonly refName: string | null }>();
+    const values = yield* Queue.unbounded<VcsBranchStatus>();
     let reads = 0;
     state.branchRead = () =>
       ++reads === 1
@@ -1468,10 +1476,10 @@ it.effect("does not replay older queued branches after a new subscriber snapshot
     );
     yield* Deferred.succeed(resume, undefined);
     yield* Fiber.join(older);
-    assert.deepEqual(yield* Queue.take(values), { refName: "new" });
+    assert.deepEqual(yield* Queue.take(values), { refName: "new", isRepo: true });
     state.branchRead = () => Effect.succeed("latest");
     yield* b.refreshBranchStatus({ cwd: "/repo" });
-    assert.deepEqual(yield* Queue.take(values), { refName: "latest" });
+    assert.deepEqual(yield* Queue.take(values), { refName: "latest", isRepo: true });
     yield* Fiber.join(subscriber);
   }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
 });
