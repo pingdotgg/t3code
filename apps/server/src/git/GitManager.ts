@@ -2861,10 +2861,6 @@ export const make = Effect.gen(function* () {
     const baseKey = pullRequestRepositoryKey(pullRequest.url);
     if (baseKey === null) return;
     const provider = yield* sourceControlProvider(cwd);
-    const canonicalKey = (url: string) =>
-      sourceControlDefinitions.canonicalRepositoryKey(
-        sourceControlDefinitions.repositoryKeyFromRemote(url),
-      );
     const headRepository = resolveHeadRepositoryNameWithOwner(pullRequest);
     // The head is named without the installation mount (Forgejo under `/git`) its web URL
     // carries, so it lives under the base's serving root. The same path at the host's root can be
@@ -2887,6 +2883,16 @@ export const make = Effect.gen(function* () {
           ]
         : []),
     ]);
+    // A clone of only the user's own fork names neither repository; no host says whose fork a
+    // checkout is, so a same-named repository under the PR's serving root counts as one.
+    const repositoryName = (baseName ?? baseKey).split("/").pop()?.toLowerCase();
+    const isPullRequestRepository = (key: string) => {
+      if (repositoryKeys.has(sourceControlDefinitions.canonicalRepositoryKey(key))) return true;
+      const root = `${headRoot}/`.toLowerCase();
+      const lower = key.toLowerCase();
+      const path = lower.startsWith(root) ? lower.slice(root.length) : "";
+      return path.includes("/") && path.split("/").pop() === repositoryName;
+    };
     const listRemoteUrls = (args: ReadonlyArray<string>) =>
       gitCore
         .execute({
@@ -2929,7 +2935,7 @@ export const make = Effect.gen(function* () {
     const matches = (url: string) => {
       const port = httpPort(url);
       return (
-        repositoryKeys.has(canonicalKey(url)) &&
+        isPullRequestRepository(sourceControlDefinitions.repositoryKeyFromRemote(url)) &&
         (port === null || pullRequestPort === null || port === pullRequestPort)
       );
     };
@@ -2950,6 +2956,7 @@ export const make = Effect.gen(function* () {
                 .refineRepositoryIdentity({
                   identity: {
                     canonicalKey: sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl),
+                    provider: provider.kind,
                     locator: { source: "git-remote", remoteName, remoteUrl },
                     rootPath: cwd,
                   },
@@ -2973,11 +2980,7 @@ export const make = Effect.gen(function* () {
         const key = sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl);
         const path = key.indexOf("/");
         return (
-          webHost !== null &&
-          path !== -1 &&
-          repositoryKeys.has(
-            sourceControlDefinitions.canonicalRepositoryKey(`${webHost}${key.slice(path)}`),
-          )
+          webHost !== null && path !== -1 && isPullRequestRepository(`${webHost}${key.slice(path)}`)
         );
       },
     );
@@ -3034,10 +3037,12 @@ export const make = Effect.gen(function* () {
         reference: normalizedReference,
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
-      yield* ensurePullRequestBelongsToCheckout(input.cwd, {
-        ...pullRequest,
-        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-      });
+      // A bare number resolves in this checkout's own repository; other references can name another.
+      if (!/^\d+$/.test(normalizedReference))
+        yield* ensurePullRequestBelongsToCheckout(input.cwd, {
+          ...pullRequest,
+          ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+        });
 
       if (input.mode === "local") {
         yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
