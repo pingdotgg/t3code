@@ -91,7 +91,8 @@ function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInpu
     "style-src 'self' 'unsafe-inline'",
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",
-    "frame-src 'self' blob: http: https:",
+    // A frame link to a blocked scheme swaps the report for an error page; these hand off to the OS.
+    "frame-src 'self' blob: http: https: mailto: tel: sms:",
     "object-src 'self' blob: http: https:",
     "form-action 'self'",
   ].join("; ");
