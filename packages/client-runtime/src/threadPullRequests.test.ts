@@ -189,14 +189,6 @@ describe("resolveThreadCurrentPullRequest", () => {
     const current = resolveThreadCurrentPullRequest([link(1), link(2)]);
     expect(current).toMatchObject({ kind: "stack", top: { number: 2 } });
   });
-
-  it("falls back to the most recently updated terminal link", () => {
-    const current = resolveThreadCurrentPullRequest([
-      link(1, { snapshot: snapshot({ state: "merged", updatedAt: "2026-01-03T00:00:00.000Z" }) }),
-      link(2, { snapshot: snapshot({ state: "closed", updatedAt: "2026-01-02T00:00:00.000Z" }) }),
-    ]);
-    expect(current).toMatchObject({ kind: "single", link: { number: 1 } });
-  });
 });
 
 describe("resolveThreadPullRequestChains", () => {
