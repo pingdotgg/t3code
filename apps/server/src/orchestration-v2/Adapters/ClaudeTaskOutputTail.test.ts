@@ -129,7 +129,7 @@ describe("tailClaudeTaskOutput", () => {
     ),
   );
 
-  it.live("reads nothing when the session id leaves the Claude task directory", () =>
+  it.effect("reads nothing when the session id leaves the Claude task directory", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
