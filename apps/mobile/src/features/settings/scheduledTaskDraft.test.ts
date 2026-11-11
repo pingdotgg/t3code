@@ -60,7 +60,7 @@ describe("scheduleDraftForTask", () => {
     const saved = scheduleFromDraft(
       scheduleDraftForTask({ schedule: { type: "webhook", signature } }),
     );
-    expect(saved).toEqual({ type: "webhook", signature, maxDeliveryAgeMinutes: null, dedupe: {} });
+    expect(saved).toEqual({ type: "webhook", signature, dedupe: {} });
     expect(saved?.type === "webhook" && saved.signature && "secret" in saved.signature).toBe(false);
   });
 

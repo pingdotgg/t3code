@@ -1,13 +1,13 @@
 import {
+  clearConnectOnlyEnvironments,
   ConnectionCatalogDocument,
   type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
+  type ConnectOnlyEnvironment,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
-  ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
   StoredOrchestrationShellSnapshot,
   StoredOrchestrationThreadSnapshot,
   decodeOrDiscardOrchestrationCache,
-  putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
@@ -16,15 +16,18 @@ import {
   replaceCatalogValue,
   Persistence,
   makeStoredShellSnapshotEncoder,
+  makeStoredThreadSnapshotEncoder,
+  makeThreadCacheWriteOrder,
 } from "@t3tools/client-runtime/platform";
-import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
   ConnectionTransientError,
   ConnectionBlockedError,
   CredentialStore,
+  NetworkMembers,
   ProfileStore,
   PullRequestRoutingPermissions,
   StoredPullRequestRoutingPermission,
+  makeNetworkMembers,
   pullRequestRoutingConnectionKey,
   pullRequestRoutingPermissionFor,
 } from "@t3tools/client-runtime/connection";
@@ -41,6 +44,12 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
+
+/** Environments dropped from the catalog because T3 Connect was their only route; read once. */
+export class ConnectOnlyNotice extends Context.Service<
+  ConnectOnlyNotice,
+  { readonly take: Effect.Effect<ReadonlyArray<ConnectOnlyEnvironment>> }
+>()("@t3tools/web/connection/storage/ConnectOnlyNotice") {}
 
 const DATABASE_NAME = "t3code:connection-runtime";
 const DATABASE_VERSION = 5;
@@ -87,7 +96,6 @@ const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCat
 const encodeConnectionCatalogDocument = Schema.encodeEffect(ConnectionCatalogDocumentJson);
 const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(StoredShellSnapshotJson);
 const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(StoredThreadSnapshotJson);
-const encodeStoredThreadSnapshot = Schema.encodeEffect(StoredThreadSnapshotJson);
 const decodeStoredServerConfig = Schema.decodeUnknownEffect(StoredServerConfigJson);
 const encodeStoredServerConfig = Schema.encodeEffect(StoredServerConfigJson);
 const decodeStoredVcsRefs = Schema.decodeUnknownEffect(StoredVcsRefsJson);
@@ -719,10 +727,19 @@ export const layer = Layer.effectContext(
     );
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
     const pullRequestRoutingPermissions = makeBrowserPullRequestRoutingPermissions();
+    const networkMembers = yield* makeNetworkMembers({
+      read: catalog.read.pipe(Effect.map((document) => document.networkMembers ?? [])),
+      write: (networkMembers) => catalog.update((document) => ({ ...document, networkMembers })),
+    });
     // Remembers each thread row's encoding, so a save only encodes rows that changed.
     const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder({
       yieldToHost: yieldToBrowserTask,
     });
+    const encodeStoredThreadSnapshot = makeStoredThreadSnapshotEncoder({
+      format: "full",
+      yieldToHost: yieldToBrowserTask,
+    });
+    const threadWriteOrder = makeThreadCacheWriteOrder();
 
     const targetStore = Persistence.ConnectionTargetStore.of({
       list: catalog.read.pipe(
@@ -813,25 +830,20 @@ export const layer = Layer.effectContext(
           ),
         })),
     });
-    const remoteTokenStore = TokenStore.make({
-      get: (environmentId) =>
-        catalog.read.pipe(
-          Effect.map((document) =>
-            Option.fromUndefinedOr(
-              document.remoteDpopTokens.find((token) => token.environmentId === environmentId),
-            ),
+    const connectOnlyNotice = ConnectOnlyNotice.of({
+      take: catalog.read.pipe(
+        Effect.flatMap((document) => {
+          const environments = document.connectOnlyEnvironments ?? [];
+          return environments.length === 0
+            ? Effect.succeed(environments)
+            : catalog.update(clearConnectOnlyEnvironments).pipe(Effect.as(environments));
+        }),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not read the T3 Connect removal notice.", { cause }).pipe(
+            Effect.as([]),
           ),
         ),
-      put: (token) => catalog.update((document) => putRemoteDpopTokenInCatalog(document, token)),
-      remove: (environmentId) =>
-        catalog.update((document) => ({
-          ...document,
-          remoteDpopTokens: removeCatalogValue(
-            document.remoteDpopTokens,
-            (value) => value.environmentId,
-            environmentId,
-          ),
-        })),
+      ),
     });
     const cacheStore = Persistence.EnvironmentCacheStore.of({
       loadShell: Effect.fn("Persistence.EnvironmentCacheStore.loadShell")(function (environmentId) {
@@ -948,18 +960,19 @@ export const layer = Layer.effectContext(
       ),
       saveThread: Effect.fn("storage.saveThread")(
         function* (environmentId, snapshot) {
+          const key = threadCacheKey(environmentId, snapshot.projection.thread.id);
+          const isLatest = threadWriteOrder.beginSave(environmentId, snapshot.projection.thread.id);
           const encoded = yield* encodeStoredThreadSnapshot({
-            schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
             environmentId,
             threadId: snapshot.projection.thread.id,
             snapshot,
           }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
-          yield* writeDatabaseValue(
-            database,
-            THREAD_STORE_NAME,
-            threadCacheKey(environmentId, snapshot.projection.thread.id),
-            encoded,
-          );
+          if (!isLatest()) return;
+          // An older copy of a thread now too large to keep would paint stale on reopen.
+          yield* Option.match(encoded, {
+            onNone: () => removeDatabaseValue(database, THREAD_STORE_NAME, key),
+            onSome: (payload) => writeDatabaseValue(database, THREAD_STORE_NAME, key, payload),
+          });
         },
         Effect.mapError((cause) =>
           cause._tag === "ConnectionPersistenceError"
@@ -1036,6 +1049,7 @@ export const layer = Layer.effectContext(
       ),
       removeThread: Effect.fn("Persistence.EnvironmentCacheStore.removeThread")(
         function (environmentId, threadId) {
+          threadWriteOrder.removeThread(environmentId, threadId);
           return removeDatabaseValue(
             database,
             THREAD_STORE_NAME,
@@ -1044,6 +1058,7 @@ export const layer = Layer.effectContext(
         },
       ),
       clear: Effect.fn("Persistence.EnvironmentCacheStore.clear")(function (environmentId) {
+        threadWriteOrder.clearEnvironment(environmentId);
         return Effect.all(
           [
             Effect.promise(() => projectFaviconCache.clearEnvironment(environmentId)),
@@ -1100,10 +1115,11 @@ export const layer = Layer.effectContext(
 
     return Context.make(Persistence.ConnectionTargetStore, targetStore).pipe(
       Context.add(PullRequestRoutingPermissions, pullRequestRoutingPermissions),
+      Context.add(NetworkMembers, networkMembers),
       Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
-      Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
+      Context.add(ConnectOnlyNotice, connectOnlyNotice),
       Context.add(Persistence.EnvironmentCacheStore, cacheStore),
       Context.add(EnvironmentQueryStore, queryStore),
     );

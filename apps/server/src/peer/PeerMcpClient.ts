@@ -87,7 +87,7 @@ const fromLinkError = (error: PeerLinkError) =>
 const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
   code: "orchestration_error",
   message:
-    "The linked environment has Linked environments turned off. Turn it on in its Settings → Labs.",
+    "The linked machine is not taking part in your device network. Turn it on there in Settings → Connections → Device network.",
 });
 
 /** The peer answered 401: the link's token no longer works there. */

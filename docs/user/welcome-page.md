@@ -9,9 +9,9 @@ To see the page again, go to **Settings → About → Welcome page** and select
 **Open**. Direct links, such as Settings, open normally before setup is done.
 
 The hosted app at app.t3.codes does not open the page. With no computer connected,
-it asks you to sign in to T3 Connect, then to install T3 Code and run
-`t3 connect` on your computer. From home, it adds compatible computers linked to your account and
-opens the app. To add more computers later, use **Settings → Environments**.
+it asks you to add one with a pairing link. The computer must be reachable from that
+browser at an HTTPS address, such as its [Tailscale HTTPS](./remote-access.md#tailscale-https)
+address. To add more computers later, use **Settings → Environments**.
 
 If T3 Code cannot confirm the workspace during startup, it shows
 **Still connecting** instead of opening the app. Select **Reload** to try again.
@@ -54,13 +54,9 @@ without one. Checked projects are still imported.
 ## Phone
 
 Select **Set up** and scan the code with your phone. It opens the App Store on an
-iPhone and Google Play on Android. Then select **Sign in to T3 Connect** and allow
-this computer when T3 Code asks, so the app can reach it. Sign in to the app with
-the same account. If you are signed in but this computer is not shared yet, select
-**Set up T3 Connect**. If T3 Connect is on but the app cannot reach this computer,
-select **Check T3 Connect** to see why. The page leaves the phone out on builds
-without T3 Connect, or when your organization turns it off. You can still pair the
-app with a code from **Settings → Sharing & access**.
+iPhone and Google Play on Android. Then pair the app with a code from
+**Settings → Sharing & access**. The phone must reach this computer over your local
+network or Tailscale; see [remote access](./remote-access.md).
 
 ## Projects
 

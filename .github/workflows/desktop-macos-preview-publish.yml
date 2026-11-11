@@ -48,10 +48,6 @@ jobs:
       pr_number: ${{ steps.pr.outputs.pr_number }}
       head_sha: ${{ steps.pr.outputs.head_sha }}
       version: ${{ steps.version.outputs.version }}
-      clerk_publishable_key: ${{ steps.version.outputs.clerk_publishable_key }}
-      clerk_jwt_template: ${{ steps.version.outputs.clerk_jwt_template }}
-      clerk_cli_oauth_client_id: ${{ steps.version.outputs.clerk_cli_oauth_client_id }}
-      relay_url: ${{ steps.version.outputs.relay_url }}
     steps:
       - id: pr
         name: Resolve the pull request behind the build
@@ -193,14 +189,12 @@ jobs:
               ;;
           esac
 
-      # Same inputs as the build workflow, read from the built commit through
+      # Same input as the build workflow, read from the built commit through
       # the contents API as data: the desktop manifest's base version plus the
-      # build run's number reproduces the version baked into the bundle, and
-      # .env.example holds the public T3 Connect identifiers the bundle was
-      # compiled with, which the signed app's passkey entitlement must match.
-      # Both are validated before they reach a file name or an entitlement.
+      # build run's number reproduces the version baked into the bundle. It is
+      # validated before it reaches a file name.
       - id: version
-        name: Resolve preview version and public configuration
+        name: Resolve preview version
         if: steps.gate.outputs.eligible == 'true'
         shell: bash
         env:
@@ -224,18 +218,6 @@ jobs:
             exit 1
           fi
           echo "version=${base_version}-pr.${PR_NUMBER}.${BUILD_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-
-          head_file .env.example > "$RUNNER_TEMP/head.env.example"
-          for key in clerk_publishable_key:T3CODE_CLERK_PUBLISHABLE_KEY clerk_jwt_template:T3CODE_CLERK_JWT_TEMPLATE clerk_cli_oauth_client_id:T3CODE_CLERK_CLI_OAUTH_CLIENT_ID relay_url:T3CODE_RELAY_URL; do
-            output="${key%%:*}"
-            name="${key##*:}"
-            value="$(sed -n "s/^${name}=//p" "$RUNNER_TEMP/head.env.example" | head -n 1)"
-            if [[ ! "$value" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
-              echo "$name is missing or malformed in .env.example at $HEAD_SHA." >&2
-              exit 1
-            fi
-            echo "${output}=${value}" >> "$GITHUB_OUTPUT"
-          done
 
       # Only the default-branch revision that owns this workflow supplies the
       # validator. Never check out the PR in a workflow_run job.
@@ -303,11 +285,6 @@ jobs:
       version: ${{ needs.resolve.outputs.version }}
       ref: ${{ github.sha }}
       release_channel: preview
-      relay_client_tracing: false
-      clerk_publishable_key: ${{ needs.resolve.outputs.clerk_publishable_key }}
-      clerk_jwt_template: ${{ needs.resolve.outputs.clerk_jwt_template }}
-      clerk_cli_oauth_client_id: ${{ needs.resolve.outputs.clerk_cli_oauth_client_id }}
-      relay_url: ${{ needs.resolve.outputs.relay_url }}
       label: macOS arm64 preview
       runner: blacksmith-12vcpu-macos-26
       platform: mac
@@ -460,7 +437,7 @@ jobs:
               `Version: ${process.env.PREVIEW_VERSION}`,
               `Commit: ${process.env.HEAD_SHA.slice(0, 7)}`,
               "",
-              "Signed and notarized, with T3 Connect enabled. The app bundle (server, web client, Electron main) is built from this PR; packaging, native helpers, and desktop dependencies come from `main`.",
+              "Signed and notarized. The app bundle (server, web client, Electron main) is built from this PR; packaging, native helpers, and desktop dependencies come from `main`.",
               "",
               "No GitHub sign-in is needed. The download stays available until this PR closes. The `preview:mac` label was consumed by this build; a maintainer applies it again to build a newer commit.",
             ].join("\n");

@@ -21,20 +21,10 @@ import type {
   ThreadTaskView,
   ThreadTaskWatchInput,
 } from "@t3tools/contracts";
+import { GATEWAY_SCOPE_VALUES, type GatewayScope } from "@t3tools/contracts";
 import type { AgentHandoffInput, AgentHandoffResult } from "./handoff.ts";
-export const GATEWAY_SCOPE_VALUES = [
-  "read",
-  "create",
-  "send",
-  "control",
-  "lifecycle",
-  "approval",
-  "artifact",
-  "review",
-  "admin",
-  "delivery",
-] as const;
-export type GatewayScope = (typeof GATEWAY_SCOPE_VALUES)[number];
+
+export { GATEWAY_SCOPE_VALUES, type GatewayScope };
 
 export function hasGatewayScopes(
   grants: Readonly<Record<string, ReadonlyArray<GatewayScope>>>,

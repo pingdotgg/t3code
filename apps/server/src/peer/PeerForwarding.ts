@@ -85,7 +85,7 @@ export class PeerForwarding extends Context.Service<
 export const linkedEnvironmentsOff = new OrchestratorMcpFailure({
   code: "capability_denied",
   message:
-    "Linked environments is off on this machine, so no tool can act on another machine. Leave out environmentId to work here; the user can turn it on in Settings → Labs.",
+    "This machine is not taking part in the device network, so no tool can act on another machine. Leave out environmentId to work here; the user can turn it on in Settings → Connections → Device network.",
 });
 
 /**
@@ -301,7 +301,7 @@ const make = Effect.gen(function* () {
         ),
       );
       // Devices only add to the links, so an unreadable tailnet still lists them.
-      const devices = yield* tailnetDevices.list.pipe(
+      const devices = yield* tailnetDevices.list().pipe(
         Effect.map((snapshot) => snapshot.devices),
         Effect.tapError((error) => Effect.logWarning("Tailnet devices unreadable", error)),
         Effect.orElseSucceed(() => []),

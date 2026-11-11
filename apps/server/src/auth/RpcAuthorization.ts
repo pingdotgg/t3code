@@ -19,8 +19,6 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
-  AuthRelayReadScope,
-  AuthRelayWriteScope,
   AuthTerminalOperateScope,
   ORCHESTRATION_V2_WS_METHODS,
   AuthTerminalReadScope,
@@ -66,6 +64,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsMutate]: AuthOrchestrationOperateScope,
   [WS_METHODS.mcpGatewayConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.mcpGatewayRespond]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpGatewayPreview]: AuthOrchestrationReadScope,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   // The same skills subscribeServerConfig streams to readers, with their bodies.
@@ -97,6 +96,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetDatabaseStorage]: AuthOrchestrationReadScope,
   [WS_METHODS.peerLinksList]: AuthAccessReadScope,
   [WS_METHODS.tailnetDevicesList]: AuthAccessReadScope,
+  [WS_METHODS.subscribeTailnetDevices]: AuthAccessReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
   [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,
@@ -144,8 +144,6 @@ export const RPC_REQUIRED_SCOPES = {
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
-  [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
-  [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsFilterOptions]: AuthOrchestrationReadScope,
@@ -294,7 +292,8 @@ const requiredScopesForRpcCall = (
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||
-      resource._tag === "draft-workspace-file"
+      resource._tag === "draft-workspace-file" ||
+      (resource._tag === "native-app-icon" && resource.app._tag === "app-path")
         ? AuthFilesystemReadScope
         : AuthOrchestrationReadScope,
     ];

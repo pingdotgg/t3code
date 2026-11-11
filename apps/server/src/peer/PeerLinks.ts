@@ -5,7 +5,6 @@ import {
   EnvironmentHttpApi,
   EnvironmentId,
   type ExecutionEnvironmentCapabilities,
-  type ExecutionEnvironmentDescriptor,
   MCP_PEER_LINK_SOFTWARE_ID,
   type PeerLink,
   type PeerLinkCreateInput,
@@ -25,12 +24,17 @@ import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as PubSub from "effect/PubSub";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
@@ -53,6 +57,20 @@ const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
  */
 const probeTimeout = (origin: string) =>
   isLocalLoopbackHost(new URL(origin).hostname) ? Duration.seconds(3) : Duration.seconds(10);
+
+/** Why a probe got no T3 Code answer: the innermost cause, which names the network error. */
+const probeFailure = (error: unknown): string => {
+  if (Predicate.isTagged(error, "TimeoutError")) return "no answer in time";
+  let current = error;
+  for (let depth = 0; depth < 6; depth++) {
+    const cause = Predicate.hasProperty(current, "cause") ? current.cause : undefined;
+    if (!Predicate.isObject(cause)) break;
+    current = cause;
+  }
+  if (Predicate.hasProperty(current, "code") && typeof current.code === "string")
+    return current.code;
+  return current instanceof Error ? current.message : String(current);
+};
 
 /** Node's TLS verification code in a failed request's cause chain, if any. */
 export const certificateErrorCode = (error: unknown) => {
@@ -80,7 +98,7 @@ export interface ResolvedPeerLink {
 }
 
 export const LINKED_ENVIRONMENTS_OFF =
-  "Linked environments is off on this machine. Turn it on in Settings → Labs.";
+  "This machine is not taking part in your device network. Turn it on in Settings → Connections → Device network.";
 
 /**
  * Links from this environment to others. Linking signs this environment in to
@@ -91,20 +109,11 @@ export const LINKED_ENVIRONMENTS_OFF =
 export class PeerLinks extends Context.Service<
   PeerLinks,
   {
-    /** Whether the Linked environments beta (Settings → Labs) is on here. */
+    /** Whether this machine takes part in the device network (the Device network switch). */
     readonly enabled: Effect.Effect<boolean>;
     readonly link: (input: PeerLinkCreateInput) => Effect.Effect<PeerLink, PeerLinkError>;
     /** Keeps a link another flow already made, such as a tailnet device's grant, with its token. */
     readonly store: (link: PeerLink, token: string) => Effect.Effect<void, PeerLinkError>;
-    /**
-     * The environment answering at `url`, or nothing when it is not a usable
-     * address or does not answer as T3 Code. Sends no credential.
-     */
-    readonly describe: (
-      url: string,
-    ) => Effect.Effect<
-      Option.Option<{ readonly environmentId: EnvironmentId; readonly label: string }>
-    >;
     /** Every link with its reachability, probing each peer once, all at once. */
     readonly list: Effect.Effect<ReadonlyArray<PeerLinkSummary>, PeerLinkError>;
     /** Every stored link, without asking any peer whether it answers. */
@@ -124,6 +133,8 @@ export class PeerLinks extends Context.Service<
       environmentId: EnvironmentId,
       outcome: { readonly error: string | null },
     ) => Effect.Effect<void>;
+    /** Every link stored or removed after subscribing. */
+    readonly subscribeChanges: Effect.Effect<Stream.Stream<EnvironmentId>, never, Scope.Scope>;
   }
 >()("t3/peer/PeerLinks") {}
 
@@ -191,6 +202,12 @@ const peerOrigin = (url: string) => {
   return Effect.succeed(parsed.origin);
 };
 
+/** Whether a host is this machine's own loopback. Tests serve their peers there, so they narrow it. */
+export const LoopbackHost = Context.Reference<(host: string) => boolean>(
+  "t3/peer/PeerLinks/LoopbackHost",
+  { defaultValue: () => isLocalLoopbackHost },
+);
+
 /** Whether a peer holds a linked agent to its limits and keeps its work within its link. */
 export const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapabilities }) =>
   peer.capabilities.mcpModeLimitHeader === true && peer.capabilities.linkFence === true;
@@ -218,6 +235,8 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const changes = yield* PubSub.unbounded<EnvironmentId>();
+  const isOwnLoopback = yield* LoopbackHost;
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -236,15 +255,26 @@ const make = Effect.gen(function* () {
    * as T3 Code. A certificate this machine rejects fails instead, since
    * the peer may well be there.
    */
-  const describe = (origin: string) =>
+  const probe = (origin: string) =>
     clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
+      // A brief network drop must not list a live peer as down; the timeout still bounds both tries.
+      Effect.retry({
+        times: 1,
+        schedule: Schedule.spaced("1 second"),
+        // A drop or a 5xx from a proxy is brief; a 4xx has already said what is there.
+        while: (error) =>
+          HttpClientError.isHttpClientError(error) &&
+          ("response" in error.reason
+            ? error.reason.response.status >= 500
+            : error.reason._tag === "TransportError" && certificateErrorCode(error) === undefined),
+      }),
       Effect.timeout(probeTimeout(origin)),
-      Effect.asSome,
+      Effect.map((descriptor) => Result.succeed(descriptor)),
       Effect.catch((error) => {
         const code = certificateErrorCode(error);
         return code === undefined
-          ? Effect.succeed(Option.none<ExecutionEnvironmentDescriptor>())
+          ? Effect.succeed(Result.fail(probeFailure(error)))
           : Effect.fail(
               new PeerLinkError({
                 reason: "unreachable",
@@ -253,6 +283,8 @@ const make = Effect.gen(function* () {
             );
       }),
     );
+
+  const describe = (origin: string) => probe(origin).pipe(Effect.map(Result.getSuccess));
 
   /** Whether `url` answers as `environmentId`, counting an untrusted certificate as no. */
   const answersAs = Effect.fn("PeerLinks.answersAs")(function* (
@@ -430,6 +462,13 @@ const make = Effect.gen(function* () {
       (url) =>
         Effect.gen(function* () {
           const origin = yield* peerOrigin(url);
+          // Loopback is this machine, where anything may answer as the one picked.
+          if (isOwnLoopback(new URL(origin).hostname)) {
+            return yield* new PeerLinkError({
+              reason: "unreachable",
+              message: `${origin} is this machine, not ${name}.`,
+            });
+          }
           return { origin, descriptor: yield* describe(origin) };
         }).pipe(Effect.result),
       { concurrency: "unbounded" },
@@ -463,14 +502,14 @@ const make = Effect.gen(function* () {
   const answeringAt = Effect.fn("PeerLinks.answeringAt")(function* (urls: ReadonlyArray<string>) {
     const origins = yield* Effect.forEach(urls, peerOrigin);
     const primary = origins[0]!;
-    const descriptor = yield* describe(primary);
-    if (Option.isNone(descriptor)) {
+    const probed = yield* probe(primary);
+    if (Result.isFailure(probed)) {
       return yield* new PeerLinkError({
         reason: "not_a_t3_environment",
-        message: `Nothing at ${primary} answered as a T3 Code environment.`,
+        message: `Nothing at ${primary} answered as a T3 Code environment (${probed.failure}).`,
       });
     }
-    return { primary, peer: descriptor.value, origins };
+    return { primary, peer: probed.success, origins };
   });
 
   const link: PeerLinks["Service"]["link"] = Effect.fn("PeerLinks.link")(function* (input) {
@@ -478,8 +517,8 @@ const make = Effect.gen(function* () {
       return yield* new PeerLinkError({ reason: "disabled", message: LINKED_ENVIRONMENTS_OFF });
     }
     const urls = [input.url, ...(input.alternateUrls ?? [])];
-    // The user picked a machine: link through the addresses that prove to
-    // be it, so a reused LAN address never receives the pairing code.
+    // The user picked a machine: link through the addresses that answer as
+    // it, so one that now answers as another never receives the pairing code.
     const { primary, peer, origins } =
       input.expectedEnvironmentId === undefined
         ? yield* answeringAt(urls)
@@ -488,6 +527,22 @@ const make = Effect.gen(function* () {
             input.expectedEnvironmentId,
             input.expectedLabel ?? input.expectedEnvironmentId,
           );
+    // Anything can answer as a linked machine, so an address alone renews its
+    // link only where the link already reaches it, and never moves it.
+    if (input.expectedEnvironmentId === undefined) {
+      const row = yield* readRow(peer.environmentId);
+      const existing = Option.isSome(row) ? yield* toLink(row.value) : undefined;
+      if (
+        existing !== undefined &&
+        DateTime.isGreaterThan(existing.expiresAt, yield* DateTime.now) &&
+        !existing.urls.includes(primary)
+      ) {
+        return yield* new PeerLinkError({
+          reason: "pairing_rejected",
+          message: `${primary} answers as ${existing.label}, which is already linked at another address. If ${existing.label} moved, forget that link first.`,
+        });
+      }
+    }
     const self = yield* environment.getDescriptor;
     if (peer.environmentId === self.environmentId) {
       return yield* new PeerLinkError({
@@ -559,15 +614,9 @@ const make = Effect.gen(function* () {
       if (Option.isSome(previous) && previous.value.secret_name !== secretName) {
         yield* secrets.remove(previous.value.secret_name).pipe(Effect.ignore);
       }
+      yield* PubSub.publish(changes, linked.environmentId);
     },
   );
-
-  const describeUrl: PeerLinks["Service"]["describe"] = (url) =>
-    peerOrigin(url).pipe(
-      Effect.flatMap(describe),
-      Effect.map(Option.map((peer) => ({ environmentId: peer.environmentId, label: peer.label }))),
-      Effect.orElseSucceed(() => Option.none()),
-    );
 
   /** A peer's label follows its machine name, so the link takes the one its own address answers with. */
   const withLabel = (link: PeerLink, label: string) =>
@@ -628,6 +677,7 @@ const make = Effect.gen(function* () {
       for (const row of deleted) {
         yield* secrets.remove(row.secret_name).pipe(Effect.catch(failStorage));
       }
+      if (deleted.length > 0) yield* PubSub.publish(changes, environmentId);
       return deleted.length > 0;
     },
   );
@@ -655,8 +705,8 @@ const make = Effect.gen(function* () {
           message: `The link to ${link.label} lost its credential. Link it again.`,
         });
       }
-      // The token goes only to an address that proves it is this peer, so a
-      // reused LAN address or a moved hostname never receives it.
+      // The token goes only to an address that still answers as this peer,
+      // so one that now answers as another machine never receives it.
       let fenced = true;
       let label = link.label;
       const url = yield* Effect.findFirst(link.urls, (candidate) =>
@@ -713,13 +763,13 @@ const make = Effect.gen(function* () {
     enabled,
     link,
     store,
-    describe: describeUrl,
     list,
     stored,
     get,
     unlink,
     resolve,
     recordOutcome,
+    subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
   });
 });
 

@@ -776,8 +776,8 @@ export const OrchestratorMcpTailnetDevice = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
   status: TailnetDeviceStatus,
-  /** What it may do on the user's machines; revoked: cut off everywhere. */
-  access: TailnetDeviceAccess,
+  /** What it may do here; revoked: cut off everywhere; null: not in the user's network. */
+  access: Schema.NullOr(TailnetDeviceAccess),
   /** This environment links to it, and how; null: not linked from here. */
   outgoing: Schema.NullOr(PeerLinkOrigin),
   /** It holds a live session here. */
@@ -879,7 +879,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   lastRunStatus: ScheduledTaskRunStatus,
   webhookUrl: Schema.optional(Schema.String).annotate({
     description:
-      "Public URL for the sender. Absent: no T3 Connect tunnel. The user must enable T3 Connect remote access.",
+      "Webhook URL on this machine's tailnet HTTPS address. Only senders on the user's tailnet can reach it; public services cannot. Absent: no tailnet HTTPS address.",
   }),
   webhookSignature: Schema.optional(Schema.Literals(["none", "set"])),
   blockedByPolicy: Schema.optional(Schema.String).annotate({

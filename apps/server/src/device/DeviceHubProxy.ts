@@ -63,7 +63,7 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "dpop",
   "content-length",
   "accept-encoding",
-  // The client's HTTPS hop makes the hub reject our loopback Origin over T3 Connect.
+  // A client's HTTPS hop (Tailscale Serve) makes the hub reject our loopback Origin.
   "x-forwarded-proto",
 ]);
 
@@ -213,6 +213,14 @@ const handler = Effect.gen(function* () {
   upstreamSearch.delete("wsTicket");
   upstreamSearch.delete("hostId");
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
+  const screenshotDevice = upstreamSearch.get("device");
+  if (!ready.upstream && hubPath === "/vendor/serve-sim/api/screenshot" && screenshotDevice) {
+    const { png } = yield* devices.screenshot({ hostId: ready.hostId, deviceId: screenshotDevice });
+    return HttpServerResponse.uint8Array(png, {
+      contentType: "image/png",
+      headers: { "cache-control": "no-store, no-transform" },
+    });
+  }
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.
   const routed = ready.upstream ? yield* ready.upstream(hubPath, upstreamSearch) : undefined;
   if (routed === null) {

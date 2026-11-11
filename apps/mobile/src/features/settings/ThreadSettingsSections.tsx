@@ -48,13 +48,6 @@ export function SettingsLabsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <MachineBetaSection
-          title="Linked environments"
-          icon="link"
-          capability="peerLinks"
-          setting="linkedEnvironmentsEnabled"
-          description="Let agents on a machine work on your other machines, and theirs on it. Turn it on for each machine. While off, nothing new starts over a link; running tasks finish."
-        />
-        <MachineBetaSection
           title="Fast worktree checkout"
           icon="bolt.circle"
           capability="fastWorktreeCheckout"
@@ -313,8 +306,6 @@ export function NewThreadSettingsSection() {
   );
 }
 
-type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
-
 /** One switch per connected machine that offers the beta, since each machine's own setting decides. */
 function MachineBetaSection({
   title,
@@ -325,8 +316,8 @@ function MachineBetaSection({
 }: {
   readonly title: string;
   readonly icon: ComponentProps<typeof SettingsSwitchRow>["icon"];
-  readonly capability: "peerLinks" | "fastWorktreeCheckout";
-  readonly setting: MachineBetaSetting;
+  readonly capability: "fastWorktreeCheckout";
+  readonly setting: "fastWorktreeCheckout";
   readonly description: string;
 }) {
   const { environments } = useEnvironments();
@@ -358,12 +349,7 @@ function MachineBetaSection({
               onValueChange={(value) =>
                 void updateSettings({
                   environmentId: environment.environmentId,
-                  input: {
-                    patch:
-                      setting === "linkedEnvironmentsEnabled"
-                        ? { linkedEnvironmentsEnabled: value }
-                        : { fastWorktreeCheckout: value },
-                  },
+                  input: { patch: { [setting]: value } },
                 })
               }
             />

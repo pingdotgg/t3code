@@ -96,16 +96,11 @@ export const terminalSessionsTotal = Metric.counter("t3_terminal_sessions_total"
 });
 
 export const webhookDeliveriesTotal = Metric.counter("t3_webhook_deliveries_total", {
-  description: "Webhook requests handled, by outcome and source.",
+  description: "Webhook requests handled, by outcome.",
 });
 
 export const webhookDeliveryDuration = Metric.timer("t3_webhook_delivery_duration", {
   description: "Time to verify, log, and enqueue one webhook request.",
-});
-
-export const webhookHeldDelay = Metric.timer("t3_webhook_held_delay", {
-  description:
-    "Time between the relay receiving a webhook request and the environment handling it.",
 });
 
 export const webhookRunsTotal = Metric.counter("t3_webhook_runs_total", {

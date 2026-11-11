@@ -9,6 +9,8 @@ import {
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthCreatePairingCredentialInput,
+  NETWORK_ACCESS_CEILING,
+  NETWORK_APP_SUBJECT_PREFIX,
   type AuthEnvironmentScope,
   type AuthPairingLink,
   type AuthPairingCredentialResult,
@@ -42,7 +44,7 @@ import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
-import * as DevicePolicy from "../peer/DevicePolicy.ts";
+import * as Membership from "../peer/Membership.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -86,8 +88,10 @@ export interface McpClientSession {
   readonly access: AuthMcpClientAccess;
   /** Another T3 Code environment's link, whose work here stays within it. */
   readonly peerLink: boolean;
-  /** That environment, when it said which one it is. */
+  /** That environment, when it said which one it is. Proven only for a member session. */
   readonly peerEnvironmentId: EnvironmentId | undefined;
+  /** Minted by the tailnet handshake for a roster member, not by a pairing code. */
+  readonly member: boolean;
 }
 
 export interface AuthenticatedSession {
@@ -257,88 +261,6 @@ export class ServerAuthDpopReplayKeyCalculationError extends Schema.TaggedError<
   }
 }
 
-export class ServerAuthLinkedCloudAccountVerificationError extends Schema.TaggedError<ServerAuthLinkedCloudAccountVerificationError>()(
-  "ServerAuthLinkedCloudAccountVerificationError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Could not verify the linked cloud account.";
-  }
-}
-
-export class ServerAuthLinkedCloudAccountReadError extends Schema.TaggedError<ServerAuthLinkedCloudAccountReadError>()(
-  "ServerAuthLinkedCloudAccountReadError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Could not read the linked cloud account.";
-  }
-}
-
-export class ServerAuthLinkedCloudAccountMissingError extends Schema.TaggedError<ServerAuthLinkedCloudAccountMissingError>()(
-  "ServerAuthLinkedCloudAccountMissingError",
-  {},
-) {
-  override get message(): string {
-    return "Cloud linked user is not installed for this environment.";
-  }
-}
-
-export class ServerAuthCloudLinkJwtSigningError extends Schema.TaggedError<ServerAuthCloudLinkJwtSigningError>()(
-  "ServerAuthCloudLinkJwtSigningError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to sign cloud link JWT.";
-  }
-}
-
-export class ServerAuthCloudMintPublicKeyMissingError extends Schema.TaggedError<ServerAuthCloudMintPublicKeyMissingError>()(
-  "ServerAuthCloudMintPublicKeyMissingError",
-  {},
-) {
-  override get message(): string {
-    return "Cloud mint public key is not installed for this environment.";
-  }
-}
-
-export class ServerAuthCloudRelayIssuerMissingError extends Schema.TaggedError<ServerAuthCloudRelayIssuerMissingError>()(
-  "ServerAuthCloudRelayIssuerMissingError",
-  {},
-) {
-  override get message(): string {
-    return "Cloud relay issuer is not installed for this environment.";
-  }
-}
-
-export class ServerAuthCloudHealthJwtSigningError extends Schema.TaggedError<ServerAuthCloudHealthJwtSigningError>()(
-  "ServerAuthCloudHealthJwtSigningError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to sign cloud health JWT.";
-  }
-}
-
-export class ServerAuthCloudMintJwtSigningError extends Schema.TaggedError<ServerAuthCloudMintJwtSigningError>()(
-  "ServerAuthCloudMintJwtSigningError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to sign cloud mint JWT.";
-  }
-}
-
 export const ServerAuthInternalError = Schema.Union([
   ServerAuthBootstrapCredentialValidationError,
   ServerAuthSessionCredentialValidationError,
@@ -354,14 +276,6 @@ export const ServerAuthInternalError = Schema.Union([
   ServerAuthWebSocketTokenIssueError,
   ServerAuthDpopReplayStateRecordError,
   ServerAuthDpopReplayKeyCalculationError,
-  ServerAuthLinkedCloudAccountVerificationError,
-  ServerAuthLinkedCloudAccountReadError,
-  ServerAuthLinkedCloudAccountMissingError,
-  ServerAuthCloudLinkJwtSigningError,
-  ServerAuthCloudMintPublicKeyMissingError,
-  ServerAuthCloudRelayIssuerMissingError,
-  ServerAuthCloudHealthJwtSigningError,
-  ServerAuthCloudMintJwtSigningError,
 ]);
 export type ServerAuthInternalError = typeof ServerAuthInternalError.Type;
 export const isServerAuthInternalError = Schema.is(ServerAuthInternalError);
@@ -505,12 +419,24 @@ export class EnvironmentAuth extends Context.Service<
       readonly proofKeyThumbprint?: string;
       readonly purpose?: "startup";
       readonly mcpApproval?: AuthMcpClientAccess;
+      readonly brokeredBy?: EnvironmentId;
+      readonly replacesAppId?: string;
     }) => Effect.Effect<
       IssuedPairingLink,
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
     >;
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput,
+      /**
+       * The redeemed session's subject (an app of the network passes its own), the member that
+       * asked for it on an app's behalf, whose revocation ends the session, and the app of the
+       * network it pairs again for, removed when it is redeemed.
+       */
+      options?: {
+        readonly subject?: string;
+        readonly brokeredBy?: EnvironmentId;
+        readonly replacesAppId?: string;
+      },
     ) => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
@@ -567,6 +493,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly peerLink: boolean;
+      readonly member?: boolean;
       readonly peerEnvironmentId?: EnvironmentId;
       readonly client: AuthClientMetadata;
     }) => Effect.Effect<
@@ -737,7 +664,7 @@ export const make = Effect.gen(function* () {
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
-  const devicePolicy = yield* DevicePolicy.DevicePolicy;
+  const membership = yield* Membership.Membership;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const digest = yield* Digest.Digest;
   const descriptor = yield* policy.getDescriptor();
@@ -869,6 +796,51 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.getSessionState"),
     );
 
+  /**
+   * A credential a member asked for is refused once that member is revoked, and an app of the
+   * network becomes one when its invitation is first redeemed, so an unused code leaves no entry.
+   */
+  const admitRedeemed = Effect.fn("EnvironmentAuth.admitRedeemed")(function* (
+    grant: Pick<
+      PairingGrantStore.BootstrapGrant,
+      "scopes" | "subject" | "label" | "brokeredBy" | "replacesAppId"
+    >,
+  ) {
+    if (grant.brokeredBy !== undefined) {
+      const broker = yield* membership.accessOf(grant.brokeredBy);
+      if (Option.isSome(broker) && broker.value === "revoked") {
+        return yield* new ServerAuthInvalidCredentialError({
+          diagnostic: "The machine that opened this credential was revoked.",
+        });
+      }
+    }
+    if (!grant.subject.startsWith(NETWORK_APP_SUBJECT_PREFIX)) return;
+    const redeemed = yield* membership
+      .redeemApp({
+        appId: grant.subject.slice(NETWORK_APP_SUBJECT_PREFIX.length),
+        label: grant.label ?? "App",
+        access: AuthStandardClientScopes.every((scope) => grant.scopes.includes(scope))
+          ? "full-access"
+          : "read-only",
+        ...(grant.replacesAppId === undefined ? {} : { replaces: grant.replacesAppId }),
+      })
+      .pipe(
+        Effect.mapError((cause) => new ServerAuthBootstrapCredentialValidationError({ cause })),
+      );
+    if (redeemed === "revoked") {
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: "This app was removed from the network.",
+      });
+    }
+    if (redeemed === "added" && grant.replacesAppId !== undefined) {
+      yield* sessions
+        .revokeBySubject(`${NETWORK_APP_SUBJECT_PREFIX}${grant.replacesAppId}`)
+        .pipe(
+          Effect.mapError((cause) => new ServerAuthBootstrapCredentialValidationError({ cause })),
+        );
+    }
+  });
+
   const createBrowserSession: EnvironmentAuth["Service"]["createBrowserSession"] = Effect.fn(
     "EnvironmentAuth.createBrowserSession",
   )(function* (credential, requestMetadata, previousSessionToken) {
@@ -906,11 +878,13 @@ export const make = Effect.gen(function* () {
     const grant = yield* bootstrapCredentials
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
+    yield* admitRedeemed(grant);
     const session = yield* sessions
       .issue({
         method: "browser-session-cookie",
         subject: grant.subject,
         scopes: grant.scopes,
+        ...(grant.brokeredBy === undefined ? {} : { brokeredBy: grant.brokeredBy }),
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
           : {}),
@@ -933,7 +907,7 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "scopes" | "subject" | "label"
+    "scopes" | "subject" | "label" | "brokeredBy" | "replacesAppId"
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -995,14 +969,15 @@ export const make = Effect.gen(function* () {
             if (grantedScopes.length === 0) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
+            yield* admitRedeemed(grant);
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 subject: grant.subject,
                 scopes: grantedScopes,
+                ...(grant.brokeredBy === undefined ? {} : { brokeredBy: grant.brokeredBy }),
                 // DPoP sessions keep the default lifetime so LAN and tailnet routes outlive a
-                // sleeping client or an unreachable relay. Clients renew through the relay
-                // hourly while it answers, which is what bounds a revoked Connect member.
+                // sleeping client.
                 ...(input?.proofKeyThumbprint
                   ? { proofKeyThumbprint: input.proofKeyThumbprint }
                   : {}),
@@ -1060,6 +1035,8 @@ export const make = Effect.gen(function* () {
         ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
         ...(input?.purpose ? { purpose: input.purpose } : {}),
         ...(input?.mcpApproval ? { mcpApproval: input.mcpApproval } : {}),
+        ...(input?.brokeredBy ? { brokeredBy: input.brokeredBy } : {}),
+        ...(input?.replacesAppId ? { replacesAppId: input.replacesAppId } : {}),
       });
       return {
         id: issued.id,
@@ -1162,14 +1139,19 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.revokeOtherSessionsExcept"),
     );
 
-  const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (input) =>
+  const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (
+    input,
+    options,
+  ) =>
     createPairingLink({
       scopes: input?.access
         ? mcpClientScopes(input.access)
         : (input?.scopes ?? AuthStandardClientScopes),
-      subject: "one-time-token",
+      subject: options?.subject ?? "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
       ...(input?.access ? { mcpApproval: input.access } : {}),
+      ...(options?.brokeredBy ? { brokeredBy: options.brokeredBy } : {}),
+      ...(options?.replacesAppId ? { replacesAppId: options.replacesAppId } : {}),
     }).pipe(
       Effect.map((issued) => ({
         ...toPairingCredential(issued),
@@ -1354,24 +1336,34 @@ export const make = Effect.gen(function* () {
             : "read-only",
           peerLink: session.peerLink === true,
           peerEnvironmentId: session.peerEnvironmentId,
+          member: session.member === true,
         };
         if (session.peerEnvironmentId === undefined) return Effect.succeed(client);
-        // The device's current policy narrows what its token was issued with, on every request.
-        return devicePolicy.entryAccess(session.peerEnvironmentId).pipe(
-          Effect.flatMap((entry) =>
-            Option.isNone(entry)
-              ? Effect.succeed(client)
-              : entry.value === "revoked"
+        // The roster narrows what the token was issued with, on every request. A member session
+        // whose machine left the roster has nothing left; a paired link is only ever narrowed.
+        return membership.accessOf(session.peerEnvironmentId).pipe(
+          Effect.flatMap((access) => {
+            if (Option.isNone(access)) {
+              return client.member
                 ? Effect.fail(
                     new ServerAuthInvalidCredentialError({
-                      diagnostic: "This device's access was revoked.",
+                      diagnostic: "This machine is no longer in the network.",
                     }),
                   )
-                : Effect.succeed({
-                    ...client,
-                    access: DevicePolicy.narrowerAccess(client.access, entry.value),
+                : Effect.succeed(client);
+            }
+            const ceiling = NETWORK_ACCESS_CEILING[access.value].mode;
+            return ceiling === null
+              ? Effect.fail(
+                  new ServerAuthInvalidCredentialError({
+                    diagnostic: "This device's access was revoked.",
                   }),
-          ),
+                )
+              : Effect.succeed({
+                  ...client,
+                  access: Membership.narrowerAccess(client.access, ceiling),
+                });
+          }),
         );
       }),
       Effect.withSpan("EnvironmentAuth.authenticateMcpClient"),
@@ -1387,6 +1379,7 @@ export const make = Effect.gen(function* () {
         ttl: MCP_CLIENT_SESSION_TTL,
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         peerLink: input.peerLink,
+        ...(input.member === true ? { member: true } : {}),
         ...(input.peerEnvironmentId === undefined
           ? {}
           : { peerEnvironmentId: input.peerEnvironmentId }),
@@ -1484,8 +1477,8 @@ const mcpApprovalLevel = (subject: string): AuthMcpClientAccess | undefined => {
   return isMcpClientAccess(level) ? level : undefined;
 };
 
-/** Subjects of sessions and links a pairing link created, keyed by how the client paired. */
-const LINK_PAIRED_SUBJECTS = { link: "one-time-token", connect: "cloud-connect" } as const;
+/** Subject of sessions and links a pairing link created. */
+const LINK_PAIRED_SUBJECT = "one-time-token";
 
 /**
  * Revokes sessions and unused links from pairing the policy no longer allows, so a policy rolled
@@ -1500,25 +1493,23 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
     readonly pairingLinks: PairingGrantStore.PairingGrantStore["Service"];
   },
 ) {
-  const remoteAllowed = ManagedLimits.allowsRemoteClients(policy);
-  const disallowed = new Set<string>();
-  if (!remoteAllowed) disallowed.add(LINK_PAIRED_SUBJECTS.link);
-  if (!ManagedLimits.allowsConnect(policy)) disallowed.add(LINK_PAIRED_SUBJECTS.connect);
-  if (disallowed.size === 0) return;
+  if (ManagedLimits.allowsRemoteClients(policy)) return;
+  // An app of the network is paired from elsewhere, like a plain code.
   const sessions = (yield* stores.sessions.listActive()).filter(
     (session) =>
-      disallowed.has(session.subject) ||
+      session.subject === LINK_PAIRED_SUBJECT ||
+      session.subject.startsWith(NETWORK_APP_SUBJECT_PREFIX) ||
       // The startup link also pairs browsers on this machine; only a device elsewhere goes.
-      (!remoteAllowed &&
-        session.subject === INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT &&
+      (session.subject === INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT &&
         session.client.ipAddress !== undefined &&
         !isLocalLoopbackHost(session.client.ipAddress)),
   );
   const links = (yield* stores.pairingLinks.listActive()).filter(
     (link) =>
-      disallowed.has(link.subject) ||
+      link.subject === LINK_PAIRED_SUBJECT ||
+      link.subject.startsWith(NETWORK_APP_SUBJECT_PREFIX) ||
       // Approval codes let an agent elsewhere sign in, as plain codes do.
-      (!remoteAllowed && link.subject.startsWith(MCP_APPROVAL_SUBJECT_PREFIX)),
+      link.subject.startsWith(MCP_APPROVAL_SUBJECT_PREFIX),
   );
   yield* Effect.forEach(sessions, (session) => stores.sessions.revoke(session.sessionId), {
     discard: true,
@@ -1533,13 +1524,13 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
 });
 
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
-  Layer.provideMerge(DevicePolicy.layer),
+  Layer.provideMerge(Membership.layer),
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
 );
 
-const layerStorage = Layer.mergeAll(ServerSecretStore.layer, SqlitePersistence.layerConfig);
+const layerStorage = Layer.mergeAll(ServerSecretStore.layer, SqlitePersistence.layerCliConfig);
 
 export const layerRuntime = layer.pipe(
   Layer.provideMerge(ManagedPolicy.layer),

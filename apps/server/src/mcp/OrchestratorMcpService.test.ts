@@ -105,15 +105,6 @@ describe("OrchestratorMcpService", () => {
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
-        contextTransfers: [
-          {
-            id: resultTransferId,
-            type: "subagent_result",
-            sourceThreadId: childThreadId,
-            targetThreadId: parentThreadId,
-            sourcePoint: { runId: childRunId },
-          },
-        ],
         subagents: [
           {
             id: taskId,
@@ -145,7 +136,15 @@ describe("OrchestratorMcpService", () => {
             completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
           },
         ],
-        contextTransfers: [],
+        contextTransfers: [
+          {
+            id: resultTransferId,
+            type: "subagent_result",
+            sourceThreadId: childThreadId,
+            targetThreadId: parentThreadId,
+            sourcePoint: { runId: childRunId },
+          },
+        ],
         messages: [
           {
             id: MessageId.make("message:mcp-ack-result"),
@@ -174,6 +173,7 @@ describe("OrchestratorMcpService", () => {
                 return hasNestedWork
                   ? {
                       ...childProjection,
+                      contextTransfers: [],
                       subagents: [
                         { ...parentProjection.subagents[0]!, status: "running" as const },
                       ],
@@ -183,7 +183,6 @@ describe("OrchestratorMcpService", () => {
               const snapshot = hasNestedWork
                 ? {
                     ...parentProjection,
-                    contextTransfers: [],
                     subagents: parentProjection.subagents.map((task) => ({
                       ...task,
                       result: null,
@@ -609,6 +608,8 @@ describe("OrchestratorMcpService", () => {
             listAppOwnedChildThreadIds: () => Effect.succeed([]),
             delegatedTaskResultPending: () => Effect.succeed(false),
             stopDelegatedTasks: () => Effect.void,
+            cancelDelegatedTask: ({ command }) =>
+              Ref.update(dispatched, (commands) => [...commands, command]),
             // The orchestrator's subagent.stop repair is covered in ThreadStop.test.ts.
             dispatch: (command) =>
               Ref.update(dispatched, (commands) => [...commands, command]).pipe(
@@ -712,6 +713,12 @@ describe("OrchestratorMcpService", () => {
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.andThen(Effect.fail(new Error("simulated stop failure") as never)),
             ),
+          stopDelegatedTasks: () => Effect.void,
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
+              Effect.andThen(Effect.fail(new Error("simulated stop failure") as never)),
+            ),
         }),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -801,6 +808,10 @@ describe("OrchestratorMcpService", () => {
               ),
             ),
           stopDelegatedTasks: () => Effect.void,
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
+            ),
         }),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -891,6 +902,10 @@ describe("OrchestratorMcpService", () => {
               ),
             ),
           stopDelegatedTasks: () => Effect.void,
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
+            ),
         }),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -1055,6 +1070,10 @@ describe("OrchestratorMcpService", () => {
           dispatch: (command) =>
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.as({} as never),
+            ),
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
             ),
           stopDelegatedTasks: () =>
             Effect.gen(function* () {
@@ -3172,7 +3191,13 @@ describe("OrchestratorMcpService provider resolution", () => {
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(masterRepository, saved)),
+          Effect.provide(
+            service(masterRepository, saved, {
+              ...existing,
+              threadId: ThreadId.make("thread:scheduled-base"),
+              threadMode: "continue",
+            }),
+          ),
         );
         yield* mcp.updateScheduledTask(client, {
           scheduledTaskId: existing.id,
@@ -3181,6 +3206,20 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(yield* Ref.get(saved), [
           { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
         ]);
+      }),
+    );
+
+    it.effect("keeps the saved workspace when an unbound task stays unbound", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(masterRepository, saved)),
+        );
+        yield* mcp.updateScheduledTask(client, {
+          scheduledTaskId: existing.id,
+          bindToCurrentThread: false,
+        });
+        assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
       }),
     );
 
@@ -3842,6 +3881,15 @@ describe("OrchestratorMcpService thread list", () => {
           ["thread:b-snoozed", "project:b"],
         ],
       );
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("points a caller outside any thread at allProjects when it omits projectId", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const error = yield* mcp.listThreads(client, {}).pipe(Effect.flip);
+      assert.equal(error.code, "target_required");
+      assert.include(error.message, "allProjects");
     }).pipe(Effect.provide(service)),
   );
 });

@@ -74,16 +74,21 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Force stop kills agent processes, as Stop on a terminal does.
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,
   // A guest link hands thread access to someone outside, like a pairing link.
-  [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksLink]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
   // Device access and tailnet device settings replicate to every one of my devices.
   [WS_METHODS.tailnetDevicesSetAccess]: AuthAccessWriteScope,
-  [WS_METHODS.tailnetDevicesUpdateSettings]: AuthAccessWriteScope,
-  // Hands the app a session on another device, as a pairing link does.
-  [WS_METHODS.tailnetDevicesOpenDevice]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesAdmit]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesSetAppAccess]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesForget]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesForgetApp]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesSetLimit]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesLeave]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesAllowJoin]: AuthAccessWriteScope,
+  // A session on another member, never past the caller's own grant; the server decides who may.
+  [WS_METHODS.tailnetDevicesOpenDevice]: AuthOrchestrationReadScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import { buildPairingAppLink } from "@t3tools/shared/remote";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
@@ -43,9 +44,7 @@ import {
 } from "../serverRuntimeState.ts";
 import {
   buildPairingUrl,
-  formatHostForUrl,
   isLoopbackHost,
-  isWildcardHost,
   renderTerminalQrCode,
   resolveHeadlessConnectionString,
 } from "../startupAccess.ts";
@@ -70,7 +69,6 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
     checkedStatePaths: Schema.Array(Schema.String),
     inLinkedWorktree: Schema.Boolean,
     serveCommand: Schema.String,
-    connectCommand: Schema.String,
   },
 ) {
   override get message(): string {
@@ -80,7 +78,7 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
       ...(this.inLinkedWorktree
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
-      `Start one with \`${this.serveCommand}\`, or connect this machine with T3 Connect: \`${this.connectCommand}\`.`,
+      `Start one with \`${this.serveCommand}\`.`,
     ].join("\n");
   }
 }
@@ -304,7 +302,6 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
     checkedStatePaths,
     inLinkedWorktree,
     serveCommand: (yield* resolveHostCliCommand("serve", baseDirArgs)).command,
-    connectCommand: (yield* resolveHostCliCommand("connect", baseDirArgs)).command,
   });
 });
 
@@ -559,7 +556,7 @@ export const pairCommand = Command.make("pair", {
           );
         } else if (target.state.privateNetworkOnly) {
           notes.push(
-            "This URL works only from this machine's local network. From elsewhere, re-run with --tailscale or use T3 Connect.",
+            "This URL works only from this machine's local network. From elsewhere, re-run with --tailscale.",
           );
         }
         if (target.variant === "dev" && target.state.devUrl === undefined) {

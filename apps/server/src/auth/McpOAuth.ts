@@ -19,7 +19,7 @@ import {
   parseMcpApprovalCode,
   type RuntimeMode,
 } from "@t3tools/contracts";
-import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/hostedApp";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -33,7 +33,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/http";
 
-import { hostedAppUrlConfig } from "../cloud/publicConfig.ts";
+import { hostedAppUrlConfig } from "../environment/hostedAppUrl.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -361,7 +361,7 @@ const make = Effect.gen(function* () {
         return yield* new AuthMcpRegistrationError({
           error: "invalid_client_metadata",
           error_description:
-            "Linked environments is off on that machine. Turn it on in its Settings → Labs.",
+            "That machine is not taking part in your device network. Turn it on there in Settings → Connections → Device network.",
         });
       }
       const peerEnvironmentId = peerLink ? metadata.t3_environment_id : undefined;
@@ -634,6 +634,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     label: client.label,
                     access: client.access,
                     linked: client.peerLink,
+                    peerEnvironmentId: client.peerEnvironmentId,
                     ...(client.peerLink ? {} : { hostedAppUrl }),
                   },
                   capabilities: new Set<McpInvocationContext.McpCapability>([

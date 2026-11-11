@@ -137,7 +137,7 @@ export function useAgentLibrary() {
   };
 }
 
-/** A connected client bridges its machines, including peers reached through T3 Connect. */
+/** A connected client bridges its machines. */
 export function AgentLibrarySync() {
   const { environments } = useEnvironments();
   const io = useAgentLibraryIo("agent library sync");

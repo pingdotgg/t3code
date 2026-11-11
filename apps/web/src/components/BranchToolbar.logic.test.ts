@@ -8,6 +8,7 @@ import {
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
   resolveLocalCheckoutBranchMismatch,
+  resolveLockedWorkspaceLabel,
   resolveThreadBranchForSend,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
@@ -90,6 +91,16 @@ describe("resolveEffectiveEnvMode", () => {
         draftThreadEnvMode: undefined,
       }),
     ).toBe("local");
+  });
+});
+
+describe("resolveLockedWorkspaceLabel", () => {
+  it.each([
+    ["/home/me/.t3/worktrees/app/t3-ff466c42", "t3-ff466c42"],
+    ["/home/me/.t3/worktrees/app/t3-ff466c42/", "t3-ff466c42"],
+    ["C:\\Users\\me\\worktrees\\feature-x", "feature-x"],
+  ])("names the worktree at %s", (path, label) => {
+    expect(resolveLockedWorkspaceLabel(path, "worktree")).toBe(label);
   });
 });
 

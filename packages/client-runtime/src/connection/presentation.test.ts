@@ -11,7 +11,6 @@ import {
   BearerConnectionTarget,
   ConnectionBlockedError,
   ConnectionTransientError,
-  RelayConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
 import { connectionStatusText, environmentMcpUrl, presentConnectionState } from "./presentation.ts";
@@ -51,7 +50,7 @@ function supervisorState(overrides: Partial<SupervisorConnectionState>): Supervi
 }
 
 describe("connection presentation", () => {
-  it("copies the T3 Connect MCP address first, then the route this device is connected over", () => {
+  it("copies the MCP address of the route this device is connected over first", () => {
     const route = (connectionId: string, httpBaseUrl: string): ConnectionRoute => {
       const target = new BearerConnectionTarget({ ...TARGET, connectionId });
       return {
@@ -81,38 +80,6 @@ describe("connection presentation", () => {
       "http://100.115.1.44:3773/mcp",
     );
     expect(environmentMcpUrl({ entry })).toBe("http://192.168.4.53:3773/mcp");
-    expect(
-      environmentMcpUrl({
-        entry,
-        connectedTarget: lan.target,
-        relayHttpBaseUrl: "https://tunnel.example.test",
-      }),
-    ).toBe("https://tunnel.example.test/mcp");
-  });
-
-  // regression: #16909 Copy MCP URL falls back to an alternate route when the relay route has no address
-  it("passes over routes without an address of their own", () => {
-    const relay = new RelayConnectionTarget({
-      environmentId: TARGET.environmentId,
-      label: TARGET.label,
-    });
-    const entry: ConnectionCatalogEntry = {
-      ...ENTRY,
-      target: relay,
-      profile: Option.none(),
-      alternateRoutes: [{ target: ENTRY.target, profile: ENTRY.profile }],
-    };
-
-    expect(environmentMcpUrl({ entry, connectedTarget: relay })).toBe(
-      "https://environment.example.test/mcp",
-    );
-    expect(
-      environmentMcpUrl({
-        entry,
-        connectedTarget: relay,
-        relayHttpBaseUrl: "https://tunnel.example.test",
-      }),
-    ).toBe("https://tunnel.example.test/mcp");
   });
 
   it("distinguishes initial connection, reconnect, and retry errors", () => {
@@ -161,10 +128,10 @@ describe("connection presentation", () => {
   });
 
   it("settles a host past its grace period as offline and a refused credential as re-pair", () => {
-    const tunnelDown = new ConnectionTransientError({
+    const hostDown = new ConnectionTransientError({
       reason: "remote-unavailable",
-      detail: "The tunnel is down.",
-      hop: "tunnel",
+      detail: "The host is down.",
+      hop: "server",
     });
     for (const phase of ["connecting", "backoff"] as const) {
       const connection = presentConnectionState(
@@ -172,7 +139,7 @@ describe("connection presentation", () => {
           phase,
           attempt: 6,
           generation: 1,
-          lastFailure: tunnelDown,
+          lastFailure: hostDown,
           unreachable: true,
           lastConnectedAt: 1_000,
         }),
@@ -188,7 +155,7 @@ describe("connection presentation", () => {
       expect(connectionStatusText(connection)).toBe("Offline");
     }
 
-    const refused = (hop: "server" | "relay") =>
+    const refused = (hop: "server") =>
       presentConnectionState(
         supervisorState({
           phase: "blocked",
@@ -201,8 +168,6 @@ describe("connection presentation", () => {
       );
     expect(refused("server")).toMatchObject({ phase: "error", needsPairing: true });
     expect(connectionStatusText(refused("server"))).toBe("Needs pairing again");
-    // A T3 Connect sign-in failure is fixed by signing in, not by pairing.
-    expect(refused("relay").needsPairing).toBeUndefined();
   });
 
   it("preserves an explicitly available environment while offline", () => {

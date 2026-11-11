@@ -348,6 +348,7 @@ export const readTailscaleStatus = readTailscaleOutput("status", ["status", "--j
 );
 
 const TailscaleStatusNode = Schema.Struct({
+  ID: Schema.optional(Schema.Unknown),
   HostName: Schema.optional(Schema.Unknown),
   DNSName: Schema.optional(Schema.Unknown),
   TailscaleIPs: Schema.optional(Schema.Unknown),
@@ -366,6 +367,11 @@ const TailnetStatusJson = Schema.Struct({
 const decodeTailnetStatusJson = Schema.decodeEffect(Schema.fromJsonString(TailnetStatusJson));
 
 export interface TailnetPeer {
+  /**
+   * Tailscale's stable node id. It survives renames and key rotation and changes only when the
+   * node is removed and added again; names and addresses can be reused by another node.
+   */
+  readonly nodeId: string | null;
   /** The tailnet machine name (MagicDNS label), falling back to the OS host name. */
   readonly nodeName: string;
   readonly magicDnsName: string | null;
@@ -378,6 +384,7 @@ export interface TailnetPeer {
 
 export interface Tailnet {
   readonly self: {
+    readonly nodeId: string | null;
     readonly userId: string | null;
     readonly magicDnsName: string | null;
     readonly tailnetAddresses: readonly string[];
@@ -423,6 +430,7 @@ const parseTailnet = (rawStatusJson: string): Effect.Effect<Tailnet, TailscaleSt
       const capMap = self?.CapMap;
       return {
         self: {
+          nodeId: nonEmptyString(self?.ID),
           userId: userIdOf(self?.UserID),
           magicDnsName: normalizeDnsName(self?.DNSName),
           tailnetAddresses: stringsOf(self?.TailscaleIPs).filter(isTailnetAddress),
@@ -435,6 +443,7 @@ const parseTailnet = (rawStatusJson: string): Effect.Effect<Tailnet, TailscaleSt
           if (nodeName === null) return [];
           return [
             {
+              nodeId: nonEmptyString(peer.ID),
               nodeName,
               magicDnsName,
               tailnetAddresses: stringsOf(peer.TailscaleIPs).filter(isTailnetAddress),
@@ -456,6 +465,8 @@ export const readTailnet = readTailscaleOutput("status", ["status", "--json"]).p
 const TailscaleWhoisJson = Schema.Struct({
   Node: Schema.optional(
     Schema.Struct({
+      // `Node.ID` is the numeric id; `StableID` is the string `status --json` reports as `ID`.
+      StableID: Schema.optional(Schema.Unknown),
       Name: Schema.optional(Schema.Unknown),
       ComputedName: Schema.optional(Schema.Unknown),
       Tags: Schema.optional(Schema.Unknown),
@@ -473,6 +484,8 @@ const TailscaleWhoisJson = Schema.Struct({
 const decodeTailscaleWhoisJson = Schema.decodeEffect(Schema.fromJsonString(TailscaleWhoisJson));
 
 export interface TailnetWhois {
+  /** The same stable node id `TailnetPeer.nodeId` reads from status. */
+  readonly nodeId: string | null;
   readonly userId: string | null;
   readonly loginName: string | null;
   /** The tailnet machine name (MagicDNS label). */
@@ -493,6 +506,7 @@ export const parseTailscaleWhois = (
         nonEmptyString(parsed.Node?.ComputedName);
       if (nodeName === null) return null;
       return {
+        nodeId: nonEmptyString(parsed.Node?.StableID),
         userId: userIdOf(parsed.UserProfile?.ID),
         loginName: nonEmptyString(parsed.UserProfile?.LoginName),
         nodeName,
@@ -517,57 +531,6 @@ export const whoisTailnetAddress = Effect.fn("tailscale.whoisTailnetAddress")(fu
     ),
   );
 });
-
-const TailscaleExitNodeJson = Schema.Struct({
-  ExitNodeStatus: Schema.optional(Schema.Struct({ Online: Schema.optional(Schema.Unknown) })),
-  Peer: Schema.optional(
-    Schema.Record(
-      Schema.String,
-      Schema.Struct({
-        ExitNode: Schema.optional(Schema.Unknown),
-        HostName: Schema.optional(Schema.Unknown),
-        DNSName: Schema.optional(Schema.Unknown),
-      }),
-    ),
-  ),
-});
-
-const decodeTailscaleExitNodeJson = Schema.decodeEffect(
-  Schema.fromJsonString(TailscaleExitNodeJson),
-);
-
-export interface TailscaleExitNode {
-  readonly name: string | null;
-  readonly online: boolean;
-}
-
-/**
- * `ExitNodeStatus` is present only while an exit node is in use, but it has no
- * name. The name comes from the peer marked `ExitNode: true`.
- */
-export const parseTailscaleExitNode = (
-  rawStatusJson: string,
-): Effect.Effect<TailscaleExitNode | null, TailscaleStatusParseError> =>
-  decodeTailscaleExitNodeJson(rawStatusJson).pipe(
-    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
-    Effect.map((parsed) => {
-      if (parsed.ExitNodeStatus === undefined) return null;
-      const peer = Object.values(parsed.Peer ?? {}).find(
-        (candidate) => candidate.ExitNode === true,
-      );
-      // The DNS label is the tailnet machine name; HostName is the OS name and ignores renames.
-      const dnsLabel = typeof peer?.DNSName === "string" ? (peer.DNSName.split(".")[0] ?? "") : "";
-      const hostName = typeof peer?.HostName === "string" ? peer.HostName.trim() : "";
-      return {
-        name: dnsLabel || hostName || null,
-        online: parsed.ExitNodeStatus.Online === true,
-      };
-    }),
-  );
-
-export const readTailscaleExitNode = readTailscaleOutput("status", ["status", "--json"]).pipe(
-  Effect.flatMap(parseTailscaleExitNode),
-);
 
 const TailscalePrefsJson = Schema.Struct({
   RunSSH: Schema.optional(Schema.Unknown),

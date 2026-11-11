@@ -27,8 +27,8 @@ import { cli } from "../binCli.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
-} from "../cloud/serviceProtocol.ts";
-import * as ServiceLauncherClient from "../cloud/serviceLauncherClient.ts";
+} from "../service/serviceProtocol.ts";
+import * as ServiceLauncherClient from "../service/serviceLauncherClient.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
@@ -335,10 +335,8 @@ describe("t3 pair", () => {
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
         assert.include(rendered, "No running T3 Code server found.");
-        for (const subcommand of ["serve", "connect"]) {
-          const { command } = yield* resolveHostCliCommand(subcommand, ["--base-dir", baseDir]);
-          assert.include(rendered, `\`${command}\``);
-        }
+        const { command } = yield* resolveHostCliCommand("serve", ["--base-dir", baseDir]);
+        assert.include(rendered, `\`${command}\``);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );

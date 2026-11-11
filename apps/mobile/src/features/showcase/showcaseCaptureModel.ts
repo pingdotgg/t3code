@@ -4,7 +4,7 @@ import { isShowcaseNativeContentReady, type ShowcaseRenderSignal } from "./showc
 
 export const SHOWCASE_THREAD_ID = "remote-command-center";
 
-function sceneFromPathname(pathname: string): ShowcaseScene | null {
+export function showcaseSceneOnScreen(pathname: string): ShowcaseScene | null {
   const routePath = pathname.split(/[?#]/u, 1)[0] ?? pathname;
   if (routePath === "/settings" || routePath.endsWith("/settings/environments")) {
     return "environments";
@@ -14,17 +14,6 @@ function sceneFromPathname(pathname: string): ShowcaseScene | null {
   if (routePath.startsWith("/threads/")) return "thread";
   if (routePath === "/") return "threads";
   return null;
-}
-
-/** Agent activity is staged on the threads list, so that route counts as the scene. */
-export function showcaseSceneOnScreen(
-  requestedScene: ShowcaseScene | null,
-  pathname: string,
-): ShowcaseScene | null {
-  const routeScene = sceneFromPathname(pathname);
-  return requestedScene === "agent-activity" && routeScene === "threads"
-    ? "agent-activity"
-    : routeScene;
 }
 
 export interface ShowcaseNavigationTarget {
@@ -69,7 +58,6 @@ export interface ShowcaseReadinessInput {
   readonly hasFixture: boolean;
   readonly orientationSettled: boolean;
   readonly themeApplied: boolean;
-  readonly agentActivityStaged: boolean;
   readonly themeId: MobileThemeId;
   readonly renderSignal: ShowcaseRenderSignal | null;
   /** Counts render-signal changes; a redraw report restarts the settle delay. */
@@ -88,7 +76,6 @@ export function showcaseReadinessKey(input: ShowcaseReadinessInput): string | nu
     !input.hasFixture ||
     !input.orientationSettled ||
     !input.themeApplied ||
-    (scene === "agent-activity" && !input.agentActivityStaged) ||
     !isShowcaseNativeContentReady({
       scene,
       themeId: input.themeId,

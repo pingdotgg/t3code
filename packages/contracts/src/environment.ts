@@ -128,6 +128,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   usageLimitSources: Schema.optionalKey(Schema.Boolean),
   /** Honors `workspaceSnapshotsOnDemand`; older servers send every snapshot and drop them in the stream. */
   providerWorkspaceSnapshotsOnDemand: Schema.optionalKey(Schema.Boolean),
+  /** Honors `modelCatalogOnly`; older servers drop the field and probe every provider. */
+  modelCatalogRefresh: Schema.optionalKey(Schema.Boolean),
   usagePriceOverrides: Schema.optionalKey(Schema.Boolean),
   usageModelAliases: Schema.optionalKey(Schema.Boolean),
   threadPinning: Schema.optionalKey(Schema.Boolean),
@@ -156,8 +158,6 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   serverInstallation: ForwardCompatibleOptional(ServerInstallation),
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
   serverUpdateThreadContinuation: Schema.optionalKey(Schema.Boolean),
-  /** Only explicit false skips Live Activity seeding; older servers may still publish. */
-  agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
   projectCloneTracking: Schema.optionalKey(Schema.Boolean),
   /** Server runs scheduled tasks (`scheduledTasks.*`). */
   scheduledTasks: Schema.optionalKey(Schema.Boolean),

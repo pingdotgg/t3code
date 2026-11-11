@@ -5,10 +5,9 @@ name: Web Preview
 # non-aliased) deploy into the existing hosted-web Vercel project, so the
 # latest/nightly channel aliases are never touched.
 #
-# The build intentionally omits the T3 Connect cloud config (Clerk keys, relay
-# URL): previews boot as the hosted-static app with manual pairing only. Pair a
-# server into a preview with `t3 pair --tailscale` (or any reachable HTTPS
-# backend) and open the pairing URL against the preview origin.
+# Previews boot as the hosted-static app with manual pairing. Pair a server into
+# a preview with `t3 pair --tailscale` (or any reachable HTTPS backend) and open
+# the pairing URL against the preview origin.
 #
 # The preview must be opened at the exact deployment URL from the PR comment.
 # Vite bakes that URL in as the hosted origin (via VERCEL_URL), and

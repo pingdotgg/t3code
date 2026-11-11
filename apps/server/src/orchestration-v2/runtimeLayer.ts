@@ -1,5 +1,4 @@
 import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
-import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -248,6 +247,8 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
       layerEventSink,
       IdAllocator.layer,
       ProviderSessionRuntime.layer,
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
+      ThreadCommandExecutor.layer,
     ),
   ),
 );
@@ -401,9 +402,6 @@ export const layerProduction = Layer.mergeAll(
   layerSecretRequestsProvided,
   layerTodoServiceProvided,
   layerThreadTaskProvided,
-  GuestShareService.layer.pipe(
-    Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),
-  ),
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(
       Layer.mergeAll(

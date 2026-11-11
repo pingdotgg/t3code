@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
+import { ChildProcessSpawner } from "effect/process";
 import * as NetService from "@t3tools/shared/Net";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -15,8 +16,6 @@ import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
-vi.mock("@clerk/electron", () => ({ createClerkBridge: vi.fn() }));
-vi.mock("@clerk/electron/storage", () => ({ storage: vi.fn() }));
 vi.mock("../ipc/DesktopIpcHandlers.ts", () => ({
   installDesktopIpcHandlers: () => Effect.void,
 }));
@@ -26,7 +25,7 @@ vi.mock("./DesktopStartupRecovery.ts", () => ({ listen: Effect.void }));
 import * as DesktopApp from "./DesktopApp.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
-import * as DesktopClerk from "./DesktopClerk.ts";
+import * as DesktopLaunchLinks from "./DesktopLaunchLinks.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
@@ -132,9 +131,9 @@ it.effect.each([false, true])(
             register: Effect.void,
             relaunch: () => Effect.void,
           }),
-          Effect.provideService(DesktopClerk.DesktopClerk, {
+          Effect.provideService(DesktopLaunchLinks.DesktopLaunchLinks, {
             configure: Effect.void,
-          } as DesktopClerk.DesktopClerk["Service"]),
+          } as DesktopLaunchLinks.DesktopLaunchLinks["Service"]),
           Effect.provideService(ElectronSafeStorage.ElectronSafeStorage, {
             selectedStorageBackend: Effect.succeedNone,
           } as unknown as ElectronSafeStorage.ElectronSafeStorage["Service"]),
@@ -214,6 +213,7 @@ it.effect.each([false, true])(
         Effect.provide(
           Layer.mergeAll(
             Layer.mock(BrowserImport.BrowserImport, {}),
+            Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {}),
             Layer.mock(DesktopBackendConfiguration.DesktopBackendConfiguration, {}),
             Layer.mock(DesktopCliCommand.DesktopCliCommand, {}),
             Layer.mock(DesktopClientSettings.DesktopClientSettings, {}),

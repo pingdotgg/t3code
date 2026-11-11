@@ -40,7 +40,7 @@ export const manualSettledAt = Effect.fn("RemoteParentSettlement.manualSettledAt
   let environment = environmentId;
   let current = threadId;
   for (let hop = 0; hop < MAX_HOPS; hop++) {
-    if (broker.grants()[environment]?.includes("read") !== true) return null;
+    if ((yield* broker.access).grants[environment]?.includes("read") !== true) return null;
     const found = yield* broker.call("getThread", [environment, current]).pipe(Effect.option);
     if (found._tag === "None" || found.value.settledAt == null) return null;
     const thread = found.value;

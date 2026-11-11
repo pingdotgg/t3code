@@ -20,7 +20,6 @@ import { PrimaryConnectionTarget } from "./model.ts";
 import { describeOutdatedHost, updateOutdatedHost } from "./outdatedHostUpdate.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionResolver from "./resolver.ts";
-import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-old"),
@@ -229,15 +228,6 @@ describe("updateOutdatedHost", () => {
           Layer.mergeAll(
             Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry),
             Layer.succeed(ConnectionResolver.ConnectionResolver, resolver),
-            Layer.succeed(
-              RelayEnvironmentDiscovery.RelayEnvironmentDiscovery,
-              RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.of({
-                state: yield* SubscriptionRef.make(
-                  RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
-                ),
-                refresh: Effect.void,
-              }),
-            ),
             Layer.succeed(HttpClient.HttpClient, httpClient),
             Layer.succeed(Socket.WebSocketConstructor, (url) => {
               const socket = new OutdatedHostSocket(url, () => {
@@ -302,15 +292,6 @@ describe("updateOutdatedHost", () => {
                       target: TARGET,
                     },
                   }),
-              }),
-            ),
-            Layer.succeed(
-              RelayEnvironmentDiscovery.RelayEnvironmentDiscovery,
-              RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.of({
-                state: yield* SubscriptionRef.make(
-                  RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
-                ),
-                refresh: Effect.void,
               }),
             ),
             Layer.succeed(
@@ -405,15 +386,6 @@ describe("updateOutdatedHost", () => {
           Layer.mergeAll(
             Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry),
             Layer.succeed(ConnectionResolver.ConnectionResolver, resolver),
-            Layer.succeed(
-              RelayEnvironmentDiscovery.RelayEnvironmentDiscovery,
-              RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.of({
-                state: yield* SubscriptionRef.make(
-                  RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
-                ),
-                refresh: Effect.void,
-              }),
-            ),
             Layer.succeed(HttpClient.HttpClient, httpClient),
             Layer.succeed(Socket.WebSocketConstructor, (url) => {
               const socket = new OutdatedHostSocket(url, () => {

@@ -1,0 +1,315 @@
+name: Mobile Dev Client
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Dev client {0}{1} {2}', inputs.platform, inputs.platform == 'android' && format(' {0}', inputs.abi) || '', inputs.fingerprint) || '' }}
+
+# Builds the simulator and emulator development client for a commit's native
+# fingerprint and shares it through the native-client cache, the one
+# `vp run mobile:install` reads on every machine. Android builds with Gradle,
+# ccache, and pnpm state on a sticky disk; iOS builds on a macOS runner, so no
+# machine needs Xcode or an EAS build for it.
+#
+# - push to main: main's client is cached before anyone asks for it.
+# - workflow_dispatch: `mobile:install` starts this for the checkout's HEAD on a
+#   cache miss, when the person running it may dispatch workflows here, and
+#   waits for the client in the cache. The run name is how it finds its run.
+# - pull_request (this file or the script): builds without sharing, as a check.
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/mobile/**
+      - packages/client-runtime/**
+      - packages/contracts/**
+      - packages/shared/**
+      - assets/**
+      - patches/**
+      - scripts/mobile-native-client.ts
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/mobile-dev-client.yml
+  pull_request:
+    paths:
+      - .github/workflows/mobile-dev-client.yml
+      - scripts/mobile-native-client.ts
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit to build (default main)
+        required: false
+        type: string
+      platform:
+        description: Platform
+        required: true
+        default: android
+        type: choice
+        options: [android, ios]
+      abi:
+        description: Android ABI of the device
+        required: true
+        default: x86_64
+        type: choice
+        options: [x86_64, arm64-v8a]
+      fingerprint:
+        description: Native fingerprint the caller expects; the run fails when the commit's differs
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android ${{ matrix.abi }}
+    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'android')
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pool emulators are x86_64; a dispatch builds the ABI it asks for.
+        abi: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.abi)) || fromJSON('["x86_64"]') }}
+    concurrency:
+      # One run per client: a second request for the same fingerprint waits and finds it
+      # in the cache. A shared group would drop every waiting run but the newest.
+      group: mobile-dev-client-android-${{ matrix.abi }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.fingerprint || github.sha }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+      ABI: ${{ matrix.abi }}
+      EXPECTED_FINGERPRINT: ${{ inputs.fingerprint }}
+      # A pull request checks that the build works: it builds even on a cache hit and shares nothing.
+      T3_NATIVE_CLIENT_CACHE: ${{ github.event_name == 'pull_request' && 'off' || '' }}
+      # Gradle and Xcode output goes to the job log, not a file on the runner.
+      T3_NATIVE_CLIENT_VERBOSE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      # A dispatch names any commit GitHub has, including a fork's. Only a commit that
+      # collaborators pushed here builds with the cache login and the shared disk.
+      - name: Check the commit belongs to this repository
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          if git ls-remote --heads origin | grep -q "^$sha"; then
+            exit 0
+          fi
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...main" --jq .status || true)"
+          if [ "$status" = "ahead" ] || [ "$status" = "identical" ]; then
+            exit 0
+          fi
+          echo "::error::$sha is not the head of a branch in $GITHUB_REPOSITORY and not on main; build it locally."
+          exit 1
+
+      # The build runs dependency scripts; it gets no token. checkout keeps the token in a
+      # file under RUNNER_TEMP that .git/config includes, so both go. `persist-credentials:
+      # false` fails here: its cleanup runs `git submodule foreach`, which stops at the
+      # vendored gitlinks under .repos (no .gitmodules entry).
+      - name: Drop checkout credentials
+        run: |
+          git config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+            rm -f "$file"
+            git config --local --unset-all "$key"
+          done
+          git config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+            git config --local --unset-all "$key"
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if git config --local --get-regexp 'extraheader|includeif' || ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::checkout credentials are still present"
+            exit 1
+          fi
+
+      - name: Prepare build directories
+        run: |
+          cache="$HOME/.cache/t3-android-dev-client"
+          {
+            echo "GRADLE_USER_HOME=$cache/gradle"
+            echo "CCACHE_DIR=$cache/ccache"
+            echo "CCACHE_MAXSIZE=5G"
+            # Gradle installs the NDK fresh each run, so key on the compiler's version, not its mtime.
+            echo "CCACHE_COMPILERCHECK=%compiler% -v"
+            # The checkout path is the same on every run, so ccache keys stay stable.
+            echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+            # CMake (3.17+) reads these, and AGP passes Gradle's environment through.
+            echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
+          } >> "$GITHUB_ENV"
+
+      # Pull requests build cold: their code must not write Gradle or ccache state that
+      # the runs holding the cache login restore.
+      - name: Mount build cache
+        if: github.event_name != 'pull_request'
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-android-dev-client-${{ matrix.abi }}
+          path: ~/.cache/t3-android-dev-client
+
+      - name: Configure Gradle and ccache
+        run: |
+          mkdir -p "$GRADLE_USER_HOME" "$CCACHE_DIR"
+          # No daemon: nothing should hold the sticky disk open when it is committed.
+          printf 'org.gradle.caching=true\norg.gradle.daemon=false\n' > "$GRADLE_USER_HOME/gradle.properties"
+          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update -qq && sudo apt-get install -y -qq ccache
+          ccache --zero-stats
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
+          install-args: --filter=@t3tools/mobile... --filter=@t3tools/scripts...
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # Only this step's login can write to the cache; pull requests never get it.
+      # Only this login can write to the cache; pull requests never get it.
+      - id: login
+        name: Log in to the native client cache
+        if: github.event_name != 'pull_request'
+        env:
+          WRITE_TOKEN: ${{ secrets.T3_NATIVE_CLIENT_WRITE_TOKEN }}
+        run: |
+          if [ -z "$WRITE_TOKEN" ]; then
+            echo "::warning::T3_NATIVE_CLIENT_WRITE_TOKEN is not set; nothing can be shared, so nothing is built."
+            exit 0
+          fi
+          node --input-type=module <<'NODE'
+          import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+          import { homedir } from "node:os";
+          import { join } from "node:path";
+          const { endpoint } = JSON.parse(readFileSync(".task-cache.json", "utf8"));
+          const directory = join(homedir(), ".config/t3-task-cache");
+          mkdirSync(directory, { recursive: true, mode: 0o700 });
+          writeFileSync(
+            join(directory, "credentials.json"),
+            JSON.stringify({ [endpoint]: { name: "ci-native-clients", token: process.env.WRITE_TOKEN } }),
+            { mode: 0o600 },
+          );
+          NODE
+          echo "T3_NATIVE_CLIENT_SHARE=required" >> "$GITHUB_ENV"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build and share
+        if: github.event_name == 'pull_request' || steps.login.outputs.ready == 'true'
+        shell: bash # pipefail: a failed build fails the step through tee
+        run: |
+          node scripts/mobile-native-client.ts ensure android --prepare --abi "$ABI" ${EXPECTED_FINGERPRINT:+--expect-fingerprint "$EXPECTED_FINGERPRINT"} | tee "$RUNNER_TEMP/dev-client.log"
+          result="$(tail -n 1 "$RUNNER_TEMP/dev-client.log")"
+          echo "### android dev client: \`$(jq -r '.source' <<<"$result")\` for fingerprint \`$(jq -r '.fingerprint' <<<"$result")\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cache statistics
+        if: success() || failure()
+        continue-on-error: true
+        run: |
+          {
+            echo '```'
+            ccache --show-stats
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  ios:
+    name: iOS simulator
+    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'ios')
+    runs-on: blacksmith-12vcpu-macos-26
+    timeout-minutes: 60
+    concurrency:
+      group: mobile-dev-client-ios-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.fingerprint || github.sha }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+      EXPECTED_FINGERPRINT: ${{ inputs.fingerprint }}
+      T3_NATIVE_CLIENT_CACHE: ${{ github.event_name == 'pull_request' && 'off' || '' }}
+      # Gradle and Xcode output goes to the job log, not a file on the runner.
+      T3_NATIVE_CLIENT_VERBOSE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      # A dispatch names any commit GitHub has, including a fork's. Only a commit that
+      # collaborators pushed here builds with the cache login and the shared disk.
+      - name: Check the commit belongs to this repository
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          if git ls-remote --heads origin | grep -q "^$sha"; then
+            exit 0
+          fi
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...main" --jq .status || true)"
+          if [ "$status" = "ahead" ] || [ "$status" = "identical" ]; then
+            exit 0
+          fi
+          echo "::error::$sha is not the head of a branch in $GITHUB_REPOSITORY and not on main; build it locally."
+          exit 1
+
+      # The build runs dependency scripts; it gets no token. checkout keeps the token in a
+      # file under RUNNER_TEMP that .git/config includes, so both go. `persist-credentials:
+      # false` fails here: its cleanup runs `git submodule foreach`, which stops at the
+      # vendored gitlinks under .repos (no .gitmodules entry).
+      - name: Drop checkout credentials
+        run: |
+          git config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+            rm -f "$file"
+            git config --local --unset-all "$key"
+          done
+          git config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+            git config --local --unset-all "$key"
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if git config --local --get-regexp 'extraheader|includeif' || ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::checkout credentials are still present"
+            exit 1
+          fi
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
+          install-args: --filter=@t3tools/mobile... --filter=@t3tools/scripts...
+
+      # Only this login can write to the cache; pull requests never get it.
+      - id: login
+        name: Log in to the native client cache
+        if: github.event_name != 'pull_request'
+        env:
+          WRITE_TOKEN: ${{ secrets.T3_NATIVE_CLIENT_WRITE_TOKEN }}
+        run: |
+          if [ -z "$WRITE_TOKEN" ]; then
+            echo "::warning::T3_NATIVE_CLIENT_WRITE_TOKEN is not set; nothing can be shared, so nothing is built."
+            exit 0
+          fi
+          node --input-type=module <<'NODE'
+          import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+          import { homedir } from "node:os";
+          import { join } from "node:path";
+          const { endpoint } = JSON.parse(readFileSync(".task-cache.json", "utf8"));
+          const directory = join(homedir(), ".config/t3-task-cache");
+          mkdirSync(directory, { recursive: true, mode: 0o700 });
+          writeFileSync(
+            join(directory, "credentials.json"),
+            JSON.stringify({ [endpoint]: { name: "ci-native-clients", token: process.env.WRITE_TOKEN } }),
+            { mode: 0o600 },
+          );
+          NODE
+          echo "T3_NATIVE_CLIENT_SHARE=required" >> "$GITHUB_ENV"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build and share
+        if: github.event_name == 'pull_request' || steps.login.outputs.ready == 'true'
+        shell: bash # pipefail: a failed build fails the step through tee
+        run: |
+          node scripts/mobile-native-client.ts ensure ios --prepare ${EXPECTED_FINGERPRINT:+--expect-fingerprint "$EXPECTED_FINGERPRINT"} | tee "$RUNNER_TEMP/dev-client.log"
+          result="$(tail -n 1 "$RUNNER_TEMP/dev-client.log")"
+          echo "### ios dev client: \`$(jq -r '.source' <<<"$result")\` for fingerprint \`$(jq -r '.fingerprint' <<<"$result")\`" >> "$GITHUB_STEP_SUMMARY"

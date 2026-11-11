@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ThreadShell,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -26,43 +27,50 @@ import { EnvironmentToolkit } from "./tools.ts";
 const environmentId = EnvironmentId.make("environment:preferences");
 const threadId = ThreadId.make("thread:preferences");
 
+const dependencies = (
+  getThreadShell: Effect.Effect<OrchestrationV2ThreadShell>,
+  onUpdate: (patch: ServerSettingsPatch) => Effect.Effect<void>,
+) =>
+  Layer.mergeAll(
+    ThreadCommandExecutor.layer,
+    Layer.succeed(McpInvocationContext.McpInvocationContext, {
+      environmentId,
+      requestNamespace: "provider:preferences",
+      thread: {
+        threadId,
+        providerSessionId: "provider:preferences",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+      client: undefined,
+      capabilities: new Set(["orchestration" as const]),
+      issuedAt: 0,
+    }),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: () => getThreadShell,
+    }),
+    Layer.mock(Environment.ServerEnvironment)({
+      getDescriptor: Effect.succeed({
+        environmentId,
+        label: "Test",
+        platform: { os: "linux", arch: "x64" },
+        serverVersion: "0.0.0",
+        capabilities: { repositoryIdentity: false },
+      }),
+    }),
+    Layer.mock(Settings.ServerSettingsService)({
+      getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+      updateSettings: (patch) => onUpdate(patch).pipe(Effect.as(DEFAULT_SERVER_SETTINGS)),
+    }),
+  );
+
 it.effect("refuses a preferences update when the caller's turn ends while it waits", () =>
   Effect.gen(function* () {
     const caller = yield* Ref.make<OrchestrationV2ThreadShell>(liveThreadShell(threadId));
     const updates = yield* Ref.make(0);
     const checked = yield* Deferred.make<void>();
-    const layerDependencies = Layer.mergeAll(
-      ThreadCommandExecutor.layer,
-      Layer.succeed(McpInvocationContext.McpInvocationContext, {
-        environmentId,
-        requestNamespace: "provider:preferences",
-        thread: {
-          threadId,
-          providerSessionId: "provider:preferences",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-        },
-        client: undefined,
-        capabilities: new Set(["orchestration" as const]),
-        issuedAt: 0,
-      }),
-      Layer.mock(ThreadManagement.ThreadManagementService)({
-        getThreadShell: () =>
-          Ref.get(caller).pipe(Effect.tap(() => Deferred.succeed(checked, undefined))),
-      }),
-      Layer.mock(Environment.ServerEnvironment)({
-        getDescriptor: Effect.succeed({
-          environmentId,
-          label: "Test",
-          platform: { os: "linux", arch: "x64" },
-          serverVersion: "0.0.0",
-          capabilities: { repositoryIdentity: false },
-        }),
-      }),
-      Layer.mock(Settings.ServerSettingsService)({
-        getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-        updateSettings: () =>
-          Ref.update(updates, (count) => count + 1).pipe(Effect.as(DEFAULT_SERVER_SETTINGS)),
-      }),
+    const layerDependencies = dependencies(
+      Ref.get(caller).pipe(Effect.tap(() => Deferred.succeed(checked, undefined))),
+      () => Ref.update(updates, (count) => count + 1),
     );
     yield* Effect.gen(function* () {
       const toolkit = yield* EnvironmentToolkit;
@@ -93,5 +101,37 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
         ),
       ),
     );
+  }),
+);
+
+it.effect("cannot change the agent library, whatever the patch names", () =>
+  Effect.gen(function* () {
+    const patches = yield* Ref.make<ReadonlyArray<ServerSettingsPatch>>([]);
+    yield* Effect.gen(function* () {
+      const toolkit = yield* EnvironmentToolkit;
+      yield* toolkit
+        .handle("t3_environment_preferences_update", {
+          newWorktreesStartFromOrigin: true,
+          agentSkills: [],
+          mcpGatewayProfiles: [],
+          agentSkillDeletedAt: { review: "2027-01-01" },
+        } as never)
+        .pipe(Stream.unwrap, Stream.runCollect);
+    }).pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer).pipe(
+          Layer.provideMerge(
+            dependencies(Effect.succeed(liveThreadShell(threadId)), (patch) =>
+              Ref.update(patches, (seen) => [...seen, patch]),
+            ),
+          ),
+        ),
+      ),
+    );
+    const [patch] = yield* Ref.get(patches);
+    expect(patch).toMatchObject({ newWorktreesStartFromOrigin: true });
+    expect(patch).not.toHaveProperty("agentSkills");
+    expect(patch).not.toHaveProperty("mcpGatewayProfiles");
+    expect(patch).not.toHaveProperty("agentSkillDeletedAt");
   }),
 );

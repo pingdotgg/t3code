@@ -107,7 +107,10 @@ const makeNetwork = Effect.gen(function* () {
     calls: number;
     loseReplyFor: string | null;
     legacyRelay: boolean;
+    /** The modes each relayed call carried, by action. */
+    modes: Array<readonly [string, unknown]>;
   } = {
+    modes: [],
     connected: true,
     calls: 0,
     // The relaying app predates check-backs: deliveries pass through its older contract.
@@ -117,9 +120,14 @@ const makeNetwork = Effect.gen(function* () {
   };
   const roundTrip = <S extends Schema.Top>(schema: S, value: unknown) =>
     Schema.decodeUnknownEffect(schema)(value).pipe(Effect.orDie);
-  const call = (environmentId: EnvironmentId, request: ThreadTaskRemoteRequest) =>
+  const call = (
+    environmentId: EnvironmentId,
+    request: ThreadTaskRemoteRequest,
+    modeCeiling?: unknown,
+  ) =>
     Effect.gen(function* () {
       state.calls += 1;
+      state.modes.push([request.action, modeCeiling]);
       if (!state.connected)
         return yield* Effect.fail("No T3 app with T3 Agents enabled is connected.");
       const target = services.get(environmentId);
@@ -206,6 +214,7 @@ const environment = (network: Effect.Success<typeof makeNetwork>, environmentId:
       id: ThreadId,
       parent?: { thread: ThreadId; environment?: EnvironmentId },
       profileId?: string,
+      runtimeMode: "approval-required" | "full-access" = "full-access",
     ) =>
       run(
         Effect.flatMap(OrchestratorV2, (orchestrator) =>
@@ -216,7 +225,7 @@ const environment = (network: Effect.Success<typeof makeNetwork>, environmentId:
             projectId: ProjectId.make(`project:${environmentId}`),
             title: id,
             modelSelection: { instanceId, model: "gpt-5.1-codex" },
-            runtimeMode: "full-access",
+            runtimeMode,
             interactionMode: "default",
             branch: null,
             worktreePath: null,
@@ -869,6 +878,26 @@ it.effect("a named child launched on another environment is in its Captain's swe
         [[worker, B]],
       );
       assert.equal(sweep[0]!.task.summary, "Configure Accessibility");
+    }),
+  ),
+);
+
+it.effect("a chat's task calls to another environment carry the chat's own modes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const network = yield* makeNetwork;
+      const envA = yield* environment(network, A);
+      const envB = yield* environment(network, B);
+      const tasksA = yield* envA.startService;
+      yield* envB.startService;
+      yield* envA.create(captain, undefined, undefined, "approval-required");
+      yield* envB.create(worker, { thread: captain, environment: A });
+      yield* tasksA.assign(asCaptain, { threadId: worker, summary: "Remote deliverable" }, B);
+      const supervised = { runtimeMode: "approval-required", interactionMode: "default" };
+      assert.deepEqual(
+        network.state.modes.filter(([action]) => action === "remoteAssign"),
+        [["remoteAssign", supervised]],
+      );
     }),
   ),
 );

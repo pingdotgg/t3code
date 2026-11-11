@@ -87,8 +87,8 @@ split still carry the content inline: the event store hashes it while decoding, 
 migration 11 stored every such content, so replay resolves the same row. Keep the profile
 snapshot, profile revision/tombstone settings merge, client grant/delivery store,
 and machine-aware navigation. Desktop branding, fork release feed, bundled build
-version, and branded startup route remain independent of orchestration. Official
-T3 Connect/auth/relay configuration is retained; the fork requires no cloud of its own.
+version, and branded startup route remain independent of orchestration. The fork removed
+T3 Connect and requires no cloud of its own.
 
 V2 now owns durable queued runs, queued editing, worktree preparation, and draft
 promotion. The fork's V1 browser-local message queue and worktree activity recovery

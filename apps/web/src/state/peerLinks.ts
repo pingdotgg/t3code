@@ -7,15 +7,12 @@ import {
 import { createPeerLinkEnvironmentAtoms } from "@t3tools/client-runtime/state/peerLinks";
 import { AuthAccessReadScope, type EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useEffect, useEffectEvent } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentIdentities, useEnvironments } from "./environments";
 import { environmentPresentations } from "./presentation";
-import { relayEnvironmentDiscovery } from "./relay";
 import { useEnvironmentQuery } from "./query";
 import { useEnvironmentsWithScope } from "./session";
-import { useAtomCommand } from "./use-atom-command";
 
 export const peerLinkEnvironment = createPeerLinkEnvironmentAtoms(connectionAtomRuntime);
 
@@ -51,37 +48,25 @@ export function useLinkedEnvironments(
   });
 }
 
-export function usePeerLinkHosts() {
+/** Connected environments that can join a network, whether or not they have it turned on. */
+export function useNetworkHosts() {
   const { environments } = useEnvironments();
   const supported = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" &&
-      offersLinkedEnvironments(environment.serverConfig),
+      environment.serverConfig?.environment.capabilities.peerLinks === true,
   );
   const readable = useEnvironmentsWithScope(supported, AuthAccessReadScope);
   return supported.filter((environment) => readable.has(environment.environmentId));
 }
 
 /**
- * The user's other machines, for picking one to link `environmentId` to,
- * including those only on their T3 Connect account. Reads that environment's
- * links only while `enabled`, since listing them asks every linked machine
+ * The user's other machines, for picking one to link `environmentId` to. Reads that
+ * environment's links only while `enabled`, since listing them asks every linked machine
  * whether it answers.
  */
 export function useLinkableMachines(environmentId: EnvironmentId, enabled: boolean) {
   const { environments } = useEnvironments();
-  const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
-  const refreshDiscovery = useAtomCommand(relayEnvironmentDiscovery.refresh, {
-    reportFailure: false,
-  });
-  // Connect hosts are listed only once something asked for them, so ask on open.
-  const discoverIfUnasked = useEffectEvent(() => {
-    if (discovery.environments.size === 0 && !discovery.refreshing) void refreshDiscovery();
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- discovery follows the picker's visibility, which a card's mount or a dialog's open sets
-  useEffect(() => {
-    if (enabled) discoverIfUnasked();
-  }, [enabled]);
   const links = useEnvironmentQuery(
     enabled ? peerLinkEnvironment.list({ environmentId, input: {} }) : null,
   );
@@ -89,6 +74,5 @@ export function useLinkableMachines(environmentId: EnvironmentId, enabled: boole
     environments,
     threadEnvironmentId: environmentId,
     links: links.data?.links ?? [],
-    connect: discovery.environments,
   });
 }

@@ -3,17 +3,17 @@
 Agents that T3 Code did not start can work with an environment through its MCP
 server. They can read projects and threads, start and message threads, and
 check which providers and models are available. This covers Claude Code or
-Codex in your own terminal, ChatGPT, and bots that support MCP. Each agent signs
+Codex in your own terminal, and other MCP agents running on your own devices. Each agent signs
 in once, and you choose what it may do.
 
 ## Add T3 Code to an assistant app
 
 Open the command palette (`Cmd/Ctrl+K`) and choose **Use T3 Code in another
 app (MCP)**, or use the button in **Settings → Sharing & access**. Pick the
-app, choose what it may do, and follow the step for that app. Assistants like
-Poke and Claude run in the cloud, so the wizard first asks you to sign in to T3
-Connect and turn it on for the environment. To reach your other machines through
-the same connection, turn on **Linked environments** in Labs and
+app, choose what it may do, and follow the step for that app. The dialog shows
+the environment's Tailscale `/mcp` address, which only devices on your tailnet can
+reach. Assistants that run in the cloud, such as ChatGPT, claude.ai, or Poke,
+cannot reach it. To reach your other machines through the same connection, keep the machine on under **Taking part** in Settings → Environments → Device network and
 [link them](./remote-access.md#link-another-environment).
 
 When the app opens the sign-in page, choose **Get code** in the wizard and paste
@@ -34,20 +34,20 @@ example:
 https://<environment-address>/mcp
 ```
 
-When T3 Connect serves the environment, the copied URL is its T3 Connect
-address, which agents can reach from anywhere. Otherwise it uses the route this
-device is connected over, so an agent on the same device can reach it.
+The copied URL uses the route this device is connected over, so an agent on the
+same device can reach it.
 
-- **An agent on your own computers** can use `localhost` on the host, T3
-  Connect, or any `https` address, such as
+- **An agent on your own computers** can use `localhost` on the host, or any
+  `https` address, such as
   [Tailscale HTTPS](./remote-access.md#tailscale-https). Signing in sends the
   agent's credentials to the environment, and agents only do that over `https`
   or to `localhost`. A plain-`http` LAN or Tailscale address, like
   `http://100.x.y.z:3773`, lets an agent find the environment but not finish
   signing in.
-- **A hosted agent**, such as ChatGPT or a bot running in the cloud, must reach
-  the environment from the internet. Use the T3 Connect address. A Tailscale
-  address only works from your own tailnet.
+- **A hosted agent**, such as ChatGPT or a bot running in the cloud, cannot reach
+  the environment. A Tailscale address works only from devices on your own
+  tailnet. Exposing it to the internet, for example with Tailscale Funnel, is
+  your own setup and is not supported by T3 Code.
 
 ## Approve a sign-in
 
@@ -75,6 +75,22 @@ policy. Approving without a code starts at **Read only**:
   threads in every project. A thread it starts or steers cannot run with more
   permissions than the mode you chose.
 
+## What outside agents can call
+
+Some tools only work for an agent running inside a T3 thread, because they act
+as that thread: subagents, secret requests, rendered HTML, the browser preview,
+devices, and worktree handoff. They still appear in an outside agent's tool
+list, but calling one returns an error saying it needs an agent running inside
+T3 Code.
+
+- To hand off work, start a thread with `t3_thread_launch`, then follow it with
+  `t3_thread_wait` or `t3_thread_read`, instead of `create_threads` or
+  `delegate_task`.
+- Tools that default to the caller's own project or thread need an explicit
+  `projectId` or `threadId`.
+- To list threads across projects, call `t3_thread_list` with
+  `allProjects: true`, or use `t3_thread_search`.
+
 ## Claude Code
 
 ```sh
@@ -97,21 +113,10 @@ codex mcp login t3
 `codex mcp login --no-browser` prints the sign-in URL instead of opening it.
 `codex mcp list` shows `t3` with OAuth once you approve.
 
-## ChatGPT
-
-Add the environment as a custom MCP app in ChatGPT's apps settings:
-
-1. Create a new app or plugin with a custom MCP server.
-2. Set the server URL to `https://<environment-address>/mcp`, using the T3
-   Connect address.
-3. Choose **OAuth** for authentication. ChatGPT discovers the rest; you do not
-   need a client ID or secret.
-4. Create the app, then approve the sign-in page that opens.
-
 ## Other agents and bots
 
-Any agent that supports remote MCP servers over HTTP with OAuth can connect. Give
-it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
+Any agent on a device that can reach the environment and supports remote MCP
+servers over HTTP with OAuth can connect. Give it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
 Agents without OAuth support cannot connect.
 
 ## Scripts on the host

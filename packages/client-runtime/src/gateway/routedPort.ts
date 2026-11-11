@@ -1,5 +1,6 @@
 import { GATEWAY_PORT_METHODS } from "./bridgeClient.ts";
 import type { GatewayEnvironmentSummary, GatewayRuntimePort } from "./port.ts";
+import type { ModeLimit } from "./portModes.ts";
 
 /**
  * Every environment a runtime port call acts on: the first argument when it is an ID, or the
@@ -21,6 +22,8 @@ export interface GatewayPortRelay {
     method: keyof GatewayRuntimePort,
     args: ReadonlyArray<unknown>,
     environmentIds: ReadonlyArray<string>,
+    /** The calling chat's modes, for the app answering the call to apply where it runs. */
+    modeCeiling?: ModeLimit,
   ) => Promise<unknown>;
 }
 

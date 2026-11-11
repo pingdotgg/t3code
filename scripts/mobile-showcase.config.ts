@@ -90,7 +90,7 @@ const config: ShowcaseConfig = {
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max",
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
-      scenes: ["thread", "terminal", "review", "threads", "environments", "agent-activity"],
+      scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
         store: "apple",
         directory: "apple/iphone-6.9",
@@ -107,7 +107,7 @@ const config: ShowcaseConfig = {
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-14-Plus",
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
-      scenes: ["thread", "terminal", "review", "threads", "environments", "agent-activity"],
+      scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
         store: "apple",
         directory: "apple/iphone-6.5",
@@ -169,7 +169,7 @@ const config: ShowcaseConfig = {
         height: 1920,
         density: 420,
       },
-      scenes: ["thread", "terminal", "review", "threads", "environments", "agent-activity"],
+      scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
         store: "google-play",
         directory: "google-play/phone",
@@ -192,7 +192,7 @@ const config: ShowcaseConfig = {
         height: 1920,
         density: 288,
       },
-      scenes: ["thread", "terminal", "review", "threads", "environments", "agent-activity"],
+      scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
         store: "google-play",
         directory: "google-play/tablet-7",
@@ -215,7 +215,7 @@ const config: ShowcaseConfig = {
         height: 2560,
         density: 288,
       },
-      scenes: ["thread", "terminal", "review", "threads", "environments", "agent-activity"],
+      scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
         store: "google-play",
         directory: "google-play/tablet-10",

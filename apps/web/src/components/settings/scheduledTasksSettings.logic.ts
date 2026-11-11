@@ -1,7 +1,6 @@
-import { isListedThreadLineage, isWebhookDedupeTemplate } from "@t3tools/contracts";
+import { isWebhookDedupeTemplate } from "@t3tools/contracts";
 import {
   EnvironmentId,
-  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
@@ -15,14 +14,13 @@ import {
   type ServerSettings,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
-  parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
   webhookFilterDrafts,
   webhookFilterDraftsChanged,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 
 import {
   resolveProjectSettings,
@@ -31,6 +29,38 @@ import {
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
+
+export const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+export function scheduleLabel(
+  schedule: ScheduledTaskSchedule,
+  timeZone?: string,
+  runAt?: string | null,
+): string {
+  if (schedule.type === "cron") return `Cron ${schedule.expression} (${schedule.timezone})`;
+  if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
+  if (schedule.type === "interval") {
+    const minutes = schedule.everyMs / 60_000;
+    return Number.isInteger(minutes)
+      ? `Every ${minutes} min`
+      : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
+  }
+  const weekdays = schedule.weekdays ?? [];
+  const days =
+    weekdays.length === 0
+      ? "Daily"
+      : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
+        ? "Weekdays"
+        : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
+  const zone = scheduleTimeZoneLabel(timeZone, runAt);
+  return `${days} at ${schedule.timeOfDay}${zone === undefined ? "" : ` ${zone}`}`;
+}
 
 export function matchesScheduledTaskScope(
   scope: ResolvedSettingsScope,
@@ -111,7 +141,6 @@ export interface DraftState {
   readonly signaturePrefix: string;
   /** Write-only: empty keeps the secret already stored on the server. */
   readonly signatureSecret: string;
-  readonly maxDeliveryAgeMinutes: string;
   readonly replayKey: string;
   readonly coalesceKey: string;
   readonly coalesceWindowSeconds: string;
@@ -145,13 +174,6 @@ export function scheduleDraftErrors(draft: DraftState) {
     return [];
   }
   if (draft.scheduleMode !== "webhook") return [];
-  if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
-    return [
-      {
-        title: "Invalid age limit",
-        description: `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
-      },
-    ];
   const errors: Array<{ title: string; description: string }> = [];
   for (const [label, value] of [
     ["Duplicate request key", draft.replayKey],
@@ -212,13 +234,11 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     };
   }
   if (draft.scheduleMode === "webhook") {
-    const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
     const replayKey = draft.replayKey.trim();
     const coalesceKey = draft.coalesceKey.trim();
     const coalesceWindowSeconds = draft.coalesceWindowSeconds.trim()
       ? Number(draft.coalesceWindowSeconds)
       : undefined;
-    if (maxDeliveryAgeMinutes === undefined) return null;
     const parsedFilters = parseWebhookFilterDrafts(draft.filters);
     if (!("filters" in parsedFilters)) return null;
     const secret = draft.signatureSecret.trim();
@@ -232,7 +252,6 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
             ...(secret ? { secret } : {}),
           }
         : null,
-      maxDeliveryAgeMinutes,
       ...(replayKey || coalesceKey || coalesceWindowSeconds !== undefined
         ? {
             dedupe: {
@@ -314,10 +333,6 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       schedule.type === "webhook" && schedule.dedupe?.coalesceWindowSeconds !== undefined
         ? String(schedule.dedupe.coalesceWindowSeconds)
         : "",
-    maxDeliveryAgeMinutes:
-      schedule.type === "webhook" && schedule.maxDeliveryAgeMinutes != null
-        ? String(schedule.maxDeliveryAgeMinutes)
-        : "",
     filters,
     savedFilters: filters,
   };
@@ -350,30 +365,6 @@ export function unbindDraftFromThread(draft: DraftState): DraftState {
 export function changeDraftProject(draft: DraftState, projectId: string): DraftState {
   if (projectId === draft.projectId) return draft;
   return { ...unbindDraftFromThread(draft), projectId };
-}
-
-/** Threads a task can move to. The current one is left out; the picker always shows it. */
-export function scheduledTaskDestinationThreads(
-  threads: ReadonlyArray<EnvironmentThreadShell>,
-  target: {
-    readonly environmentId: EnvironmentId;
-    readonly projectId: string;
-    readonly currentThreadId: ThreadId | null;
-    readonly query: string;
-  },
-): ReadonlyArray<EnvironmentThreadShell> {
-  const search = target.query.trim().toLocaleLowerCase();
-  return threads
-    .filter(
-      (thread) =>
-        thread.environmentId === target.environmentId &&
-        thread.projectId === target.projectId &&
-        thread.id !== target.currentThreadId &&
-        thread.archivedAt === null &&
-        isListedThreadLineage(thread.lineage) &&
-        thread.title.toLocaleLowerCase().includes(search),
-    )
-    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 export function scheduledTaskDefaultModel(

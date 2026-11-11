@@ -93,7 +93,4 @@ it("counts the owner's guest share actions, and only guest message sends", () =>
   expect(commandFeatureUsage(command({ ...ids, type: "thread.guest-share.close" }))).toEqual({
     feature: "guest_share.close",
   });
-  expect(featureUsage(WS_METHODS.guestShareCreate, { threadId: "thread-private" })).toEqual({
-    feature: "guest_share.create",
-  });
 });

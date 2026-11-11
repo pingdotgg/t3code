@@ -387,145 +387,16 @@ jobs:
       - name: Test
         run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
-  relay_public_config:
-    name: Resolve T3 Connect public config
-    # Consumes only the release commit, not preflight's resolved version, so it
-    # runs alongside preflight instead of after it. The condition mirrors preflight's.
-    needs: [resolve_commit]
-    if: |
-      needs.resolve_commit.result == 'success' &&
-      (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 5
-    # Previews build any branch, but production admits only main and v* tags.
-    # The empty name runs previews with no environment, so their Clerk and relay
-    # ids come from .env.example. Everything else matches nightly: the tracing
-    # read below needs only repository-level Cloudflare credentials.
-    environment:
-      name: ${{ inputs.channel != 'preview' && 'production' || '' }}
-    outputs:
-      clerk_publishable_key: ${{ steps.public_config.outputs.clerk_publishable_key }}
-      clerk_jwt_template: ${{ steps.public_config.outputs.clerk_jwt_template }}
-      clerk_cli_oauth_client_id: ${{ steps.public_config.outputs.clerk_cli_oauth_client_id }}
-      relay_url: ${{ steps.public_config.outputs.relay_url }}
-    env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      RELAY_DOMAIN: ${{ vars.RELAY_DOMAIN }}
-      RELAY_API_ZONE_NAME: ${{ vars.RELAY_API_ZONE_NAME }}
-      CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
-      CLERK_JWT_TEMPLATE: ${{ vars.CLERK_JWT_TEMPLATE }}
-      CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.CLERK_CLI_OAUTH_CLIENT_ID }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.resolve_commit.outputs.ref }}
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
-
-      - name: Setup dependencies
-        uses: ./.github/actions/setup-ci-deps
-        with:
-          install-args: --filter=t3code-relay...
-
-      # The deployed stack's outputs, read from Alchemy's state store without
-      # planning or applying. Select the backend explicitly to avoid loading
-      # the stack's unrelated provider credentials; suppress informational logs
-      # and strip the credential-refresh progress prefix before parsing JSON.
-      # Redacted values are persisted as
-      # {"__redacted__": "<value>"}; the token is masked before it is written.
-      - name: Read production relay tracing config
-        shell: bash
-        working-directory: infra/relay
-        run: |
-          set -euo pipefail
-          output="$(npx alchemy state read T3CodeRelay/prod/output --backend cloudflare --log-level error --no-input | sed -n '/^{/,$p')"
-          field() {
-            jq -er --arg key "$1" '.[$key] | if type == "object" then .__redacted__ else . end | select(. != null and . != "")' <<<"$output" \
-              || { echo "Relay stack output is missing $1" >&2; exit 1; }
-          }
-          url="$(field clientTracingUrl)"
-          dataset="$(field clientTracingDataset)"
-          token="$(field clientTracingToken)"
-          echo "::add-mask::$token"
-          {
-            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_URL=$url"
-            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET=$dataset"
-            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=$token"
-          } > "$RUNNER_TEMP/relay-client-tracing.env"
-
-      - name: Upload relay client tracing config
-        uses: actions/upload-artifact@v7
-        with:
-          name: relay-client-tracing-config
-          path: ${{ runner.temp }}/relay-client-tracing.env
-          if-no-files-found: error
-          retention-days: 1
-
-      - id: public_config
-        name: Resolve production relay public config
-        shell: bash
-        env:
-          PREVIEW: ${{ inputs.channel == 'preview' }}
-        run: |
-          set -euo pipefail
-
-          if [[ "$PREVIEW" == "true" ]]; then
-            env_example() { sed -n "s|^T3CODE_$1=||p" .env.example; }
-            CLERK_PUBLISHABLE_KEY="$(env_example CLERK_PUBLISHABLE_KEY)"
-            CLERK_JWT_TEMPLATE="$(env_example CLERK_JWT_TEMPLATE)"
-            CLERK_CLI_OAUTH_CLIENT_ID="$(env_example CLERK_CLI_OAUTH_CLIENT_ID)"
-            RELAY_DOMAIN="$(sed -n 's|^T3CODE_RELAY_URL=https://||p' .env.example)"
-          fi
-
-          relay_domain="${RELAY_DOMAIN:-}"
-          if [[ -z "$relay_domain" && -n "${RELAY_API_ZONE_NAME:-}" ]]; then
-            relay_domain="relay.$RELAY_API_ZONE_NAME"
-          fi
-          required=(
-            relay_domain
-            CLERK_PUBLISHABLE_KEY
-            CLERK_JWT_TEMPLATE
-            CLERK_CLI_OAUTH_CLIENT_ID
-          )
-          missing=()
-          for name in "${required[@]}"; do
-            if [[ -z "${!name:-}" ]]; then
-              missing+=("$name")
-            fi
-          done
-          if (( ${#missing[@]} > 0 )); then
-            printf 'Missing required relay deployment configuration: %s\n' "${missing[*]}" >&2
-            exit 1
-          fi
-
-          echo "clerk_publishable_key=$CLERK_PUBLISHABLE_KEY" >> "$GITHUB_OUTPUT"
-          echo "clerk_jwt_template=$CLERK_JWT_TEMPLATE" >> "$GITHUB_OUTPUT"
-          echo "clerk_cli_oauth_client_id=$CLERK_CLI_OAUTH_CLIENT_ID" >> "$GITHUB_OUTPUT"
-          echo "relay_url=https://$relay_domain" >> "$GITHUB_OUTPUT"
-
   # The platform-independent JS (server bundle, web client, Electron main) is
   # built exactly once here and handed to every platform job as `js-bundle`.
-  # The relay/Clerk values are baked into the bundle, so they belong to this
-  # job rather than to the packaging jobs.
   build_bundle:
     name: Build JS bundle
-    # Same gating as relay_public_config: only the release commit is needed, so
-    # this runs alongside preflight. See the condition comment there.
-    needs: [preflight, relay_public_config]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
+    needs: [preflight]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 30
     outputs:
       npm_launcher_artifact_id: ${{ steps.npm_launcher.outputs.artifact-id }}
-    env:
-      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -551,20 +422,6 @@ jobs:
           install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
         env:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
-
-      - name: Download relay client tracing config
-        uses: actions/download-artifact@v8
-        with:
-          name: relay-client-tracing-config
-          path: ${{ runner.temp }}/relay-client-tracing
-
-      - name: Load relay client tracing config
-        shell: bash
-        run: |
-          config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
-          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
-          echo "::add-mask::$tracing_token"
-          cat "$config_path" >> "$GITHUB_ENV"
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -642,18 +499,14 @@ jobs:
   # not at all.
   desktop_mac_arm64:
     name: Desktop macOS arm64
-    needs: [preflight, relay_public_config, build_bundle]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    needs: [preflight, build_bundle]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
       version: ${{ needs.preflight.outputs.version }}
       ref: ${{ needs.preflight.outputs.ref }}
       release_channel: ${{ needs.preflight.outputs.release_channel }}
-      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: macOS arm64
       runner: blacksmith-12vcpu-macos-26
       platform: mac
@@ -668,18 +521,14 @@ jobs:
 
   desktop_mac_x64:
     name: Desktop macOS x64
-    needs: [preflight, relay_public_config, build_bundle]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    needs: [preflight, build_bundle]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
       version: ${{ needs.preflight.outputs.version }}
       ref: ${{ needs.preflight.outputs.ref }}
       release_channel: ${{ needs.preflight.outputs.release_channel }}
-      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: macOS x64
       runner: blacksmith-12vcpu-macos-26
       platform: mac
@@ -694,18 +543,14 @@ jobs:
 
   desktop_linux_x64:
     name: Desktop Linux x64
-    needs: [preflight, relay_public_config, build_bundle]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    needs: [preflight, build_bundle]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
       version: ${{ needs.preflight.outputs.version }}
       ref: ${{ needs.preflight.outputs.ref }}
       release_channel: ${{ needs.preflight.outputs.release_channel }}
-      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: Linux x64
       runner: blacksmith-32vcpu-ubuntu-2404
       platform: linux
@@ -720,18 +565,14 @@ jobs:
   # and archive are built on arm64 hardware rather than cross-built.
   desktop_linux_arm64:
     name: Desktop Linux arm64
-    needs: [preflight, relay_public_config, build_bundle]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    needs: [preflight, build_bundle]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
       version: ${{ needs.preflight.outputs.version }}
       ref: ${{ needs.preflight.outputs.ref }}
       release_channel: ${{ needs.preflight.outputs.release_channel }}
-      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: Linux arm64
       runner: blacksmith-16vcpu-ubuntu-2404-arm
       platform: linux
@@ -748,18 +589,14 @@ jobs:
   # Windows.
   desktop_win_x64:
     name: Desktop Windows x64
-    needs: [preflight, relay_public_config, build_bundle]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    needs: [preflight, build_bundle]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
       version: ${{ needs.preflight.outputs.version }}
       ref: ${{ needs.preflight.outputs.ref }}
       release_channel: ${{ needs.preflight.outputs.release_channel }}
-      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: Windows x64
       runner: blacksmith-16vcpu-ubuntu-2404
       verify_runner: windows-2025
@@ -772,18 +609,14 @@ jobs:
 
   desktop_win_arm64:
     name: Desktop Windows arm64
-    needs: [preflight, relay_public_config, build_bundle]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    needs: [preflight, build_bundle]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
       version: ${{ needs.preflight.outputs.version }}
       ref: ${{ needs.preflight.outputs.ref }}
       release_channel: ${{ needs.preflight.outputs.release_channel }}
-      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: Windows arm64
       runner: blacksmith-16vcpu-ubuntu-2404
       verify_runner: windows-11-arm
@@ -799,7 +632,6 @@ jobs:
     needs:
       [
         preflight,
-        relay_public_config,
         quality,
         test,
         test_web,
@@ -811,7 +643,7 @@ jobs:
         desktop_win_x64,
         desktop_win_arm64,
       ]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test_web.result == 'success' && needs.test_server.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test_web.result == 'success' && needs.test_server.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
@@ -1134,17 +966,13 @@ jobs:
   # npm-before-client order in docs/operations/release.md holds for users.
   build_web:
     name: Build hosted web app
-    needs: [preflight, relay_public_config]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
+    needs: [preflight]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       deployment_url: ${{ steps.deploy.outputs.deployment_url }}
     env:
-      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
@@ -1164,20 +992,6 @@ jobs:
         uses: ./.github/actions/setup-ci-deps
         with:
           install-args: --filter=@t3tools/scripts... --filter=@t3tools/web...
-
-      - name: Download relay client tracing config
-        uses: actions/download-artifact@v8
-        with:
-          name: relay-client-tracing-config
-          path: ${{ runner.temp }}/relay-client-tracing
-
-      - name: Load relay client tracing config
-        shell: bash
-        run: |
-          config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
-          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
-          echo "::add-mask::$tracing_token"
-          cat "$config_path" >> "$GITHUB_ENV"
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -1213,13 +1027,6 @@ jobs:
               --token "$VERCEL_TOKEN" \
               --scope "${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}" \
               --build-env "APP_VERSION=${{ needs.preflight.outputs.version }}" \
-              --build-env "T3CODE_CLERK_PUBLISHABLE_KEY=${T3CODE_CLERK_PUBLISHABLE_KEY:-}" \
-              --build-env "T3CODE_CLERK_JWT_TEMPLATE=${T3CODE_CLERK_JWT_TEMPLATE:-}" \
-              --build-env "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID=${T3CODE_CLERK_CLI_OAUTH_CLIENT_ID:-}" \
-              --build-env "T3CODE_RELAY_URL=${T3CODE_RELAY_URL:-}" \
-              --build-env "T3CODE_RELAY_CLIENT_OTLP_TRACES_URL=${T3CODE_RELAY_CLIENT_OTLP_TRACES_URL:-}" \
-              --build-env "T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET=${T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET:-}" \
-              --build-env "T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=${T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN:-}" \
               --build-env "VITE_HOSTED_APP_URL=$router_url" \
               --build-env "VITE_HOSTED_APP_CHANNEL=$channel_name"
           )"
@@ -1490,7 +1297,18 @@ jobs:
 
           git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml
           git commit --no-verify -m "chore(release): prepare $RELEASE_TAG"
-          git push origin HEAD:main
+
+          # main moves while this job runs, so a rejected push rebases and retries.
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt). Rebasing onto latest main."
+            git pull --rebase origin main
+          done
+
+          echo "Could not push the version bump after 5 attempts." >&2
+          exit 1
 
   announce_discord:
     name: Announce release on Discord
@@ -1498,11 +1316,10 @@ jobs:
       always() && !cancelled() &&
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.release_channel != 'preview' &&
-      needs.relay_public_config.result == 'success' &&
       needs.release.result == 'success' &&
       needs.deploy_web.result == 'success' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
-    needs: [preflight, relay_public_config, release, deploy_web, finalize]
+    needs: [preflight, release, deploy_web, finalize]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
