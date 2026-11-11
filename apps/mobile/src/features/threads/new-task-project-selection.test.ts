@@ -171,11 +171,11 @@ describe("resolveRouteDraftProject", () => {
   const route = { environmentId: "environment", projectId: "deleted" };
 
   it("returns a share draft to the picker when its project is gone and no project is left", () => {
-    expect(resolveRouteDraftProject(route, [], "share")).toEqual({ kind: "pick" });
+    expect(resolveRouteDraftProject(route, [], true)).toEqual({ kind: "pick" });
   });
 
   it("waits for the catalog before leaving a draft without shared content", () => {
-    expect(resolveRouteDraftProject(route, [], undefined)).toEqual({ kind: "wait" });
+    expect(resolveRouteDraftProject(route, [], false)).toEqual({ kind: "wait" });
   });
 });
 

@@ -154,7 +154,7 @@ type ProjectRef = { readonly environmentId: string; readonly projectId: string }
 export function resolveRouteDraftProject(
   route: ProjectRef,
   projects: ReadonlyArray<EnvironmentProject>,
-  pendingShareId: string | undefined,
+  hasPendingShare: boolean,
 ):
   | { readonly kind: "select"; readonly project: EnvironmentProject }
   | { readonly kind: "pick" }
@@ -164,7 +164,7 @@ export function resolveRouteDraftProject(
       candidate.environmentId === route.environmentId && candidate.id === route.projectId,
   );
   if (project) return { kind: "select", project };
-  return projects.length > 0 || pendingShareId !== undefined ? { kind: "pick" } : { kind: "wait" };
+  return projects.length > 0 || hasPendingShare ? { kind: "pick" } : { kind: "wait" };
 }
 
 export function newTaskDestination(options: {

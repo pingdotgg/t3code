@@ -274,7 +274,7 @@ export function NewTaskDraftScreen(props: {
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isReturningToProjectPicker, setIsReturningToProjectPicker] = useState(false);
   const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;
-  const pendingShareId = incomingShare?.id;
+  const hasPendingShare = Boolean(incomingShare);
   const requestedInitialProjectAvailable = Boolean(
     props.initialProjectRef?.environmentId &&
     props.initialProjectRef.projectId &&
@@ -422,7 +422,7 @@ export function NewTaskDraftScreen(props: {
       const routeProject = resolveRouteDraftProject(
         { environmentId: initialEnvironmentId, projectId: initialProjectId },
         projects,
-        pendingShareId,
+        hasPendingShare,
       );
 
       if (routeProject.kind === "select") {
@@ -507,7 +507,7 @@ export function NewTaskDraftScreen(props: {
     props.incomingShareId,
     props.draftId,
     navigation,
-    pendingShareId,
+    hasPendingShare,
     selectedProject,
     selectedProjectKey,
     setProject,
