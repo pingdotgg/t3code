@@ -10851,7 +10851,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 // The dialog is a control request, not a tool call, so no
                 // tool_result would ever settle a tool row started for it.
                 { startToolCall: false },
-              );
+              ).pipe(pauseStallWatchdogWhile);
               if (result.behavior !== "allow") return { behavior: "cancelled" as const };
               const answers =
                 result.updatedInput === undefined
@@ -10959,6 +10959,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             .withPermits(1)(failStalledTurn(live, turn))
             .pipe(Effect.delay(CLAUDE_STALLED_TURN_TIMEOUT), Effect.forkIn(sessionScope));
         });
+
+        // A human answering a dialog is not a stalled request; the deadline restarts after.
+        const pauseStallWatchdogWhile = Effect.fn("ClaudeAdapterV2.pauseStallWatchdogWhile")(
+          function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
+            const live = yield* Ref.get(queryContext);
+            const turn = live?.lastTurn ?? null;
+            if (live === null || turn === null) return yield* effect;
+            yield* cancelStallWatchdog(turn);
+            return yield* effect.pipe(
+              Effect.ensuring(
+                Effect.gen(function* () {
+                  if (
+                    (yield* Ref.get(queryContext)) === live &&
+                    (yield* Ref.get(activeTurn)) === turn
+                  ) {
+                    yield* watchTurnForStall(live, turn, null);
+                  }
+                }),
+              ),
+            );
+          },
+        );
 
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,

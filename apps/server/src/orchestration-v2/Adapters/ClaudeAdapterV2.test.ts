@@ -6247,6 +6247,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
           [NodeId.make("node-attempt-resume-dialog")],
         );
+        // A human answering slowly is not a stalled request.
+        yield* TestClock.adjust("11 minutes");
         yield* harness.runtime.respondToRuntimeRequest({
           requestId: request.runtimeRequest.id,
           answers: {
