@@ -4218,8 +4218,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
 
       expect(prompt).toContain("Add the thread model file");
-      expect(prompt).toContain("- model `claude-opus-5-5`, harness Claude\n");
-      expect(prompt).toContain("- model `claude-sonnet-5-5`, harness unknown\n");
+      expect(prompt).toContain('- model "claude-opus-5-5", harness Claude\n');
+      expect(prompt).toContain('- model "claude-sonnet-5-5", harness unknown\n');
       expect(prompt).not.toContain("Work account");
       expect(prompt).not.toContain("claude_removed");
       expect(prompt).not.toContain("claude-haiku-5-5");
@@ -4279,8 +4279,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
 
       expect(prompt).toContain("Implement the thread model file");
-      expect(prompt).toContain("- model `claude-opus-5-5`, harness Claude\n");
-      expect(prompt).toContain("- model `gpt-6.2`, harness Codex\n");
+      expect(prompt).toContain('- model "claude-opus-5-5", harness Claude\n');
+      expect(prompt).toContain('- model "gpt-6.2", harness Codex\n');
     }),
   );
 
