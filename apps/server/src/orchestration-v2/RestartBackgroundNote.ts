@@ -135,7 +135,10 @@ export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): s
   ].join("\n");
 }
 
-/** Delegated tasks a Stop on this thread interrupted, until a turn that started after they ended completes. */
+/**
+ * Delegated tasks a Stop on this thread interrupted, until a turn requested after they ended
+ * completes. A run's turn start reads tasks after its request, but can record startedAt later.
+ */
 export function pendingStoppedDelegatedTasks(input: {
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>;
@@ -154,16 +157,15 @@ export function pendingStoppedDelegatedTasks(input: {
       .filter((turn) => turn.status === "completed")
       .map((turn) => turn.runAttemptId),
   );
-  const toldRunStarts = input.runs
+  const toldRunRequests = input.runs
     .filter(
       (run) =>
-        run.startedAt !== null &&
         !input.compactionMessageIds.has(run.userMessageId) &&
         input.attempts.some(
           (attempt) => attempt.runId === run.id && completedAttemptIds.has(attempt.id),
         ),
     )
-    .map((run) => DateTime.toEpochMillis(run.startedAt!));
+    .map((run) => DateTime.toEpochMillis(run.requestedAt));
   return input.subagents.filter(
     (task) =>
       task.origin === "app_owned" &&
@@ -173,7 +175,9 @@ export function pendingStoppedDelegatedTasks(input: {
       task.cancelledRunId === undefined &&
       task.completionDelivery?.state === "disposed" &&
       task.completedAt !== null &&
-      !toldRunStarts.some((startedAt) => startedAt > DateTime.toEpochMillis(task.completedAt!)),
+      !toldRunRequests.some(
+        (requestedAt) => requestedAt > DateTime.toEpochMillis(task.completedAt!),
+      ),
   );
 }
 

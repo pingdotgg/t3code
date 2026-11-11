@@ -258,7 +258,7 @@ it("counts a prompted mid-turn or chained continuation as delivering the note", 
 it("tells the next completed turn about delegated tasks its Stop interrupted, once", () => {
   const at = (minute: number) => DateTime.makeUnsafe(`2026-10-03T10:0${minute}:00.000Z`);
   const spawning = run(1, claudeThread, {
-    startedAt: at(0),
+    requestedAt: at(0),
     delegatedCompletion: { disposition: "stopped", nextGeneration: 1, delivery: null },
   });
   const task = (id: string, extra: Partial<OrchestrationV2Subagent> = {}) =>
@@ -291,5 +291,8 @@ it("tells the next completed turn about delegated tasks its Stop interrupted, on
 
   assert.deepEqual(pending([spawning]), [stopped]);
   assert.equal(stoppedDelegatedTasksNote([stopped]).split("\n")[1], "- Build A (task stopped)");
-  assert.deepEqual(pending([spawning, run(2, claudeThread, { startedAt: at(2) })]), []);
+  // Requested while the task was still settling, so its turn start could not see it.
+  const racing = run(2, claudeThread, { requestedAt: at(0), startedAt: at(2) });
+  assert.deepEqual(pending([spawning, racing]), [stopped]);
+  assert.deepEqual(pending([spawning, racing, run(3, claudeThread, { requestedAt: at(2) })]), []);
 });
