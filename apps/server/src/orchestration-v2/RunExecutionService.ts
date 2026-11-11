@@ -1153,13 +1153,10 @@ export const layer: Layer.Layer<
                 (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
               ),
             );
-          // Moving the thread to another workspace detaches its provider
-          // session, which stops the turn that asked for the move. That ends
-          // the turn as the handoff intended; only a Stop makes it an interrupt.
-          // Its native subagents died with the session, so they still settle as
-          // interrupted from the raw terminal. The completed write refuses in
-          // the same transaction as a committed Stop request, so a Stop racing
-          // the handoff falls back to the interrupted terminal.
+          // A workspace handoff detaches the session and stops the turn that asked
+          // for it: the run completes, while its native subagents still settle
+          // as interrupted. The completed write refuses in the same transaction
+          // as a stored Stop request, so a racing Stop stays authoritative.
           const handedOff =
             terminal.status === "interrupted" &&
             input.shouldFinalizeRun !== undefined &&

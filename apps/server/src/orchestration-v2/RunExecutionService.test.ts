@@ -2590,11 +2590,12 @@ it.effect("settles native subagents when a workspace handoff completes the root 
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
+          PreviewAgentActivity.layer,
           Layer.mock(CheckpointService.CheckpointServiceV2)({
             captureBaseline: () => Effect.void,
           }),
           layerTurnItemPositionsTest,
-          Layer.mock(EventSink.EventSinkV2)({
+          mockEventSink({
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Ref.update(written, (current) => [...current, ...input.events]).pipe(Effect.as([])),
@@ -2627,7 +2628,7 @@ it.effect("settles native subagents when a workspace handoff completes the root 
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
         commandId: CommandId.make("command:subagent-workspace-handoff"),
-        appThread: { id: ids.threadId } as OrchestrationV2AppThread,
+        appThread: rootAppThread(ids.threadId),
         providerSessionId: ProviderSessionId.make("session:subagent-workspace-handoff"),
         session: {
           events: Stream.empty,
