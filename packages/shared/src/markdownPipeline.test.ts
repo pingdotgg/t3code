@@ -1,5 +1,5 @@
 import { expect, it } from "vite-plus/test";
-import { unified } from "unified";
+import { type PluggableList, unified } from "unified";
 import rehypeRaw from "rehype-raw";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
@@ -8,6 +8,7 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
 
 it.each([
@@ -204,6 +205,62 @@ it("builds the tree rehype-raw builds for markdown without HTML", () => {
   }
 });
 
+it("keeps local editor file links but not other schemes through the shared Markdown sanitizer", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        "[cursor](cursor://file/Users/me/repo/file.md:3)",
+        "[code](vscode://file/Users/me/repo/file.md:3:7)",
+        "[insiders](vscode-insiders://file/Users/me/repo/file.md)",
+        "[unknown](foo://file/Users/me/repo/file.md)",
+        "[zed](zed://file/Users/me/repo/file.md)",
+      ].join(" "),
+    ),
+  );
+  type Node = { tagName?: string; properties?: { href?: string }; children?: Node[] };
+  const hrefs = ((tree.children[0] as Node).children ?? [])
+    .filter((node) => node.tagName === "a")
+    .map((node) => node.properties?.href);
+  expect(hrefs).toEqual([
+    "cursor://file/Users/me/repo/file.md:3",
+    "vscode://file/Users/me/repo/file.md:3:7",
+    "vscode-insiders://file/Users/me/repo/file.md",
+    undefined,
+    undefined,
+  ]);
+});
+
+it("keeps mixed-case local editor file links by lowercasing the scheme before sanitizing", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        "[upper](VSCODE://file/Users/me/repo/file.md:3:7)",
+        "[mixed](Cursor://file/Users/me/repo/file.md:3)",
+        "[other](FOO://file/Users/me/repo/file.md)",
+      ].join(" "),
+    ),
+  );
+  type Node = { tagName?: string; properties?: { href?: string }; children?: Node[] };
+  const hrefs = ((tree.children[0] as Node).children ?? [])
+    .filter((node) => node.tagName === "a")
+    .map((node) => node.properties?.href);
+  expect(hrefs).toEqual([
+    "vscode://file/Users/me/repo/file.md:3:7",
+    "cursor://file/Users/me/repo/file.md:3",
+    undefined,
+  ]);
+});
+
 it("keeps backslashes that CommonMark would read as escapes in prose Windows paths", () => {
   const processor = unified()
     .use(remarkParse)
@@ -251,6 +308,47 @@ it("keeps an image on its own line under a label but leaves inline images inline
   ).toBe("Palette<br>\n<img><br>\nHero (dark)<br>\n<img>");
   expect(render("Built [![CI](/ci.svg)](/ci)\nand wrapped")).toBe("Built <img>\nand wrapped");
   expect(render("Hard-wrapped\nprose")).toBe("Hard-wrapped\nprose");
+});
+
+it("keeps the number written on each ordered list item only when enabled", () => {
+  type Node = { tagName?: string; properties?: { value?: unknown }; children?: Node[] };
+  const values = (node: Node): unknown[] => [
+    ...(node.tagName === "li" ? [node.properties?.value] : []),
+    ...(node.children ?? []).flatMap(values),
+  ];
+  const renderer = (plugins: PluggableList) => {
+    const processor = unified()
+      .use(remarkParse)
+      .use(plugins)
+      .use(remarkRehype, { allowDangerousHtml: true });
+    return (markdown: string) =>
+      values(processor.runSync(processor.parse(markdown), markdown) as Node);
+  };
+  const render = renderer([
+    ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+    remarkEnableOrderedListNumbers,
+  ]);
+
+  expect(render("3. first\n5. second\n6. third")).toEqual([undefined, "5", undefined]);
+  expect(render("1. one\n1. one again")).toEqual([undefined, "1"]);
+  expect(render("> 1. quoted\n> 4. skipped")).toEqual([undefined, "4"]);
+  expect(render("1. outer\n   1. nested\n   7. jump\n9. back")).toEqual([
+    undefined,
+    undefined,
+    "7",
+    "9",
+  ]);
+  expect(render("1. one\n2. two\n- bullet")).toEqual([undefined, undefined, undefined]);
+  expect(render("-       first block\n\n        3. first\n        5. second")).toEqual([
+    undefined,
+    undefined,
+    "5",
+  ]);
+  expect(
+    renderer(CHAT_MARKDOWN_REMARK_PLUGINS)(
+      "3. first\n5. second\n\n-       first block\n\n        3. first\n        5. second",
+    ),
+  ).toEqual([undefined, undefined, undefined, undefined, undefined]);
 });
 
 it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer resolves", () => {
