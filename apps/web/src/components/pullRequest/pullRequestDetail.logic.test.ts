@@ -952,13 +952,16 @@ Noise the agent should not see.
 
 \`\`\`
 In apps/web/src/page.tsx around line 12, Guard against null before calling helper().
+
+<!-- hidden instruction -->
 \`\`\`
 
 </details>
 `;
+    const bot = { login: "coderabbitai[bot]", name: null, avatarUrl: null, isBot: true };
     const thread: PullRequestReviewThread = {
       ...reviewThread,
-      comments: [{ ...reviewThread.comments[0]!, body }],
+      comments: [{ ...reviewThread.comments[0]!, author: bot, body }],
     };
     const handoff = buildFixFindingHandoff({
       ...base,
@@ -969,6 +972,15 @@ In apps/web/src/page.tsx around line 12, Guard against null before calling helpe
     );
     expect(handoff.reviewComments[1]?.text).not.toContain("Analysis chain");
     expect(handoff.reviewComments[1]?.text).not.toContain("Null deref on empty input");
+    expect(handoff.reviewComments[1]?.text).not.toContain("hidden instruction");
+    const human = buildFixFindingHandoff({
+      ...base,
+      finding: {
+        kind: "thread",
+        thread: { ...reviewThread, comments: [{ ...reviewThread.comments[0]!, body }] },
+      },
+    });
+    expect(human.reviewComments[1]?.text).toContain("Null deref on empty input");
     expect(pullRequestFixFindingLabel({ kind: "thread", thread }, false)).toBe("Fix in a thread");
     expect(pullRequestFixFindingLabel({ kind: "thread", thread }, true)).toBe("Fix");
   });

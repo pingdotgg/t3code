@@ -701,14 +701,11 @@ function readableBody(raw: string): string | null {
   return readable === "" ? null : readable;
 }
 
-/** Prefer a reviewer's agent prompt when present; otherwise the readable remark. */
-function findingBody(raw: string): string | null {
-  const parsed = parseAiReviewerFeedback(raw);
-  if (parsed?.agentPrompt != null) {
-    const text = aiReviewerFixText(parsed);
-    return text === "" ? null : text;
-  }
-  return readableBody(raw);
+/** Prefer a bot reviewer's agent prompt when present; otherwise the readable remark. */
+function findingBody(comment: Pick<PullRequestComment, "author" | "body">): string | null {
+  const parsed = comment.author?.isBot === true ? parseAiReviewerFeedback(comment.body) : null;
+  if (parsed?.agentPrompt != null) return readableBody(aiReviewerFixText(parsed));
+  return readableBody(comment.body);
 }
 
 /**
@@ -933,7 +930,7 @@ function reviewThreadContext(
     text: bounded(
       thread.comments
         .flatMap((comment) => {
-          const body = findingBody(comment.body);
+          const body = findingBody(comment);
           return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
         })
         .join("\n"),
@@ -1027,7 +1024,7 @@ export function buildFixFindingsHandoff(input: {
         !attached.has(comment.id),
     )
     .flatMap((comment) => {
-      const body = findingBody(comment.body);
+      const body = findingBody(comment);
       if (body === null) return [];
       const where = comment.path === null ? "" : ` on \`${boundedField(comment.path)}\``;
       return [`${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`];
@@ -1142,7 +1139,7 @@ export function buildFixFindingHandoff(input: {
   }
   if (input.finding.kind === "comment") {
     const comment = input.finding.comment;
-    const body = findingBody(comment.body) ?? "";
+    const body = findingBody(comment) ?? "";
     const where = comment.path === null ? "" : ` on \`${boundedField(comment.path)}\``;
     return {
       prompt: [
