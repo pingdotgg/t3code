@@ -712,7 +712,7 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
               url: source,
               hops: auditHops,
               status: null,
-              ...(isOcwBlockedError(cause) ? { blocked: cause.reason } : { error: String(cause) }),
+              error: String(cause),
             }),
           )
         : Effect.void,

@@ -51,7 +51,7 @@ describe("course download audit", () => {
       assert.deepStrictEqual(await NodeFSP.readdir(auditDir), ["downloads-2026-11.jsonl"]);
       const current = NodePath.join(auditDir, "downloads-2026-11.jsonl");
       await NodeFSP.truncate(current, 100 * 1024 * 1024 + 1);
-      await NodeFSP.utimes(current, new Date(0), new Date(0));
+      await NodeFSP.utimes(current, 0, 0);
       await auditDownload({ stateDir: dir }, { url: "https://example.com/capped" });
       assert.include((await NodeFSP.readFile(current, "utf8")).slice(-30), '"capped":true');
     }),
