@@ -3,6 +3,7 @@ import type { UnifiedSettings } from "@t3tools/contracts";
 import type { Dispatch } from "react";
 import type { ComposerThreadTarget, DraftSessionState } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
 import {
   type EnvironmentId,
   type ModelSelection,
@@ -81,6 +82,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const applyThreadModelPick = useApplyThreadModelPick();
 
   const handleRuntimeModeChange = (mode: RuntimeMode) => {
     if (mode === runtimeMode) return;
@@ -182,12 +184,13 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       if (options?.focusComposer !== false) scheduleComposerFocus();
       return;
     }
-    setComposerDraftModelSelection(
-      scopeThreadRef(activeThread.environmentId, activeThread.id),
-      nextModelSelection,
-      { explicit: true, replaceOptions: true },
-    );
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    setComposerDraftModelSelection(threadRef, nextModelSelection, {
+      explicit: true,
+      replaceOptions: true,
+    });
     setStickyComposerModelSelection(nextModelSelection);
+    if (!isLocalDraftThread) applyThreadModelPick(threadRef);
     if (options?.focusComposer !== false) scheduleComposerFocus();
   };
   const onProviderModelSelectStable = useStableCallback(onProviderModelSelect);

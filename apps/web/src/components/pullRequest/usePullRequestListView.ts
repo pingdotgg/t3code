@@ -41,6 +41,7 @@ import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
 import { SORT_OPTIONS } from "./pullRequestListOptions";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
+  readonly selectedUrl?: string;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
   readonly host?: string;
@@ -140,6 +141,16 @@ export function usePullRequestScope(search: PullRequestsSearch) {
   const assignmentKey = environmentQueries
     .map(({ environmentId, projectIds }) => `${environmentId}#${projectIds?.join("+") ?? "*"}`)
     .join("|");
+  // The URL is user-controlled and stands in for the PR link until detail loads.
+  const selectedLink = search.selectedUrl
+    ? sourceControlClients.parseChangeRequestUrl(search.selectedUrl)?.link
+    : undefined;
+  const selectedUrl =
+    selectedLink !== undefined &&
+    selectedLink.number === search.number &&
+    selectedLink.repository.toLowerCase() === search.repository?.toLowerCase()
+      ? search.selectedUrl
+      : undefined;
   const linkedSelection =
     search.repository && search.number && selectedProject
       ? {
@@ -147,6 +158,7 @@ export function usePullRequestScope(search: PullRequestsSearch) {
           repository: search.repository,
           number: search.number,
           projectId: selectedProject.id,
+          ...(selectedUrl ? { url: selectedUrl, revealUrl: selectedUrl } : {}),
           ...(selectedHost ? { host: selectedHost } : {}),
         }
       : null;
@@ -345,6 +357,7 @@ function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch,
 
 export function validatePullRequestsSearch(raw: Record<string, unknown>): PullRequestsSearch {
   return {
+    ...(typeof raw.selectedUrl === "string" ? { selectedUrl: raw.selectedUrl.slice(0, 4096) } : {}),
     involvement:
       raw.involvement === "reviewing" || raw.involvement === "authored" ? raw.involvement : "all",
     state:

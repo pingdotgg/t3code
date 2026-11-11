@@ -6,7 +6,7 @@ import type {
   SnapShotSource,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { CircleAlertIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
+import { CircleAlertIcon, ImageIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
 import { type ComponentProps, useLayoutEffect, useRef } from "react";
 
 import {
@@ -16,7 +16,8 @@ import {
   composerFileNeedsReattach,
 } from "../../composerDraftStore";
 import { retryAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
-import { formatAttachmentUploadProgress } from "../../lib/attachmentUploadState";
+import type { AttachmentUploadState } from "../../lib/attachmentUploadState";
+import { useAttachmentUploadProgress } from "../../hooks/useAttachmentUploadProgress";
 import { isHeicImageFile } from "../../lib/imageCompression";
 import {
   type PendingSnapShotAnimation,
@@ -47,15 +48,46 @@ import {
 } from "./SnapShotAttachmentDetails";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 
+function ComposerAttachmentUploadProgress({
+  id,
+  upload,
+  fallback,
+}: {
+  id: string;
+  upload: AttachmentUploadState | undefined;
+  fallback?: string;
+}) {
+  return useAttachmentUploadProgress(id, upload) ?? fallback ?? null;
+}
+
+function ComposerImageFallback() {
+  return (
+    <span
+      role="img"
+      aria-label="Image attachment"
+      className="flex size-full items-center justify-center p-3 text-secondary-label"
+    >
+      <ImageIcon aria-hidden="true" className="size-4" />
+    </span>
+  );
+}
+
 // A tile's remove button shows on hover or focus; touch screens always show it.
 const COMPOSER_TILE_REMOVE_CLASS_NAME =
   "absolute right-1 top-1 flex opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100";
 
 /** Upload progress as a centered percentage over a dimmed tile. */
-function ComposerTileUploadProgress({ progress }: { readonly progress: number }) {
+function ComposerTileUploadProgress({
+  id,
+  upload,
+}: {
+  readonly id: string;
+  readonly upload: AttachmentUploadState | undefined;
+}) {
+  const progress = useAttachmentUploadProgress(id, upload);
   return (
     <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/65 text-white text-meta tabular-nums">
-      {formatAttachmentUploadProgress(progress)}
+      {upload?.status === "uploading" ? progress : "Preparing"}
     </span>
   );
 }
@@ -227,21 +259,17 @@ export function ComposerAttachmentMediaRow({
                           name={ready.name}
                           mimeType={ready.mimeType}
                           src={ready.previewUrl}
-                          alt={image.name}
+                          alt=""
                           className="h-full w-full object-cover"
                         />
                       ) : (
-                        <span className="flex h-full items-center justify-center px-1 text-3xs text-secondary-label">
-                          {image.name}
-                        </span>
+                        <ComposerImageFallback />
                       )
                     }
                   />
                 </button>
               ) : (
-                <div className="flex h-full w-full items-center justify-center px-1 text-center text-3xs text-secondary-label">
-                  {image.name}
-                </div>
+                <ComposerImageFallback />
               )}
               {source?.kind === "snap-shot" ? (
                 <SnapShotAttachmentDetails
@@ -267,10 +295,8 @@ export function ComposerAttachmentMediaRow({
                   </TooltipPopup>
                 </Tooltip>
               )}
-              {(ready ? upload?.status === "uploading" : supportsAttachmentUploads) && (
-                <ComposerTileUploadProgress
-                  progress={upload?.status === "uploading" ? upload.progress : 0}
-                />
+              {(!ready || upload?.status === "uploading") && (
+                <ComposerTileUploadProgress id={image.id} upload={upload} />
               )}
               {ready && upload?.status === "failed" && (
                 <Tooltip>
@@ -361,7 +387,7 @@ export function ComposerAttachmentMediaRow({
               <PlayIcon className="relative z-10 size-4 fill-current drop-shadow-md" />
             </button>
             {upload?.status === "uploading" && (
-              <ComposerTileUploadProgress progress={upload.progress} />
+              <ComposerTileUploadProgress id={file.id} upload={upload} />
             )}
             {upload?.status === "failed" && (
               <Tooltip>
@@ -455,13 +481,21 @@ export function ComposerAttachmentFileList({
               <span className="truncate">{file.name}</span>
             </InlineButton>
             <span className="min-w-0 flex-1 truncate text-dim-foreground text-meta">
-              {needsReattach
-                ? canReattachFile
-                  ? "Attach again"
-                  : "Remove to send"
-                : upload?.status === "uploading"
-                  ? formatAttachmentUploadProgress(upload.progress)
-                  : formatAttachmentSize(file.sizeBytes)}
+              {needsReattach ? (
+                canReattachFile ? (
+                  "Attach again"
+                ) : (
+                  "Remove to send"
+                )
+              ) : upload?.status === "uploading" ? (
+                <ComposerAttachmentUploadProgress
+                  id={file.id}
+                  upload={upload}
+                  fallback={formatAttachmentSize(file.sizeBytes)}
+                />
+              ) : (
+                formatAttachmentSize(file.sizeBytes)
+              )}
             </span>
             {!needsReattach && upload?.status === "failed" ? (
               <Tooltip>
