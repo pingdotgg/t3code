@@ -29,6 +29,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleThreadPanel,
   disabledReason = null,
 }: PanelLayoutControlsProps) {
+  const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
+  if (mobileSidebarSheetMounted) return null;
   const threadPanelToggle = (
     <Button
       className="relative shrink-0 [-webkit-app-region:no-drag]"
@@ -80,6 +82,8 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   maximized: boolean;
   onToggle: () => void;
 }) {
+  const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
+  if (mobileSidebarSheetMounted) return null;
   const label = maximized ? "Restore panel size" : "Maximize panel";
   return (
     <Tooltip>
