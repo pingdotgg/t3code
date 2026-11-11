@@ -780,6 +780,61 @@ describe("RelayClient", () => {
         );
       },
     );
+
+    // Windows tears a timed-out child down with `taskkill /T /F`, which can take tens of seconds.
+    it.effect.skipIf(windowsHost)(
+      "settles a hung version probe at its timeout despite slow child cleanup",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-cloudflared-test-",
+          });
+          const overridePath = `${baseDir}/override/cloudflared`;
+          yield* writeExecutable(overridePath);
+          const spawned = yield* Deferred.make<void>();
+          const slowCleanupSpawner = ChildProcessSpawner.make(() =>
+            Effect.addFinalizer(() => Effect.sleep("20 seconds")).pipe(
+              Effect.andThen(Deferred.succeed(spawned, undefined)),
+              Effect.as(
+                ChildProcessSpawner.makeHandle({
+                  ...makeHandle(),
+                  exitCode: Effect.never,
+                  isRunning: Effect.succeed(true),
+                  stdout: Stream.never,
+                  all: Stream.never,
+                }),
+              ),
+            ),
+          );
+          const env = { PATH: "", T3CODE_CLOUDFLARED_PATH: overridePath };
+          const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, slowCleanupSpawner),
+          );
+          const resolving = yield* manager.resolve.pipe(
+            Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env })),
+            Effect.timeoutOption("11 seconds"),
+            Effect.forkChild,
+          );
+          yield* Deferred.await(spawned);
+          yield* TestClock.adjust("11 seconds");
+          yield* TestClock.adjust("1 minute");
+          expect(yield* Fiber.join(resolving)).toEqual(
+            Option.some({ status: "missing", version: RelayClient.CLOUDFLARED_VERSION }),
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              NodeCrypto.layer,
+              layerHttpClient(new Uint8Array()),
+              layerSpawner([]),
+              layerHostRuntime({ PATH: "" }),
+            ),
+          ),
+        ),
+    );
   });
 
   it("orders and parses cloudflared versions", () => {
