@@ -637,6 +637,7 @@ const boundedDownload = (url: string, destination: string, audit?: DownloadAudit
 
 const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
   const auditHops: { url: string; status: number | null; ips: string[] }[] = [];
+  let auditWritten = false;
   return Effect.tryPromise({
     try: async (signal) => {
       // Every URL we fetch stays on OCW: the source can come from a YouTube description.
@@ -650,6 +651,7 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
         const hops: { url: string; status: number | null; ips: string[] }[] = [];
         let finalResponse: Response | undefined;
         let body: Buffer | undefined;
+        let failure: unknown;
         try {
           for (let count = 0; count <= 5; count += 1) {
             // OCW host validation is fixed; this lookup only records the resolved addresses.
@@ -673,15 +675,21 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
             current = onOcw(new URL(location, current.toString()));
           }
           throw new Error("Too many OCW redirects.");
+        } catch (cause) {
+          failure = cause;
+          throw cause;
         } finally {
-          if (audit)
+          if (audit) {
+            auditWritten = true;
             await auditDownload(audit, {
               url: initial.toString(),
               hops,
               status: finalResponse?.status ?? hops.at(-1)?.status ?? null,
               contentType: finalResponse?.headers.get("content-type") ?? null,
               ...(body ? { bytes: body.byteLength, body } : {}),
+              ...(failure ? { error: String(failure) } : {}),
             });
+          }
         }
       };
       let parsed = onOcw(new URL(source));
@@ -707,7 +715,7 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
       }),
   }).pipe(
     Effect.tapError((cause) =>
-      audit && auditHops.length === 0
+      audit && !auditWritten
         ? Effect.promise(() =>
             auditDownload(audit, {
               url: source,

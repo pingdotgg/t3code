@@ -389,4 +389,31 @@ describe("course ingestion parsers", () => {
       Effect.provideService(ProcessRunner.ProcessRunner, { run: () => Effect.die("not used") }),
     ),
   );
+
+  it.effect("audits one failed OCW hop once", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "ocw-audit-failure-")),
+      );
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Promise.reject(new Error("socket closed"))),
+      );
+      yield* ingestCourse("https://ocw.mit.edu/courses/tiny/", {
+        ytDlp: false,
+        workDir: NodePath.join(stateDir, "tmp"),
+        audit: { stateDir },
+      }).pipe(Effect.flip, Effect.ensuring(Effect.sync(() => vi.unstubAllGlobals())));
+      const [file] = yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(stateDir, "audit")));
+      const lines = (yield* Effect.promise(() =>
+        NodeFSP.readFile(NodePath.join(stateDir, "audit", file!), "utf8"),
+      ))
+        .trim()
+        .split("\n");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("socket closed");
+    }).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, { run: () => Effect.die("not used") }),
+    ),
+  );
 });
