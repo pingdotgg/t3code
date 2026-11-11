@@ -73,6 +73,8 @@ import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 
+const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
+
 const decodeDelegationBinding = Schema.decodeOption(
   Schema.fromJsonString(OrchestratorMcpTaskReceiptBinding),
 );
@@ -1809,11 +1811,12 @@ const make = Effect.gen(function* () {
             runIds: [runId],
           })
           .pipe(
-            Effect.catchTag("OrchestratorProjectionError", (error) =>
-              Schema.is(ProjectionStoreThreadNotFoundError)(error.cause)
-                ? Effect.succeed(null)
-                : Effect.fail(error),
-            ),
+            Effect.catchTags({
+              OrchestratorProjectionError: (error) =>
+                isProjectionStoreThreadNotFoundError(error.cause)
+                  ? Effect.succeed(null)
+                  : Effect.fail(error),
+            }),
           );
         return records?.runs.find((run) => run.id === runId) ?? null;
       },
