@@ -46,6 +46,8 @@ describe("inlineCodeFilePathCandidate", () => {
     ["bin/run:12", null],
     ["docs/README:12", "docs/README:12"],
     ["./bin/run:12", "./bin/run:12"],
+    ["src/資料.備份:12", "src/資料.備份:12"],
+    ["docs/notes.é:12", "docs/notes.é:12"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
