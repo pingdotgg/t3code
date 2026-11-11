@@ -564,6 +564,9 @@ describe("review thread conversations", () => {
       }),
     ).toBe("> Use `<!-- x -->`:\n> ```html\n> <!-- keep -->\n> ```\n\n");
     expect(
+      pullRequestQuoteReply({ ...loose, author: null, body: "~~~html\n<!-- keep -->\n~~~" }),
+    ).toBe("> ~~~html\n> <!-- keep -->\n> ~~~\n\n");
+    expect(
       pullRequestQuoteReply({ ...loose, author: null, body: "Not code \\`<!-- drop -->\\`" }),
     ).toBe("> Not code \\`\\`\n\n");
   });

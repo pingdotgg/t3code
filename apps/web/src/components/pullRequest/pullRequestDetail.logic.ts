@@ -540,7 +540,7 @@ export function pullRequestQuoteReply(comment: PullRequestComment, selection?: s
     selected ||
     comment.body
       .replace(
-        /(\\[\s\S]|```[\s\S]*?```|`[^`\n]*`)|<!--[\s\S]*?-->/gu,
+        /(\\[\s\S]|```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|<!--[\s\S]*?-->/gu,
         (_, kept?: string) => kept ?? "",
       )
       .trim();
