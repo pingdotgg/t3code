@@ -295,7 +295,7 @@ function referenceDefinition(written: string, quotes: number): MarkdownReference
   let end = 1;
   while (end < source.length && source[end] !== "]") end += source[end] === "\\" ? 2 : 1;
   if (source[0] !== "[" || end >= source.length) return null;
-  return { label: source.slice(1, end).replace(/\s+/g, " ").toLowerCase(), source };
+  return { label: source.slice(1, end).replace(/\s+/g, " ").trim().toLowerCase(), source };
 }
 
 /** Read after HTML flattening, which exposes definitions a raw HTML block hides from the parse. */
@@ -324,7 +324,12 @@ export function withReferenceDefinitions(
   definitions: ReadonlyArray<MarkdownReferenceDefinition>,
 ): string {
   if (definitions.length === 0 || !markdown.includes("[")) return markdown;
-  const text = markdown.toLowerCase().replace(/\s+/g, " ");
+  // Labels match as CommonMark matches them: case-insensitive, whitespace collapsed and trimmed.
+  const text = markdown
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\[ /g, "[")
+    .replace(/ \]/g, "]");
   // A label the fragment defines itself keeps its own definition, as in the whole reply.
   const used = definitions.filter(
     (definition) =>

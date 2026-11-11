@@ -133,11 +133,11 @@ describe("splitMarkdownDetails", () => {
         0,
         { "part > rest": "https://example.com/a", "part rest": "https://example.com/b" },
       ],
-      // A fold that defines a label keeps its own definition.
+      // A fold that defines a label keeps its own definition, however the label is spaced.
       [
-        "Top\n\n<details>\n<summary>S</summary>\n\nSee [x].\n\n[x]: https://second\n\n</details>\n\n[x]: https://first",
+        "[ x ]: https://outside.example\n\n<details>\n<summary>S</summary>\n\nSee [ x ].\n\n[x]: https://inside.example\n\n</details>",
         1,
-        { x: "https://second" },
+        { x: "https://inside.example" },
       ],
     ] as const) {
       const segment = splitMarkdownDetails(markdown)[pick];
