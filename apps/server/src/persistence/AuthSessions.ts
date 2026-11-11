@@ -101,12 +101,15 @@ export type RevokePeerEnvironmentSessionsInput = typeof RevokePeerEnvironmentSes
 export const RevokeSubjectSessionsInput = Schema.Struct({
   subject: Schema.String,
   revokedAt: Schema.DateTimeUtcFromString,
+  /** A session left alone, such as the one asking. */
+  keep: Schema.optionalKey(AuthSessionId),
 });
 export type RevokeSubjectSessionsInput = typeof RevokeSubjectSessionsInput.Type;
 
 export const RevokeBrokeredSessionsInput = Schema.Struct({
   brokeredBy: EnvironmentId,
   revokedAt: Schema.DateTimeUtcFromString,
+  keep: Schema.optionalKey(AuthSessionId),
 });
 export type RevokeBrokeredSessionsInput = typeof RevokeBrokeredSessionsInput.Type;
 
@@ -418,12 +421,13 @@ export const make = Effect.gen(function* () {
   const revokeSubjectRows = SqlSchema.findAll({
     Request: RevokeSubjectSessionsInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
-    execute: ({ subject, revokedAt }) =>
+    execute: ({ subject, revokedAt, keep }) =>
       sql`
         UPDATE auth_sessions
         SET revoked_at = ${revokedAt}
         WHERE subject = ${subject}
           AND revoked_at IS NULL
+          AND session_id IS NOT ${keep ?? null}
         RETURNING session_id AS "sessionId"
       `,
   });
@@ -442,12 +446,13 @@ export const make = Effect.gen(function* () {
   const revokeBrokeredRows = SqlSchema.findAll({
     Request: RevokeBrokeredSessionsInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
-    execute: ({ brokeredBy, revokedAt }) =>
+    execute: ({ brokeredBy, revokedAt, keep }) =>
       sql`
         UPDATE auth_sessions
         SET revoked_at = ${revokedAt}
         WHERE brokered_by = ${brokeredBy}
           AND revoked_at IS NULL
+          AND session_id IS NOT ${keep ?? null}
         RETURNING session_id AS "sessionId"
       `,
   });

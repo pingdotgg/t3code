@@ -416,13 +416,36 @@ const make = Effect.gen(function* () {
       Effect.mapError(storageError),
     );
 
+  /**
+   * The level an older build would read, in the table it reads: without a row there it lets a
+   * machine in at its default, full access, so a revocation must survive a downgrade.
+   */
+  const writeLegacyPolicy = Effect.fn("Membership.writeLegacyPolicy")(function* (
+    entry: NetworkMember,
+    stampJson: string,
+  ) {
+    const limit = (yield* limits).get(entry.environmentId);
+    const access =
+      entry.access === "revoked" || limit === undefined
+        ? entry.access
+        : narrowerAccess(entry.access, limit);
+    yield* sql`
+        INSERT INTO tailnet_device_policy (environment_id, access, stamp_json, updated_by)
+        VALUES (${entry.environmentId}, ${access}, ${stampJson}, ${entry.updatedAt.node})
+        ON CONFLICT (environment_id) DO UPDATE SET
+          access = excluded.access,
+          stamp_json = excluded.stamp_json,
+          updated_by = excluded.updated_by
+      `;
+  });
+
   const write = (entry: NetworkMember) =>
     Effect.all([
       encodeStamp(entry.updatedAt),
       entry.restores === undefined ? Effect.succeed(null) : encodeStamp(entry.restores),
     ]).pipe(
-      Effect.flatMap(
-        ([stampJson, restoresJson]) => sql`
+      Effect.flatMap(([stampJson, restoresJson]) =>
+        sql`
           INSERT INTO network_members
             (environment_id, label, node_id, access, stamp_json, restores_json)
           VALUES (
@@ -436,7 +459,7 @@ const make = Effect.gen(function* () {
             stamp_json = excluded.stamp_json,
             restores_json = excluded.restores_json,
             hidden = CASE WHEN excluded.access = 'revoked' THEN network_members.hidden ELSE 0 END
-        `,
+        `.pipe(Effect.andThen(writeLegacyPolicy(entry, stampJson)), sql.withTransaction),
       ),
       Effect.mapError(storageError),
     );
@@ -504,6 +527,7 @@ const make = Effect.gen(function* () {
 
   const setLimit: Membership["Service"]["setLimit"] = Effect.fn("Membership.setLimit")(
     function* (environmentId, limit) {
+      const found = yield* member(environmentId);
       yield* (
         limit === null
           ? sql`DELETE FROM network_member_limits WHERE environment_id = ${environmentId}`
@@ -511,7 +535,17 @@ const make = Effect.gen(function* () {
               INSERT INTO network_member_limits (environment_id, access) VALUES (${environmentId}, ${limit})
               ON CONFLICT (environment_id) DO UPDATE SET access = excluded.access
             `
-      ).pipe(Effect.mapError(storageError));
+      ).pipe(
+        Effect.andThen(
+          Option.isNone(found)
+            ? Effect.void
+            : encodeStamp(found.value.updatedAt).pipe(
+                Effect.flatMap((stampJson) => writeLegacyPolicy(found.value, stampJson)),
+              ),
+        ),
+        sql.withTransaction,
+        Effect.mapError(storageError),
+      );
       yield* changed();
     },
   );
@@ -571,9 +605,14 @@ const make = Effect.gen(function* () {
       const before = current.get(environmentId);
       if (before === entry) continue;
       wrote = true;
-      // A bound node is never dropped for an unbound copy. Restamped, so the binding spreads.
+      // A bound node is never dropped for an unbound copy. Restamped, so the binding spreads,
+      // except a revocation: its stamp is its rank, and names who revoked it (a leave or not).
       if (entry.nodeId === null && before !== undefined && before.nodeId !== null) {
-        yield* write({ ...entry, nodeId: before.nodeId, updatedAt: yield* stamp });
+        yield* write({
+          ...entry,
+          nodeId: before.nodeId,
+          updatedAt: entry.access === "revoked" ? entry.updatedAt : yield* stamp,
+        });
       } else {
         yield* write(entry);
       }

@@ -468,6 +468,9 @@ export const layer = HttpApiBuilder.group(
                       if (error.reason === "forbidden") {
                         return yield* new EnvironmentHttpForbiddenError({ message: error.message });
                       }
+                      if (error.reason === "unknown_device") {
+                        return yield* failEnvironmentInvalidRequest("unknown_app");
+                      }
                       return yield* failEnvironmentInternal(
                         "pairing_credential_issuance_failed",
                         error,

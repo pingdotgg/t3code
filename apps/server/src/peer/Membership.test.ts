@@ -1,6 +1,13 @@
+import { it as effectIt } from "@effect/vitest";
 import { EnvironmentId, type NetworkMember } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import { describe, expect, it } from "vite-plus/test";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
+import * as Membership from "./Membership.ts";
 import { mergeMembers } from "./Membership.ts";
 
 const laptop = EnvironmentId.make("env-laptop");
@@ -61,4 +68,46 @@ describe("mergeRoster", () => {
       [phone]: "revoked",
     });
   });
+});
+
+const layerMembership = Membership.layer.pipe(
+  Layer.provideMerge(Sqlite.layerMemory),
+  Layer.provide(
+    Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+      getEnvironmentId: Effect.succeed(laptop),
+    }),
+  ),
+);
+
+describe("the access an older build sees", () => {
+  // An older build reads only `tailnet_device_policy`, and lets in a machine with no row there at
+  // its default, full access. So every level here is written there too.
+  effectIt.effect("follows every member write, narrowed by this machine's limit", () =>
+    Effect.gen(function* () {
+      const membership = yield* Membership.Membership;
+      const sql = yield* SqlClient.SqlClient;
+      const legacy = (environmentId: EnvironmentId) =>
+        sql<{ readonly access: string; readonly updated_by: string }>`
+          SELECT access, updated_by FROM tailnet_device_policy WHERE environment_id = ${environmentId}
+        `.pipe(Effect.map((rows) => rows.map((row) => [row.access, row.updated_by])));
+      const put = (environmentId: EnvironmentId, access: NetworkMember["access"]) =>
+        membership.put({ environmentId, label: environmentId, nodeId: null, access });
+
+      yield* put(box, "full-access");
+      yield* put(box, "revoked");
+      expect(yield* legacy(box)).toEqual([["revoked", laptop]]);
+
+      yield* put(box, "auto");
+      yield* membership.setLimit(box, "read-only");
+      expect(yield* legacy(box)).toEqual([["read-only", laptop]]);
+
+      // A narrowing merged from another machine lands there too.
+      yield* put(studio, "full-access");
+      yield* membership.merge(phone, {
+        members: [write(studio, "approval-required", Number.MAX_SAFE_INTEGER, 0, phone)],
+        apps: [],
+      });
+      expect(yield* legacy(studio)).toEqual([["approval-required", phone]]);
+    }).pipe(Effect.provide(layerMembership)),
+  );
 });

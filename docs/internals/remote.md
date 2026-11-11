@@ -161,8 +161,16 @@ and narrowing from a member's sync, never widening, and mints nothing.
 A machine that leaves writes its own tombstone (stamped by itself) and clears
 its roster, so a restore would list a machine that takes no part: it is
 refused, and the user adds the machine again, a join whose write names the
-tombstone in `restores`. Forgetting hides a tombstone on one machine only; found
-on the tailnet again, the machine is offered to add like any other.
+tombstone in `restores`. Leaving ends every app and member session except the
+one that asked, which keeps its scopes, so a machine reached only through the
+network can still allow joining and be added again. A revocation is never
+restamped, so its stamp still says who wrote it. Forgetting hides a tombstone on
+one machine only; found on the tailnet again, the machine is offered to add like
+any other.
+
+Every member write also writes the level an older build reads
+(`tailnet_device_policy`, narrowed by the local limit), because that build lets
+a machine with no row there in at full access. Nothing reads it back.
 
 An app opens another member through the server it is connected to, which asks
 that member over its member session for a one-time pairing credential. The

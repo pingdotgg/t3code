@@ -2820,7 +2820,8 @@ export const layerWsRpc = (
         [WS_METHODS.tailnetDevicesForgetApp]: (input) => tailnetDevices.forgetApp(input.appId),
         [WS_METHODS.tailnetDevicesSetLimit]: (input) =>
           tailnetDevices.setLimit(input.environmentId, input.access),
-        [WS_METHODS.tailnetDevicesLeave]: () => tailnetDevices.leave,
+        [WS_METHODS.tailnetDevicesLeave]: () =>
+          tailnetDevices.leave({ sessionId: currentSession.sessionId }),
         [WS_METHODS.tailnetDevicesAllowJoin]: () => tailnetDevices.allowJoin,
         [WS_METHODS.tailnetDevicesOpenDevice]: (input) =>
           tailnetDevices.openDevice(input.environmentId, {

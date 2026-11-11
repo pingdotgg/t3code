@@ -15,6 +15,7 @@ import {
   type NetworkApp,
   type NetworkAppAccess,
   type AuthPairingCredentialResult,
+  type AuthSessionId,
   type NetworkMember,
   type PeerLink,
   type TailnetChallengeConfirm,
@@ -53,6 +54,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -85,6 +87,8 @@ const FULL_SCAN_INTERVAL = Duration.minutes(10);
 const TAILNET_POLL_INTERVAL = Duration.minutes(1);
 /** A device answered a scan, or a link reached it, this recently, so it counts as online. */
 const ONLINE_WINDOW = Duration.minutes(15);
+/** A machine seen again this soon is not written again: it still counts as online. */
+const SEEN_REFRESH = Duration.minutes(5);
 /** How long an unclaimed machine lets a network add it after its owner allows it. */
 const JOIN_WINDOW = Duration.minutes(10);
 /** Subject of the agent sessions a pairing code or the tailnet handshake issues. */
@@ -249,10 +253,13 @@ export class TailnetDevices extends Context.Service<
     readonly forget: (environmentId: EnvironmentId) => Effect.Effect<void, TailnetDevicesError>;
     /**
      * This machine leaves its network: the others learn it revoked itself, its member links and
-     * sessions end, and its roster here is cleared. Links made with `local` stay. Refused while
-     * it is the last full-access machine and others remain, which would strand them.
+     * sessions end, and its roster here is cleared. Links made with `local` stay, and so does the
+     * `caller`'s own session, unchanged, so a machine reached only through the network can still
+     * be added again. Refused while it is the last full-access machine and others remain.
      */
-    readonly leave: Effect.Effect<void, TailnetDevicesError>;
+    readonly leave: (caller?: {
+      readonly sessionId: AuthSessionId;
+    }) => Effect.Effect<void, TailnetDevicesError>;
     /** Lets an admin of a network add this machine, or re-add it after an update, for a while. */
     readonly allowJoin: Effect.Effect<TailnetDeviceAllowJoinResult, TailnetDevicesError>;
     /**
@@ -354,9 +361,12 @@ const make = Effect.gen(function* () {
    * Ends everything a revoked machine holds here, including what it opened for apps, and stops
    * using its link.
    */
-  const cutOff = Effect.fn("TailnetDevices.cutOff")(function* (environmentId: EnvironmentId) {
+  const cutOff = Effect.fn("TailnetDevices.cutOff")(function* (
+    environmentId: EnvironmentId,
+    keep?: AuthSessionId,
+  ) {
     yield* sessions.revokeByPeerEnvironment(environmentId);
-    yield* sessions.revokeBrokeredBy(environmentId);
+    yield* sessions.revokeBrokeredBy(environmentId, keep);
     yield* links.unlink(environmentId);
   }, Effect.mapError(storageError));
 
@@ -368,8 +378,11 @@ const make = Effect.gen(function* () {
   }, Effect.mapError(storageError));
 
   /** Ends an app's sessions here, so it pairs again at its new access. */
-  const cutApp = Effect.fn("TailnetDevices.cutApp")(function* (appId: string) {
-    yield* sessions.revokeBySubject(`${NETWORK_APP_SUBJECT_PREFIX}${appId}`);
+  const cutApp = Effect.fn("TailnetDevices.cutApp")(function* (
+    appId: string,
+    keep?: AuthSessionId,
+  ) {
+    yield* sessions.revokeBySubject(`${NETWORK_APP_SUBJECT_PREFIX}${appId}`, keep);
   }, Effect.mapError(storageError));
 
   /**
@@ -458,17 +471,35 @@ const make = Effect.gen(function* () {
     Effect.mapError(storageError),
   );
 
-  const upsertDevice = (
-    device: TailnetDeviceDescriptor,
-    seen: {
-      readonly tailnetName: string;
-      readonly nodeId: string | null;
-      readonly at: DateTime.Utc;
-    } | null,
-  ) =>
-    encodeUrls(device.urls).pipe(
-      Effect.flatMap(
-        (urlsJson) => sql`
+  const upsertDevice = Effect.fn("TailnetDevices.upsertDevice")(
+    function* (
+      device: TailnetDeviceDescriptor,
+      seen: {
+        readonly tailnetName: string;
+        readonly nodeId: string | null;
+        readonly at: DateTime.Utc;
+      } | null,
+    ): Effect.fn.Return<void, Schema.SchemaError | SqlError> {
+      const urlsJson = yield* encodeUrls(device.urls);
+      const [known] = yield* sql<DeviceRow>`
+        SELECT * FROM tailnet_devices WHERE environment_id = ${device.environmentId}
+      `;
+      // A scan sees the same machines again and again; only a change is written and pushed.
+      if (
+        seen !== null &&
+        known !== undefined &&
+        known.label === device.label &&
+        known.urls_json === urlsJson &&
+        known.tailnet_name === seen.tailnetName &&
+        (seen.nodeId === null || known.node_id === seen.nodeId) &&
+        known.last_seen_at !== null &&
+        Math.abs(
+          Duration.toMillis(DateTime.distance(DateTime.makeUnsafe(known.last_seen_at), seen.at)),
+        ) < Duration.toMillis(SEEN_REFRESH)
+      ) {
+        return;
+      }
+      yield* sql`
           INSERT INTO tailnet_devices
             (environment_id, label, urls_json, tailnet_name, node_id, last_seen_at)
           VALUES (
@@ -483,12 +514,17 @@ const make = Effect.gen(function* () {
             tailnet_name = COALESCE(excluded.tailnet_name, tailnet_devices.tailnet_name),
             node_id = COALESCE(excluded.node_id, tailnet_devices.node_id),
             last_seen_at = COALESCE(excluded.last_seen_at, tailnet_devices.last_seen_at)
-        `,
+        `;
+      yield* changed;
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("Could not record a tailnet device", { cause }),
+        ),
+        Effect.ignore,
       ),
-      Effect.andThen(changed),
-      Effect.tapError((cause) => Effect.logWarning("Could not record a tailnet device", { cause })),
-      Effect.ignore,
-    );
+  );
 
   /** Hints from another member only add addresses; what was seen here stays. */
   const addHint = (device: TailnetDeviceDescriptor) =>
@@ -971,9 +1007,9 @@ const make = Effect.gen(function* () {
       access.value === "full-access" ? payload : { members: leaving, apps: [] },
       { narrowOnly },
     );
-    yield* Effect.forEach(cuts.revoked, cutOff, { discard: true });
-    yield* Effect.forEach(cuts.narrowed, cutBrokered, { discard: true });
-    yield* Effect.forEach(cuts.appsCut, cutApp, { discard: true });
+    yield* Effect.forEach(cuts.revoked, (id) => cutOff(id), { discard: true });
+    yield* Effect.forEach(cuts.narrowed, (id) => cutBrokered(id), { discard: true });
+    yield* Effect.forEach(cuts.appsCut, (appId) => cutApp(appId), { discard: true });
     yield* seedLimits(cuts.added);
   });
 
@@ -1329,41 +1365,45 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const leave: TailnetDevices["Service"]["leave"] = Effect.gen(function* () {
-    const self = yield* environment.getEnvironmentId;
-    const own = yield* membership.member(self);
-    if (Option.isNone(own)) {
-      return yield* new TailnetDevicesError({
-        reason: "unknown_device",
-        message: "This machine is not in a network.",
-      });
-    }
-    const roster = yield* membership.members;
-    const appList = yield* membership.apps;
-    const others = roster.filter(
-      (member) => member.environmentId !== self && member.access !== "revoked",
-    );
-    // Nobody could change the network after this machine leaves, so it would be stranded.
-    if (
-      own.value.access === "full-access" &&
-      others.length > 0 &&
-      !others.some((member) => member.access === "full-access")
-    ) {
-      return yield* forbidden(
-        "This is the last machine with full access. Give another machine full access first, or forget the others.",
+  const leave: TailnetDevices["Service"]["leave"] = Effect.fn("TailnetDevices.leave")(
+    function* (caller) {
+      const self = yield* environment.getEnvironmentId;
+      const own = yield* membership.member(self);
+      if (Option.isNone(own)) {
+        return yield* new TailnetDevicesError({
+          reason: "unknown_device",
+          message: "This machine is not in a network.",
+        });
+      }
+      const roster = yield* membership.members;
+      const appList = yield* membership.apps;
+      const others = roster.filter(
+        (member) => member.environmentId !== self && member.access !== "revoked",
       );
-    }
-    // The one write a machine may make about itself, so every member cuts it off.
-    yield* membership.put({ ...own.value, access: "revoked" });
-    yield* push;
-    yield* Effect.forEach(
-      roster.filter((member) => member.environmentId !== self),
-      (member) => cutOff(member.environmentId),
-      { discard: true },
-    );
-    yield* Effect.forEach(appList, (app) => cutApp(app.appId), { discard: true });
-    yield* membership.clear;
-  }).pipe(Effect.withSpan("TailnetDevices.leave"));
+      // Nobody could change the network after this machine leaves, so it would be stranded.
+      if (
+        own.value.access === "full-access" &&
+        others.length > 0 &&
+        !others.some((member) => member.access === "full-access")
+      ) {
+        return yield* forbidden(
+          "This is the last machine with full access. Give another machine full access first, or forget the others.",
+        );
+      }
+      // The one write a machine may make about itself, so every member cuts it off.
+      yield* membership.put({ ...own.value, access: "revoked" });
+      yield* push;
+      yield* Effect.forEach(
+        roster.filter((member) => member.environmentId !== self),
+        (member) => cutOff(member.environmentId, caller?.sessionId),
+        { discard: true },
+      );
+      yield* Effect.forEach(appList, (app) => cutApp(app.appId, caller?.sessionId), {
+        discard: true,
+      });
+      yield* membership.clear;
+    },
+  );
 
   const allowJoin: TailnetDevices["Service"]["allowJoin"] = Effect.gen(function* () {
     yield* requireEnabled();
@@ -1890,6 +1930,8 @@ const make = Effect.gen(function* () {
           { concurrency: "unbounded" },
         );
         return Stream.concat(Stream.succeed(undefined), triggers).pipe(
+          // Triggers that arrive while a snapshot is built collapse into one rebuild after it.
+          Stream.buffer({ capacity: 1, strategy: "sliding" }),
           Stream.mapEffect(() => list(caller)),
           Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
         );

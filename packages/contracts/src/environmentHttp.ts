@@ -116,6 +116,8 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "invalid_audio",
   "speech_unavailable",
   "speech_busy",
+  /** Pair again named an app this server no longer lists; pair it as a new app. */
+  "unknown_app",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 

@@ -472,13 +472,15 @@ export class SessionStore extends Context.Service<
     readonly revokeByPeerEnvironment: (
       peerEnvironmentId: EnvironmentId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
-    /** Revokes every session of one subject, such as an app of the network. */
+    /** Revokes every session of one subject, such as an app of the network, except `keep`. */
     readonly revokeBySubject: (
       subject: string,
+      keep?: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
-    /** Revokes every session redeemed from a credential another machine asked for. */
+    /** Revokes every session redeemed from a credential another machine asked for, except `keep`. */
     readonly revokeBrokeredBy: (
       brokeredBy: EnvironmentId,
+      keep?: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
@@ -1141,10 +1143,10 @@ const make = Effect.gen(function* () {
 
   const revokeBySubject: SessionStore["Service"]["revokeBySubject"] = Effect.fn(
     "SessionStore.revokeBySubject",
-  )(function* (subject) {
+  )(function* (subject, keep) {
     const revokedAt = yield* DateTime.now;
     const revokedSessionIds = yield* authSessions
-      .revokeBySubject({ subject, revokedAt })
+      .revokeBySubject({ subject, revokedAt, ...(keep === undefined ? {} : { keep }) })
       .pipe(Effect.mapError((cause) => new SubjectSessionsRevocationError({ subject, cause })));
     yield* Ref.update(connectedSessionsRef, (current) => {
       const next = new Map(current);
@@ -1160,10 +1162,10 @@ const make = Effect.gen(function* () {
 
   const revokeBrokeredBy: SessionStore["Service"]["revokeBrokeredBy"] = Effect.fn(
     "SessionStore.revokeBrokeredBy",
-  )(function* (brokeredBy) {
+  )(function* (brokeredBy, keep) {
     const revokedAt = yield* DateTime.now;
     const revokedSessionIds = yield* authSessions
-      .revokeBrokeredBy({ brokeredBy, revokedAt })
+      .revokeBrokeredBy({ brokeredBy, revokedAt, ...(keep === undefined ? {} : { keep }) })
       .pipe(Effect.mapError((cause) => new BrokeredSessionsRevocationError({ brokeredBy, cause })));
     yield* Ref.update(connectedSessionsRef, (current) => {
       const next = new Map(current);
