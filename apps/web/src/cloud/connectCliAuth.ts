@@ -39,13 +39,7 @@ export function buildConnectCliClerkAuthorizeUrl(request: ConnectAuthorizeReques
   });
 }
 
-/**
- * It has to be the authorize endpoint rather than this page: /connect carries the CLI request
- * in its fragment, so navigating back to the same URL is a same-document fragment navigation
- * the browser never reloads — and Clerk treats any post-sign-in navigation as a page unload and
- * skips the state emit that would otherwise re-render the surface, so the session never arrives
- * either.
- */
+/** Force a new document: fragment revisits do not reload, and Clerk suppresses post-sign-in session updates. */
 export function connectCliSignInRedirectUrl(
   request: ConnectAuthorizeRequest,
   currentHref: string,
