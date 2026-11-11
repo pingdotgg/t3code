@@ -318,6 +318,63 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
   );
 
   it.effect.each([
+    {
+      name: "an IPv6 startup failure",
+      stderr:
+        "enforce_kernel_ipv6_support.cc:70] Check failed: AddressFamilySupported(AF_INET6, &loopback6_ok)",
+      exit: "process.exit(1)",
+      message:
+        "Antigravity requires IPv6 socket support. Enable IPv6 in this environment. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown.",
+    },
+    {
+      name: "a SIGKILL exit",
+      stderr: "",
+      exit: "process.kill(process.pid, 'SIGKILL')",
+      message:
+        "The downloaded Antigravity runtime could not start in this environment: it exited after signal SIGKILL.",
+    },
+    {
+      name: "a non-zero exit code",
+      stderr: "Private startup diagnostics: internal runtime failure",
+      exit: "process.exit(3)",
+      message:
+        "The downloaded Antigravity runtime could not start in this environment: it exited with code 3.",
+    },
+  ])(
+    "reports $name without private stderr and keeps the previous release",
+    (testCase) =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const { installation, stagingReleased } = yield* makeHarness({
+          previous: true,
+          useDefaultValidation: true,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) =>
+              spawner.spawn(
+                command._tag === "StandardCommand" && command.command.endsWith(executableName)
+                  ? ChildProcess.make(process.execPath, [
+                      "-e",
+                      `process.stderr.write(${encodeJsonString(testCase.stderr)}, () => ${testCase.exit});`,
+                    ])
+                  : command,
+              ),
+            ),
+          ),
+        );
+        yield* installation.start;
+        expect(yield* terminalState(installation)).toMatchObject({
+          phase: "failed",
+          message: testCase.message,
+        });
+        yield* Deferred.await(stagingReleased);
+        yield* expectPreviousRelease(installation);
+      }),
+    { skip: hostPlatform === "win32" },
+  );
+
+  it.effect.each([
     { name: "checksum mismatch", completeAsset: { sha256: "2".repeat(64) } },
     { name: "short download", archive: completeArchive.subarray(0, -1), completeAsset: {} },
     {
