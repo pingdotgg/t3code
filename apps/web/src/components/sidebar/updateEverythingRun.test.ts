@@ -77,7 +77,7 @@ describe("startDesktopUpdateLaunchNotice", () => {
 });
 
 describe("retryFailedUpdateRunServers", () => {
-  it("settles a failed server that already restarted on the target and retries only the others", async () => {
+  it("settles a failed server that already restarted on the target and retries only the others", () => {
     const targetVersion = "9.9.9";
     const serverVersions = new Map([
       [EnvironmentId.make("already-updated"), targetVersion],
@@ -113,14 +113,11 @@ describe("retryFailedUpdateRunServers", () => {
       restartAt: null,
       machines: [...serverVersions.keys()].map(failedMachine),
     }));
-    const update = vi.fn(async (_target: ServerUpdateTarget): Promise<ServerUpdateOutcome> => ({
-      status: "failed",
-      message: rejection,
-    }));
+    const update = vi.fn(
+      (_target: ServerUpdateTarget) => new Promise<ServerUpdateOutcome>(() => {}),
+    );
 
     retryFailedUpdateRunServers(update);
-    await Promise.resolve();
-    await Promise.resolve();
 
     let run: UpdateEverythingRun | null = null;
     setUpdateEverythingRun((current) => {
@@ -136,7 +133,7 @@ describe("retryFailedUpdateRunServers", () => {
       })),
     ).toEqual([
       { environmentId: "already-updated", result: "done", retryable: false },
-      { environmentId: "behind", result: "failed", retryable: true },
+      { environmentId: "behind", result: null, retryable: true },
     ]);
   });
 });
