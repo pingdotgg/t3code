@@ -1156,27 +1156,6 @@ describe("native provider presentation in the v2 timeline", () => {
   });
 
   it.each([
-    { severity: undefined, warning: true },
-    { severity: "warning" as const, warning: true },
-    { severity: "info" as const, warning: false },
-  ])("shows a system notice as a warning unless it is info: $severity", ({ severity, warning }) => {
-    const item = {
-      ...base,
-      type: "system_notice" as const,
-      message: "Claude accepted your steer",
-      ...(severity === undefined ? {} : { severity }),
-    } satisfies OrchestrationV2TurnItem;
-    const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
-      visibleTurnItems: [visible(item)],
-      optimisticMessages: [],
-    });
-    if (entry?.kind !== "work") throw new Error("Expected a notice work entry");
-
-    expect(entry.entry.label).toBe("Claude accepted your steer");
-    expect(entry.entry.sourceActivityKind === "runtime.warning").toBe(warning);
-  });
-
-  it.each([
     { outputIndicatesFailure: true },
     { exitCode: 2 },
     { output: "bash: foo: command not found" },

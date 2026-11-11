@@ -544,7 +544,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     case "run_interrupt_result":
       return "stop";
     case "system_notice":
-      return item.severity === "info" ? "zap" : "warning";
+      return "warning";
     case "error":
       return item.failure.class === "usage_limit"
         ? item.status === "completed"

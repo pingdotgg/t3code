@@ -98,7 +98,6 @@ export const OrchestrationV2CreationSource = Schema.Literals([
 ]);
 export type OrchestrationV2CreationSource = typeof OrchestrationV2CreationSource.Type;
 
-export const OrchestrationV2SystemNoticeSeverity = Schema.Literals(["info", "warning"]);
 export const OrchestrationV2ThreadHistoryOrigin = Schema.Literals(["native", "v1_import"]);
 export type OrchestrationV2ThreadHistoryOrigin = typeof OrchestrationV2ThreadHistoryOrigin.Type;
 
@@ -1753,8 +1752,6 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
-    /** Absent means warning, as notices were before severity existed. */
-    severity: Schema.optional(OrchestrationV2SystemNoticeSeverity),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2594,8 +2591,6 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
-    /** Absent means warning, as notices were before severity existed. */
-    severity: Schema.optional(OrchestrationV2SystemNoticeSeverity),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

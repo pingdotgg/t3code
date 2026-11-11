@@ -93,27 +93,6 @@ it("keeps historical plan detail accessible from its paged turn item", () => {
   expect(presented[2]).toMatchObject({ activities: [{ projectedItem: { item } }] });
 });
 
-it.each([
-  { severity: undefined, icon: "warning" },
-  { severity: "warning" as const, icon: "warning" },
-  { severity: "info" as const, icon: "zap" },
-])(
-  "shows a system notice with a warning icon unless it is info: $severity",
-  ({ severity, icon }) => {
-    const item = {
-      ...base("notice", "2026-08-29T00:00:00.000Z", 1),
-      type: "system_notice",
-      message: "Claude accepted your steer",
-      ...(severity === undefined ? {} : { severity }),
-    } as OrchestrationV2TurnItem;
-
-    const activity = buildThreadFeed([projected(item, 0)]).flatMap((entry) =>
-      entry.type === "activity-group" ? entry.activities : [],
-    )[0];
-    expect(activity?.icon).toBe(icon);
-  },
-);
-
 it("shows a compact command as one mobile divider before, during, and after compaction", () => {
   const startedAt = "2026-06-20T00:00:01.000Z";
   const prompt = projected({ ...userMessage(), text: "/compact", idleCompaction: "onReturn" }, 0);

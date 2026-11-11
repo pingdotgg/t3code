@@ -3165,7 +3165,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
-    readonly offer?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["offer"];
     readonly promptSuggestions?: boolean;
   }) =>
     Effect.gen(function* () {
@@ -3298,10 +3297,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 offer: (message) =>
                   Effect.sync(() => {
                     offeredMessages.push(message);
-                  }).pipe(
-                    Effect.andThen(changes.notify),
-                    Effect.andThen(options?.offer?.(message) ?? Effect.void),
-                  ),
+                  }).pipe(Effect.andThen(changes.notify)),
                 setModel: (model) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push({ model });
@@ -4869,9 +4865,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   // regression: #23948 Claude holds a steer behind a running foreground tool
-  // call and goes silent, so the turn shows each steer waiting until Claude
-  // starts it, and says so when the turn ends before Claude accepts one.
-  it.effect("shows a steer as waiting until Claude starts it", () =>
+  // call and goes silent, so each steer stays pending until Claude starts it.
+  it.effect("keeps a steer pending until Claude starts it", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -4904,29 +4899,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
       yield* steer("message-steer-read");
       yield* steer("message-steer-unread");
-      const notices = () => {
-        const latest = new Map<
-          string,
-          { status: string; title: string; severity: string | undefined }
-        >();
+      const steerStatuses = () => {
+        const latest = new Map<string, string>();
         for (const event of harness.events) {
-          if (event.type !== "turn_item.updated" || event.turnItem.type !== "system_notice") {
-            continue;
-          }
-          latest.set(event.turnItem.nativeItemRef?.nativeId ?? "", {
-            status: event.turnItem.status,
-            title: event.turnItem.title ?? "",
-            severity: event.turnItem.severity,
-          });
+          if (event.type === "steer.updated") latest.set(event.messageId, event.status);
         }
-        return [...latest.values()];
+        return Object.fromEntries(latest);
       };
-      const expectNotices = (
-        expected: ReadonlyArray<{ status: string; title: string; severity: string }>,
-      ) =>
+      const expectSteers = (expected: Record<string, string>) =>
         harness
-          .until(() => JSON.stringify(notices()) === JSON.stringify(expected))
-          .pipe(Effect.andThen(Effect.sync(() => assert.deepEqual(notices(), [...expected]))));
+          .until(() => JSON.stringify(steerStatuses()) === JSON.stringify(expected))
+          .pipe(Effect.andThen(Effect.sync(() => assert.deepEqual(steerStatuses(), expected))));
 
       // Claude keeps streaming the foreground tool's turn; once its text is
       // recorded, anything the steers emitted before it is recorded too.
@@ -4941,18 +4924,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           (event) => event.type === "message.updated" && event.message.text === "Still building.",
         ),
       );
-      assert.deepEqual(notices(), [
-        {
-          status: "waiting",
-          title: "Waiting for Claude to accept your steer",
-          severity: "warning",
-        },
-        {
-          status: "waiting",
-          title: "Waiting for Claude to accept your steer",
-          severity: "warning",
-        },
-      ]);
+      assert.deepEqual(steerStatuses(), {
+        "message-steer-read": "pending",
+        "message-steer-unread": "pending",
+      });
 
       const lifecycle = (index: number, state: string, uuid: string) =>
         harness.offerAndWait(
@@ -4968,14 +4943,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       // proof it read one.
       yield* lifecycle(2, "completed", "00000000-0000-4000-8000-000000002393");
       yield* lifecycle(1, "started", "00000000-0000-4000-8000-000000002394");
-      yield* expectNotices([
-        { status: "completed", title: "Claude accepted your steer", severity: "info" },
-        {
-          status: "waiting",
-          title: "Waiting for Claude to accept your steer",
-          severity: "warning",
-        },
-      ]);
+      yield* expectSteers({
+        "message-steer-read": "completed",
+        "message-steer-unread": "pending",
+      });
 
       yield* harness.offerAndWait(
         claudeSdkFrame({
@@ -4984,93 +4955,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       yield* harness.awaitTerminal(1);
-      yield* expectNotices([
-        { status: "completed", title: "Claude accepted your steer", severity: "info" },
-        { status: "completed", title: "Steer not confirmed", severity: "warning" },
-      ]);
+      yield* expectSteers({
+        "message-steer-read": "completed",
+        "message-steer-unread": "completed",
+      });
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-      ),
-    ),
-  );
-
-  it.effect("says a steer was not sent when Claude refuses it", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarnessWithOptions({
-        offer: (message) =>
-          message.priority === "now"
-            ? Effect.fail(
-                new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                  method: "offer",
-                  cause: "stdin closed",
-                }),
-              )
-            : Effect.void,
-      });
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const attemptId = RunAttemptId.make("attempt-steer-offer-failed");
-      const input = makeClaudeTestTurnInput({
-        threadId: harness.threadId,
-        providerThread: harness.providerThread,
-        now: yield* DateTime.now,
-        attemptId,
-        text: "Run the slow build.",
-        attachments: [],
-      });
-      yield* harness.runtime.startTurn(input);
-      const steerError = yield* harness.runtime
-        .steerTurn({
-          threadId: harness.threadId,
-          runId: input.runId,
-          providerThread: harness.providerThread,
-          providerTurnId: idAllocator.derive.providerTurn({
-            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-            nativeTurnId: `turn:${attemptId}`,
-          }),
-          message: {
-            createdBy: "user",
-            creationSource: "web",
-            messageId: MessageId.make("message-steer-offer-failed"),
-            text: "Steer",
-            attachments: [],
-          },
-        })
-        .pipe(Effect.flip);
-      assert.equal(steerError._tag, "ProviderAdapterSteerRunError");
-
-      // The turn ending later must not relabel the failed steer as unconfirmed.
-      yield* harness.offerAndWait(
-        claudeSdkFrame({
-          ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000002397", result: "Built." }),
-          user_message_uuid: harness.promptUuid(0),
-        }),
-      );
-      yield* harness.awaitTerminal(1);
-      const notices = harness.events.flatMap((event) =>
-        event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
-          ? [
-              {
-                status: event.turnItem.status,
-                title: event.turnItem.title,
-                severity: event.turnItem.severity,
-              },
-            ]
-          : [],
-      );
-      assert.deepEqual(notices, [
-        {
-          status: "waiting",
-          title: "Waiting for Claude to accept your steer",
-          severity: "warning",
-        },
-        { status: "failed", title: "Steer not sent to Claude", severity: "warning" },
-      ]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
       ),
     ),
   );
@@ -5115,7 +5012,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
       ),
     ),
   );

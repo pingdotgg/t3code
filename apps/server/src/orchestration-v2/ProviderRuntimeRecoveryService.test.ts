@@ -381,20 +381,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
     nodes: [],
     subagents: [],
     messages: [],
-    turnItems: [
-      { id: "turn_item_steer", nativeId: "steer:00000000-0000-4000-8000-000000000001" },
-      { id: "turn_item_notice", nativeId: "notice" },
-    ].map(({ id, nativeId }) => ({
-      id: TurnItemId.make(id),
-      runId,
-      nodeId: null,
-      type: "system_notice",
-      status: "waiting",
-      title: "Waiting for Claude to read your steer",
-      message: "Waiting for Claude to read your steer",
-      severity: "info",
-      nativeItemRef: { driver: "claudeAgent", nativeId, strength: "weak" },
-    })),
+    turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
@@ -428,35 +415,6 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
     assert.equal(summary.terminalizedRuns, 1);
     const runEvent = committedInput?.events.find((event) => event.type === "run.updated");
     assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.status : null, "cancelled");
-    // Only our steer notice stops claiming Claude may still read it.
-    assert.deepEqual(
-      committedInput?.events.flatMap((event) =>
-        event.type === "turn-item.updated" && event.payload.type === "system_notice"
-          ? [
-              {
-                id: event.payload.id,
-                status: event.payload.status,
-                title: event.payload.title,
-                severity: event.payload.severity,
-              },
-            ]
-          : [],
-      ),
-      [
-        {
-          id: TurnItemId.make("turn_item_steer"),
-          status: "cancelled",
-          title: "Steer not confirmed",
-          severity: "warning",
-        },
-        {
-          id: TurnItemId.make("turn_item_notice"),
-          status: "cancelled",
-          title: "Waiting for Claude to read your steer",
-          severity: "info",
-        },
-      ],
-    );
   }).pipe(Effect.provide(layer));
 });
 

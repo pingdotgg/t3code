@@ -415,7 +415,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
       return {
         ...common,
         label: item.message,
-        ...(item.severity === "info" ? {} : { sourceActivityKind: "runtime.warning" }),
+        sourceActivityKind: "runtime.warning",
       };
     case "error": {
       const presentation = providerErrorPresentation(item);
