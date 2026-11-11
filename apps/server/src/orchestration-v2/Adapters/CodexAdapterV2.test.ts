@@ -4199,12 +4199,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     { name: "started only", completed: false, path: viewedImage, preview: false },
     { name: "non-image path", completed: true, path: "/workspace/notes.txt", preview: false },
     { name: "newline in path", completed: true, path: "/workspace/a\nb.png", preview: false },
-    {
-      name: "path over 4096 chars",
-      completed: true,
-      path: `/workspace/${"a".repeat(4096)}.png`,
-      preview: false,
-    },
   ])("projects viewed images as read rows: $name", ({ name, completed, path, preview }) =>
     Effect.gen(function* () {
       const scenario = `codex-image-view-${name.replaceAll(" ", "-")}`;

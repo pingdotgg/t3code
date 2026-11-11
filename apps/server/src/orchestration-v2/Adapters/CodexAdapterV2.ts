@@ -5355,13 +5355,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
             if (payload.item.type === "webSearch" || payload.item.type === "imageView") {
               const artifacts =
-                payload.item.type === "imageView"
-                  ? yield* buildImageViewArtifacts(context, payload.item)
-                  : yield* buildWebSearchArtifacts({
-                      context,
-                      item: payload.item,
-                      completed: true,
-                    });
+                payload.item.type === "webSearch"
+                  ? yield* buildWebSearchArtifacts({ context, item: payload.item, completed: true })
+                  : yield* buildImageViewArtifacts(context, payload.item);
               yield* emitProviderEvent({
                 type: "node.updated",
                 driver: CODEX_PROVIDER,
