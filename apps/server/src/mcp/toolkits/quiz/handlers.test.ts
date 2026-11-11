@@ -13,10 +13,16 @@ import { QuizToolkit } from "./tools.ts";
 import * as QuizHandlers from "./handlers.ts";
 import { shownTutorText } from "./handlers.ts";
 
-const at = (second: number, role: string, text: string, id = `${role}-${second}`) => ({
+const at = (
+  second: number,
+  role: string,
+  text: string,
+  id = `${role}-${second}`,
+  actualText = "x".repeat(text.length),
+) => ({
   id,
   role,
-  text: "x".repeat(text.length),
+  text: actualText,
   createdAt: DateTime.makeUnsafe(Date.UTC(2026, 10, 8, 16, 52, second)),
 });
 
@@ -41,6 +47,39 @@ describe("quiz card reply visibility", () => {
       "message:provider:claudeAgent:native-item:msg_011CgpYTQZCUAf5iyjZ9S6jP%3Athinking%3A1",
     );
     expect(shownTutorText([at(26, "user", "answer"), thinking])).toBe(0);
+  });
+
+  it("does not count a verdict paragraph after a card answer", () => {
+    const verdict = "v".repeat(198);
+    const answer = 'Quiz answer: "A", right.\n\n(card card-1)';
+    expect(
+      shownTutorText([
+        at(26, "user", answer, undefined, answer),
+        at(36, "assistant", verdict, undefined, verdict),
+      ]),
+    ).toBe(0);
+  });
+
+  it("counts teaching after the verdict paragraph", () => {
+    const verdict = "v".repeat(198);
+    const teaching = "t".repeat(100);
+    const answer = 'Quiz answer: "A", right.\n\n(card card-1)';
+    expect(
+      shownTutorText([
+        at(26, "user", answer, undefined, answer),
+        at(36, "assistant", `${verdict}\n\n${teaching}`, undefined, `${verdict}\n\n${teaching}`),
+      ]),
+    ).toBe(teaching.length + 2);
+  });
+
+  it("keeps counting text after a non-answer user message", () => {
+    const text = "v".repeat(198);
+    expect(
+      shownTutorText([
+        at(26, "user", "not a card answer"),
+        at(36, "assistant", text, undefined, text),
+      ]),
+    ).toBe(text.length);
   });
 });
 

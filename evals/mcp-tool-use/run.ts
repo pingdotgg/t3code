@@ -52,12 +52,15 @@ import {
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   type CardPurpose,
+  cardAnswerVerdictLength,
   cardReplyProblem,
   foldCardReply,
+  parseCardAnswer,
   replyCoverage,
   quizCardProblem,
   readQuestionCard,
   readQuizCard,
+  withoutCardAnswerTag,
 } from "@t3tools/shared/quizCard";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
@@ -878,6 +881,7 @@ type Sample = {
   readonly said: Array<string>;
   /** Real tutor text shown since the learner's last message. */
   shownSinceLastUser: number;
+  verdictPending: boolean;
   /** Root Claude text held until the next tool in lesson cases. */
   readonly heldLessonText: Array<string>;
   lessonCardSeen: boolean;
@@ -928,6 +932,12 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     priorResults: new Map(),
     said: [],
     shownSinceLastUser: 0,
+    verdictPending:
+      parseCardAnswer(
+        withoutCardAnswerTag(
+          testCase.prompt || [...prior].findLast((turn) => turn.role === "user")?.text || "",
+        ),
+      ) !== undefined,
     heldLessonText: [],
     lessonCardSeen: false,
     lessonCardReplies: [],
@@ -2385,7 +2395,12 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       sample.heldLessonText.length = 0;
     }
     said.push(...texts);
-    sample.shownSinceLastUser += texts.reduce((total, text) => total + text.length, 0);
+    let shown = texts.reduce((total, text) => total + text.length, 0);
+    if (sample.verdictPending && texts.length > 0) {
+      shown -= cardAnswerVerdictLength(texts[0]!);
+      sample.verdictPending = false;
+    }
+    sample.shownSinceLastUser += shown;
     const uses = response.content.filter(isToolUse);
     calls.push(...ranCalls(sample, step, uses));
     if (response.stop_reason !== "tool_use") {

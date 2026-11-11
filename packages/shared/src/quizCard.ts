@@ -384,6 +384,11 @@ export function parseCardAnswer(text: string): ParsedCardAnswer | undefined {
   return answers.length > 0 ? { kind: "blanks", answers } : undefined;
 }
 
+export function cardAnswerVerdictLength(text: string) {
+  const paragraphEnd = text.indexOf("\n\n");
+  return paragraphEnd === -1 ? text.length : paragraphEnd;
+}
+
 // The card's item id rides in the answer text so every client, after reloads, knows which card it answered.
 const CARD_ANSWER_TAG = /\n\n\(card (\S+)\)$/;
 
