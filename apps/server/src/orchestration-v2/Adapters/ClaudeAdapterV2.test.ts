@@ -8770,14 +8770,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("measures a model outside the catalog against the window Claude reports", () =>
+  it.effect.each([
+    {
+      model: "gateway-model",
+      autoCompactWindow: "",
+      reported: { "gateway-model": 1_048_576 },
+      windows: [null, 1_048_576],
+      thresholds: [undefined, undefined],
+    },
+    {
+      model: "claude-opus-5-5",
+      autoCompactWindow: "300000",
+      reported: { "claude-opus-5-5": 200_000 },
+      windows: [1_000_000, 200_000],
+      thresholds: [267_000, undefined],
+    },
+    {
+      model: "claude-opus-5-5",
+      autoCompactWindow: "300000",
+      reported: { "claude-haiku-5-5": 200_000 },
+      windows: [1_000_000, 1_000_000],
+      thresholds: [267_000, 267_000],
+    },
+  ])("measures $model against the window Claude reports for it", (row) =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow: row.autoCompactWindow },
+      });
       const modelSelection = {
         instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
-        model: "gateway-model",
+        model: row.model,
       } satisfies ModelSelection;
-      assert.strictEqual(harness.runtime.getModelContextWindow?.(modelSelection), undefined);
+      assert.strictEqual(
+        harness.runtime.getModelContextWindow?.(modelSelection) ?? null,
+        row.windows[0],
+      );
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
           threadId: harness.threadId,
@@ -8795,30 +8822,43 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000680",
           result: "OK",
-          modelUsage: {
-            "gateway-model": {
-              inputTokens: 9_667,
-              outputTokens: 2,
-              cacheReadInputTokens: 0,
-              cacheCreationInputTokens: 0,
-              webSearchRequests: 0,
-              costUSD: 0,
-              contextWindow: 1_048_576,
-              maxOutputTokens: 32_000,
-            },
-          },
+          modelUsage: Object.fromEntries(
+            Object.entries(row.reported).map(([model, contextWindow]) => [
+              model,
+              {
+                inputTokens: 9_667,
+                outputTokens: 2,
+                cacheReadInputTokens: 0,
+                cacheCreationInputTokens: 0,
+                webSearchRequests: 0,
+                costUSD: 0,
+                contextWindow,
+                maxOutputTokens: 32_000,
+              },
+            ]),
+          ),
         }),
       ];
       for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "completed");
-      const windows = harness.events.flatMap((event) =>
+      const usages = harness.events.flatMap((event) =>
         event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
-          ? [event.providerTurn.tokenUsage.maxTokens]
+          ? [event.providerTurn.tokenUsage]
           : [],
       );
-      assert.deepEqual(windows, [null, 1_048_576]);
-      assert.strictEqual(harness.runtime.getModelContextWindow?.(modelSelection), 1_048_576);
+      assert.deepEqual(
+        usages.map((usage) => usage.maxTokens),
+        row.windows,
+      );
+      assert.deepEqual(
+        usages.map((usage) => usage.autoCompactThreshold),
+        row.thresholds,
+      );
+      assert.strictEqual(
+        harness.runtime.getModelContextWindow?.(modelSelection),
+        row.windows.at(-1),
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

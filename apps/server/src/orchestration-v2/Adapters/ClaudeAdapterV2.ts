@@ -5306,13 +5306,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   );
   // Reloaded at each turn and steer so downloaded manifest updates apply without a release.
   let modelCatalog = yield* loadModelCatalog;
-  // Results report the window Claude Code compacts against; outside the catalog it is the only source.
+  // Results report the window Claude Code enforces, which outranks the catalog: user settings
+  // such as CLAUDE_CODE_DISABLE_1M_CONTEXT shrink it, and outside the catalog it is the only source.
   const reportedContextWindows = new Map<string, number>();
   const claudeContextWindow = (modelSelection: ModelSelection): number | null =>
-    resolveClaudeCatalogContextWindowTokens(modelCatalog, modelSelection) ??
     reportedContextWindows.get(
       compileClaudeModelSelection(modelSelection, modelCatalog).apiModelId,
     ) ??
+    resolveClaudeCatalogContextWindowTokens(modelCatalog, modelSelection) ??
     null;
   const continuationRequests = adapterOptions.continuationRequests ?? {
     offer: () => Effect.void,
