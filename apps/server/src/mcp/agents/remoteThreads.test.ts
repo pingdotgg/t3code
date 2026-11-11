@@ -164,8 +164,6 @@ const makeMacBook = (
             modelSelection,
           },
         ];
-      case "agentLibrarySync":
-        return { skillIds: [], profileIds: [], profiles: [] };
       case "resolveProfileModelSelection":
         return modelSelection;
       case "createThread":

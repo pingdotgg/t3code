@@ -423,15 +423,6 @@ export interface GatewayPresence {
   readonly observedAt: string;
 }
 
-export interface GatewayAgentLibrarySync {
-  readonly skillIds: ReadonlyArray<string>;
-  readonly profileIds: ReadonlyArray<string>;
-  /** The changed agents as they would be; a dropped one is only in profileIds. */
-  readonly profiles: ReadonlyArray<
-    Pick<GatewayProfile, "profileId" | "name" | "runtimeMode" | "interactionMode">
-  >;
-}
-
 export interface GatewayRuntimePort {
   listSkills?(environmentId: string): Promise<ReadonlyArray<AgentSkill>>;
   createSkill?(environmentId: string, input: GatewaySkillInput): Promise<AgentSkill>;
@@ -466,8 +457,6 @@ export interface GatewayRuntimePort {
     profileId: string,
   ): Promise<{ profileId: string; status: "succeeded"; deletedAt?: string | undefined }>;
   syncAgentLibrary?(environmentId: string): Promise<void>;
-  /** What syncAgentLibrary would change there, without changing it. */
-  agentLibrarySync?(environmentId: string): Promise<GatewayAgentLibrarySync>;
   replicateProfiles?(
     environmentId: string,
     profiles: ReadonlyArray<GatewayProfile>,

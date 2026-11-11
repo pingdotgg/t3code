@@ -1,6 +1,6 @@
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import { AgentSkill, type ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
-import { agentLibrarySyncChanges, syncAgentLibraryBeforeUse } from "../operations/agentLibrary.ts";
+import { syncAgentLibraryBeforeUse } from "../operations/agentLibrary.ts";
 import { performAgentHandoff } from "./handoff.ts";
 import {
   RuntimeRequestId,
@@ -636,13 +636,6 @@ export function createGatewayRuntimePort(
         Effect.gen(function* () {
           const registry = yield* EnvironmentRegistry;
           yield* registry.run(EnvironmentId.make(environmentId), syncAgentLibraryBeforeUse());
-        }),
-      ),
-    agentLibrarySync: (environmentId) =>
-      run(
-        Effect.gen(function* () {
-          const registry = yield* EnvironmentRegistry;
-          return yield* registry.run(EnvironmentId.make(environmentId), agentLibrarySyncChanges());
         }),
       ),
     unsettleThread: (environmentId, threadId) =>

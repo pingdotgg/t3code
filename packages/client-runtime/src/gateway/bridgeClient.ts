@@ -52,7 +52,6 @@ export const GATEWAY_PORT_METHODS: ReadonlySet<keyof GatewayRuntimePort> = new S
   "deleteProfile",
   "replicateProfiles",
   "syncAgentLibrary",
-  "agentLibrarySync",
   "listEnvironments",
   "getEnvironmentStatus",
   "getPresence",

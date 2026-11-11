@@ -18,17 +18,19 @@ const readLiveLibrary = Effect.fn("readLiveLibrary")(function* () {
   return Option.some({ ...config, settings });
 });
 
-/** The merged library and what writing it to the target would patch, if anything. */
-const planAgentLibrarySync = Effect.fn("planAgentLibrarySync")(function* (profileId?: string) {
+/** Await convergence at the command boundary, including MCP and mobile callers. */
+export const syncAgentLibraryBeforeUse = Effect.fn("syncAgentLibraryBeforeUse")(function* (
+  profileId?: string,
+) {
   const registry = yield* Effect.serviceOption(EnvironmentRegistry);
-  if (Option.isNone(registry)) return undefined;
+  if (Option.isNone(registry)) return;
   const entries = yield* SubscriptionRef.get(registry.value.entries);
-  if (entries.size < 2 && profileId === undefined) return undefined;
+  if (entries.size < 2 && profileId === undefined) return;
   const supervisor = yield* EnvironmentSupervisor;
   const environmentId = supervisor.target.environmentId;
   return yield* Effect.gen(function* () {
     const targetOption = yield* readLiveLibrary();
-    if (Option.isNone(targetOption)) return undefined;
+    if (Option.isNone(targetOption)) return;
     const target = targetOption.value;
     const cache = yield* Effect.serviceOption(EnvironmentCacheStore);
     const cached = (id: typeof environmentId) =>
@@ -75,11 +77,16 @@ const planAgentLibrarySync = Effect.fn("planAgentLibrarySync")(function* (profil
         message: "Update T3 on this machine to use shared agent skills.",
       });
     }
-    return {
-      library,
-      patch: agentLibraryForSync(library, supportsSkills),
-      current: agentLibraryForSync(mergeAgentLibraries([target.settings]), supportsSkills),
-    };
+    const patch = agentLibraryForSync(library, supportsSkills);
+    if (
+      !Equal.equals(
+        patch,
+        agentLibraryForSync(mergeAgentLibraries([target.settings]), supportsSkills),
+      )
+    ) {
+      yield* request(WS_METHODS.serverUpdateSettings, { patch, replicateProfiles: true });
+    }
+    return library;
   }).pipe(
     Effect.mapError(
       (cause) =>
@@ -89,63 +96,4 @@ const planAgentLibrarySync = Effect.fn("planAgentLibrarySync")(function* (profil
         }),
     ),
   );
-});
-
-/** Await convergence at the command boundary, including MCP and mobile callers. */
-export const syncAgentLibraryBeforeUse = Effect.fn("syncAgentLibraryBeforeUse")(function* (
-  profileId?: string,
-) {
-  const plan = yield* planAgentLibrarySync(profileId);
-  if (plan === undefined) return;
-  if (!Equal.equals(plan.patch, plan.current)) {
-    const environmentId = (yield* EnvironmentSupervisor).target.environmentId;
-    yield* request(WS_METHODS.serverUpdateSettings, {
-      patch: plan.patch,
-      replicateProfiles: true,
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new EnvironmentRpcUnavailableError({
-            environmentId,
-            message: `Could not synchronize the agent library before use: ${String(cause)}`,
-          }),
-      ),
-    );
-  }
-  return plan.library;
-});
-
-const changedIds = <A>(
-  before: ReadonlyArray<A> | undefined,
-  after: ReadonlyArray<A> | undefined,
-  id: (item: A) => string,
-) => {
-  const previous = new Map((before ?? []).map((item) => [id(item), JSON.stringify(item)]));
-  const next = new Map((after ?? []).map((item) => [id(item), JSON.stringify(item)]));
-  return [...new Set([...previous.keys(), ...next.keys()])].filter(
-    (key) => previous.get(key) !== next.get(key),
-  );
-};
-
-/**
- * What synchronizing would change on the target, without writing it: the skills it adds,
- * rewrites or drops, the agents it touches, and those agents as they would be.
- */
-export const agentLibrarySyncChanges = Effect.fn("agentLibrarySyncChanges")(function* () {
-  const plan = yield* planAgentLibrarySync();
-  if (plan === undefined) return { skillIds: [], profileIds: [], profiles: [] };
-  const skills = (library: typeof plan.patch) =>
-    "agentSkills" in library ? library.agentSkills : undefined;
-  const profileIds = changedIds(
-    plan.current.mcpGatewayProfiles,
-    plan.patch.mcpGatewayProfiles,
-    (profile) => profile.profileId,
-  );
-  return {
-    skillIds: changedIds(skills(plan.current), skills(plan.patch), (skill) => skill.skillId),
-    profileIds,
-    profiles: plan.patch.mcpGatewayProfiles.filter((profile) =>
-      profileIds.includes(profile.profileId),
-    ),
-  };
 });

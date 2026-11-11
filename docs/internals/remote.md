@@ -203,9 +203,9 @@ it applies them against its own reads of the target, so a relaying server that
 was told a wrong thread mode cannot widen the call; a call with no modes runs as
 the narrowest chat. The app also caps each call by the target's own roster
 access for the calling machine, so a caller with a stale roster cannot act past
-a revoke it has not seen. Agent library syncs are checked the same way: one a
-chat triggers is refused when it would change an agent there broader than the
-chat. A phone needs one
+a revoke it has not seen. Only a full-access chat may change the agent library:
+every client syncs it to every machine at no ceiling, so a per-call check could
+not stop a limited chat's edit reaching a broader agent. A phone needs one
 reachable member to renew, and if every full-access member is lost, the
 network has to be started again from a fresh machine.
 

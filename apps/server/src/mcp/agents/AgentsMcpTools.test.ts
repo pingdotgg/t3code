@@ -138,7 +138,6 @@ const makeLayer = (
       },
     ],
     listProjects: { items: [{ id: "project-2", title: "remote-app" }], snapshotAt: "snapshot-2" },
-    agentLibrarySync: { skillIds: [], profileIds: [], profiles: [] },
     createThread: { status: "accepted", threadId: "thread-remote", requestId: "request-remote" },
     scheduledTask: {
       tasks: [
@@ -756,4 +755,35 @@ it.effect(
       expect(reached).not.toContain("respondToUserInput");
       expect(JSON.stringify(result.structuredContent)).toContain("broader than this chat's");
     }),
+);
+
+it.effect("keeps a chat below full access from changing the shared skill library", () =>
+  Effect.gen(function* () {
+    const updatesFor = (modes: Parameters<typeof McpToolAccessTestkit.liveThreadShell>[1]) => {
+      const updates: Array<string> = [];
+      const updateSkill = async (_environmentId: string, skillId: string) => {
+        updates.push(skillId);
+        return { skillId };
+      };
+      return callTool("t3_update_skill", {
+        skillId: "unused",
+        patch: { content: "Take more notes" },
+      }).pipe(
+        Effect.provide(
+          makeLayer([], undefined, [], modes, {
+            updateSkill,
+            listProfiles: async () => [],
+          } as never),
+        ),
+        Effect.as(updates),
+      );
+    };
+    // No agent uses the skill, but every machine syncs it to whichever agent adopts it later.
+    expect(
+      yield* updatesFor({ runtimeMode: "auto-accept-edits", interactionMode: "default" }),
+    ).toEqual([]);
+    expect(
+      yield* updatesFor({ runtimeMode: "full-access", interactionMode: "default" }),
+    ).toHaveLength(1);
+  }),
 );
