@@ -137,6 +137,7 @@ describe("resolveProjectSettings", () => {
       const resolved = resolveProjectSettings(settings, projectId);
       expect(resolved.settings.defaultModelSelection?.model).toBe(expectedModel);
       expect(resolved.sources.defaultModelSelection).toBe(expectedSource);
+      expect(resolved.overrides.defaultModelSelection?.model).toBe("gpt-5.6-sol");
     },
   );
 
