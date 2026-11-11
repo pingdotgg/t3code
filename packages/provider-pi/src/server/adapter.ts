@@ -61,6 +61,8 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import {
   findReportedPiModel,
   makePiRpcConnection,
+  type PiRpcError,
+  PiRpcTimeoutError,
   resolvePiModelSlug,
   piRecordField as recordField,
   piRecordNumber as recordNumber,
@@ -73,7 +75,11 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_FILE_CHANGE_TOOLS,
+  PI_T3_ADMIT_COMMAND,
+  PI_T3_SERVICE_TIER_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
@@ -552,6 +558,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // Turn failures can leave Pi alive; pump termination retires the runtime.
       let runtimeRetired = false;
       let pendingWake: PiWake | null = null;
+      // T3's extension holds runs a resumed session's hooks start until an owned turn admits them.
+      let resumeAdmissionPending = false;
+      let lifecycleFailure: PiRpcError | PiRpcTimeoutError | null = null;
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
         readonly touched: Set<string>;
@@ -769,6 +778,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const lifecycleRequest = Effect.fn("PiAdapter.lifecycleRequest")(
         function* (record: PiRpcRecord) {
+          // Later lifecycle calls on the stopped transport report why it stopped.
+          if (lifecycleFailure !== null) return yield* lifecycleFailure;
           if (extensionStatusReset !== null)
             return yield* protocolError("A Pi session lifecycle request is already pending");
           const reset = {
@@ -784,7 +795,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             )
               return yield* protocolError("Pi transport closed during status reset");
             yield* Deferred.await(reset.ready);
-            const result = yield* request(record, PI_SESSION_TIMEOUT_MS);
+            // Session hooks can wait on the user, so only time without an open dialog counts.
+            const deadline = Effect.gen(function* () {
+              do yield* Effect.sleep(Duration.millis(PI_SESSION_TIMEOUT_MS));
+              while (pendingPrompts.size > 0);
+              return yield* new PiRpcTimeoutError({
+                operation: String(record["type"]),
+                timeoutMs: PI_SESSION_TIMEOUT_MS,
+              });
+            });
+            const result = yield* Effect.raceFirst(request(record, Infinity), deadline);
             if (recordField(result, "cancelled") === true) {
               yield* sessionEventPermit.withPermits(1)(
                 Effect.gen(function* () {
@@ -836,7 +856,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             // A failed lifecycle RPC can leave Pi's previous native session disposed.
             Effect.tapError((error) =>
               error._tag === "PiRpcError" || error._tag === "PiRpcTimeoutError"
-                ? connection.terminate
+                ? Effect.suspend(() => {
+                    lifecycleFailure ??= error;
+                    return connection.terminate;
+                  })
                 : Effect.void,
             ),
             Effect.onInterrupt(() => connection.terminate),
@@ -2467,124 +2490,136 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
       });
 
-      const registerThread = Effect.fnUntraced(function* (
-        threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
-        publish = true,
-      ) {
-        if (rollbackBarrier !== null)
-          return yield* protocolError("Cannot register a Pi thread during rollback");
-        if (threadState !== null && threadState.activeTurn !== null) {
-          return yield* protocolError("Cannot register a Pi thread while a turn is active");
-        }
-        if (pendingWake !== null) {
-          const state = threadState;
-          if (
-            state !== null &&
-            state === pendingWake.state &&
-            state.providerThread.appThreadId === threadInput.threadId &&
-            (threadInput.existingProviderThread === undefined ||
-              threadInput.existingProviderThread.nativeThreadRef?.nativeId ===
-                state.providerThread.nativeThreadRef?.nativeId)
-          )
-            return state.providerThread;
-          return yield* protocolError(
-            "Cannot switch Pi threads while native work is awaiting a turn",
-          );
-        }
-        const existing = threadInput.existingProviderThread;
-        const resumeId = existing?.nativeThreadRef?.nativeId;
-        const needsNewSession = resumeId == null && registrationAttempted;
-        registrationAttempted = true;
-        if (resumeId != null || needsNewSession) {
-          lastNativeThreadId = resumeId ?? lastNativeThreadId;
-          // Failed lifecycle operations can still change native sessions; invalidate bindings and defaults.
-          threadState = null;
-          appliedModel = null;
-          appliedThinking = null;
-          appliedSessionName = null;
-          baselineModel = null;
-          baselineThinking = null;
-          contextWindow = null;
-          const result = yield* lifecycleRequest(
-            resumeId != null
-              ? { type: "switch_session", sessionPath: resumeId }
-              : { type: "new_session" },
-          );
-          if (recordField(result, "cancelled") === true) {
-            return yield* protocolError("A Pi extension cancelled the session switch");
+      const registerThread = Effect.fnUntraced(
+        function* (
+          threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
+          publish = true,
+        ) {
+          if (rollbackBarrier !== null)
+            return yield* protocolError("Cannot register a Pi thread during rollback");
+          if (threadState !== null && threadState.activeTurn !== null) {
+            return yield* protocolError("Cannot register a Pi thread while a turn is active");
           }
-        }
-        const stateData = yield* request({ type: "get_state" });
-        if (discoveredModels === null) yield* discoverModels();
-        contextWindow = rememberModelContextWindow(recordField(stateData, "model"));
-        // Capture each baseline before applying selections so our own choices cannot become Pi defaults.
-        if (baselineModel === null && appliedModel === null) {
-          const stateModel = recordField(stateData, "model");
-          const provider = recordString(stateModel, "provider");
-          const modelId = recordString(stateModel, "id");
-          if (provider !== undefined && modelId !== undefined) {
-            baselineModel = { provider, modelId };
+          if (pendingWake !== null) {
+            const state = threadState;
+            if (
+              state !== null &&
+              state === pendingWake.state &&
+              state.providerThread.appThreadId === threadInput.threadId &&
+              (threadInput.existingProviderThread === undefined ||
+                threadInput.existingProviderThread.nativeThreadRef?.nativeId ===
+                  state.providerThread.nativeThreadRef?.nativeId)
+            )
+              return state.providerThread;
+            return yield* protocolError(
+              "Cannot switch Pi threads while native work is awaiting a turn",
+            );
           }
-        }
-        if (baselineThinking === null && appliedThinking === null) {
-          baselineThinking = recordString(stateData, "thinkingLevel") ?? null;
-          appliedThinking = baselineThinking;
-        }
-        // switch_session accepts a file path, not Pi's display session UUID.
-        const nativeId = recordString(stateData, "sessionFile");
-        if (nativeId === undefined) {
-          return yield* protocolError("get_state returned no persisted sessionFile", stateData);
-        }
-        if (needsNewSession && nativeId === lastNativeThreadId) {
-          return yield* protocolError("Pi did not create a distinct session file");
-        }
-        lastNativeThreadId = nativeId;
-        const createdAt = yield* DateTime.now;
-        const providerThread: OrchestrationV2ProviderThread =
-          existing !== undefined
-            ? {
-                ...existing,
-                providerSessionId: input.providerSessionId,
-                nativeThreadRef: providerRef(nativeId),
-                ...(needsNewSession ? { nativeConversationHeadRef: null, contextUsage: null } : {}),
-                status: "idle",
-                updatedAt: createdAt,
-              }
-            : {
-                id: idAllocator.derive.providerThread({
+          const existing = threadInput.existingProviderThread;
+          const resumeId = existing?.nativeThreadRef?.nativeId;
+          const needsNewSession = resumeId == null && registrationAttempted;
+          registrationAttempted = true;
+          if (resumeId != null || needsNewSession) {
+            lastNativeThreadId = resumeId ?? lastNativeThreadId;
+            // Failed lifecycle operations can still change native sessions; invalidate bindings and defaults.
+            threadState = null;
+            appliedModel = null;
+            appliedThinking = null;
+            appliedSessionName = null;
+            baselineModel = null;
+            baselineThinking = null;
+            contextWindow = null;
+            const result = yield* lifecycleRequest(
+              resumeId != null
+                ? { type: "switch_session", sessionPath: resumeId }
+                : { type: "new_session" },
+            );
+            if (recordField(result, "cancelled") === true) {
+              return yield* protocolError("A Pi extension cancelled the session switch");
+            }
+            resumeAdmissionPending = resumeId != null;
+          }
+          const stateData = yield* request({ type: "get_state" });
+          if (discoveredModels === null) yield* discoverModels();
+          contextWindow = rememberModelContextWindow(recordField(stateData, "model"));
+          // Capture each baseline before applying selections so our own choices cannot become Pi defaults.
+          if (baselineModel === null && appliedModel === null) {
+            const stateModel = recordField(stateData, "model");
+            const provider = recordString(stateModel, "provider");
+            const modelId = recordString(stateModel, "id");
+            if (provider !== undefined && modelId !== undefined) {
+              baselineModel = { provider, modelId };
+            }
+          }
+          if (baselineThinking === null && appliedThinking === null) {
+            baselineThinking = recordString(stateData, "thinkingLevel") ?? null;
+            appliedThinking = baselineThinking;
+          }
+          // switch_session accepts a file path, not Pi's display session UUID.
+          const nativeId = recordString(stateData, "sessionFile");
+          if (nativeId === undefined) {
+            return yield* protocolError("get_state returned no persisted sessionFile", stateData);
+          }
+          if (needsNewSession && nativeId === lastNativeThreadId) {
+            return yield* protocolError("Pi did not create a distinct session file");
+          }
+          lastNativeThreadId = nativeId;
+          const createdAt = yield* DateTime.now;
+          const providerThread: OrchestrationV2ProviderThread =
+            existing !== undefined
+              ? {
+                  ...existing,
+                  providerSessionId: input.providerSessionId,
+                  nativeThreadRef: providerRef(nativeId),
+                  ...(needsNewSession
+                    ? { nativeConversationHeadRef: null, contextUsage: null }
+                    : {}),
+                  status: "idle",
+                  updatedAt: createdAt,
+                }
+              : {
+                  id: idAllocator.derive.providerThread({
+                    driver: PI_PROVIDER,
+                    nativeThreadId: nativeId,
+                  }),
                   driver: PI_PROVIDER,
-                  nativeThreadId: nativeId,
-                }),
-                driver: PI_PROVIDER,
-                providerInstanceId: options.instanceId,
-                providerSessionId: input.providerSessionId,
-                appThreadId: threadInput.threadId,
-                ownerNodeId: null,
-                nativeThreadRef: providerRef(nativeId),
-                nativeConversationHeadRef: null,
-                status: "idle",
-                firstRunOrdinal: null,
-                lastRunOrdinal: null,
-                handoffIds: [],
-                forkedFrom: null,
-                pendingBackgroundTasks: [],
-                createdAt,
-                updatedAt: createdAt,
-              };
-        threadState = { providerThread, activeTurn: null };
-        const baselineEntries = yield* request({ type: "get_entries" }).pipe(
-          Effect.orElseSucceed(() => undefined),
-        );
-        lastKnownLeaf = recordString(baselineEntries, "leafId") ?? null;
-        leafCursorStale = baselineEntries === undefined;
-        if (publish)
-          yield* emit({
-            type: "provider_thread.updated",
-            driver: PI_PROVIDER,
-            providerThread,
-          });
-        return providerThread;
-      });
+                  providerInstanceId: options.instanceId,
+                  providerSessionId: input.providerSessionId,
+                  appThreadId: threadInput.threadId,
+                  ownerNodeId: null,
+                  nativeThreadRef: providerRef(nativeId),
+                  nativeConversationHeadRef: null,
+                  status: "idle",
+                  firstRunOrdinal: null,
+                  lastRunOrdinal: null,
+                  handoffIds: [],
+                  forkedFrom: null,
+                  pendingBackgroundTasks: [],
+                  createdAt,
+                  updatedAt: createdAt,
+                };
+          threadState = { providerThread, activeTurn: null };
+          const baselineEntries = yield* request({ type: "get_entries" }).pipe(
+            Effect.orElseSucceed(() => undefined),
+          );
+          lastKnownLeaf = recordString(baselineEntries, "leafId") ?? null;
+          leafCursorStale = baselineEntries === undefined;
+          if (publish)
+            yield* emit({
+              type: "provider_thread.updated",
+              driver: PI_PROVIDER,
+              providerThread,
+            });
+          return providerThread;
+        },
+        // The guard stops Pi mid-registration; report why instead of the transport failure it causes.
+        (effect) =>
+          effect.pipe(
+            Effect.mapError((error) =>
+              unsolicitedActivityDetected ? protocolError(PI_UNSOLICITED_ACTIVITY_ERROR) : error,
+            ),
+          ),
+      );
 
       const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
         const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
@@ -2860,6 +2895,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               state.providerThread = turnInput.providerThread;
               state.activeTurn = activeTurn;
               activeTurn.adoptedWake = wake !== null && !continuation;
+              // Selection is applied and this turn owns the thread, so held resume work may run.
+              if (resumeAdmissionPending && !continuation) {
+                yield* request({ type: "prompt", message: `/${PI_T3_ADMIT_COMMAND}` });
+                resumeAdmissionPending = false;
+              }
               if (compactCommand !== null) {
                 yield* connection.send(compactRpcRecord(compactCommand));
                 pendingCompactResponses.push({

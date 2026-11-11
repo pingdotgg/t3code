@@ -31,6 +31,7 @@ import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
+import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -53,7 +54,7 @@ import {
 } from "./adapter.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
-import { PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import { PI_T3_ADMIT_COMMAND, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
 
 const layerTest = Layer.mergeAll(
@@ -242,6 +243,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let promptDisposition = true;
   let currentModel = "default";
   const serviceTierCommand = `/${PI_T3_SERVICE_TIER_COMMAND}`;
+  const admitCommand = `/${PI_T3_ADMIT_COMMAND}`;
 
   const emit = (record: PiRpcRecord, chunkBytes?: number) =>
     Effect.gen(function* () {
@@ -291,6 +293,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         thinkingLevel = String(record["level"]);
         return base;
       case "prompt":
+        if (record["message"] === admitCommand)
+          return { ...base, data: { disposition: "handled" } };
         if (String(record["message"]).startsWith(serviceTierCommand)) {
           serviceTier = String(record["message"]).slice(serviceTierCommand.length).trim() || null;
           return promptDisposition ? { ...base, data: { disposition: "handled" } } : base;
@@ -356,7 +360,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         const record = decodeJsonLine(line) as PiRpcRecord;
         if (
           record["type"] === "prompt" &&
-          !String(record["message"]).startsWith(serviceTierCommand)
+          !String(record["message"]).startsWith(serviceTierCommand) &&
+          record["message"] !== admitCommand
         ) {
           promptThinkingLevels.push(thinkingLevel);
           promptModels.push(currentModel);
@@ -1950,6 +1955,108 @@ describe("PiAdapterV2", () => {
         sessionError.type === "provider_session.updated" &&
           sessionError.providerSession.lastError?.includes("invisible tool execution") === true,
       );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("admits held resume work only from an owned turn after selecting its model", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* runtime.resumeThread({ providerThread });
+      const admitted = () =>
+        fake.allRequests().filter((request) => request["message"] === `/${PI_T3_ADMIT_COMMAND}`)
+          .length;
+      assert.equal(admitted(), 0);
+      for (const runOrdinal of [1, 2]) {
+        yield* startTurn(
+          runtime,
+          providerThread,
+          "default",
+          [],
+          "Continue",
+          modelSelection("anthropic/selected"),
+          runOrdinal,
+        );
+        while ((yield* fake.takeRequest("prompt"))["message"] !== "Continue");
+        if (runOrdinal === 1) {
+          const types = fake
+            .allRequests()
+            .map((request) =>
+              request["type"] === "prompt" ? String(request["message"]) : String(request["type"]),
+            );
+          assert.isBelow(types.indexOf("set_model"), types.indexOf(`/${PI_T3_ADMIT_COMMAND}`));
+          assert.isBelow(types.indexOf(`/${PI_T3_ADMIT_COMMAND}`), types.indexOf("Continue"));
+        }
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+      }
+      assert.equal(admitted(), 1);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("times a session switch only while no hook dialog waits on the user", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      yield* fake.takeRequest("switch_session");
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "resume-goal",
+        method: "confirm",
+        title: "Resume goal?",
+      });
+      const dialog = yield* takeEvent((event) => event.type === "runtime_request.updated");
+      assert.isTrue(dialog.type === "runtime_request.updated");
+      if (dialog.type !== "runtime_request.updated") return;
+      yield* TestClock.adjust("2 minutes");
+      yield* runtime.respondToRuntimeRequest({
+        requestId: dialog.runtimeRequest.id,
+        decision: "accept",
+      });
+      yield* fake.takeRequest("extension_ui_response");
+      yield* TestClock.adjust("1 minute");
+      const failure = yield* Fiber.join(resumed).pipe(Effect.flip);
+      assert.include(String(failure.cause), "switch_session failed: timed out");
+      const retry = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        })
+        .pipe(Effect.flip);
+      assert.include(String(retry.cause), "switch_session failed: timed out");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("reports unowned work that stops Pi during a session switch", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      yield* fake.takeRequest("switch_session");
+      yield* fake.emit({ type: "agent_start" });
+      const failure = yield* Fiber.join(resumed).pipe(Effect.flip);
+      assert.include(JSON.stringify(failure), "invisible tool execution");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

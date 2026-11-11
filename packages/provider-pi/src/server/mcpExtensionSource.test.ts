@@ -6,7 +6,11 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_T3_ADMIT_COMMAND,
+  PI_T3_MCP_EXTENSION_SOURCE,
+  PI_T3_SERVICE_TIER_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
@@ -80,6 +84,48 @@ describe("Pi orchestration prompt section", () => {
       assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
     }
+  });
+});
+
+describe("Pi resume admission", () => {
+  it("holds runs of a resumed session until T3 admits them", async () => {
+    const handlers = new Map<string, Array<(event: unknown) => unknown>>();
+    const commands = new Map<string, CommandHandler>();
+    const source = NodeModule.stripTypeScriptTypes(
+      PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
+        "export default async function",
+        "async function",
+      ),
+    );
+    await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
+      process: { env: {}, argv: [] },
+      pi: {
+        on: (name: string, handler: (event: unknown) => unknown) =>
+          handlers.set(name, [...(handlers.get(name) ?? []), handler]),
+        registerCommand: (name: string, options: { handler: CommandHandler }) =>
+          commands.set(name, options.handler),
+      },
+    });
+    const sessionStart = handlers.get("session_start")![0]!;
+    const gate = handlers.get("before_agent_start")![0]!;
+    const admit = commands.get(PI_T3_ADMIT_COMMAND)!;
+    const settled = async (run: unknown) => {
+      let done = false;
+      void Promise.resolve(run).then(() => (done = true));
+      for (let tick = 0; tick < 5; tick++) await Promise.resolve();
+      return done;
+    };
+
+    await sessionStart({ type: "session_start", reason: "startup" });
+    assert.isTrue(await settled(gate({})));
+    await sessionStart({ type: "session_start", reason: "resume" });
+    const held = gate({});
+    // Pi emits resume twice for one switch_session.
+    await sessionStart({ type: "session_start", reason: "resume" });
+    assert.isFalse(await settled(held));
+    await admit("");
+    assert.isTrue(await settled(held));
+    assert.isTrue(await settled(gate({})));
   });
 });
 
