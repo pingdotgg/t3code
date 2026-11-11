@@ -770,9 +770,18 @@ it.layer(
             enabled: true,
           },
         ],
+        workspaceSnapshots: [
+          {
+            cwd: "/repo",
+            checkedAt: "2026-04-14T00:00:00.000Z",
+            slashCommands: [{ name: "project" }],
+            skills: [],
+          },
+        ],
       } as const satisfies ServerProvider;
+      const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = previousProvider;
       const refreshedProvider = {
-        ...previousProvider,
+        ...machineProvider,
         checkedAt: "2026-04-14T00:01:00.000Z",
         models: [],
         slashCommands: [],
@@ -790,6 +799,18 @@ it.layer(
       assert.deepStrictEqual(
         ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).skills,
         [],
+      );
+      assert.strictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider)
+          .workspaceSnapshots,
+        undefined,
+      );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, {
+          ...machineProvider,
+          checkedAt: "2026-04-14T00:01:00.000Z",
+        }).workspaceSnapshots,
+        previousProvider.workspaceSnapshots,
       );
     });
 

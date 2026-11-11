@@ -293,24 +293,31 @@ export const mergeProviderSnapshot = (
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
+  const inventory = shouldRetainMissingOpenCodeMetadata(nextProvider)
+    ? {
+        slashCommands:
+          nextProvider.slashCommands.length === 0
+            ? previousProvider.slashCommands
+            : nextProvider.slashCommands,
+        skills: nextProvider.skills.length === 0 ? previousProvider.skills : nextProvider.skills,
+      }
+    : { slashCommands: nextProvider.slashCommands, skills: nextProvider.skills };
+  // Workspace snapshots overlay the machine inventory they were scanned against;
+  // when it changes (e.g. a live session advertises commands), clients rescan.
+  const keepWorkspaceSnapshots =
+    previousProvider.workspaceSnapshots !== undefined &&
+    Equal.equals(inventory.slashCommands, previousProvider.slashCommands) &&
+    Equal.equals(inventory.skills, previousProvider.skills);
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
     models: mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
     ...(nextProvider.workspaceSnapshots !== undefined
       ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
-      : previousProvider.workspaceSnapshots !== undefined
+      : keepWorkspaceSnapshots
         ? { workspaceSnapshots: previousProvider.workspaceSnapshots }
         : {}),
-    ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
-      ? {
-          slashCommands:
-            nextProvider.slashCommands.length === 0
-              ? previousProvider.slashCommands
-              : nextProvider.slashCommands,
-          skills: nextProvider.skills.length === 0 ? previousProvider.skills : nextProvider.skills,
-        }
-      : {}),
+    ...inventory,
   };
 };
 
