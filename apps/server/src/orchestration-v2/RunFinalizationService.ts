@@ -2,7 +2,6 @@ import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import {
   CheckpointScopeId,
   CommandId,
-  type OrchestrationV2ThreadShell,
   ProjectId,
   type ProviderSessionId,
   RunId,
@@ -11,6 +10,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FiberMap from "effect/FiberMap";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -182,50 +182,12 @@ export const layerObserver = Layer.effect(
     const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
     const vcsStatus = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const pullRequestLookups = yield* FiberMap.make<string>();
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const projects = yield* ProjectService.ProjectService;
     const vcsDrivers = yield* VcsDriverRegistry.VcsDriverRegistry;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-
-    const followBranchDrift = Effect.fn("RunFinalizationService.followBranchDrift")(function* (
-      thread: OrchestrationV2ThreadShell,
-      cwd: string,
-      refName: string,
-      runId: RunId,
-    ) {
-      // Ignore the old checkpoint checkout after a location move.
-      if (
-        thread.worktreePath === null ||
-        thread.worktreePath !== cwd ||
-        isTemporaryWorktreeBranch(refName)
-      ) {
-        return false;
-      }
-      return yield* threads
-        .dispatch({
-          type: "thread.metadata.update",
-          commandId: CommandId.make(`command:effect:worktree-branch-drift:${runId}`),
-          finalizedRunId: runId,
-          threadId: thread.id,
-          branch: refName,
-          expectedActiveRunId: thread.activeRunId,
-          expectedBranch: thread.branch,
-          expectedWorktreePath: thread.worktreePath,
-          requireExclusiveWorktree: true,
-        })
-        .pipe(
-          Effect.as(true),
-          Effect.catch((error) =>
-            Effect.logWarning("failed to follow worktree branch drift after run completion", {
-              threadId: thread.id,
-              previousBranch: thread.branch,
-              branch: refName,
-              category: failureCategory(error),
-            }).pipe(Effect.as(false)),
-          ),
-        );
-    });
 
     const followWorktreeMove = Effect.fn("RunFinalizationService.followWorktreeMove")(function* ({
       threadId,
@@ -386,7 +348,6 @@ export const layerObserver = Layer.effect(
           branch: checkedOutBranch,
           // The provider already moved; an explicit client handoff still detaches.
           preserveProviderSession: true,
-          ...(checkedOutBranch !== null ? { requireExclusiveWorktree: true } : {}),
         })
         .pipe(
           Effect.catch((error) =>
@@ -407,25 +368,21 @@ export const layerObserver = Layer.effect(
             [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
             { concurrency: "unbounded" },
           );
-          if (local.refName === null) return;
+          if (local.refName === null || local.isDefaultRef) return;
           const thread = yield* projections.getThreadShell(threadId);
-          if (!thread) return;
-          if (thread.branch !== local.refName) {
-            if (!(yield* followBranchDrift(thread, cwd, local.refName, runId))) return;
-          } else if (
-            local.isDefaultRef ||
-            (thread.activeRunId !== null && thread.activeRunId !== runId)
-          ) {
-            return;
-          }
+          if (!thread || thread.branch !== local.refName) return;
+          if (thread.activeRunId !== null && thread.activeRunId !== runId) return;
+          // The forge CLI can take minutes, so the next turn must not wait for it. A newer
+          // turn's lookup replaces a running one instead of queueing behind the cwd's lock.
           yield* vcsStatus.refreshPullRequestStatus(cwd).pipe(
             Effect.catch((error) =>
               Effect.logWarning("failed to refresh pull request status after run completion", {
                 threadId,
                 cwd,
-                category: failureCategory(error),
+                detail: error.message,
               }),
             ),
+            FiberMap.run(pullRequestLookups, cwd),
           );
         },
         (effect, { cwd }) =>

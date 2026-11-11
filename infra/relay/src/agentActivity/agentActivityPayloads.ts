@@ -12,9 +12,7 @@ export function isTerminalPhase(state: RelayAgentActivityState): boolean {
   return state.phase === "completed" || state.phase === "failed";
 }
 
-// Rows are only removed when their environment publishes a terminal state. An
-// environment that dies mid-run (machine off, process killed) never does, so
-// without an age cutoff its threads inflate activeCount forever.
+// Dead environments never publish terminal states; expire their rows so activeCount cannot remain inflated.
 const RUNNING_AGENT_ACTIVITY_ROW_TTL_MS = 2 * 60 * 60 * 1_000;
 const WAITING_AGENT_ACTIVITY_ROW_TTL_MS = 24 * 60 * 60 * 1_000;
 
@@ -43,14 +41,13 @@ export function isExpiredAgentActivityState(
   return !Number.isFinite(expiresAt) || nowMs > expiresAt;
 }
 
-const MAX_SUMMARY_TEXT_LENGTH = 120;
+export const MAX_SUMMARY_TEXT_LENGTH = 120;
 const MAX_STATUS_TEXT_LENGTH = 40;
 const MAX_DEEP_LINK_LENGTH = 512;
-// The Live Activity banner (lock screen / Notification Center) renders up to
-// five rows; the expanded Dynamic Island shows the top three of these.
+// Banners render five rows; the expanded Dynamic Island shows the top three.
 export const MAX_ACTIVITY_ROWS = 5;
 
-function truncateText(value: string, maxLength: number): string {
+export function truncateText(value: string, maxLength: number): string {
   const trimmed = value.trim();
   if (trimmed.length <= maxLength) {
     return trimmed;
@@ -66,7 +63,7 @@ function sanitizeDeepLink(value: string): string {
   return truncateText(trimmed, MAX_DEEP_LINK_LENGTH);
 }
 
-export function sanitizeAgentActivityAggregateRow(
+function sanitizeAgentActivityAggregateRow(
   row: RelayAgentActivityAggregateRow,
 ): RelayAgentActivityAggregateRow {
   return {

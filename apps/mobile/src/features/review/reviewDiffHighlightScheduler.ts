@@ -6,7 +6,7 @@ export interface NativeReviewVisibleRange {
 export function createReviewDiffHighlightScheduler(
   request: (range: NativeReviewVisibleRange) => void,
 ) {
-  let requestedRange: NativeReviewVisibleRange = { firstRowIndex: 0, lastRowIndex: 80 };
+  let requestedRange: NativeReviewVisibleRange | undefined;
   let visibleRange = requestedRange;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -17,19 +17,25 @@ export function createReviewDiffHighlightScheduler(
   const flush = () => {
     cancel();
     requestedRange = visibleRange;
-    request(visibleRange);
+    if (visibleRange) request(visibleRange);
   };
 
   return {
     update(nextRange: NativeReviewVisibleRange) {
       if (
-        nextRange.firstRowIndex === visibleRange.firstRowIndex &&
+        nextRange.firstRowIndex === visibleRange?.firstRowIndex &&
         nextRange.lastRowIndex === visibleRange.lastRowIndex
       ) {
         return;
       }
       visibleRange = nextRange;
       cancel();
+      if (!requestedRange) {
+        // Native publishes a pre-jump range and its initial destination together.
+        // Yield once so the destination wins before sending an unabortable source RPC.
+        timer = setTimeout(flush, 0);
+        return;
+      }
       const movedRows =
         Math.abs(nextRange.firstRowIndex - requestedRange.firstRowIndex) +
         Math.abs(nextRange.lastRowIndex - requestedRange.lastRowIndex);
@@ -41,8 +47,10 @@ export function createReviewDiffHighlightScheduler(
     },
     reset() {
       cancel();
-      requestedRange = { firstRowIndex: 0, lastRowIndex: 80 };
+      const previousRange = visibleRange;
+      requestedRange = undefined;
       visibleRange = requestedRange;
+      return previousRange;
     },
     cancel,
   };
