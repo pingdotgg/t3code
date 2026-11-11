@@ -9953,8 +9953,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       scenario: string,
       steerText: string,
       createdBy: "user" | "agent" = "user",
+      stallSkillsList = false,
     ) =>
       Effect.gen(function* () {
+        const skillsListed = yield* Deferred.make<void>();
         const transcript = makeCodexReplayTranscript({
           scenario,
           entries: [
@@ -9993,6 +9995,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           undefined,
           (method, params) => {
             if (method !== "skills/list") return undefined;
+            if (stallSkillsList) {
+              return Deferred.succeed(skillsListed, undefined).pipe(Effect.andThen(Effect.never));
+            }
             const cwds =
               Predicate.isObject(params) && Array.isArray(params.cwds) ? params.cwds : [];
             return Effect.succeed({
@@ -10032,7 +10037,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               event.providerTurn.status === "running",
           ),
         );
-        const steer = yield* harness.runtime
+        const steering = yield* harness.runtime
           .steerTurn({
             threadId: harness.threadId,
             runId: turnInput.runId,
@@ -10045,7 +10050,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               createdBy,
             },
           })
-          .pipe(Effect.exit);
+          .pipe(Effect.exit, Effect.forkScoped);
+        if (stallSkillsList) {
+          yield* Deferred.await(skillsListed);
+          yield* TestClock.adjust("5 seconds");
+        }
+        const steer = yield* Fiber.join(steering);
         return { steer, requests };
       });
 
@@ -10065,17 +10075,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     );
 
-    it.effect("still steers a skill mention an agent sent", () =>
+    it.effect.each([
+      { label: "a skill mention an agent sent", text: "$zebra-probe", createdBy: "agent" },
+      { label: "a `$` mention that is not a Codex skill", text: "echo $PATH", createdBy: "user" },
+      { label: "a skill mention when skills/list stalls", text: "$zebra-probe", stall: true },
+    ] as const)("still steers $label", ({ label, text, ...rest }) =>
       Effect.gen(function* () {
         const { steer, requests } = yield* steerWhileRunning(
-          "skill-steer-agent",
-          "$zebra-probe",
-          "agent",
+          `skill-steer-${label}`,
+          text,
+          "createdBy" in rest ? rest.createdBy : "user",
+          "stall" in rest,
         );
 
         assert.include(requests, "turn/steer");
@@ -10083,21 +10103,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-    );
-
-    it.effect("still steers a `$` mention that is not a Codex skill", () =>
-      Effect.gen(function* () {
-        const { steer, requests } = yield* steerWhileRunning("skill-steer-path", "echo $PATH");
-
-        assert.include(requests, "turn/steer");
-        assert.isTrue(Exit.isSuccess(steer));
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     );

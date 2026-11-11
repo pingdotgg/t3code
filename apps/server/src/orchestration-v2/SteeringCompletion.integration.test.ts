@@ -1549,25 +1549,48 @@ it.effect("queues a steer the provider can only run as its own turn behind the r
   Effect.scoped(
     Effect.gen(function* () {
       const { events, started, steered, layer, startFirstTurn, releaseSteer } =
-        yield* nextTurnSelectionHarness("steering-requires-new-turn", false, true, Effect.void, true, undefined, true);
+        yield* nextTurnSelectionHarness(
+          "steering-requires-new-turn",
+          false,
+          true,
+          Effect.void,
+          true,
+          undefined,
+          true,
+        );
       yield* Deferred.succeed(releaseSteer, undefined);
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const threadId = yield* startFirstTurn;
         const first = started[0]!;
+        const laterId = MessageId.make("message:later");
         const steerId = MessageId.make("message:skill");
+        const secondSteerId = MessageId.make("message:skill-2");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
-          commandId: CommandId.make("steer-skill"),
+          commandId: CommandId.make("queue-later"),
           threadId,
-          messageId: steerId,
-          text: "$zebra-probe",
+          messageId: laterId,
+          text: "later",
           attachments: [],
-          dispatchMode: { type: "steer_active", targetRunId: first.runId },
+          dispatchMode: { type: "queue_after_active" },
           createdBy: "user",
           creationSource: "web",
         });
+        for (const messageId of [steerId, secondSteerId]) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`steer-${messageId}`),
+            threadId,
+            messageId,
+            text: "$zebra-probe",
+            attachments: [],
+            dispatchMode: { type: "steer_active", targetRunId: first.runId },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
         yield* worker.drain();
 
         const queued = yield* orchestrator.getThreadProjection(threadId);
@@ -1577,6 +1600,10 @@ it.effect("queues a steer the provider can only run as its own turn behind the r
         const next = queued.runs.find((run) => run.userMessageId === steerId);
         assert.equal(next?.status, "queued");
         assert.equal(queued.messages.find((message) => message.id === steerId)?.runId, next?.id);
+        assert.deepEqual(
+          queuedRunsInDeliveryOrder(queued).map((run) => run.userMessageId),
+          [steerId, secondSteerId, laterId],
+        );
 
         const settled = yield* orchestrator.streamDomainEvents.pipe(
           Stream.filter(
@@ -1626,7 +1653,15 @@ it.effect.each([
   Effect.scoped(
     Effect.gen(function* () {
       const { events, started, layer, startFirstTurn, steerEntered, releaseSteer } =
-        yield* nextTurnSelectionHarness("steering-requires-new-turn-stop", false, true, Effect.void, true, undefined, true);
+        yield* nextTurnSelectionHarness(
+          "steering-requires-new-turn-stop",
+          false,
+          true,
+          Effect.void,
+          true,
+          undefined,
+          true,
+        );
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -1724,7 +1759,15 @@ it.effect("sends a promoted message first when it cannot steer the running turn"
   Effect.scoped(
     Effect.gen(function* () {
       const { started, steered, layer, startFirstTurn, releaseSteer } =
-        yield* nextTurnSelectionHarness("steering-requires-new-turn-promote", false, true, Effect.void, true, undefined, true);
+        yield* nextTurnSelectionHarness(
+          "steering-requires-new-turn-promote",
+          false,
+          true,
+          Effect.void,
+          true,
+          undefined,
+          true,
+        );
       yield* Deferred.succeed(releaseSteer, undefined);
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -451,7 +451,10 @@ const mentionsEnabledCodexSkill = Effect.fn("CodexAdapterV2.mentionsEnabledCodex
 ) {
   const names = new Set(Array.from(text.matchAll(SKILL_MENTION_PATTERN), (match) => match[2]));
   if (names.size === 0) return false;
-  const response = yield* client.request("skills/list", { cwds: cwd === null ? [] : [cwd] });
+  // A steer waits on this lookup, so a stalled app-server falls back to a plain steer.
+  const response = yield* client
+    .request("skills/list", { cwds: cwd === null ? [] : [cwd] })
+    .pipe(Effect.timeout("5 seconds"));
   return response.data.some((entry) =>
     entry.skills.some((skill) => skill.enabled && names.has(skill.name)),
   );
