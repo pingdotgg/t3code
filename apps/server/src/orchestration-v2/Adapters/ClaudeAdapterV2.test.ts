@@ -6635,9 +6635,42 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       expected:
         "Claude stopped: the prompt exceeds the model's context window. Run /compact or start a new thread.",
     },
+    ...[
+      {
+        name: "a model version error rewritten by a custom endpoint",
+        baseUrl: "https://gateway.example.test/v1",
+        installed: "2.1.322",
+        expected:
+          "The custom API endpoint gateway.example.test reported Claude Code 2.1.280, but this session runs Claude Code 2.1.322. Running claude update will not fix this; the endpoint or a proxy behind it rewrote the version.",
+      },
+      { name: "a model version error without a custom endpoint", installed: "2.1.322" },
+      {
+        name: "a model version error from a Claude Code still below the required version",
+        baseUrl: "https://gateway.example.test/v1",
+        installed: "2.1.285",
+      },
+    ].map((row) => {
+      const result =
+        "API Error: 400 Claude Code 2.1.280 does not support this model; version 2.1.290 or newer is required. Run 'claude update', or update the Claude desktop app, then try again.";
+      return {
+        ...row,
+        isError: true,
+        result,
+        errors: undefined,
+        apiErrorStatus: undefined,
+        terminalReason: undefined,
+        environment: {
+          CLAUDE_CONFIG_DIR: "/synthetic/no-claude-config",
+          ...(row.baseUrl === undefined ? {} : { ANTHROPIC_BASE_URL: row.baseUrl }),
+        },
+        expected: row.expected ?? result,
+      };
+    }),
   ])("reports terminal API error text for $name", (input) =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
+      const harness = yield* makeWakeHarnessWithOptions(
+        "environment" in input ? { environment: input.environment } : undefined,
+      );
       const now = yield* DateTime.now;
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
@@ -6650,6 +6683,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       const apiErrorStatus = input.apiErrorStatus ?? 400;
+      if ("installed" in input) {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "00000000-0000-4000-8000-000000000698",
+            session_id: WAKE_NATIVE_SESSION,
+            claude_code_version: input.installed,
+          }),
+        );
+      }
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({
@@ -8382,6 +8426,70 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           McpProviderSessions.layer,
           NodeServices.layer,
           NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  // The passive row is the frame Claude 2.1.303 emits for a Stop hook returning a systemMessage.
+  it.effect.each([
+    { name: "hides a passive summary", level: "notice", visible: false },
+    { name: "shows a blocking notice", level: "notice", preventContinuation: true, visible: true },
+    { name: "shows a warning", level: "warning", visible: true },
+  ])("Claude Stop-hook notices: $name", ({ level, preventContinuation, visible }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("claude-stop-hook-notice-attempt"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const content = "Stop says: 40 scans, 0 findings";
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "informational",
+          content,
+          level,
+          ...(preventContinuation === undefined
+            ? {}
+            : { prevent_continuation: preventContinuation }),
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "00000000-0000-4000-8000-000000000820",
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000821", result: content }),
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem.message]
+            : [],
+        ),
+        visible ? [content] : [],
+      );
+      assert.isFalse(
+        harness.events.some(
+          (event) => event.type === "message.updated" && event.message.role === "assistant",
+        ),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          IdAllocator.layer,
+          McpProviderSessions.layer,
         ),
       ),
     ),
@@ -15711,11 +15819,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("gives a nested subagent its own effort, else the one its owner runs at", () =>
+  it.effect("records only explicit effort for nested subagents", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const OUTER_TOOL_USE_ID = "toolu-effort-outer";
-        const INHERITING_TOOL_USE_ID = "toolu-effort-nested-inheriting";
+        const UNSPECIFIED_TOOL_USE_ID = "toolu-effort-nested-unspecified";
         const OVERRIDING_TOOL_USE_ID = "toolu-effort-nested-overriding";
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
@@ -15781,14 +15889,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               type: "message",
               role: "assistant",
               content: [
-                agentCall(INHERITING_TOOL_USE_ID),
+                agentCall(UNSPECIFIED_TOOL_USE_ID),
                 agentCall(OVERRIDING_TOOL_USE_ID, "max"),
               ],
             },
             uuid: "00000000-0000-4000-8000-000000000223",
             session_id: WAKE_NATIVE_SESSION,
           }),
-          taskStarted(INHERITING_TOOL_USE_ID, "00000000-0000-4000-8000-000000000224"),
+          taskStarted(UNSPECIFIED_TOOL_USE_ID, "00000000-0000-4000-8000-000000000224"),
           taskStarted(OVERRIDING_TOOL_USE_ID, "00000000-0000-4000-8000-000000000225"),
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000226",
@@ -15813,7 +15921,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepEqual(Object.fromEntries(efforts), {
           [`task-${OUTER_TOOL_USE_ID}`]: "low",
-          [`task-${INHERITING_TOOL_USE_ID}`]: "low",
+          [`task-${UNSPECIFIED_TOOL_USE_ID}`]: undefined,
           [`task-${OVERRIDING_TOOL_USE_ID}`]: "max",
         });
         const childEfforts = harness.events.flatMap((event) =>
@@ -15821,7 +15929,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ? [getModelSelectionStringOptionValue(event.appThread.modelSelection, "effort")]
             : [],
         );
-        assert.deepEqual(childEfforts, ["low", "low", "max"]);
+        assert.deepEqual(childEfforts, ["low", undefined, "max"]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
