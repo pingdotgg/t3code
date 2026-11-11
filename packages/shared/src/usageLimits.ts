@@ -423,7 +423,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
         if (account.usageLimits.unavailable?.reason === "unsupported") continue;
         const notice = limitsNotice(account.usageLimits);
         if (notice) {
-          const name = `${source.label} · ${account.email || hubAccountName(account)}`;
+          const name = `${source.label} · ${PROVIDER_DISPLAY_NAMES[account.driver] ?? account.driver}`;
           notices.push(`${label(environmentLabel, name)}: ${notice}`);
         }
       }

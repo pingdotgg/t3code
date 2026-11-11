@@ -736,7 +736,7 @@ describe("pools", () => {
       expect(collected.map((entry) => entry.limits.windows.length)).toEqual([1, 0]);
       expect(collectLimitPools(collected, Date.parse(checkedAt))[0]?.accounts).toHaveLength(2);
       expect(collectLimitNotices(input)).toEqual([
-        `Desktop · hub · account@example.com: ${unavailable.message ?? "Could not read limits."}`,
+        `Desktop · hub · Claude: ${unavailable.message ?? "Could not read limits."}`,
       ]);
       input.delete(EnvironmentId.make("env-a"));
       expect(collectLimitAccounts(input)).toHaveLength(2);
