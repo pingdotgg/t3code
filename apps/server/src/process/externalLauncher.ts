@@ -1,3 +1,4 @@
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as NodePath from "@effect/platform-node/NodePath";
 import {
   EDITORS,
@@ -476,13 +477,14 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
-    const { command, baseArgs } = Option.getOrElse(
-      yield* resolveEditorCommand(editorDef, env),
-      () => ({
+    const resolved = yield* resolveEditorCommand(editorDef, env);
+    if (Option.isNone(resolved)) {
+      return yield* new ExternalLauncherCommandNotFoundError({
+        editor: editorDef.id,
         command: editorDef.commands[0],
-        baseArgs: "baseArgs" in editorDef ? editorDef.baseArgs : [],
-      }),
-    );
+      });
+    }
+    const { command, baseArgs } = resolved.value;
     return {
       editor: editorDef.id,
       target: input.cwd,
@@ -500,21 +502,22 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
+  const target = expandHomePath(input.cwd, yield* HostProcess.HomeDirectory);
   if (input.reveal === true) {
-    return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
+    return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
   }
 
   return {
     editor: editorDef.id,
-    target: input.cwd,
+    target,
     command,
     args:
       command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
+        ? [resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME)]
         : platform === "win32"
           ? // Explorer interprets / as a switch and silently opens a fallback folder.
-            [normalizeWindowsFileManagerPath(input.cwd)]
-          : [input.cwd],
+            [normalizeWindowsFileManagerPath(target)]
+          : [target],
   };
 });
 
