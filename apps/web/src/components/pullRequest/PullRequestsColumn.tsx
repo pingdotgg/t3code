@@ -135,7 +135,7 @@ export function PullRequestsColumn({
       inert={maximizedAway}
       data-pane-notch-host={split ? "" : undefined}
       className={cn(
-        "@container/pr-list flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-background surface-grain",
+        "pane-mobile-chrome @container/pr-list flex min-h-0 min-w-0 flex-col overflow-x-hidden surface-grain md:bg-background",
         maximizedAway ? "w-0 flex-none" : "flex-1",
         // Beside an open review the list is a pane of its own, its corner given to the notch.
         split && "overflow-hidden md:rounded-pane md:rounded-ss-none",
