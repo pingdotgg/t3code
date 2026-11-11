@@ -460,6 +460,22 @@ it("waits for Enter after a number picks a single choice with nothing focused", 
   expect(onConfirm).toHaveBeenCalledTimes(1);
 });
 
+it("waits for Enter after a number changes a single choice that was just clicked", async () => {
+  const { screen, option, onAdvance } = await renderKeyboardChat("click-then-key", [
+    channel,
+    steps,
+  ]);
+  await using _ = screen;
+  using _timers = fakeTimers();
+
+  // The click would advance 200 ms later; the number arrives first.
+  await option("Beta").click();
+  await userEvent.keyboard("2");
+  await act(() => vi.advanceTimersByTime(1000));
+  expect(option("Stable").element()).toHaveAttribute("aria-pressed", "true");
+  expect(onAdvance).not.toHaveBeenCalled();
+});
+
 it("confirms on Enter after a click instead of unselecting the clicked option", async () => {
   const { screen, option, onConfirm } = await renderKeyboardChat("click", [steps]);
   await using _ = screen;

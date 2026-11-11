@@ -206,6 +206,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       return false;
     }
     if (!event.repeat) {
+      // The key overrides a click still waiting to advance, so its pick waits for Enter.
+      if (autoAdvanceTimerRef.current !== null) window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
       setCollapsedQuestionId(null);
       onOptionKey(activeQuestion.id, event.key);
     }

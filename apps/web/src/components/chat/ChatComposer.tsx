@@ -480,6 +480,8 @@ export interface ChatComposerProps {
     expandedCursor: number,
     cursorAdjacentToMention: boolean,
   ) => void;
+  /** Replaces the question's answer with text the user did not type, keeping no option numbers. */
+  onReplaceActivePendingUserInputCustomAnswer: (questionId: string, value: string) => void;
   /** Takes back the last option number typed for the question; false when there is none. */
   onRemoveActivePendingUserInputOptionKey: (questionId: string) => boolean;
 
@@ -579,6 +581,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onDismissActivePendingUserInput,
     onPreviousActivePendingUserInputQuestion,
     onChangeActivePendingUserInputCustomAnswer,
+    onReplaceActivePendingUserInputCustomAnswer,
     onRemoveActivePendingUserInputOptionKey,
     onProviderModelSelect,
     onOpenProviderSetup,
@@ -1759,13 +1762,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptRef.current = next.text;
     const activePendingQuestion = activePendingProgress?.activeQuestion;
     if (activePendingQuestion && activePendingUserInput) {
-      onChangeActivePendingUserInputCustomAnswer(
-        activePendingQuestion.id,
-        next.text,
-        nextCursor,
-        nextExpandedCursor,
-        isLiteralPendingAnswer,
-      );
+      onReplaceActivePendingUserInputCustomAnswer(activePendingQuestion.id, next.text);
     } else {
       setPrompt(next.text);
       onTypingGuardDraftChange();

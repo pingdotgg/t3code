@@ -25,6 +25,7 @@ import { getUploadedAttachments, useAttachmentUploadStore } from "../../lib/atta
 import { reviewCommentContextRecord } from "../../lib/composerContextRecords";
 import {
   buildPendingUserInputAnswers,
+  setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
@@ -70,6 +71,7 @@ function makePendingCustomAnswerSetter(input: {
   readonly setPendingUserInputAnswersByRequestId: (
     update: SetStateAction<Record<string, Record<string, PendingUserInputDraftAnswer>>>,
   ) => void;
+  readonly setAnswer: typeof setPendingUserInputAnswerText;
 }) {
   return (questionId: string, value: string) => {
     const { activePendingUserInput, activePendingRequestKey } = input;
@@ -82,12 +84,11 @@ function makePendingCustomAnswerSetter(input: {
     }
     input.writePrompt(value);
     input.withdrawRestoredAnswer(questionId, value);
-    // A choice-only question takes option keys and nothing else.
     input.setPendingUserInputAnswersByRequestId((existing) => ({
       ...existing,
       [activePendingRequestKey]: {
         ...existing[activePendingRequestKey],
-        [questionId]: setPendingUserInputAnswerText(
+        [questionId]: input.setAnswer(
           question,
           existing[activePendingRequestKey]?.[questionId],
           value,
@@ -503,12 +504,25 @@ export function usePendingThreadRequests(input: {
     );
     if (nextPrompt !== currentPrompt) setComposerDraftPrompt(composerDraftTarget, nextPrompt);
   });
+  // Typing continues the option keys the answer field hides; a choice-only question
+  // takes the keys and nothing else.
   const onChangeActivePendingUserInputCustomAnswer = makePendingCustomAnswerSetter({
     activePendingUserInput,
     activePendingRequestKey,
     writePrompt,
     withdrawRestoredAnswer,
     setPendingUserInputAnswersByRequestId,
+    setAnswer: setPendingUserInputAnswerText,
+  });
+  // Edits made for the user, such as dictation, replace the text the field shows and
+  // drop the option keys behind it.
+  const onReplaceActivePendingUserInputCustomAnswer = makePendingCustomAnswerSetter({
+    activePendingUserInput,
+    activePendingRequestKey,
+    writePrompt,
+    withdrawRestoredAnswer,
+    setPendingUserInputAnswersByRequestId,
+    setAnswer: setPendingUserInputCustomAnswer,
   });
 
   /** Takes back the last option key typed for the question; false when there is none. */
@@ -574,6 +588,7 @@ export function usePendingThreadRequests(input: {
     onDismissUserInput: onDismissUserInputStable,
     onSelectActivePendingUserInputOption: onSelectActivePendingUserInputOptionStable,
     onChangeActivePendingUserInputCustomAnswer,
+    onReplaceActivePendingUserInputCustomAnswer,
     onRemoveActivePendingUserInputOptionKey: onRemoveActivePendingUserInputOptionKeyStable,
     onAdvanceActivePendingUserInput,
     onAdvanceActivePendingUserInputStable,
