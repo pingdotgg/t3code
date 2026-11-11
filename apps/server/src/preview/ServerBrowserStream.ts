@@ -24,6 +24,7 @@ import { authenticateMediaRequest } from "../auth/http.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
+import { requestUrl } from "../requestUrl.ts";
 
 const PREVIEW_STREAM_ROUTE_PREFIX = "/api/preview-stream";
 const TAB_GONE_CODE = 4404;
@@ -53,7 +54,7 @@ const parseMessage = (chunk: Uint8Array | string): unknown => {
 // Request middleware owns tracing, including long-lived WebSocket sessions.
 const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBrowser["Service"]) {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const url = HttpServerRequest.toURL(request);
+  const url = requestUrl(request);
   if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
   if (url.value.pathname === `${PREVIEW_STREAM_ROUTE_PREFIX}/download`) {
     return yield* serveDownload(browser, url.value.searchParams);

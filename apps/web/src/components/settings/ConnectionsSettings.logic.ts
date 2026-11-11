@@ -19,6 +19,7 @@ import {
   type DesktopSshEnvironmentTarget,
   type DesktopUpdateState,
   type DesktopWslState,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import {
   getDesktopUpdateDownloadedVersion,
@@ -65,6 +66,22 @@ export function missingTailscaleEndpointDescription(
   return state && state.mode !== "network-accessible" && !state.tailscaleServeEnabled
     ? "Turn on Network access to detect Tailscale."
     : "Start Tailscale to set up HTTPS access through MagicDNS.";
+}
+
+export function resolveTailscaleServeBaseUrl(
+  endpoint: Pick<AdvertisedEndpoint, "httpBaseUrl"> | null,
+  port: number,
+  isPortValid: boolean,
+): string | null {
+  if (!endpoint) return null;
+  if (!isPortValid) return endpoint.httpBaseUrl;
+  try {
+    const url = new URL(endpoint.httpBaseUrl);
+    url.port = String(port);
+    return url.toString().replace(/\/$/u, "");
+  } catch {
+    return endpoint.httpBaseUrl;
+  }
 }
 
 export function isWslSettingsRowVisible(input: {
@@ -419,4 +436,23 @@ export function endpointShareHint(endpoint: AdvertisedEndpoint, url: string): st
     case "loopback":
       return "Clients on this machine";
   }
+}
+
+/** An explicit choice while it is listed, else the primary, else a connected environment. */
+export function resolveAccessEnvironmentId(input: {
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly connected: boolean;
+  }>;
+  readonly selected: EnvironmentId | null;
+}): EnvironmentId | null {
+  const isListed = (environmentId: EnvironmentId | null) =>
+    input.environments.some((environment) => environment.environmentId === environmentId);
+  if (isListed(input.selected)) return input.selected;
+  if (isListed(input.primaryEnvironmentId)) return input.primaryEnvironmentId;
+  return (
+    (input.environments.find((environment) => environment.connected) ?? input.environments[0])
+      ?.environmentId ?? null
+  );
 }

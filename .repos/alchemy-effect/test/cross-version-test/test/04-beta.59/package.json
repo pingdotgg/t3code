@@ -7,9 +7,9 @@
     "test": "bun test"
   },
   "dependencies": {
-    "alchemy": "2.0.0-beta.59",
-    "effect": "4.0.0-beta.84",
     "@effect/platform-bun": "4.0.0-beta.84",
-    "@effect/platform-node": "4.0.0-beta.84"
+    "@effect/platform-node": "4.0.0-beta.84",
+    "alchemy": "2.0.0-beta.59",
+    "effect": "4.0.0-beta.84"
   }
 }
