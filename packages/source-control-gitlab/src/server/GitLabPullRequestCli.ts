@@ -599,6 +599,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly action: PullRequestAction;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly removeAgentCreditsOnMerge?: boolean;
+      /** The head the caller reviewed; a merge refuses any other. */
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<ProviderChangeRequestSummary | void, GitLabPullRequestCliError>;
 
     readonly updateMergeRequest: (input: {
@@ -2848,7 +2850,11 @@ export const make = Effect.gen(function* () {
             yield* executeMr("rebase");
           }
           const refs = yield* getDiffRefs(input);
-          flags.push("--sha", refs.headSha);
+          // A rebase replaces the reviewed head, which the caller checked before asking for it.
+          flags.push(
+            "--sha",
+            input.mergeMethod === "rebase" ? refs.headSha : (input.expectedHeadSha ?? refs.headSha),
+          );
           if (input.removeAgentCreditsOnMerge === true) {
             // Read after the SHA guard, so a push since then fails the merge instead of
             // merging commits whose credits these messages don't cover.
