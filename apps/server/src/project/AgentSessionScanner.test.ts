@@ -1150,6 +1150,67 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   });
 
   describe("recentThreads", () => {
+    it.effect("refresh rediscovers Claude sessions created after the first discovery", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-refresh-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-refresh-");
+        const workspace = yield* makeTempDir("t3code-workspace-refresh-");
+        const claudeTranscript = (cwd: string, sessionId: string) =>
+          `${JSON.stringify({
+            type: "user",
+            cwd,
+            sessionId,
+            timestamp: "2026-08-24T11:00:00.000Z",
+            message: { role: "user", content: "First prompt" },
+          })}\n${JSON.stringify({
+            type: "assistant",
+            sessionId,
+            timestamp: "2026-08-24T11:01:00.000Z",
+            message: { role: "assistant", content: [{ type: "text", text: "Done" }] },
+          })}\n`;
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-selected", "claude-first.jsonl"),
+          contents: claudeTranscript(workspace, "claude-first"),
+          mtimeMs: nowMs - 60_000,
+        });
+
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const first = yield* scanner.recentThreads(workspace).pipe(Stream.runCollect);
+          expect(
+            first.flatMap((outcome) =>
+              outcome._tag === "Importable" ? [outcome.thread.providerSessionId] : [],
+            ),
+          ).toEqual(["claude-first"]);
+
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-selected", "claude-second.jsonl"),
+            contents: claudeTranscript(workspace, "claude-second"),
+            mtimeMs: nowMs - 30_000,
+          });
+
+          const stale = yield* scanner.recentThreads(workspace).pipe(Stream.runCollect);
+          expect(
+            stale.flatMap((outcome) =>
+              outcome._tag === "Importable" ? [outcome.thread.providerSessionId] : [],
+            ),
+          ).toEqual(["claude-first"]);
+
+          const refreshed = yield* scanner
+            .recentThreads(workspace, [], { refresh: true })
+            .pipe(Stream.runCollect);
+          expect(
+            refreshed.flatMap((outcome) =>
+              outcome._tag === "Importable" ? [outcome.thread.providerSessionId] : [],
+            ),
+          ).toEqual(["claude-second", "claude-first"]);
+        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+      }),
+    );
+
     it.effect("imports recent Claude, Codex, and Pi sessions for the selected project only", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

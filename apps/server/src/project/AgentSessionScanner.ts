@@ -228,6 +228,7 @@ export class AgentSessionScanner extends Context.Service<
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
+      options?: { readonly refresh?: boolean },
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
@@ -1807,6 +1808,7 @@ export const make = Effect.gen(function* () {
   const prepareRecentThreads = Effect.fn("AgentSessionScanner.prepareRecentThreads")(function* (
     workspaceRoot: string,
     completedSources: ReadonlyArray<AgentSessionImportSource>,
+    options?: { readonly refresh?: boolean },
   ) {
     const root = path.resolve(expandHomePath(workspaceRoot, homeDir));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
@@ -1815,8 +1817,13 @@ export const make = Effect.gen(function* () {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
 
+    // Onboarding scan fills the cache; bulk import reuses it. Explicit Discover/Adopt refresh.
     // Imports recorded since a budget-truncated collection can free budget for transcripts it cut off.
-    if (cachedCandidates === null || cachedCandidates.metadataTruncated) {
+    if (
+      options?.refresh === true ||
+      cachedCandidates === null ||
+      cachedCandidates.metadataTruncated
+    ) {
       cachedCandidates = yield* collectCandidates();
     }
     const { candidates } = cachedCandidates;
@@ -2027,7 +2034,8 @@ export const make = Effect.gen(function* () {
   const recentThreads: AgentSessionScanner["Service"]["recentThreads"] = (
     workspaceRoot,
     completedSources = [],
-  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
+    options,
+  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources, options));
 
   return AgentSessionScanner.of({ scan, recentThreads });
 });

@@ -537,7 +537,9 @@ const make = Effect.gen(function* () {
     );
     const provider = input.provider ?? "claudeAgent";
     // Skip completedSources so list keeps titles; adoption status comes from the thread id.
-    const outcomes = yield* scanner.recentThreads(project.workspaceRoot).pipe(Stream.runCollect);
+    const outcomes = yield* scanner
+      .recentThreads(project.workspaceRoot, [], { refresh: true })
+      .pipe(Stream.runCollect);
     const sessions: Array<AgentSessionListed> = [];
     for (const outcome of outcomes) {
       if (outcome._tag !== "Importable") continue;
@@ -583,7 +585,9 @@ const make = Effect.gen(function* () {
       return { threadId, adopted: false } satisfies AgentSessionAdoptResult;
     }
 
-    const outcomes = yield* scanner.recentThreads(project.workspaceRoot).pipe(Stream.runCollect);
+    const outcomes = yield* scanner
+      .recentThreads(project.workspaceRoot, [], { refresh: true })
+      .pipe(Stream.runCollect);
     const match = outcomes.find(
       (outcome): outcome is Extract<typeof outcome, { _tag: "Importable" }> =>
         outcome._tag === "Importable" &&
