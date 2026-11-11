@@ -3,11 +3,13 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import {
   type CardPurpose,
+  cardAnswerVerdictLength,
   cardReplyProblem,
   foldCardReply,
   quizCardProblem,
   readQuestionCard,
   readQuizCard,
+  withoutCardAnswerTag,
 } from "@t3tools/shared/quizCard";
 
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -35,12 +37,19 @@ export const shownTutorText = (
     (a, b) => DateTime.toEpochMillis(a.createdAt) - DateTime.toEpochMillis(b.createdAt),
   );
   const lastUser = ordered.findLastIndex((message) => message.role === "user");
+  const lastUserWasCardAnswer =
+    lastUser !== -1 && withoutCardAnswerTag(ordered[lastUser]!.text) !== ordered[lastUser]!.text;
+  let verdictPending = lastUserWasCardAnswer;
   return ordered
     .slice(lastUser + 1)
     .filter(
       (message) => message.role === "assistant" && !/(?::|%3A)thinking(?::|%3A)/iu.test(message.id),
     )
-    .reduce((total, message) => total + message.text.length, 0);
+    .reduce((total, message) => {
+      if (!verdictPending || /:reply$/u.test(message.id)) return total + message.text.length;
+      verdictPending = false;
+      return total + message.text.length - cardAnswerVerdictLength(message.text);
+    }, 0);
 };
 
 const readShownTutorText = readThread(undefined, ["messages"]).pipe(
