@@ -265,7 +265,6 @@ it.layer(NodeServices.layer)("decideThreadMove", (it) => {
     ["rule 5: a folder in a linked git worktree", "worktree/sub", worktree],
     ["rule 5: the linked worktree itself", "worktree", worktree],
     ["rule 5: a folder in a jj workspace", "jjws/sub", worktree],
-    ["rule 5: a folder in a default jj workspace", "jjdefault/sub", worktree],
     ["rule 5: the managed worktrees directory itself", "managed", worktree],
     ["rule 5: under a managed worktrees directory", "managed/repo/branch/sub", worktree],
     ["rule 5: unreadable .git fails, naming it", "locked-git", (f) => failure(`${f}/.git`)],
@@ -275,6 +274,7 @@ it.layer(NodeServices.layer)("decideThreadMove", (it) => {
     ["rule 6: a submodule under worktrees/ needs one", "main/worktrees/lib", needsProject],
     ["rule 6: a checkout whose git dir is under worktrees/", "separate", needsProject],
     ["rule 6: a deleted project's root needs a project", "deleted", needsProject],
+    ["rule 6: a folder in a default jj workspace needs one", "jjdefault/sub", needsProject],
     ["a missing folder is refused", "missing", refusal(/^No folder at `.*missing`\.$/)],
     [
       "a folder under an unreadable parent is refused, not reported missing",

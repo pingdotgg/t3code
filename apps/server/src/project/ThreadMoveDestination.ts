@@ -256,7 +256,7 @@ export const decideThreadMove = Effect.fn("ThreadMoveDestination.decideThreadMov
           return worktreeRefusal;
         }
       }
-      if ((yield* kindOf(fileSystem, path.join(directory, ".jj", "repo"))) !== null) {
+      if ((yield* kindOf(fileSystem, path.join(directory, ".jj", "repo"))) === "File") {
         return worktreeRefusal;
       }
       if (path.dirname(directory) === directory) break;
