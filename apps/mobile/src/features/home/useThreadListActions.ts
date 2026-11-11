@@ -17,7 +17,11 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { readEnvironmentScope } from "../../state/session";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import {
+  environmentThreadShells,
+  steadyNavigationThreadShellsAtom,
+  threadEnvironment,
+} from "../../state/threads";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -572,7 +576,7 @@ export function useThreadListActions(): {
   const moveThread = async (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
     if (!checkThreadOperationPermission(thread, "Could not move thread")) return false;
     if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
-    const shells = appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom);
+    const shells = appAtomRegistry.get(steadyNavigationThreadShellsAtom);
     const current = shells.find(
       (row) => row.id === thread.id && row.environmentId === thread.environmentId,
     );
