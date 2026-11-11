@@ -1,8 +1,9 @@
+import { AppState } from "react-native";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createAppUpdateDeferral,
-  createAppUpdateLaunchCheck,
+  installAppUpdateChecks,
   runAppUpdateCheck,
   type AppUpdateCheckState,
   type AppUpdateClient,
@@ -234,10 +235,9 @@ describe("runAppUpdateCheck", () => {
     const client = makeUpdateClient({
       checkForUpdateAsync: vi.fn(() => checkResult),
     });
-    const checkOnLaunch = createAppUpdateLaunchCheck(client);
     const manualStates: AppUpdateCheckState[] = [];
 
-    const launchCheck = checkOnLaunch();
+    const launchCheck = runAppUpdateCheck({ client });
     const manualCheck = runAppUpdateCheck({
       client,
       onStateChange: (state) => manualStates.push(state),
@@ -303,16 +303,16 @@ describe("runAppUpdateCheck", () => {
   });
 });
 
-describe("createAppUpdateLaunchCheck", () => {
-  it("checks at most once for each JavaScript launch", async () => {
+describe("installAppUpdateChecks", () => {
+  it("checks once at launch and stops listening for foregrounds when disposed", () => {
+    const remove = vi.fn();
+    vi.mocked(AppState.addEventListener).mockReturnValueOnce({ remove });
     const client = makeUpdateClient();
-    const checkOnLaunch = createAppUpdateLaunchCheck(client);
 
-    const first = checkOnLaunch();
-    const second = checkOnLaunch();
-    await first;
-
-    expect(second).toBeUndefined();
+    const dispose = installAppUpdateChecks(client);
     expect(client.checkForUpdateAsync).toHaveBeenCalledOnce();
+    dispose();
+
+    expect(remove).toHaveBeenCalledOnce();
   });
 });
