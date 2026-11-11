@@ -152,6 +152,12 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
+    case "observation.append":
+    case "observation.subscribe":
+    case "observation.unsubscribe":
+    case "observation.link-work":
+    case "observation.decline":
+    case "observation.duplicate":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":

@@ -141,6 +141,10 @@ import {
   decideGuestShareCommand,
   type GuestShareCommand,
 } from "./GuestShareDecider.ts";
+import {
+  decideObservationStreamCommand,
+  type ObservationStreamCommand,
+} from "./ObservationStreamDecider.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -612,6 +616,12 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
+    case "observation.append":
+    case "observation.subscribe":
+    case "observation.unsubscribe":
+    case "observation.link-work":
+    case "observation.decline":
+    case "observation.duplicate":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -3583,6 +3593,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
     yield* releaseGuestAttachments(command, thread.guestShare, decided.success.guestShare, effects);
   });
+
+  const dispatchObservationStream = Effect.fn("orchestrationV2.dispatch.observationStream")(
+    function* (
+      command: ObservationStreamCommand,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, [])
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const thread = projection.thread;
+      const now = yield* DateTime.now;
+      const decided = decideObservationStreamCommand({ thread, command, now });
+      if (Result.isFailure(decided)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: decided.failure,
+        });
+      }
+      if (decided.success === thread) return;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.observation-stream-updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: decided.success,
+      });
+    },
+  );
 
   // Emitted before the message so the send and the status change commit together, and so
   // `dispatchMessage`, which reads pending events, keeps the updated share.
@@ -13996,6 +14042,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.guest-message.submit":
       case "thread.guest-message.dismiss":
         yield* dispatchGuestShare(command, events, effects);
+        break;
+      case "observation.append":
+      case "observation.subscribe":
+      case "observation.unsubscribe":
+      case "observation.link-work":
+      case "observation.decline":
+      case "observation.duplicate":
+        yield* dispatchObservationStream(command, events);
         break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);

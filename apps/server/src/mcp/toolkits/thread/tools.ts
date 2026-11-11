@@ -15,6 +15,8 @@ import {
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
+  ObservationItem,
+  ObservationItemId,
   ThreadId,
   RunId,
   NonNegativeInt,
@@ -104,6 +106,38 @@ const QueueTool = Tool.make("t3_queue", {
   success: Schema.Union([
     Schema.Struct({ items: Schema.Array(queueEntry), nextCursor: Schema.NullOr(NonNegativeInt) }),
     queueEntry,
+    OrchestrationV2DispatchCommandResult,
+  ]),
+}).annotate(Tool.Destructive, true);
+
+const OBSERVATION_READ_ACTIONS = ["list", "read", "subscribers"] as const;
+const ObservationStreamTool = Tool.make("t3_observation_stream", {
+  ...commandTool,
+  description:
+    "Intake stream (not owned work). Omit `threadId` for this thread. list/read/subscribers. append: `title`. subscribe/unsubscribe. link_work: `itemId`+`linkedThreadId`. decline: `itemId`. duplicate: `itemId`+`duplicateOfObservationId`.",
+  parameters: Schema.Struct({
+    action: Schema.Literals([
+      ...OBSERVATION_READ_ACTIONS,
+      "append",
+      "subscribe",
+      "unsubscribe",
+      "link_work",
+      "decline",
+      "duplicate",
+    ]),
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    threadId: Schema.optional(ThreadId),
+    itemId: Schema.optional(ObservationItemId),
+    title: Schema.optional(TrimmedNonEmptyString),
+    body: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    linkedThreadId: Schema.optional(ThreadId),
+    duplicateOfObservationId: Schema.optional(ObservationItemId),
+    openOnly: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Union([
+    Schema.Struct({ items: Schema.Array(ObservationItem) }),
+    Schema.Struct({ subscribers: Schema.Array(ThreadId) }),
+    ObservationItem,
     OrchestrationV2DispatchCommandResult,
   ]),
 }).annotate(Tool.Destructive, true);
@@ -245,4 +279,5 @@ export const ThreadToolkit = Toolkit.make(
   ThreadOrganizeTool,
   PendingRequestTool,
   QueueTool,
+  ObservationStreamTool,
 );

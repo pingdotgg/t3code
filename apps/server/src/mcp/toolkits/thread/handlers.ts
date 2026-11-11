@@ -1,5 +1,7 @@
 import {
   type CommandId,
+  OPEN_OBSERVATION_STATUSES,
+  ObservationItemId,
   type RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
@@ -8,6 +10,7 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -328,6 +331,103 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               type: "queued-run.cancel",
               runId,
             }));
+        }
+      }),
+    ),
+  ),
+  t3_observation_stream: McpToolAccess.either(
+    (input) => input.action === "list" || input.action === "read" || input.action === "subscribers",
+    McpToolAccess.reads((input) =>
+      Effect.gen(function* () {
+        const { projection } = yield* readThread(input.threadId);
+        const items = projection.thread.observationItems ?? [];
+        if (input.action === "subscribers") {
+          return { subscribers: projection.thread.observationStreamSubscribers ?? [] };
+        }
+        if (input.action === "list") {
+          return {
+            items:
+              input.openOnly === true
+                ? items.filter((item) => OPEN_OBSERVATION_STATUSES.has(item.status))
+                : items,
+          };
+        }
+        const itemId = yield* required(input.itemId, "itemId");
+        const item = items.find((candidate) => candidate.id === itemId);
+        return (
+          item ??
+          (yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "The observation was not found.",
+          }))
+        );
+      }),
+    ),
+    writesThread((input) =>
+      Effect.gen(function* () {
+        const { projection, caller } = yield* readThread(input.threadId);
+        const actorThreadId = caller?.id ?? projection.thread.id;
+        switch (input.action) {
+          case "append": {
+            const title = yield* required(input.title, "title");
+            const random = yield* SecureRandom.SecureRandom;
+            const itemId =
+              input.itemId ?? ObservationItemId.make(`observation:${yield* random.uuidV4()}`);
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "observation.append",
+              itemId,
+              title,
+              body: input.body ?? "",
+              createdByThreadId: actorThreadId,
+            }));
+          }
+          case "subscribe":
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "observation.subscribe",
+              subscriberThreadId: actorThreadId,
+            }));
+          case "unsubscribe":
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "observation.unsubscribe",
+              subscriberThreadId: actorThreadId,
+            }));
+          case "link_work": {
+            const itemId = yield* required(input.itemId, "itemId");
+            const linkedThreadId = yield* required(input.linkedThreadId, "linkedThreadId");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "observation.link-work",
+              itemId,
+              linkedThreadId,
+              actorThreadId,
+            }));
+          }
+          case "decline": {
+            const itemId = yield* required(input.itemId, "itemId");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "observation.decline",
+              itemId,
+              actorThreadId,
+            }));
+          }
+          default: {
+            const itemId = yield* required(input.itemId, "itemId");
+            const duplicateOfObservationId = yield* required(
+              input.duplicateOfObservationId,
+              "duplicateOfObservationId",
+            );
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "observation.duplicate",
+              itemId,
+              duplicateOfObservationId,
+              actorThreadId,
+            }));
+          }
         }
       }),
     ),

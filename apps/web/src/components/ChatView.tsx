@@ -181,6 +181,7 @@ import {
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
+import { ObservationStreamPanel } from "./chat/ObservationStreamPanel";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { ComposerContextPermissions } from "./ComposerContextPermissions";
@@ -2975,6 +2976,8 @@ export default function ChatView(props: ChatViewProps) {
       message.status === "pending" ? [message.id] : [],
     ) ?? [];
   const pendingGuestMessageCount = pendingGuestMessageIds.length;
+  const openObservationCount =
+    serverProjection?.thread.observationItems?.filter((item) => item.status === "open").length ?? 0;
   const pendingGuestMessageKey = pendingGuestMessageIds.join(",");
   const previousPendingGuestMessagesRef = useRef({
     threadKey: routeThreadKey,
@@ -3093,6 +3096,7 @@ export default function ChatView(props: ChatViewProps) {
     !hasThreadNow &&
     threadStatusLine === null &&
     pendingGuestMessageCount === 0 &&
+    openObservationCount === 0 &&
     !hasQueuedTurns ? null : (
       <>
         {pendingHandoff === null ? null : (
@@ -3118,6 +3122,11 @@ export default function ChatView(props: ChatViewProps) {
             threadRef={scopeThreadRef(activeThread.environmentId, activeThread.id)}
             onImageExpand={onExpandTimelineImageStable}
             onFileOpen={openFileAttachmentStable}
+          />
+        ) : null}
+        {openObservationCount > 0 && isServerThread && activeThread ? (
+          <ObservationStreamPanel
+            threadRef={scopeThreadRef(activeThread.environmentId, activeThread.id)}
           />
         ) : null}
         {hasQueuedTurns ? queuedRunsControl : null}
