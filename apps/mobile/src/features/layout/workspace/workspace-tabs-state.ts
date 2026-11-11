@@ -85,6 +85,8 @@ export function workspaceTabsReducer(
       };
       break;
     case "query":
+      // Settings search is session-scoped; a late native text event after cancel must not stick.
+      if (tab === "settings" && current.searchMode === "resting") return state;
       next = { ...current, query: action.query };
       break;
     case "expand":
