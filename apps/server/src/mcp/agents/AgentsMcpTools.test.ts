@@ -757,33 +757,47 @@ it.effect(
     }),
 );
 
-it.effect("keeps a chat below full access from changing the shared skill library", () =>
-  Effect.gen(function* () {
-    const updatesFor = (modes: Parameters<typeof McpToolAccessTestkit.liveThreadShell>[1]) => {
-      const updates: Array<string> = [];
-      const updateSkill = async (_environmentId: string, skillId: string) => {
-        updates.push(skillId);
-        return { skillId };
+// Creating an agent needs a provider catalog this fixture lacks; portModes.test covers it.
+const LIBRARY_WRITES = [
+  ["t3_create_skill", { name: "Notes", description: "", content: "Take notes" }, "createSkill"],
+  ["t3_update_skill", { skillId: "unused", patch: { content: "Take more notes" } }, "updateSkill"],
+  ["t3_delete_skill", { skillId: "unused" }, "deleteSkill"],
+  ["t3_delete_agent", { profileId: "unused" }, "deleteProfile"],
+] as const;
+
+it.effect.each(LIBRARY_WRITES)(
+  "keeps a chat below full access from %s on the shared library",
+  ([tool, args, method]) =>
+    Effect.gen(function* () {
+      const writesFor = (modes: Parameters<typeof McpToolAccessTestkit.liveThreadShell>[1]) => {
+        const writes: Array<string> = [];
+        const record = async () => {
+          writes.push(method);
+          return { skillId: "unused", profileId: "unused", status: "succeeded" };
+        };
+        return callTool(tool, args).pipe(
+          Effect.provide(
+            makeLayer([], undefined, [], modes, {
+              [method]: record,
+              listProfiles: async () => [
+                {
+                  profileId: "unused",
+                  name: "Unused",
+                  runtimeMode: "approval-required",
+                  interactionMode: "default",
+                },
+              ],
+            } as never),
+          ),
+          Effect.as(writes),
+        );
       };
-      return callTool("t3_update_skill", {
-        skillId: "unused",
-        patch: { content: "Take more notes" },
-      }).pipe(
-        Effect.provide(
-          makeLayer([], undefined, [], modes, {
-            updateSkill,
-            listProfiles: async () => [],
-          } as never),
-        ),
-        Effect.as(updates),
-      );
-    };
-    // No agent uses the skill, but every machine syncs it to whichever agent adopts it later.
-    expect(
-      yield* updatesFor({ runtimeMode: "auto-accept-edits", interactionMode: "default" }),
-    ).toEqual([]);
-    expect(
-      yield* updatesFor({ runtimeMode: "full-access", interactionMode: "default" }),
-    ).toHaveLength(1);
-  }),
+      // Nothing uses it yet, but every machine syncs it to whichever agent adopts it later.
+      expect(
+        yield* writesFor({ runtimeMode: "auto-accept-edits", interactionMode: "default" }),
+      ).toEqual([]);
+      expect(yield* writesFor({ runtimeMode: "full-access", interactionMode: "default" })).toEqual([
+        method,
+      ]);
+    }),
 );
