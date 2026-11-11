@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type ThreadId,
   type OrchestrationV2ThreadLinkMetadata,
+  type OrchestrationV2ThreadMentionLinks,
   type OrchestrationGetTurnDiffResult,
   type OrchestrationV2GetTurnItemInput,
 } from "@t3tools/contracts";
@@ -40,10 +41,10 @@ import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 export function createOrchestrationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
   options: {
-    /** Re-checks `threadTitles` when one of their threads leaves the shell, and the archive on any removal. */
+    /** Re-checks titles when their threads leave the shell, the archive on removal, and mention links on runs or rollbacks. */
     readonly shellState?: (
       environmentId: EnvironmentId,
-    ) => Atom.Atom<Pick<EnvironmentShellState, "removedAt">>;
+    ) => Atom.Atom<Pick<EnvironmentShellState, "removedAt" | "snapshot">>;
     /** Runs on each turn-range and full-thread diff the server answers. */
     readonly onCheckpointDiffAnswer?: QueryAnswerHandler<
       { readonly ignoreWhitespace?: boolean },
@@ -81,6 +82,22 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     return Atom.make((get) => {
       const { removedAt } = get(state);
       return Math.max(-1, ...input.threadIds.map((threadId) => removedAt.get(threadId) ?? -1));
+    });
+  };
+  const refreshOnThreadRun = ({
+    environmentId,
+    input,
+  }: {
+    readonly environmentId: EnvironmentId;
+    readonly input: { readonly threadId: ThreadId };
+  }) => {
+    if (shellState === undefined) return undefined;
+    const state = shellState(environmentId);
+    return Atom.make((get) => {
+      const thread = Option.getOrUndefined(get(state).snapshot)?.threads.find(
+        (candidate) => candidate.id === input.threadId,
+      );
+      return `${thread?.latestRunId}:${thread?.status}`;
     });
   };
   return {
@@ -121,6 +138,29 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
           ]),
         );
       }),
+    }),
+    threadMentionLinks: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-mention-links",
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+      execute: Effect.fn("orchestration.threadMentionLinks")(function* (input: {
+        readonly threadId: ThreadId;
+      }) {
+        const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+        const session = yield* SubscriptionRef.get(supervisor.session);
+        if (Option.isNone(session)) {
+          return yield* new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            message: "The environment has no session.",
+          });
+        }
+        const config = yield* session.value.initialConfig;
+        if (config.threadMentionLinks !== true) {
+          return { links: [] } satisfies OrchestrationV2ThreadMentionLinks;
+        }
+        return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadMentionLinks, input);
+      }),
+      refreshTrigger: refreshOnThreadRun,
     }),
     threadTranscript: createEnvironmentCommand(runtime, {
       label: "environment-data:orchestration:thread-transcript",

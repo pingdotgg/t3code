@@ -30,8 +30,9 @@ import type {
   TurnItemId,
 } from "@t3tools/contracts";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { orchestrationEnvironment } from "./orchestration";
 import { environmentProjects } from "./projects";
 import { environmentPresentations } from "./presentation";
 import { environmentServerConfigsAtom } from "./server";
@@ -413,8 +414,9 @@ export function selectThreadRelationshipShells(
   threadId: ThreadId,
   projection: Pick<ThreadStructure, "thread" | "subagents" | "contextTransfers"> | null,
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+  mentionedThreadIds: ReadonlyArray<ThreadId>,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
-  const named = new Set<string>([threadId]);
+  const named = new Set<string>([threadId, ...mentionedThreadIds]);
   if (projection !== null) {
     const parentThreadId = shellParentThreadId(projection.thread);
     if (parentThreadId !== null) named.add(parentThreadId);
@@ -439,12 +441,18 @@ export function selectThreadRelationshipShells(
 
 const relationshipShellsAtomFamily = Atom.family((key: string) => {
   const ref = parseThreadKey(key);
+  const mentionLinks = orchestrationEnvironment.threadMentionLinks({
+    environmentId: ref.environmentId,
+    input: { threadId: ref.threadId },
+  });
   let previous: ReadonlyArray<OrchestrationV2ThreadShell> = [];
   return Atom.make((get) => {
     const next = selectThreadRelationshipShells(
       ref.threadId,
       get(environmentThreadDetails.quietThreadAtom(ref))?.projection ?? null,
       get(environmentThreadShells.environmentThreadsAtom(ref.environmentId)),
+      AsyncResult.getOrElse(get(mentionLinks), () => null)?.links.map((link) => link.threadId) ??
+        [],
     ).map(
       (thread) =>
         get(

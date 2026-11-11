@@ -2171,6 +2171,15 @@ const WsOrchestrationV2GetThreadLinkMetadataRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetThreadMentionLinksRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadMentionLinks,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadMentionLinks.input,
+    success: OrchestrationV2RpcSchemas.getThreadMentionLinks.output,
+    error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetWorktreeThreadIdsRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds,
   {
@@ -2708,6 +2717,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetThreadFamilyRpc,
   WsOrchestrationV2GetThreadTitlesRpc,
   WsOrchestrationV2GetThreadLinkMetadataRpc,
+  WsOrchestrationV2GetThreadMentionLinksRpc,
   WsOrchestrationV2GetWorktreeThreadIdsRpc,
   WsOrchestrationV2GetOlderSettledThreadsRpc,
   WsOrchestrationV2GetThreadProjectionRpc,

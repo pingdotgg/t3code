@@ -4089,6 +4089,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadFamily: "orchestration.getThreadFamily",
   getThreadTitles: "orchestration.getThreadTitles",
   getThreadLinkMetadata: "orchestration.getThreadLinkMetadata",
+  getThreadMentionLinks: "orchestration.getThreadMentionLinks",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
@@ -4794,6 +4795,10 @@ export const OrchestrationV2RpcSchemas = {
   getThreadLinkMetadata: {
     input: OrchestrationV2GetThreadTitlesInput,
     output: Schema.Record(ThreadId, OrchestrationV2ThreadLinkMetadata),
+  },
+  getThreadMentionLinks: {
+    input: OrchestrationV2GetThreadMentionLinksInput,
+    output: OrchestrationV2ThreadMentionLinks,
   },
   getWorktreeThreadIds: {
     input: OrchestrationV2GetWorktreeThreadIdsInput,
