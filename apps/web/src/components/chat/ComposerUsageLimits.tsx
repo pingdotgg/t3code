@@ -300,10 +300,12 @@ function UsageLimitsAccounts({
 
 /** The governing limit for the selected model, pooled across reported accounts. */
 export interface LowLimitSignal {
-  /** Dismissals last for the session, per provider instance and limit window. */
+  /** The watched window; a dismissal lasts until that window resets. */
   readonly key: string;
   readonly driver: ServerProvider["driver"];
   readonly window: ServerProviderUsageWindow;
+  /** When the usage was read. */
+  readonly checkedAt: string;
 }
 
 /** The session window an instance reports for its own signed-in account. */
@@ -397,13 +399,26 @@ export function resolveLowLimitSignal(
           resetsAt: pooled.resets[0]?.member.window.resetsAt,
         }
       : undefined);
-  if (!window || !isLowLimit(window) || (window.resetsAt && Date.parse(window.resetsAt) <= now))
+  // Pool members are read together; the newest read is the one that can show a new window.
+  const checkedAt =
+    single?.account.limits.checkedAt ??
+    active
+      .map((account) => account.limits.checkedAt)
+      .toSorted()
+      .at(-1);
+  if (
+    !window ||
+    !checkedAt ||
+    !isLowLimit(window) ||
+    (window.resetsAt && Date.parse(window.resetsAt) <= now)
+  )
     return null;
   return {
     // Which account is tightest and its reported reset time both shift between usage reads.
     key: [environmentId, provider.instanceId, window.id].join("\u0000"),
     driver: provider.driver,
     window,
+    checkedAt,
   };
 }
 
@@ -434,12 +449,29 @@ export function resolveLowLimitSwitchTarget(
   return candidates[0]?.provider ?? null;
 }
 
-// Session-scoped so a remount does not bring a dismissed notice back before
-// its window resets.
-const dismissedLowLimitKeys = new Set<string>();
+/** Each dismissed window's reset time, by signal key. */
+export type LowLimitDismissals = ReadonlyMap<string, number | null>;
 
-export function isLowLimitDismissed(key: string): boolean {
-  return dismissedLowLimitKeys.has(key);
+// Session-scoped so a remount does not bring a dismissed notice back before its window resets.
+let sessionLowLimitDismissals: LowLimitDismissals = new Map();
+
+export function readLowLimitDismissals(): LowLimitDismissals {
+  return sessionLowLimitDismissals;
+}
+
+function resetAt(window: ServerProviderUsageWindow): number | null {
+  const at = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
+  return Number.isFinite(at) ? at : null;
+}
+
+export function isLowLimitDismissed(
+  dismissals: LowLimitDismissals,
+  signal: LowLimitSignal,
+): boolean {
+  if (!dismissals.has(signal.key)) return false;
+  const dismissedResetAt = dismissals.get(signal.key) ?? null;
+  // Judged by when the usage was read, not the clock: a later read is what can show a new window.
+  return dismissedResetAt === null || Date.parse(signal.checkedAt) < dismissedResetAt;
 }
 
 /** Ticks once a minute; the rest of the composer does not re-render with it. */
@@ -526,7 +558,7 @@ export function lowLimitBannerItem({
   readonly switchTarget: ServerProvider | null;
   readonly onSwitch: (provider: ServerProvider) => void;
   readonly limits: LimitsSource | null;
-  readonly onDismissed: () => void;
+  readonly onDismissed: (dismissals: LowLimitDismissals) => void;
 }): ComposerBannerStackItem {
   return {
     id: `low-limit:${signal.key}`,
@@ -550,8 +582,11 @@ export function lowLimitBannerItem({
     ),
     dismissLabel: "Dismiss low usage notice",
     onDismiss: () => {
-      dismissedLowLimitKeys.add(signal.key);
-      onDismissed();
+      sessionLowLimitDismissals = new Map(sessionLowLimitDismissals).set(
+        signal.key,
+        resetAt(signal.window),
+      );
+      onDismissed(sessionLowLimitDismissals);
     },
   };
 }

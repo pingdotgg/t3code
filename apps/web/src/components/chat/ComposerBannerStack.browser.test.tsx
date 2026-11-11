@@ -1,3 +1,9 @@
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { InfoIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
@@ -13,6 +19,7 @@ import {
   type ComposerBannerStackItem,
 } from "./ComposerBannerStack";
 import { ComposerSurface } from "./ComposerSurface";
+import { useChatBannerLane } from "./ChatBannerLane";
 
 function notice(title: string, group?: ComposerBannerStackItem["group"]): ComposerBannerStackItem {
   return { id: title, variant: "default", icon: <InfoIcon />, title, ...(group ? { group } : {}) };
@@ -163,4 +170,89 @@ it("opens the details of a long notice right above its button", async () => {
     expect(gap).toBeGreaterThanOrEqual(0);
     expect(gap).toBeLessThan(8);
   });
+});
+
+function LowUsageLane({
+  resetsAt,
+  checkedAt,
+}: {
+  readonly resetsAt: string;
+  readonly checkedAt: string;
+}) {
+  const claude: ServerProvider = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    version: "2.1.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-11-11T16:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    usageLimits: {
+      checkedAt,
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          windowDurationMins: 300,
+          usedPercent: 84,
+          resetsAt,
+        },
+      ],
+    },
+  };
+  const items = useChatBannerLane({
+    environmentId: EnvironmentId.make("remote"),
+    activeProviderStatus: claude,
+    providerStatuses: [claude],
+    usageLimitSources: [],
+    selectedModel: undefined,
+    canSwitchProvider: false,
+    providerStatus: null,
+    providerStatusBannerKey: null,
+    setDismissedProviderStatusBannerKey: () => {},
+    onOpenProviderSetup: () => {},
+    onOpenTerminal: () => {},
+    onProviderModelSelect: () => {},
+    limitsAvailable: false,
+    threadId: null,
+    threadError: null,
+    threadErrorClass: null,
+    threadErrorCode: null,
+    threadErrorBannerKey: null,
+    onRetry: null,
+    retrying: false,
+    setThreadError: () => {},
+    setThreadErrorBannerDismissTick: () => {},
+  });
+  return <ComposerBannerStack items={items} />;
+}
+
+it("dismisses the low usage notice until its window resets", async () => {
+  // Windows whose reset has passed are ignored, so the clock sits before the first reset.
+  using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-11T16:00:00.000Z"));
+  await using screen = await render(
+    <LowUsageLane resetsAt="2026-11-11T19:59:59.612Z" checkedAt="2026-11-11T16:00:00.000Z" />,
+  );
+  await screen.getByRole("button", { name: "Dismiss low usage notice" }).click();
+  await expect.element(screen.getByText("Claude usage low")).not.toBeInTheDocument();
+
+  // A turn's rate-limit event reports the same reset in whole seconds.
+  await screen.rerender(
+    <LowUsageLane resetsAt="2026-11-11T20:00:00.000Z" checkedAt="2026-11-11T16:05:00.000Z" />,
+  );
+  await expect.element(screen.getByText("Claude usage low")).not.toBeInTheDocument();
+  // A pooled read can name another account as the tightest, with a later reset.
+  await screen.rerender(
+    <LowUsageLane resetsAt="2026-11-11T22:30:00.000Z" checkedAt="2026-11-11T16:10:00.000Z" />,
+  );
+  await expect.element(screen.getByText("Claude usage low")).not.toBeInTheDocument();
+  await screen.rerender(
+    <LowUsageLane resetsAt="2026-11-12T01:00:00.000Z" checkedAt="2026-11-11T20:01:00.000Z" />,
+  );
+  await expect.element(screen.getByText("Claude usage low")).toBeVisible();
 });
