@@ -20,6 +20,7 @@ import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
+  readCodexProbeTimeouts,
 } from "../CodexProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -132,6 +133,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             undefined,
             effective.environment,
             managedAuth,
+            yield* readCodexProbeTimeouts(host),
           );
           const credentials = yield* runtime.auth.access;
           // Another server can replace the saved profile while the native probe runs.
@@ -314,13 +316,17 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
                   ),
                 ),
               onSuccess: (effective) =>
-                probeCodexSkillsForCwd({
-                  binaryPath: effective.config.binaryPath,
-                  homePath: effective.config.homePath,
-                  launchArgs: effective.config.launchArgs,
-                  cwd,
-                  environment: effective.environment,
-                }).pipe(
+                readCodexProbeTimeouts(host).pipe(
+                  Effect.flatMap((timeouts) =>
+                    probeCodexSkillsForCwd({
+                      binaryPath: effective.config.binaryPath,
+                      homePath: effective.config.homePath,
+                      launchArgs: effective.config.launchArgs,
+                      cwd,
+                      environment: effective.environment,
+                      timeouts,
+                    }),
+                  ),
                   Effect.flatMap((skills) =>
                     snapshot.getSnapshot.pipe(Effect.map((draft) => ({ ...draft, skills }))),
                   ),
