@@ -1,9 +1,18 @@
 import { tooltipSafeFinalFocus } from "./focus-return";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { useRender } from "@base-ui/react/use-render";
 import { XIcon } from "lucide-react";
-import { type ComponentProps, createContext, type ReactNode, use, useId, useState } from "react";
+import {
+  type ComponentProps,
+  createContext,
+  type ReactNode,
+  use,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { cn } from "~/lib/utils";
-import { Button } from "~/components/ui/button";
+import { Button, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_APP_POPUP_CLASS,
   DIALOG_APP_PANEL_POPUP_CLASS,
@@ -45,6 +54,20 @@ function Dialog<Payload>(props: DialogPrimitive.Root.Props<Payload>) {
       <DialogPrimitive.Root {...props} />
     </ControlledOpenContext>
   );
+}
+
+function useDialogActionInitialFocus() {
+  const popupRef = useRef<HTMLDivElement>(null);
+  const initialFocus = (openType: string) => {
+    // Match Base UI: touch opens focus the popup to avoid opening the virtual keyboard.
+    if (openType === "touch") return popupRef.current;
+    return (
+      popupRef.current?.querySelector<HTMLElement>(
+        '[data-slot="dialog-action"]:not(:disabled):not([aria-disabled="true"])',
+      ) ?? true
+    );
+  };
+  return { popupRef, initialFocus };
 }
 
 const DialogPortal = DialogPrimitive.Portal;
@@ -120,6 +143,50 @@ function DialogPopup({
   const [parts, registerPart] = useParts();
   const defaultId = useId();
   const popupId = props.id ?? defaultId;
+  const { popupRef, initialFocus } = useDialogActionInitialFocus();
+  const popup = useRender({
+    ref: popupRef,
+    render: (
+      <DialogPrimitive.Popup
+        className={cn(
+          variant === "media"
+            ? DIALOG_MEDIA_POPUP_CLASS
+            : variant === "app-panel"
+              ? DIALOG_APP_PANEL_POPUP_CLASS
+              : variant === "app"
+                ? DIALOG_APP_POPUP_CLASS
+                : DIALOG_POPUP_CLASS,
+          variant === "app" || variant === "app-panel"
+            ? "text-foreground"
+            : "row-start-2 text-popover-foreground",
+          variant === "default" && "max-h-full max-w-lg",
+          bottomStickOnMobile &&
+            variant !== "app" &&
+            variant !== "app-panel" &&
+            DIALOG_MOBILE_SHEET_CLASS,
+          className,
+        )}
+        data-has-header={parts.length > 0 ? "" : undefined}
+        data-slot="dialog-popup"
+        initialFocus={initialFocus}
+        render={renderRetainedPopup}
+        {...props}
+        id={popupId}
+        finalFocus={tooltipSafeFinalFocus(props.finalFocus, popupId)}
+      >
+        <PartPresenceContext value={registerPart}>{children}</PartPresenceContext>
+        {showCloseButton && (
+          <DialogPrimitive.Close
+            aria-label="Close"
+            className="absolute end-2 top-2"
+            render={<Button size="icon" variant="ghost" />}
+          >
+            <XIcon />
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Popup>
+    ),
+  });
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
@@ -143,46 +210,18 @@ function DialogPopup({
             "z-[60] grid-rows-1 place-items-center px-4 pb-6 pt-[calc(var(--native-titlebar-height,0px)+1.5rem)] [-webkit-app-region:no-drag]",
         )}
       >
-        <DialogPrimitive.Popup
-          className={cn(
-            variant === "media"
-              ? DIALOG_MEDIA_POPUP_CLASS
-              : variant === "app-panel"
-                ? DIALOG_APP_PANEL_POPUP_CLASS
-                : variant === "app"
-                  ? DIALOG_APP_POPUP_CLASS
-                  : DIALOG_POPUP_CLASS,
-            variant === "app" || variant === "app-panel"
-              ? "text-foreground"
-              : "row-start-2 text-popover-foreground",
-            variant === "default" && "max-h-full max-w-lg",
-            bottomStickOnMobile &&
-              variant !== "app" &&
-              variant !== "app-panel" &&
-              DIALOG_MOBILE_SHEET_CLASS,
-            className,
-          )}
-          data-has-header={parts.length > 0 ? "" : undefined}
-          data-slot="dialog-popup"
-          render={renderRetainedPopup}
-          {...props}
-          id={popupId}
-          finalFocus={tooltipSafeFinalFocus(props.finalFocus, popupId)}
-        >
-          <PartPresenceContext value={registerPart}>{children}</PartPresenceContext>
-          {showCloseButton && (
-            <DialogPrimitive.Close
-              aria-label="Close"
-              className="absolute end-2 top-2"
-              render={<Button size="icon" variant="ghost" />}
-            >
-              <XIcon />
-            </DialogPrimitive.Close>
-          )}
-        </DialogPrimitive.Popup>
+        {popup}
       </DialogViewport>
     </DialogPortal>
   );
+}
+
+type DialogActionProps = Omit<React.ComponentProps<typeof Button>, "variant"> & {
+  variant?: Exclude<ButtonVariant, `${string}destructive${string}`>;
+};
+
+function DialogAction(props: DialogActionProps) {
+  return <Button data-slot="dialog-action" {...props} />;
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
@@ -275,6 +314,8 @@ export {
   DialogTrigger,
   DialogPortal,
   DialogClose,
+  DialogAction,
+  useDialogActionInitialFocus,
   DialogBackdrop,
   DialogBackdrop as DialogOverlay,
   DialogPopup,

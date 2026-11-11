@@ -2355,7 +2355,7 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
-  it("shows images the agent viewed outside their collapsed tool group", () => {
+  it("keeps image reads inside their tool group", () => {
     const threadId = ThreadId.make("viewed-images-thread");
     const runId = RunId.make("viewed-images-run");
     const at = (second: number) =>
@@ -2423,8 +2423,12 @@ describe("deriveMessagesTimelineRows", () => {
         sourceItemId: item.id,
         item,
       }));
-    const viewedImages = (settled: boolean, expandedRunIds?: ReadonlySet<RunId>) => {
-      const rows = deriveMessagesTimelineRows({
+    const rows = (
+      settled: boolean,
+      expandedRunIds?: ReadonlySet<RunId>,
+      expandedWorkGroupIds?: ReadonlySet<string>,
+    ) =>
+      deriveMessagesTimelineRows({
         timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
           visibleTurnItems: items(settled),
           optimisticMessages: [],
@@ -2439,19 +2443,29 @@ describe("deriveMessagesTimelineRows", () => {
         isWorking: !settled,
         activeTurnStartedAt: settled ? null : DateTime.formatIso(at(0)),
         ...(expandedRunIds === undefined ? {} : { expandedRunIds }),
+        ...(expandedWorkGroupIds === undefined ? {} : { expandedWorkGroupIds }),
         turnDiffSummaries: [],
         supportsConversationRollback: false,
       });
-      return rows.flatMap((row, index) =>
-        row.kind === "viewed-images" ? [{ after: rows[index - 1]?.kind, paths: row.paths }] : [],
-      );
-    };
-    const paths = ["/repo/docs/sidebar.png", "/repo/docs/topbar.png"];
-
-    expect(viewedImages(false)).toEqual([{ after: "work-live", paths }]);
-    // A settled turn's fold keeps hiding its work, images included, until it is opened.
-    expect(viewedImages(true)).toEqual([]);
-    expect(viewedImages(true, new Set([runId]))).toEqual([{ after: "work-toggle", paths }]);
+    const expandedRunIds = new Set([runId]);
+    for (const settled of [false, true]) {
+      const collapsed = rows(settled, expandedRunIds);
+      const group = collapsed.find((row) => row.kind === "work-live" || row.kind === "work-toggle");
+      expect(group).toBeDefined();
+      if (group?.kind !== "work-live" && group?.kind !== "work-toggle") continue;
+      const expanded = rows(settled, expandedRunIds, new Set([group.groupId]));
+      expect(collapsed.map((row) => row.kind)).not.toContain("viewed-images");
+      expect(expanded.map((row) => row.kind)).not.toContain("viewed-images");
+      expect(
+        expanded.flatMap((row) =>
+          row.kind === "work" && row.isExpandedToolGroup
+            ? row.groupedEntries
+                .filter((entry) => entry.itemType === "dynamic_tool")
+                .map((entry) => entry.id)
+            : [],
+        ),
+      ).toEqual(["read-sidebar", "read-notes", "read-sidebar-again", "read-topbar"]);
+    }
   });
 
   it("keeps imported V1 turns folded once the thread's first V2 run starts", () => {
