@@ -436,10 +436,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sort projects sidebar manual created recent"],
   },
   {
-    id: "snooze-options",
-    title: "Snooze options",
+    id: "bedtime-reminder",
+    title: "Bedtime reminder",
     to: "/settings/threads",
-    searchTerms: ["snooze presets times later tonight tomorrow next week remind"],
+    searchTerms: ["sleep bedtime reminder go to bed wrap up late night"],
     environmentOnly: true,
     scope: "environment-defaults",
   },

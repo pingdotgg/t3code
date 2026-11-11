@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { BedtimeReminderSettings } from "./BedtimeReminderSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
@@ -62,7 +63,6 @@ import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeConte
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
-import { SnoozePresetsRow } from "./SnoozePresetsSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { managedTelemetryOffMessage, usePrimaryManagedPolicy } from "../../state/managedPolicy";
 import {
@@ -1709,8 +1709,8 @@ export function ThreadsSettingsPanel() {
       <ProjectDefaultsSettings category="general" />
 
       {!isProjectScope ? (
-        <SettingsSection id="snooze" title="Snooze">
-          <SnoozePresetsRow />
+        <SettingsSection id="bedtime-reminder" title="Bedtime reminder">
+          <BedtimeReminderSettings />
         </SettingsSection>
       ) : null}
 

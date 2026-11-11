@@ -52,6 +52,7 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { BedtimeReminderTimeOfDay } from "./bedtimeReminder.ts";
 import {
   CloudSpeechModelId,
   SpeechAcceleration,
@@ -96,8 +97,8 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 7;
 
-export const MAX_SNOOZE_PRESET_MINUTES = 30 * 24 * 60;
-export const MAX_SNOOZE_PRESETS = 8;
+const MAX_SNOOZE_PRESET_MINUTES = 30 * 24 * 60;
+const MAX_SNOOZE_PRESETS = 8;
 export const SnoozePresetDay = Schema.Literals([
   "today",
   "tomorrow",
@@ -1428,6 +1429,10 @@ export const ServerSettings = Schema.Struct({
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Local time-of-day on the environment, "HH:MM"; null turns the reminder off. */
+  bedtimeReminderTime: Schema.NullOr(BedtimeReminderTimeOfDay).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   snoozePresets: SnoozePresetSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_PRESETS)),
   ),
@@ -1864,6 +1869,7 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
+  bedtimeReminderTime: Schema.optionalKey(Schema.NullOr(BedtimeReminderTimeOfDay)),
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),
   hiddenThreadTags: Schema.optionalKey(Schema.Array(Schema.String)),
   hideTaggedThreads: Schema.optionalKey(Schema.Boolean),

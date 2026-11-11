@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  type BedtimeReminderState,
   type EditorId,
   type EnvironmentId,
   type EnvironmentTheme,
@@ -105,6 +106,17 @@ export const primaryServerLegacyThreadMigrationAtom = Atom.make(
     );
   },
 ).pipe(Atom.withLabel("web-primary-server-legacy-thread-migration"));
+
+export const primaryBedtimeReminderAtom = Atom.make((get): BedtimeReminderState | null => {
+  const environmentId = get(primaryEnvironmentIdAtom);
+  if (environmentId === null) {
+    return null;
+  }
+  return AsyncResult.getOrElse(
+    get(serverEnvironment.bedtimeReminderLive({ environmentId, input: {} })),
+    () => null,
+  );
+}).pipe(Atom.withLabel("web-primary-bedtime-reminder"));
 
 export const primaryServerSettingsAtom = Atom.make(
   (get): ServerSettings => get(primaryServerConfigAtom)?.settings ?? DEFAULT_SERVER_SETTINGS,

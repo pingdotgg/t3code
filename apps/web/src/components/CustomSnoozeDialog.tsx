@@ -1,5 +1,4 @@
 import { useEffect, useId, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
 import { create } from "zustand";
 import {
   localSnoozeDate,
@@ -8,7 +7,7 @@ import {
   type CustomSnoozeInput,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { Button } from "./ui/button";
-import { CalendarIcon, Settings2Icon } from "lucide-react";
+import { CalendarIcon } from "lucide-react";
 import { Calendar } from "./ui/calendar";
 import { weekStartsOn } from "../timestampFormat";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -64,7 +63,6 @@ export function CustomSnoozeDialogHost() {
 
 function CustomSnoozeDialog() {
   const id = useId();
-  const navigate = useNavigate();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
   const nowMinute = useNowMinute();
   // Follows the clock so a dialog left open past midnight stops offering yesterday.
@@ -227,21 +225,6 @@ function CustomSnoozeDialog() {
             )}
           </DialogPanel>
           <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost-muted"
-              className="sm:mr-auto"
-              onClick={() => {
-                finish(null);
-                void navigate({
-                  to: "/settings/threads",
-                  hash: "snooze-options",
-                });
-              }}
-            >
-              <Settings2Icon />
-              Edit snooze options
-            </Button>
             <Button type="button" variant="outline" onClick={() => finish(null)}>
               Cancel
             </Button>
