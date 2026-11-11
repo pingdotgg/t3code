@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Cross-process launcher contention uses real filesystem leases and IPC barriers.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -5,10 +7,13 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { CliError } from "effect/cli";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as BootService from "./bootService.ts";
@@ -20,6 +25,24 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   serviceStateHasPendingUpdate,
 } from "./serviceProtocol.ts";
+
+const leaseObserver = vi.hoisted(() => ({ contended: (_destination: string) => {} }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    renameSync: (...args: Parameters<typeof actual.renameSync>) => {
+      try {
+        return actual.renameSync(...args);
+      } catch (error) {
+        if (["EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+          leaseObserver.contended(String(args[1]));
+        }
+        throw error;
+      }
+    },
+  };
+});
 
 it("reads the served T3 home back out of a rendered unit or plist", () => {
   const plan = (baseDir: string) => ({
@@ -90,10 +113,19 @@ const macInstallerPath =
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
   installerPath = macInstallerPath,
+  xdgConfigHome?: string,
+  managerXdgConfigHome = xdgConfigHome,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-boot-service-test-" });
+  const managerUnitDir = path.join(
+    managerXdgConfigHome !== undefined && path.isAbsolute(managerXdgConfigHome)
+      ? managerXdgConfigHome
+      : path.join(home, ".config"),
+    "systemd",
+    "user",
+  );
   const baseDir = path.join(home, ".t3");
   const statePath = path.join(baseDir, "runtime", "service-state.json");
   const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3", platform);
@@ -140,15 +172,26 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       }
       return {
         stdout:
-          input.args[0] === "--version"
-            ? `t3 v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
-            : input.command === "loginctl" && input.args[0] === "show-user"
-              ? `${control.linger}\n`
-              : input.args[1] === "is-enabled"
-                ? control.enabled
-                  ? "enabled\n"
-                  : "disabled\n"
-                : "",
+          input.command === "busctl"
+            ? JSON.stringify({
+                type: "as",
+                data: [
+                  "/usr/lib/systemd/user",
+                  `${managerUnitDir}.control`,
+                  "/run/user/501/systemd/transient",
+                  managerUnitDir,
+                  "/etc/systemd/user",
+                ],
+              })
+            : input.args[0] === "--version"
+              ? `t3 v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
+              : input.command === "loginctl" && input.args[0] === "show-user"
+                ? `${control.linger}\n`
+                : input.args[1] === "is-enabled"
+                  ? control.enabled
+                    ? "enabled\n"
+                    : "disabled\n"
+                  : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           failed ||
@@ -198,6 +241,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
             ConfigProvider.fromEnv({
               env: {
                 HOME: home,
+                ...(xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: xdgConfigHome }),
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
@@ -213,6 +257,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     service,
     makeService,
     fs,
+    home,
     baseDir,
     statePath,
     commands,
@@ -315,10 +360,52 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("installs, reports current state, and uninstalls", () =>
+  it.effect.each([
+    "unset",
+    "empty",
+    "relative",
+    "relocated",
+    "shell-only",
+    "manager-only",
+    "manager-unavailable",
+  ] as const)("installs, discovers, restarts, and uninstalls with $XDG_CONFIG_HOME %s", (setting) =>
     Effect.gen(function* () {
-      const { service, fs, statePath, timeouts, runtime } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const configRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-xdg-config-" });
+      const xdgConfigHome = {
+        unset: undefined,
+        empty: "",
+        relative: "relative-config",
+        relocated: path.join(configRoot, "config root"),
+        "shell-only": path.join(configRoot, "config root"),
+        "manager-only": undefined,
+        "manager-unavailable": path.join(configRoot, "config root"),
+      }[setting];
+      const managerXdgConfigHome =
+        setting === "shell-only"
+          ? ""
+          : setting === "manager-only"
+            ? path.join(configRoot, "config root")
+            : undefined;
+      const { service, makeService, home, statePath, timeouts, runtime, control } =
+        yield* makeHarness("linux", undefined, xdgConfigHome, managerXdgConfigHome);
+      const unitPath = path.join(
+        setting === "relocated" || setting === "manager-only" || setting === "manager-unavailable"
+          ? path.join(configRoot, "config root")
+          : path.join(home, ".config"),
+        "systemd",
+        "user",
+        "t3code.service",
+      );
+      expect(yield* service.status).toMatchObject({ installed: false, unitPath });
       const plan = yield* service.install();
+      expect(plan.unitPath).toBe(unitPath);
+      if (setting === "manager-unavailable") {
+        control.failCommand =
+          "busctl --user --json=short get-property org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager UnitPath";
+      }
+      const discoveredService = yield* makeService();
 
       expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -332,6 +419,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         current: true,
         installedVersion: "1.2.3",
       });
+      expect(yield* discoveredService.status).toMatchObject({
+        installed: true,
+        current: true,
+        unitPath,
+      });
+      expect(yield* discoveredService.restart).toBe("restarted");
       const pendingState = JSON.stringify({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.3",
@@ -345,8 +438,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       });
       yield* fs.writeFileString(statePath, pendingState);
       expect((yield* service.status).current).toBe(false);
-      expect(yield* service.uninstall).toBe(true);
-      expect((yield* service.status).installed).toBe(false);
+      expect(yield* discoveredService.uninstall).toBe(true);
+      expect(yield* fs.exists(unitPath)).toBe(false);
+      expect((yield* discoveredService.status).installed).toBe(false);
       // systemd can take 90s to stop, exceeding the runner's 60s default.
       expect(timeouts.get("systemctl --user disable --now t3code.service")).toEqual(
         Duration.seconds(120),
@@ -369,6 +463,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           expect(yield* service.status).toMatchObject({
             current: false,
             installedVersion: "1.2.4-nightly.1",
+          });
+          yield* service.install({ allowDowngrade: true });
+          expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.2.3",
           });
         }
       }),
@@ -503,6 +602,168 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         expect(yield* newer.restart).toBe("restarted");
         expect((yield* newer.status).problems).not.toContain("restart-pending");
         expect((yield* newer.status).current).toBe(true);
+
+        const latest = yield* makeService(undefined, "1.2.5");
+        yield* latest.install({ start: true });
+        expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.5",
+        });
+        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.5/t3");
+        expect((yield* latest.status).current).toBe(true);
+        expect(
+          yield* fs.exists(path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE)),
+        ).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "serializes a local install with another process reconciling an older unit snapshot",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, statePath, makeService, runtime } = yield* makeHarness();
+        const path = yield* Path.Path;
+        const plan = yield* service.install();
+        const unit = yield* fs.readFileString(plan.unitPath);
+        yield* fs.writeFileString(
+          plan.unitPath,
+          unit.replace("versions/1.2.3/t3", "versions/1.2.2/t3"),
+        );
+        yield* fs.writeFileString(
+          statePath,
+          JSON.stringify({
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.2.3",
+            update: {
+              id: "committed",
+              fromVersion: "1.2.2",
+              targetVersion: "1.2.3",
+              status: "committed",
+            },
+          }),
+        );
+        const rejection = path.join(plan.baseDir, "rejected-update");
+        const databasePath = path.join(plan.baseDir, "state.sqlite");
+        yield* fs.writeFileString(databasePath, "database");
+        yield* fs.writeFileString(
+          runtime.entryPath,
+          `#!${process.execPath}
+import { writeFileSync } from "node:fs";
+process.on("message", message => {
+  if (message === "request-update") process.send({ type: "request-update", targetVersion: "1.2.5", dbPath: ${JSON.stringify(databasePath)} });
+  if (message.type === "update-rejected") {
+    writeFileSync(${JSON.stringify(rejection)}, message.reason);
+    process.exit(0);
+  }
+});
+`,
+        );
+        yield* fs.chmod(runtime.entryPath, 0o755);
+        const newer = yield* makeService(undefined, "1.2.4");
+        yield* makeService(undefined, "1.2.5");
+        const snapshot = Promise.withResolvers<void>();
+        const milestone = Promise.withResolvers<void>();
+        const script = path.join(plan.baseDir, "launcher-contention.mjs");
+        yield* fs.writeFileString(
+          script,
+          `
+import fs from "node:fs/promises";
+import cp from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+const server = Promise.withResolvers();
+const originalSpawn = cp.spawn;
+cp.spawn = (...args) => { const child = originalSpawn(...args); server.resolve(child); return child; };
+process.on("message", async message => {
+  if (message === "installed") (await server.promise).send("request-update");
+});
+const originalRead = fs.readFile;
+fs.readFile = async (...args) => {
+  const contents = await originalRead(...args);
+  if (args[0] === ${JSON.stringify(plan.unitPath)}) {
+    fs.readFile = originalRead;
+    syncBuiltinESMExports();
+    const resume = new Promise(resolve => process.once("message", resolve));
+    process.send("snapshot");
+    await resume;
+  }
+  return contents;
+};
+syncBuiltinESMExports();
+const { Launcher, readServiceState } = await import(${JSON.stringify(import.meta.resolve("../serviceLauncher.ts"))});
+const launcher = new Launcher(${JSON.stringify(plan.baseDir)}, await readServiceState(${JSON.stringify(statePath)}), {
+  serviceUnit: { path: ${JSON.stringify(plan.unitPath)}, reload: async () => {} },
+});
+try { await launcher.run(); throw Error("unexpected completion"); }
+catch (error) {
+  if (!error.message.includes("Active child exited unexpectedly (0)")) throw error;
+}
+const { acquireServiceSelectionLock } = await import(${JSON.stringify(import.meta.resolve("./serviceSelectionLock.ts"))});
+// Exit owning the real lease, as a crashed process would.
+await acquireServiceSelectionLock(${JSON.stringify(plan.unitPath)});
+process.disconnect();
+`,
+        );
+        const child = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            NodeChildProcess.fork(script, [], {
+              execArgv: [],
+              stdio: ["ignore", "inherit", "inherit", "ipc"],
+            }),
+          ),
+          (child) =>
+            Effect.sync(() => {
+              if (child.exitCode === null && child.signalCode === null) child.kill();
+            }),
+        );
+        const exited = new Promise<void>((resolve, reject) => {
+          child.once("error", reject);
+          child.once("exit", (code) =>
+            code === 0 ? resolve() : reject(new Error(`launcher exited ${code}`)),
+          );
+        });
+        child.on("message", (message) => {
+          if (message === "snapshot") snapshot.resolve();
+        });
+        yield* Effect.promise(() =>
+          Promise.race([
+            snapshot.promise,
+            exited.then(() => {
+              throw new Error("launcher exited before snapshot");
+            }),
+          ]),
+        );
+        leaseObserver.contended = (destination) => {
+          if (destination === plan.unitPath + ".selection-lock") milestone.resolve();
+        };
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            leaseObserver.contended = () => {};
+          }),
+        );
+        const installing = yield* newer
+          .install({ start: false })
+          .pipe(Effect.ensuring(Effect.sync(() => milestone.resolve())), Effect.forkChild);
+        // Resume the launcher once the installer contends for the unit lease, or once an
+        // uncoordinated installer has finished, which makes the stale snapshot win.
+        yield* Effect.promise(() => milestone.promise);
+        child.send("resume");
+        yield* Fiber.join(installing);
+        child.send("installed");
+        yield* Effect.promise(() => exited);
+        expect(yield* fs.readFileString(rejection)).toContain("Service selection changed");
+        expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.4",
+        });
+        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+        expect(
+          yield* fs.readFileString(
+            path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE),
+          ),
+        ).toBe("1.2.4\n");
+        // The next installer reclaims the dead owner and releases its own lease.
+        yield* newer.install({ start: false });
+        expect(yield* fs.exists(plan.unitPath + ".selection-lock")).toBe(false);
       }),
   );
 
@@ -545,6 +806,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const error = yield* service.install({ start: false }).pipe(Effect.flip);
       expect(error._tag).toBe("BootServiceUpdatePendingError");
       expect(yield* fs.readFileString(statePath)).toBe(pendingState);
+      yield* fs.remove((yield* service.status).unitPath);
+      expect((yield* service.install({ start: false }).pipe(Effect.flip))._tag).toBe(
+        "BootServiceUpdatePendingError",
+      );
+      expect(yield* fs.readFileString(statePath)).toBe(pendingState);
     }),
   );
 
@@ -553,9 +819,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const { service, commands, control, makeService } = yield* makeHarness();
       yield* service.install();
       const failure = yield* service
-        .withStopped(
-          Effect.suspend(() => Effect.fail(control.active ? "running" : "repair failed")),
-        )
+        .withStopped(Effect.failSync(() => (control.active ? "running" : "repair failed")))
         .pipe(Effect.flip);
       expect(failure).toBe("repair failed");
       expect(control.active).toBe(true);
@@ -610,17 +874,24 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("restart leaves a service that serves another T3 home alone", () =>
+  it.effect("restart and install leave a service that serves another T3 home alone", () =>
     Effect.gen(function* () {
-      const { service, fs, commands, makeService } = yield* makeHarness();
-      yield* service.install();
-      commands.length = 0;
+      const { service, fs, baseDir, commands, makeService } = yield* makeHarness();
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
       const path = yield* Path.Path;
       const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
 
       const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
+      commands.length = 0;
       expect(yield* other.restart).toBe("skipped");
-      expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([]);
+      const refused = yield* other.install().pipe(Effect.flip);
+      expect(refused._tag).toBe("BootServiceOtherBaseDirError");
+      // The CLI prints a user message without a stack trace.
+      expect(CliError.getUserMessage(refused)).toBe(refused.message);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+      expect(commands).toEqual([]);
+      expect((yield* other.status).otherBaseDir).toBe(baseDir);
     }),
   );
 
