@@ -52,6 +52,7 @@ const windowsConfig: DesktopBackendStartConfig = {
 
 function makeProcess(
   exitCode: ChildProcessSpawner.ChildProcessHandle["exitCode"],
+  kill: Effect.Effect<void> = Effect.void,
 ): ChildProcessSpawner.ChildProcessHandle {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(123),
@@ -60,7 +61,7 @@ function makeProcess(
     all: Stream.empty,
     exitCode,
     isRunning: Effect.succeed(false),
-    kill: () => Effect.void,
+    kill: () => kill,
     stdin: Sink.drain,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
@@ -318,7 +319,7 @@ describe("DesktopBackendPool", () => {
     ),
   );
 
-  it.effect("keeps a live WSL primary probing after a readiness timeout", () =>
+  it.effect("falls back to Windows when a live WSL primary never becomes ready", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const spawned = yield* Queue.unbounded<string>();
@@ -337,10 +338,14 @@ describe("DesktopBackendPool", () => {
               ? { ...windowsConfig, executablePath: "wsl.exe", runningDistro: "Ubuntu" }
               : windowsConfig;
           }),
-          // A cold WSL boot: the process stays up but is not ready within one readiness window.
+          // The WSL server stays up but its port is unreachable, so readiness never succeeds.
           spawn: (command) => {
             Queue.offerUnsafe(spawned, command._tag === "StandardCommand" ? command.command : "");
-            return makeProcess(Effect.never);
+            const exited = Deferred.makeUnsafe<ChildProcessSpawner.ExitCode>();
+            return makeProcess(
+              Deferred.await(exited),
+              Deferred.succeed(exited, ChildProcessSpawner.ExitCode(143)).pipe(Effect.asVoid),
+            );
           },
           showErrorBox: (title) => Ref.update(errors, (shown) => [...shown, title]),
           onReadinessProbe: Deferred.succeed(firstProbe, undefined).pipe(Effect.asVoid),
@@ -352,13 +357,10 @@ describe("DesktopBackendPool", () => {
           // Past the manager's default readiness timeout.
           yield* TestClock.adjust(Duration.minutes(3));
 
-          const startup = yield* SubscriptionRef.get(
-            (yield* DesktopState.DesktopState).primaryBackendStartup,
-          );
-          assert.equal(startup._tag, "Failing");
-          assert.deepEqual(yield* Ref.get(errors), []);
-          assert.deepEqual(yield* Queue.takeAll(spawned), ["wsl.exe"]);
-          assert.isTrue((yield* (yield* DesktopAppSettings.DesktopAppSettings).get).wslOnly);
+          assert.equal(yield* Queue.take(spawned), "wsl.exe");
+          assert.equal(yield* Queue.take(spawned), "/electron");
+          assert.deepEqual(yield* Ref.get(errors), ["WSL backend is still unavailable"]);
+          assert.isFalse((yield* (yield* DesktopAppSettings.DesktopAppSettings).get).wslOnly);
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(TestClock.layer())),
     ),
