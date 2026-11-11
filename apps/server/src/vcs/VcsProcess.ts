@@ -210,6 +210,9 @@ export const make = Effect.gen(function* () {
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         env: {
+          // Failures are read by English patterns; without LANG, macOS Git follows the system language.
+          // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
+          ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
           ...input.env,
           ...explicitBareRepositoryEnv({ ...process.env, ...input.env }, hostPlatform),
         },

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parseFileUrlHref, splitFilePathPosition, resolvePathLinkTarget } from "./fileLinks.ts";
+import {
+  fileLinkLabel,
+  parseFileUrlHref,
+  splitFilePathPosition,
+  resolvePathLinkTarget,
+} from "./fileLinks.ts";
 
 describe("parseFileUrlHref", () => {
   it.each([
@@ -32,6 +37,9 @@ describe("splitFilePathPosition", () => {
     ["src/main.ts", "#L18C2", { path: "src/main.ts", line: 18, column: 2 }],
     ["src/main.ts:3", "#L18C2", { path: "src/main.ts", line: 3 }],
     ["src/main.ts:0", "", { path: "src/main.ts" }],
+    ["src/main.ts:42-64", "", { path: "src/main.ts", line: 42, endLine: 64 }],
+    ["src/main.ts", "#L42-L64", { path: "src/main.ts", line: 42, endLine: 64 }],
+    ["src/main.ts:42-42", "", { path: "src/main.ts", line: 42 }],
   ])("splits %s%s", (path, hash, expected) => {
     expect(splitFilePathPosition(path, hash)).toEqual(expected);
   });
@@ -72,5 +80,14 @@ describe("resolvePathLinkTarget", () => {
     for (const cwd of ["C:/work/project", "/Home/alice/project", "/users/alice/project"]) {
       expect(resolvePathLinkTarget("~/notes.md:3", cwd)).toBe("~/notes.md:3");
     }
+  });
+});
+
+describe("fileLinkLabel", () => {
+  it.each([
+    [{ path: "/repo/src/http.ts", line: 42, column: 7 }, "http.ts · L42:C7"],
+    [{ path: "/repo/src/http.ts", line: 42, endLine: 64 }, "http.ts · L42–64"],
+  ])("labels %o", (file, label) => {
+    expect(fileLinkLabel(file, new Map())).toBe(label);
   });
 });
