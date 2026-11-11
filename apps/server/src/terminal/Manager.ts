@@ -1892,27 +1892,34 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Deferred.doneUnsafe(exited, Effect.void);
     });
     yield* Effect.gen(function* () {
-      // Read the tree first: a shell that exits on SIGTERM reparents its children out of it.
-      const descendantPids = yield* findDescendantPids;
-      for (const pid of descendantPids) signalProcess(pid, "SIGTERM");
-      const terminated = yield* Effect.try({
-        try: () => process.kill("SIGTERM"),
-        catch: (cause) =>
-          new TerminalProcessSignalError({
-            cause,
-            signal: "SIGTERM",
-            terminalPid: process.pid,
-          }),
-      }).pipe(
-        Effect.as(true),
-        Effect.catch((error) =>
-          Effect.logWarning("failed to kill terminal process", {
-            threadId,
-            terminalId,
-            signal: "SIGTERM",
-            cause: error,
-          }).pipe(Effect.as(false)),
-        ),
+      // Shutdown may interrupt the lookup, but never the SIGTERMs that follow it.
+      const { descendantPids, terminated } = yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          // Read the tree first: a shell that exits on SIGTERM reparents its children out of it.
+          const lookup = yield* Effect.exit(restore(findDescendantPids));
+          const descendantPids = Exit.isSuccess(lookup) ? lookup.value : [];
+          for (const pid of descendantPids) signalProcess(pid, "SIGTERM");
+          const terminated = yield* Effect.try({
+            try: () => process.kill("SIGTERM"),
+            catch: (cause) =>
+              new TerminalProcessSignalError({
+                cause,
+                signal: "SIGTERM",
+                terminalPid: process.pid,
+              }),
+          }).pipe(
+            Effect.as(true),
+            Effect.catch((error) =>
+              Effect.logWarning("failed to kill terminal process", {
+                threadId,
+                terminalId,
+                signal: "SIGTERM",
+                cause: error,
+              }).pipe(Effect.as(false)),
+            ),
+          );
+          return { descendantPids, terminated };
+        }),
       );
       const shellExitedBeforeGrace = terminated
         ? Deferred.await(exited).pipe(

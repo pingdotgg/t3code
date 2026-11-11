@@ -886,6 +886,24 @@ it.layer(
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("still signals a stopping shell when the manager shuts down mid-lookup", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const { manager } = yield* createManager(5, {
+            ptyAdapter,
+            processTable: Effect.never,
+          }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+          yield* manager.open(openInput());
+          yield* manager.close({ threadId: "thread-1" });
+        }),
+      );
+
+      expect(ptyAdapter.processes[0]?.killSignals).toEqual(["SIGTERM"]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("labels a running command by its whole process name, spaces included", () =>
     Effect.gen(function* () {
       const { manager } = yield* createManager(5, {
