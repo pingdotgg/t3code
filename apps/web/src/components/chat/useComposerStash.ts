@@ -25,6 +25,7 @@ import {
   partitionStashAttachments,
   usePromptStashStore,
 } from "../../promptStashStore";
+import type { PendingUserInputProgress } from "../../pendingUserInput";
 import { type PendingUserInput } from "../../session-logic";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { collapseExpandedComposerCursor } from "../../composer-logic";
@@ -77,7 +78,7 @@ export function useComposerStash(input: {
   readonly routeThreadRef: ChatComposerProps["routeThreadRef"];
   readonly projectSelectionRequired: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
-  readonly activePendingProgress: ChatComposerProps["activePendingProgress"];
+  readonly activePendingProgress: PendingUserInputProgress | null;
   readonly prompt: string;
   readonly composerMenuOpen: boolean;
   readonly isComposerCollapsedMobile: boolean;

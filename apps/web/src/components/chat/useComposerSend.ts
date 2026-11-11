@@ -211,7 +211,7 @@ interface ComposerSendInput {
   readonly readPendingEnvironmentChange: DraftEnvironmentRouting["readPendingEnvironmentChange"];
   readonly pendingApprovals: PendingThreadRequests["pendingApprovals"];
   readonly respondingRequestIds: PendingThreadRequests["respondingRequestIds"];
-  readonly activePendingProgress: PendingThreadRequests["activePendingProgress"];
+  readonly activePendingUserInput: PendingThreadRequests["activePendingUserInput"];
   readonly onAdvanceActivePendingUserInput: PendingThreadRequests["onAdvanceActivePendingUserInput"];
   readonly onRespondToApproval: PendingThreadRequests["onRespondToApproval"];
   readonly beginLocalDispatch: LocalDispatchState["beginLocalDispatch"];
@@ -304,7 +304,7 @@ export function useComposerSend(input: ComposerSendInput) {
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
-    activePendingProgress,
+    activePendingUserInput,
     onAdvanceActivePendingUserInput,
     onRespondToApproval: onRespondToApprovalStable,
     beginLocalDispatch,
@@ -449,7 +449,7 @@ export function useComposerSend(input: ComposerSendInput) {
         ? parseSideChatCommand(promptAtSend)
         : null;
     const answeringQuestion =
-      Boolean(activePendingProgress) && sendCtx?.answeringPendingUserInput !== false;
+      Boolean(activePendingUserInput) && sendCtx?.answeringPendingUserInput !== false;
     // Where side chats are unavailable, `/side` text can still be a literal answer.
     if (sideChatDisabledReason !== null && sideChatCommand && !answeringQuestion) {
       toastManager.add(
