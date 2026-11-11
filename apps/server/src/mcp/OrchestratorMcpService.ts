@@ -2771,7 +2771,11 @@ const make = Effect.gen(function* () {
           ? null
           : yield* threadManagement
               .getReceiptChildRun(receipt.binding.childThreadId, receipt.binding.childRunId)
-              .pipe(Effect.orElseSucceed(() => null));
+              .pipe(
+                Effect.mapError(() =>
+                  failure("orchestration_error", "Unable to read the child run."),
+                ),
+              );
       const rawStatus = run === null ? undefined : taskStatusForRun(run);
       const outcome =
         run?.status === "rolled_back"

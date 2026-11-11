@@ -61,6 +61,7 @@ import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
@@ -1803,10 +1804,18 @@ const make = Effect.gen(function* () {
     getDelegationReceipt,
     getReceiptChildRun: Effect.fn("ThreadManagementService.getReceiptChildRun")(
       function* (threadId, runId) {
-        const records = yield* orchestrator.getThreadRecords(threadId, ["runs"], {
-          runIds: [runId],
-        });
-        return records.runs.find((run) => run.id === runId) ?? null;
+        const records = yield* orchestrator
+          .getThreadRecords(threadId, ["runs"], {
+            runIds: [runId],
+          })
+          .pipe(
+            Effect.catchTag("OrchestratorProjectionError", (error) =>
+              Schema.is(ProjectionStoreThreadNotFoundError)(error.cause)
+                ? Effect.succeed(null)
+                : Effect.fail(error),
+            ),
+          );
+        return records?.runs.find((run) => run.id === runId) ?? null;
       },
     ),
     waitForThread,

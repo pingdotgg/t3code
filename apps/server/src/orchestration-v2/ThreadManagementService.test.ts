@@ -35,6 +35,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -164,6 +165,38 @@ it.effect("reads only matching delegation receipts and recovers retained event b
       status: "rejected",
       binding: null,
     });
+  }).pipe(Effect.provide(layerTest));
+});
+
+it.effect("distinguishes absent receipt children from projection read failures", () => {
+  const threadId = ThreadId.make("thread:receipt-child");
+  const runId = RunId.make("run:receipt-child");
+  let missing = true;
+  const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadRecords: () =>
+          Effect.fail(
+            new Orchestrator.OrchestratorProjectionError({
+              threadId,
+              cause: missing
+                ? new ProjectionStoreThreadNotFoundError({ threadId })
+                : new Error("read failed"),
+            }),
+          ),
+      }),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerReceiptsTest),
+  );
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    expect(yield* threads.getReceiptChildRun(threadId, runId)).toBeNull();
+    missing = false;
+    expect(yield* Effect.flip(threads.getReceiptChildRun(threadId, runId))).toBeInstanceOf(
+      Orchestrator.OrchestratorProjectionError,
+    );
   }).pipe(Effect.provide(layerTest));
 });
 
