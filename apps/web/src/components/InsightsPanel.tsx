@@ -52,6 +52,10 @@ import { ScrollArea } from "./ui/scroll-area";
 import { tokenTypeSegments } from "./usage/usageBreakdown";
 import { UsageShareBar, type ShareSegment } from "./usage/UsageShareBar";
 
+/** Matches `UsagePriceInput.items` max length in contracts. */
+const USAGE_PRICE_MAX_ITEMS = 1_000;
+const EMPTY_LIVE_RUN_IDS: ReadonlySet<string> = new Set();
+
 const SPAN_BAR_CLASS: Record<TimingSpanKind, string> = {
   queue: "border-border/60 bg-foreground/10 text-foreground",
   reasoning: "border-border/60 bg-foreground/35 text-foreground",
@@ -107,6 +111,73 @@ function priceItemsForRows(
     if (totals === null) return [];
     return [{ id: row.runId, model: row.priceModel, totals }];
   });
+}
+
+function isRunTimingLive(status: string): boolean {
+  return (
+    status === "queued" || status === "preparing" || status === "starting" || status === "running"
+  );
+}
+
+/** Same open statuses `deriveThreadTimingTrace` ends with `nowMs`. */
+function isItemTimingLive(status: string): boolean {
+  return status === "pending" || status === "running" || status === "waiting";
+}
+
+/** True when deriveThreadTimingTrace would read `nowMs` for an open run or item. */
+function projectionNeedsLiveClock(projection: {
+  readonly runs: ReadonlyArray<{ readonly status: string }>;
+  readonly turnItems: ReadonlyArray<{ readonly status: string }>;
+}): boolean {
+  for (const run of projection.runs) {
+    if (isRunTimingLive(run.status)) return true;
+  }
+  for (const item of projection.turnItems) {
+    if (isItemTimingLive(item.status)) return true;
+  }
+  return false;
+}
+
+function liveRunIdsFromProjection(projection: {
+  readonly runs: ReadonlyArray<{ readonly id: string; readonly status: string }>;
+  readonly turnItems: ReadonlyArray<{ readonly runId: string | null; readonly status: string }>;
+}): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const run of projection.runs) {
+    if (isRunTimingLive(run.status)) ids.add(run.id);
+  }
+  for (const item of projection.turnItems) {
+    if (item.runId !== null && isItemTimingLive(item.status)) ids.add(item.runId);
+  }
+  return ids;
+}
+
+/**
+ * Settled rows keep a stable query key (and the 60s priceUsage cache). Live rows
+ * price alone so token ticks do not resend the whole thread. Cap at the contract
+ * limit, keeping the newest settled rows when truncating.
+ */
+function partitionPriceItems(
+  rows: readonly ThreadTurnTokenUsageRow[],
+  liveRunIds: ReadonlySet<string>,
+): {
+  readonly settled: readonly UsagePriceItemInput[];
+  readonly live: readonly UsagePriceItemInput[];
+  readonly requestCount: number;
+} {
+  const settled: UsagePriceItemInput[] = [];
+  const live: UsagePriceItemInput[] = [];
+  for (const item of priceItemsForRows(rows)) {
+    if (liveRunIds.has(item.id)) live.push(item);
+    else settled.push(item);
+  }
+  const liveCap = Math.min(live.length, USAGE_PRICE_MAX_ITEMS);
+  const settledCap = Math.min(settled.length, USAGE_PRICE_MAX_ITEMS - liveCap);
+  return {
+    settled: settledCap < settled.length ? settled.slice(-settledCap) : settled,
+    live: live.slice(0, liveCap),
+    requestCount: settled.length + live.length,
+  };
 }
 
 function measurableTurnCount(rows: readonly ThreadTurnTokenUsageRow[]): number {
@@ -172,7 +243,10 @@ export function InsightsPanel({
   readonly visible: boolean;
 }) {
   const projection = useQuietThreadProjection(visible ? threadRef : null);
-  const nowMs = useNowSecond();
+  const needsLiveClock = projection !== null && projectionNeedsLiveClock(projection.projection);
+  const nowMs = useNowSecond(needsLiveClock);
+  const liveRunIds =
+    projection === null ? EMPTY_LIVE_RUN_IDS : liveRunIdsFromProjection(projection.projection);
   const trace =
     projection === null
       ? null
@@ -191,20 +265,44 @@ export function InsightsPanel({
           providerTurns: projection.projection.providerTurns,
         });
   const tokenUsage = projection === null ? null : summarizeThreadTurnTokenUsageRows(turnRows);
-  const priceItems = priceItemsForRows(turnRows);
-  const priced = useEnvironmentQuery(
-    !visible || priceItems.length === 0
+  const {
+    settled: settledPriceItems,
+    live: livePriceItems,
+    requestCount: priceRequestCount,
+  } = partitionPriceItems(turnRows, liveRunIds);
+  const settledPriced = useEnvironmentQuery(
+    !visible || settledPriceItems.length === 0
       ? null
       : serverEnvironment.priceUsage({
           environmentId: threadRef.environmentId,
-          input: { items: [...priceItems] },
+          input: { items: [...settledPriceItems] },
         }),
   );
-  const costs = costByRunId(priced.data?.items ?? null, turnRows);
+  const livePriced = useEnvironmentQuery(
+    !visible || livePriceItems.length === 0
+      ? null
+      : serverEnvironment.priceUsage({
+          environmentId: threadRef.environmentId,
+          input: { items: [...livePriceItems] },
+        }),
+  );
+  const pricedItems = [...(settledPriced.data?.items ?? []), ...(livePriced.data?.items ?? [])];
+  const costs = costByRunId(pricedItems.length > 0 ? pricedItems : null, turnRows);
   const threadCost = threadCostEstimate(costs, measurableTurnCount(turnRows));
-  const pricingPending = priceItems.length > 0 && priced.isPending && priced.data === null;
+  const pricingPending =
+    priceRequestCount > 0 &&
+    ((settledPriceItems.length > 0 && settledPriced.isPending && settledPriced.data === null) ||
+      (livePriceItems.length > 0 && livePriced.isPending && livePriced.data === null)) &&
+    pricedItems.length === 0;
   const pricingError =
-    priceItems.length > 0 && priced.error !== null && priced.data === null ? priced.error : null;
+    priceRequestCount > 0 &&
+    pricedItems.length === 0 &&
+    ((settledPriceItems.length > 0 &&
+      settledPriced.error !== null &&
+      settledPriced.data === null) ||
+      (livePriceItems.length > 0 && livePriced.error !== null && livePriced.data === null))
+      ? (settledPriced.error ?? livePriced.error)
+      : null;
   const occupancy =
     projection === null
       ? null
