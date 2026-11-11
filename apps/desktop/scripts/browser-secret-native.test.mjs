@@ -38,6 +38,7 @@ describe.skipIf(hostPlatform !== "linux")("bundled libsecret helper", () => {
         "-Wl,--wrap=secret_service_search_sync",
         "-Wl,--wrap=secret_item_get_locked",
         "-Wl,--wrap=secret_item_get_secret",
+        "-Wl,--wrap=secret_item_get_modified",
         "-o",
         executable,
         ...flags,
@@ -79,11 +80,11 @@ describe.skipIf(hostPlatform !== "linux")("bundled libsecret helper", () => {
   });
 
   it.each(["chrome", "chromium"])(
-    "reads the %s key KWallet stores without an application attribute",
+    "reads the newest %s key KWallet stores without an application attribute",
     (application) => {
       const result = run([application]);
       expect(result.status).toBe(0);
-      expect(result.stdout).toEqual(Buffer.from("secret\0with whitespace \t\r\n"));
+      expect(result.stdout).toEqual(Buffer.from("live é€"));
     },
   );
 

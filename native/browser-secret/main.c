@@ -39,6 +39,18 @@ static GList *search(const SecretSchema *schema, GHashTable *attributes, GError 
     return items;
 }
 
+/* A KWallet migration can leave an older item with the same server and user.
+ * Chromium writes a key only when it finds none, so the newest one is live. */
+static GList *newest_first(GList *items) {
+    GList *newest = items;
+    for (GList *link = items; link != NULL; link = link->next) {
+        if (secret_item_get_modified(link->data) > secret_item_get_modified(newest->data)) newest = link;
+    }
+    if (newest == items) return items;
+    items = g_list_remove_link(items, newest);
+    return g_list_concat(newest, items);
+}
+
 int main(int argc, char **argv) {
     if (argc != 2 || argv[1][0] == '\0') return 64;
     g_set_application_name("T3 Code");
@@ -48,10 +60,11 @@ int main(int argc, char **argv) {
         &chromium_schema, secret_attributes_build(&chromium_schema, "application", argv[1], NULL), &error);
     for (gsize i = 0; error == NULL && items == NULL && i < G_N_ELEMENTS(kwallet_entries); i++) {
         if (strcmp(argv[1], kwallet_entries[i][0]) != 0) continue;
-        items = search(&kwallet_schema,
-                       secret_attributes_build(&kwallet_schema, "server", kwallet_entries[i][1],
-                                               "user", kwallet_entries[i][2], NULL),
-                       &error);
+        items = newest_first(search(&kwallet_schema,
+                                    secret_attributes_build(&kwallet_schema, "server",
+                                                            kwallet_entries[i][1], "user",
+                                                            kwallet_entries[i][2], NULL),
+                                    &error));
     }
 
     int status = READ_FAILED;
