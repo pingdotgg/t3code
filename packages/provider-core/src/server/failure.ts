@@ -114,6 +114,7 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeCodeRootRefusalError":
         case "CursorModelUnavailableError":
         case "CodexGoalObjectiveTooLongError":
+        case "CodexReviewPolicyUnappliedError":
         case "ProviderSetupError":
         case "ProviderAdapterThreadInUseError":
           return { known: stringField(cause, "message"), category: categoryMessage() };

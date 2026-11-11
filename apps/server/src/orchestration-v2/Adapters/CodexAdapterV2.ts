@@ -931,6 +931,21 @@ class CodexGoalObjectiveTooLongError extends Schema.TaggedError<CodexGoalObjecti
   }
 }
 
+class CodexReviewPolicyUnappliedError extends Schema.TaggedError<CodexReviewPolicyUnappliedError>()(
+  "CodexReviewPolicyUnappliedError",
+  {},
+) {
+  override get message() {
+    return "Codex runs /review with the settings of this thread's last turn, which differ from the selected mode. Send a message in this mode first, then /review.";
+  }
+}
+
+// review/start takes no policy and thread/resume ignores overrides on a loaded thread.
+function codexTurnPolicyKey(params: CodexSchema.V2TurnStartParams): string {
+  const { cwd, approvalPolicy, approvalsReviewer, sandboxPolicy } = params;
+  return JSON.stringify({ cwd, approvalPolicy, approvalsReviewer, sandboxPolicy });
+}
+
 function validateCodexGoalObjective(objective: string) {
   let length = 0;
   for (const _ of objective) length++;
@@ -971,6 +986,22 @@ const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2Pro
 
 function describeCodexGoal(goal: OrchestrationV2ProviderGoal): string {
   return `Goal ${goal.status.replace("_", " ")}: ${goal.objective}`;
+}
+
+/** Reads `/review [branch <base> | commit <sha> | <instructions>]`; bare `/review` reviews the working tree. */
+export function parseCodexReviewCommand(message: {
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<unknown> | undefined;
+}): CodexSchema.V2ReviewStartParams["target"] | null {
+  if ((message.attachments?.length ?? 0) > 0) return null;
+  const match = /^\/review(?:\s+([\s\S]*))?$/u.exec(message.text.trim());
+  if (match === null) return null;
+  const argument = (match[1] ?? "").trim();
+  if (argument === "") return { type: "uncommittedChanges" };
+  const ref = /^(branch|commit)\s+(\S+)$/iu.exec(argument);
+  if (ref?.[1]?.toLowerCase() === "branch") return { type: "baseBranch", branch: ref[2]! };
+  if (ref?.[1]?.toLowerCase() === "commit") return { type: "commit", sha: ref[2]! };
+  return { type: "custom", instructions: argument };
 }
 
 // Codex starts the next goal turn milliseconds after the last one completes.
@@ -1206,6 +1237,8 @@ interface ActiveCodexTurnContext {
     readonly failure: OrchestrationV2ProviderFailure;
   };
   readonly nativeStartReady?: Deferred.Deferred<void>;
+  // Inline reviews report items under the review/start turn id, but turn/interrupt takes this inner one.
+  reviewTurnId?: string;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly projectionAppThread: OrchestrationV2AppThread;
   readonly projectionThreadId: ThreadId;
@@ -1931,6 +1964,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>(),
         );
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
+        // Keyed by native thread; turn/started for the inner review turn can beat registration.
+        const turnPolicies = new Map<string, string>();
+        const reviewStarts = new Map<
+          string,
+          { context?: ActiveCodexTurnContext; reviewTurnId?: string }
+        >();
+        const attachReviewTurn = Effect.fnUntraced(function* (
+          context: ActiveCodexTurnContext,
+          reviewTurnId: string,
+        ) {
+          context.reviewTurnId = reviewTurnId;
+          if (context.nativeStartReady !== undefined) {
+            yield* Deferred.succeed(context.nativeStartReady, undefined);
+          }
+        });
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
         const subagentSelections = new Map<string, Omit<ModelSelection, "instanceId">>();
         // A reroute names one turn; until new settings arrive, the thread's model is unknown.
@@ -4764,6 +4812,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               return;
             }
+            const reviewStart = reviewStarts.get(payload.threadId);
+            if (reviewStart !== undefined) {
+              if (reviewStart.context === undefined) {
+                reviewStart.reviewTurnId = payload.turn.id;
+                return;
+              }
+              reviewStarts.delete(payload.threadId);
+              yield* attachReviewTurn(reviewStart.context, payload.turn.id);
+              return;
+            }
             const pendingRootTurn = (yield* Ref.get(pendingRootTurns)).get(payload.threadId);
             if (pendingRootTurn !== undefined) {
               yield* registerRootTurn({
@@ -6637,6 +6695,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (input.context.nativeStartReady !== undefined) {
                 yield* Deferred.succeed(input.context.nativeStartReady, undefined);
               }
+              const reviewThreadId = input.context.providerThread.nativeThreadRef?.nativeId;
+              if (
+                reviewThreadId != null &&
+                reviewStarts.get(reviewThreadId)?.context === input.context
+              ) {
+                reviewStarts.delete(reviewThreadId);
+              }
               if (!input.continueRun && input.context.capacityRetryPending !== undefined) {
                 yield* Deferred.succeed(input.context.capacityRetryPending, undefined);
               }
@@ -7121,6 +7186,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(yield* Ref.get(activeTurns)),
             ]);
             const started = yield* client.request("turn/start", turnStartParams);
+            turnPolicies.set(threadId, codexTurnPolicyKey(turnStartParams));
             const previousTurn =
               previousTurns.get(started.turn.id) ??
               (yield* Ref.get(activeTurns)).get(started.turn.id);
@@ -7157,6 +7223,45 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ),
             ),
         );
+
+        const startReview = Effect.fn("CodexAdapterV2.startReview")(function* (
+          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+          target: CodexSchema.V2ReviewStartParams["target"],
+        ) {
+          const threadId = yield* getNativeThreadId(turnInput.providerThread);
+          const policy = yield* buildCodexTurnStartParams({
+            nativeThreadId: threadId,
+            codexInput: [],
+            runtimePolicy: turnInput.runtimePolicy,
+            modelSelection: turnInput.modelSelection,
+          });
+          if (turnPolicies.get(threadId) !== codexTurnPolicyKey(policy)) {
+            return yield* new CodexReviewPolicyUnappliedError();
+          }
+          const reviewStart: { context?: ActiveCodexTurnContext; reviewTurnId?: string } = {};
+          reviewStarts.set(threadId, reviewStart);
+          const started = yield* client
+            .request("review/start", { threadId, target, delivery: "inline" })
+            .pipe(
+              Effect.onError(() =>
+                Effect.sync(() => {
+                  if (reviewStarts.get(threadId) === reviewStart) reviewStarts.delete(threadId);
+                }),
+              ),
+            );
+          const context = yield* registerRootTurn({
+            turnInput,
+            nativeTurnId: started.turn.id,
+            startedAt: codexTimestamp(started.turn.startedAt),
+            waitForNativeStart: true,
+          });
+          if (reviewStart.reviewTurnId === undefined) {
+            reviewStart.context = context;
+            return;
+          }
+          if (reviewStarts.get(threadId) === reviewStart) reviewStarts.delete(threadId);
+          yield* attachReviewTurn(context, reviewStart.reviewTurnId);
+        });
 
         /**
          * Setting or resuming a goal starts the first goal turn with this run's
@@ -7551,7 +7656,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ? parseGoalCommand(turnInput.message)
                 : null;
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
+            const reviewTarget =
+              turnInput.restartContinuationOfRunId === undefined
+                ? parseCodexReviewCommand(turnInput.message)
+                : null;
             return Effect.gen(function* () {
+              if (reviewTarget !== null) return yield* startReview(turnInput, reviewTarget);
               yield* startNativeTurn(
                 turnInput,
                 turnInput.restartContinuationOfRunId === undefined
@@ -7917,7 +8027,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }
                   yield* client.request("turn/interrupt", {
                     threadId: yield* getNativeThreadId(context.providerThread),
-                    turnId: context.nativeTurnId,
+                    turnId: context.reviewTurnId ?? context.nativeTurnId,
                   });
                 }
                 const containedTerminalKeys = new Set<string>();

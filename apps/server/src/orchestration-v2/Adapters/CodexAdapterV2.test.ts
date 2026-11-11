@@ -1802,6 +1802,156 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped),
   );
 
+  it("reads /review targets", () => {
+    const parse = (text: string) => CodexAdapterV2.parseCodexReviewCommand({ text });
+    assert.deepEqual(parse("  /review "), { type: "uncommittedChanges" });
+    assert.deepEqual(parse("/review branch main"), { type: "baseBranch", branch: "main" });
+    assert.deepEqual(parse("/review Commit abc123"), { type: "commit", sha: "abc123" });
+    assert.deepEqual(parse("/review focus on\nerror handling"), {
+      type: "custom",
+      instructions: "focus on\nerror handling",
+    });
+    assert.isNull(parse("/reviewer"));
+    assert.isNull(parse("please /review"));
+    assert.isNull(CodexAdapterV2.parseCodexReviewCommand({ text: "/review", attachments: [{}] }));
+  });
+
+  it.effect("runs /review only under the last turn's policy and stops its inner turn", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "review-thread";
+      const firstTurnId = "review-first-turn";
+      const nativeTurnId = "review-root-turn";
+      const innerTurnId = "review-inner-turn";
+      const prompt = "Fix the bug.";
+      const transcript = makeCodexReplayTranscript({
+        scenario: "review-start-and-stop",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId: firstTurnId, prompt }),
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: firstTurnId, status: "completed" }),
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "review/start",
+            frame: {
+              id: 4,
+              method: "review/start",
+              params: {
+                threadId: nativeThreadId,
+                target: { type: "baseBranch", branch: "main" },
+                delivery: "inline",
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "review/start",
+            frame: {
+              id: 4,
+              result: {
+                reviewThreadId: nativeThreadId,
+                turn: {
+                  ...makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                  startedAt: null,
+                },
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "turn/started",
+            afterMs: 1000,
+            frame: {
+              method: "turn/started",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: innerTurnId, status: "inProgress" }),
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "turn/interrupt",
+            frame: {
+              id: 5,
+              method: "turn/interrupt",
+              params: { threadId: nativeThreadId, turnId: innerTurnId },
+            },
+          },
+          { type: "emit_inbound", label: "turn/interrupt", frame: { id: 5, result: {} } },
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      const turnInput = (attempt: string, text: string) =>
+        Effect.map(DateTime.now, (now) =>
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(attempt),
+            text,
+          }),
+        );
+      yield* harness.runtime.startTurn(yield* turnInput("first-attempt", prompt));
+      yield* harness.awaitTerminal(1);
+      const supervised = yield* turnInput("supervised-review-attempt", "/review");
+      const refused = yield* harness.runtime
+        .startTurn({
+          ...supervised,
+          runtimePolicy: { ...supervised.runtimePolicy, runtimeMode: "approval-required" },
+        })
+        .pipe(Effect.flip);
+      assert.include(
+        makeProviderFailure({ cause: refused }).message,
+        "Send a message in this mode first",
+      );
+      yield* harness.runtime.startTurn(yield* turnInput("review-attempt", "/review branch main"));
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+        nativeTurnId,
+      });
+      const interrupt = yield* harness.runtime
+        .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(interrupt);
+      yield* harness.awaitTerminal(2);
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["completed", "interrupted"],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("waits for native start before interrupting an acknowledged queued turn", () =>
     Effect.gen(function* () {
       const nativeThreadId = "early-stop-thread";
