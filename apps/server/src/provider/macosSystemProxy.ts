@@ -15,18 +15,23 @@ function proxyUrl(fields: ReadonlyMap<string, string>, prefix: "HTTP" | "HTTPS")
   return `http://${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${port}`;
 }
 
-// macOS writes `*.local` and `169.254/16`; curl matches `.local` and full CIDRs (npm ignores CIDRs).
+// macOS writes `*.local` and `169.254/16` by default.
+const LINK_LOCAL_RANGE = /^169\.254(?:\.0){0,2}\/16$/;
+
 function toNoProxyEntry(exception: string): string {
-  if (exception.startsWith("*.")) {
-    return exception.slice(1);
-  }
-  const cidr = /^(\d+(?:\.\d+){0,3})\/(\d+)$/.exec(exception);
-  if (!cidr) {
-    return exception;
-  }
-  const octets = cidr[1]!.split(".");
-  while (octets.length < 4) octets.push("0");
-  return `${octets.join(".")}/${cidr[2]}`;
+  if (LINK_LOCAL_RANGE.test(exception)) return "169.254.0.0/16";
+  return exception.startsWith("*.") ? exception.slice(1) : exception;
+}
+
+/**
+ * npm matches NO_PROXY by hostname suffix and ignores IP ranges, so a bypassed
+ * private registry would go through the proxy. Such lists keep main's direct connection.
+ */
+function hasUnrepresentableException(exception: string): boolean {
+  if (LINK_LOCAL_RANGE.test(exception)) return false;
+  return (
+    exception.includes("/") || exception.slice(exception.startsWith("*.") ? 2 : 0).includes("*")
+  );
 }
 
 /** Maps `scutil --proxy` output to proxy env vars; SOCKS and PAC are ignored. */
@@ -57,7 +62,7 @@ export function parseScutilProxy(output: string, inheritedNoProxy = ""): Record<
 
   const http = proxyUrl(fields, "HTTP");
   const https = proxyUrl(fields, "HTTPS");
-  if (!http && !https) {
+  if ((!http && !https) || exceptions.some(hasUnrepresentableException)) {
     return {};
   }
   const noProxy = [

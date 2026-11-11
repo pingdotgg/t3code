@@ -976,31 +976,11 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
-  it.effect("leaves an inherited proxy alone and does not read the macOS system proxy", () => {
-    const spawns: Array<{ command: string; env: NodeJS.ProcessEnv | undefined }> = [];
-    return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry(baseProvider);
-      const runner = yield* makeTestRunner(registry);
-
-      yield* runner.updateProvider(CODEX_DRIVER);
-
-      assert.deepStrictEqual(spawns, [{ command: "npm", env: undefined }]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.succeed(HostProcess.Platform, "darwin"),
-          Layer.succeed(HostProcess.Environment, { https_proxy: "http://proxy.corp:8080" }),
-          layerLatestVersionHttpClient("0.0.0"),
-          layerMockSpawner((command, _args, options) => {
-            spawns.push({ command, env: options.env });
-            return { stdout: "updated" };
-          }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("does not read the macOS system proxy when the updater declares its own proxy", () => {
+  it.effect.each([
+    { name: "an inherited proxy", inherited: { https_proxy: "http://proxy.corp:8080" }, env: {} },
+    { name: "an updater proxy", inherited: {}, env: { HTTPS_PROXY: "http://instance:3128" } },
+    { name: "a bypass-all NO_PROXY", inherited: {}, env: { no_proxy: "*" } },
+  ])("does not read the macOS system proxy with $name", ({ inherited, env }) => {
     const spawns: Array<{ command: string; env: NodeJS.ProcessEnv | undefined }> = [];
     return Effect.gen(function* () {
       const { registry } = yield* makeRegistry(baseProvider);
@@ -1014,7 +994,7 @@ describe("providerMaintenanceRunner", () => {
               executable: "npm",
               args: ["install", "-g", "@openai/codex@latest"],
               lockKey: "npm-global",
-              env: { HTTPS_PROXY: "http://instance.proxy:3128" },
+              env,
             },
           }),
       });
@@ -1022,81 +1002,17 @@ describe("providerMaintenanceRunner", () => {
       yield* runner.updateProvider(CODEX_DRIVER);
 
       assert.deepStrictEqual(spawns, [
-        { command: "npm", env: { HTTPS_PROXY: "http://instance.proxy:3128" } },
+        { command: "npm", env: Object.keys(env).length > 0 ? env : undefined },
       ]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, "darwin"),
-          Layer.succeed(HostProcess.Environment, { PATH: "/usr/bin:/bin" }),
+          Layer.succeed(HostProcess.Environment, inherited),
           layerLatestVersionHttpClient("0.0.0"),
           layerMockSpawner((command, _args, options) => {
             spawns.push({ command, env: options.env });
             return { stdout: "updated" };
-          }),
-        ),
-      ),
-    );
-  });
-
-  it.effect.each([
-    {
-      name: "merges an updater's NO_PROXY into the system proxy bypass list",
-      updateEnv: { NO_PROXY: "registry.corp" },
-      expected: ["scutil", "npm"],
-    },
-    {
-      name: "does not read the macOS system proxy when NO_PROXY bypasses everything",
-      updateEnv: { no_proxy: "*" },
-      expected: ["npm"],
-    },
-  ])("$name", ({ updateEnv, expected }) => {
-    const spawns: Array<{ command: string; env: NodeJS.ProcessEnv | undefined }> = [];
-    return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry(baseProvider);
-      const runner = yield* makeTestRunner({
-        ...registry,
-        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
-          Effect.succeed({
-            ...lifecycleFor(provider),
-            update: {
-              command: "npm install -g @openai/codex@latest",
-              executable: "npm",
-              args: ["install", "-g", "@openai/codex@latest"],
-              lockKey: "npm-global",
-              env: updateEnv,
-            },
-          }),
-      });
-
-      yield* runner.updateProvider(CODEX_DRIVER);
-
-      assert.deepStrictEqual(
-        spawns.map(({ command }) => command.split("/").pop()),
-        expected,
-      );
-      const updaterEnv = spawns.at(-1)?.env;
-      if (expected.includes("scutil")) {
-        assert.strictEqual(updaterEnv?.HTTPS_PROXY, "http://127.0.0.1:7890");
-        assert.strictEqual(updaterEnv?.NO_PROXY, updaterEnv?.no_proxy);
-        assert.match(updaterEnv?.NO_PROXY ?? "", /^registry\.corp,localhost,/);
-      } else {
-        assert.deepStrictEqual(updaterEnv, updateEnv);
-      }
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.succeed(HostProcess.Platform, "darwin"),
-          Layer.succeed(HostProcess.Environment, { PATH: "/usr/bin:/bin" }),
-          layerLatestVersionHttpClient("0.0.0"),
-          layerMockSpawner((command, _args, options) => {
-            spawns.push({ command, env: options.env });
-            return command.endsWith("scutil")
-              ? {
-                  stdout:
-                    "<dictionary> {\n  HTTPSEnable : 1\n  HTTPSPort : 7890\n  HTTPSProxy : 127.0.0.1\n}\n",
-                }
-              : { stdout: "updated" };
           }),
         ),
       ),
@@ -1107,13 +1023,30 @@ describe("providerMaintenanceRunner", () => {
     const updaterEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
     return Effect.gen(function* () {
       const { registry } = yield* makeRegistry(baseProvider);
-      const runner = yield* makeTestRunner(registry);
+      const runner = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed({
+            ...lifecycleFor(provider),
+            update: {
+              command: "npm install -g @openai/codex@latest",
+              executable: "npm",
+              args: ["install", "-g", "@openai/codex@latest"],
+              lockKey: "npm-global",
+              env: { NO_PROXY: "registry.corp" },
+            },
+          }),
+      });
 
       yield* runner.updateProvider(CODEX_DRIVER);
 
       assert.strictEqual(updaterEnvs.length, 1);
       assert.strictEqual(updaterEnvs[0]?.HTTPS_PROXY, "http://127.0.0.1:7890");
       assert.strictEqual(updaterEnvs[0]?.HTTP_PROXY, "http://127.0.0.1:7890");
+      assert.strictEqual(
+        updaterEnvs[0]?.no_proxy,
+        "registry.corp,localhost,127.0.0.1,::1,[::1],.local,169.254.0.0/16",
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

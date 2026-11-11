@@ -27,6 +27,25 @@ describe("parseScutilProxy", () => {
     assert.deepStrictEqual(parseScutilProxy(""), {});
   });
 
+  it.each(["192.168.0.0/16", "10.*"])(
+    "keeps the direct connection when the exceptions include %s, which npm cannot match",
+    (exception) => {
+      assert.deepStrictEqual(
+        parseScutilProxy(
+          dictionary(
+            "ExceptionsList : <array> {",
+            `  0 : ${exception}`,
+            "}",
+            "HTTPEnable : 1",
+            "HTTPPort : 3128",
+            "HTTPProxy : 10.0.0.1",
+          ),
+        ),
+        {},
+      );
+    },
+  );
+
   it("reads only the top-level settings and merges exceptions into NO_PROXY", () => {
     assert.deepStrictEqual(
       parseScutilProxy(
@@ -34,8 +53,7 @@ describe("parseScutilProxy", () => {
           "ExceptionsList : <array> {",
           "  0 : *.local",
           "  1 : 169.254/16",
-          "  2 : 10.0.0.0/8",
-          "  3 : internal.corp",
+          "  2 : internal.corp",
           "}",
           "HTTPSEnable : 1",
           "HTTPSPort : 8443",
@@ -53,10 +71,8 @@ describe("parseScutilProxy", () => {
       {
         HTTPS_PROXY: "http://[fd00::1]:8443",
         https_proxy: "http://[fd00::1]:8443",
-        NO_PROXY:
-          "registry.corp,localhost,127.0.0.1,::1,[::1],.local,169.254.0.0/16,10.0.0.0/8,internal.corp",
-        no_proxy:
-          "registry.corp,localhost,127.0.0.1,::1,[::1],.local,169.254.0.0/16,10.0.0.0/8,internal.corp",
+        NO_PROXY: "registry.corp,localhost,127.0.0.1,::1,[::1],.local,169.254.0.0/16,internal.corp",
+        no_proxy: "registry.corp,localhost,127.0.0.1,::1,[::1],.local,169.254.0.0/16,internal.corp",
       },
     );
   });
