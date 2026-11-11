@@ -1,0 +1,38 @@
+import type * as securityhub from "@distilled.cloud/aws/securityhub";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `securityhub:GetEnabledStandards`.
+ *
+ * Lists the standards subscriptions currently enabled in the account.
+ * Account-level operation — invoked with the caller's request as-is.
+ * Provide the implementation with
+ * `Effect.provide(AWS.SecurityHub.GetEnabledStandardsHttp)`.
+ * ### Standards & Controls
+ * **Example:** List Enabled Standards
+ * ```typescript
+ * // init — account-level binding, no resource argument
+ * const getEnabledStandards = yield* AWS.SecurityHub.GetEnabledStandards();
+ *
+ * // runtime
+ * const { StandardsSubscriptions } = yield* getEnabledStandards();
+ * ```
+ *
+ * @binding
+ */
+export interface GetEnabledStandards extends Binding.Service<
+  GetEnabledStandards,
+  "AWS.SecurityHub.GetEnabledStandards",
+  () => Effect.Effect<
+    (
+      request?: securityhub.GetEnabledStandardsRequest,
+    ) => Effect.Effect<
+      securityhub.GetEnabledStandardsResponse,
+      securityhub.GetEnabledStandardsError
+    >
+  >
+> {}
+export const GetEnabledStandards = Binding.Service<GetEnabledStandards>(
+  "AWS.SecurityHub.GetEnabledStandards",
+);
