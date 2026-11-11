@@ -168,9 +168,12 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         });
       }
     }
+    const usageURL = URL.parse(workspace.usageURL);
     return {
       ...makeUsageLimits({ checkedAt, windows }),
-      externalUsage: { label: workspace.name?.trim() || workspace.id, url: workspace.usageURL },
+      ...(usageURL?.protocol === "http:" || usageURL?.protocol === "https:"
+        ? { externalUsage: { label: workspace.name?.trim() || workspace.id, url: usageURL.href } }
+        : {}),
     };
   }).pipe(
     Effect.timeout("5 seconds"),

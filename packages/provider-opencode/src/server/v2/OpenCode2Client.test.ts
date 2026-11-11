@@ -253,6 +253,7 @@ describe("OpenCode2Client usage limits", () => {
   it.effect("reads the connected workspace and maps Go and Console budgets", () =>
     Effect.gen(function* () {
       let workspace = "wrk_remote";
+      let usageURL: string | undefined;
       const transport = HttpClient.make((request) => {
         assert.strictEqual(request.headers.authorization, utf8Basic("remote-password"));
         assert.deepStrictEqual(Array.from(request.urlParams), [
@@ -286,7 +287,7 @@ describe("OpenCode2Client usage limits", () => {
                 workspace: {
                   id: workspace,
                   name: workspace,
-                  usageURL: "https://opencode.ai/console/" + workspace,
+                  usageURL: usageURL ?? "https://opencode.ai/console/" + workspace,
                 },
                 go: {
                   rolling: { percent: 23, limited: false, resetsAt: 1793491200000 },
@@ -381,6 +382,19 @@ describe("OpenCode2Client usage limits", () => {
       const next = yield* api.usageLimits("/remote/project");
       assert.strictEqual(next?.externalUsage?.label, "wrk_switched");
       assert.strictEqual(next?.externalUsage?.url, "https://opencode.ai/console/wrk_switched");
+      for (const url of [
+        "not a URL",
+        "javascript:alert(1)",
+        "custom-app://usage",
+        "file:///tmp/usage",
+      ]) {
+        usageURL = url;
+        const invalid = yield* api.usageLimits("/remote/project");
+        assert.strictEqual(invalid?.externalUsage, undefined);
+        assert.deepStrictEqual(invalid?.windows, next?.windows);
+      }
+      usageURL = "http://console.example/workspace/usage";
+      assert.strictEqual((yield* api.usageLimits("/remote/project"))?.externalUsage?.url, usageURL);
     }),
   );
 
