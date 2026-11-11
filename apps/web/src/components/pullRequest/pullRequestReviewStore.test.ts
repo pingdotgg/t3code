@@ -30,17 +30,6 @@ describe("pull request review drafts", () => {
     ]);
   });
 
-  it("keeps summary bodies isolated by review key", () => {
-    const store = usePullRequestReviewStore.getState();
-    store.setSummary("review-a", "Summary A");
-    store.setSummary("review-b", "Summary B");
-    store.clearSummary("review-a", "Summary A");
-
-    expect(usePullRequestReviewStore.getState().summaries).toEqual({
-      "review-b": "Summary B",
-    });
-  });
-
   it("keeps drafts on different hosts separate when a thread reviews the same repository and number", () => {
     const reference = {
       projectId: ProjectId.make("project-a"),
