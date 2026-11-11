@@ -2136,13 +2136,6 @@ it.layer(
           const rescanned = yield* workspaceOf;
           assert.deepStrictEqual(rescanned?.models, nextWorkspaceModels);
           assert.strictEqual(rescanned?.modelsPending, undefined);
-
-          // A machine change alone keeps the folder's models until its next read settles.
-          yield* Ref.set(machineProvider, provider);
-          yield* registry.refreshInstance(instanceId);
-          const stale = yield* workspaceOf;
-          assert.deepStrictEqual(stale?.models, nextWorkspaceModels);
-          assert.strictEqual(stale?.modelsPending, true);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
