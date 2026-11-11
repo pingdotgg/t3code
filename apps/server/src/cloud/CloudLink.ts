@@ -751,6 +751,7 @@ const make = Effect.gen(function* () {
     options?: {
       readonly lockHeld?: boolean;
       readonly confirmedOrigin?: RelayManagedEndpointOrigin;
+      readonly replaceRevokedLink?: boolean;
     },
   ) {
     const apply = Effect.gen(function* () {
@@ -769,8 +770,10 @@ const make = Effect.gen(function* () {
           },
         });
       }
-      // A revoked link no longer binds this environment to its old account.
-      yield* dropRevokedCloudLink.pipe(withSecrets);
+      // Only an explicit link replaces a revoked one: a clock-skew 401 can mark a live link revoked.
+      if (options?.replaceRevokedLink === true) {
+        yield* dropRevokedCloudLink.pipe(withSecrets);
+      }
       yield* validateLinkedCloudUser(payload.cloudUserId);
       const endpointRuntimeJson = payload.endpointRuntime
         ? yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime)
@@ -1164,7 +1167,7 @@ const make = Effect.gen(function* () {
 
   const applyRelayConfig = Effect.fn("environment.cloud.relayConfig")(
     function* (payload: RelayEnvironmentConfigRequest) {
-      const result = yield* applyCloudRelayConfig(payload);
+      const result = yield* applyCloudRelayConfig(payload, { replaceRevokedLink: true });
       if (payload.endpointRuntime?.providerKind === "cloudflare_tunnel") {
         const address = httpServer.address;
         if (typeof address === "string" || !("port" in address)) {

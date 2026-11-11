@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -186,7 +187,13 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ServerEnvironment.ServerEnvironment,
           ServerEnvironment.ServerEnvironment.of({
             getEnvironmentId: Effect.succeed(EnvironmentId.make("env_123")),
-            getDescriptor: Effect.die("unused"),
+            getDescriptor: Effect.succeed({
+              environmentId: EnvironmentId.make("env_123"),
+              label: "Test environment",
+              platform: { os: "linux", arch: "x64" },
+              serverVersion: "0.0.0-test",
+              capabilities: { repositoryIdentity: true },
+            }),
           }),
         ),
         Effect.provideService(
@@ -614,14 +621,20 @@ describe("releaseManagedTunnelOnShutdown", () => {
   });
 
   it.effect.each([
-    { name: "replaces a revoked link to another account", revoked: true },
-    { name: "rejects switching an active link to another account", revoked: false },
-  ])("$name", ({ revoked }) => {
+    { name: "replaces a revoked link to another account", revoked: true, startup: false },
+    { name: "rejects switching an active link to another account", revoked: false, startup: false },
+    {
+      name: "keeps a revoked link when startup links another account",
+      revoked: true,
+      startup: true,
+    },
+  ])("$name", ({ revoked, startup }) => {
     const { store, values } = makeMemorySecretStore([
       [RELAY_URL_SECRET, "https://relay.example.test"],
       [CLOUD_LINKED_USER_ID, "user-123"],
       [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
       ...(revoked ? [[CLOUD_LINK_REVOKED, "true"] as const] : []),
+      ...(startup ? [[CLOUD_CLI_DESIRED_LINK_SECRET, "publish_only"] as const] : []),
     ]);
     const cloudMintPublicKey =
       "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----";
@@ -629,16 +642,29 @@ describe("releaseManagedTunnelOnShutdown", () => {
     return Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
       expect((yield* link.linkState()).linkRevoked).toBe(revoked);
-      const result = yield* link
-        .applyRelayConfig({
-          relayUrl: "https://relay.example.test",
-          cloudUserId: "user-456",
-          environmentCredential: "fresh-credential",
-          cloudMintPublicKey,
-          endpointRuntime: null,
-        })
-        .pipe(Effect.flip, Effect.option);
-      if (revoked) {
+      const relink = Effect.gen(function* () {
+        if (startup) {
+          yield* link.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773");
+        } else {
+          yield* link.applyRelayConfig({
+            relayUrl: "https://relay.example.test",
+            cloudUserId: "user-456",
+            environmentCredential: "fresh-credential",
+            cloudMintPublicKey,
+            endpointRuntime: null,
+          });
+        }
+      });
+      const result = yield* relink.pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_RELAY_URL: "https://relay.example.test" } }),
+          ),
+        ),
+        Effect.flip,
+        Effect.option,
+      );
+      if (revoked && !startup) {
         expect(result).toEqual(Option.none());
         expect(yield* link.linkState()).toMatchObject({
           linked: true,
@@ -650,9 +676,35 @@ describe("releaseManagedTunnelOnShutdown", () => {
         );
       } else {
         expect(Option.getOrThrow(result)).toBeInstanceOf(CloudLink.CloudLinkAccountMismatchError);
-        expect((yield* link.linkState()).cloudUserId).toBe("user-123");
+        expect(yield* link.linkState()).toMatchObject({
+          cloudUserId: "user-123",
+          linkRevoked: revoked,
+        });
       }
-    }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        respond: () =>
+          Response.json({
+            challenge: "challenge-1",
+            expiresAt: "2099-01-01T00:00:00.000Z",
+            ok: true,
+            cloudUserId: "user-456",
+            environmentId: "env_123",
+            endpoint: {
+              httpBaseUrl: "http://127.0.0.1:3773",
+              wsBaseUrl: "ws://127.0.0.1:3773",
+              providerKind: "manual",
+            },
+            endpointRuntime: null,
+            relayIssuer: "https://relay.example.test",
+            environmentCredential: "fresh-credential",
+            cloudMintPublicKey,
+          }),
+      }),
+    );
   });
 
   it.effect(
