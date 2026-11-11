@@ -307,11 +307,11 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(false);
 
-  const csrfToken = (sessionId: string, authorization: AuthorizationRequest) =>
+  const csrfToken = (holder: string, authorization: AuthorizationRequest) =>
     sign(
       "mcp-csrf",
       JSON.stringify([
-        sessionId,
+        holder,
         authorization.client.clientId,
         authorization.redirectUri,
         authorization.codeChallenge,
@@ -413,9 +413,13 @@ const make = Effect.gen(function* () {
         // Approving manages access, and a session may only hand out scopes it holds.
         session.scopes.includes(AuthAccessWriteScope) &&
         session.scopes.includes(AuthOrchestrationReadScope)
-          ? csrfToken(session.sessionId, authorization).pipe(
-              Effect.map((token) => ({ csrfToken: token, scopes: session.scopes })),
-            )
+          ? // The hosted app may get a fresh credential per call, all bound to one browser key.
+            csrfToken(
+              session.proofKeyThumbprint === undefined
+                ? session.sessionId
+                : `dpop:${session.proofKeyThumbprint}`,
+              authorization,
+            ).pipe(Effect.map((token) => ({ csrfToken: token, scopes: session.scopes })))
           : Effect.undefined,
       ),
       Effect.orElseSucceed(() => undefined),
