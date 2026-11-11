@@ -316,20 +316,29 @@ describe("mobile task permissions", () => {
       visibleTurnItems: [],
       updatedAt: DateTime.makeUnsafe(0),
     } as unknown as OrchestrationV2ThreadProjection;
-    state.compactModel = "gpt-5.5";
-    const stale = useThreadComposerState(NO_SIDE_CHATS);
-    expect(stale.compactBeforeSend).toBeNull();
-    // A model picked after the last render still decides the send.
-    state.draft = {
-      ...state.draft,
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
-    };
-    await stale.onSendMessage();
+    const due: ModelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+    state.compactModel = due.model;
+    const unannounced = useThreadComposerState(NO_SIDE_CHATS);
+    expect(unannounced.compactBeforeSend).toBeNull();
+    // Due at send time but not at the last render, as when the minute clock trails the deadline.
+    state.draft = { ...state.draft, modelSelection: due };
+    await unannounced.onSendMessage();
     expect(state.enqueue).toHaveBeenLastCalledWith(
-      expect.objectContaining({ compactBeforeSend: true }),
+      expect.not.objectContaining({ compactBeforeSend: true }),
     );
     const composer = useThreadComposerState(NO_SIDE_CHATS);
     expect(composer.compactBeforeSend?.tokens).toBe(248_000);
+    await composer.onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ compactBeforeSend: true }),
+    );
+    // A model picked after the last render still decides the send.
+    state.draft = { ...state.draft, modelSelection: undefined };
+    await composer.onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ compactBeforeSend: true }),
+    );
+    state.draft = { ...state.draft, modelSelection: due };
     composer.compactBeforeSend?.keepFullHistory();
     const kept = useThreadComposerState(NO_SIDE_CHATS);
     expect(kept.compactBeforeSend).toBeNull();
