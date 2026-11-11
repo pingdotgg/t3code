@@ -36,7 +36,7 @@ describe("dialog initial focus", () => {
       });
 
       await expect.element(page.getByRole("button", { name: focused, exact: true })).toHaveFocus();
-      await act(() => userEvent.keyboard("{Enter}"));
+      await userEvent.keyboard("{Enter}");
       await expect(confirmation).resolves.toBe(confirmed);
     },
   );
@@ -54,7 +54,7 @@ describe("dialog initial focus", () => {
       </Dialog>,
     );
     await act(() => page.getByRole("button", { name: "Open retry" }).element().focus());
-    await act(() => userEvent.keyboard("{Enter}"));
+    await userEvent.keyboard("{Enter}");
 
     await expect.element(page.getByRole("button", { name: "Try again" })).toHaveFocus();
     expect(popup.current).toBe(page.getByRole("dialog").element());
