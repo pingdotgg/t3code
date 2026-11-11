@@ -908,6 +908,7 @@ describe("Grok goal subagents", () => {
         }
       }).pipe(Effect.scoped, Effect.provide(replayLayerTest)),
   );
+
   it.live("keeps each parallel same-description task bound to its own child session", () =>
     Effect.gen(function* () {
       const childA = "01a1a0a6-c174-7d71-9b21-e32e6e069fa1";
