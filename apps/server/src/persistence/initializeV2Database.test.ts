@@ -10,6 +10,7 @@ import { assert, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Predicate from "effect/Predicate";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -119,7 +120,7 @@ it.effect(
   },
 );
 
-const makeStaleCopy = Effect.fn(function* (name: string) {
+const makeStaleCopy = Effect.fn(function* (name: string, onRemove?: (path: string) => void) {
   const directory = yield* Effect.acquireRelease(
     Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), `t3-v1-v2-${name}-`))),
     (directory) => Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
@@ -154,7 +155,13 @@ const makeStaleCopy = Effect.fn(function* (name: string) {
     Layer.provideMerge(Layer.mergeAll(layerStores, layerSink)),
   );
   const startV2 = Effect.gen(function* () {
-    yield* replaceStaleV2Database(destinationPath);
+    yield* replaceStaleV2Database(destinationPath).pipe(
+      Effect.updateService(FileSystem.FileSystem, (fs) => ({
+        ...fs,
+        remove: (path, options) =>
+          Effect.sync(() => onRemove?.(path)).pipe(Effect.andThen(fs.remove(path, options))),
+      })),
+    );
     return yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).reconcileShells;
@@ -295,6 +302,33 @@ it.effect.each(Object.entries(v2Work))(
       assert.notInclude(threads, "thread-b");
       assert.deepEqual(backups(directory), []);
     }).pipe(Effect.scoped),
+);
+
+it.effect("keeps a session that a CLI revokes after the stale check but before the re-copy", () =>
+  Effect.gen(function* () {
+    const revokeOnce = (path: string) => {
+      if (!path.endsWith(".stale")) return;
+      const cli = new NodeSqlite.DatabaseSync(path.slice(0, -".stale".length));
+      try {
+        cli.exec(
+          `UPDATE auth_sessions SET revoked_at = '2026-01-03T00:00:00.000Z' WHERE session_id = 'session-a'`,
+        );
+      } finally {
+        cli.close();
+      }
+    };
+    const { directory, startV2, inV2 } = yield* makeStaleCopy("racing", revokeOnce);
+    yield* addNewerV1Thread(directory);
+
+    assert.notInclude(yield* startV2, "thread-b");
+    const rows = yield* inV2(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        return yield* sql`SELECT revoked_at FROM auth_sessions WHERE session_id = 'session-a'`;
+      }),
+    );
+    assert.deepEqual(rows, [{ revoked_at: "2026-01-03T00:00:00.000Z" }]);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("includes committed WAL data and does not publish a failed snapshot", () => {

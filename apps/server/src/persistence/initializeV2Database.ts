@@ -140,17 +140,6 @@ function hasV2Revocations(source: NodeSqlite.DatabaseSync, copy: NodeSqlite.Data
   });
 }
 
-// Copies through SQLite instead of renaming files: a CLI command may hold the V2 database open
-// without server ownership, and its later writes must land in the live database.
-async function backupInto(sourcePath: string, destinationPath: string) {
-  const database = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
-  try {
-    await NodeSqlite.backup(database, destinationPath);
-  } finally {
-    database.close();
-  }
-}
-
 function inspectStaleCopy(sourcePath: string, destinationPath: string) {
   const source = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
   try {
@@ -164,6 +153,42 @@ function inspectStaleCopy(sourcePath: string, destinationPath: string) {
   } finally {
     source.close();
   }
+}
+
+// Copies through SQLite instead of renaming files, so connections that CLI commands hold without
+// server ownership keep writing to the live database. The copy holds the V2 write lock from its
+// first step until it commits; rate 1 makes that first step return early (any V1 database spans
+// more than one page), so the inspection and backup run where no CLI write can slip in.
+async function recopyIfStale(sourcePath: string, destinationPath: string, backupPath: string) {
+  const source = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
+  let inspected = false;
+  let kept: "current" | "diverged" | undefined;
+  try {
+    await NodeSqlite.backup(source, destinationPath, {
+      rate: 1,
+      progress: () => {
+        if (inspected) return;
+        inspected = true;
+        const state = inspectStaleCopy(sourcePath, destinationPath);
+        if (state !== "stale") {
+          kept = state;
+          throw new Error("The V2 database is no longer stale");
+        }
+        const copy = new NodeSqlite.DatabaseSync(destinationPath, { readOnly: true });
+        try {
+          copy.prepare("VACUUM INTO ?").run(backupPath);
+        } finally {
+          copy.close();
+        }
+      },
+    });
+  } catch (error) {
+    if (kept !== undefined) return kept;
+    throw error;
+  } finally {
+    source.close();
+  }
+  return "stale" as const;
 }
 
 /** Its copied legacy tables remain the source for lazy transcript import. */
@@ -224,45 +249,43 @@ export const replaceStaleV2Database = Effect.fn("replaceStaleV2Database")(functi
   const sourcePath = path.join(path.dirname(destinationPath), "state.sqlite");
   yield* Effect.gen(function* () {
     if (!(yield* fs.exists(sourcePath)) || !(yield* fs.exists(destinationPath))) return;
-    const state = yield* Effect.try({
+    const checked = yield* Effect.try({
       try: () => inspectStaleCopy(sourcePath, destinationPath),
       catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
     }).pipe(Effect.orElseSucceed(() => "current" as const));
-    if (state === "current") return;
+    if (checked === "current") return;
+    const backupPath = `${destinationPath}.stale`;
+    const state =
+      checked === "diverged"
+        ? checked
+        : yield* Effect.gen(function* () {
+            // A previous backup was also a copy without V2 work, so one backup is enough.
+            for (const suffix of ["", "-wal", "-shm"]) {
+              yield* fs.remove(backupPath + suffix, { force: true });
+            }
+            return yield* Effect.tryPromise({
+              try: () => recopyIfStale(sourcePath, destinationPath, backupPath),
+              catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
+            });
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning(
+                "The V2 database predates newer V1 data, but it could not be copied again; keeping it",
+                { destinationPath, cause },
+              ).pipe(Effect.as("current" as const)),
+            ),
+          );
     if (state === "diverged") {
       yield* Effect.logWarning(
         "The V1 database has newer projects or threads, but they are not imported because the V2 database already holds V2 work",
         { sourcePath, destinationPath },
       );
-      return;
+    } else if (state === "stale") {
+      yield* Effect.logWarning(
+        "The V2 database predates newer V1 data and holds no V2 work; backed it up and copied V1 again",
+        { backupPath },
+      );
     }
-    const backupPath = `${destinationPath}.stale`;
-    const replaced = yield* Effect.gen(function* () {
-      // A previous backup was also a copy without V2 work, so one backup is enough.
-      for (const suffix of ["", "-wal", "-shm"]) {
-        yield* fs.remove(backupPath + suffix, { force: true });
-      }
-      yield* Effect.tryPromise({
-        try: async () => {
-          await backupInto(destinationPath, backupPath);
-          await backupInto(sourcePath, destinationPath);
-        },
-        catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
-      });
-    }).pipe(
-      Effect.as(true),
-      Effect.catch((cause) =>
-        Effect.logWarning(
-          "The V2 database predates newer V1 data, but it could not be copied again; keeping it",
-          { destinationPath, cause },
-        ).pipe(Effect.as(false)),
-      ),
-    );
-    if (!replaced) return;
-    yield* Effect.logWarning(
-      "The V2 database predates newer V1 data and holds no V2 work; backed it up and copied V1 again",
-      { backupPath },
-    );
   }).pipe(
     Effect.mapError((cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause })),
   );
