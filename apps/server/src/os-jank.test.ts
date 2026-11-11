@@ -136,6 +136,42 @@ effectIt.effect("hydrates a missing JAVA_HOME from the login shell and keeps an 
   ),
 );
 
+effectIt.effect("prefers the login shell's session bus over the launch bus on linux", () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() =>
+      vi
+        .spyOn(NodeChildProcess, "execFileSync")
+        .mockReturnValue(
+          [
+            "__T3CODE_ENV_PATH_START__",
+            "/opt/tools/bin",
+            "__T3CODE_ENV_PATH_END__",
+            "__T3CODE_ENV_DBUS_SESSION_BUS_ADDRESS_START__",
+            "unix:path=/tmp/keyring-session/bus",
+            "__T3CODE_ENV_DBUS_SESSION_BUS_ADDRESS_END__",
+          ].join("\n"),
+        ),
+    ),
+    () =>
+      Effect.gen(function* () {
+        const env: NodeJS.ProcessEnv = {
+          SHELL: "/bin/bash",
+          PATH: "/usr/bin",
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+        };
+
+        yield* fixPath().pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, env),
+          Effect.provide(NodeServices.layer),
+        );
+
+        assert.equal(env.DBUS_SESSION_BUS_ADDRESS, "unix:path=/tmp/keyring-session/bus");
+      }),
+    (probe) => Effect.sync(() => probe.mockRestore()),
+  ),
+);
+
 effectIt.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
   Effect.gen(function* () {
     const env: NodeJS.ProcessEnv = { Path: "C:\\Windows" };
