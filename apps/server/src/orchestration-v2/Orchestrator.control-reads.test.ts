@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -22,10 +24,13 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import type * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import {
   orchestrationCommandDuration,
   orchestrationCommandsTotal,
@@ -40,6 +45,13 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+
+declare module "node:sqlite" {
+  interface StatementSync {
+    // Node 26 has this; @types/node 24 does not declare it yet.
+    stat(counter: "vmStep"): number;
+  }
+}
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -1625,6 +1637,216 @@ it.effect.each([false, true])("rejects thread.create for an existing id (deleted
     const retried = yield* orchestrator.dispatch(duplicate).pipe(Effect.flip);
     assert.equal(retried._tag, "OrchestratorCommandPreviouslyRejectedError");
     assert.include(retried.message, refused.message);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("starts and finishes a delegated task without reading the parent's history", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const sql = yield* SqlClient.SqlClient;
+    const parentThreadId = ThreadId.make("thread:long-parent");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-long-parent"),
+      threadId: parentThreadId,
+      projectId: ProjectId.make("project:long-parent"),
+      title: "Parent",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-long-parent"),
+      threadId: parentThreadId,
+      messageId: MessageId.make("message:long-parent"),
+      text: "Delegate the work",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const parent = yield* projections.getThreadRecords(parentThreadId, [
+      "runs",
+      "attempts",
+      "providerThreads",
+    ]);
+    const parentRun = parent.runs[0]!;
+    const providerTurnId = ProviderTurnId.make("provider-turn:long-parent");
+    const nativeRef = (nativeId: string) => ({
+      driver: adapter.driver,
+      nativeId,
+      strength: "strong" as const,
+    });
+    for (const event of [
+      {
+        type: "provider-thread.updated",
+        payload: { ...parent.providerThreads[0]!, nativeThreadRef: nativeRef("native:parent") },
+      },
+      // A steered run: its attempt points at a provider turn that another attempt started.
+      {
+        type: "provider-turn.updated",
+        payload: {
+          id: providerTurnId,
+          providerThreadId: parentRun.providerThreadId!,
+          nodeId: parentRun.rootNodeId!,
+          runAttemptId: null,
+          nativeTurnRef: nativeRef("native:parent:turn"),
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      },
+      { type: "run-attempt.updated", payload: { ...parent.attempts[0]!, providerTurnId } },
+    ] as const) {
+      yield* projections.apply({
+        ...event,
+        id: EventId.make(`event:long-parent:${event.type}`),
+        threadId: parentThreadId,
+        runId: parentRun.id,
+        occurredAt: now,
+      });
+    }
+
+    // Keep the statements of the task start and finish operations, not of the recovery around them.
+    const taskSpans = [
+      "orchestrationV2.dispatch.delegatedTaskRequest",
+      "Orchestrator.finalizeAppOwnedSubagent",
+    ];
+    const statements: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+    const recordStatements = Effect.provideService(
+      Statement.CurrentTransformer,
+      (statement, _make, _fiber, span) => {
+        for (
+          let parent = Option.some<Tracer.AnySpan>(span);
+          Option.isSome(parent) && parent.value._tag === "Span";
+          parent = parent.value.parent
+        ) {
+          if (taskSpans.includes(parent.value.name)) {
+            statements.push(statement.compile());
+            break;
+          }
+        }
+        return Effect.succeed(statement);
+      },
+    );
+    yield* orchestrator
+      .dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("delegate-long-parent"),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Do the work",
+        completionWake: "always",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      })
+      .pipe(recordStatements);
+    const started = yield* projections.getThreadRecords(parentThreadId, ["subagents", "turnItems"]);
+    const task = started.subagents[0]!;
+    const childThreadId = task.childThreadId!;
+    assert.equal(
+      started.turnItems.find((item) => item.type === "subagent")?.providerTurnId,
+      providerTurnId,
+    );
+    const child = yield* projections.getThreadRecords(childThreadId, ["runs", "contextTransfers"]);
+    const spawnPoint = child.contextTransfers[0]?.sourcePoint;
+    assert.deepEqual(
+      [spawnPoint?.providerThreadRef, spawnPoint?.providerTurnRef],
+      [nativeRef("native:parent"), nativeRef("native:parent:turn")],
+    );
+
+    // The run listener skips reconcile commands, so the recovery below finishes the task here.
+    yield* eventSink.write({
+      commandId: CommandId.make("command:runtime-reconcile:long-parent"),
+      events: [
+        {
+          id: EventId.make("event:long-parent:child-completed"),
+          type: "run.updated",
+          threadId: childThreadId,
+          runId: child.runs[0]!.id,
+          occurredAt: now,
+          payload: { ...child.runs[0]!, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    yield* orchestrator.recoverDelegatedTasks.pipe(recordStatements);
+    const finished = yield* projections.getThreadRecords(parentThreadId, [
+      "subagents",
+      "nodes",
+      "turnItems",
+      "runs",
+    ]);
+    assert.deepEqual(
+      [
+        finished.subagents[0]?.status,
+        finished.subagents[0]?.completionDelivery?.state,
+        finished.nodes.find((node) => node.id === task.id)?.status,
+        finished.turnItems.find((item) => item.type === "subagent")?.status,
+        finished.runs[0]?.delegatedCompletion?.delivery?.taskIds,
+      ],
+      ["completed", "claimed", "completed", "completed", [task.id]],
+    );
+
+    // Start and finish read the task's own records, so their VM steps, which are deterministic,
+    // must stay flat on a copy with a long parent history. Left out: the counts that number the
+    // task and its wake, which walk one index, and provider turn history, whose read has no
+    // index on the attempt and walks the thread's turn rows without decoding them.
+    const copyPath = "file:/delegated-task-reads?vfs=memdb";
+    using copy = new NodeSqlite.DatabaseSync(copyPath);
+    yield* sql`VACUUM INTO ${copyPath}`;
+    const reads = statements.filter(
+      ([query]) => /^\s*(SELECT|WITH)\b/.test(query) && !query.includes("COUNT(*)"),
+    );
+    const readSteps = () =>
+      reads.reduce((steps, [query, params]) => {
+        const statement = copy.prepare(query);
+        statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
+        return steps + statement.stat("vmStep");
+      }, 0);
+    const shortSteps = readSteps();
+    assert.isAbove(shortSteps, 0);
+    const addHistory = (table: string, key: string, renamed: ReadonlyArray<string> = []) => {
+      const name = `orchestration_v2_projection_${table}`;
+      const columns = copy
+        .prepare(`SELECT name FROM pragma_table_info('${name}')`)
+        .all()
+        .map((column) => String(column.name));
+      const values = columns.map((column) =>
+        column === key || renamed.includes(column)
+          ? `CASE WHEN ${column} = '${parentThreadId}' THEN ${column} ELSE ${column} || ':history:' || history.n END`
+          : column === "ordinal"
+            ? "ordinal + history.n"
+            : column,
+      );
+      copy.exec(`WITH RECURSIVE history(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 300)
+        INSERT INTO ${name} (${columns.join(", ")})
+        SELECT ${values.join(", ")} FROM ${name}, history
+        WHERE '${parentThreadId}' IN (${columns.filter((column) => column.endsWith("thread_id")).join(", ")})`);
+    };
+    addHistory("nodes", "node_id");
+    addHistory("turn_items", "turn_item_id", ["node_id"]);
+    addHistory("subagents", "subagent_id", ["child_thread_id"]);
+    addHistory("context_transfers", "context_transfer_id", [
+      "source_thread_id",
+      "target_thread_id",
+    ]);
+    addHistory("runs", "run_id");
+    addHistory("run_attempts", "attempt_id", ["run_id"]);
+    addHistory("messages", "message_id");
+    assert.isAtMost(readSteps(), shortSteps * 1.1);
   }).pipe(Effect.provide(layerTest)),
 );
 
