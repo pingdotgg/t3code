@@ -64,6 +64,7 @@ export interface ThreadTitleGenerationInput {
   linkedContext?: string | undefined;
   cwd: string;
   message: string;
+  projectTitle?: string | undefined;
   previousTitle?: string | undefined;
   forkSource?: ThreadTitleForkSource | undefined;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
