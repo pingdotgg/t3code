@@ -438,7 +438,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return hasPickableFavorite ? "favorites" : props.activeInstanceId;
     },
   );
-  useProviderWorkspaceSnapshotRefresh({
+  const { scanning: workspaceModelsScanning } = useProviderWorkspaceSnapshotRefresh({
     environmentId: props.environmentId,
     gitCwd: props.workspaceCwd ?? null,
     instanceId: selectedInstanceId === "favorites" ? undefined : selectedInstanceId,
@@ -1071,7 +1071,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               emptyLabel={
                 selectedInstanceId === "favorites" && !isSearching
                   ? "No favorites yet"
-                  : "No models found"
+                  : workspaceModelsScanning
+                    ? "Searching project models..."
+                    : "No models found"
               }
               onRequestClose={onRequestClose}
               onOpenProviderSetup={onOpenProviderSetup}

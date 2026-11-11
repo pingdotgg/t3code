@@ -503,6 +503,8 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         const answers: Record<string, string> = {
           "/api/info": OPENCODE_2_RESPONSES["/api/info"].body,
           "/api/debug/location": "[]",
+          "/api/model": '{"location":{"directory":"/work"},"data":[]}',
+          "/api/provider": '{"location":{"directory":"/work"},"data":[]}',
           "/api/command": OPENCODE_2_WORKSPACE_RESPONSES["/api/command"].body,
           "/api/skill": OPENCODE_2_WORKSPACE_RESPONSES["/api/skill"].body,
         };
