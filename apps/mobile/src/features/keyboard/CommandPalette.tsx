@@ -8,7 +8,8 @@ import {
   type EnvironmentThreadSearchMatch,
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
-import { isListedThreadLineage, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import { isOpenListedThread } from "@t3tools/client-runtime/state/shell";
+import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import {
   foldSearchQuery,
   PALETTE_MESSAGE_LIMIT,
@@ -440,34 +441,32 @@ export function CommandPalette(props: {
           },
         }),
     }));
-    const threadItems: CommandPaletteItem[] = threads
-      .filter((thread) => thread.archivedAt === null && isListedThreadLineage(thread.lineage))
-      .map((thread) => {
-        const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
-        const environment =
-          savedConnectionsById[thread.environmentId]?.environmentLabel ?? thread.environmentId;
-        return {
-          key: scopedThreadKey(thread.environmentId, thread.id),
-          kind: "thread",
-          title: thread.title || "Untitled thread",
-          detail: [project?.title, environment].filter(Boolean).join(" · "),
-          searchTerms: [],
-          threadSearch: threadSearchSubject(
-            thread,
-            project?.title,
-            environments.length > 1 ? environment : null,
-          ),
-          // Last among threads: picking the thread already open does nothing.
-          ...(thread.environmentId === activeThread?.environmentId && thread.id === activeThread.id
-            ? { secondary: true }
-            : {}),
-          run: () =>
-            selectDetail({
-              name: "Thread",
-              params: { environmentId: String(thread.environmentId), threadId: String(thread.id) },
-            }),
-        };
-      });
+    const threadItems: CommandPaletteItem[] = threads.filter(isOpenListedThread).map((thread) => {
+      const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
+      const environment =
+        savedConnectionsById[thread.environmentId]?.environmentLabel ?? thread.environmentId;
+      return {
+        key: scopedThreadKey(thread.environmentId, thread.id),
+        kind: "thread",
+        title: thread.title || "Untitled thread",
+        detail: [project?.title, environment].filter(Boolean).join(" · "),
+        searchTerms: [],
+        threadSearch: threadSearchSubject(
+          thread,
+          project?.title,
+          environments.length > 1 ? environment : null,
+        ),
+        // Last among threads: picking the thread already open does nothing.
+        ...(thread.environmentId === activeThread?.environmentId && thread.id === activeThread.id
+          ? { secondary: true }
+          : {}),
+        run: () =>
+          selectDetail({
+            name: "Thread",
+            params: { environmentId: String(thread.environmentId), threadId: String(thread.id) },
+          }),
+      };
+    });
     // Recent means used recently: written in or opened, whichever is later.
     threadItems.sort(
       (left, right) =>

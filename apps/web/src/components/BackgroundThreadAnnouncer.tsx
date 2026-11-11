@@ -1,6 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { isOpenListedThread } from "@t3tools/client-runtime/state/shell";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import { isListedThreadLineage } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -44,7 +44,7 @@ export function startBackgroundThreadAnnouncements(
     const snapshots: BackgroundThreadSnapshot[] = [];
     for (const thread of threads) {
       // Subagents and side chats have no row of their own; their requests surface on the parent.
-      if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) continue;
+      if (!isOpenListedThread(thread)) continue;
       if (!liveEnvironmentIds.has(thread.environmentId)) continue;
       snapshots.push({
         key: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),

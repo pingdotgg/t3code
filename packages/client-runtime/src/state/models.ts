@@ -16,7 +16,7 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { isSubagentThread } from "@t3tools/contracts";
+import { isListedThread, isSubagentThread } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
@@ -205,6 +205,19 @@ export interface EnvironmentThreadShell {
   readonly titleRegeneration?: { readonly requestId: string; readonly startedAt: string } | null;
   readonly deletedAt: string | null;
   readonly source: OrchestrationV2ThreadShell;
+}
+
+/**
+ * An open thread with a row of its own. Subagents and side chats live in their parent's view;
+ * a delegated child chat keeps its provider's subagent lineage but is listed.
+ */
+export function isOpenListedThread(
+  thread: Pick<
+    EnvironmentThreadShell,
+    "archivedAt" | "lineage" | "parentThreadId" | "parentRelationship"
+  >,
+): boolean {
+  return thread.archivedAt === null && isListedThread(thread);
 }
 
 function iso(value: DateTime.Utc): string {
