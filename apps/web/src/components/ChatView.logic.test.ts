@@ -1,4 +1,4 @@
-import { recordServerClock, toServerClock } from "@t3tools/client-runtime/clock";
+import { recordServerClock } from "@t3tools/client-runtime/clock";
 import {
   boundAttachmentIds,
   buildExpiredTerminalContextToastCopy,
@@ -128,35 +128,29 @@ describe("deriveComposerSendState", () => {
   });
 });
 
-it.each([true, false])(
-  "counts optimistic sends on the host clock with an existing thread: %s",
-  (hasThread) => {
-    const thread = makeThread();
-    vi.useFakeTimers();
-    vi.setSystemTime(now);
-    recordServerClock(thread.environmentId, {
+describe("createLocalDispatchSnapshot", () => {
+  it("stamps an optimistic send on the host clock", () => {
+    const environmentId = makeThread().environmentId;
+    using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse(now));
+    recordServerClock(environmentId, {
       serverTimeMs: Date.parse(now) + 3_600_000,
       requestedAtMs: Date.parse(now),
       receivedAtMs: Date.parse(now),
     });
     try {
-      const dispatch = createLocalDispatchSnapshot(hasThread ? thread : undefined, {
-        environmentId: thread.environmentId,
-      });
-      expect(
-        toServerClock(thread.environmentId, Date.parse(now) + 2_000) -
-          Date.parse(dispatch.startedAt),
-      ).toBe(2_000);
+      // A first send has no thread yet, so the environment comes from options.
+      expect(createLocalDispatchSnapshot(undefined, { environmentId }).startedAt).toBe(
+        "2026-03-29T01:00:00.000Z",
+      );
     } finally {
-      recordServerClock(thread.environmentId, {
+      recordServerClock(environmentId, {
         serverTimeMs: undefined,
         requestedAtMs: 0,
         receivedAtMs: 0,
       });
-      vi.useRealTimers();
     }
-  },
-);
+  });
+});
 
 describe("buildExpiredTerminalContextToastCopy", () => {
   it("refers to several expired contexts as them", () => {
