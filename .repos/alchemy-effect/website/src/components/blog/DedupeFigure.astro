@@ -1,0 +1,481 @@
+---
+/**
+ * `<DedupeFigure />` — schema dedupe by partition refinement, shown on the
+ * generated code itself. Each line is one schema. Lines in the same colored
+ * block are "maybe the same". A reference is colored by the block of the
+ * schema it points at, so a line whose reference color differs from its
+ * block-mates visibly doesn't belong, and moves to a new block. That move
+ * recolors every reference to it, which can split the lines that point at it
+ * on the next pass. When nothing moves, each block folds into one line.
+ *
+ * The passes are computed below from the shapes, so the animation is the
+ * algorithm's real result for this made-up example.
+ */
+---
+
+<figure class="dd not-content" id="dd" aria-label="Partition refinement folding fifteen generated schemas into seven">
+  <div class="dd-top">
+    <span class="dd-step" id="dd-step"></span>
+    <span class="dd-count"><b id="dd-n">15</b> schemas</span>
+    <button type="button" id="dd-pause" aria-pressed="false">❚❚ Pause</button>
+  </div>
+  <div class="dd-stage" id="dd-stage"></div>
+  <div class="dd-real">
+    <span><b>Stripe</b> 12,529 → <b class="dd-to">2,720</b></span>
+    <span><b>Cloudflare Workers</b> 2,643 → <b class="dd-to">491</b></span>
+    <span><b>EC2</b> 3,851 → <b class="dd-to">2,553</b></span>
+  </div>
+  <figcaption class="dd-cap">Made-up schemas above · real services below</figcaption>
+</figure>
+
+<style is:global>
+  .dd {
+    margin: 2rem 0;
+    padding: 12px 14px 10px;
+    font: 14px/1.5 var(--alc-font-sans);
+    color: var(--alc-fg-1);
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 12px;
+  }
+  .dd * {
+    box-sizing: border-box;
+  }
+  .dd-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 30px;
+    margin-bottom: 10px;
+  }
+  .dd-step {
+    flex: 1;
+    font-weight: 700;
+    font-size: 15px;
+  }
+  .dd-step.in {
+    animation: ddin 0.6s ease both;
+  }
+  .dd-count {
+    font: 600 13px var(--alc-font-mono);
+    color: var(--alc-fg-3);
+    white-space: nowrap;
+  }
+  .dd-count b {
+    display: inline-block;
+    min-width: 1.4em;
+    font-size: 20px;
+    text-align: right;
+    color: var(--alc-fg-1);
+    transition: color 0.4s;
+  }
+  .dd-count.done b {
+    color: var(--alc-accent-text);
+  }
+  .dd button {
+    all: unset;
+    flex: none;
+    cursor: pointer;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--alc-fg-1);
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline-3);
+    border-radius: 7px;
+  }
+  .dd button:focus-visible {
+    outline: 2px solid var(--alc-accent);
+  }
+  .dd-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow-x: auto;
+    font: 12.5px/22px var(--alc-font-mono);
+    font-variant-ligatures: none;
+  }
+  .dd-blk {
+    padding: 3px 0;
+    background: color-mix(in srgb, var(--c) 9%, transparent);
+    border-left: 4px solid var(--c);
+    border-radius: 4px;
+    transition:
+      background 0.5s,
+      border-color 0.5s;
+  }
+  .dd-blk.stable {
+    animation: ddstable 1.6s ease;
+  }
+  @keyframes ddstable {
+    50% {
+      background: color-mix(in srgb, var(--c) 16%, transparent);
+    }
+  }
+  .dd-ln {
+    height: 22px;
+    padding: 0 10px;
+    overflow: hidden;
+    white-space: pre;
+    color: var(--alc-fg-3);
+    transition:
+      height 0.9s ease,
+      opacity 0.7s,
+      background 0.6s;
+  }
+  .dd-ln.bad {
+    background: color-mix(in srgb, var(--alc-fg-1) 10%, transparent);
+  }
+  .dd-ln.two {
+    height: 44px;
+  }
+  .dd-ln.fold {
+    height: 0;
+    opacity: 0;
+  }
+  .dd-nm {
+    font-weight: 700;
+    color: var(--c);
+    transition: color 0.5s;
+  }
+  .dd-ref {
+    padding: 0 3px;
+    font-weight: 700;
+    color: var(--r);
+    border-radius: 3px;
+    transition:
+      color 0.9s,
+      box-shadow 0.6s;
+  }
+  .dd-ln.bad .dd-ref {
+    box-shadow: 0 0 0 2px var(--alc-fg-1);
+  }
+  .dd-ref.ping {
+    animation: ddping 1.6s ease 1;
+  }
+  @keyframes ddping {
+    50% {
+      background: color-mix(in srgb, var(--r) 22%, transparent);
+    }
+  }
+  .dd-also {
+    color: var(--alc-accent-text);
+    animation: ddin 0.4s ease both;
+  }
+  .dd-real {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    margin-top: 12px;
+    padding-top: 10px;
+    font: 12.5px var(--alc-font-mono);
+    color: var(--alc-fg-4);
+    border-top: 1px solid var(--alc-hairline-2);
+  }
+  .dd-real b {
+    font-family: var(--alc-font-sans);
+    color: var(--alc-fg-2);
+  }
+  .dd-real .dd-to {
+    font-family: var(--alc-font-mono);
+    color: var(--alc-accent-text);
+  }
+  .dd-cap {
+    margin-top: 6px;
+    font-size: 11.5px;
+    color: var(--alc-fg-4);
+  }
+  @keyframes ddin {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+  }
+  @media (max-width: 620px) {
+    .dd-stage {
+      font-size: 11px;
+    }
+    .dd-step {
+      font-size: 14px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dd * {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+</style>
+
+<script>
+  type Kind = "string" | "integer" | "object";
+  interface Shape {
+    id: string;
+    kind: Kind;
+    field?: [name: string, target: string];
+  }
+
+  // In spec order: lookalikes are scattered, as they are in a real spec.
+  const SHAPES: Shape[] = [
+    { id: "Region", kind: "object", field: ["id", "Code"] },
+    { id: "Code", kind: "string" },
+    { id: "RegionList", kind: "object", field: ["item", "Region"] },
+    { id: "Node", kind: "object", field: ["child", "Node"] },
+    { id: "Zone", kind: "object", field: ["id", "Name"] },
+    { id: "Count", kind: "integer" },
+    { id: "QuotaList", kind: "object", field: ["item", "Quota"] },
+    { id: "Name", kind: "string" },
+    { id: "Quota", kind: "object", field: ["id", "Count"] },
+    { id: "ZoneList", kind: "object", field: ["item", "Zone"] },
+    { id: "TreeNode", kind: "object", field: ["child", "TreeNode"] },
+    { id: "Label", kind: "string" },
+    { id: "Area", kind: "object", field: ["id", "Label"] },
+    { id: "AreaList", kind: "object", field: ["item", "Area"] },
+    { id: "Key", kind: "string" },
+  ];
+  const BY = new Map(SHAPES.map((s) => [s.id, s]));
+
+  const PAL = [
+    "var(--alc-info)",
+    "var(--alc-terracotta)",
+    "var(--alc-accent)",
+    "var(--alc-warn)",
+    "var(--alc-fg-3)",
+    // split-offs: clearly different from the kind colors above
+    "color-mix(in srgb, var(--alc-info) 40%, var(--alc-danger))",
+    "color-mix(in srgb, var(--alc-accent) 45%, var(--alc-info))",
+    "var(--alc-danger)",
+  ];
+  const NEUTRAL = "var(--alc-hairline-3)";
+
+  interface Group {
+    color: number;
+    ids: string[];
+  }
+  type Partition = Group[];
+
+  // ---- the algorithm ----
+  /** First guess: same kind and same field names. Blocks in order of first appearance. */
+  function byKind(): Partition {
+    const key = (s: Shape) => `${s.kind}:${s.field?.[0] ?? ""}`;
+    const order = ["string:", "integer:", "object:id", "object:item", "object:child"];
+    const map = new Map<string, string[]>();
+    for (const s of SHAPES) (map.get(key(s)) ?? map.set(key(s), []).get(key(s))!).push(s.id);
+    return order.filter((k) => map.has(k)).map((k, i) => ({ color: i, ids: map.get(k)! }));
+  }
+  function groupOf(p: Partition) {
+    const g = new Map<string, number>();
+    p.forEach((grp, i) => grp.ids.forEach((id) => g.set(id, i)));
+    return g;
+  }
+  /** One pass: split each block by which blocks its members point at. */
+  function refine(p: Partition, next: { n: number }) {
+    const g = groupOf(p);
+    const out: Partition = [];
+    const moved: string[] = [];
+    for (const grp of p) {
+      const subs = new Map<string, string[]>();
+      for (const id of grp.ids) {
+        const t = BY.get(id)!.field?.[1];
+        const sig = t === undefined ? "" : String(g.get(t));
+        (subs.get(sig) ?? subs.set(sig, []).get(sig)!).push(id);
+      }
+      [...subs.values()].forEach((ids, i) => {
+        if (i === 0) out.push({ color: grp.color, ids });
+        else (out.push({ color: next.n++, ids }), moved.push(...ids));
+      });
+    }
+    return { p: out, moved };
+  }
+  const P0: Partition = [{ color: -1, ids: SHAPES.map((s) => s.id) }];
+  const P1 = byKind();
+  const PASSES: { p: Partition; moved: string[] }[] = [];
+  {
+    const next = { n: P1.length };
+    let cur = P1;
+    for (;;) {
+      const r = refine(cur, next);
+      PASSES.push(r);
+      if (!r.moved.length) break;
+      cur = r.p;
+    }
+  }
+  const FINAL = PASSES[PASSES.length - 1]!.p;
+
+  const root = document.getElementById("dd");
+  if (root) {
+    const $ = (id: string) => document.getElementById(`dd-${id}`)!;
+    const stage = $("stage");
+    const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let paused = false;
+    const wait = async (ms: number) => {
+      await new Promise((r) => setTimeout(r, reduced() ? 0 : ms));
+      while (paused) await new Promise((r) => setTimeout(r, 120));
+    };
+    const colorOf = (i: number) => (i < 0 ? NEUTRAL : PAL[i % PAL.length]!);
+
+    // One line per schema, created once and moved between blocks.
+    const line = new Map<string, HTMLElement>();
+    for (const s of SHAPES) {
+      const el = document.createElement("div");
+      el.className = "dd-ln";
+      el.dataset.id = s.id;
+      const body =
+        s.kind === "string"
+          ? "S.String"
+          : s.kind === "integer"
+            ? "S.Number"
+            : `S.Struct({ ${s.field![0]}: <span class="dd-ref" data-t="${s.field![1]}">${s.field![1]}</span> })`;
+      el.innerHTML = `const <span class="dd-nm">${s.id}</span> = ${body}<span class="dd-tail"></span>`;
+      line.set(s.id, el);
+    }
+    const block = new Map<number, HTMLElement>();
+    const blockEl = (color: number) => {
+      if (!block.has(color)) {
+        const el = document.createElement("div");
+        el.className = "dd-blk";
+        el.style.setProperty("--c", colorOf(color));
+        block.set(color, el);
+      }
+      return block.get(color)!;
+    };
+
+    /** Lay out partition `p`, sliding every line and block from where it was. */
+    function render(p: Partition, animate = true) {
+      const before = new Map<Element, DOMRect>();
+      for (const el of [...line.values(), ...block.values()]) if (el.isConnected) before.set(el, el.getBoundingClientRect());
+      const g = groupOf(p);
+      const used = new Set<number>();
+      const blocks = p.map((grp) => {
+        const b = blockEl(grp.color);
+        used.add(grp.color);
+        // Only move lines that aren't already in place: re-inserting restarts animations.
+        grp.ids.forEach((id, i) => {
+          const el = line.get(id)!;
+          if (b.children[i] !== el) b.insertBefore(el, b.children[i] ?? null);
+        });
+        return b;
+      });
+      for (const [c, b] of block) if (!used.has(c)) (b.remove(), block.delete(c));
+      blocks.forEach((b, i) => {
+        if (stage.children[i] !== b) stage.insertBefore(b, stage.children[i] ?? null);
+      });
+      while (stage.children.length > blocks.length) stage.lastElementChild!.remove();
+      for (const [id, el] of line) {
+        el.style.setProperty("--c", colorOf(p[g.get(id)!]!.color));
+        el.querySelectorAll<HTMLElement>(".dd-ref").forEach((r) => {
+          const next = colorOf(p[g.get(r.dataset.t!)!]!.color);
+          if (animate && r.style.getPropertyValue("--r") && r.style.getPropertyValue("--r") !== next) {
+            r.classList.remove("ping");
+            void r.offsetWidth;
+            r.classList.add("ping");
+          }
+          r.style.setProperty("--r", next);
+        });
+      }
+      if (!animate || reduced()) return;
+      for (const [el, a] of before) {
+        if (!el.isConnected) continue;
+        const b = el.getBoundingClientRect();
+        const dx = a.left - b.left;
+        const dy = a.top - b.top;
+        if (Math.abs(dx) + Math.abs(dy) > 1)
+          el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], {
+            duration: 1100,
+            easing: "cubic-bezier(.4,0,.2,1)",
+          });
+      }
+    }
+
+    function step(text: string) {
+      const el = $("step");
+      el.textContent = text;
+      el.classList.remove("in");
+      void el.offsetWidth;
+      el.classList.add("in");
+    }
+    function setCount(n: number, done = false) {
+      $("n").textContent = String(n);
+      root!.querySelector(".dd-count")!.classList.toggle("done", done);
+    }
+    function reset() {
+      for (const el of line.values()) {
+        el.classList.remove("bad", "fold", "two");
+        el.querySelector(".dd-tail")!.innerHTML = "";
+        el.querySelectorAll(".dd-ref").forEach((r) => {
+          r.classList.remove("ping");
+          (r as HTMLElement).style.removeProperty("--r");
+        });
+      }
+      for (const b of block.values()) b.remove();
+      block.clear();
+      render(P0, false);
+      step(`${SHAPES.length} schemas, straight from the spec`);
+      setCount(SHAPES.length);
+    }
+
+    // Reserve the tallest layout (all lines in the final blocks) so the page doesn't jump.
+    render(FINAL, false);
+    stage.style.minHeight = `${stage.offsetHeight}px`;
+    reset();
+
+    let run = 0;
+    async function play() {
+      const me = ++run;
+      const go = async (ms: number) => (await wait(ms), me === run);
+      reset();
+      if (!(await go(2200))) return;
+
+      step("Group the ones that look alike");
+      render(P1);
+      if (!(await go(2800))) return;
+
+      for (const [i, pass] of PASSES.entries()) {
+        if (!pass.moved.length) {
+          step("Nothing left to split");
+          block.forEach((b) => (b.classList.remove("stable"), void b.offsetWidth, b.classList.add("stable")));
+          if (!(await go(2000))) return;
+          break;
+        }
+        step(i === 0 ? "A reference doesn't match, so it splits off" : "That split ripples up a level");
+        pass.moved.forEach((id) => line.get(id)!.classList.add("bad"));
+        if (!(await go(2000))) return;
+        pass.moved.forEach((id) => line.get(id)!.classList.remove("bad"));
+        render(pass.p);
+        if (!(await go(2800))) return;
+      }
+
+      // Fold each block into its first line.
+      step(`Fold each block into one schema`);
+      for (const grp of FINAL) {
+        const [head, ...rest] = grp.ids;
+        rest.forEach((id) => line.get(id)!.classList.add("fold"));
+        if (rest.length) {
+          const h = line.get(head!)!;
+          h.classList.add("two");
+          h.querySelector(".dd-tail")!.innerHTML = `\n<span class="dd-also">  // also ${rest.join(", ")}</span>`;
+        }
+      }
+      setCount(FINAL.length, true);
+      if (!(await go(7000))) return;
+      void play();
+    }
+
+    $("pause").onclick = () => {
+      paused = !paused;
+      const b = $("pause");
+      b.textContent = paused ? "▶ Play" : "❚❚ Pause";
+      b.setAttribute("aria-pressed", String(paused));
+    };
+    const io = new IntersectionObserver(
+      (es) => {
+        if (es.some((e) => e.isIntersecting)) {
+          io.disconnect();
+          void play();
+        }
+      },
+      { threshold: 0.4 },
+    );
+    io.observe(root);
+  }
+</script>

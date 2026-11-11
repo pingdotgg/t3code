@@ -77,16 +77,19 @@ jobs:
               return;
             }
 
-            // workflow_run.pull_requests is empty for fork PRs, so resolve the
-            // PR from the built commit instead and require exactly one open PR
-            // from the same head repository and branch. The build baked its
+            // workflow_run.pull_requests and the commit-to-PR lookup are both
+            // empty for fork PRs, so list open PRs by head owner and branch
+            // and require exactly one at the built commit. The build baked its
             // PR number into the version, so two candidates would mean the
             // asset name could belong to either.
-            const associated = await github.paginate(
-              github.rest.repos.listPullRequestsAssociatedWithCommit,
-              { owner, repo, commit_sha: run.head_sha, per_page: 100 },
-            );
-            const matching = associated.filter(
+            const open = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: "open",
+              head: `${run.head_repository?.owner?.login}:${run.head_branch}`,
+              per_page: 100,
+            });
+            const matching = open.filter(
               (candidate) =>
                 candidate.state === "open" &&
                 candidate.head.sha === run.head_sha &&
