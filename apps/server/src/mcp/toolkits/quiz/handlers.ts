@@ -6,7 +6,6 @@ import {
   cardAnswerVerdictLength,
   cardReplyProblem,
   foldCardReply,
-  parseCardAnswer,
   quizCardProblem,
   readQuestionCard,
   readQuizCard,
@@ -39,7 +38,7 @@ export const shownTutorText = (
   );
   const lastUser = ordered.findLastIndex((message) => message.role === "user");
   const lastUserWasCardAnswer =
-    lastUser !== -1 && parseCardAnswer(withoutCardAnswerTag(ordered[lastUser]!.text)) !== undefined;
+    lastUser !== -1 && withoutCardAnswerTag(ordered[lastUser]!.text) !== ordered[lastUser]!.text;
   let verdictPending = lastUserWasCardAnswer;
   return ordered
     .slice(lastUser + 1)
@@ -47,7 +46,7 @@ export const shownTutorText = (
       (message) => message.role === "assistant" && !/(?::|%3A)thinking(?::|%3A)/iu.test(message.id),
     )
     .reduce((total, message) => {
-      if (!verdictPending) return total + message.text.length;
+      if (!verdictPending || /:reply$/u.test(message.id)) return total + message.text.length;
       verdictPending = false;
       return total + message.text.length - cardAnswerVerdictLength(message.text);
     }, 0);

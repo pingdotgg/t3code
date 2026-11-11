@@ -55,7 +55,6 @@ import {
   cardAnswerVerdictLength,
   cardReplyProblem,
   foldCardReply,
-  parseCardAnswer,
   replyCoverage,
   quizCardProblem,
   readQuestionCard,
@@ -932,12 +931,11 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     priorResults: new Map(),
     said: [],
     shownSinceLastUser: 0,
-    verdictPending:
-      parseCardAnswer(
-        withoutCardAnswerTag(
-          testCase.prompt || [...prior].findLast((turn) => turn.role === "user")?.text || "",
-        ),
-      ) !== undefined,
+    verdictPending: (() => {
+      const answer =
+        testCase.prompt || [...prior].findLast((turn) => turn.role === "user")?.text || "";
+      return withoutCardAnswerTag(answer) !== answer;
+    })(),
     heldLessonText: [],
     lessonCardSeen: false,
     lessonCardReplies: [],

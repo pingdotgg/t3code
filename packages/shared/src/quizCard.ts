@@ -385,8 +385,9 @@ export function parseCardAnswer(text: string): ParsedCardAnswer | undefined {
 }
 
 export function cardAnswerVerdictLength(text: string) {
-  const paragraphEnd = text.indexOf("\n\n");
-  return paragraphEnd === -1 ? text.length : paragraphEnd;
+  const trimmed = text.trimStart();
+  const paragraphEnd = trimmed.indexOf("\n\n");
+  return paragraphEnd === -1 ? text.length : text.length - trimmed.length + paragraphEnd;
 }
 
 // The card's item id rides in the answer text so every client, after reloads, knows which card it answered.
