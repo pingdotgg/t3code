@@ -119,6 +119,9 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
 }) {
   const listRef = useRef<LegendListRef | null>(null);
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
+  const [listReady, setListReady] = useState(false);
+  // An empty result unmounts the list, so the next one needs its first frame reserved again.
+  if (listReady && props.items.length === 0) setListReady(false);
   const updateScrollFade = () => {
     const scrollElement = listRef.current?.getScrollableNode?.();
     if (!(scrollElement instanceof HTMLElement)) return;
@@ -189,9 +192,13 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               onLayout={updateScrollFade}
               onItemSizeChanged={updateScrollFade}
               onScroll={updateScrollFade}
+              onReady={() => setListReady(true)}
               // LegendList sizes its first window from this element before its rows give it height, so
-              // reserve the rows' height (1.75rem each, plus p-2). A basis, so a short window can shrink it.
-              style={{ flexBasis: `min(${props.items.length * 1.75 + 1}rem, 18rem)` }}
+              // reserve the rows' minimum height (1.75rem each, plus p-2) until it has placed them.
+              // Afterwards the list sizes to its rows, and a short window can shrink it.
+              style={
+                listReady ? {} : { minHeight: `min(${props.items.length * 1.75 + 1}rem, 18rem)` }
+              }
               className={cn(
                 "max-h-72 min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain p-2 [&::-webkit-scrollbar-track]:my-4",
                 getVirtualizedScrollFadeClassName(scrollFade),

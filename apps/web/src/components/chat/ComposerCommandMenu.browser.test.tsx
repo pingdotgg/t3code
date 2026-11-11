@@ -1,5 +1,5 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
@@ -55,6 +55,18 @@ it("mounts only the rows near the visible window of a long skill list", async ()
 
   const mountedRows = screen.container.querySelectorAll("[data-composer-item-id]").length;
   expect(mountedRows, "rows mounted for 300 skills").toBeLessThan(50);
+});
+
+it("sizes a short list to its rows without an inner scrollbar", async () => {
+  await using screen = await render(<Menu activeItemId={null} items={skillItems.slice(0, 8)} />);
+  await expect.element(page.getByRole("option", { name: /demo-skill-007/ })).toBeVisible();
+
+  await vi.waitFor(() => {
+    const listbox = screen.container.querySelector("[role=listbox]")!;
+    for (const element of [listbox, ...listbox.querySelectorAll("*")]) {
+      expect(element.scrollHeight - element.clientHeight, "overflow").toBeLessThanOrEqual(1);
+    }
+  });
 });
 
 it("brings a highlighted row far down a long list into the visible window", async () => {
