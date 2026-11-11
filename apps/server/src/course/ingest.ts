@@ -637,6 +637,7 @@ const boundedDownload = (url: string, destination: string, audit?: DownloadAudit
 
 const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
   const auditHops: { url: string; status: number | null; ips: string[] }[] = [];
+  let auditedAttempt = false;
   return Effect.tryPromise({
     try: async (signal) => {
       // Every URL we fetch stays on OCW: the source can come from a YouTube description.
@@ -646,26 +647,38 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
         return url;
       };
       const fetchPage = async (initial: URL) => {
+        auditedAttempt = true;
         let current = onOcw(initial);
         const hops: { url: string; status: number | null; ips: string[] }[] = [];
-        for (let count = 0; count <= 5; count += 1) {
-          const ips = await NodeDnsPromises.lookup(current.hostname, { all: true })
-            .then((rows) => rows.map(({ address }) => address))
-            .catch(() => []);
-          const response = await fetch(current, {
-            redirect: "manual",
-            signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-          });
-          hops.push({ url: current.toString(), status: response.status, ips });
-          auditHops.push(hops.at(-1)!);
-          if (![301, 302, 303, 307, 308].includes(response.status))
+        let finalResponse: Response | undefined;
+        try {
+          for (let count = 0; count <= 5; count += 1) {
+            const ips = await NodeDnsPromises.lookup(current.hostname, { all: true })
+              .then((rows) => rows.map(({ address }) => address))
+              .catch(() => []);
+            const response = await fetch(current, {
+              redirect: "manual",
+              signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+            });
+            hops.push({ url: current.toString(), status: response.status, ips });
+            auditHops.push(hops.at(-1)!);
+            if (![301, 302, 303, 307, 308].includes(response.status)) finalResponse = response;
             return { response, hops, url: current };
-          const location = response.headers.get("location");
-          await response.body?.cancel();
-          if (!location || count === 5) throw new Error("Too many OCW redirects.");
-          current = onOcw(new URL(location, current));
+            const location = response.headers.get("location");
+            await response.body?.cancel();
+            if (!location || count === 5) throw new Error("Too many OCW redirects.");
+            current = onOcw(new URL(location, current));
+          }
+          throw new Error("Too many OCW redirects.");
+        } finally {
+          if (audit)
+            await auditDownload(audit, {
+              url: initial.toString(),
+              hops,
+              status: finalResponse?.status ?? hops.at(-1)?.status ?? null,
+              contentType: finalResponse?.headers.get("content-type") ?? null,
+            });
         }
-        throw new Error("Too many OCW redirects.");
       };
       let parsed = onOcw(new URL(source));
       // Short links such as ocw.mit.edu/18-06S05 redirect to /courses/<slug>/.
@@ -679,27 +692,25 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
       const response = fetched.response;
       if (!response.ok) throw new Error(`OCW download page returned HTTP ${response.status}.`);
       const html = await response.text();
-      if (audit)
-        await auditDownload(audit, {
-          url: page.toString(),
-          hops: fetched.hops,
-          status: response.status,
-          bytes: Buffer.byteLength(html),
-          contentType: response.headers.get("content-type"),
-          body: Buffer.from(html),
-        });
       const match = html.match(/href=["']([^"']+\.zip(?:\?[^"']*)?)["']/i);
       if (!match) throw new Error("The OCW download page did not contain a course zip.");
       return onOcw(new URL(match[1]!, page)).toString();
     },
     catch: (cause) => {
-      if (audit)
-        void auditDownload(audit, {
+      if (audit && !auditedAttempt)
+        return auditDownload(audit, {
           url: source,
           hops: auditHops,
           status: null,
           ...(isOcwBlockedError(cause) ? { blocked: cause.reason } : { error: String(cause) }),
-        });
+        }).then(
+          () =>
+            new CourseIngestError({
+              message: `Could not find the OCW course download: ${
+                isOcwBlockedError(cause) ? cause.reason : String(cause)
+              }`,
+            }),
+        );
       return new CourseIngestError({
         message: `Could not find the OCW course download: ${
           isOcwBlockedError(cause) ? cause.reason : String(cause)
