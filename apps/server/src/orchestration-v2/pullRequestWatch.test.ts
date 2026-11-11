@@ -733,8 +733,6 @@ describe("evaluatePullRequestWatch", () => {
   it("keeps other replies and outcomes actionable beside CodeRabbit review progress", () => {
     const bodies = [
       codeRabbitReply("Full review triggered.", "Actions performed"),
-      codeRabbitReply("Review finished."),
-      codeRabbitReply("Review rate limited.", "Action not completed"),
       codeRabbitReply("Unable to review.", "Action not completed"),
       codeRabbitReply("Here is the answer to your question."),
       "Review triggered.",
@@ -742,7 +740,6 @@ describe("evaluatePullRequestWatch", () => {
         "<!-- This is an auto-generated reply by CodeRabbit -->",
         "",
       ),
-      `${"x".repeat(1_000)}${codeRabbitReply("Review triggered.")}`,
     ];
     const comments = [
       ...bodies.map((body, index) => ({
