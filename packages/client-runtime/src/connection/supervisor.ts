@@ -1284,10 +1284,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const connectedAt = yield* Clock.currentTimeMillis;
     yield* setLease(connectedLease);
     if (connectedLease.activeRoute !== undefined && options?.rememberRoute !== undefined) {
-      // Persist sticky order for the next cold start only. Applying it to the
-      // live entry would make the active route look preferred and stop
-      // better-route upgrades (for example LAN while connected over relay).
-      yield* options.rememberRoute({ activeRoute: connectedLease.activeRoute });
+      const activeRoute = connectedLease.activeRoute;
+      const remember = options.rememberRoute;
+      // Sticky for the next cold start only, and only after initialConfig. Too
+      // early prefers a route that later fails sync; applying it live would also
+      // stop better-route upgrades (LAN while on relay).
+      yield* connectedLease.session.initialConfig.pipe(
+        Effect.andThen(remember({ activeRoute })),
+        Effect.ignoreCause({ log: true }),
+        Effect.forkScoped,
+      );
     }
     if (options?.learnRoutes !== undefined) {
       yield* learnRoutesFrom(options.learnRoutes, connectedLease).pipe(Effect.forkScoped);

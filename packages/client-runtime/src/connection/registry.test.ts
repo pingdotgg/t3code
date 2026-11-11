@@ -470,20 +470,21 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       yield* options?.beforeSessionConnect?.(target.environmentId) ?? Effect.void;
       const closed = yield* Deferred.make<never, ConnectionTransientError>();
       yield* Ref.update(sessions, (current) => [...current, { closed }]);
+      const sessionConfig = (
+        options?.directEndpoints === undefined ? {} : { directEndpoints: options.directEndpoints }
+      ) as ServerConfig;
       const session = yield* Effect.acquireRelease(
         Effect.succeed({
           client: {} as RpcSession.RpcSession["client"],
-          initialConfig:
-            options?.directEndpoints === undefined
-              ? Effect.die(new Error("Config is not used by registry tests."))
-              : Effect.succeed({ directEndpoints: options.directEndpoints } as ServerConfig),
+          // Succeeds so sticky-route remember can wait on it like production.
+          initialConfig: Effect.succeed(sessionConfig),
           subscribeServerConfig: () =>
             options?.directEndpoints === undefined
               ? Stream.never
               : Stream.make({
                   version: 1 as const,
                   type: "snapshot" as const,
-                  config: { directEndpoints: options.directEndpoints } as ServerConfig,
+                  config: sessionConfig,
                 }),
           ready: Effect.void,
           probe: Effect.void,
@@ -759,6 +760,8 @@ describe("EnvironmentRegistry", () => {
           TARGET.environmentId,
           (state) => state.phase === "connected",
         );
+        // rememberRoute forks after initialConfig; let that fiber finish.
+        yield* Effect.yieldNow;
 
         expect(yield* Ref.get(harness.storedLastConnected)).toEqual(
           new Map([[TARGET.environmentId, 0]]),
@@ -2385,6 +2388,8 @@ describe("EnvironmentRegistry routes", () => {
           LAN_TARGET.environmentId,
           (state) => state.phase === "connected",
         );
+        // rememberRoute forks after initialConfig; let that fiber finish.
+        yield* Effect.yieldNow;
 
         expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
           RELAY_TARGET,

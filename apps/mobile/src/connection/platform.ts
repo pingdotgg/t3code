@@ -43,9 +43,12 @@ function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "on
 
 function privateNetworkLikely(state: Network.NetworkState): boolean {
   if (state.isConnected !== true) return false;
+  // VPN/OTHER often mean Wi‑Fi under a tunnel; keep LAN like UNKNOWN does.
   return (
     state.type === Network.NetworkStateType.WIFI ||
     state.type === Network.NetworkStateType.ETHERNET ||
+    state.type === Network.NetworkStateType.VPN ||
+    state.type === Network.NetworkStateType.OTHER ||
     state.type === Network.NetworkStateType.UNKNOWN
   );
 }

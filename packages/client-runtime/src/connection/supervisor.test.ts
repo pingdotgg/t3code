@@ -353,6 +353,48 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("remembers a sticky route only after initial config succeeds", () =>
+    Effect.gen(function* () {
+      const releaseConfig = yield* Deferred.make<ServerConfig>();
+      const remembered = yield* Deferred.make<string>();
+      const harness = yield* makeHarness({
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        initialConfig: () => Deferred.await(releaseConfig),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_ENTRY, {
+        initiallyDesired: true,
+        rememberRoute: ({ activeRoute }) =>
+          Deferred.succeed(remembered, connectionRouteId(activeRoute.target)).pipe(
+            Effect.as(Option.none()),
+          ),
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(Option.isNone(yield* Deferred.poll(remembered))).toBe(true);
+
+      yield* Deferred.succeed(releaseConfig, PROBE_CAPABLE_CONFIG);
+      expect(yield* Deferred.await(remembered)).toBe(connectionRouteId(LAN_TARGET));
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not remember a sticky route when initial config fails", () =>
+    Effect.gen(function* () {
+      const remembered = yield* Ref.make(false);
+      const harness = yield* makeHarness({
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        initialConfig: () => Effect.fail(transient("Wrong environment.")),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_ENTRY, {
+        initiallyDesired: true,
+        rememberRoute: () => Ref.set(remembered, true).pipe(Effect.as(Option.none())),
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* TestClock.adjust("1 second");
+      expect(yield* Ref.get(remembered)).toBe(false);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("waits while offline and connects immediately when the network returns", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ networkStatus: "offline" });
