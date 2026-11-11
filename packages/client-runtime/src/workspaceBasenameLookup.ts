@@ -49,7 +49,7 @@ export function pickWorkspaceBasenameMatch(
 }
 
 // Repository-relative paths can repeat the project's suffix in subfolder projects.
-export function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string): string | null {
+function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string): string | null {
   if (isAbsolutePath(relativePath)) return null;
   const pathSegments = relativePath.split(/[\\/]+/);
   const cwdSegments = cwd.split(/[\\/]+/).filter(Boolean);
@@ -65,7 +65,42 @@ export function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string):
   return null;
 }
 
-export function pickStrippedWorkspaceMatch(
+/**
+ * The project search query that may find a chat file link's real file, or null when the link
+ * names its file exactly. Agents often cite paths relative to a package (`cloud/http.ts`).
+ */
+export function workspaceLinkLookupQuery(relativePath: string, cwd: string): string | null {
+  const trimmed = relativePath.trim();
+  if (isAbsolutePath(trimmed) || /^(?:\.{1,2}|~)[\\/]/.test(trimmed) || /[\\/]$/.test(trimmed)) {
+    return null;
+  }
+  if (needsWorkspaceBasenameLookup(trimmed)) return trimmed;
+  return stripRepeatedWorkspacePrefix(trimmed, cwd) ?? trimmed;
+}
+
+/** The one file a chat link names: its basename, its path past a repeated prefix, or its suffix. */
+export function pickWorkspaceLinkMatch(
+  relativePath: string,
+  cwd: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): string | null {
+  const trimmed = relativePath.trim();
+  if (needsWorkspaceBasenameLookup(trimmed)) return pickWorkspaceBasenameMatch(trimmed, entries);
+  const stripped = stripRepeatedWorkspacePrefix(trimmed, cwd);
+  const strippedMatch =
+    stripped === null ? null : pickStrippedWorkspaceMatch(stripped, cwd, entries);
+  if (strippedMatch !== null) return strippedMatch;
+  const suffix = trimmed.replaceAll("\\", "/");
+  const matches = entries.filter(
+    (entry) =>
+      entry.kind === "file" &&
+      (entry.path.replaceAll("\\", "/") === suffix ||
+        entry.path.replaceAll("\\", "/").endsWith(`/${suffix}`)),
+  );
+  return matches.length === 1 ? (matches[0]?.path ?? null) : null;
+}
+
+function pickStrippedWorkspaceMatch(
   strippedPath: string,
   cwd: string,
   entries: ReadonlyArray<WorkspaceEntryCandidate>,
