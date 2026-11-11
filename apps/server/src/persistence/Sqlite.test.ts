@@ -2,15 +2,109 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
+import type * as NodeWorkerThreads from "node:worker_threads";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import { vi } from "vite-plus/test";
 
+import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerOwnership from "../serverOwnership.ts";
+import { migrationManifest, runMigrations } from "./Migrations.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
+
+const workers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
+
+vi.mock("node:worker_threads", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeWorkerThreads>();
+  class RecordedWorker extends actual.Worker {
+    constructor(...args: ConstructorParameters<typeof actual.Worker>) {
+      super(...args);
+      workers.push(this);
+    }
+  }
+  return { ...actual, Worker: RecordedWorker };
+});
+
+it.effect("keeps writes moving past a 48 MiB WAL while a reader retains its snapshot", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-burst-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  const persistence = SqlitePersistence.layerFromPath(dbPath).pipe(
+    Layer.provide(NodeServices.layer),
+  );
+
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const checkpointWorker = workers.at(-1)!;
+    yield* sql`CREATE TABLE burst_probe(id INTEGER PRIMARY KEY, payload BLOB)`;
+    yield* sql`INSERT INTO burst_probe VALUES (1, NULL)`;
+    yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+    const reader = yield* Effect.acquireRelease(
+      Effect.sync(() => new NodeSqlite.DatabaseSync(dbPath, { readOnly: true })),
+      (database) => Effect.sync(() => database.close()),
+    );
+    reader.exec("BEGIN");
+    assert.equal(reader.prepare("SELECT COUNT(*) AS count FROM burst_probe").get()?.count, 1);
+
+    yield* sql.withTransaction(
+      sql`INSERT INTO burst_probe VALUES (2, zeroblob(${48 * 1024 * 1024}))`,
+    );
+    const state = yield* Effect.callback<{
+      readonly log: number;
+      readonly checkpointed: number;
+      readonly blocked: boolean;
+    }>((resume) => {
+      const onMessage = (message: {
+        readonly type?: string;
+        readonly log?: number;
+        readonly checkpointed?: number;
+        readonly blocked?: boolean;
+      }) => {
+        if (
+          message.type === "checkpoint" &&
+          typeof message.log === "number" &&
+          message.log > 10_000 &&
+          typeof message.checkpointed === "number" &&
+          typeof message.blocked === "boolean"
+        ) {
+          checkpointWorker.off("message", onMessage);
+          resume(
+            Effect.succeed({
+              log: message.log,
+              checkpointed: message.checkpointed,
+              blocked: message.blocked,
+            }),
+          );
+        }
+      };
+      checkpointWorker.on("message", onMessage);
+      checkpointWorker.ref();
+      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+      checkpointWorker.postMessage("barrier");
+      return Effect.sync(() => checkpointWorker.off("message", onMessage));
+    });
+    assert.isBelow(state.checkpointed, state.log);
+    assert.isFalse(state.blocked);
+
+    yield* sql.withTransaction(sql`INSERT INTO burst_probe VALUES (3, NULL)`);
+    assert.equal(reader.prepare("SELECT COUNT(*) AS count FROM burst_probe").get()?.count, 1);
+    reader.exec("COMMIT");
+    assert.equal(reader.prepare("SELECT COUNT(*) AS count FROM burst_probe").get()?.count, 3);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(persistence),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
 
 // Linux names an open, already-deleted file "<path> (deleted)" in /proc/self/fd.
 // SQLite names its temp files "etilqs_*" and, without TMPDIR, puts them in
@@ -94,5 +188,67 @@ it.effect("drops planner statistics a database already has", () => {
     }).pipe(Effect.provide(persistence()));
   }).pipe(
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
+const ownT3Home = Effect.fn(function* () {
+  const { serverRuntimeStatePath } = yield* ServerConfig.ServerConfig;
+  // An empty home, so no boot service installed on this machine is read.
+  const home = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+  yield* ServerOwnership.acquireServerOwnership(serverRuntimeStatePath).pipe(
+    Effect.provide(ProcessRunner.layer),
+    Effect.provideService(HostProcess.HomeDirectory, home),
+    Effect.provideService(HostProcess.Environment, {}),
+  );
+});
+
+const migrateTo = (toMigrationInclusive?: number) =>
+  Effect.gen(function* () {
+    const { dbPath } = yield* ServerConfig.ServerConfig;
+    yield* runMigrations({ toMigrationInclusive }).pipe(
+      Effect.provide(NodeSqliteClient.layer({ filename: dbPath })),
+    );
+  });
+
+const latestRecordedMigrationId = Effect.gen(function* () {
+  const { dbPath } = yield* ServerConfig.ServerConfig;
+  const rows = yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    return yield* sql<{ readonly id: number }>`
+      SELECT MAX(migration_id) AS id FROM effect_sql_migrations
+    `;
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+  return rows[0]?.id;
+});
+
+const layerT3Home = ServerConfig.layerTest(process.cwd(), { prefix: "t3-sqlite-cli-" });
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("layerCliConfig", (it) => {
+  it.effect("does not migrate a T3 home a running server owns", () =>
+    Effect.gen(function* () {
+      const recorded = Math.max(...migrationManifest.map(([id]) => id)) - 1;
+      yield* migrateTo(recorded);
+      yield* ownT3Home();
+
+      const opened = yield* Effect.void.pipe(
+        Effect.provide(SqlitePersistence.layerCliConfig),
+        Effect.result,
+      );
+
+      assert.equal(yield* latestRecordedMigrationId, recorded);
+      assert.equal(opened._tag, "Failure");
+      if (opened._tag === "Failure") {
+        assert.instanceOf(opened.failure, SqlitePersistence.ServerOwnsDatabaseError);
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerT3Home)),
+  );
+
+  it.effect("opens a current T3 home while a running server owns it", () =>
+    Effect.gen(function* () {
+      yield* migrateTo();
+      yield* ownT3Home();
+
+      yield* Effect.void.pipe(Effect.provide(SqlitePersistence.layerCliConfig));
+    }).pipe(Effect.scoped, Effect.provide(layerT3Home)),
   );
 });

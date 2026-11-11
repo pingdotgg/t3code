@@ -27,16 +27,20 @@ const NativeVersion = Schema.String.check(Schema.isPattern(/^\d+\.\d+\.\d+$/));
 const update = makePackageManagedProviderMaintenanceResolver({
   provider: ProviderDriverKind.make("claudeAgent"),
   npmPackageName: "@anthropic-ai/claude-code",
+  mise: { tool: "claude" },
   nativeUpdate: {
     args: ["update"],
+    // On Unix the native launcher links into ${XDG_DATA_HOME:-~/.local/share}/claude/versions; a
+    // plain file at ~/.local/bin/claude is a wrapper whose owner `claude update` cannot see.
     isCommandPath: (commandPath) => {
       const normalized = normalizeCommandPath(commandPath);
       return (
-        normalized.endsWith("/.local/bin/claude") ||
         normalized.endsWith("/.local/bin/claude.exe") ||
-        normalized.includes("/.local/share/claude/")
+        normalized.includes("/.local/share/claude/") ||
+        normalized.includes("/claude/versions/")
       );
     },
+    requiresCommandPath: true,
   },
 });
 

@@ -11,6 +11,7 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "effect-acp/errors";
 
@@ -49,6 +50,19 @@ const mockAgentCatalog = (env: Record<string, string>) =>
         distribution: "npx" as const,
         spawn: { command: "node", args: [mockAgentPath], env: { ...process.env, ...env } },
       }),
+  });
+
+const watchUntil = (directory: string, done: () => boolean) =>
+  Effect.callback<void>((resume) => {
+    const check = () => {
+      if (!done()) return;
+      // Deleting a still-watched directory raises EPERM on Windows.
+      watcher.close();
+      resume(Effect.void);
+    };
+    const watcher = NodeFS.watch(directory, check);
+    check();
+    return Effect.sync(() => watcher.close());
   });
 
 describe("ACP Registry probe", () => {
@@ -296,7 +310,7 @@ describe("ACP Registry probe", () => {
     },
   );
 
-  it("bounds and de-duplicates advertised commands", () => {
+  it("keeps every distinct advertised command and de-duplicates the rest", () => {
     const commands = normalizeAcpRegistryCommands([
       {
         name: "create_plan",
@@ -308,9 +322,11 @@ describe("ACP Registry probe", () => {
         name: `command_${index}`,
         description: "",
       })),
+      { name: "$late-skill", description: "Advertised after 128 commands" },
     ]);
 
-    expect(commands.slashCommands).toHaveLength(128);
+    expect(commands.slashCommands).toHaveLength(141);
+    expect(commands.slashCommands.at(-1)).toEqual({ name: "command_139" });
     expect(commands.slashCommands[0]).toEqual({
       name: "create_plan",
       description: "Create a plan",
@@ -319,7 +335,7 @@ describe("ACP Registry probe", () => {
     expect(
       commands.slashCommands.filter((command) => command.name.toLowerCase() === "create_plan"),
     ).toHaveLength(1);
-    expect(commands.skills).toEqual([]);
+    expect(commands.skills.map((skill) => skill.name)).toEqual(["late-skill"]);
   });
 
   it("routes dollar-prefixed ACP commands to the provider skill menu", () => {
@@ -381,17 +397,7 @@ describe("ACP Registry probe", () => {
   it.live("lets the agent finish work it started after session/new before closing a probe", () => {
     const markerDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-acp-probe-"));
     const markerPath = NodePath.join(markerDir, "post-session-work");
-    const markerWritten = Effect.callback<void>((resume) => {
-      const resumeOnMarker = () => {
-        if (!NodeFS.existsSync(markerPath)) return;
-        // Deleting a still-watched directory raises EPERM on Windows.
-        watcher.close();
-        resume(Effect.void);
-      };
-      const watcher = NodeFS.watch(markerDir, resumeOnMarker);
-      resumeOnMarker();
-      return Effect.sync(() => watcher.close());
-    });
+    const markerWritten = watchUntil(markerDir, () => NodeFS.existsSync(markerPath));
 
     return Effect.gen(function* () {
       const result = yield* probeAcpRegistryConfiguration({
@@ -414,6 +420,64 @@ describe("ACP Registry probe", () => {
       ),
     );
   });
+
+  it.live.each(["succeeds", "fails"] as const)(
+    "deletes its health-probe session when deletion is advertised and %s",
+    (deleteOutcome) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "acp-probe-delete-" });
+        const requestLogPath = NodePath.join(directory, "requests.ndjson");
+        const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
+          search: () => Effect.die("unused search"),
+          prepare: () => Effect.die("unused prepare"),
+          inspect: () => Effect.die("unused inspect"),
+          uninstallManagedBinary: () => Effect.die("unused uninstall"),
+          resolve: () =>
+            Effect.succeed({
+              agent: {
+                id: "mock-agent",
+                name: "Mock Agent",
+                version: "1.0.0",
+                description: "ACP probe cleanup test agent",
+                distribution: { npx: { package: "mock-agent@1.0.0" } },
+              },
+              distribution: "npx" as const,
+              spawn: {
+                command: "node",
+                args: [mockAgentPath],
+                env: {
+                  ...process.env,
+                  T3_ACP_V2_MANAGEMENT: "1",
+                  T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+                  ...(deleteOutcome === "fails" ? { T3_ACP_FAIL_DELETE_SESSION: "1" } : {}),
+                },
+              },
+            }),
+        });
+
+        const result = yield* probeAcpRegistryConfiguration({
+          instanceId,
+          settings: decodeSettings({ agentId: "mock-agent" }),
+          cwd: process.cwd(),
+          environment: process.env,
+        }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+        expect(result.probe.ready).toBe(true);
+        expect(result.probe.sessionManagement.canDelete).toBe(true);
+
+        // Successful probes close their scope, and so delete the session, after the settle grace.
+        yield* watchUntil(directory, () =>
+          NodeFS.readFileSync(requestLogPath, "utf8").includes('"session/delete"'),
+        );
+        const requests = (yield* fs.readFileString(requestLogPath))
+          .split("\n")
+          .filter((line) => line.length > 0)
+          .map((line) => JSON.parse(line));
+        expect(requests.filter((request) => request.method === "session/delete")).toEqual([
+          expect.objectContaining({ params: { sessionId: "mock-session-1" } }),
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
 
   it("distinguishes authentication failures from generic probe failures", () => {
     const advertised = normalizeAcpRegistryAuthMethods([
