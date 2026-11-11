@@ -231,7 +231,10 @@ export function getProviderUpdateRunOutcome(
   const updateState = provider?.updateState;
   const restartNotice = provider ? getProviderRestartNotice(provider) : null;
   return updateState?.status === "succeeded"
-    ? { status: "updated", message: restartNotice ? `${label}: ${restartNotice}` : null }
+    ? {
+        status: "updated",
+        message: restartNotice ? `${label}: ${restartNotice}\n${run.machineLabel}` : null,
+      }
     : {
         status: "failed",
         line: `${label}: ${updateState?.message ?? "Provider update did not finish."}\n${run.machineLabel}`,

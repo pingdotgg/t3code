@@ -337,7 +337,7 @@ describe("getProviderUpdateRunToastView", () => {
       ]),
     ).toMatchObject({
       type: "success",
-      description: `Linux · OpenCode: ${message}\nLaptop · OpenCode: ${message}`,
+      description: `OpenCode: ${message}\nLinux\nOpenCode: ${message}\nLaptop`,
     });
     expect(
       getProviderUpdateSidebarPillView([updated], {
