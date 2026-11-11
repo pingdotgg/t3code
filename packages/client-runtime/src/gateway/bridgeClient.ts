@@ -93,7 +93,7 @@ async function proof(token: string, value: string): Promise<string> {
 const encodeTaskError = Schema.encodeUnknownOption(Schema.Struct(ThreadTaskError.fields));
 
 /** A task error the port failed with, in wire form, so the gateway can still report its code. */
-function wireTaskError(error: unknown): unknown {
+export function wireTaskError(error: unknown): unknown {
   for (let current = error, depth = 0; depth < 4; depth++) {
     if (typeof current !== "object" || current === null) return undefined;
     if ((current as { _tag?: unknown })._tag === "ThreadTaskError") {

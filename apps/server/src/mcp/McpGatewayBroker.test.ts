@@ -4,6 +4,7 @@ import {
   McpGatewayRelayEvent,
   type McpGatewayRelayGrants,
   ThreadId,
+  ThreadTaskError,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -37,7 +38,7 @@ const serve = (
   answer: (
     method: string,
     args: ReadonlyArray<unknown>,
-  ) => { result?: unknown; error?: string; unreachable?: true },
+  ) => { result?: unknown; error?: string; unreachable?: true; taskError?: unknown },
   subject = CODE_PAIRED_SUBJECT,
 ) =>
   broker.connect(owner, grants, subject).pipe(
@@ -196,6 +197,45 @@ it.effect("fails calls no connected app can run, and reports app errors", () =>
       expect(yield* failureMessage(broker.forward("listProjects", ["remote"], ["remote"]))).toBe(
         "not granted",
       );
+    }),
+  ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect("keeps a task error an app answers typed, and any other answer untyped", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      const typed = { _tag: "ThreadTaskError", code: "task_not_found", detail: "No task." };
+      let taskError: unknown;
+      yield* serve(broker, "desktop", { remote: ["read"] }, () => ({
+        error: "task_not_found: No task.",
+        taskError,
+      }));
+      const read = () =>
+        Effect.flip(
+          Effect.asVoid(
+            broker.forward("threadTask", ["remote", { action: "read", input: {} }], ["remote"]),
+          ),
+        );
+      taskError = typed;
+      const failure = yield* read();
+      expect(failure).toBeInstanceOf(ThreadTaskError);
+      expect(failure).toMatchObject({ code: "task_not_found", detail: "No task." });
+      // An older app sends only the message; a task error that does not decode is ignored.
+      for (const wire of [undefined, { ...typed, code: "bogus" }, { _tag: "ThreadTaskError" }]) {
+        taskError = wire;
+        const untyped = yield* read();
+        expect(untyped._tag).toBe("McpGatewayUnavailableError");
+        expect(untyped.message).toBe("task_not_found: No task.");
+      }
+      // This server's own typed calls still fail as unreachable, never as the app's task error.
+      taskError = typed;
+      const own = yield* Effect.flip(
+        Effect.asVoid(
+          broker.call("threadTask", [remote, { action: "projectSnapshot", input: {} }]),
+        ),
+      );
+      expect(own._tag).toBe("McpGatewayUnavailableError");
     }),
   ).pipe(Effect.provide(layerDependencies())),
 );

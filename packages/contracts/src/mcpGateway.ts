@@ -112,6 +112,8 @@ export const McpGatewayRelayResponse = Schema.Struct({
   error: Schema.optionalKey(Schema.String),
   /** With `error`: the app did not run the call, because it cannot reach or was not granted it. */
   unreachable: Schema.optionalKey(Schema.Literal(true)),
+  /** With `error`: the encoded `ThreadTaskError` it failed with. Ignored when it does not decode. */
+  taskError: Schema.optionalKey(Schema.Unknown),
 });
 export type McpGatewayRelayResponse = typeof McpGatewayRelayResponse.Type;
 

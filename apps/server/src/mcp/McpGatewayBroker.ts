@@ -21,6 +21,7 @@ import {
   type McpGatewayRelayResult,
   type TailnetDeviceAccess,
   THREAD_TASK_WATCH_MAX_MS,
+  ThreadTaskError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -40,6 +41,9 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { DESKTOP_APP_SUBJECT } from "../auth/PairingGrantStore.ts";
 
 const unavailable = (message: string) => new McpGatewayUnavailableError({ message });
+const decodeTaskError = Schema.decodeUnknownOption(ThreadTaskError);
+/** An app's error answer: the task error it ran into, or otherwise only its message. */
+type AppFailure = McpGatewayUnavailableError | ThreadTaskError;
 const linksOff = unavailable(
   "Linked environments is off on this machine, so its agents cannot act on another machine.",
 );
@@ -105,7 +109,7 @@ interface Host {
 }
 interface Pending {
   readonly host: Host;
-  readonly deferred: Deferred.Deferred<unknown, McpGatewayUnavailableError>;
+  readonly deferred: Deferred.Deferred<unknown, AppFailure>;
   /** The app took it off its queue, so it may have run. */
   delivered: boolean;
   /** The app answered, or said it could not run the call there (`unreachable`). */
@@ -116,7 +120,7 @@ interface Pending {
  * environment), it may have run (taken, no answer), or the app answered with an error.
  */
 interface AskFailure {
-  readonly error: McpGatewayUnavailableError;
+  readonly error: AppFailure;
   readonly ran: "no" | "maybe" | "yes";
 }
 
@@ -338,7 +342,7 @@ export const make = Effect.gen(function* () {
     modeCeiling?: McpGatewayRelayEvent["modeCeiling"],
   ): Effect.fn.Return<unknown, AskFailure> {
     const invocationId = yield* random.uuidV4();
-    const deferred = yield* Deferred.make<unknown, McpGatewayUnavailableError>();
+    const deferred = yield* Deferred.make<unknown, AppFailure>();
     const call: Pending = { host, deferred, delivered: false, answer: "none" };
     pending.set(invocationId, call);
     return yield* Effect.gen(function* () {
@@ -412,7 +416,7 @@ export const make = Effect.gen(function* () {
     environmentIds: ReadonlyArray<string>,
     /** The calling chat's modes, applied again by the app where the call runs. */
     modeCeiling?: McpGatewayRelayEvent["modeCeiling"],
-  ): Effect.fn.Return<unknown, McpGatewayUnavailableError> {
+  ): Effect.fn.Return<unknown, AppFailure> {
     if (method === "listEnvironments") {
       const evaluated = yield* evaluate();
       if (evaluated.blocked !== undefined) return yield* evaluated.blocked;
@@ -482,7 +486,7 @@ export const make = Effect.gen(function* () {
           else unreachable.add(routeKey(candidate, id));
         }
       });
-    const attempt = (index: number): Effect.Effect<unknown, McpGatewayUnavailableError> => {
+    const attempt = (index: number): Effect.Effect<unknown, AppFailure> => {
       const candidate = holding[index]!;
       return ask(candidate, method, relayedArgs, deadline, modeCeiling).pipe(
         Effect.tap(() => route(candidate, true)),
@@ -522,7 +526,12 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => unavailable(`The arguments of ${method} do not match its contract.`)),
       Effect.flatMap((encoded) =>
         // The app answering runs a call without modes at the narrowest, so they are always sent.
-        invoke(method, encoded as ReadonlyArray<unknown>, [environmentId], modeCeiling),
+        invoke(method, encoded as ReadonlyArray<unknown>, [environmentId], modeCeiling).pipe(
+          // Peer calls read any app error as unreachable; only agents' tool calls see it typed.
+          Effect.mapError((error) =>
+            error._tag === "ThreadTaskError" ? unavailable(error.message) : error,
+          ),
+        ),
       ),
       Effect.flatMap((answer) =>
         codec
@@ -551,7 +560,11 @@ export const make = Effect.gen(function* () {
     call.answer =
       input.error !== undefined && input.unreachable === true ? "unreachable" : "answered";
     if (input.error !== undefined) {
-      yield* Deferred.fail(call.deferred, unavailable(input.error));
+      const message = input.error;
+      yield* Deferred.fail(
+        call.deferred,
+        Option.getOrElse(decodeTaskError(input.taskError), () => unavailable(message)),
+      );
       return;
     }
     yield* Deferred.succeed(call.deferred, input.result);
