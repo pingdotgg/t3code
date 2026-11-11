@@ -1222,6 +1222,46 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
+  it.effect("branch PR lookup prefers a fork branch's own published ref over origin/main", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* initForkCheckout();
+      yield* runGit(repoDir, ["checkout", "-b", "feature/repro", "origin/main"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/repro"]);
+
+      const { service } = createFakeSourceControlProvider({
+        prListSequence: [
+          [
+            {
+              number: 224,
+              title: "Fork feature",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/224",
+              baseRefName: "main",
+              headRefName: "feature/repro",
+              state: "open",
+              isCrossRepository: true,
+              headRepositoryNameWithOwner: "contributor/codething-mvp",
+              headRepositoryOwnerLogin: "contributor",
+            },
+          ],
+        ],
+      });
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          createsChangeRequestsIn: ({ repository }) =>
+            Effect.succeed(repository === "pingdotgg/codething-mvp"),
+        },
+      });
+
+      const pullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/repro",
+      });
+
+      expect(pullRequest?.number).toBe(224);
+    }),
+  );
+
   it.effect("branch PR lookup uses a saved tracked branch without changing checkout", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

@@ -1859,12 +1859,7 @@ export const make = Effect.gen(function* () {
       headContext.headBranch === details.defaultBranch ||
       (details.defaultBranch === null &&
         (headContext.headBranch === "main" || headContext.headBranch === "master"));
-    if (
-      headContext.headBranch === details.branch ||
-      !upstreamHeadIsDefault ||
-      headContext.isCrossRepository ||
-      isPullRequestWorktreeLocalBranchName(details.branch)
-    ) {
+    if (headContext.headBranch === details.branch || !upstreamHeadIsDefault) {
       return { headContext, lookup: true };
     }
     const remoteName = yield* findRemoteTrackingRemote(
@@ -1873,7 +1868,12 @@ export const make = Effect.gen(function* () {
       headContext.remoteName,
     ).pipe(Effect.orElseSucceed(() => null));
     if (remoteName === null) {
-      return { headContext, lookup: false };
+      // No own-name ref: a fork's default branch can itself be the PR head (a local alias).
+      return {
+        headContext,
+        lookup:
+          headContext.isCrossRepository || isPullRequestWorktreeLocalBranchName(details.branch),
+      };
     }
     const ownNameContext = yield* resolveBranchHeadContext(cwd, {
       branch: details.branch,
