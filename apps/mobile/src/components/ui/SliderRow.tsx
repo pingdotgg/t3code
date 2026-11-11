@@ -5,7 +5,7 @@ import {
   disabled,
   tint,
 } from "@expo/ui/swift-ui/modifiers";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { useRef } from "react";
 import { View } from "react-native";
 

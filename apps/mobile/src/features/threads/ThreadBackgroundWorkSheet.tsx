@@ -6,7 +6,7 @@ import {
   type PendingBackgroundWorkItem,
 } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 

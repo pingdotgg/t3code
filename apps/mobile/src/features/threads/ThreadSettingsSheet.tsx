@@ -36,7 +36,7 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { type NativeStackNavigationProp } from "@react-navigation/native-stack";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { AsyncResult } from "effect/reactivity";
 import {
   createContext,

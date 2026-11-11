@@ -1,6 +1,6 @@
 import { useNavigation } from "@react-navigation/native";
 import { isListedThreadLineage } from "@t3tools/contracts";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { useMemo, useState } from "react";
 import { FlatList, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
