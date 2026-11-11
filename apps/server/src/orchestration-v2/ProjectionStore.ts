@@ -5760,8 +5760,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => rows[0]?.count ?? 0),
         Effect.mapError(controlReadError(threadId)),
       );
-    // Tool output text reaches the export unchanged, so its bytes are a floor for the export. Other
-    // stored bytes are not: decoding drops fields. Rows that createOrchestrationV2TurnItemVisibility
+    // Tool output reaches the export unchanged, so the bytes of its text, also inside a structured
+    // result, are a floor for the export. Other stored bytes are not: decoding drops fields. Rows that createOrchestrationV2TurnItemVisibility
     // can hide and rows a fork inherits are left out. The output sum parses payloads, so it runs
     // only when the stored rows, sized from their row headers, are over `limit`.
     const getTranscriptByteFloor: ProjectionStoreV2Shape["getTranscriptByteFloor"] = (
@@ -5782,10 +5782,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           WHEN (SELECT COALESCE(SUM(octet_length(payload_json)), 0) FROM exported) <= ${limit}
             THEN 0
           ELSE (
-            SELECT COALESCE(SUM(octet_length(json_extract(payload_json, '$.output'))), 0)
+            -- json_valid is false past SQLite's nesting limit, where json_tree would fail.
+            SELECT COALESCE(SUM(CASE WHEN json_valid(payload_json) THEN (
+              SELECT COALESCE(SUM(octet_length(leaf.value)), 0)
+              FROM json_tree(exported.payload_json, '$.output') AS leaf
+              WHERE leaf.type = 'text'
+            ) ELSE 0 END), 0)
             FROM exported
             WHERE type IN ('command_execution', 'dynamic_tool')
-              AND json_type(payload_json, '$.output') = 'text'
           )
         END AS bytes
       `.pipe(

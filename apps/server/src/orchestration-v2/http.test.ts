@@ -253,17 +253,29 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
 
     const sql = Context.get(services, SqlClient.SqlClient);
     const commandItemId = items.find((item) => item.type === "command_execution")!.id;
-    const setCommandField = (path: string, bytes: number) => sql`
-      UPDATE orchestration_v2_projection_turn_items
-      SET payload_json = json_set(payload_json, ${path}, printf('%.*c', ${bytes}, 'x'))
+    const setCommandPayload = (payload: Statement.Fragment) => sql`
+      UPDATE orchestration_v2_projection_turn_items SET payload_json = ${payload}
       WHERE turn_item_id = ${commandItemId}
     `;
-    // Stored bytes the export drops do not count: only what it keeps can reject it.
-    yield* setCommandField("$.output", 1);
-    yield* setCommandField("$.droppedLegacyField", PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1);
+    const fill = (bytes: number) => sql`printf('%.*c', ${bytes}, 'x')`;
+    // Stored bytes the export drops do not count, and neither does a row SQLite cannot parse:
+    // only what the export keeps can reject it.
+    yield* setCommandPayload(sql`json_set(
+      payload_json, '$.output', 'x',
+      '$.droppedLegacyField', ${fill(PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1)}
+    )`);
     expect((yield* read(thread.id)).status).toBe(200);
-    // Tool output over the limit rejects the export. Its only read is the size.
-    yield* setCommandField("$.output", PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1);
+    const deepField = sql`'"droppedDeepField":' || printf('%.*c', 1001, '[') || printf('%.*c', 1001, ']') || ','`;
+    yield* setCommandPayload(
+      sql`replace(payload_json, '"droppedLegacyField":', ${deepField} || '"droppedLegacyField":')`,
+    );
+    expect((yield* read(thread.id)).status).toBe(200);
+    // Tool output over the limit rejects the export, here in the structured shape tools store.
+    // Its only read is the size.
+    yield* setCommandPayload(sql`json_set(
+      replace(payload_json, ${deepField}, ''), '$.output',
+      json_array(json_object('type', 'text', 'text', ${fill(PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1)}))
+    )`);
     const reads: Array<string> = [];
     expect(
       yield* readTranscriptError.pipe(
