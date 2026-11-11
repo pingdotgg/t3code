@@ -3,7 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodePerfHooks from "node:perf_hooks";
 
 import type { ServerEventLoopStall } from "@t3tools/contracts";
-import { RotatingFileSink } from "@t3tools/shared/logging";
+import { RotatingFileSink, RotatingFileSinkError } from "@t3tools/shared/logging";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -150,15 +150,21 @@ const layerWith = (
       const latestNoticeableStall = yield* Ref.make<
         { readonly stall: ServerEventLoopStall; readonly detectedAtMs: number } | undefined
       >(undefined);
-      const stallSink = yield* Effect.try(
-        () =>
+      const stallSink = yield* Effect.try({
+        try: () =>
           new RotatingFileSink({
             filePath: stallLog.filePath,
             maxBytes: stallLog.maxBytes,
             maxFiles: 1,
             throwOnError: true,
           }),
-      ).pipe(
+        catch: (cause) =>
+          new RotatingFileSinkError({
+            operation: "initialize",
+            filePath: stallLog.filePath,
+            cause,
+          }),
+      }).pipe(
         Effect.catch(() =>
           Effect.logWarning("event loop stall log unavailable", {
             filePath: stallLog.filePath,
@@ -201,7 +207,17 @@ const layerWith = (
         );
         if (stallSink !== undefined) {
           yield* encodeStallLine({ time: detectedAt, ...attributes }).pipe(
-            Effect.flatMap((line) => Effect.try(() => stallSink.write(`${line}\n`))),
+            Effect.flatMap((line) =>
+              Effect.try({
+                try: () => stallSink.write(`${line}\n`),
+                catch: (cause) =>
+                  new RotatingFileSinkError({
+                    operation: "write",
+                    filePath: stallLog.filePath,
+                    cause,
+                  }),
+              }),
+            ),
             Effect.catch(() =>
               Effect.logWarning("event loop stall log write failed", {
                 filePath: stallLog.filePath,

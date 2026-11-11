@@ -35,6 +35,7 @@ import {
   type ProviderSessionId,
   type RuntimeRequestId,
   type ThreadId,
+  settingsSecretLiteral,
 } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
@@ -746,7 +747,12 @@ function toolStatus(part: ToolPart): {
         ? { node: "failed", item: "failed" }
         : { node: "completed", item: "completed" };
     case "error":
-      return { node: "failed", item: "failed" };
+      // Stop marks in-flight tools this way; OpenCode's own UI shows them as cancelled.
+      return part.state.metadata?.["interrupted"] === true ||
+        part.state.error === "Tool execution aborted" ||
+        (part.tool === "task" && part.state.error === "Task cancelled")
+        ? { node: "interrupted", item: "interrupted" }
+        : { node: "failed", item: "failed" };
   }
 }
 
@@ -947,8 +953,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           binaryPath: options.settings.binaryPath,
           directory: cwd,
           serverUrl: options.settings.serverUrl,
-          ...(options.settings.serverPassword
-            ? { serverPassword: options.settings.serverPassword }
+          ...(settingsSecretLiteral(options.settings.serverPassword)
+            ? { serverPassword: settingsSecretLiteral(options.settings.serverPassword) }
             : {}),
           environment: options.environment,
         });
@@ -1438,14 +1444,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           if (part.state.status === "completed" && output !== undefined) context.result = output;
           const status = toolStatus(part);
           const completedAt = toolCompletedAt(part, now);
-          const subagentStatus: OrchestrationV2Subagent["status"] =
-            status.item === "failed"
-              ? "failed"
-              : status.item === "completed"
-                ? "completed"
-                : status.item === "pending"
-                  ? "pending"
-                  : "running";
+          const subagentStatus: OrchestrationV2Subagent["status"] = status.item;
           const subagent: OrchestrationV2Subagent = {
             id: nodeId,
             threadId: turn.threadId,
@@ -1900,15 +1899,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             },
           });
           yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: OPENCODE_PROVIDER,
+            turnItem: runtimeRequestTurnItem(pending, "waiting", null, now),
+          });
+          // A response can commit as soon as the actionable request is published.
+          yield* emitProviderEvent({
             type: "runtime_request.updated",
             driver: OPENCODE_PROVIDER,
             threadId: turn.threadId,
             runtimeRequest,
-          });
-          yield* emitProviderEvent({
-            type: "turn_item.updated",
-            driver: OPENCODE_PROVIDER,
-            turnItem: runtimeRequestTurnItem(pending, "waiting", null, now),
           });
           yield* updateProviderSession("waiting", null);
         });
@@ -3026,7 +3026,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             }),
           ).pipe(
             Effect.asVoid,
+            // OpenCode answers only when generation ends; once admitted, the event stream owns the outcome.
             Effect.tapError((cause) =>
+              Deferred.isDoneUnsafe(receipt) ||
               abortController.signal.aborted ||
               turn.finalized ||
               turn.admissionGeneration !== generation
