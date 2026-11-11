@@ -10,6 +10,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   applyPreviewServerEvent,
+  previewStateAtom,
   readThreadPreviewState,
   reconcilePreviewServerSessions,
 } from "~/previewStateStore";
@@ -48,8 +49,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       if (result.waiting || !AsyncResult.isSuccess(result)) return;
       reconcilePreviewServerSessions(threadRef, result.value);
       if (!readThreadPreviewState(threadRef).listLoaded) {
-        // An event overtook the first list. Retry the authoritative baseline;
-        // do not declare a partial event-only index ready for surface cleanup.
+        // An event overtook the initial list; retry before using the partial index for surface cleanup.
         queueMicrotask(() => {
           if (!disposed) get.refresh(sessionsAtom);
         });
@@ -70,8 +70,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       disposed = true;
     });
     const initialEvent = get.once(eventsAtom);
-    // Subscribing alone does not evaluate a lazy list. Start it now, but
-    // reconcile only subsequent responses: a completed cache may be stale.
+    // Evaluate the lazy list, then reconcile only new responses because cached results can be stale.
     get.once(sessionsAtom);
     get.subscribe(sessionsAtom, (result) => {
       reconcileSessions(result);
@@ -84,9 +83,8 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
     get.mount(eventsAtom);
     queueMicrotask(() => {
       if (disposed) return;
-      // The cached list can predate an automation-created tab. Keep the local
-      // snapshot visible until an authoritative refresh arrives instead of
-      // reconciling against a stale empty result when the panel first mounts.
+      // Keep local tabs until authoritative refresh; stale cached emptiness could remove automation-created
+      // tabs.
       const current = get.once(sessionsAtom);
       if (!AsyncResult.isInitial(current) && !current.waiting) get.refresh(sessionsAtom);
       if (eventsVersion === 0) applyLatestEvent(initialEvent);
@@ -100,24 +98,41 @@ export function usePreviewSession(threadRef: ScopedThreadRef): void {
 
 const inactiveAtom = Atom.make(() => undefined);
 
-// Discover background tabs without listing every thread at startup. Retain each
-// sync for the host's lifetime so later events still arrive while chat is absent.
+// Discover background tabs without listing every thread at startup. Keep each
+// sync while the thread has tabs so later events still arrive while chat is
+// absent, then release it so closed previews stop costing a list and a fan-out.
 const desktopHostedPreviewSyncAtom = Atom.family((environmentId: EnvironmentId) => {
   const eventsAtom = previewEnvironment.events({ environmentId, input: {} });
   return Atom.make((get) => {
-    const syncedThreadIds = new Set<string>();
+    const releaseByThreadId = new Map<string, () => void>();
+    get.addFinalizer(() => {
+      for (const release of releaseByThreadId.values()) release();
+    });
     get.subscribe(
       eventsAtom,
       (result) => {
         if (!AsyncResult.isSuccess(result) || result.value.type === "closed") return;
         const threadId = result.value.threadId;
-        if (syncedThreadIds.has(threadId)) return;
-        syncedThreadIds.add(threadId);
-        get.mount(
-          previewSessionSyncAtom(
-            scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId))),
-          ),
+        if (releaseByThreadId.has(threadId)) return;
+        const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
+        const unmount = get.registry.mount(previewSessionSyncAtom(threadKey));
+        // The opening event may not be applied yet, so wait until a tab has
+        // been seen. A pending local close can still be cancelled and restored.
+        let hadSessions = false;
+        const unwatch = get.registry.subscribe(
+          previewStateAtom(threadKey),
+          (state) => {
+            if (Object.keys(state.sessions).length > 0) hadSessions = true;
+            else if (hadSessions && state.suppressedTabIds.size === 0) release();
+          },
+          { immediate: true },
         );
+        function release() {
+          unwatch();
+          unmount();
+          releaseByThreadId.delete(threadId);
+        }
+        releaseByThreadId.set(threadId, release);
       },
       { immediate: true },
     );
