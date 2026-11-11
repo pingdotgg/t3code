@@ -508,23 +508,41 @@ function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs"
   return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
 }
 
-/** Stamp at wake start; queued prompts lack start times and delegated results jump the queue. */
+/**
+ * Stamp at wake start; queued prompts lack start times and delegated results jump the queue.
+ * Auto-drained agent messages continue active work; explicit queue starts reset it.
+ */
 function wakeWorkStartedAt(
-  runs: ReadonlyArray<OrchestrationV2Run>,
-  trigger: {
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "subagents">,
+  trigger: Pick<
+    OrchestrationV2ConversationMessage,
+    "createdBy" | "creationSource" | "senderThreadId"
+  > & {
     readonly notification?: unknown;
     readonly delegatedCompletion?: unknown;
     readonly restartContinuationOfRunId?: RunId | undefined;
   },
+  delivery: "immediate" | "automatic-queue" | "explicit-queue" = "immediate",
 ): Pick<OrchestrationV2Run, "workStartedAt"> {
   if (
     trigger.notification === undefined &&
     trigger.delegatedCompletion === undefined &&
-    trigger.restartContinuationOfRunId === undefined
+    trigger.restartContinuationOfRunId === undefined &&
+    !(
+      trigger.createdBy === "agent" &&
+      trigger.creationSource === "mcp" &&
+      trigger.senderThreadId !== undefined &&
+      (delivery === "automatic-queue" ||
+        (delivery === "immediate" &&
+          projection.subagents.some(
+            (subagent) =>
+              subagent.origin === "app_owned" && subagent.childThreadId === trigger.senderThreadId,
+          )))
+    )
   ) {
     return {};
   }
-  const previous = runs
+  const previous = projection.runs
     .flatMap((run) => (run.startedAt === null ? [] : [{ run, startedAt: run.startedAt }]))
     .toSorted(
       (left, right) =>
@@ -2372,6 +2390,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
         updatedAt: now,
       };
+      // Resume can clear the hold before the stopped run ends; its Stop marker still makes the drain explicit.
+      const endedRunId = options?.endedRunId;
+      const queueDelivery =
+        endedRunId === undefined ||
+        queuedRun.queueHeld === true ||
+        (yield* projectionStore
+          .getThreadRecords(threadId, ["turnItems"], {
+            turnItemTypes: ["run_interrupt_request"],
+            turnItemRunIds: [endedRunId],
+          })
+          .pipe(
+            Effect.map(({ turnItems }) => turnItems.length > 0),
+            Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+          ))
+          ? "explicit-queue"
+          : "automatic-queue";
       const startingRun: OrchestrationV2Run = {
         ...queuedRun,
         providerThreadId: queuedProviderThread.id,
@@ -2380,11 +2414,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         queuePosition: null,
         startedAt: null,
         contextHandoffId: activeHandoff?.id ?? null,
-        ...wakeWorkStartedAt(projection.runs, {
-          notification: queuedMessage.notification,
-          delegatedCompletion: queuedMessage.delegatedCompletion,
-          restartContinuationOfRunId: queuedRun.restartContinuationOfRunId,
-        }),
+        ...wakeWorkStartedAt(
+          projection,
+          {
+            createdBy: queuedMessage.createdBy,
+            creationSource: queuedMessage.creationSource,
+            senderThreadId: queuedMessage.senderThreadId,
+            notification: queuedMessage.notification,
+            delegatedCompletion: queuedMessage.delegatedCompletion,
+            restartContinuationOfRunId: queuedRun.restartContinuationOfRunId,
+          },
+          queueDelivery,
+        ),
       };
       const userTurnItem: OrchestrationV2TurnItem = {
         ...(legacyQueuedTurnItem ?? {
@@ -6969,7 +7010,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? { workspacePreparation: dispatchMode.workspaceStrategy }
           : {}),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
-        ...wakeWorkStartedAt(projection.runs, command),
+        ...wakeWorkStartedAt(projection, command),
         ...(freshContext ? { freshContext: true } : {}),
       };
       const attempt: OrchestrationV2RunAttempt = {
@@ -7755,7 +7796,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? {}
         : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
       ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
-      ...wakeWorkStartedAt(projection.runs, command),
+      ...wakeWorkStartedAt(projection, command),
     };
     const attempt: OrchestrationV2RunAttempt = {
       id: attemptId,
