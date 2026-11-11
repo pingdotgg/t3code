@@ -659,6 +659,7 @@ export function BranchToolbarBranchSelector({
 
   function selectPickerItem(itemValue: string) {
     if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
+      latestSelectionIdRef.current++;
       handleOpenChange(false);
       onComposerFocusRequest?.();
       onCheckoutPullRequestRequest(prReference);
