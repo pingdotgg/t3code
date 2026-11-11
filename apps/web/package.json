@@ -17,7 +17,7 @@
     "@betteroffice/fonts": "0.4.0",
     "@betteroffice/fonts-cjk": "0.4.0",
     "@betteroffice/pptx": "0.2.0",
-    "@betteroffice/xlsx": "0.3.0",
+    "@betteroffice/xlsx": "0.5.1",
     "@clerk/clerk-js": "catalog:",
     "@clerk/electron": "catalog:",
     "@clerk/react": "catalog:",
