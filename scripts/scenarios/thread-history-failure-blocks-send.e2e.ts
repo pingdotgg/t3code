@@ -56,7 +56,9 @@ test(
       };
     });
     await t3.open();
-    await screen.getByText("Existing conversation", { exact: false }).first().tap();
+    await screen.getByRole("button", /^Existing conversation, Done,/).tap();
+    await screen.getByRole("button", "Toggle thread details panel").tap();
+    await screen.getByRole("button", "Toggle main sidebar").tap();
     await expect(screen.getByText("Thread history unavailable")).toBeVisible();
     await screen.getByRole("textbox").fill("Wait for the existing conversation");
     await app.screenshot("history-unavailable");
