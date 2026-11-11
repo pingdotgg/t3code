@@ -8,6 +8,7 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
@@ -18,7 +19,7 @@ import {
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -844,6 +845,11 @@ function makeReplayQueryRunner(
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.background_tasks", toolUseId });
           }).pipe(Effect.as(true)),
+        // Recorded CLIs predate MCP Apps capabilities, so replays never reach these.
+        mcpServerStatus: Effect.die("unexpected MCP server status in replay"),
+        readMcpResource: () => Effect.die("unexpected MCP resource read in replay"),
+        callMcpTool: () => Effect.die("unexpected MCP tool call in replay"),
+        listPermissionRules: Effect.die("unexpected permission rules read in replay"),
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });
         }),
@@ -1023,7 +1029,7 @@ function layerClaudeProviderAdapterRegistryReplay(
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
   return Layer.unwrap(
     writeReplayTaskOutputFiles(transcript).pipe(
       Effect.orDie,
@@ -1041,7 +1047,7 @@ function layerClaudeProviderAdapterRegistryReplay(
           ).pipe(Effect.map((adapter) => [adapter])),
         ),
       ),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   ).pipe(
     Layer.provide(
@@ -1049,6 +1055,7 @@ function layerClaudeProviderAdapterRegistryReplay(
         layerClaudeAgentSdkReplay(transcript, options),
         IdAllocator.layer,
         NodeServices.layer,
+        NodeCrypto.layer,
         layerServerConfig,
       ),
     ),
@@ -1611,10 +1618,10 @@ async function recordClaudeStreamingQuery(input: {
       const message = ClaudeAdapterV2.makeClaudeUserMessage({
         text: prompt,
         uuid: await Effect.runPromise(
-          Crypto.Crypto.pipe(
-            Effect.flatMap((crypto) => crypto.randomUUIDv4()),
+          SecureRandom.SecureRandom.pipe(
+            Effect.flatMap((random) => random.uuidV4()),
             Effect.filterOrFail(ClaudeAdapterV2.isClaudePromptUuid),
-            Effect.provide(NodeServices.layer),
+            Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         ),
       });
@@ -2168,15 +2175,11 @@ async function recordClaudeForkSessionQuery(input: {
           type: "session.fork",
           sessionId: input.sessionId,
           options: {
-            dir: sanitizedReplayCwd(input.scenario),
             upToMessageId,
           },
         },
       });
-      const forked = await forkSession(input.sessionId, {
-        dir: input.cwd,
-        upToMessageId,
-      });
+      const forked = await forkSession(input.sessionId, { upToMessageId });
       forkedNativeSessionIds.push(forked.sessionId);
       input.entries.push({
         type: "emit_inbound",

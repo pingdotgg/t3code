@@ -13,9 +13,7 @@ test.skipIf(!baseURL)(
         headers: {
           origin,
           "content-type": "application/json",
-          cookie: [...cookies]
-            .map(([name, value]) => `${name}=${value}`)
-            .join("; "),
+          cookie: [...cookies].map(([name, value]) => `${name}=${value}`).join("; "),
         },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(10_000),
