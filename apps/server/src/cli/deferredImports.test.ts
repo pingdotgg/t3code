@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration uses temporary Node paths.
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NetService from "@t3tools/shared/Net";
@@ -45,7 +46,7 @@ const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(Effect.provide(layerCliRuntime));
 
-it.layer(NodeServices.layer)("CLI deferred imports", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imports", (it) => {
   it.effect("runs commands that do not need them without loading them", () =>
     Effect.gen(function* () {
       hooks.importsAttempted.length = 0;
