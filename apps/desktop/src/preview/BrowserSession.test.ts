@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
+      readonly webRequest: { readonly onBeforeSendHeaders: ReturnType<typeof vi.fn> };
     }
   >(),
 }));
@@ -48,8 +50,8 @@ const layerDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
 });
 const layerFor = (platform: NodeJS.Platform) =>
   BrowserSession.layer.pipe(
-    Layer.provideMerge(Layer.succeed(HostProcess.Platform, platform)),
-    Layer.provide(Layer.merge(NodeServices.layer, layerDialog)),
+    Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
+    Layer.provide(Layer.merge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer), layerDialog)),
   );
 const layer = layerFor("linux");
 
@@ -65,6 +67,7 @@ describe("BrowserSession", () => {
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
+        webRequest: { onBeforeSendHeaders: vi.fn() },
       };
       sessions.set(partition, browserSession);
       return browserSession;
@@ -118,10 +121,12 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("keeps the guest's effective User-Agent equal to Electron's native one", () =>
+  it.effect("keeps the native User-Agent except for the Electron token sent to Teams", () =>
     Effect.gen(function* () {
       const nativeUserAgent =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Electron/41.5.0 Safari/537.36";
+      const teamsUserAgent =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Safari/537.36";
       fromPartition.mockReset();
       fromPartition.mockImplementation((partition: string) => {
         let userAgent = nativeUserAgent;
@@ -134,6 +139,7 @@ describe("BrowserSession", () => {
           setUserAgent: vi.fn((next: string) => {
             userAgent = next;
           }),
+          webRequest: { onBeforeSendHeaders: vi.fn() },
         };
         sessions.set(partition, browserSession);
         return browserSession;
@@ -146,10 +152,33 @@ describe("BrowserSession", () => {
       const browserSession = sessions.get(partition);
       assert.isDefined(browserSession);
       assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
+
+      // Teams redirects Electron to an error page before sign-in; every other host sees the native one.
+      const calls = browserSession.webRequest.onBeforeSendHeaders.mock.calls;
+      assert.strictEqual(calls.length, 1);
+      const [filter, listener] = calls[0] ?? [];
+      assert.deepStrictEqual(filter, {
+        urls: ["https://teams.cloud.microsoft/*", "https://teams.microsoft.com/*"],
+      });
+      const send = (requestHeaders: Record<string, string>) => {
+        let response: { requestHeaders?: Record<string, string> } | undefined;
+        listener({ requestHeaders }, (next: typeof response) => {
+          response = next;
+        });
+        return response;
+      };
+      for (const key of ["User-Agent", "user-agent"]) {
+        const requestHeaders = { [key]: nativeUserAgent, Accept: "*/*" };
+        assert.deepStrictEqual(send(requestHeaders), {
+          requestHeaders: { [key]: teamsUserAgent, Accept: "*/*" },
+        });
+        assert.strictEqual(requestHeaders[key], nativeUserAgent);
+      }
+      assert.deepStrictEqual(send({ Accept: "*/*" }), {});
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("grants clipboard-sanitized-write through both the request and check handlers", () =>
+  it.effect("grants preview permissions through both the request and check handlers", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
       const partition = yield* browserSessions.getPartition("scope-a");
@@ -173,10 +202,11 @@ describe("BrowserSession", () => {
       };
 
       for (const permission of [
-        "clipboard-read",
         "clipboard-sanitized-write",
         "geolocation",
         "fullscreen",
+        "pointerLock",
+        "loopback-network",
       ]) {
         assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
         assert.isTrue(
@@ -188,7 +218,13 @@ describe("BrowserSession", () => {
       // `clipboard-write` is not a real Electron permission — the async write API
       // uses `clipboard-sanitized-write` — so the stale name must not be granted,
       // and unrelated permissions stay denied.
-      for (const permission of ["clipboard-write", "notifications", "midi"]) {
+      for (const permission of [
+        "clipboard-write",
+        "notifications",
+        "midi",
+        "local-network",
+        "local-network-access",
+      ]) {
         assert.isFalse(requestAllows(permission), `request handler should deny ${permission}`);
         assert.isFalse(
           checkHandler(null, permission) as boolean,
@@ -228,7 +264,7 @@ describe("BrowserSession", () => {
           "check handler should deny geolocation",
         );
 
-        for (const permission of ["clipboard-read", "clipboard-sanitized-write", "fullscreen"]) {
+        for (const permission of ["clipboard-sanitized-write", "fullscreen"]) {
           assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
           assert.isTrue(
             checkHandler(null, permission) as boolean,
@@ -270,6 +306,55 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("asks once per origin before a page reads the clipboard", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const browserSession = sessions.get(partition);
+      assert.isDefined(browserSession);
+      const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+      const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+      assert.isFunction(requestHandler);
+      assert.isFunction(checkHandler);
+
+      const readClipboard = (requestingUrl: string) =>
+        Effect.callback<boolean>((resume) => {
+          requestHandler(
+            null,
+            "clipboard-read",
+            (granted: boolean) => resume(Effect.succeed(granted)),
+            { requestingUrl, isMainFrame: true },
+          );
+        });
+      const checkClipboard = (origin: string): boolean =>
+        checkHandler(null, "clipboard-read", origin, {}) as boolean;
+
+      showMessageBox.mockReset();
+      showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1);
+
+      assert.isFalse(checkClipboard("https://allowed.test"));
+      assert.isTrue(yield* readClipboard("https://allowed.test/page"));
+      assert.strictEqual(showMessageBox.mock.calls.length, 1);
+      assert.strictEqual(
+        showMessageBox.mock.calls[0]?.[0].message,
+        "https://allowed.test wants to see text and images copied to the clipboard",
+      );
+      assert.deepStrictEqual(showMessageBox.mock.calls[0]?.[0].buttons, ["Allow", "Block"]);
+      // Enter must not accept a prompt the page raised while the user was typing.
+      assert.strictEqual(showMessageBox.mock.calls[0]?.[0].defaultId, 1);
+
+      assert.isTrue(yield* readClipboard("https://allowed.test/other"));
+      assert.isTrue(checkClipboard("https://allowed.test"));
+
+      assert.isFalse(yield* readClipboard("https://blocked.test/"));
+      assert.isFalse(yield* readClipboard("https://blocked.test/again"));
+      assert.isFalse(checkClipboard("https://blocked.test"));
+      assert.isTrue(checkClipboard("https://allowed.test"));
+      assert.strictEqual(showMessageBox.mock.calls.length, 2);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("clears a partition whose session has not been opened yet", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
@@ -280,11 +365,16 @@ describe("BrowserSession", () => {
       assert.isUndefined(sessions.get(partition));
 
       yield* browserSessions.getSession("scope-untouched");
+      const other = yield* browserSessions.getSession("scope-other");
       yield* browserSessions.clearCookies([partition]);
 
       const created = sessions.get(partition);
       assert.isDefined(created);
       assert.strictEqual(created.clearStorageData.mock.calls.length, 1);
+      assert.deepStrictEqual(created.clearStorageData.mock.calls[0]?.[0], {
+        storages: ["cookies", "localstorage", "indexdb", "serviceworkers", "cachestorage"],
+      });
+      assert.strictEqual(vi.mocked(other.clearStorageData).mock.calls.length, 0);
     }).pipe(Effect.provide(layer)),
   );
 });
