@@ -158,6 +158,8 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
+// Codex can announce a retry and never resume. Recovered retries resume model output within ~75s.
+const CODEX_PROVIDER_RETRY_STALL_TIMEOUT = "10 minutes";
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
@@ -1138,6 +1140,17 @@ function codexExhaustionHttpStatus(errorInfo: CodexErrorInfo | null | undefined)
     errorInfo !== null &&
     "responseTooManyFailedAttempts" in errorInfo
     ? (errorInfo.responseTooManyFailedAttempts.httpStatusCode ?? null)
+    : null;
+}
+
+function codexErrorHttpStatus(errorInfo: CodexErrorInfo | null | undefined): number | null {
+  const detail =
+    typeof errorInfo === "object" && errorInfo !== null ? Object.values(errorInfo)[0] : undefined;
+  return typeof detail === "object" &&
+    detail !== null &&
+    "httpStatusCode" in detail &&
+    typeof detail.httpStatusCode === "number"
+    ? detail.httpStatusCode
     : null;
 }
 
@@ -4899,6 +4912,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               updated.set(context.providerTurnId, state);
               return updated;
             });
+            yield* failStalledProviderRetry(context, state, payload.error.codexErrorInfo).pipe(
+              Effect.delay(CODEX_PROVIDER_RETRY_STALL_TIMEOUT),
+              Effect.forkIn(scope, { startImmediately: true }),
+            );
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CODEX_PROVIDER,
@@ -6311,6 +6328,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly failureMessage?: string;
           readonly failureErrorInfo?: CodexErrorInfo;
           readonly continueRun?: boolean;
+          readonly stalledRetry?: {
+            readonly state: ActiveCodexProviderRetry;
+            readonly failure: NonNullable<ActiveCodexTurnContext["latestProviderFailure"]>;
+          };
         }) =>
           // Capacity continuation already holds the permit across finalization and restart.
           (input.continueRun ? Function.identity : turnTerminalizationPermit.withPermits(1))(
@@ -6318,6 +6339,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const current = (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
               if (current !== input.context) {
                 return false;
+              }
+              if (input.stalledRetry !== undefined) {
+                // Checked under the permit so item/started cannot clear the retry mid-finalize.
+                const retries = yield* Ref.get(providerRetries);
+                if (
+                  retries.get(input.context.providerTurnId) !== input.stalledRetry.state ||
+                  (yield* Ref.get(interruptingNativeTurns)).has(input.nativeTurnId)
+                )
+                  return false;
+                input.context.latestProviderFailure ??= input.stalledRetry.failure;
               }
               input.context.fileChangeKindsByItem.clear();
               const providerRetry = yield* Ref.modify(providerRetries, (current) => {
@@ -6636,6 +6667,48 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return true;
             }),
           );
+
+        // A retry that ends on 429 is the same exhaustion responseTooManyFailedAttempts reports.
+        const failStalledProviderRetry = Effect.fn("CodexAdapterV2.failStalledProviderRetry")(
+          function* (
+            context: ActiveCodexTurnContext,
+            state: ActiveCodexProviderRetry,
+            errorInfo: CodexErrorInfo | null | undefined,
+          ) {
+            const finalized = yield* finalizeCodexTurn({
+              context,
+              nativeTurnId: context.nativeTurnId,
+              status: "failed",
+              completedAt: yield* DateTime.now,
+              stalledRetry: {
+                state,
+                failure: {
+                  nativeMessage: state.nativeMessage,
+                  nativeCode: state.nativeCode,
+                  failure: {
+                    ...state.failure,
+                    retryable: false,
+                    ...(codexErrorHttpStatus(errorInfo) === 429 ? { class: "usage_limit" } : {}),
+                  },
+                },
+              },
+            });
+            if (!finalized) return;
+            const nativeThreadId = yield* getNativeThreadId(context.providerThread);
+            yield* client
+              .request("turn/interrupt", { threadId: nativeThreadId, turnId: context.nativeTurnId })
+              .pipe(
+                Effect.timeout("10 seconds"),
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration-v2.codex-stalled-retry-interrupt-failed", {
+                    nativeThreadId,
+                    nativeTurnId: context.nativeTurnId,
+                    cause,
+                  }),
+                ),
+              );
+          },
+        );
 
         // Codex can end an overloaded turn without retry advice. Continue its
         // persisted history with empty input instead of resending the user message.
