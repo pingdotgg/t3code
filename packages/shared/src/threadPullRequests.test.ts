@@ -1,10 +1,7 @@
 import type { ThreadPullRequestLink, ThreadPullRequestSnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  openLinkedThreadPullRequests,
-  settleClosePullRequestsMessage,
-} from "./threadPullRequests.ts";
+import { openLinkedThreadPullRequests } from "./threadPullRequests.ts";
 
 function snapshot(input: Partial<ThreadPullRequestSnapshot> = {}): ThreadPullRequestSnapshot {
   return {
@@ -51,19 +48,5 @@ describe("openLinkedThreadPullRequests", () => {
 
   it("treats a missing list as empty", () => {
     expect(openLinkedThreadPullRequests(undefined)).toEqual([]);
-  });
-});
-
-describe("settleClosePullRequestsMessage", () => {
-  it("names a single pull request", () => {
-    expect(settleClosePullRequestsMessage(1)).toBe(
-      "This thread has 1 open pull request.\n\nClose them when settling?",
-    );
-  });
-
-  it("pluralizes several pull requests", () => {
-    expect(settleClosePullRequestsMessage(3)).toBe(
-      "This thread has 3 open pull requests.\n\nClose them when settling?",
-    );
   });
 });
