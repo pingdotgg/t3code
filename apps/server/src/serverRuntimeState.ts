@@ -198,7 +198,10 @@ export const readPersistedServerRuntimeState = Effect.fn(
  * credentials to the recorded origin: a killed server leaves its record behind, and
  * another process may own its port by now.
  */
-export const readLiveServerRuntimeState = (path: string) =>
+export const readLiveServerRuntimeState = Effect.fn(
+  "serverRuntimeState.readLiveServerRuntimeState",
+)((path: string) =>
   readPersistedServerRuntimeState(path).pipe(
     Effect.map(Option.filter((state) => isProcessAlive(state.pid))),
-  );
+  ),
+);
