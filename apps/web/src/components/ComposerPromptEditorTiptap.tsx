@@ -522,7 +522,6 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     >
       <AssistantCitationChip
         citation={citation}
-        composer
         commentEditor={{
           open: commentTarget !== null,
           sourceAnchor: commentTarget?.sourceAnchor,
