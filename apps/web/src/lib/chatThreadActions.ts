@@ -64,6 +64,17 @@ export function resolveNewDraftStartFromOrigin(input: {
   return input.envMode === "worktree" && input.newWorktreesStartFromOrigin;
 }
 
+/** A runtime mode configured on the project wins over the project's last-used one. */
+export function resolveDefaultRuntimeMode(
+  projectSettings: ResolvedProjectSettings,
+  lastUsedRuntimeMode: RuntimeMode | null,
+): RuntimeMode {
+  return (
+    (projectSettings.sources.defaultRuntimeMode === "environment" ? lastUsedRuntimeMode : null) ??
+    projectSettings.settings.defaultRuntimeMode
+  );
+}
+
 /**
  * What a new thread in a project starts with when the draft has no pick of its
  * own: a setting configured on the project itself wins, then the project's
@@ -83,9 +94,10 @@ export function resolveNewThreadDefaults(input: {
   readonly runtimeMode: RuntimeMode;
 } {
   const { settings, sources } = input.projectSettings;
-  const runtimeMode =
-    (sources.defaultRuntimeMode === "environment" ? input.lastUsed?.runtimeMode : null) ??
-    settings.defaultRuntimeMode;
+  const runtimeMode = resolveDefaultRuntimeMode(
+    input.projectSettings,
+    input.lastUsed?.runtimeMode ?? null,
+  );
   const projectSelection =
     sources.defaultModelSelection === "environment" ? null : settings.defaultModelSelection;
   if (!projectSelection && input.lastUsed) {

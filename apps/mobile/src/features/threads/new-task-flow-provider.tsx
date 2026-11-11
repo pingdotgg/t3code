@@ -414,11 +414,13 @@ export function NewTaskFlowProvider(
         projectId: selectedProject.id,
       })
     : null;
-  // A runtime mode configured on the project wins over its history.
-  const defaultRuntimeMode =
-    (projectSettings.sources.defaultRuntimeMode === "project" ? null : lastUsed?.runtimeMode) ??
-    projectSettings.settings.defaultRuntimeMode;
   const managedPolicy = selectedEnvironmentServerConfig?.managedPolicy;
+  // A mode configured on the project wins over its history, which yields to the policy ceiling.
+  const defaultRuntimeMode = resolveNewThreadRuntimeMode(
+    projectSettings.sources.defaultRuntimeMode === "project" ? undefined : lastUsed?.runtimeMode,
+    projectSettings.settings.defaultRuntimeMode,
+    managedPolicy,
+  );
   const runtimeMode = resolveNewThreadRuntimeMode(
     selectedProjectDraft.runtimeMode,
     defaultRuntimeMode,
