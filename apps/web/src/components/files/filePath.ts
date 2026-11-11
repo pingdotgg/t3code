@@ -1,5 +1,5 @@
 import type { ProjectEntry } from "@t3tools/contracts";
-import { isHostPath, isUncPath, isWindowsDrivePath } from "@t3tools/shared/path";
+import { isHostPath, isUncPath, slashWindowsDrivePath } from "@t3tools/shared/path";
 
 export interface FileBreadcrumb {
   label: string;
@@ -61,10 +61,10 @@ export function joinHostPath(folder: string, relativePath: string): string {
     const base = folder.endsWith("\\") ? folder : `${folder}\\`;
     return base + relativePath.split("/").join("\\");
   }
-  const slashFolder = isWindowsDrivePath(folder) ? folder.replaceAll("\\", "/") : folder;
-  const base = slashFolder.endsWith("/") ? slashFolder : `${slashFolder}/`;
-  const child = isWindowsDrivePath(folder) ? relativePath.replaceAll("\\", "/") : relativePath;
-  return base + child;
+  const base = slashWindowsDrivePath(folder);
+  return slashWindowsDrivePath(
+    base.endsWith("/") ? base + relativePath : `${base}/${relativePath}`,
+  );
 }
 
 export function fileBreadcrumbChildren(
