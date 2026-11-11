@@ -80,7 +80,7 @@ export interface ResolvedPeerLink {
 }
 
 export const LINKED_ENVIRONMENTS_OFF =
-  "Linked environments is off on this machine. Turn it on in Settings → Labs.";
+  "This machine is not taking part in your device network. Turn it on in Settings → Connections → Device network.";
 
 /**
  * Links from this environment to others. Linking signs this environment in to
@@ -91,7 +91,7 @@ export const LINKED_ENVIRONMENTS_OFF =
 export class PeerLinks extends Context.Service<
   PeerLinks,
   {
-    /** Whether the Linked environments beta (Settings → Labs) is on here. */
+    /** Whether this machine takes part in the device network (the Device network switch). */
     readonly enabled: Effect.Effect<boolean>;
     readonly link: (input: PeerLinkCreateInput) => Effect.Effect<PeerLink, PeerLinkError>;
     /** Keeps a link another flow already made, such as a tailnet device's grant, with its token. */

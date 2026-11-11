@@ -361,7 +361,7 @@ const make = Effect.gen(function* () {
         return yield* new AuthMcpRegistrationError({
           error: "invalid_client_metadata",
           error_description:
-            "Linked environments is off on that machine. Turn it on in its Settings → Labs.",
+            "That machine is not taking part in your device network. Turn it on there in Settings → Connections → Device network.",
         });
       }
       const peerEnvironmentId = peerLink ? metadata.t3_environment_id : undefined;

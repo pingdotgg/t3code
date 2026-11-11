@@ -193,7 +193,8 @@ const withModeLimit = (
 const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
   {
     error: "linked_environments_off",
-    message: "Linked environments is off on this machine. Turn it on in its Settings → Labs.",
+    message:
+      "This machine is not taking part in your device network. Turn it on in its Settings → Connections → Device network.",
   },
   { status: 403, headers: { "cache-control": "no-store" } },
 );
