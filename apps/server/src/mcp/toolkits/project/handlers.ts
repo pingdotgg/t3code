@@ -29,6 +29,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -151,6 +152,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               message: "The project was not found.",
             });
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
+        }
+        if (!replaying && input.modelSelection !== undefined) {
+          const { instanceId, model } = input.modelSelection;
+          const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+          const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+          if (provider !== undefined)
+            yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
         }
         // Reject unresolved base refs before accepting a launch; worktree provisioning happens later.
         const strategy = input.workspaceStrategy;
