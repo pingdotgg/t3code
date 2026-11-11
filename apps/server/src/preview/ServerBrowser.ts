@@ -36,8 +36,10 @@ import {
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
   PreviewClearProfileError,
+  type PreviewError,
   type PreviewEvent,
   type PreviewNavStatus,
+  type PreviewOpenInput,
   type PreviewSessionSnapshot,
   type PreviewViewportSetting,
   ThreadId,
@@ -253,6 +255,9 @@ export class ServerBrowser extends Context.Service<
       readonly tabId: string;
       readonly downloadId: string;
     }) => Effect.Effect<Option.Option<{ readonly path: string; readonly fileName: string }>>;
+
+    /** A tab opened from an agent's tab joins that agent while it has room for another. */
+    readonly open: (input: PreviewOpenInput) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
 
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
 
@@ -2846,8 +2851,32 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PreviewClearProfileError({ profileId, cause }),
     });
 
+  const open = Effect.fn("ServerBrowser.open")(function* (input: PreviewOpenInput) {
+    const { openerTabId, ...openInput } = input;
+    const owner =
+      openerTabId === undefined || input.runtime !== "server"
+        ? undefined
+        : (yield* manager.list({ threadId: input.threadId })).sessions.find(
+            (session) => session.tabId === openerTabId,
+          )?.automationOwner;
+    if (owner === undefined || atTabLimit(owner)) return yield* manager.open(openInput);
+    let opened: PreviewSessionSnapshot | undefined;
+    return yield* openTab({
+      ...openInput,
+      automationOwner: owner,
+      beforePublish: (snapshot) => {
+        opened = snapshot;
+      },
+    }).pipe(
+      Effect.flatMap(() => (opened ? Effect.succeed(opened) : Effect.fail(undefined))),
+      // Losing a capacity race or the launch still opens the tab the user clicked, unclaimed.
+      Effect.catch(() => manager.open(openInput)),
+    );
+  });
+
   return ServerBrowser.of({
     attachViewer,
+    open,
     clearProfile,
     profileReporter,
     openDownload,
