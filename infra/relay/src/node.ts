@@ -48,7 +48,6 @@ const program = Effect.gen(function* () {
 
   const database = yield* makeWithDefaults();
   // A failed migration leaves the database in an unknown state; refuse to start instead of serving.
-  // @effect-diagnostics-next-line anyUnknownInErrorContext:off - drizzle's migrate types its error as any
   yield* migrate(database, { migrationsFolder, migrationsTable: "relay_migrations" }).pipe(
     Effect.orDie,
   );
