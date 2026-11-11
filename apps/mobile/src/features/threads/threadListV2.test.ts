@@ -367,6 +367,31 @@ describe("buildThreadListV2Items", () => {
     expect(layout.settledCount).toBe(1);
   });
 
+  it("shows only the inbox or only the pins in the pinned view, counting the other", () => {
+    const input = {
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "Active" }),
+        makeThread({
+          id: ThreadId.make("pinned"),
+          title: "Pinned",
+          pinnedAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    };
+    const activeView = buildThreadListV2Items({ ...input, threadView: "active" });
+    expect(activeView.items.map((item) => item.thread.id)).toEqual(["active"]);
+    expect(activeView.otherViewThreadCount).toBe(1);
+    const pinnedView = buildThreadListV2Items({ ...input, threadView: "pinned" });
+    expect(pinnedView.items.map((item) => item.thread.id)).toEqual(["pinned"]);
+    expect(pinnedView.otherViewThreadCount).toBe(1);
+    const off = buildThreadListV2Items({ ...input, threadView: null });
+    expect(off.items.map((item) => item.thread.id)).toEqual(["pinned", "active"]);
+    expect(off.otherViewThreadCount).toBe(0);
+  });
+
   it("snooze hides a pinned thread and wake restores it to the pinned block", () => {
     const snoozedInput = {
       threads: [

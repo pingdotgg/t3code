@@ -60,6 +60,7 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
     snoozedShelfExpanded: false,
     settledShelfExpanded: true,
     selectedThreadKey: null,
+    threadView: null,
   };
   const seen: Array<ReturnType<typeof useThreadListV2>> = [];
   function Probe(props: { input: typeof input; tab: string }) {

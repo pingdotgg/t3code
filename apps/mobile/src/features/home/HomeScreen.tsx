@@ -79,6 +79,7 @@ import {
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
+import { ThreadListPinnedViewChip } from "../threads/ThreadListPinnedViewChip";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeProjectScopes,
@@ -441,6 +442,8 @@ export function HomeScreen(props: HomeScreenProps) {
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    threadView,
+    togglePinnedView,
   } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(props.threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
@@ -484,6 +487,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey,
+    threadView,
   });
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.
@@ -744,6 +748,12 @@ export function HomeScreen(props: HomeScreenProps) {
           onProjectChange={props.onProjectChange}
         />
       ) : null}
+      <ThreadListPinnedViewChip
+        threadView={threadView}
+        otherViewThreadCount={threadListV2Layout.otherViewThreadCount}
+        otherViewDoneCount={threadListV2Layout.otherViewDoneCount}
+        onToggle={togglePinnedView}
+      />
     </>
   );
 
@@ -787,6 +797,13 @@ export function HomeScreen(props: HomeScreenProps) {
           className="flex-1 items-center justify-center px-4"
           style={{ paddingBottom: insets.bottom }}
         >
+          {/* An empty view still offers the way back to the other one. */}
+          <ThreadListPinnedViewChip
+            threadView={threadView}
+            otherViewThreadCount={threadListV2Layout.otherViewThreadCount}
+            otherViewDoneCount={threadListV2Layout.otherViewDoneCount}
+            onToggle={togglePinnedView}
+          />
           {v2ListEmpty}
         </View>
       </ScreenContent>

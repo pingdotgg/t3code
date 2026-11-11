@@ -1,4 +1,5 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
+import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import { useAtomValue } from "@effect/atom-react";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
@@ -288,6 +289,7 @@ export function CommandPalette(props: {
       .filter((match) => match.source === "user" || match.source === "assistant")
       .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
   );
+  const { threadView, togglePinnedView } = useThreadListV2ShelfPreferences();
   const items = useMemo(() => {
     const actions: CommandPaletteItem[] = [
       {
@@ -347,6 +349,15 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
+    if (threadView !== null) {
+      actions.push({
+        key: "pinnedView",
+        kind: "action",
+        title: threadView === "pinned" ? "Show active threads" : "Show pinned threads",
+        searchTerms: ["pinned", "pins", "inbox", "view"],
+        run: togglePinnedView,
+      });
+    }
     if (canTriage) {
       actions.push({
         key: "triage",
@@ -473,6 +484,8 @@ export function CommandPalette(props: {
     selectDetail,
     startTriage,
     threads,
+    threadView,
+    togglePinnedView,
     triageEnvironmentId,
   ]);
   const rankedMessageKeys = useMemo(() => {

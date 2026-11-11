@@ -243,6 +243,11 @@ export function threadHasUnseenCompletion(
   return completedAtMs > lastVisitedAtMs;
 }
 
+/** Whether a row shows the Done label: an unread completion with no other status. */
+export function threadListV2ShowsDone(thread: EnvironmentThreadShell): boolean {
+  return resolveThreadListV2Status(thread) === "ready" && threadHasUnseenCompletion(thread);
+}
+
 export function resolveThreadListV2WokeAt(
   thread: EnvironmentThreadShell,
   options: { readonly now: string },
@@ -375,6 +380,9 @@ export interface ThreadListV2Layout {
   readonly nextSnoozeWakeAt: string | null;
   /** Threads listed only because their messages match the search. */
   readonly contentOnlyThreadKeys: ReadonlySet<string>;
+  /** Pinned view: threads in the view that is not showing, and those that show Done. */
+  readonly otherViewThreadCount: number;
+  readonly otherViewDoneCount: number;
 }
 
 export interface ThreadListV2ThreadListItem {
@@ -675,6 +683,8 @@ export function buildThreadListV2Items(input: {
   readonly isListedSettled?: (thread: EnvironmentThreadShell) => boolean;
   /** Settled threads in scope that are not local (older settled threads not loaded). */
   readonly unloadedSettledCount?: number;
+  /** Pinned view beta: the view showing, or null while the beta is off. */
+  readonly threadView?: "active" | "pinned" | null;
 }): ThreadListV2Layout {
   const now = input.now;
   const pending =
@@ -759,6 +769,16 @@ export function buildThreadListV2Items(input: {
     }
   }
 
+  // The pinned view shows the inbox or the pins, never both. Search spans every thread.
+  const offView =
+    input.threadView === "active"
+      ? [...pinned]
+      : input.threadView === "pinned"
+        ? [...active, ...working]
+        : [];
+  const otherViewThreadCount = offView.length;
+  const otherViewDoneCount = offView.filter(threadListV2ShowsDone).length;
+
   if (rankedMatches !== null) {
     // Searching lists every match by rank across shelves, as the palette and
     // the web sidebar do, then threads listed for their messages in the
@@ -796,7 +816,15 @@ export function buildThreadListV2Items(input: {
       settledShelfHeaderIndex: null,
       nextSnoozeWakeAt,
       contentOnlyThreadKeys,
+      otherViewThreadCount,
+      otherViewDoneCount,
     };
+  }
+
+  if (input.threadView === "active") pinned.length = 0;
+  if (input.threadView === "pinned") {
+    active.length = 0;
+    working.length = 0;
   }
 
   const orderedActive = workingShelfEnabled
@@ -919,5 +947,7 @@ export function buildThreadListV2Items(input: {
     settledShelfHeaderIndex,
     nextSnoozeWakeAt,
     contentOnlyThreadKeys,
+    otherViewThreadCount,
+    otherViewDoneCount,
   };
 }

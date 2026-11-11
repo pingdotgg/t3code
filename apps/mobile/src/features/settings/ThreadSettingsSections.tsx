@@ -219,6 +219,30 @@ export function WorkingSectionSettings() {
   );
 }
 
+export function PinnedViewSettings() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const pinnedViewEnabled =
+    AsyncResult.isSuccess(preferences) && preferences.value.pinnedViewEnabled === true;
+
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Pinned view (beta)">
+        <SettingsSwitchRow
+          icon="pin"
+          label="Pinned view"
+          value={pinnedViewEnabled}
+          onValueChange={(value) => savePreferences({ pinnedViewEnabled: value })}
+        />
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Give pinned threads their own view. A button above the thread list switches between active
+        and pinned threads.
+      </Text>
+    </View>
+  );
+}
+
 export function NewThreadSettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);

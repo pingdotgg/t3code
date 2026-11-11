@@ -118,6 +118,9 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly toolCallVisibility?: ToolCallVisibility;
   readonly workingShelfEnabled?: boolean;
+  /** Pinned view beta: the thread list shows the inbox or only pinned threads. */
+  readonly pinnedViewEnabled?: boolean;
+  readonly threadListPinnedView?: boolean;
   readonly useLastProjectForNewThreads?: boolean;
   readonly lastThreadProject?: typeof ThreadProject.Type;
   readonly modelFavorites?: ReadonlyArray<{
@@ -202,6 +205,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingMode?: SidebarProjectGroupingMode;
     toolCallVisibility?: ToolCallVisibility;
     workingShelfEnabled?: boolean;
+    pinnedViewEnabled?: boolean;
+    threadListPinnedView?: boolean;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
     modelFavorites?: Preferences["modelFavorites"];
@@ -329,6 +334,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;
+  }
+  if (typeof parsed.pinnedViewEnabled === "boolean") {
+    preferences.pinnedViewEnabled = parsed.pinnedViewEnabled;
+  }
+  if (typeof parsed.threadListPinnedView === "boolean") {
+    preferences.threadListPinnedView = parsed.threadListPinnedView;
   }
   if (typeof parsed.useLastProjectForNewThreads === "boolean") {
     preferences.useLastProjectForNewThreads = parsed.useLastProjectForNewThreads;

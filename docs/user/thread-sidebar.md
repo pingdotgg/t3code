@@ -65,7 +65,9 @@ On web and desktop, turn on **Settings → Labs → Pinned view** to give pinned
 view. A pin button at the top of the sidebar then switches between active threads and pinned
 threads, as does `mod+alt+p` (change it in **Settings → Keybindings**). Its badges count the threads
 in the other view and, in blue, how many of them finished since you last opened them. Snoozed and
-settled threads show in both views.
+settled threads show in both views. On mobile, turn on **Pinned view** in **Settings → General**; a
+button above the thread list then switches views and shows the same counts, and the command palette
+offers the switch on both.
 
 On web and desktop, unpinning, settling, snoozing, and archiving a thread each show
 a notification with **Undo** for five seconds. Undo restores the thread's previous
