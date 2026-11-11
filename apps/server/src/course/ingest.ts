@@ -662,12 +662,14 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
             });
             hops.push({ url: current.toString(), status: response.status, ips });
             auditHops.push(hops.at(-1)!);
-            if (![301, 302, 303, 307, 308].includes(response.status)) finalResponse = response;
-            return { response, hops, url: current };
+            if (![301, 302, 303, 307, 308].includes(response.status)) {
+              finalResponse = response;
+              return { response, hops, url: current };
+            }
             const location = response.headers.get("location");
             await response.body?.cancel();
             if (!location || count === 5) throw new Error("Too many OCW redirects.");
-            current = onOcw(new URL(location, current));
+            current = onOcw(new URL(location, current.toString()));
           }
           throw new Error("Too many OCW redirects.");
         } finally {
@@ -698,19 +700,12 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
     },
     catch: (cause) => {
       if (audit && !auditedAttempt)
-        return auditDownload(audit, {
+        void auditDownload(audit, {
           url: source,
           hops: auditHops,
           status: null,
           ...(isOcwBlockedError(cause) ? { blocked: cause.reason } : { error: String(cause) }),
-        }).then(
-          () =>
-            new CourseIngestError({
-              message: `Could not find the OCW course download: ${
-                isOcwBlockedError(cause) ? cause.reason : String(cause)
-              }`,
-            }),
-        );
+        });
       return new CourseIngestError({
         message: `Could not find the OCW course download: ${
           isOcwBlockedError(cause) ? cause.reason : String(cause)

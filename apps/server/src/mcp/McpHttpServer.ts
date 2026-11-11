@@ -92,6 +92,7 @@ import {
   CourseReferenceToolkit,
   CourseToolkit,
 } from "./toolkits/course/tools.ts";
+import * as CourseService from "../course/CourseService.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   requestUrl(request).pipe(
@@ -685,7 +686,7 @@ export const imageToolContent = (encodedResult: unknown, includeImage = true) =>
   const { screenshot: _screenshot, ...rest } = result;
   const metadata = {
     ...rest,
-    images: images.map(({ data: _data, type: _type, ...image }) => image),
+    images: images.map(({ data: _data, ...image }) => image),
     ...(screenshot === undefined
       ? {}
       : {
@@ -882,6 +883,7 @@ const registerCourseReferenceFetch = Effect.fn("McpHttpServer.registerCourseRefe
   function* () {
     const config = yield* ServerConfig.ServerConfig;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const courses = yield* CourseService.CourseService;
     const built = yield* decodeAsAdvertised(CourseReferenceToolkit);
     yield* registerImageTool(
       CourseReferenceFetchTool,
@@ -893,6 +895,7 @@ const registerCourseReferenceFetch = Effect.fn("McpHttpServer.registerCourseRefe
         effect.pipe(
           Effect.provideService(ServerConfig.ServerConfig, config),
           Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+          Effect.provideService(CourseService.CourseService, courses),
         ),
       "reference_fetch",
       (error) =>

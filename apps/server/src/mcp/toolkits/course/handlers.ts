@@ -40,6 +40,16 @@ const courseOwnershipFailure = () =>
     code: "invalid_request",
     message: "That course belongs to another lesson.",
   });
+const normalizeSolutionLeads = (raw: ReadonlyArray<string>): ReadonlyArray<string> | undefined => {
+  const leads: string[] = [];
+  for (const value of raw) {
+    if (!URL.canParse(value)) return undefined;
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    leads.push(url.href);
+  }
+  return leads;
+};
 const getOwnedCourse = Effect.fn("course.getOwnedCourse")(function* (
   service: CourseService.CourseService["Service"],
   threadId: ThreadId,
@@ -190,25 +200,12 @@ const handlers = {
       const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "course_prepare");
       const service = yield* CourseService.CourseService;
       const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
-      const rawLeads = [...new Set(input.solutionLeads ?? [])];
-      const solutionLeads: string[] = [];
-      for (const raw of rawLeads) {
-        let url: URL;
-        try {
-          url = new URL(raw);
-        } catch {
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: "solutionLeads must contain at most 10 http(s) URLs",
-          });
-        }
-        if (url.protocol !== "http:" && url.protocol !== "https:")
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: "solutionLeads must contain at most 10 http(s) URLs",
-          });
-        solutionLeads.push(url.href);
-      }
+      const solutionLeads = normalizeSolutionLeads([...new Set(input.solutionLeads ?? [])]);
+      if (solutionLeads === undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "solutionLeads must contain at most 10 http(s) URLs",
+        });
       if (solutionLeads.length > 10)
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalTimers:off
 import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeZlib from "node:zlib";
 import * as Effect from "effect/Effect";
@@ -309,7 +309,7 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
         const links = [...html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
           .slice(0, 300)
           .map((match) =>
-            URL.canParse(match[1]!, url)
+            URL.canParse(match[1]!, url.toString())
               ? {
                   href: new URL(match[1]!, url).toString(),
                   text: match[2]!
