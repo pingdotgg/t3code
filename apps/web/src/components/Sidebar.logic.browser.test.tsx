@@ -1,7 +1,16 @@
+import { EnvironmentId, ThreadId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { compileResolvedKeybindingsConfig, isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
-import { useSnoozeWakeClock, useThreadJumpHintsVisible } from "./Sidebar.logic";
+import { registerModelPickerContent } from "../modelPickerVisibility";
+import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import {
+  THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  useSnoozeWakeClock,
+  useThreadJumpHintsVisible,
+} from "./Sidebar.logic";
 
 const MOUNTED_AT_MS = Date.parse("2026-10-24T08:00:00.000Z");
 
@@ -32,28 +41,115 @@ describe("useSnoozeWakeClock", () => {
   });
 });
 
-function JumpHints(props: { readonly held: boolean }) {
-  return <output>{useThreadJumpHintsVisible(props.held) ? "shown" : "hidden"}</output>;
+const ROUTE_THREAD_REF = {
+  environmentId: EnvironmentId.make("local"),
+  threadId: ThreadId.make("thread-1"),
+};
+
+function JumpHints(props: { readonly keybindings: ResolvedKeybindingsConfig }) {
+  const shown = useThreadJumpHintsVisible(props.keybindings, ROUTE_THREAD_REF);
+  return <output>{shown ? "shown" : "hidden"}</output>;
 }
 
 describe("useThreadJumpHintsVisible", () => {
   it("waits for the delay again on a second hold", async () => {
-    // The first render reads the clock.
-    using _timers = fakeTimers({ now: 0 });
-    await using screen = await render(<JumpHints held />, {
+    const keybindings = compileResolvedKeybindingsConfig([
+      { key: "mod+1", command: "thread.jump.1" },
+    ]);
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await using screen = await render(<JumpHints keybindings={keybindings} />, {
       // A bare hook host; nothing here links or navigates.
       router: false,
     });
-    await act(() => vi.advanceTimersByTime(1_000));
-    await expect.element(screen.getByRole("status")).toHaveTextContent("shown");
+    using _timers = fakeTimers();
+    const output = screen.getByRole("status");
 
-    await screen.rerender(<JumpHints held={false} />);
-    await expect.element(screen.getByRole("status")).toHaveTextContent("hidden");
-    await act(() => vi.advanceTimersByTime(1_000));
+    await userEvent.keyboard(`{${modifier}>}`);
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
+    await expect.element(output).toHaveTextContent("shown");
 
-    await screen.rerender(<JumpHints held />);
-    await expect.element(screen.getByRole("status")).toHaveTextContent("hidden");
-    await act(() => vi.advanceTimersByTime(1_000));
-    await expect.element(screen.getByRole("status")).toHaveTextContent("shown");
+    await userEvent.keyboard(`{/${modifier}}`);
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
+
+    await userEvent.keyboard(`{${modifier}>}`);
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS - 1));
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => vi.advanceTimersByTime(1));
+    await expect.element(output).toHaveTextContent("shown");
+    await userEvent.keyboard(`{/${modifier}}`);
+  });
+
+  it("follows terminal focus and the route thread's terminal while the modifier is held", async () => {
+    using stack = new DisposableStack();
+    const terminal = document.createElement("div");
+    terminal.dataset.terminalOwner = "drawer";
+    const terminalInput = document.createElement("textarea");
+    terminal.append(terminalInput);
+    document.body.append(terminal);
+    stack.defer(() => terminal.remove());
+    stack.defer(() => useTerminalUiStateStore.getState().setTerminalOpen(ROUTE_THREAD_REF, false));
+    const keybindings = compileResolvedKeybindingsConfig([
+      { key: "mod+1", command: "thread.jump.1", when: "terminalOpen" },
+    ]);
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await using screen = await render(<JumpHints keybindings={keybindings} />, {
+      // A bare hook host; nothing here links or navigates.
+      router: false,
+    });
+    using _timers = fakeTimers();
+    const output = screen.getByRole("status");
+
+    await userEvent.keyboard(`{${modifier}>}`);
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => useTerminalUiStateStore.getState().setTerminalOpen(ROUTE_THREAD_REF, true));
+    await expect.element(output).toHaveTextContent("shown");
+    await act(() => terminalInput.focus());
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => terminalInput.blur());
+    await expect.element(output).toHaveTextContent("shown");
+    await userEvent.keyboard(`{/${modifier}}`);
+    await expect.element(output).toHaveTextContent("hidden");
+  });
+
+  it("returns when the model picker closes while the modifier is still held", async () => {
+    const keybindings = compileResolvedKeybindingsConfig([
+      { key: "mod+1", command: "thread.jump.1", when: "!modelPickerOpen" },
+    ]);
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await using screen = await render(<JumpHints keybindings={keybindings} />, {
+      // A bare hook host; nothing here links or navigates.
+      router: false,
+    });
+    using _timers = fakeTimers();
+    const output = screen.getByRole("status");
+
+    await userEvent.keyboard(`{${modifier}>}`);
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
+    await expect.element(output).toHaveTextContent("shown");
+    let unregisterModelPicker = () => {};
+    await act(() => {
+      unregisterModelPicker = registerModelPickerContent();
+    });
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => unregisterModelPicker());
+    await expect.element(output).toHaveTextContent("shown");
+    await userEvent.keyboard(`{/${modifier}}`);
+  });
+
+  it("shows after the delay for a jump binding without a modifier", async () => {
+    const keybindings = compileResolvedKeybindingsConfig([{ key: "f1", command: "thread.jump.1" }]);
+    // Mounting starts the hold delay.
+    using _timers = fakeTimers();
+    await using screen = await render(<JumpHints keybindings={keybindings} />, {
+      // A bare hook host; nothing here links or navigates.
+      router: false,
+    });
+    const output = screen.getByRole("status");
+
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
+    await expect.element(output).toHaveTextContent("shown");
   });
 });
