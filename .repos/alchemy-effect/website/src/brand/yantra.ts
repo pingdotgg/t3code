@@ -10,8 +10,8 @@ const YANTRA = {
   viewBox: [0, 0, 24, 24],
   center: 12,
   circleRadius: 9.5,
-  binduRadius: 1.1,
-  strokeWidth: 1.1,
+  binduRadius: 1.3,
+  strokeWidth: 1.5,
 } as const;
 
 /**
@@ -65,6 +65,13 @@ export const YANTRA_THEMES = {
     /** `--alc-bg` (dark block) */
     bg: "#14110d",
   },
+  /** Monochrome: white strokes and bindu, for the dark background. */
+  mono: {
+    stroke: "#ffffff",
+    dot: "#ffffff",
+    /** `--alc-bg` (dark block) */
+    bg: "#14110d",
+  },
 } as const;
 
 export type YantraTheme = keyof typeof YANTRA_THEMES;
@@ -85,13 +92,9 @@ export function yantraSvg({
 }: YantraOptions = {}): string {
   const colors = YANTRA_THEMES[theme === "auto" ? "light" : theme];
 
-  const stroke =
-    theme === "auto"
-      ? `var(--alc-accent-deep, ${colors.stroke})`
-      : colors.stroke;
+  const stroke = theme === "auto" ? `var(--alc-accent-deep, ${colors.stroke})` : colors.stroke;
 
-  const dot =
-    theme === "auto" ? `var(--alc-yantra-dot, ${colors.dot})` : colors.dot;
+  const dot = theme === "auto" ? `var(--alc-yantra-dot, ${colors.dot})` : colors.dot;
 
   const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="${YANTRA.viewBox.join(" ")}" fill="none" stroke="${stroke}" stroke-width="${YANTRA.strokeWidth}" stroke-linecap="round" stroke-linejoin="round">`,

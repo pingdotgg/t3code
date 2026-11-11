@@ -23,6 +23,8 @@ const sessionId = "mock-session-1";
 const v2Management = process.env.ACP_MOCK_V2_MANAGEMENT === "1";
 const unknownVariants = process.env.ACP_MOCK_UNKNOWN_VARIANTS === "1";
 const mcpOverAcp = process.env.ACP_MOCK_MCP_OVER_ACP === "1";
+const v2Diff = process.env.ACP_MOCK_V2_DIFF === "1";
+const badTypedRequest = process.env.ACP_MOCK_BAD_TYPED_REQUEST === "1";
 
 const program = Effect.gen(function* () {
   const agent = yield* AcpAgent.AcpAgent;
@@ -178,7 +180,7 @@ const program = Effect.gen(function* () {
         },
       });
 
-      if (process.env.ACP_MOCK_V2_DIFF === "1") {
+      if (v2Diff) {
         yield* agent.client.sessionUpdate({
           sessionId,
           update: {
@@ -211,7 +213,7 @@ const program = Effect.gen(function* () {
       });
 
       yield* agent.client.extRequest("x/typed_request", {
-        message: process.env.ACP_MOCK_BAD_TYPED_REQUEST === "1" ? 123 : "hello from typed request",
+        message: badTypedRequest ? 123 : "hello from typed request",
       });
 
       yield* agent.client.extNotification("x/typed_notification", {
