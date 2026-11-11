@@ -62,6 +62,18 @@ const courseReferenceFetchHandler = McpToolAccess.readsAsCaller(
         scope,
         "course_reference_fetch",
       );
+      if (!input.courseId)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "courseId is required for course reference fetches",
+        });
+      const service = yield* CourseService.CourseService;
+      const course = yield* service.get({ id: input.courseId }).pipe(Effect.mapError(fail));
+      if (!course.prepThreadIds.includes(thread.threadId))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "course_reference_fetch is available only to this course's prep thread",
+        });
       const config = yield* ServerConfig.ServerConfig;
       return yield* fetchCourseReference({
         url: input.url,
@@ -156,11 +168,6 @@ const handlers = {
           code: "invalid_request",
           message: "unit is required with plan, quiz or transcript",
         });
-      if (input.references !== undefined && input.pset === undefined)
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: "pset is required with references",
-        });
       const service = yield* CourseService.CourseService;
       const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
       return yield* service
@@ -183,8 +190,26 @@ const handlers = {
       const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "course_prepare");
       const service = yield* CourseService.CourseService;
       const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
-      const solutionLeads = [...new Set(input.solutionLeads ?? [])];
-      if (solutionLeads.length > 10 || solutionLeads.some((url) => !/^https?:\/\//i.test(url)))
+      const rawLeads = [...new Set(input.solutionLeads ?? [])];
+      const solutionLeads: string[] = [];
+      for (const raw of rawLeads) {
+        let url: URL;
+        try {
+          url = new URL(raw);
+        } catch {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "solutionLeads must contain at most 10 http(s) URLs",
+          });
+        }
+        if (url.protocol !== "http:" && url.protocol !== "https:")
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "solutionLeads must contain at most 10 http(s) URLs",
+          });
+        solutionLeads.push(url.href);
+      }
+      if (solutionLeads.length > 10)
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "solutionLeads must contain at most 10 http(s) URLs",
