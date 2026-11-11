@@ -3067,7 +3067,7 @@ export default function ChatView(props: ChatViewProps) {
       : (timelineMessages.findLast(
           (message) => message.role === "user" && message.runId === failedRunId,
         ) ?? null);
-  const { onSend, onRetryFailedRun, retryingFailedRunId } = useComposerSend({
+  const { onSend, withdrawQueuedSend, onRetryFailedRun, retryingFailedRunId } = useComposerSend({
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -3145,6 +3145,7 @@ export default function ChatView(props: ChatViewProps) {
     persistThreadSettingsForNextTurn,
     linkCheckoutPullRequest,
   });
+  const withdrawQueuedSendStable = useStableCallback(withdrawQueuedSend);
 
   const onRetryFailedRunStable = useStableCallback(onRetryFailedRun);
   const canRetryFailedRun =
@@ -3258,6 +3259,7 @@ export default function ChatView(props: ChatViewProps) {
           })}
           onEditQueuedRun={queuedRunEdit.beginEdit}
           onCancelEdit={queuedRunEdit.cancelEdit}
+          onRemovePending={withdrawQueuedSendStable}
           timestampFormat={timestampFormat}
           onOpenThread={onOpenRelatedThreadStable}
           onImageExpand={onExpandTimelineImageStable}
