@@ -240,8 +240,8 @@ describe("course ingestion parsers", () => {
         NodePath.join(import.meta.dirname, "fixtures/tiny-ocw.zip"),
         "https://ocw.mit.edu/courses/tiny/",
       );
-      expect(course.units.map((unit) => unit.title)).toEqual(["Lecture 1", "Lecture 0"]);
-      expect(course.units[0]?.text).toBe("[00:00] Tiny caption");
+      expect(course.units.map((unit) => unit.title)).toEqual(["Lecture 0", "Lecture 1"]);
+      expect(course.units[1]?.text).toBe("[00:00] Tiny caption");
     }),
   );
 

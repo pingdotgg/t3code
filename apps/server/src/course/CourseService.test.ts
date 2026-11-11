@@ -118,7 +118,7 @@ describe("CourseService", () => {
         ingested: { ...ingested, units: [ingested.units[1]!, ingested.units[0]!] },
       });
       yield* Deferred.succeed(gate, undefined);
-      yield* Fiber.join(fiber);
+      assert.strictEqual((yield* Fiber.join(fiber)).unit.youtubeId, "video21");
       const noFetch = {
         run: () => Effect.die("no fetch"),
       } as unknown as ProcessRunner.ProcessRunner["Service"];

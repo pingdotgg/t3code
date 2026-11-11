@@ -250,7 +250,7 @@ export const parseOcwZipEntries = (
       ...new Set(
         [
           ...(stringValue(page?.content) ?? "").matchAll(
-            /href\s*=\s*["'][^"']*?pages\/(.+?)\/index\.html["']/gi,
+            /href\s*=\s*["'][^"']*?pages\/([^"']+?)\/index\.html["']/gi,
           ),
         ]
           .map((match) => match[1]!)
