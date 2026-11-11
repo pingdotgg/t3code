@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
@@ -861,6 +862,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect(yield* installation.resolve(uncertain).pipe(Effect.flip)).toMatchObject({
           operation: "resolve",
         });
+      }
+
+      const win32 = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+      const serverOnC: Path.Path = {
+        ...win32,
+        resolve: (...segments) => win32.resolve("C:\\t3", ...segments),
+      };
+      const launcherOnD = "D:\\launchers\\agy.cmd";
+      for (const [written, expected] of [
+        ["\\runtime\\agy_acp_server.exe", null],
+        ["C:runtime\\agy_acp_server.exe", null],
+        ["%~dp0runtime\\agy_acp_server.exe", "D:\\launchers\\runtime\\agy_acp_server.exe"],
+        ["\\\\server\\share\\agy_acp_server.exe", "\\\\server\\share\\agy_acp_server.exe"],
+      ] as const) {
+        expect(AntigravityInstallation.launcherTargetPath(serverOnC, launcherOnD, written)).toBe(
+          expected,
+        );
       }
     }),
   );

@@ -51,6 +51,15 @@ const LAUNCHER_SETUP =
 const LAUNCHER_COMMAND =
   /^[\s@]*(?:"([^"]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe))(?:\s[^&|<>()]*)?$/iu;
 
+// The launcher runs in the project directory, so a target like `\x\agy_acp_server.exe`
+// whose drive comes from the working directory may not be the file resolved here.
+export const launcherTargetPath = (path: Path.Path, launcher: string, written: string) => {
+  const target = written.replace(/%~dp0/giu, () => `${path.dirname(launcher)}${path.sep}`);
+  if (/[%!]/u.test(target)) return null;
+  const resolved = path.resolve(target);
+  return path.parse(target).root === path.parse(resolved).root ? resolved : null;
+};
+
 const ReleaseId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const ActiveRelease = Schema.Struct({ releaseId: ReleaseId });
 const InstalledRelease = Schema.Struct({
@@ -272,12 +281,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       if (LAUNCHER_SETUP.test(line)) continue;
       const match = LAUNCHER_COMMAND.exec(line);
       if (!match) return null;
-      const target = (match[1] ?? match[2] ?? "").replace(
-        /%~dp0/giu,
-        () => `${path.dirname(launcher)}${path.sep}`,
-      );
-      if (/[%!]/u.test(target) || !path.isAbsolute(target)) return null;
-      targets.add(path.resolve(target));
+      const target = launcherTargetPath(path, launcher, match[1] ?? match[2] ?? "");
+      if (target === null) return null;
+      targets.add(target);
     }
     const [target] = targets;
     if (targets.size !== 1 || !target || !(yield* executableFile(target))) return null;
