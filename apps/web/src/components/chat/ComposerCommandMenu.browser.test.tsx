@@ -117,11 +117,15 @@ it("shows the first row when filtering a scrolled list highlights it", async () 
 });
 
 it("keeps the highlighted option mounted while the list scrolls away from it", async () => {
-  await using _screen = await render(<Menu activeItemId={skillItems[0]!.id} />);
+  await using screen = await render(<Menu activeItemId={skillItems[0]!.id} />);
   await scrollListToEnd();
 
   expect(
     document.getElementById(composerSuggestionOptionId("composer-suggestions", skillItems[0]!.id)),
     "aria-activedescendant target",
   ).not.toBeNull();
+
+  // Sources like thread shells hand over a new but equal array on unrelated updates.
+  await screen.rerender(<Menu activeItemId={skillItems[0]!.id} items={[...skillItems]} />);
+  await expect.element(page.getByRole("option", { name: /demo-skill-299/ })).toBeInViewport();
 });

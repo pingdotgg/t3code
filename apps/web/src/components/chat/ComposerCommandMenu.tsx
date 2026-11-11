@@ -146,8 +146,8 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
       // Keeps the row clear of the scroll fades.
       viewportMargin: { start: 24, end: 24 },
     });
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- a filter can keep the index while the list stays scrolled.
-  }, [activeIndex, props.items]);
+    // A filter can keep the index while the list stays scrolled; an equal new array must not scroll.
+  }, [activeIndex, props.items[0]?.id]);
 
   return (
     <Command
