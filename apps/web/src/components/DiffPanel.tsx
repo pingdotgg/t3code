@@ -269,7 +269,7 @@ export default function DiffPanel({
     routeThreadRef ? state.repositoryCwdByThreadKey[scopedThreadKey(routeThreadRef)] : undefined,
   );
   const repositoriesQuery = useEnvironmentQuery(
-    canReadFiles && activeThread && workspaceCwd
+    visible && canReadFiles && activeThread && workspaceCwd
       ? reviewEnvironment.repositories({
           environmentId: activeThread.environmentId,
           input: { cwd: workspaceCwd },
