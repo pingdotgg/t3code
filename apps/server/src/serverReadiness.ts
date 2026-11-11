@@ -15,7 +15,6 @@ const connectionHttpRoutes: ReadonlySet<string> = new Set([
   "POST /api/auth/websocket-ticket/rpc",
   "POST /api/t3-connect/health",
   "POST /api/t3-connect/mint-credential",
-  "POST /api/connect/mint-credential",
   "GET /ws",
 ]);
 
