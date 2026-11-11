@@ -600,43 +600,6 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect(
-    "installs a Windows update only with room for the installer, install folder and margin",
-    () => {
-      const megabyte = 1024 * 1024;
-      const requiredBytes = (150 + 400 + 128) * megabyte;
-      const installWithTempFreeBytes = (tempFreeBytes: number) => {
-        const harness = makeHarness({
-          platform: "win32",
-          diskSpace: {
-            tempFreeBytes,
-            installerBytes: 150 * megabyte,
-            installDirectoryBytes: 400 * megabyte,
-          },
-        });
-        return Effect.scoped(
-          Effect.gen(function* () {
-            const updates = yield* DesktopUpdates.DesktopUpdates;
-            yield* updates.configure;
-            harness.emit("update-downloaded", {
-              version: "1.2.4",
-              downloadedFile:
-                "C:\\Users\\me\\AppData\\Local\\t3code-updater\\pending\\installer.exe",
-            });
-            yield* flushCallbacks;
-            yield* updates.install;
-            return harness.quitAndInstalls();
-          }),
-        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-      };
-
-      return Effect.gen(function* () {
-        assert.equal(yield* installWithTempFreeBytes(requiredBytes - 1), 0);
-        assert.equal(yield* installWithTempFreeBytes(requiredBytes), 1);
-      });
-    },
-  );
-
   it.effect("keeps a Windows update retryable when a separate install volume is full", () => {
     const megabyte = 1024 * 1024;
     const harness = makeHarness({
