@@ -1,5 +1,5 @@
+import * as Kubernetes from "@alchemy.run/kubernetes";
 import { Stage } from "alchemy";
-import * as Kubernetes from "alchemy/Kubernetes";
 import * as Effect from "effect/Effect";
 
 export const Cluster = Effect.gen(function* () {
