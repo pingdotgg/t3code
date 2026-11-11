@@ -97,9 +97,12 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   const subagentThreadIds = new Set<string>();
   const settledTimes: Array<number> = [];
   for (const row of rows) {
+    // A promoted child still needs its idle ancestors, so parents are tracked by lineage.
+    if (row.lineage.relationshipToParent === "subagent" && row.lineage.parentThreadId) {
+      subagentParentIds.add(row.lineage.parentThreadId);
+    }
     if (isNestedSubagentThread(row)) {
       subagentThreadIds.add(row.id);
-      if (row.lineage.parentThreadId) subagentParentIds.add(row.lineage.parentThreadId);
     } else if (isListedThread(row) && row.settledOverride === "settled" && row.settledAt !== null) {
       settledTimes.push(DateTime.toEpochMillis(row.settledAt));
     }
@@ -422,7 +425,9 @@ export function shouldPublishShellApplicationEvent(
     return true;
   }
   if (event.type === "thread.promoted") subagentThreadIds.delete(event.threadId);
-  if (event.type === "thread.demoted") subagentThreadIds.add(event.threadId);
+  if (event.type === "thread.demoted" && isNestedSubagentThread(event.payload)) {
+    subagentThreadIds.add(event.threadId);
+  }
   if (event.type === "thread.deleted") {
     // Replay and the live tail overlap; keep known IDs so late events stay filtered.
     return true;

@@ -183,6 +183,9 @@ describe("omitIdleSubagentShells", () => {
       row("grandchild", "middle"),
       // Idle, but the user gave it a row of its own.
       row("promoted", "root", { promotedAt: DateTime.makeUnsafe(0) }),
+      // The idle parent of a promoted child stays, so approval rollups reach the root.
+      row("nested", "root"),
+      row("promotedUnderNested", "nested", { promotedAt: DateTime.makeUnsafe(0) }),
     ];
     expect(omitIdleSubagentShells(threads).map((thread) => thread.id)).toEqual([
       "root",
@@ -192,6 +195,8 @@ describe("omitIdleSubagentShells", () => {
       "background",
       "middle",
       "promoted",
+      "nested",
+      "promotedUnderNested",
     ]);
   });
 
@@ -209,15 +214,21 @@ describe("omitIdleSubagentShells", () => {
 
   it("publishes the transcript events of a child once it is promoted, until it is demoted", () => {
     const subagents = new Set(["child"]);
-    const publishes = (type: string) =>
+    const publishes = (type: string, relationshipToParent: string = "subagent") =>
       shouldPublishShellApplicationEvent(
-        { event: { threadId: "child", type } } as ApplicationStoredEvent,
+        {
+          event: { threadId: "child", type, payload: { lineage: { relationshipToParent } } },
+        } as ApplicationStoredEvent,
         subagents,
       );
     expect(publishes("thread.promoted")).toBe(true);
     expect(publishes("turn-item.updated")).toBe(true);
     expect(publishes("thread.demoted")).toBe(true);
     expect(publishes("turn-item.updated")).toBe(false);
+    // A demoted side chat is not a subagent, so its transcript events still refresh its shell.
+    publishes("thread.promoted");
+    expect(publishes("thread.demoted", "fork")).toBe(true);
+    expect(publishes("turn-item.updated", "fork")).toBe(true);
   });
 });
 
