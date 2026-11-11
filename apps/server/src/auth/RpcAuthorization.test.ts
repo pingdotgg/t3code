@@ -139,6 +139,51 @@ describe("RPC scope middleware", () => {
   );
 });
 
+it.effect("protects secret-backed skill paths while allowing settings-authorized clients", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.serverGetBundledSkills
+        > => tag !== WS_METHODS.serverGetBundledSkills,
+      ),
+    );
+    const catalog = {
+      targets: [
+        {
+          instanceId: ProviderInstanceId.make("codex"),
+          label: "Codex",
+          directory: "/secret-derived/home/skills",
+          skills: [],
+        },
+      ],
+    };
+    let handled = 0;
+    const handlers = group.toLayerHandler(WS_METHODS.serverGetBundledSkills, () =>
+      Effect.sync(() => {
+        handled++;
+        return catalog;
+      }),
+    );
+    const denied = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
+    );
+    expect(yield* denied[WS_METHODS.serverGetBundledSkills]({}).pipe(Effect.flip)).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthSettingsWriteScope,
+    });
+    expect(handled).toBe(0);
+    const granted = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthSettingsWriteScope]))),
+    );
+    expect(yield* granted[WS_METHODS.serverGetBundledSkills]({})).toEqual(catalog);
+    expect(handled).toBe(1);
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as const)(
   "enforces read permission on stream %s",
   (method) =>

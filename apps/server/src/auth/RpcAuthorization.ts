@@ -90,7 +90,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverGetStorageCleanupReport]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetDatabaseStorage]: AuthOrchestrationReadScope,
-  [WS_METHODS.serverGetBundledSkills]: AuthOrchestrationReadScope,
+  // Catalog paths can include resolved provider secrets.
+  [WS_METHODS.serverGetBundledSkills]: AuthSettingsWriteScope,
   [WS_METHODS.serverManageBundledSkill]: AuthSettingsWriteScope,
   [WS_METHODS.peerLinksList]: AuthAccessReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
