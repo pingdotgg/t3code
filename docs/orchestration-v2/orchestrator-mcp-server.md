@@ -499,6 +499,13 @@ time; an idle thread returns immediately. A timeout reports the latest durable
 status and does not cancel work. `output` carries what the run submitted
 against its `outputSchema`.
 
+### `t3_workflow`
+
+Starts, lists, reads, signals, resumes and cancels [workflow runs](../internals/workflows.md), and
+lists the questions runs ask a person. It is advertised to clients outside a thread only, such as
+the `t3 workflow` CLI, so it costs no thread any context; an agent in a thread drives workflows
+through that CLI. `start` is idempotent on `idempotencyKey` and `signal` on `signalId`.
+
 ### `t3_thread_interrupt`
 
 Interrupts a selected active run through the normal V2 `run.interrupt` command.
