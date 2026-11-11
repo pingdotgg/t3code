@@ -846,7 +846,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       );
     },
   );
-
   it.effect("preserves relay rejection errors with React Native response headers", () => {
     vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
     vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
