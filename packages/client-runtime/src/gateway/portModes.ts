@@ -134,6 +134,29 @@ class Guard {
       this.within(`Scheduled task ${taskId}'s thread ${task.threadId}`, bound);
   }
 
+  /** Synchronizing the user's library there changes no agent broader than the caller. */
+  async librarySync(environmentId: string) {
+    if (this.port.agentLibrarySync === undefined) {
+      throw this.refuse(`What synchronizing would change on ${environmentId} cannot be checked.`);
+    }
+    const sync = await this.port.agentLibrarySync(environmentId);
+    if (![sync?.skillIds, sync?.profileIds, sync?.profiles].every(Array.isArray)) {
+      throw this.refuse(`What synchronizing would change on ${environmentId} cannot be checked.`);
+    }
+    if (sync.skillIds.length === 0 && sync.profileIds.length === 0) return;
+    const what = (profile: Pick<GatewayProfile, "profileId" | "name">) =>
+      `Synchronizing the agent library on ${environmentId} would change agent ${profile.profileId ?? profile.name}, which`;
+    for (const profile of sync.profiles) this.within(what(profile), profileModes(profile));
+    for (const profile of await this.profiles(environmentId)) {
+      if (
+        (profile.profileId !== undefined && sync.profileIds.includes(profile.profileId)) ||
+        profile.skillIds?.some((skillId) => sync.skillIds.includes(skillId))
+      ) {
+        this.within(what(profile), profileModes(profile));
+      }
+    }
+  }
+
   async skillUsers(environmentId: string, skillId: string) {
     for (const profile of await this.profiles(environmentId)) {
       if (profile.skillIds?.includes(skillId)) {
@@ -206,7 +229,9 @@ export const PORT_MODE_POLICIES = {
   getPullRequestActivity: reads,
   listProfiles: reads,
   resolveProfileModelSelection: reads,
-  listSkills: reads,
+  // Listing skills there, like every library write below, synchronizes the library first.
+  listSkills: (guard, environmentId) => guard.librarySync(environmentId),
+  agentLibrarySync: reads,
   // The Agents board shows no one thread.
   openAgents: reads,
   // Putting a thread on someone's screen acts on it, as messaging it would.
@@ -215,7 +240,10 @@ export const PORT_MODE_POLICIES = {
     target.type === "agents" ? undefined : thread(environmentId, target.threadId),
   ]),
 
-  createThread: (guard, input) => guard.within(`The new thread ${input.threadId}`, input),
+  createThread: async (guard, input) => {
+    if (input.profileSelection) await guard.librarySync(input.environmentId);
+    guard.within(`The new thread ${input.threadId}`, input);
+  },
   sendMessage: writesThreads((input) => [input]),
   controlThread: writesThreads((input) => [STARTS_WORK.has(input.action) ? input : undefined]),
   respondToUserInput: writesThreads((input) => [input]),
@@ -240,7 +268,10 @@ export const PORT_MODE_POLICIES = {
     thread(environmentId, threadId),
     thread(parentEnvironmentId ?? environmentId, parentThreadId ?? undefined),
   ]),
-  handoffThread: (guard, input) => guard.profile(input.environmentId, input.profileId),
+  handoffThread: async (guard, input) => {
+    await guard.librarySync(input.environmentId);
+    await guard.profile(input.environmentId, input.profileId);
+  },
   threadTask: async (guard, environmentId, request) => {
     switch (request.action) {
       case "read":
@@ -283,9 +314,12 @@ export const PORT_MODE_POLICIES = {
   todo: (guard, _environmentId, request) =>
     request.action === "list" ? undefined : edits("Changing todos")(guard),
 
-  createProfile: (guard, _environmentId, profile) =>
-    guard.within(`The new agent ${profile.name}`, profileModes(profile)),
+  createProfile: async (guard, environmentId, profile) => {
+    await guard.librarySync(environmentId);
+    guard.within(`The new agent ${profile.name}`, profileModes(profile));
+  },
   updateProfile: async (guard, environmentId, profileId, patch) => {
+    await guard.librarySync(environmentId);
     const existing = await guard.profile(environmentId, profileId);
     guard.within(
       `Agent ${profileId} as changed`,
@@ -295,30 +329,42 @@ export const PORT_MODE_POLICIES = {
       }),
     );
   },
-  deleteProfile: (guard, environmentId, profileId) => guard.profile(environmentId, profileId),
-  // Copies the profiles it is given to another machine, so each must be within the caller's.
+  deleteProfile: async (guard, environmentId, profileId) => {
+    await guard.librarySync(environmentId);
+    await guard.profile(environmentId, profileId);
+  },
+  // Copies the profiles it is given to another machine, over any it has with the same id, so
+  // both must be within the caller's.
   replicateProfiles: async (guard, environmentId, profiles, deletedAt) => {
     for (const profile of profiles) {
       guard.within(`Agent ${profile.profileId ?? profile.name}`, profileModes(profile));
     }
-    if (deletedAt === undefined) return;
+    const replaced = new Set([
+      ...profiles.map((profile) => profile.profileId),
+      ...Object.keys(deletedAt ?? {}),
+    ]);
     for (const profile of await guard.profiles(environmentId)) {
-      if (profile.profileId !== undefined && profile.profileId in deletedAt) {
+      if (profile.profileId !== undefined && replaced.has(profile.profileId)) {
         guard.within(`Agent ${profile.profileId}`, profileModes(profile));
       }
     }
   },
-  // Merges the user's own library from their machines, as their app does before each use; it
-  // carries nothing the caller chose, and every agent start runs it.
-  syncAgentLibrary: reads,
+  // Merges the user's library from their machines, which may carry a limited chat's skill edit
+  // made elsewhere to an agent here.
+  syncAgentLibrary: (guard, environmentId) => guard.librarySync(environmentId),
   // A new skill changes no agent until a profile lists it, which is checked there.
-  createSkill: edits("Adding a skill"),
+  createSkill: async (guard, environmentId) => {
+    edits("Adding a skill")(guard);
+    await guard.librarySync(environmentId);
+  },
   updateSkill: async (guard, environmentId, skillId) => {
     edits("Changing a skill")(guard);
+    await guard.librarySync(environmentId);
     await guard.skillUsers(environmentId, skillId);
   },
   deleteSkill: async (guard, environmentId, skillId) => {
     edits("Removing a skill")(guard);
+    await guard.librarySync(environmentId);
     await guard.skillUsers(environmentId, skillId);
   },
   executeOperation: async (guard, input) => {

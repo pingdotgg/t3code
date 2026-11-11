@@ -75,6 +75,7 @@ const METHOD_NEEDS: {
   deleteProfile: () => WRITE,
   replicateProfiles: () => WRITE,
   syncAgentLibrary: () => WRITE,
+  agentLibrarySync: () => READ,
   getEnvironmentStatus: () => READ,
   getPresence: () => READ,
   listProfiles: () => READ,

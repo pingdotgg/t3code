@@ -79,9 +79,13 @@ it.effect("routes each call only to an app holding the scopes it needs", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const broker = yield* make;
-      yield* serve(broker, "desktop", { remote: ["read", "send"] }, (method) => ({
-        result: `desktop:${method}`,
-      }));
+      yield* serve(
+        broker,
+        "desktop",
+        { remote: ["read", "send"] },
+        (method) => ({ result: `desktop:${method}` }),
+        DESKTOP_APP_SUBJECT,
+      );
       yield* serve(
         broker,
         "phone",
@@ -137,9 +141,13 @@ it.effect(
           connectionState,
           targetKind: "remote",
         });
-        yield* serve(broker, "studio", { studio: ["read"] }, () => ({
-          result: [summary("studio", "connected")],
-        }));
+        yield* serve(
+          broker,
+          "studio",
+          { studio: ["read"] },
+          () => ({ result: [summary("studio", "connected")] }),
+          DESKTOP_APP_SUBJECT,
+        );
         yield* serve(
           broker,
           "laptop",
@@ -455,6 +463,75 @@ it.effect("never lets a session paired by code take an environment another sessi
       }));
       expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
         "laptop-again:listProjects",
+      );
+    }),
+  ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect("counts only what an app could relay when deciding who holds an environment", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      const membership = yield* Membership.Membership;
+      yield* membership.put({
+        environmentId: here,
+        label: "here",
+        nodeId: null,
+        access: "full-access",
+      });
+      yield* membership.putApp({ appId: "phone", label: "Phone", access: "full-access" });
+      // An app of the network does not relay a machine outside it, so it holds nothing there.
+      const phone = yield* serve(
+        broker,
+        "phone",
+        { elsewhere: ["read"] },
+        (method) => ({ result: `phone:${method}` }),
+        "network-app:phone",
+      );
+      yield* serve(broker, "laptop", { elsewhere: ["read"] }, (method) => ({
+        result: `laptop:${method}`,
+      }));
+      expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
+        "laptop:listProjects",
+      );
+      yield* Fiber.interrupt(phone);
+      expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
+        "laptop:listProjects",
+      );
+    }),
+  ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect("frees an environment a session paired by code held once it disconnects", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      const first = yield* serve(broker, "first", { elsewhere: ["read"] }, (method) => ({
+        result: `first:${method}`,
+      }));
+      yield* serve(broker, "second", { elsewhere: ["read"] }, (method) => ({
+        result: `second:${method}`,
+      }));
+      expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
+        "first:listProjects",
+      );
+      yield* Fiber.interrupt(first);
+      expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
+        "second:listProjects",
+      );
+      // This machine's own desktop app vouches for what it relays, so it goes first.
+      yield* serve(
+        broker,
+        "desktop",
+        { elsewhere: ["read"] },
+        (method) => ({ result: `desktop:${method}` }),
+        DESKTOP_APP_SUBJECT,
+      );
+      yield* serve(broker, "third", { elsewhere: ["read"] }, (method) => ({
+        result: `third:${method}`,
+      }));
+      expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
+        "desktop:listProjects",
       );
     }),
   ).pipe(Effect.provide(layerDependencies())),

@@ -186,10 +186,16 @@ calls relayed through a connected app (`McpGatewayBroker`). A relayed call is
 capped on every call by this machine's own roster access. A member is relayed
 only by this machine's own desktop app (its `desktop-bootstrap` session) or a
 network app's session, within that app's access; a code-paired session cannot
-take a member's traffic, nor an environment another session already relays.
+take a member's traffic, nor an environment one of those apps, or an earlier
+connected code-paired session, relays while it stays connected.
 Each relayed call also carries the calling chat's modes, and the app answering
 it applies them against its own reads of the target, so a relaying server that
-was told a wrong thread mode cannot widen the call. A phone needs one
+was told a wrong thread mode cannot widen the call; a call with no modes runs as
+the narrowest chat. The app also caps each call by the target's own roster
+access for the calling machine, so a caller with a stale roster cannot act past
+a revoke it has not seen. Agent library syncs are checked the same way: one a
+chat triggers is refused when it would change an agent there broader than the
+chat. A phone needs one
 reachable member to renew, and if every full-access member is lost, the
 network has to be started again from a fresh machine.
 

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { MCP_GATEWAY_BASELINE_SCOPES } from "../../mcpGatewayState";
-import { toggleMcpGatewayGrantForAll, updateMcpGatewayGrant } from "./McpGatewaySettings";
+import type { TailnetDevicesSnapshot } from "@t3tools/contracts";
+
+import {
+  mcpGrantCeiling,
+  toggleMcpGatewayGrantForAll,
+  updateMcpGatewayGrant,
+} from "./McpGatewaySettings";
 
 const primary = "a534b83f-a352-44d8-aedc-c4230c179390";
 const macbook = "2549ba75-2a91-4554-8baa-88e6ae0efa48";
@@ -56,5 +62,34 @@ describe("MCP environment grants", () => {
     );
     expect(next["hidden-env"]).toEqual(["read"]);
     expect(next[primary]).toContain("read");
+  });
+});
+
+describe("MCP grant ceiling", () => {
+  const snapshot = (fields: object) =>
+    ({
+      selfMember: { access: "full-access" },
+      callerAppId: null,
+      apps: [],
+      ...fields,
+    }) as unknown as TailnetDevicesSnapshot;
+
+  it.each([
+    ["a machine in no network", { selfMember: null }, undefined],
+    ["a session paired by code", {}, undefined],
+    ["a revoked machine", { selfMember: { access: "revoked" } }, []],
+    [
+      "a full-access app",
+      { callerAppId: "phone", apps: [{ appId: "phone", access: "full-access" }] },
+      undefined,
+    ],
+    [
+      "a read-only app",
+      { callerAppId: "phone", apps: [{ appId: "phone", access: "read-only" }] },
+      ["read"],
+    ],
+    ["an app the roster dropped", { callerAppId: "phone", apps: [] }, []],
+  ])("caps %s the way the server does", (_label, fields, scopes) => {
+    expect(mcpGrantCeiling(snapshot(fields))?.scopes).toEqual(scopes);
   });
 });

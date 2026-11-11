@@ -1,10 +1,20 @@
+import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { type GatewayScope, type GatewayStatusSnapshot } from "@t3tools/client-runtime/gateway";
+import {
+  EnvironmentId,
+  GATEWAY_SCOPE_VALUES,
+  NETWORK_ACCESS_CEILING,
+  type TailnetDevicesSnapshot,
+} from "@t3tools/contracts";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import * as Atom from "effect/reactivity/Atom";
 import { ChevronDownIcon } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 
 import { useEnvironments } from "../../state/environments";
+import { tailnetDevices } from "../../state/tailnetDevices";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
@@ -66,12 +76,65 @@ const ADVANCED_SCOPES = MCP_GATEWAY_CONFIGURABLE_SCOPES.filter(
   (scope) => !MCP_GATEWAY_BASELINE_SCOPES.includes(scope),
 );
 
+/** The scopes a server would still honor for this app on an environment, and why no more. */
+export interface McpGrantCeiling {
+  readonly scopes: ReadonlyArray<GatewayScope>;
+  readonly reason: string;
+}
+
 export interface McpGrantEnvironmentRow {
   readonly environmentId: string;
   readonly label: string;
   readonly connectionState: string;
   readonly failureReason?: EnvironmentConnectionPresentation["failureReason"];
+  readonly ceiling?: McpGrantCeiling | undefined;
 }
+
+/**
+ * What the environment's own device network lets agents reach through this app, from its
+ * snapshot. Undefined when it sets no cap; servers still check each call.
+ */
+export function mcpGrantCeiling(
+  snapshot: TailnetDevicesSnapshot | null,
+): McpGrantCeiling | undefined {
+  if (snapshot === null || snapshot.selfMember === null) return undefined;
+  if (snapshot.selfMember.access === "revoked") {
+    return { scopes: [], reason: "Revoked from the device network, so agents cannot reach it." };
+  }
+  if (snapshot.callerAppId === null) return undefined;
+  const access =
+    snapshot.apps.find((app) => app.appId === snapshot.callerAppId)?.access ?? "revoked";
+  const scopes = NETWORK_ACCESS_CEILING[access].gateway;
+  if (scopes.length === GATEWAY_SCOPE_VALUES.length) return undefined;
+  return {
+    scopes,
+    reason:
+      scopes.length === 0
+        ? "This app is no longer in the device network, so agents cannot reach it through this app."
+        : `This app has ${access} access in the device network, so agents may only read here.`,
+  };
+}
+
+const grantCeilingsAtom = Atom.family((key: string) =>
+  Atom.make((get) =>
+    Object.fromEntries(
+      (JSON.parse(key) as ReadonlyArray<string>).map((environmentId) => [
+        environmentId,
+        mcpGrantCeiling(
+          AsyncResult.getOrElse(
+            get(
+              tailnetDevices.snapshot({
+                environmentId: EnvironmentId.make(environmentId),
+                input: {},
+              }),
+            ),
+            () => null,
+          ),
+        ),
+      ]),
+    ),
+  ),
+);
 
 function deviceConnectionText(environment: McpGrantEnvironmentRow): string {
   if (environment.connectionState === "connected") return "Connected";
@@ -240,6 +303,9 @@ export function McpEnvironmentGrantMatrix({
       {visibleEnvironments.map((environment) => {
         const on = isGrantOn(grants, environment.environmentId);
         const scopes = scopesFor(grants, environment.environmentId);
+        const ceiling = environment.ceiling;
+        const refused = (scope: GatewayScope) =>
+          ceiling !== undefined && !ceiling.scopes.includes(scope);
         return (
           <div key={environment.environmentId} className="rounded-lg border p-3">
             <div className="flex items-center justify-between gap-3">
@@ -289,8 +355,15 @@ export function McpEnvironmentGrantMatrix({
                     }}
                   >
                     <MenuRadioItem value="off">Off</MenuRadioItem>
-                    <MenuRadioItem value="on">On (default access)</MenuRadioItem>
-                    <MenuRadioItem value="all">All capabilities</MenuRadioItem>
+                    <MenuRadioItem value="on" disabled={MCP_GATEWAY_BASELINE_SCOPES.some(refused)}>
+                      On (default access)
+                    </MenuRadioItem>
+                    <MenuRadioItem
+                      value="all"
+                      disabled={MCP_GATEWAY_CONFIGURABLE_SCOPES.some(refused)}
+                    >
+                      All capabilities
+                    </MenuRadioItem>
                   </MenuRadioGroup>
                   <MenuSeparator />
                   <MenuGroup>
@@ -299,6 +372,7 @@ export function McpEnvironmentGrantMatrix({
                       <MenuCheckboxItem
                         key={scope}
                         checked={scopes.includes(scope)}
+                        disabled={refused(scope) && !scopes.includes(scope)}
                         onCheckedChange={(checked) => {
                           onChange(
                             updateMcpGatewayGrant(
@@ -321,6 +395,7 @@ export function McpEnvironmentGrantMatrix({
                       <MenuCheckboxItem
                         key={scope}
                         checked={scopes.includes(scope)}
+                        disabled={refused(scope) && !scopes.includes(scope)}
                         onCheckedChange={(checked) => {
                           onChange(
                             updateMcpGatewayGrant(
@@ -343,6 +418,9 @@ export function McpEnvironmentGrantMatrix({
               <div className="mt-2 text-xs text-muted-foreground">
                 {scopes.map((scope) => SCOPE_LABELS[scope] ?? scope).join(", ")}
               </div>
+            ) : null}
+            {ceiling !== undefined ? (
+              <div className="mt-1 text-xs text-muted-foreground">{ceiling.reason}</div>
             ) : null}
           </div>
         );
@@ -539,12 +617,22 @@ export function McpGatewaySettings() {
   const grantsDirty =
     pendingGrants !== null && JSON.stringify(pendingGrants) !== JSON.stringify(savedGrants);
 
+  const ceilings = useAtomValue(
+    grantCeilingsAtom(
+      JSON.stringify(
+        environments
+          .filter((environment) => environment.connection.phase === "connected")
+          .map((environment) => environment.environmentId),
+      ),
+    ),
+  );
   const environmentRows: ReadonlyArray<McpGrantEnvironmentRow> = environments.map(
     (environment) => ({
       environmentId: environment.environmentId,
       label: environment.label,
       connectionState: environment.connection.phase,
       failureReason: environment.connection.failureReason,
+      ceiling: ceilings[environment.environmentId],
     }),
   );
 

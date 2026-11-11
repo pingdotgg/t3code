@@ -69,7 +69,10 @@ export const NETWORK_ACCESS_CEILING = {
 >;
 
 /** Per-environment T3 Agents scopes a connected app grants to agents relayed through it. */
-export const McpGatewayRelayGrants = Schema.Record(Schema.String, Schema.Array(GatewayScope));
+export const McpGatewayRelayGrants = Schema.Record(
+  Schema.String,
+  Schema.Array(GatewayScope).check(Schema.isMaxLength(GATEWAY_SCOPE_VALUES.length)),
+).check(Schema.isMaxProperties(256));
 export type McpGatewayRelayGrants = typeof McpGatewayRelayGrants.Type;
 
 export const McpGatewayConnectInput = Schema.Struct({ grants: McpGatewayRelayGrants });

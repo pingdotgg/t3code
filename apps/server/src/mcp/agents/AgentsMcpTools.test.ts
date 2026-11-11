@@ -138,6 +138,7 @@ const makeLayer = (
       },
     ],
     listProjects: { items: [{ id: "project-2", title: "remote-app" }], snapshotAt: "snapshot-2" },
+    agentLibrarySync: { skillIds: [], profileIds: [], profiles: [] },
     createThread: { status: "accepted", threadId: "thread-remote", requestId: "request-remote" },
     scheduledTask: {
       tasks: [

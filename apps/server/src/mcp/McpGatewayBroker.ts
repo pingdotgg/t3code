@@ -59,6 +59,8 @@ export interface McpGatewayAccess {
   readonly limit?: string | undefined;
 }
 
+const SERVER_MODES = { runtimeMode: "full-access", interactionMode: "default" } as const;
+
 type HostGrants = Record<string, ReadonlyArray<GatewayScope>>;
 interface Evaluated {
   readonly blocked: McpGatewayUnavailableError | undefined;
@@ -132,23 +134,13 @@ export const make = Effect.gen(function* () {
           : undefined;
         const relayer =
           subject === DESKTOP_APP_SUBJECT ? "desktop" : appId === undefined ? "paired" : "app";
-        const identity = relayer === "paired" ? `session:${owner}` : subject;
-        // A session paired by code vouches only for itself, so it never takes an environment
-        // another session already relays; it would otherwise win by being newest.
-        const taken = new Set(
-          relayer !== "paired"
-            ? []
-            : [...hosts.values()]
-                .filter((other) => other.identity !== identity)
-                .flatMap((other) => Object.keys(other.grants)),
-        );
         const host: Host = {
           owner,
           relayer,
-          identity,
+          identity: relayer === "paired" ? `session:${owner}` : subject,
           appId,
           connectionId,
-          grants: Object.fromEntries(Object.entries(grants).filter(([id]) => !taken.has(id))),
+          grants,
           requests,
           stalled: false,
         };
@@ -181,7 +173,10 @@ export const make = Effect.gen(function* () {
    * own desktop app or by an app of the network, within that app's roster access; an app of the
    * network relays only members, and a session paired by code only environments outside it.
    */
-  const evaluate = Effect.fn("McpGatewayBroker.evaluate")(function* () {
+  const evaluate = Effect.fn("McpGatewayBroker.evaluate")(function* (
+    /** Only these environments, so a call reads the roster for what it touches. */
+    only?: ReadonlySet<string>,
+  ) {
     const enabled = yield* settings.getSettings.pipe(
       Effect.map((current) => current.linkedEnvironmentsEnabled),
       Effect.orElseSucceed(() => false),
@@ -215,6 +210,7 @@ export const make = Effect.gen(function* () {
       const grants: HostGrants = {};
       const uncapped: HostGrants = {};
       for (const [environmentId, scopes] of Object.entries(host.grants)) {
+        if (only !== undefined && !only.has(environmentId)) continue;
         let target = targets.get(environmentId);
         if (target === undefined) {
           target = yield* membership.accessOf(environmentId as EnvironmentId);
@@ -246,6 +242,30 @@ export const make = Effect.gen(function* () {
               : `The app relaying ${environmentId} is no longer in the network.`;
       }
       bound.set(host, { grants, uncapped });
+    }
+    // A session paired by code vouches only for itself: it never takes an environment from
+    // this machine's desktop app or an app of the network, nor from the earliest connected
+    // session paired by code that still answers. Leaving frees it.
+    const holder = new Map<string, Host>();
+    for (const [host, { uncapped }] of bound) {
+      for (const environmentId of Object.keys(uncapped)) {
+        const held = holder.get(environmentId);
+        if (
+          held === undefined ||
+          (held.relayer === "paired" &&
+            (host.relayer !== "paired" || (held.stalled && !host.stalled)))
+        ) {
+          holder.set(environmentId, host);
+        }
+      }
+    }
+    for (const [host, { grants, uncapped }] of bound) {
+      if (host.relayer !== "paired") continue;
+      for (const environmentId of Object.keys(uncapped)) {
+        if (holder.get(environmentId)?.identity === host.identity) continue;
+        delete grants[environmentId];
+        delete uncapped[environmentId];
+      }
     }
     for (const { grants } of bound.values()) {
       for (const environmentId of Object.keys(grants)) delete refusals[environmentId];
@@ -357,16 +377,20 @@ export const make = Effect.gen(function* () {
     /** The calling chat's modes, applied again by the app where the call runs. */
     modeCeiling?: McpGatewayRelayEvent["modeCeiling"],
   ): Effect.fn.Return<unknown, McpGatewayUnavailableError> {
-    const evaluated = yield* evaluate();
-    if (evaluated.blocked !== undefined) return yield* evaluated.blocked;
-    const bound = evaluated.hosts;
-    if (method === "listEnvironments") return yield* listEnvironments(bound);
+    if (method === "listEnvironments") {
+      const evaluated = yield* evaluate();
+      if (evaluated.blocked !== undefined) return yield* evaluated.blocked;
+      return yield* listEnvironments(evaluated.hosts);
+    }
     const requirements = gatewayPortCallScopes(method, args);
     if (requirements === undefined) {
       return yield* unavailable(
         `${method} names no environment whose T3 Agents access could be checked, so it is not relayed.`,
       );
     }
+    const evaluated = yield* evaluate(new Set(requirements.map((need) => need.environmentId)));
+    if (evaluated.blocked !== undefined) return yield* evaluated.blocked;
+    const bound = evaluated.hosts;
     // The newest app whose own grant covers the call runs it, preferring one that answers; a
     // grant another app holds never widens it.
     const holding = [...bound]
@@ -417,7 +441,8 @@ export const make = Effect.gen(function* () {
     return codec.encodeArgs(args).pipe(
       Effect.mapError(() => unavailable(`The arguments of ${method} do not match its contract.`)),
       Effect.flatMap((encoded) =>
-        invoke(method, encoded as ReadonlyArray<unknown>, [environmentId]),
+        // No chat makes these calls; the app answering runs a call without modes at the narrowest.
+        invoke(method, encoded as ReadonlyArray<unknown>, [environmentId], SERVER_MODES),
       ),
       Effect.flatMap((answer) =>
         codec
