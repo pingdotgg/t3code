@@ -7,6 +7,7 @@ import {
   textDirection,
   type TextDirection,
 } from "@t3tools/shared/textDirection";
+import { useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -27,8 +28,14 @@ import {
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
+import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import {
+  fileRoutePathSegments,
+  resolveFileLinkPath,
+  resolveWorkspaceRelativeFilePath,
+} from "../files/filePath";
 import { useLiveThreadLinkLabels } from "../../state/entities";
 import {
   isPendingUserInputOptionSelected,
@@ -77,13 +84,33 @@ function proseDirectionStyle(text: string, setDirection: TextDirection | undefin
 function QuestionText(props: {
   readonly markdown: string;
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly workspaceRoot: string | null;
   readonly setDirection: TextDirection | undefined;
   readonly resolveImageSource: MarkdownImageSourceResolver;
   readonly onImagePress: (href: string) => void;
 }) {
   const styles = useMarkdownPreviewStyles();
   const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
-  const openLink = useOpenPullRequest();
+  const navigation = useNavigation();
+  const openPullRequest = useOpenPullRequest();
+  const openLink = (href: string) => {
+    const link = resolveMarkdownLinkPresentation(href);
+    if (link.kind !== "file") {
+      void openPullRequest(href);
+      return;
+    }
+    const path = resolveFileLinkPath(props.workspaceRoot, link.path);
+    if (path === null) return;
+    navigation.navigate("ThreadFile", {
+      environmentId: String(props.environmentId),
+      threadId: String(props.threadId),
+      path: fileRoutePathSegments(
+        resolveWorkspaceRelativeFilePath(props.workspaceRoot, path) ?? path,
+      ),
+      ...(link.line ? { line: String(link.line) } : {}),
+    });
+  };
   return (
     <SelectableMarkdownText
       markdown={markdown}
@@ -93,7 +120,7 @@ function QuestionText(props: {
       textAlign={
         Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
       }
-      onLinkPress={(href) => void openLink(href)}
+      onLinkPress={openLink}
       resolveImageSource={props.resolveImageSource}
       onImagePress={props.onImagePress}
     />
@@ -266,6 +293,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
               <QuestionText
                 markdown={question.question}
                 environmentId={props.environmentId}
+                threadId={props.threadId}
+                workspaceRoot={props.workspaceRoot}
                 setDirection={setDirection}
                 resolveImageSource={resolveImageSource}
                 onImagePress={openImagePreview}
@@ -320,6 +349,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                           <QuestionText
                             markdown={preview}
                             environmentId={props.environmentId}
+                            threadId={props.threadId}
+                            workspaceRoot={props.workspaceRoot}
                             setDirection={setDirection}
                             resolveImageSource={resolveImageSource}
                             onImagePress={openImagePreview}
