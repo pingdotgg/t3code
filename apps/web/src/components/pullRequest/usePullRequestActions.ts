@@ -262,6 +262,7 @@ export function writeHandoffToComposer(
 }
 
 export type PullRequestCheckoutPrepared = {
+  readonly pullRequest: { readonly url: string };
   readonly branch: string;
   readonly worktreePath: string | null;
   readonly isOnPullRequestHead: boolean;
@@ -308,6 +309,7 @@ export async function runPullRequestCheckoutHandoff(input: {
   // Explicit timeouts survive toast updates and would pin the result after loading.
   let cancelled = false;
   let settled = false;
+  let pendingDraftId: DraftId | null = null;
   const toastId = toastManager.add({
     type: "loading",
     title: `Preparing the ${input.terminology.singular} checkout...`,
@@ -317,6 +319,8 @@ export async function runPullRequestCheckoutHandoff(input: {
       onClick: () => {
         if (cancelled || settled) return;
         cancelled = true;
+        // Unblock send immediately; finally clears again after prepare/point settle.
+        if (pendingDraftId !== null) setPullRequestCheckoutPending(pendingDraftId, false);
         input.clearHandoff();
         finishCheckoutHandoffToast(toastId, {
           type: "info",
@@ -348,6 +352,7 @@ export async function runPullRequestCheckoutHandoff(input: {
     return;
   }
 
+  pendingDraftId = opened.draftId;
   setPullRequestCheckoutPending(opened.draftId, true);
   try {
     const prepared = await input.prepare(opened.threadId);
@@ -508,6 +513,11 @@ export function usePullRequestHandoffs({
           branch: prepared.branch,
           worktreePath: prepared.worktreePath,
           envMode: prepared.worktreePath === null ? "local" : "worktree",
+          // Draft carries the PR until its first send makes it a thread, which links it.
+          checkoutPullRequest: {
+            url: prepared.pullRequest.url,
+            branch: prepared.branch,
+          },
         }),
     });
   };

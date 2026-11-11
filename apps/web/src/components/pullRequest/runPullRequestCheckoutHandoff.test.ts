@@ -48,6 +48,13 @@ type PreparedResult = AtomCommandResult<PullRequestCheckoutPrepared, unknown>;
 
 const opened = { draftId: "draft-1" as never, threadId: "thread-1" as never };
 
+const preparedCheckout: PullRequestCheckoutPrepared = {
+  pullRequest: { url: "https://github.com/pingdotgg/t3code/pull/1" },
+  branch: "pr-1",
+  worktreePath: "/tmp/pr-1",
+  isOnPullRequestHead: true,
+};
+
 function reset() {
   state.add.mockClear().mockReturnValue(state.toastId);
   state.update.mockClear();
@@ -87,23 +94,10 @@ it("puts the task in the composer before checkout finishes", async () => {
     actionProps: { children: "Cancel" },
   });
 
-  prepare.resolve(
-    AsyncResult.success({
-      branch: "pr-1",
-      worktreePath: "/tmp/pr-1",
-      isOnPullRequestHead: true,
-    }),
-  );
+  prepare.resolve(AsyncResult.success(preparedCheckout));
   await pending;
   expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(false);
-  expect(pointThread).toHaveBeenCalledWith(
-    {
-      branch: "pr-1",
-      worktreePath: "/tmp/pr-1",
-      isOnPullRequestHead: true,
-    },
-    opened,
-  );
+  expect(pointThread).toHaveBeenCalledWith(preparedCheckout, opened);
   expect(clearHandoff).toHaveBeenCalled();
   expect(state.update).toHaveBeenCalledWith(
     state.toastId,
@@ -132,8 +126,10 @@ it("cancels preparation and keeps the prompt without pointing the thread", async
   });
 
   await vi.waitFor(() => expect(state.setPrompt).toHaveBeenCalled());
+  expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(true);
   cancelFromToast();
   expect(clearHandoff).toHaveBeenCalled();
+  expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(false);
   expect(state.update).toHaveBeenCalledWith(
     state.toastId,
     expect.objectContaining({
@@ -144,15 +140,10 @@ it("cancels preparation and keeps the prompt without pointing the thread", async
     }),
   );
 
-  prepare.resolve(
-    AsyncResult.success({
-      branch: "pr-1",
-      worktreePath: "/tmp/pr-1",
-      isOnPullRequestHead: true,
-    }),
-  );
+  prepare.resolve(AsyncResult.success(preparedCheckout));
   await pending;
   expect(pointThread).not.toHaveBeenCalled();
+  expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(false);
 });
 
 it("seeds the prompt when cancel lands while openThread is still pending", async () => {
@@ -166,12 +157,7 @@ it("seeds the prompt when cancel lands while openThread is still pending", async
     task: { prompt: "Fix the failing check" },
     clearHandoff,
     openThread: () => open.promise,
-    prepare: async () =>
-      AsyncResult.success({
-        branch: "pr-1",
-        worktreePath: "/tmp/pr-1",
-        isOnPullRequestHead: true,
-      }),
+    prepare: async () => AsyncResult.success(preparedCheckout),
     pointThread,
   });
 
@@ -192,12 +178,7 @@ it("reports a failed rebind when the opened draft was discarded during prepare",
     task: { prompt: "Fix the failing check" },
     clearHandoff,
     openThread: async () => opened,
-    prepare: async () =>
-      AsyncResult.success({
-        branch: "pr-1",
-        worktreePath: "/tmp/pr-1",
-        isOnPullRequestHead: true,
-      }),
+    prepare: async () => AsyncResult.success(preparedCheckout),
     pointThread: async () => false,
   });
 

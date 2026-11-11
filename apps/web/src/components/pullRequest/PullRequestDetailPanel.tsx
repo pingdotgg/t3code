@@ -994,6 +994,11 @@ export function PullRequestDetailPanel({
           branch: prepared.branch,
           worktreePath: prepared.worktreePath,
           envMode: prepared.worktreePath === null ? "local" : "worktree",
+          // Draft carries the PR until its first send makes it a thread, which links it.
+          checkoutPullRequest: {
+            url: prepared.pullRequest.url,
+            branch: prepared.branch,
+          },
         }),
     });
   };
