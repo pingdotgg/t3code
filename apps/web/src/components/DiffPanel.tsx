@@ -1,3 +1,4 @@
+import { threadWorkspacePath } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
@@ -259,8 +260,9 @@ export default function DiffPanel({
         }
       : null,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const activeRepositoryRoot = activeThread?.worktreePath
+  const activeWorkspacePath = activeThread ? threadWorkspacePath(activeThread) : null;
+  const activeCwd = activeWorkspacePath ?? activeProject?.workspaceRoot;
+  const activeRepositoryRoot = activeWorkspacePath
     ? undefined
     : activeProject?.repositoryIdentity?.rootPath;
   const serverConfig = useAtomValue(

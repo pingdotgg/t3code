@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ProviderInstanceId,
   EnvironmentMachineKind,
   VcsRef,
   ProjectId,
@@ -15,11 +16,16 @@ export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
+  executionTarget?: ProviderInstanceId;
+  selected?: boolean;
   projectId: ProjectId | null;
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
 }
+
+export const environmentOptionValue = (option: EnvironmentOption) =>
+  option.executionTarget === undefined ? option.environmentId : `cloud:${option.executionTarget}`;
 
 /** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */
 export const ADD_TO_MACHINE_LABEL_CLASS =

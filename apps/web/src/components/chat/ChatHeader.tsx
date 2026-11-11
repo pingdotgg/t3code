@@ -42,6 +42,7 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { CursorCloudMachineBadge } from "../CursorCloudMachine";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -56,6 +57,8 @@ interface ChatHeaderProps {
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
   onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
+  /** The thread runs on a Cursor Cloud VM whose state the header shows. */
+  cloudMachine?: boolean;
 }
 
 function resolveRenameCommit(input: {
@@ -81,6 +84,7 @@ export const ChatHeader = memo(function ChatHeader({
   onNewThreadInProject,
   onOpenProjectSettings,
   onFindInThread,
+  cloudMachine = false,
 }: ChatHeaderProps) {
   const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
@@ -393,6 +397,12 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {isServerThread && cloudMachine ? (
+        <CursorCloudMachineBadge
+          environmentId={activeThreadEnvironmentId}
+          threadId={activeThreadId}
+        />
+      ) : null}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );

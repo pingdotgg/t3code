@@ -23,6 +23,10 @@
       "types": "./src/server/CursorAgentSdk.ts",
       "import": "./src/server/CursorAgentSdk.ts"
     },
+    "./server/cloudMachine": {
+      "types": "./src/server/cloudMachine/index.ts",
+      "import": "./src/server/cloudMachine/index.ts"
+    },
     "./server/accountUsage": {
       "types": "./src/server/accountUsage.ts",
       "import": "./src/server/accountUsage.ts"

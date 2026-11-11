@@ -180,6 +180,8 @@ import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as CursorCloud from "./cursorCloud/CursorCloud.ts";
+import * as CursorCloudMachines from "./cursorCloud/CursorCloudMachines.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
@@ -1511,6 +1513,8 @@ export const layerWsRpc = (
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const secretResolver = yield* SecretResolver.SecretResolver;
+      const cursorCloud = yield* CursorCloud.CursorCloud;
+      const cursorCloudMachines = yield* CursorCloudMachines.CursorCloudMachines;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -1914,6 +1918,13 @@ export const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
+        [WS_METHODS.cursorCloudStatus]: () => cursorCloud.status,
+        [WS_METHODS.cursorCloudConnect]: (input) => cursorCloud.connect(input),
+        [WS_METHODS.cursorCloudDisconnect]: () => cursorCloud.disconnect,
+        [WS_METHODS.cursorCloudSubscribeMachine]: ({ threadId }) =>
+          cursorCloudMachines.subscribe(threadId),
+        [WS_METHODS.cursorCloudWakeMachine]: ({ threadId }) => cursorCloudMachines.wake(threadId),
+
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3428,6 +3439,8 @@ export const WS_RPC_SERVER_OPTIONS = {
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
+    const cursorCloud = yield* CursorCloud.CursorCloud;
+    const cursorCloudMachines = yield* CursorCloudMachines.CursorCloudMachines;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const npmRelease = yield* NpmRelease.NpmRelease;
@@ -3506,6 +3519,10 @@ export const layer = Layer.unwrap(
               readSettingsClient(url.value),
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provide(Layer.succeed(CursorCloud.CursorCloud, cursorCloud)),
+              Layer.provide(
+                Layer.succeed(CursorCloudMachines.CursorCloudMachines, cursorCloudMachines),
+              ),
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),

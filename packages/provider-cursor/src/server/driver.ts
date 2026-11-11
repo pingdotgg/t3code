@@ -33,6 +33,7 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import { probeCursorSkills } from "./skills.ts";
+import { makeCursorCloudAccess } from "./cloudAccess.ts";
 import { makeCursorAuth } from "./auth.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
@@ -111,11 +112,11 @@ export const CursorDriver: ProviderDriver<
     });
     const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
     const credentials = yield* CursorCredentialStore.makeCursorCredentialStore(
-      instanceId,
+      config.cloudSourceInstanceId ?? instanceId,
       path.join(
         host.paths.stateDir,
         "provider-auth",
-        encodeURIComponent(instanceId),
+        encodeURIComponent(config.cloudSourceInstanceId ?? instanceId),
         "cursor.json",
       ),
     ).pipe(
@@ -151,9 +152,13 @@ export const CursorDriver: ProviderDriver<
           ),
         ),
     });
+    const cloudAccess = yield* makeCursorCloudAccess(auth);
     const stampSnapshot: typeof stampIdentity = (draft) =>
       stampIdentity({
         ...draft,
+        ...(config.cloudSourceInstanceId === undefined
+          ? {}
+          : { supportedRuntimeModes: ["full-access" as const] }),
         setup: { canAuthenticate: !auth.usesApiKey, canInstall: false },
         auth: {
           ...draft.auth,
@@ -166,6 +171,7 @@ export const CursorDriver: ProviderDriver<
       instanceId,
       environment: processEnv,
       getModels: () => catalogModels,
+      cloud: config.cloudSourceInstanceId !== undefined,
     }).pipe(
       Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
         ...sdkRunner,
@@ -280,9 +286,10 @@ export const CursorDriver: ProviderDriver<
       accentColor,
       enabled,
       auth: auth.controller,
+      cloudAccess,
       snapshot,
       snapshotForCwd: (cwd) =>
-        !effectiveConfig.enabled
+        !effectiveConfig.enabled || config.cloudSourceInstanceId !== undefined
           ? snapshot.getSnapshot
           : Effect.all([
               snapshot.getSnapshot,

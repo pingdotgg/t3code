@@ -142,6 +142,20 @@ checkpoints but cannot roll back its conversation. The [checkpoint boundary](./o
 therefore rejects revert before touching files. Native permission and question option IDs must
 also survive normalization; a display label is not necessarily a valid reply.
 
+## Cursor Cloud machines
+
+A Cursor Cloud thread's agent runs on a Cursor VM, so clients give it the working directory
+`/.t3-cursor-cloud/<threadId>`. The [mount](../../apps/server/src/cursorCloud/CursorCloudMount.ts)
+overrides the server's `FileSystem`, `ChildProcessSpawner`, and `PtyAdapter` so files, Git, and
+terminals under that path run on the VM, and Git's printed `/workspace` paths come back mounted.
+Code that reads a cwd through `node:fs` or a spawner built outside the server layers silently
+reads the host instead; use the services, or handle the mount as `WorkspaceFileSystem` does.
+`NodeHttpServer.layer` re-exports `NodeServices`, so the mount must stay provided above it.
+
+The VM connection uses Cursor's private remote-server protocol, not the public SDK, and can break
+when Cursor changes it. Reads never wake a sleeping VM, since that bills the user; only terminals,
+**Wake machine**, and new turns do.
+
 ## Attachments and stored history
 
 Attachments live outside the project workspace. The

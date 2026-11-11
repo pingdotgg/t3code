@@ -1,4 +1,5 @@
 // Client-supplied worktrees count only under managed folders or when Git lists them for the project.
+import { parseCursorCloudWorkspacePath } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
@@ -70,6 +71,8 @@ export const make = Effect.gen(function* () {
 
   const contains: KnownWorkspaces["Service"]["contains"] = Effect.fn("KnownWorkspaces.contains")(
     function* (realPath) {
+      // A thread's Cursor Cloud workspace; the mount serves only threads with a cloud agent.
+      if (parseCursorCloudWorkspacePath(realPath) !== null) return true;
       const within = (root: string | null) => root !== null && isWithinRoot(path, realPath, root);
       const worktreeSettings = yield* settings.getSettings.pipe(
         Effect.orElseSucceed(() => ({ worktreesDirectory: "", previousWorktreesDirectories: [] })),

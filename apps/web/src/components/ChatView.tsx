@@ -1,3 +1,4 @@
+import { CURSOR_CLOUD_INSTANCE_ID, threadWorkspacePath } from "@t3tools/contracts";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -433,7 +434,7 @@ export default function ChatView(props: ChatViewProps) {
   } = props;
   const embedded = parentPanel !== undefined;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const terminalPermission = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
   const routeThreadRef = scopeThreadRef(environmentId, threadId);
@@ -449,7 +450,7 @@ export default function ChatView(props: ChatViewProps) {
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
-  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
+  const sourceControlPermission = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const setThreadRuntimeMode = useOrchestrationCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
   });
@@ -816,6 +817,21 @@ export default function ChatView(props: ChatViewProps) {
     : undefined;
   const isServerThread = serverThread !== null;
   const activeThread = isServerThread ? serverThread : localDraftThread;
+  const cloudThread = serverThread?.modelSelection.instanceId === CURSOR_CLOUD_INSTANCE_ID;
+  // A cloud thread's agent lives in Cursor, so its composer cannot switch to a host provider.
+  const cloudSelected =
+    cloudThread ||
+    (!isServerThread &&
+      (composerActiveProvider ?? activeThread?.modelSelection.instanceId) ===
+        CURSOR_CLOUD_INSTANCE_ID);
+  // A cloud draft has no VM until its first message creates the agent.
+  const cloudDraft = cloudSelected && !cloudThread;
+  const activeThreadWorkspacePath = serverThread
+    ? threadWorkspacePath(serverThread)
+    : (activeThread?.worktreePath ?? null);
+  const canOperateTerminal = terminalPermission && !cloudDraft;
+  // Commits and pull requests run through host Git tooling, so cloud threads stay read-only.
+  const canWriteSourceControl = sourceControlPermission && !cloudSelected;
   const serverLatestRun =
     serverProjection === null ? null : deriveLatestThreadRun(serverProjection);
   const serverActivityRun =
@@ -1198,12 +1214,54 @@ export default function ChatView(props: ChatViewProps) {
       activeProject,
       environmentById.get(activeProject.environmentId)?.serverConfig?.scratchWorkspaceRoot ?? null,
     );
-  const logicalProjectEnvironments = useLogicalProjectEnvironments(
+  const providerEnvironmentId = (activeThread ? activeEnvironment : primaryEnvironment)
+    ?.environmentId;
+  const gitCwd = activeProject
+    ? projectScriptCwd({
+        project: { cwd: activeProject.workspaceRoot },
+        worktreePath: activeThreadWorkspacePath,
+      })
+    : null;
+  const allProviderStatuses = resolveProvidersForCwd(
+    (providerEnvironmentId === undefined
+      ? undefined
+      : providersByEnvironment.get(providerEnvironmentId)) ?? EMPTY_PROVIDERS,
+    gitCwd,
+  );
+  const cloudProvider = allProviderStatuses.find(
+    (provider) => provider.instanceId === CURSOR_CLOUD_INSTANCE_ID && provider.enabled,
+  );
+  const providerStatuses = allProviderStatuses.filter((provider) =>
+    cloudSelected
+      ? provider.instanceId === CURSOR_CLOUD_INSTANCE_ID
+      : provider.instanceId !== CURSOR_CLOUD_INSTANCE_ID,
+  );
+  const projectEnvironments = useLogicalProjectEnvironments(
     activeProject,
     activeProjectIsScratch && draftId !== null,
   );
+  const logicalProjectEnvironments = [
+    ...projectEnvironments.map((option) => ({
+      ...option,
+      selected: !cloudSelected && option.environmentId === environmentId,
+    })),
+    ...(cloudProvider
+      ? [
+          {
+            environmentId,
+            projectId: activeProject?.id ?? null,
+            label: "Cursor Cloud",
+            machine: "cloud" as const,
+            isPrimary: false,
+            executionTarget: CURSOR_CLOUD_INSTANCE_ID,
+            selected: cloudSelected,
+          },
+        ]
+      : []),
+  ];
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
-  const canAutoBalanceEnvironments = hasMultipleEnvironments && !activeProjectIsScratch;
+  const canAutoBalanceEnvironments =
+    projectEnvironments.length > 1 && !activeProjectIsScratch && !cloudSelected;
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,
@@ -1234,20 +1292,6 @@ export default function ChatView(props: ChatViewProps) {
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
-  const providerEnvironmentId = (activeThread ? activeEnvironment : primaryEnvironment)
-    ?.environmentId;
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
-  const providerStatuses = resolveProvidersForCwd(
-    (providerEnvironmentId === undefined
-      ? undefined
-      : providersByEnvironment.get(providerEnvironmentId)) ?? EMPTY_PROVIDERS,
-    gitCwd,
-  );
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
@@ -1624,7 +1668,7 @@ export default function ChatView(props: ChatViewProps) {
     turnDiffSummaries.at(-1)?.completedAt ?? null,
   );
 
-  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const gitStatusCwd = activeThreadWorkspacePath ?? gitCwd;
   const gitStatusAtom =
     gitStatusCwd === null
       ? null
@@ -1718,7 +1762,7 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const hasTimelineTopBanner = Boolean(timelineThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
-  const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
+  const activeThreadWorktreePath = activeThreadWorkspacePath;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
@@ -1805,7 +1849,7 @@ export default function ChatView(props: ChatViewProps) {
     draftThread,
     envLocked,
     automaticEnvironment,
-    logicalProjectEnvironments,
+    logicalProjectEnvironments: projectEnvironments,
     environmentById,
     providersByEnvironment,
     loadBalancingSettings,
@@ -1818,6 +1862,67 @@ export default function ChatView(props: ChatViewProps) {
     projectGroupingSettings,
     sendInFlightRef,
   });
+
+  const localMachineSelectionRef = useRef<{
+    draftId: DraftId;
+    modelSelection: ModelSelection | null;
+    runtimeMode: RuntimeMode;
+  } | null>(null);
+  const onMachineChangeStable = useStableCallback(
+    (targetEnvironmentId: EnvironmentId, executionTarget?: ProviderInstanceId) => {
+      if (envLocked || !draftId) return;
+      const store = useComposerDraftStore.getState();
+      setMultipleModelSelections(null);
+      if (executionTarget === CURSOR_CLOUD_INSTANCE_ID) {
+        if (!cloudSelected)
+          localMachineSelectionRef.current = {
+            draftId,
+            modelSelection: composerSelectedModelSelection ?? activeThread?.modelSelection ?? null,
+            runtimeMode,
+          };
+        store.setRuntimeMode(composerDraftTarget, "full-access");
+        store.setModelSelection(
+          composerDraftTarget,
+          { instanceId: CURSOR_CLOUD_INSTANCE_ID, model: "auto" },
+          { explicit: true, replaceOptions: true },
+        );
+        store.setDraftThreadContext(draftId, {
+          environmentSelection: "manual",
+          runtimeMode: "full-access",
+          loadBalancedEnvironmentId: null,
+          envMode: "local",
+          worktreePath: null,
+        });
+      } else {
+        if (cloudSelected) {
+          const previous =
+            localMachineSelectionRef.current?.draftId === draftId
+              ? localMachineSelectionRef.current
+              : null;
+          const provider = allProviderStatuses.find(
+            (provider) =>
+              provider.instanceId !== CURSOR_CLOUD_INSTANCE_ID &&
+              provider.enabled &&
+              provider.auth.status === "authenticated",
+          );
+          const selection =
+            previous?.modelSelection ??
+            (provider
+              ? { instanceId: provider.instanceId, model: provider.models[0]?.slug ?? "auto" }
+              : null);
+          if (selection)
+            store.setModelSelection(composerDraftTarget, selection, {
+              explicit: true,
+              replaceOptions: true,
+            });
+          const mode = previous?.runtimeMode ?? defaultRuntimeMode;
+          store.setRuntimeMode(composerDraftTarget, mode);
+          store.setDraftThreadContext(draftId, { runtimeMode: mode });
+        }
+        if (targetEnvironmentId !== environmentId) onEnvironmentChangeStable(targetEnvironmentId);
+      }
+    },
+  );
 
   const focusComposer = () => {
     composerRef.current?.focusAtEnd();
@@ -1909,6 +2014,7 @@ export default function ChatView(props: ChatViewProps) {
     shortcuts: terminalShortcuts,
   } = useChatTerminalActions({
     environmentId,
+    enabled: !cloudDraft,
     composerRef,
     terminalUiState,
     activeThread,
@@ -3249,7 +3355,7 @@ export default function ChatView(props: ChatViewProps) {
     />
   ) : null;
   const panelToggleControlProps = {
-    terminalAvailable: activeProject !== null,
+    terminalAvailable: activeProject !== null && !cloudDraft,
     terminalOpen: terminalUiState.terminalOpen,
     terminalShortcutLabel: shortcutLabelForCommand(keybindings, "terminal.toggle"),
     threadPanelOpen,
@@ -3349,6 +3455,7 @@ export default function ChatView(props: ChatViewProps) {
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
                 : {})}
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
+              cloudMachine={cloudThread}
             />
           </header>
         )}
@@ -3761,7 +3868,7 @@ export default function ChatView(props: ChatViewProps) {
                                   projectId={activeThread.projectId}
                                   worktreePath={activeThread.worktreePath}
                                   isServerThread={isServerThread}
-                                  showGitControls={isGitRepo}
+                                  showGitControls={isGitRepo && !cloudSelected}
                                   {...(routeKind === "draft" && draftId ? { draftId } : {})}
                                   onEnvModeChange={onEnvModeChangeStable}
                                   startFromOrigin={startFromOrigin}
@@ -3780,7 +3887,7 @@ export default function ChatView(props: ChatViewProps) {
                                     ? { onCheckoutPullRequestRequest: openPullRequestDialogStable }
                                     : {})}
                                   {...(canChangeEnvironment
-                                    ? { onEnvironmentChange: onEnvironmentChangeStable }
+                                    ? { onEnvironmentChange: onMachineChangeStable }
                                     : {})}
                                   autoEnvironmentLabel={autoEnvironmentLabel}
                                   onAutoEnvironment={
@@ -3861,13 +3968,15 @@ export default function ChatView(props: ChatViewProps) {
                   isServerThread={isServerThread}
                   {...(draftId ? { draftId } : {})}
                   activeProjectName={activeProject?.title}
-                  activeProjectScripts={activeProject ? activeProjectScripts : undefined}
+                  activeProjectScripts={
+                    activeProject && !cloudDraft ? activeProjectScripts : undefined
+                  }
                   preferredScriptId={
                     activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
                   }
                   keybindings={keybindings}
                   availableEditors={availableEditors}
-                  showOpenInPicker={showOpenInPicker}
+                  showOpenInPicker={showOpenInPicker && !cloudSelected}
                   openInShortcutEnabled={
                     !(
                       rightPanelOpen &&
@@ -3875,9 +3984,9 @@ export default function ChatView(props: ChatViewProps) {
                       renderedRightPanelSurface.attachment === undefined
                     )
                   }
-                  gitCwd={gitCwd}
+                  gitCwd={cloudDraft ? null : gitCwd}
                   workspaceMutationId={workspaceMutationId}
-                  isGitRepo={isGitRepo}
+                  isGitRepo={isGitRepo && !cloudDraft}
                   envLocked={envLocked}
                   availableEnvironments={logicalProjectEnvironments}
                   autoEnvironmentLabel={autoEnvironmentLabel}
@@ -3889,9 +3998,7 @@ export default function ChatView(props: ChatViewProps) {
                       ? onAutoEnvironmentStable
                       : undefined
                   }
-                  {...(canChangeEnvironment
-                    ? { onEnvironmentChange: onEnvironmentChangeStable }
-                    : {})}
+                  {...(canChangeEnvironment ? { onEnvironmentChange: onMachineChangeStable } : {})}
                   onEnvModeChange={onEnvModeChangeStable}
                   envMode={envMode}
                   {...(canOverrideServerThreadEnvMode

@@ -61,6 +61,7 @@ export interface TerminalLaunchContext {
 }
 
 interface ChatTerminalActionsInput {
+  readonly enabled?: boolean;
   readonly environmentId: EnvironmentId;
   readonly composerRef: ComposerHandleRef;
   readonly terminalUiState: ReturnType<typeof selectThreadTerminalUiState>;
@@ -105,7 +106,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
 
   const hasTerminalWriteAccess = () =>
-    readEnvironmentScope(environmentId, AuthTerminalOperateScope);
+    input.enabled !== false && readEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
     {},

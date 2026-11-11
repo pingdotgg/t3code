@@ -67,7 +67,7 @@ const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
 
 it.layer(layerTest)("CursorDriver", (it) => {
   it.effect(
-    "persists browser credentials, uses them for chat, and closes the SDK session on logout",
+    "persists browser credentials, uses them for chat and cloud requests, and closes the SDK session on logout",
     () =>
       Effect.gen(function* () {
         const login = vi.spyOn(Cursor.auth, "login").mockImplementation(async (options) => {
@@ -89,13 +89,15 @@ it.layer(layerTest)("CursorDriver", (it) => {
             HttpClientResponse.fromWeb(
               request,
               Response.json(
-                request.url.endsWith("/v1/me")
-                  ? {
-                      apiKeyName: "T3 Code",
-                      createdAt: "2026-01-01T00:00:00.000Z",
-                      userEmail: "cursor@example.com",
-                    }
-                  : { items: [{ id: "auto", displayName: "Auto" }] },
+                request.url.includes("/v1/agents")
+                  ? { items: [] }
+                  : request.url.endsWith("/v1/me")
+                    ? {
+                        apiKeyName: "T3 Code",
+                        createdAt: "2026-01-01T00:00:00.000Z",
+                        userEmail: "cursor@example.com",
+                      }
+                    : { items: [{ id: "auto", displayName: "Auto" }] },
               ),
             ),
           );
@@ -153,6 +155,9 @@ it.layer(layerTest)("CursorDriver", (it) => {
           },
           setup: { canAuthenticate: true, canInstall: false },
         });
+        expect(instance.cloudAccess).toBeDefined();
+        yield* instance.cloudAccess!.check;
+        expect(requests.at(-1)?.authorization).toBe("Bearer instance-browser-key");
         const threadId = ThreadId.make("cursor-browser-thread");
         const modelSelection = { instanceId: input.instanceId, model: "auto" };
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -173,10 +178,28 @@ it.layer(layerTest)("CursorDriver", (it) => {
           Effect.provideService(HttpClient.HttpClient, client),
         );
         expect((yield* recreated.snapshot.refresh).auth.status).toBe("authenticated");
+        const cloud = yield* CursorDriver.create({
+          ...input,
+          instanceId: ProviderInstanceId.make("cursor-cloud"),
+          displayName: "Cursor Cloud",
+          config: { ...input.config, cloudSourceInstanceId: input.instanceId },
+        }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+        expect((yield* cloud.snapshot.refresh).auth.status).toBe("authenticated");
+        expect(cloud.auth?.credentialBinding).toEqual(instance.auth?.credentialBinding);
+        expect(
+          (yield* cloud.orchestrationAdapter.getCapabilities()).checkpointing
+            .appCanCheckpointFilesystem,
+        ).toBe(false);
         yield* instance.auth!.logout(Effect.void);
         expect(closed).toBe(1);
+        const afterLogout = requests.length;
+        expect((yield* instance.cloudAccess!.check.pipe(Effect.flip)).reason).toBe(
+          "authentication",
+        );
+        expect(requests).toHaveLength(afterLogout);
         expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");
         expect((yield* recreated.snapshot.refresh).auth.status).toBe("unauthenticated");
+        expect((yield* cloud.snapshot.refresh).auth.status).toBe("unauthenticated");
         expect(
           (yield* Effect.exit(runtime.ensureThread({ threadId, modelSelection, runtimePolicy })))
             ._tag,

@@ -26,6 +26,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as Sink from "effect/Sink";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { vi } from "vite-plus/test";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -59,14 +61,15 @@ const { Agent, ConfigurationError } = loadCursorSdk();
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
-    { status: "finished", model: undefined, lateModel: undefined },
-    { status: "cancelled", model: "claude-opus-4-6", lateModel: undefined },
-    { status: "error", model: "custom-fable", lateModel: undefined },
-    { status: "finished", model: undefined, lateModel: "gpt-6-sol" },
-    { status: "finished", model: "gpt-6-sol", lateModel: null },
+    { cloud: false, status: "finished", model: undefined, lateModel: undefined },
+    { cloud: false, status: "cancelled", model: "claude-opus-4-6", lateModel: undefined },
+    { cloud: false, status: "error", model: "custom-fable", lateModel: undefined },
+    { cloud: false, status: "finished", model: undefined, lateModel: "gpt-6-sol" },
+    { cloud: false, status: "finished", model: "gpt-6-sol", lateModel: null },
+    { cloud: true, status: "finished", model: undefined, lateModel: undefined },
   ] as const)(
-    "projects Cursor tasks and unfinished tools: $status, late model $lateModel",
-    ({ status, model, lateModel }) =>
+    "projects Cursor tasks and unfinished tools: $status, late model $lateModel, cloud $cloud",
+    ({ cloud, status, model, lateModel }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const workspace = yield* fileSystem.makeTempDirectoryScoped({
@@ -93,12 +96,21 @@ describe("CursorAdapterV2", () => {
         });
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
+          cloud,
           environment: { HOME: workspace },
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
-            open: () =>
-              Effect.succeed({
+            open: (request) => {
+              assert.equal(request.options.cloud !== undefined, cloud);
+              assert.equal(request.options.local !== undefined, !cloud);
+              if (cloud) {
+                assert.isUndefined(request.options.mcpServers);
+                assert.deepEqual(request.options.cloud?.repos, [
+                  { url: "https://github.com/t3tools/t3code", startingRef: "abc123" },
+                ]);
+              }
+              return Effect.succeed({
                 agentId: "native-cursor-lifecycle",
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
@@ -165,6 +177,7 @@ describe("CursorAdapterV2", () => {
                     for (const update of readUpdates) {
                       yield* input.onDelta!(update);
                     }
+                    if (cloud) yield* input.onDelta!({ type: "text-delta", text: "Cloud reply" });
                     return {
                       agentId: "native-cursor-lifecycle",
                       runId: "native-cursor-run",
@@ -178,8 +191,36 @@ describe("CursorAdapterV2", () => {
                       cancel: Effect.void,
                     };
                   }).pipe(Effect.orDie),
-              }),
+              });
+            },
           }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              if (command._tag !== "StandardCommand") return Effect.die("Unexpected pipe");
+              const output =
+                command.args[0] === "remote"
+                  ? "git@github.com:t3tools/t3code.git"
+                  : command.args[0] === "rev-parse"
+                    ? "abc123"
+                    : "origin/main";
+              return Effect.succeed(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(1),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                  isRunning: Effect.succeed(false),
+                  kill: () => Effect.void,
+                  unref: Effect.succeed(Effect.void),
+                  stdin: Sink.drain,
+                  stdout: Stream.encodeText(Stream.make(output)),
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                }),
+              );
+            }),
+          ),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),
         );
         const runtime = yield* adapter.openSession({
@@ -193,6 +234,11 @@ describe("CursorAdapterV2", () => {
           modelSelection,
           runtimePolicy,
         });
+        if (cloud)
+          assert.equal(
+            (yield* Effect.exit(runtime.readThreadSnapshot({ providerThread })))._tag,
+            "Failure",
+          );
         const now = yield* DateTime.now;
         yield* runtime.startTurn({
           threadId,
@@ -239,7 +285,16 @@ describe("CursorAdapterV2", () => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
-        assert.isTrue(sentWithMcpOverride);
+        assert.equal(sentWithMcpOverride, !cloud);
+        if (cloud)
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.role === "assistant" &&
+                event.message.text === "Cloud reply",
+            ),
+          );
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);
@@ -1998,6 +2053,23 @@ describe("CursorAdapterV2", () => {
       platform: "linux",
     });
     assert.deepEqual(options.mcpServers, cursorMcpServers(mcpSession));
+
+    const cloud = { repos: [{ url: "https://github.com/t3tools/t3code", startingRef: "abc123" }] };
+    const cloudOptions = makeCursorAgentOptions({
+      apiKey: "secret-cursor-api-key",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("cursor-cloud"),
+        model: "composer-2.5",
+      },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: "/workspace" },
+      threadId,
+      mcpSession,
+      platform: "linux",
+      cloud,
+    });
+    assert.deepEqual(cloudOptions.cloud, cloud);
+    assert.isUndefined(cloudOptions.local);
+    assert.isUndefined(cloudOptions.mcpServers);
 
     const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
     assert.notInclude(logged, "secret-cursor-api-key");

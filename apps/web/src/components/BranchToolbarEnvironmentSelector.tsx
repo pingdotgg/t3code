@@ -1,3 +1,5 @@
+import { environmentOptionValue } from "./BranchToolbar.logic";
+import type { ProviderInstanceId } from "@t3tools/contracts";
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
@@ -26,14 +28,17 @@ interface BranchToolbarEnvironmentSelectorProps {
   envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
-  onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  onEnvironmentChange?: (
+    environmentId: EnvironmentId,
+    executionTarget?: ProviderInstanceId,
+  ) => void;
   onAddToMachine?: (() => void) | undefined;
 }
 
 // Action values cannot collide with server-minted environment IDs.
 const AUTO_VALUE = "action:auto";
 const ADD_MACHINE_VALUE = "action:add-machine";
-const environmentValue = (id: EnvironmentId) => `env:${id}`;
+const environmentValue = (option: EnvironmentOption) => `env:${environmentOptionValue(option)}`;
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
   autoEnvironmentLabel,
@@ -50,14 +55,15 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     "composer.host",
   );
   const activeEnvironment =
-    availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
+    availableEnvironments.find((env) => env.selected ?? env.environmentId === environmentId) ??
+    null;
 
   const environmentItems = [
     ...(onAutoEnvironment
       ? [{ value: AUTO_VALUE, label: autoEnvironmentLabel ?? "Auto balance" }]
       : []),
     ...availableEnvironments.map((env) => ({
-      value: environmentValue(env.environmentId),
+      value: environmentValue(env),
       label: env.label,
     })),
     ...(onAddToMachine ? [{ value: ADD_MACHINE_VALUE, label: "Add to another machine" }] : []),
@@ -89,14 +95,21 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   return (
     <Select
       modal={false}
-      value={autoEnvironmentLabel ? AUTO_VALUE : environmentValue(environmentId)}
+      value={
+        autoEnvironmentLabel
+          ? AUTO_VALUE
+          : activeEnvironment
+            ? environmentValue(activeEnvironment)
+            : `env:${environmentId}`
+      }
       onValueChange={(value) => {
         if (value === ADD_MACHINE_VALUE) {
           onAddToMachine?.();
         } else if (value === AUTO_VALUE) {
           onAutoEnvironment?.();
         } else if (value?.startsWith("env:")) {
-          onEnvironmentChange?.(value.slice(4) as EnvironmentId);
+          const option = availableEnvironments.find((env) => environmentValue(env) === value);
+          if (option) onEnvironmentChange?.(option.environmentId, option.executionTarget);
         }
       }}
       items={environmentItems}
@@ -148,8 +161,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           )}
           {availableEnvironments.map((env) => (
             <SelectItem
-              key={env.environmentId}
-              value={environmentValue(env.environmentId)}
+              key={environmentOptionValue(env)}
+              value={environmentValue(env)}
               disabled={onEnvironmentChange === undefined && env.environmentId !== environmentId}
             >
               <span className="inline-flex items-center gap-1.5">

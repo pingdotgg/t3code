@@ -32,6 +32,8 @@ import {
   MessageId,
   ThreadId,
   type ProjectScript,
+  CURSOR_CLOUD_INSTANCE_ID,
+  threadWorkspacePath,
 } from "@t3tools/contracts";
 import {
   projectScriptCwd,
@@ -110,6 +112,7 @@ import {
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
 import { ThreadHeader } from "./ThreadHeader";
+import { useCursorCloudMachineLabel } from "../../state/cursorCloud";
 import { resumeThread } from "./resume-thread";
 import {
   useAndroidWorkspaceBack,
@@ -526,9 +529,12 @@ function ThreadRouteContent(
       : scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const delegatedFromThread = useThreadShell(delegatedFromRef);
+  const cloudMachineLabel = useCursorCloudMachineLabel(
+    selectedThread?.modelSelection.instanceId === CURSOR_CLOUD_INSTANCE_ID ? selectedThread : null,
+  );
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
-    selectedEnvironmentConnection?.environmentLabel ?? null,
+    cloudMachineLabel ?? selectedEnvironmentConnection?.environmentLabel ?? null,
     // A linked environment's delegated task names its parent; other linked work its origin.
     delegatedFrom !== null
       ? `Subagent of ${delegatedFromThread?.title ?? delegatedFrom.title}`
@@ -761,7 +767,7 @@ function ThreadRouteContent(
       ),
     });
     const preferredWorktreePath = resolvePreferredThreadWorktreePath({
-      threadShellWorktreePath: selectedThread.worktreePath ?? null,
+      threadShellWorktreePath: threadWorkspacePath(selectedThread),
       threadDetailWorktreePath: selectedThreadDetailWorktreePath,
     });
     const cwd = projectScriptCwd({

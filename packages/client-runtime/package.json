@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./state/cursorCloud": {
+      "types": "./src/state/cursorCloud.ts",
+      "default": "./src/state/cursorCloud.ts"
+    },
     "./assembly-highlighting": {
       "types": "./src/assemblyHighlighting.ts",
       "default": "./src/assemblyHighlighting.ts"

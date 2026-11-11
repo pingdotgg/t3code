@@ -1,4 +1,9 @@
-import { CustomModelSetting, makeProviderSettingsSchema, TrimmedString } from "@t3tools/contracts";
+import {
+  CustomModelSetting,
+  makeProviderSettingsSchema,
+  TrimmedString,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -13,6 +18,9 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     apiEndpoint: Schema.optionalKey(TrimmedString).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    cloudSourceInstanceId: Schema.optionalKey(ProviderInstanceId).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     customModels: Schema.Array(CustomModelSetting).pipe(

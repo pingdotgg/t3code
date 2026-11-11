@@ -1,3 +1,4 @@
+import { threadWorkspacePath } from "@t3tools/contracts";
 import {
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
@@ -39,7 +40,9 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const project = useProject(projectRef);
-  const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const threadWorktreePath = serverThread
+    ? threadWorkspacePath(serverThread)
+    : (draftThread?.worktreePath ?? null);
   const knownSessions = useKnownTerminalSessions({
     environmentId: threadRef?.environmentId ?? null,
     threadId: threadRef?.threadId ?? null,

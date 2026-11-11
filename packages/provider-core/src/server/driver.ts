@@ -1,5 +1,6 @@
 // Context tags are runtime singletons; drivers need multiple instances.
 import type {
+  CursorCloudError,
   ProviderConsumeResetCreditOutcome,
   AcpRegistryListSessionsResult,
   AcpRegistryListProvidersResult,
@@ -37,7 +38,12 @@ export type ProviderWorkspaceSnapshot = ServerProvider &
     readonly workspaceModelsPending?: boolean;
   };
 
+export interface ProviderCloudAccess {
+  readonly check: Effect.Effect<void, CursorCloudError>;
+}
+
 export interface ProviderInstance {
+  readonly cloudAccess?: ProviderCloudAccess;
   readonly instanceId: ProviderInstanceId;
   readonly driverKind: ProviderDriverKind;
   readonly continuationIdentity: ProviderContinuationIdentity;

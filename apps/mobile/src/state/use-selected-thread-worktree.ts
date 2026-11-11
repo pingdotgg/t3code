@@ -1,3 +1,4 @@
+import { threadWorkspacePath } from "@t3tools/contracts";
 import { useSelectedThreadWorktreePath } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
 import { resolvePreferredThreadWorktreePath } from "../features/terminal/terminalLaunchContext";
@@ -7,7 +8,7 @@ export function useSelectedThreadWorktree() {
   const detailWorktreePath = useSelectedThreadWorktreePath();
 
   const selectedThreadWorktreePath = resolvePreferredThreadWorktreePath({
-    threadShellWorktreePath: selectedThread?.worktreePath ?? null,
+    threadShellWorktreePath: selectedThread ? threadWorkspacePath(selectedThread) : null,
     threadDetailWorktreePath: detailWorktreePath,
   });
 

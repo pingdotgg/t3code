@@ -961,7 +961,8 @@ export const layer: Layer.Layer<
           );
           // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
           yield* (
-            input.appThread.lineage.sideChat === true
+            input.appThread.lineage.sideChat === true ||
+            !input.session.providerSession.capabilities.checkpointing.appCanCheckpointFilesystem
               ? Effect.void
               : checkpointService.captureBaseline({
                   scope: input.checkpointScope,

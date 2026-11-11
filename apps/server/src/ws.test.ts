@@ -82,6 +82,8 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
+import * as CursorCloud from "./cursorCloud/CursorCloud.ts";
+import * as CursorCloudMachines from "./cursorCloud/CursorCloudMachines.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -814,6 +816,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(PairingGrantStore.PairingGrantStore)({}),
   Layer.mock(PeerLinks.PeerLinks)({}),
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+  Layer.mock(CursorCloud.CursorCloud)({}),
+  Layer.mock(CursorCloudMachines.CursorCloudMachines)({}),
   Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined }),
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),

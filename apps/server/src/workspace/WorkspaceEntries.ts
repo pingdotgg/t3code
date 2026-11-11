@@ -1,8 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as RcMap from "effect/RcMap";
@@ -23,7 +25,14 @@ import type {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
-import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
+import { parseCursorCloudWorkspacePath } from "@t3tools/contracts";
+import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
+import {
+  insertRankedSearchResult,
+  normalizeSearchQuery,
+  scoreQueryMatch,
+  type RankedSearchResult,
+} from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -152,12 +161,149 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   );
 });
 
+const MOUNTED_ENTRIES_TTL_MS = 15_000;
+
 /** @public */
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const fileSystem = yield* FileSystem.FileSystem;
+
+  // Cursor Cloud workspaces live on a VM the local search index cannot crawl, so ask its Git.
+  const mountedFileCache = new Map<
+    string,
+    { readonly at: number; readonly entries: ReadonlyArray<ProjectEntry> }
+  >();
+  const mountedEntries = Effect.fn("WorkspaceEntries.mountedEntries")(function* (cwd: string) {
+    const now = yield* Clock.currentTimeMillis;
+    const cached = mountedFileCache.get(cwd);
+    if (cached !== undefined && now - cached.at < MOUNTED_ENTRIES_TTL_MS) return cached.entries;
+    const result = yield* vcsProcess
+      .run({
+        operation: "WorkspaceEntries.mountedEntries",
+        command: "git",
+        args: ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd,
+        allowNonZeroExit: true,
+        timeoutMs: 30_000,
+        maxOutputBytes: 32 * 1024 * 1024,
+      })
+      .pipe(Effect.orElseSucceed(() => undefined));
+    const files = result?.exitCode === 0 ? result.stdout.split("\0").filter(Boolean) : [];
+    const directories = new Set<string>();
+    for (const file of files) {
+      for (let end = file.lastIndexOf("/"); end > 0; end = file.lastIndexOf("/", end - 1)) {
+        const directory = file.slice(0, end);
+        if (directories.has(directory)) break;
+        directories.add(directory);
+      }
+    }
+    const entries: ReadonlyArray<ProjectEntry> = [
+      ...[...directories].map((path) => ({ path, kind: "directory" as const })),
+      ...files.map((path) => ({ path, kind: "file" as const })),
+    ];
+    mountedFileCache.set(cwd, { at: now, entries });
+    return entries;
+  });
+
+  const searchMounted = Effect.fn("WorkspaceEntries.searchMounted")(function* (
+    input: ProjectSearchEntriesInput,
+    query: string,
+  ) {
+    const ranked: RankedSearchResult<ProjectEntry>[] = [];
+    let matches = 0;
+    for (const entry of yield* mountedEntries(input.cwd)) {
+      if (input.kind !== undefined && entry.kind !== input.kind) continue;
+      if (input.imageOnly === true && !isProjectFaviconPath(entry.path)) continue;
+      const lowered = entry.path.toLowerCase();
+      const score =
+        query === ""
+          ? 0
+          : Math.min(
+              scoreQueryMatch({
+                value: lowered.slice(lowered.lastIndexOf("/") + 1),
+                query,
+                exactBase: 0,
+                prefixBase: 10,
+                includesBase: 20,
+                fuzzyBase: 200,
+              }) ?? Number.POSITIVE_INFINITY,
+              (scoreQueryMatch({
+                value: lowered,
+                query,
+                exactBase: 0,
+                prefixBase: 10,
+                boundaryBase: 30,
+                includesBase: 40,
+                fuzzyBase: 300,
+              }) ?? Number.POSITIVE_INFINITY) + 5,
+            );
+      if (!Number.isFinite(score)) continue;
+      matches += 1;
+      insertRankedSearchResult(ranked, { item: entry, score, tieBreaker: entry.path }, input.limit);
+    }
+    return { entries: ranked.map((result) => result.item), truncated: matches > input.limit };
+  });
+
+  const listMountedDirectory = Effect.fn("WorkspaceEntries.listMountedDirectory")(function* (
+    cwd: string,
+    directoryPath: string,
+  ) {
+    const toError = (cause: unknown) =>
+      new WorkspaceEntriesReadDirectoryError({
+        cwd,
+        partialPath: directoryPath,
+        parentPath: path.join(cwd, directoryPath),
+        cause,
+      });
+    const target =
+      directoryPath === ""
+        ? { absolutePath: cwd, relativePath: "" }
+        : yield* workspacePaths
+            .resolveRelativePathWithinRoot({ workspaceRoot: cwd, relativePath: directoryPath })
+            .pipe(Effect.mapError(toError));
+    if (target.relativePath.split("/").includes(".git")) {
+      return yield* toError(new Error("Directory must be outside .git."));
+    }
+    const children = yield* fileSystem
+      .readDirectoryEntries(target.absolutePath)
+      .pipe(Effect.mapError(toError));
+    const entries = children.flatMap((child): ProjectEntry[] =>
+      child.name === ".git" || (child.type !== "Directory" && child.type !== "File")
+        ? []
+        : [
+            {
+              path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
+              kind: child.type === "Directory" ? "directory" : "file",
+            },
+          ],
+    );
+    const ignored = new Set<string>();
+    if (entries.length > 0) {
+      const result = yield* vcsProcess
+        .run({
+          operation: "WorkspaceEntries.list",
+          command: "git",
+          args: ["check-ignore", "-z", "--stdin"],
+          cwd,
+          stdin: `${entries.map((entry) => entry.path).join("\0")}\0`,
+          allowNonZeroExit: true,
+          timeoutMs: 10_000,
+        })
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (result?.exitCode === 0) {
+        for (const ignoredPath of result.stdout.split("\0")) ignored.add(ignoredPath);
+      }
+    }
+    return {
+      entries: entries
+        .map((entry) => (ignored.has(entry.path) ? { ...entry, ignored: true } : entry))
+        .toSorted((left, right) => left.path.localeCompare(right.path)),
+      truncated: false,
+    };
+  });
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -260,6 +406,9 @@ export const make = Effect.gen(function* () {
       const normalizedQuery = normalizeSearchQuery(input.query, {
         trimLeadingPattern: /^[@./]+/,
       });
+      if (parseCursorCloudWorkspacePath(normalizedCwd) !== null) {
+        return yield* searchMounted({ ...input, cwd: normalizedCwd }, normalizedQuery);
+      }
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
@@ -292,6 +441,11 @@ export const make = Effect.gen(function* () {
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      if (parseCursorCloudWorkspacePath(normalizedCwd) !== null) {
+        return input.directoryPath === undefined
+          ? { entries: yield* mountedEntries(normalizedCwd), truncated: false }
+          : yield* listMountedDirectory(normalizedCwd, input.directoryPath);
+      }
       if (input.directoryPath !== undefined) {
         const directoryPath = input.directoryPath;
         const toError = (cause: unknown) =>

@@ -1,3 +1,4 @@
+import { threadWorkspacePath } from "@t3tools/contracts";
 import {
   AuthTerminalOperateScope,
   type EnvironmentId,
@@ -174,7 +175,9 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     }
     reconcileTerminalIds(threadRef, serverOrderedTerminalIds);
   }, [reconcileTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds, threadRef]);
-  const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const worktreePath = serverThread
+    ? threadWorkspacePath(serverThread)
+    : (draftThread?.worktreePath ?? null);
   const effectiveWorktreePath = launchContext !== null ? launchContext.worktreePath : worktreePath;
   const cwd =
     launchContext?.cwd ??
@@ -330,7 +333,9 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,
   });
-  const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const threadWorktreePath = serverThread
+    ? threadWorkspacePath(serverThread)
+    : (draftThread?.worktreePath ?? null);
   const activeSummary =
     knownTerminalSessions?.find((session) => session.target.terminalId === surface.activeTerminalId)
       ?.state.summary ?? null;

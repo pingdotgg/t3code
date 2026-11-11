@@ -1,3 +1,4 @@
+import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
@@ -13,6 +14,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderSessionId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -935,189 +937,217 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
     }),
   );
 
-  it.effect("completes a side chat run with a missing checkpoint and never touches git", () =>
-    Effect.gen(function* () {
-      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-      const now = yield* DateTime.now;
-      const sideChatThreadId = ThreadId.make("thread:checkpoint-capture-side-chat");
-      const sideChatRunId = RunId.make("run:checkpoint-capture-side-chat");
-      const sideChatScopeId = CheckpointScopeId.make("scope:checkpoint-capture-side-chat");
-      const sideChatRootNodeId = NodeId.make("node:checkpoint-capture-side-chat-root");
-      const sideChatProviderThreadId = ProviderThreadId.make(
-        "provider-thread:checkpoint-capture-side-chat",
-      );
-      const event = { threadId: sideChatThreadId, occurredAt: now };
-      const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
-        {
-          ...event,
-          id: EventId.make("event:checkpoint-capture-side-chat:thread"),
-          type: "thread.created",
-          payload: {
-            createdBy: "user",
-            creationSource: "web",
-            id: sideChatThreadId,
-            projectId,
-            title: "Side chat",
-            providerInstanceId,
-            modelSelection,
-            runtimeMode: "approval-required",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: "/repo",
-            activeProviderThreadId: null,
-            lineage: {
-              parentThreadId: threadId,
-              relationshipToParent: "fork",
-              rootThreadId: threadId,
-              sideChat: true,
+  it.effect.each(["side-chat", "cloud"] as const)(
+    "completes %s with a missing checkpoint and never touches git",
+    (kind) =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const sideChatThreadId = ThreadId.make("thread:checkpoint-capture-side-chat");
+        const sideChatRunId = RunId.make("run:checkpoint-capture-side-chat");
+        const sideChatScopeId = CheckpointScopeId.make("scope:checkpoint-capture-side-chat");
+        const sideChatRootNodeId = NodeId.make("node:checkpoint-capture-side-chat-root");
+        const sideChatProviderThreadId = ProviderThreadId.make(
+          "provider-thread:checkpoint-capture-side-chat",
+        );
+        const event = { threadId: sideChatThreadId, occurredAt: now };
+        const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+          {
+            ...event,
+            id: EventId.make("event:checkpoint-capture-side-chat:thread"),
+            type: "thread.created",
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: sideChatThreadId,
+              projectId,
+              title: "Side chat",
+              providerInstanceId,
+              modelSelection,
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: "/repo",
+              activeProviderThreadId: null,
+              lineage: {
+                parentThreadId: threadId,
+                relationshipToParent: "fork",
+                rootThreadId: threadId,
+                sideChat: kind === "side-chat",
+              },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
             },
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            settledOverride: null,
-            settledAt: null,
-            lastVisitedAt: null,
-            deletedAt: null,
           },
-        },
-        {
-          ...event,
-          id: EventId.make("event:checkpoint-capture-side-chat:provider-thread"),
-          type: "provider-thread.updated",
-          driver,
-          providerInstanceId,
-          payload: {
-            id: sideChatProviderThreadId,
+          {
+            ...event,
+            id: EventId.make("event:checkpoint-capture-side-chat:provider-thread"),
+            type: "provider-thread.updated",
             driver,
             providerInstanceId,
-            providerSessionId: null,
-            appThreadId: sideChatThreadId,
-            ownerNodeId: null,
-            nativeThreadRef: null,
-            nativeConversationHeadRef: null,
-            status: "idle",
-            firstRunOrdinal: 1,
-            lastRunOrdinal: 1,
-            handoffIds: [],
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
+            payload: {
+              id: sideChatProviderThreadId,
+              driver,
+              providerInstanceId,
+              providerSessionId: kind === "cloud" ? ProviderSessionId.make("session:cloud") : null,
+              appThreadId: sideChatThreadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
           },
-        },
-        {
-          ...event,
-          id: EventId.make("event:checkpoint-capture-side-chat:run"),
-          type: "run.updated",
-          runId: sideChatRunId,
-          payload: {
-            id: sideChatRunId,
-            threadId: sideChatThreadId,
-            ordinal: 1,
-            providerInstanceId,
-            modelSelection,
-            providerThreadId: sideChatProviderThreadId,
-            userMessageId: MessageId.make("message:checkpoint-capture-side-chat"),
-            rootNodeId: sideChatRootNodeId,
-            activeAttemptId: null,
-            status: "waiting",
-            requestedAt: now,
-            startedAt: now,
-            completedAt: null,
-            checkpointId: null,
-            contextHandoffId: null,
-          },
-        },
-        {
-          ...event,
-          id: EventId.make("event:checkpoint-capture-side-chat:node"),
-          type: "node.updated",
-          runId: sideChatRunId,
-          nodeId: sideChatRootNodeId,
-          payload: {
-            id: sideChatRootNodeId,
-            threadId: sideChatThreadId,
+          {
+            ...event,
+            id: EventId.make("event:checkpoint-capture-side-chat:run"),
+            type: "run.updated",
             runId: sideChatRunId,
-            parentNodeId: null,
-            rootNodeId: sideChatRootNodeId,
-            kind: "root_turn",
-            status: "waiting",
-            countsForRun: true,
-            providerThreadId: sideChatProviderThreadId,
-            providerTurnId: null,
-            nativeItemRef: null,
-            runtimeRequestId: null,
-            checkpointScopeId: sideChatScopeId,
-            startedAt: now,
-            completedAt: null,
+            payload: {
+              id: sideChatRunId,
+              threadId: sideChatThreadId,
+              ordinal: 1,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: sideChatProviderThreadId,
+              userMessageId: MessageId.make("message:checkpoint-capture-side-chat"),
+              rootNodeId: sideChatRootNodeId,
+              activeAttemptId: null,
+              status: "waiting",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
           },
-        },
-        {
-          ...event,
-          id: EventId.make("event:checkpoint-capture-side-chat:scope"),
-          type: "checkpoint-scope.created",
-          runId: sideChatRunId,
-          nodeId: sideChatRootNodeId,
-          payload: {
-            id: sideChatScopeId,
-            threadId: sideChatThreadId,
+          {
+            ...event,
+            id: EventId.make("event:checkpoint-capture-side-chat:node"),
+            type: "node.updated",
             runId: sideChatRunId,
             nodeId: sideChatRootNodeId,
-            parentScopeId: null,
-            providerThreadId: sideChatProviderThreadId,
-            kind: "root_run",
-            ordinalWithinParent: 0,
-            advancesAppRunCount: true,
-            cwd: "/repo",
-            createdAt: now,
+            payload: {
+              id: sideChatRootNodeId,
+              threadId: sideChatThreadId,
+              runId: sideChatRunId,
+              parentNodeId: null,
+              rootNodeId: sideChatRootNodeId,
+              kind: "root_turn",
+              status: "waiting",
+              countsForRun: true,
+              providerThreadId: sideChatProviderThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: sideChatScopeId,
+              startedAt: now,
+              completedAt: null,
+            },
           },
-        },
-      ];
-      yield* Effect.forEach(events, (candidate) => projectionStore.apply(candidate));
-      const gitUnavailable = () => Effect.die("side chats must not snapshot the shared worktree");
-      const layerCapture = CheckpointCaptureService.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            CheckpointService.layer.pipe(
-              Layer.provide(
-                Layer.mergeAll(
-                  IdAllocator.layer,
-                  NodeCrypto.layer,
-                  Layer.mock(CheckpointStore.CheckpointStore)({
-                    isGitRepository: gitUnavailable,
-                    captureCheckpoint: gitUnavailable,
-                    hasCheckpointRef: gitUnavailable,
-                  }),
+          {
+            ...event,
+            id: EventId.make("event:checkpoint-capture-side-chat:scope"),
+            type: "checkpoint-scope.created",
+            runId: sideChatRunId,
+            nodeId: sideChatRootNodeId,
+            payload: {
+              id: sideChatScopeId,
+              threadId: sideChatThreadId,
+              runId: sideChatRunId,
+              nodeId: sideChatRootNodeId,
+              parentScopeId: null,
+              providerThreadId: sideChatProviderThreadId,
+              kind: "root_run",
+              ordinalWithinParent: 0,
+              advancesAppRunCount: true,
+              cwd: "/repo",
+              createdAt: now,
+            },
+          },
+        ];
+        yield* Effect.forEach(events, (candidate) => projectionStore.apply(candidate));
+        if (kind === "cloud") {
+          yield* projectionStore.apply({
+            ...event,
+            id: EventId.make("event:cloud-session"),
+            type: "provider-session.attached",
+            driver,
+            providerInstanceId,
+            payload: {
+              id: ProviderSessionId.make("session:cloud"),
+              driver,
+              providerInstanceId,
+              status: "ready",
+              cwd: "/repo",
+              model: modelSelection.model,
+              capabilities: {
+                ...CursorProviderCapabilitiesV2,
+                checkpointing: {
+                  ...CursorProviderCapabilitiesV2.checkpointing,
+                  appCanCheckpointFilesystem: false,
+                },
+              },
+              createdAt: now,
+              updatedAt: now,
+              lastError: null,
+            },
+          });
+        }
+        const gitUnavailable = () => Effect.die("side chats must not snapshot the shared worktree");
+        const layerCapture = CheckpointCaptureService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              CheckpointService.layer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    IdAllocator.layer,
+                    NodeCrypto.layer,
+                    Layer.mock(CheckpointStore.CheckpointStore)({
+                      isGitRepository: gitUnavailable,
+                      captureCheckpoint: gitUnavailable,
+                      hasCheckpointRef: gitUnavailable,
+                    }),
+                  ),
                 ),
               ),
+              Layer.mock(EventSink.EventSinkV2)({
+                commitCommand: (input) =>
+                  Effect.forEach(input.events, (committed) =>
+                    projectionStore.apply(committed),
+                  ).pipe(Effect.as({ committed: true } as never), Effect.orDie),
+              }),
             ),
-            Layer.mock(EventSink.EventSinkV2)({
-              commitCommand: (input) =>
-                Effect.forEach(input.events, (committed) => projectionStore.apply(committed)).pipe(
-                  Effect.as({ committed: true } as never),
-                  Effect.orDie,
-                ),
-            }),
           ),
-        ),
-      );
+        );
 
-      yield* CheckpointCaptureService.CheckpointCaptureServiceV2.use((service) =>
-        service.execute({
-          threadId: sideChatThreadId,
-          runId: sideChatRunId,
-          scopeId: sideChatScopeId,
-        }),
-      ).pipe(Effect.provide(layerCapture));
+        yield* CheckpointCaptureService.CheckpointCaptureServiceV2.use((service) =>
+          service.execute({
+            threadId: sideChatThreadId,
+            runId: sideChatRunId,
+            scopeId: sideChatScopeId,
+          }),
+        ).pipe(Effect.provide(layerCapture));
 
-      const { checkpoints, runs } = yield* projectionStore.getThreadRecords(sideChatThreadId, [
-        "runs",
-        "checkpoints",
-      ]);
-      assert.equal(runs[0]?.status, "completed");
-      const checkpoint = checkpoints.find((candidate) => candidate.id === runs[0]?.checkpointId);
-      assert.equal(checkpoint?.status, "missing");
-    }),
+        const { checkpoints, runs } = yield* projectionStore.getThreadRecords(sideChatThreadId, [
+          "runs",
+          "checkpoints",
+        ]);
+        assert.equal(runs[0]?.status, "completed");
+        const checkpoint = checkpoints.find((candidate) => candidate.id === runs[0]?.checkpointId);
+        assert.equal(checkpoint?.status, "missing");
+      }),
   );
 });

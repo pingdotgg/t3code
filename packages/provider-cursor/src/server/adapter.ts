@@ -36,10 +36,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { resolveCursorCloudWorkspace } from "./cloudWorkspace.ts";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
@@ -226,6 +228,7 @@ function providerSession(input: {
   readonly cwd: string | null;
   readonly model: string;
   readonly now: DateTime.Utc;
+  readonly capabilities?: OrchestrationV2ProviderCapabilities;
 }): OrchestrationV2ProviderSession {
   return {
     id: input.providerSessionId,
@@ -234,7 +237,7 @@ function providerSession(input: {
     status: "ready",
     cwd: input.cwd ?? process.cwd(),
     model: input.model,
-    capabilities: CursorProviderCapabilitiesV2,
+    capabilities: input.capabilities ?? CursorProviderCapabilitiesV2,
     createdAt: input.now,
     updatedAt: input.now,
     lastError: null,
@@ -304,6 +307,7 @@ export function makeCursorAgentOptions(input: {
   readonly threadId: ThreadId;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly platform: NodeJS.Platform;
+  readonly cloud?: AgentOptions["cloud"];
 }): AgentOptions {
   const policy = cursorRuntimeAgentPolicy(input.runtimePolicy, input.platform);
   const mcpServers = cursorMcpServers(input.mcpSession);
@@ -312,16 +316,20 @@ export function makeCursorAgentOptions(input: {
     name: `T3 Code ${input.threadId}`,
     mode: input.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
     ...(input.apiKey === undefined ? {} : { apiKey: input.apiKey }),
-    local: {
-      ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
-      autoReview: policy.autoReview,
-      settingSources: [...CURSOR_AGENT_SETTING_SOURCES],
-      sandboxOptions: {
-        enabled: policy.sandboxEnabled,
-      },
-      enableAgentRetries: true,
-    },
-    ...(mcpServers === undefined ? {} : { mcpServers }),
+    ...(input.cloud !== undefined
+      ? { cloud: input.cloud }
+      : {
+          local: {
+            ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
+            autoReview: policy.autoReview,
+            settingSources: [...CURSOR_AGENT_SETTING_SOURCES],
+            sandboxOptions: {
+              enabled: policy.sandboxEnabled,
+            },
+            enableAgentRetries: true,
+          },
+          ...(mcpServers === undefined ? {} : { mcpServers }),
+        }),
   };
 }
 
@@ -967,11 +975,13 @@ export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly environment: NodeJS.ProcessEnv;
   readonly getModels?: () => ReadonlyArray<ServerProviderModel>;
+  readonly cloud?: boolean;
 }
 
 export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
   options: CursorAdapterV2Options,
 ) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -981,12 +991,29 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const adapterOptions = options;
   const apiKey = adapterOptions.environment.CURSOR_API_KEY?.trim() || undefined;
+  const capabilities = options.cloud
+    ? {
+        ...CursorProviderCapabilitiesV2,
+        sessions: {
+          ...CursorProviderCapabilitiesV2.sessions,
+          supportsProviderSwitchingViaHandoff: false,
+        },
+        threads: { ...CursorProviderCapabilitiesV2.threads, canReadThreadSnapshot: false },
+        tools: { ...CursorProviderCapabilitiesV2.tools, supportsMcpTools: false },
+        context: { ...CursorProviderCapabilitiesV2.context, canGenerateSummaries: false },
+        checkpointing: {
+          ...CursorProviderCapabilitiesV2.checkpointing,
+          appCanCheckpointFilesystem: false,
+          providerCanReadConversationSnapshot: false,
+        },
+      }
+    : CursorProviderCapabilitiesV2;
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CursorAgentSdk.CURSOR_PROVIDER,
     getCapabilities: Effect.fn("CursorAdapter.getCapabilities")(function () {
-      return Effect.succeed(CursorProviderCapabilitiesV2);
+      return Effect.succeed(capabilities);
     }),
     planSelectionTransition: Effect.fn("CursorAdapter.planSelectionTransition")(function () {
       return Effect.succeed(turnScopedSelectionTransition());
@@ -1000,6 +1027,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           providerInstanceId: adapterOptions.instanceId,
           cwd: input.runtimePolicy.cwd,
           model: input.modelSelection.model,
+          capabilities,
           now: createdAt,
         });
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
@@ -2265,7 +2293,19 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             runtimePolicy: openInput.runtimePolicy,
             platform,
             threadId: openInput.threadId,
-            mcpSession: yield* mcpSessions.read(openInput.threadId),
+            mcpSession: adapterOptions.cloud
+              ? undefined
+              : yield* mcpSessions.read(openInput.threadId),
+            ...(adapterOptions.cloud
+              ? {
+                  cloud:
+                    openInput.operation === "create"
+                      ? yield* resolveCursorCloudWorkspace(openInput.runtimePolicy.cwd).pipe(
+                          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                        )
+                      : { env: { type: "cloud" as const } },
+                }
+              : {}),
           });
           if (
             platform === "win32" &&
@@ -2298,7 +2338,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         let cursorSkillNames: ReadonlySet<string> | undefined;
         const resolveCursorSkillText = Effect.fn("CursorAdapterV2.resolveCursorSkillText")(
           function* (rawText: string, cwd: string | undefined) {
-            if (hasCursorSkillMention(rawText) && cursorSkillNames === undefined) {
+            if (
+              !options.cloud &&
+              hasCursorSkillMention(rawText) &&
+              cursorSkillNames === undefined
+            ) {
               const skills = yield* discoverCursorSkills(cwd, adapterOptions.environment).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
@@ -2322,6 +2366,18 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           interrupted: string | undefined,
         ) {
           const rawText = turnInput.message.text;
+          if (
+            options.cloud &&
+            turnInput.message.attachments.some(
+              (attachment) => !isProviderNativeImageAttachment(attachment),
+            )
+          ) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CursorAgentSdk.CURSOR_PROVIDER,
+              detail:
+                "Cursor Cloud currently supports image attachments only. Add other files to the repository and push them first.",
+            });
+          }
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
             return { message: "/compress", prompt: undefined };
           }
@@ -2331,7 +2387,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 rawText,
                 turnInput.runtimePolicy.cwd ?? undefined,
               ),
-              attachments: turnInput.message.attachments,
+              attachments: options.cloud ? [] : turnInput.message.attachments,
               resolveAttachmentPath: host.resolveAttachmentPath,
               resolveExtractedTextPath: host.resolveExtractedTextPath,
             }),
@@ -2404,7 +2460,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               modelSelection: turnInput.modelSelection,
               runtimePolicy: turnInput.runtimePolicy,
             });
-            const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            const mcpSession = options.cloud
+              ? undefined
+              : yield* mcpSessions.read(turnInput.threadId);
             const mcpServers = cursorMcpServers(mcpSession);
             const hasDeviceTools =
               mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
@@ -2726,7 +2784,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   turnInput.message.text,
                   context.input.runtimePolicy.cwd ?? undefined,
                 ),
-                attachments: turnInput.message.attachments,
+                attachments: options.cloud ? [] : turnInput.message.attachments,
                 resolveAttachmentPath: host.resolveAttachmentPath,
                 resolveExtractedTextPath: host.resolveExtractedTextPath,
               });
@@ -2820,6 +2878,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             ),
           readThreadSnapshot: Effect.fn("CursorAdapterV2.readThreadSnapshot")(
             function* (snapshotInput) {
+              if (options.cloud)
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  detail: "Cursor Cloud does not expose conversation snapshots.",
+                });
               const requestedAgentId = nativeThreadId(snapshotInput.providerThread);
               const agent = yield* openAgent({
                 operation: "resume",
@@ -2923,6 +2986,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
 
 export type CursorAdapterV2DriverEnv =
   | CursorAgentSdk.CursorAgentSdkRunner
+  | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | Path.Path
   | IdAllocator.IdAllocatorV2

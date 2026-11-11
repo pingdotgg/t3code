@@ -263,6 +263,7 @@ export interface ProjectionCheckpointCaptureContext {
   readonly rootNode: OrchestrationV2ExecutionNode | undefined;
   readonly scope: OrchestrationV2CheckpointScope | undefined;
   readonly providerThread: OrchestrationV2ProviderThread | undefined;
+  readonly canCheckpointFilesystem?: boolean;
   /**
    * Ordinals a runless baseline must not overwrite: ready snapshots, and missing checkpoints pinning
    * a run. Without file snapshots that run link is what rewind uses. Stale rows are rebaselined.
@@ -5586,6 +5587,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId}
               AND (status = 'ready' OR (status = 'missing' AND run_id IS NOT NULL))`,
             ]);
+            const providerThread =
+              providerRows[0] === undefined
+                ? undefined
+                : yield* decodeProviderThreadPayload(providerRows[0].payload_json);
+            const sessionRows = yield* sql<{ readonly can_checkpoint: number | null }>`
+              SELECT json_extract(payload_json, '$.capabilities.checkpointing.appCanCheckpointFilesystem') AS can_checkpoint
+              FROM orchestration_v2_projection_provider_sessions
+              WHERE provider_session_id = ${providerThread?.providerSessionId ?? null}`;
             return {
               run,
               rootNode:
@@ -5596,10 +5605,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 scopeRows[0] === undefined
                   ? undefined
                   : yield* decodeCheckpointScopePayload(scopeRows[0].payload_json),
-              providerThread:
-                providerRows[0] === undefined
-                  ? undefined
-                  : yield* decodeProviderThreadPayload(providerRows[0].payload_json),
+              providerThread,
+              canCheckpointFilesystem: sessionRows[0]?.can_checkpoint !== 0,
               preservedCheckpointOrdinals: preservedRows.map(({ ordinal }) => ordinal),
               sideChat: threadRows[0].side_chat === 1,
             };

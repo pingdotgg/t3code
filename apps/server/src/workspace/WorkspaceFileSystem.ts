@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
+import { parseCursorCloudWorkspacePath } from "@t3tools/contracts";
 import type {
   FilesystemEntryMetadata,
   FilesystemGetMetadataInput,
@@ -337,9 +338,107 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  // Cursor Cloud workspaces live on the VM; the mounted FileSystem reaches them, Node's APIs cannot.
+  const readMountedFile = Effect.fn("WorkspaceFileSystem.readMountedFile")(function* (
+    input: ProjectReadFileInput,
+  ) {
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.relativePath,
+    });
+    const operationError = (cause: unknown) =>
+      new WorkspaceFileSystemOperationError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: target.absolutePath,
+        operationPath: target.absolutePath,
+        operation: "read",
+        cause,
+      });
+    const bytes = yield* fileSystem.readFile(target.absolutePath).pipe(
+      Effect.map((value): Uint8Array | null => value),
+      Effect.catchTags({
+        PlatformError: (
+          error,
+        ): Effect.Effect<null, WorkspaceFileSystemOperationError | WorkspacePathNotFileError> =>
+          input.allowMissing === true && error.reason._tag === "NotFound"
+            ? Effect.succeed(null)
+            : error.reason._tag === "BadResource"
+              ? Effect.fail(
+                  new WorkspacePathNotFileError({
+                    workspaceRoot: input.cwd,
+                    relativePath: input.relativePath,
+                    resolvedPath: target.absolutePath,
+                  }),
+                )
+              : Effect.fail(operationError(error)),
+      }),
+    );
+    if (bytes === null) {
+      return {
+        relativePath: target.relativePath,
+        contents: "",
+        byteLength: 0,
+        truncated: false,
+        exists: false,
+      };
+    }
+    const fileBytes = bytes.subarray(0, PROJECT_READ_FILE_MAX_BYTES);
+    if (fileBytes.includes(0)) {
+      return yield* new WorkspaceBinaryFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: target.absolutePath,
+      });
+    }
+    const truncated = bytes.byteLength > PROJECT_READ_FILE_MAX_BYTES;
+    return {
+      relativePath: target.relativePath,
+      contents: new TextDecoder("utf-8").decode(fileBytes, { stream: truncated }),
+      byteLength: bytes.byteLength,
+      truncated,
+    };
+  });
+
+  const writeMountedFile = Effect.fn("WorkspaceFileSystem.writeMountedFile")(function* (
+    input: ProjectWriteFileInput,
+  ) {
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.relativePath,
+    });
+    if (target.relativePath.split("/").some(isGitMetadataName)) {
+      return yield* new WorkspaceFilePathEscapeError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedWorkspaceRoot: input.cwd,
+        resolvedPath: target.absolutePath,
+      });
+    }
+    const operationError =
+      (operation: "make-directory" | "write-file", operationPath: string) => (cause: unknown) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+          operationPath,
+          operation,
+          cause,
+        });
+    const directory = path.dirname(target.absolutePath);
+    yield* fileSystem
+      .makeDirectory(directory, { recursive: true })
+      .pipe(Effect.mapError(operationError("make-directory", directory)));
+    yield* fileSystem
+      .writeFileString(target.absolutePath, input.contents)
+      .pipe(Effect.mapError(operationError("write-file", target.absolutePath)));
+    return { relativePath: target.relativePath };
+  });
+
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
+    if (parseCursorCloudWorkspacePath(input.cwd) !== null) return yield* readMountedFile(input);
     const target = yield* resolveReadTarget(input);
     const absentResult = {
       relativePath: target.relativePath,
@@ -544,6 +643,7 @@ export const make = Effect.gen(function* () {
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
     "WorkspaceFileSystem.writeFile",
   )(function* (input) {
+    if (parseCursorCloudWorkspacePath(input.cwd) !== null) return yield* writeMountedFile(input);
     yield* knownWorkspaces.assertContains(input.cwd);
     const target = yield* resolveWriteTarget(input);
     const realTargetPath = target.realTargetPath;

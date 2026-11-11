@@ -137,6 +137,7 @@ import {
   CloudRemoteEnvironmentRows,
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
+import { CursorCloudConnection } from "../CursorCloudMachine";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
@@ -1649,6 +1650,11 @@ function ConnectionsSettingsContent({
           isSearchTarget={index === 0}
         />
       ))}
+      {primaryEnvironmentId ? (
+        <SettingsSection title="Cursor Cloud · experimental">
+          <CursorCloudConnection environmentId={primaryEnvironmentId} />
+        </SettingsSection>
+      ) : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>

@@ -450,7 +450,8 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         ...(cwd === undefined ? {} : { cwd }),
         ...(input.options.local?.store === undefined ? {} : { store: input.options.local.store }),
       };
-      let abandonedRunRecoveryAvailable = input.operation === "resume";
+      let abandonedRunRecoveryAvailable =
+        input.options.cloud === undefined && input.operation === "resume";
 
       return {
         agentId: agent.agentId,

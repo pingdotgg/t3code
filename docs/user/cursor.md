@@ -12,8 +12,7 @@ TypeScript package. It does not use Cursor's ACP transport for V2 execution.
 - A model accepted by the Cursor SDK. `auto` is sent to the SDK as its `default` model selection.
 
 The adapter currently uses the SDK's local-agent runtime so runs operate in the selected T3 Code
-workspace. Cursor cloud agents need repository and cloud-environment configuration that T3 Code does
-not expose yet.
+workspace. For hosted runs, connect the Cursor Cloud machine described below.
 
 Custom Cursor MCP servers and plugins are not configured in T3 Code. They load from the environment
 machine's Cursor config when the agent opens: project `.cursor/mcp.json`, user `~/.cursor/mcp.json`,
@@ -39,6 +38,30 @@ to use the browser flow.
 Use **Change account** or **Sign out** in the same settings section. Both stop that
 instance's running threads and keep their history. Sign-out forgets the saved credential; to revoke
 the generated key before it expires, remove it from your Cursor dashboard's API keys.
+
+## Cursor Cloud
+
+Sign in to Cursor in **Settings > Providers**, then enable **Cursor Cloud** in
+**Settings > Connections** using that account. In a repository project, choose **Cursor Cloud**
+in the **Run on** picker and send a message in the normal composer. Replies and follow-up messages
+stay in the T3 thread. Use Stop to cancel a running turn.
+
+The agent clones the project's GitHub origin at the current pushed commit. Push your changes
+first, and grant Cursor access to that repository. Local uncommitted files are not uploaded.
+Cloud runs use your Cursor account's cloud allowance. Images are supported; other file attachments
+and local MCP tools are not.
+
+Once the first message starts the agent, the thread works on its Cursor VM. The terminal, Files,
+and Diff panels open the VM's `/workspace` checkout, and the thread header shows whether the VM is
+starting, running, or asleep. Cursor puts idle VMs to sleep; opening a terminal or choosing **Wake
+machine** from the header starts it again, and the next message wakes it too. Files and Git
+panels stay empty while it sleeps so that viewing a thread never starts a VM. **Open in Cursor**
+in the same menu opens the agent on cursor.com. Commits, pushes, and turn checkpoints are not
+available for cloud threads; ask the agent to push its branch. The machine picker is available in
+the web and desktop clients; the mobile app shows the VM state and opens cloud terminals and files.
+
+Disconnect it in **Settings > Connections** to remove the machine. This leaves your Cursor sign-in
+and existing cloud work in Cursor.
 
 ## V2 Capability Mapping
 

@@ -6,6 +6,7 @@ import {
   EnvironmentId,
   ThreadId,
   sessionGrantsScope,
+  threadWorkspacePath,
 } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -470,7 +471,7 @@ function ThreadTerminal(props: {
           terminalLocation: activeKnownSession?.state.summary ?? null,
           activeSessionLocation: activeKnownSession?.state.summary ?? null,
           workspaceRoot: selectedThreadProject.workspaceRoot,
-          threadShellWorktreePath: selectedThread.worktreePath ?? null,
+          threadShellWorktreePath: threadWorkspacePath(selectedThread),
           threadDetailWorktreePath: selectedThreadDetailWorktreePath,
         }
       : null,

@@ -145,6 +145,9 @@ import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as AuthHttp from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
+import * as CursorCloud from "./cursorCloud/CursorCloud.ts";
+import * as CursorCloudMachines from "./cursorCloud/CursorCloudMachines.ts";
+import * as CursorCloudMount from "./cursorCloud/CursorCloudMount.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as CodexManagedTokenBroker from "./provider/CodexManagedTokenBroker.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
@@ -257,7 +260,7 @@ const layerProviderEventLoggers = Layer.effect(
   }),
 );
 
-const layerPtyAdapter = NodePtyAdapter.layer;
+const layerPtyAdapter = CursorCloudMount.layerPtyAdapter.pipe(Layer.provide(NodePtyAdapter.layer));
 
 const layerServerSettings = ServerSettings.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
@@ -378,8 +381,11 @@ const layerHttpServer = Layer.unwrap(
   }),
 ).pipe(Layer.provide(ManagedPolicy.layer));
 
+// Every site shares this instance, so Cursor Cloud paths reach the VM wherever files or processes are used.
+const layerNodeServices = CursorCloudMount.layer.pipe(Layer.provideMerge(NodeServices.layer));
+
 const layerPlatformServices = DocumentText.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(Layer.mergeAll(layerNodeServices, NodeCrypto.layer)),
 );
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
@@ -803,7 +809,14 @@ const layerMakeRoutes = Layer.mergeAll(
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
-    Ws.layer,
+    Ws.layer.pipe(
+      Layer.provide(CursorCloud.layer),
+      Layer.provide(
+        CursorCloudMachines.layer.pipe(
+          Layer.provide(ProviderHostLive.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+        ),
+      ),
+    ),
     speechStreamRouteLayer,
   ),
   McpHttpServer.layer.pipe(
@@ -1221,6 +1234,8 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(
         RelayTracing.layerServerRelayBroker.pipe(Layer.provide(ManagedPolicy.layer)),
       ),
+      // NodeHttpServer.layer re-exports NodeServices; the mounted services must shadow it.
+      Layer.provideMerge(layerNodeServices),
       Layer.provideMerge(layerHttpServer),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
@@ -1229,6 +1244,6 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(layerPlatformServices),
     );
   }),
-).pipe(Layer.provide(ProcessRunner.layer));
+).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(layerNodeServices));
 
 export const runServer = Layer.launch(layerMakeServer);

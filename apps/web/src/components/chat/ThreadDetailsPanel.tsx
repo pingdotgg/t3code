@@ -1,3 +1,4 @@
+import type { ProviderInstanceId } from "@t3tools/contracts";
 import type {
   EditorId,
   EnvironmentId,
@@ -67,7 +68,10 @@ interface ThreadDetailsPanelProps extends Pick<
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
-  onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  onEnvironmentChange?: (
+    environmentId: EnvironmentId,
+    executionTarget?: ProviderInstanceId,
+  ) => void;
   onEnvModeChange: (mode: EnvMode) => void;
   envMode: EnvMode;
   activeThreadBranchOverride?: string | null;

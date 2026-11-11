@@ -800,6 +800,7 @@ it.effect("rechecks run ownership immediately before calling the provider", () =
     } as OrchestrationV2RunAttempt;
     const session = {
       events: Stream.never,
+      providerSession: { capabilities: { checkpointing: { appCanCheckpointFilesystem: true } } },
       startTurn: () => Ref.update(providerStarts, (count) => count + 1),
     } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
 
@@ -854,6 +855,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
     const attemptId = RunAttemptId.make("attempt:run-execution-app-context");
     const session = {
       events: Stream.never,
+      providerSession: { capabilities: { checkpointing: { appCanCheckpointFilesystem: true } } },
       startTurn: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
         Deferred.succeed(started, input),
     } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
@@ -970,6 +972,9 @@ it.effect("fails the run when its ownership check cannot be read before calling 
         providerSessionId: ProviderSessionId.make("session:run-execution-start-guard-read"),
         session: {
           events: Stream.never,
+          providerSession: {
+            capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
+          },
           startTurn: () => Ref.update(providerStarts, (count) => count + 1),
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: { id: runId, threadId, ordinal: 1, providerInstanceId } as OrchestrationV2Run,
@@ -1065,6 +1070,9 @@ it.effect(
           providerSessionId: ProviderSessionId.make(`session:compact-routing:${index}`),
           session: {
             events: Stream.never,
+            providerSession: {
+              capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
+            },
             startTurn: () =>
               Effect.sync(() => {
                 calls.push("prompt");
@@ -1121,125 +1129,134 @@ it.effect(
     }).pipe(Effect.provide(layerRunExecutionTest)),
 );
 
-it.effect("starts the provider when checkpoint baseline capture fails", () =>
-  Effect.gen(function* () {
-    const threadId = ThreadId.make("thread:run-execution-baseline-failure");
-    const runId = RunId.make("run:run-execution-baseline-failure");
-    const attemptId = RunAttemptId.make("attempt:run-execution-baseline-failure");
-    const providerThreadId = ProviderThreadId.make(
-      "provider-thread:run-execution-baseline-failure",
-    );
-    const providerInstanceId = ProviderInstanceId.make("codex");
-    const providerSessionId = ProviderSessionId.make("session:run-execution-baseline-failure");
-    const rootNodeId = NodeId.make("node:run-execution-baseline-failure");
-    const checkpointScope = {
-      id: CheckpointScopeId.make("checkpoint-scope:run-execution-baseline-failure"),
-    } as OrchestrationV2CheckpointScope;
-    const providerStarts = yield* Ref.make(0);
-    const writes = yield* Ref.make<
-      ReadonlyArray<{
-        events: ReadonlyArray<OrchestrationV2DomainEvent>;
-        effects: ReadonlyArray<PendingOrchestrationEffectV2>;
-      }>
-    >([]);
-    const layerTest = RunExecutionService.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          McpAppModelContext.layerEmpty,
-          PreviewAgentActivity.layer,
-          Layer.mock(CheckpointService.CheckpointServiceV2)({
-            captureBaseline: () =>
-              Effect.fail(
-                new CheckpointService.CheckpointBaselineCaptureError({
-                  scopeId: checkpointScope.id,
-                  ordinalWithinScope: 0,
-                  cause: new Error("VCS process timed out"),
-                }),
-              ),
-          }),
-          layerTurnItemPositionsTest,
-          mockEventSink({
-            writeWithEffects: (input) =>
-              Ref.update(writes, (current) => [
-                ...current,
-                { events: input.events, effects: input.effects },
-              ]).pipe(Effect.as([])),
-          }),
-          IdAllocator.layer,
-          Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: () => Effect.succeed([]),
-          }),
-          ServerSettings.layerTest(),
+it.effect.each([true, false])(
+  "starts the provider with filesystem checkpoint capability=%s",
+  (canCheckpointFilesystem) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:run-execution-baseline-failure");
+      const runId = RunId.make("run:run-execution-baseline-failure");
+      const attemptId = RunAttemptId.make("attempt:run-execution-baseline-failure");
+      const providerThreadId = ProviderThreadId.make(
+        "provider-thread:run-execution-baseline-failure",
+      );
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const providerSessionId = ProviderSessionId.make("session:run-execution-baseline-failure");
+      const rootNodeId = NodeId.make("node:run-execution-baseline-failure");
+      const checkpointScope = {
+        id: CheckpointScopeId.make("checkpoint-scope:run-execution-baseline-failure"),
+      } as OrchestrationV2CheckpointScope;
+      const providerStarts = yield* Ref.make(0);
+      const writes = yield* Ref.make<
+        ReadonlyArray<{
+          events: ReadonlyArray<OrchestrationV2DomainEvent>;
+          effects: ReadonlyArray<PendingOrchestrationEffectV2>;
+        }>
+      >([]);
+      const layerTest = RunExecutionService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            McpAppModelContext.layerEmpty,
+            PreviewAgentActivity.layer,
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              captureBaseline: () =>
+                !canCheckpointFilesystem
+                  ? Effect.die("Cloud turns must not capture a local baseline")
+                  : Effect.fail(
+                      new CheckpointService.CheckpointBaselineCaptureError({
+                        scopeId: checkpointScope.id,
+                        ordinalWithinScope: 0,
+                        cause: new Error("VCS process timed out"),
+                      }),
+                    ),
+            }),
+            layerTurnItemPositionsTest,
+            mockEventSink({
+              writeWithEffects: (input) =>
+                Ref.update(writes, (current) => [
+                  ...current,
+                  { events: input.events, effects: input.effects },
+                ]).pipe(Effect.as([])),
+            }),
+            IdAllocator.layer,
+            Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+              ingestNormalized: () => Effect.succeed([]),
+            }),
+            ServerSettings.layerTest(),
+          ),
         ),
-      ),
-    );
+      );
 
-    yield* Effect.gen(function* () {
-      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
-      yield* runExecution.startRootRun({
-        commandId: CommandId.make("command:run-execution-baseline-failure"),
-        appThread: rootAppThread(threadId),
-        providerSessionId,
-        session: {
-          events: Stream.never,
-          startTurn: () => Ref.update(providerStarts, (count) => count + 1),
-        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
-        run: {
-          id: runId,
-          threadId,
-          ordinal: 1,
-          providerInstanceId,
-        } as OrchestrationV2Run,
-        rootNode: { id: rootNodeId } as OrchestrationV2ExecutionNode,
-        checkpointScope,
-        providerThread: {
-          id: providerThreadId,
-          driver,
-        } as OrchestrationV2ProviderThread,
-        attempt: {
-          id: attemptId,
-          providerTurnId: null,
-        } as OrchestrationV2RunAttempt,
-        attemptId,
-        providerTurnOrdinal: 1,
-        message: {
-          messageId: MessageId.make("message:run-execution-baseline-failure"),
-          text: "Start the provider without a baseline.",
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-        },
-        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-          approvalPolicy: "never",
-          sandboxPolicy: {
-            type: "readOnly",
-            access: { type: "fullAccess" },
-            networkAccess: false,
+      yield* Effect.gen(function* () {
+        const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+        yield* runExecution.startRootRun({
+          commandId: CommandId.make("command:run-execution-baseline-failure"),
+          appThread: rootAppThread(threadId),
+          providerSessionId,
+          session: {
+            events: Stream.never,
+            providerSession: {
+              capabilities: {
+                checkpointing: { appCanCheckpointFilesystem: canCheckpointFilesystem },
+              },
+            },
+            startTurn: () => Ref.update(providerStarts, (count) => count + 1),
+          } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
+          run: {
+            id: runId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId,
+          } as OrchestrationV2Run,
+          rootNode: { id: rootNodeId } as OrchestrationV2ExecutionNode,
+          checkpointScope,
+          providerThread: {
+            id: providerThreadId,
+            driver,
+          } as OrchestrationV2ProviderThread,
+          attempt: {
+            id: attemptId,
+            providerTurnId: null,
+          } as OrchestrationV2RunAttempt,
+          attemptId,
+          providerTurnOrdinal: 1,
+          message: {
+            messageId: MessageId.make("message:run-execution-baseline-failure"),
+            text: "Start the provider without a baseline.",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
           },
-        },
-      });
-    }).pipe(Effect.provide(layerTest));
+          modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+            approvalPolicy: "never",
+            sandboxPolicy: {
+              type: "readOnly",
+              access: { type: "fullAccess" },
+              networkAccess: false,
+            },
+          },
+        });
+      }).pipe(Effect.provide(layerTest));
 
-    assert.equal(yield* Ref.get(providerStarts), 1);
+      assert.equal(yield* Ref.get(providerStarts), 1);
 
-    const events = (yield* Ref.get(writes)).flatMap((write) => [...write.events]);
-    const failedEvent = events.find(
-      (event) =>
-        (event.type === "run.updated" ||
-          event.type === "run-attempt.updated" ||
-          event.type === "node.updated") &&
-        event.payload.status === "failed",
-    );
-    assert.isUndefined(failedEvent);
-    const errorItem = events.find(
-      (event) => event.type === "turn-item.updated" && event.payload.type === "error",
-    );
-    assert.isUndefined(errorItem);
-  }),
+      const events = (yield* Ref.get(writes)).flatMap((write) => [...write.events]);
+      const failedEvent = events.find(
+        (event) =>
+          (event.type === "run.updated" ||
+            event.type === "run-attempt.updated" ||
+            event.type === "node.updated") &&
+          event.payload.status === "failed",
+      );
+      assert.isUndefined(failedEvent);
+      const errorItem = events.find(
+        (event) => event.type === "turn-item.updated" && event.payload.type === "error",
+      );
+      assert.isUndefined(errorItem);
+    }),
 );
 
 it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as const)(
@@ -1321,6 +1338,9 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
           providerSessionId,
           session: {
             events: Stream.never,
+            providerSession: {
+              capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
+            },
             startTurn: () => Ref.update(providerStarts, (count) => count + 1),
           } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
           run: {
@@ -1619,6 +1639,9 @@ it.effect("ingests new member threads of an owned child after the root turn term
         providerSessionId,
         session: {
           events: Stream.fromIterable(events),
+          providerSession: {
+            capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
+          },
           startTurn: () => Effect.void,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {
@@ -1785,6 +1808,9 @@ it.effect("ends a nested native subagent and its thread when the root run is int
         providerSessionId: ProviderSessionId.make(`session:${key}`),
         session: {
           events: Stream.fromIterable(events),
+          providerSession: {
+            capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
+          },
           startTurn: () => Effect.void,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: { id: runId, threadId, ordinal: 1, providerInstanceId } as OrchestrationV2Run,
@@ -2358,6 +2384,9 @@ it.effect(
               ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
               close: Deferred.succeed(ingestionDone, undefined),
             }),
+            providerSession: {
+              capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
+            },
             startTurn: () => Effect.void,
           } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
           run: {
@@ -3519,6 +3548,9 @@ function captureRootRunTermination(input: {
               Effect.andThen(input.onSubscriptionClose ?? Effect.void),
             ),
           }),
+          providerSession: {
+            capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
+          },
           startTurn: input.startTurn ?? (() => Effect.void),
           interruptTurn: input.interruptTurn ?? (() => Effect.void),
           hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread,
@@ -4064,6 +4096,9 @@ function runBackgroundItemScenario(
               close: Deferred.succeed(ingestionDone, undefined),
             };
           }),
+          providerSession: {
+            capabilities: { checkpointing: { appCanCheckpointFilesystem: true } },
+          },
           startTurn: () => Effect.void,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {

@@ -33,6 +33,7 @@ import {
   ChatGptHandoffInput,
   ChatGptHandoffState,
 } from "./providerSetup.ts";
+import * as CursorCloud from "./cursorCloud.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -413,6 +414,12 @@ import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
 export const WS_METHODS = {
+  cursorCloudStatus: "cursorCloud.status",
+  cursorCloudConnect: "cursorCloud.connect",
+  cursorCloudDisconnect: "cursorCloud.disconnect",
+  cursorCloudSubscribeMachine: "cursorCloud.subscribeMachine",
+  cursorCloudWakeMachine: "cursorCloud.wakeMachine",
+
   projectsListEntries: "projects.listEntries",
   projectsListIgnoredFiles: "projects.listIgnoredFiles",
   projectsReadFile: "projects.readFile",
@@ -2064,7 +2071,44 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+const WsCursorCloudStatusRpc = Rpc.make(WS_METHODS.cursorCloudStatus, {
+  payload: Schema.Struct({}),
+  success: CursorCloud.CursorCloudStatus,
+  error: Schema.Union([CursorCloud.CursorCloudError, EnvironmentAuthorizationError]),
+});
+
+const WsCursorCloudConnectRpc = Rpc.make(WS_METHODS.cursorCloudConnect, {
+  payload: CursorCloud.CursorCloudConnectInput,
+  success: CursorCloud.CursorCloudStatus,
+  error: Schema.Union([CursorCloud.CursorCloudError, EnvironmentAuthorizationError]),
+});
+
+const WsCursorCloudDisconnectRpc = Rpc.make(WS_METHODS.cursorCloudDisconnect, {
+  payload: Schema.Struct({}),
+  success: CursorCloud.CursorCloudStatus,
+  error: Schema.Union([CursorCloud.CursorCloudError, EnvironmentAuthorizationError]),
+});
+
+const WsCursorCloudSubscribeMachineRpc = Rpc.make(WS_METHODS.cursorCloudSubscribeMachine, {
+  payload: CursorCloud.CursorCloudMachineInput,
+  success: CursorCloud.CursorCloudMachineStatus,
+  error: Schema.Union([CursorCloud.CursorCloudError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsCursorCloudWakeMachineRpc = Rpc.make(WS_METHODS.cursorCloudWakeMachine, {
+  payload: CursorCloud.CursorCloudMachineInput,
+  success: Schema.Void,
+  error: Schema.Union([CursorCloud.CursorCloudError, EnvironmentAuthorizationError]),
+});
+
 export const WsRpcGroup = RpcGroup.make(
+  WsCursorCloudStatusRpc,
+  WsCursorCloudConnectRpc,
+  WsCursorCloudDisconnectRpc,
+  WsCursorCloudSubscribeMachineRpc,
+  WsCursorCloudWakeMachineRpc,
+
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
