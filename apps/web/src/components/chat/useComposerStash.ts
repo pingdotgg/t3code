@@ -168,6 +168,18 @@ export function useComposerStash(input: {
       });
       return;
     }
+    // An answer to an agent's question carries no machines, so restoring here would drop them.
+    if (
+      pendingUserInputs.length > 0 &&
+      menuEntry.records?.some((record) => record.kind === "environment")
+    ) {
+      toastManager.add({
+        type: "error",
+        title: "Stashed machines can't go in an answer",
+        description: "Restore this prompt after the agent's question is answered.",
+      });
+      return;
+    }
     setIsStashMenuOpen(false);
 
     // An expired upload restores as a needs-reattach row instead of a reference
