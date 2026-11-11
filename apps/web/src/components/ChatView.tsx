@@ -154,6 +154,8 @@ import { copyThreadReference } from "../lib/copyThreadReference";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { FileMetadataThreadProvider } from "../hooks/FileMetadataThreadProvider";
+import { useThreadAgentCwd } from "../hooks/useThreadAgentCwd";
+import { FilePanelRootContext } from "./chat/FilePanelRootContext";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { PopoverCreateHandle } from "./ui/popover";
 import {
@@ -1603,6 +1605,14 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  // The agent's cwd: a subdirectory project stays in that subdirectory of the
+  // thread's worktree. Skills, composer paths, and links in replies follow it.
+  const agentCwd = useThreadAgentCwd(
+    environmentId,
+    activeProject ?? null,
+    activeThread?.worktreePath ?? null,
+    `${activeThread?.branch ?? ""}\0${workspaceMutationId ?? ""}`,
+  );
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
   const gitStatusAtom =
     gitStatusCwd === null
@@ -2682,7 +2692,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const getShortcutContextStable = useStableCallback(getShortcutContext);
   const timelineSkills = activeProviderStatus
-    ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
+    ? resolveProviderSkillsForCwd(activeProviderStatus, agentCwd)
     : EMPTY_PROVIDER_SKILLS;
   const threadFindEnabled = isServerThread && serverConfig?.threadFind === true;
   const isThreadFindActive = useThreadFindOpen(activeThreadRef, threadFindEnabled);
@@ -3221,6 +3231,7 @@ export default function ChatView(props: ChatViewProps) {
         projectId: activeProject?.id,
         projectName: activeProject?.title ?? null,
         workspaceRoot: activeWorkspaceRoot,
+        agentCwd: agentCwd ?? undefined,
         availableEditors,
         pendingSurfaceIds: pendingFileSurfaceIds,
         onOpenFile: openFileSurfaceStable,
@@ -3455,7 +3466,7 @@ export default function ChatView(props: ChatViewProps) {
                   onImageExpand={onExpandTimelineImageStable}
                   onFileOpen={openFileAttachmentStable}
                   onFileDownload={downloadFileAttachmentStable}
-                  markdownCwd={gitCwd ?? undefined}
+                  markdownCwd={agentCwd ?? undefined}
                   resolvedTheme={resolvedTheme}
                   timestampFormat={timestampFormat}
                   workspaceRoot={activeWorkspaceRoot}
@@ -3670,7 +3681,8 @@ export default function ChatView(props: ChatViewProps) {
                                 settings={settings}
                                 keybindings={keybindings}
                                 terminalOpen={Boolean(terminalUiState.terminalOpen)}
-                                gitCwd={gitCwd}
+                                gitCwd={agentCwd}
+                                workspaceRoot={activeWorkspaceRoot ?? null}
                                 pullRequestProjectId={
                                   supportsPullRequests ? (activeProject?.id ?? null) : null
                                 }
@@ -4008,7 +4020,7 @@ export default function ChatView(props: ChatViewProps) {
       cwd={activeWorkspaceRoot}
       checkpoints={serverProjection?.checkpoints}
     >
-      {content}
+      <FilePanelRootContext value={activeWorkspaceRoot}>{content}</FilePanelRootContext>
     </FileMetadataThreadProvider>
   );
 }

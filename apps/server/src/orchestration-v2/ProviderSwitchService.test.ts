@@ -15,6 +15,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { acpSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
@@ -69,6 +70,7 @@ function layerTest(
   metadata: Readonly<Record<string, { continuationKey: string }>>,
   planSelectionTransition: ProviderAdapter.ProviderAdapterV2["Service"]["planSelectionTransition"] = () =>
     Effect.succeed({ type: "restart_session" }),
+  layerRuntimePolicy: Layer.Layer<RuntimePolicy.RuntimePolicyV2> = RuntimePolicy.layer,
 ) {
   const adapter = (
     instanceId: ProviderInstanceId,
@@ -101,7 +103,7 @@ function layerTest(
           });
     },
   });
-  return ProviderSwitch.layer.pipe(Layer.provide(layerRegistry));
+  return ProviderSwitch.layer.pipe(Layer.provide(Layer.merge(layerRegistry, layerRuntimePolicy)));
 }
 
 it.effect("releases the newest live session, not the newest record overall", () =>
@@ -250,6 +252,43 @@ it.effect.each(["stopped", "error"] as const)(
         ),
       ),
     ),
+);
+
+it.effect("switches the model in a subdirectory worktree session started below the worktree", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const thread = projection();
+    const result = yield* service.plan({
+      projection: {
+        ...thread,
+        providerSessions: [
+          {
+            ...thread.providerSessions[0]!,
+            cwd: "/repo/ios",
+            capabilities: CodexProviderCapabilitiesV2,
+          },
+        ],
+      },
+      targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+    });
+    assert.equal(result.transition.type, "switch_model_in_session");
+    assert.deepEqual(result.releaseProviderSessionIds, []);
+  }).pipe(
+    Effect.provide(
+      layerTest(
+        { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
+        (input) => Effect.succeed(acpSelectionTransition(input)),
+        Layer.succeed(RuntimePolicy.RuntimePolicyV2, {
+          resolve: (input) =>
+            Effect.succeed({
+              runtimeMode: input.thread.runtimeMode,
+              interactionMode: input.thread.interactionMode,
+              cwd: "/repo/ios",
+            }),
+        }),
+      ),
+    ),
+  ),
 );
 
 it.effect("rejects a model change the dead record never negotiated support for", () =>

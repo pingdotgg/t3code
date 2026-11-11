@@ -136,6 +136,7 @@ const layerEnrichment = Layer.unwrap(
         Effect.succeed({
           repositoryIdentity: null,
           faviconPath: null,
+          repositoryRoot: null,
           repositoryIdentityResolved: true,
         }),
       subscribeChanges: PubSub.subscribe(changes),

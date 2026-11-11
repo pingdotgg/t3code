@@ -4,8 +4,39 @@ import {
   fileRoutePathSegments,
   needsWorkspaceFileContents,
   resolveFileLinkPath,
+  resolveMentionFilePath,
+  resolveNestedFileLinkPath,
   resolveWorkspaceRelativeFilePath,
 } from "./filePath";
+
+describe("resolveNestedFileLinkPath", () => {
+  it("resolves a link from a subdirectory cwd against it, inside the checkout", () => {
+    expect(resolveNestedFileLinkPath("/wt/ios", "/wt", "../shared/file.ts")).toBe(
+      "/wt/shared/file.ts",
+    );
+    expect(resolveNestedFileLinkPath("/wt/ios", "/wt", "src/a.ts")).toBe("/wt/ios/src/a.ts");
+  });
+
+  it("rejects a link that escapes the checkout", () => {
+    expect(resolveNestedFileLinkPath("/wt/ios", "/wt", "../../etc/passwd")).toBeNull();
+  });
+
+  it("keeps the flat behavior when the cwd is the checkout", () => {
+    expect(resolveNestedFileLinkPath("/wt", "/wt", "src/a.ts")).toBe("src/a.ts");
+    expect(resolveNestedFileLinkPath("/wt", "/wt", "../x.ts")).toBeNull();
+  });
+});
+
+describe("resolveMentionFilePath", () => {
+  it.each([
+    ["/home/alice/repo", "src/a.ts", "/home/alice/repo/src/a.ts"],
+    ["/home/alice/repo", "~/.agents/AGENTS.md", "~/.agents/AGENTS.md"],
+    ["/home/alice/repo", "/etc/hosts", "/etc/hosts"],
+    [null, "src/a.ts", "src/a.ts"],
+  ])("resolves mention %s + %s", (root, path, expected) => {
+    expect(resolveMentionFilePath(root, path)).toBe(expected);
+  });
+});
 
 describe("resolveFileLinkPath", () => {
   it.each([

@@ -1,5 +1,6 @@
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
+import { composerMentionPath, rebaseWorkspaceFilePath } from "@t3tools/shared/path";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -428,6 +429,9 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  // The file panel's root, which a subdirectory project's worktree thread's
+  // gitCwd nests below; see `composerMentionPath`.
+  workspaceRoot: string | null;
   pullRequestProjectId: ProjectId | null;
   pullRequestRepository: string | null;
   threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
@@ -545,6 +549,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    workspaceRoot,
     pullRequestProjectId,
     pullRequestRepository,
     threadPullRequests,
@@ -700,14 +705,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
   const composerContextActions = {
     environmentId,
-    cwd: gitCwd ?? undefined,
+    // Mention chips name paths relative to the file panel's root.
+    cwd: workspaceRoot ?? gitCwd ?? undefined,
     projectId: activeProjectId ?? undefined,
     expandImage: (imageId: string) => {
       const preview = buildExpandedImagePreview(composerImages, imageId);
       if (preview) onExpandImage(preview);
     },
     openFile: setPreviewFileId,
-    openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
+    openMention: (path: string) =>
+      useRightPanelStore
+        .getState()
+        .openFile(routeThreadRef, rebaseWorkspaceFilePath(path, workspaceRoot, workspaceRoot)),
     expandVideo: (fileId: string) => {
       const file = composerFiles.find((candidate) => candidate.id === fileId);
       if (!file || !isVideoAttachment(file)) return;
@@ -1873,7 +1882,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (!trigger) return;
     if (item.type === "path") {
       if (!isPathSuggestionCurrent(item.searchTarget, trigger, environmentId, gitCwd)) return;
-      const replacement = `${serializeComposerFileLink(item.path)} `;
+      const replacement = `${serializeComposerFileLink(
+        composerMentionPath(item.path, gitCwd, { agentCwd: gitCwd, workspaceRoot }),
+      )} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,
         trigger.rangeEnd,

@@ -133,6 +133,8 @@ const NO_FILE_REVISION_ATOM = Atom.make(null);
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
+  /** Where the thread's agent works; tree mentions follow it. */
+  agentCwd?: string | undefined;
   projectName: string;
   projectId?: ProjectId | undefined;
   relativePath: string | null;
@@ -999,6 +1001,7 @@ function initialExplorerOpen(): boolean {
 export default function FilePreviewPanel({
   environmentId,
   cwd,
+  agentCwd,
   projectName,
   projectId,
   relativePath: requestedPath,
@@ -1550,6 +1553,7 @@ export default function FilePreviewPanel({
               key={`${environmentId}:${hostFolderPath ?? cwd}`}
               environmentId={environmentId}
               cwd={hostFolderPath ?? cwd}
+              agentCwd={agentCwd}
               projectName={hostFolderPath ?? projectName}
               hostFolder={hostFolderPath !== null}
               selectedPath={

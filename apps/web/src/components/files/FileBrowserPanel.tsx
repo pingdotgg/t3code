@@ -27,6 +27,7 @@ import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { joinHostPath } from "./filePath";
+import { composerMentionPath } from "@t3tools/shared/path";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
@@ -44,6 +45,8 @@ interface FileBrowserPanelProps {
   /** Host-folder entries use absolute paths. Avoid full traversal: disable expand-all and search only
    * loaded folders. */
   hostFolder?: boolean;
+  /** Where the thread's agent works, when known; see `composerMentionPath`. */
+  agentCwd?: string | undefined;
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
 }
@@ -142,9 +145,14 @@ export default function FileBrowserPanel({
   onRefreshSelectedFile,
   workspaceMutationId,
   hostFolder = false,
+  agentCwd,
 }: FileBrowserPanelProps) {
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
+  const mentionPath = (relativePath: string) =>
+    hostFolder
+      ? joinHostPath(cwd, relativePath)
+      : composerMentionPath(relativePath, cwd, { agentCwd, workspaceRoot: cwd });
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
@@ -182,7 +190,7 @@ export default function FileBrowserPanel({
         return;
       }
       const relativePath = item.path.replace(/\/$/, "");
-      const mention = serializeComposerFileLink(panelPath(relativePath));
+      const mention = serializeComposerFileLink(mentionPath(relativePath));
       const pointer = contextMenuPointerRef.current;
       const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
       const anchorRect = context.anchorElement.getBoundingClientRect();
@@ -253,9 +261,7 @@ export default function FileBrowserPanel({
   );
 
   const loadingDirectoriesRef = useRef(loadingDirectories);
-  const dragMention = createFileTreeDragMentionController(
-    hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {},
-  );
+  const dragMention = createFileTreeDragMentionController({ mentionPath });
   const { model } = useFileTree({
     composition: {
       contextMenu: {

@@ -29,6 +29,7 @@ import {
   hasProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
+import { rebaseWorkspaceFilePath } from "@t3tools/shared/path";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
@@ -224,6 +225,9 @@ export interface ThreadComposerProps {
   readonly canStopThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
+  // The thread file route's root, which mention paths relative to projectCwd
+  // are rebased onto.
+  readonly workspaceRoot: string | null;
   readonly sendBlockedReason?: string | null;
   readonly interactionLocked?: boolean;
   readonly draftKey?: string;
@@ -556,6 +560,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     linkedEnvironments: useLinkedEnvironments(props.environmentId),
     currentThreadId: props.selectedThread.id,
     projectCwd: props.projectCwd,
+    workspaceRoot: props.workspaceRoot,
     pullRequestProjectId: props.serverConfig ? (project?.id ?? null) : null,
     pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
     threadPullRequests: props.selectedThread.pullRequests,
@@ -949,7 +954,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                       navigation.navigate("ThreadFile", {
                         environmentId: String(props.environmentId),
                         threadId: String(props.selectedThread.id),
-                        path: fileRoutePathSegments(path),
+                        path: fileRoutePathSegments(
+                          rebaseWorkspaceFilePath(path, props.workspaceRoot, props.workspaceRoot),
+                        ),
                       });
                     }
                   }}

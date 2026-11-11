@@ -29,6 +29,7 @@ import {
   useComposerDraftSelection,
 } from "../../state/use-composer-drafts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import { composerMentionPath } from "@t3tools/shared/path";
 import {
   detectComposerTrigger,
   replaceTextRange,
@@ -225,11 +226,19 @@ export function resolveComposerCommandSelection(input: {
   readonly draftMessage: string;
   readonly trigger: Pick<ComposerTrigger, "rangeStart" | "rangeEnd">;
   readonly item: ComposerCommandItem;
+  // Path suggestions are relative to projectCwd; see `composerMentionPath`.
+  readonly projectCwd?: string | null;
+  readonly workspaceRoot?: string | null;
 }): { readonly text: string; readonly cursor: number } {
   const { draftMessage, trigger, item } = input;
   let replacement = "";
   if (item.type === "path") {
-    replacement = `${serializeComposerFileLink(item.path)} `;
+    replacement = `${serializeComposerFileLink(
+      composerMentionPath(item.path, input.projectCwd, {
+        agentCwd: input.projectCwd,
+        workspaceRoot: input.workspaceRoot,
+      }),
+    )} `;
   } else if (item.type === "skill") {
     replacement = `$${item.skill.name} `;
   } else if (item.type === "slash-command") {
@@ -251,6 +260,7 @@ export function useComposerCommandMenu({
   linkedEnvironments = NO_LINKED_ENVIRONMENTS,
   currentThreadId = null,
   projectCwd,
+  workspaceRoot = null,
   pullRequestProjectId = null,
   pullRequestRepository = null,
   threadPullRequests,
@@ -275,6 +285,7 @@ export function useComposerCommandMenu({
   readonly linkedEnvironments?: ReadonlyMap<EnvironmentId, string>;
   readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
+  readonly workspaceRoot?: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
   readonly threadPullRequests?: ReadonlyArray<ThreadPullRequestLink>;
@@ -651,7 +662,13 @@ export function useComposerCommandMenu({
       return;
     }
 
-    const result = resolveComposerCommandSelection({ draftMessage, trigger, item });
+    const result = resolveComposerCommandSelection({
+      draftMessage,
+      trigger,
+      item,
+      projectCwd,
+      workspaceRoot,
+    });
     setSelection({ start: result.cursor, end: result.cursor });
     onChangeDraftMessage(result.text);
   };

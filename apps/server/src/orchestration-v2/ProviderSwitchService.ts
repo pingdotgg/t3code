@@ -17,6 +17,7 @@ import {
   decideProviderSessionTransition,
   type ProviderSessionTransition,
 } from "./ProviderSessionTransitionPolicy.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
 
 export interface ProviderSwitchPlanV2 {
   readonly instanceChanged: boolean;
@@ -55,11 +56,12 @@ const isLiveProviderSession = (
 export const layer: Layer.Layer<
   ProviderSwitchServiceV2,
   never,
-  ProviderAdapterRegistry.ProviderAdapterRegistryV2
+  ProviderAdapterRegistry.ProviderAdapterRegistryV2 | RuntimePolicy.RuntimePolicyV2
 > = Layer.effect(
   ProviderSwitchServiceV2,
   Effect.gen(function* () {
     const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+    const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     return ProviderSwitchServiceV2.of({
       plan: Effect.fn("ProviderSwitchService.plan")(
         function* ({ projection, targetModelSelection }) {
@@ -110,6 +112,14 @@ export const layer: Layer.Layer<
                   sessionCapabilities: negotiatedCapabilities ?? currentInstance.value.capabilities,
                 })
               : undefined;
+          // Sessions record the agent's cwd, which a subdirectory project's
+          // worktree thread nests below the worktree path.
+          const targetCwd = yield* runtimePolicy
+            .resolve({ thread: projection.thread, modelSelection: targetModelSelection })
+            .pipe(
+              Effect.map((policy) => policy.cwd ?? undefined),
+              Effect.orElseSucceed(() => undefined),
+            );
           const transition =
             Option.isNone(targetInstance) || Option.isNone(targetAdapter)
               ? ({
@@ -132,6 +142,7 @@ export const layer: Layer.Layer<
                           interactionMode: projection.thread.interactionMode,
                           workspace:
                             currentSession?.cwd ??
+                            targetCwd ??
                             projection.thread.worktreePath ??
                             "<unresolved-workspace>",
                         },
@@ -145,6 +156,7 @@ export const layer: Layer.Layer<
                     runtimeMode: projection.thread.runtimeMode,
                     interactionMode: projection.thread.interactionMode,
                     workspace:
+                      targetCwd ??
                       projection.thread.worktreePath ??
                       currentSession?.cwd ??
                       "<unresolved-workspace>",
