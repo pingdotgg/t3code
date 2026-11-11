@@ -34,7 +34,7 @@ runtime in the container:
 
 ```typescript
 // alchemy.run.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 
 const migrate = yield* AWS.ECS.Task("DbMigrate", {
   image: "public.ecr.aws/docker/library/busybox:stable",
@@ -49,6 +49,11 @@ Alchemy provisions the **task and execution IAM roles**, a
 **CloudWatch log group**, and a **generated ECR repository**
 holding the image, then registers a Fargate task definition. Each
 deploy registers a new immutable revision.
+
+The log group keeps events forever by default. Set
+`logging: { retention: "2 weeks" }` on a `Task` or `Service` to
+expire them; the duration is rounded up to the nearest value
+CloudWatch Logs supports, and `"forever"` clears an existing policy.
 
 ## Three image sources
 
@@ -248,8 +253,8 @@ long-running loops with `host.run` — they execute alongside the
 HTTP handler for the life of the container:
 
 ```diff lang="typescript"
-import * as AWS from "alchemy/AWS";
-+import { ServerHost } from "alchemy/Server";
+import * as AWS from "@alchemy.run/aws";
++import { ServerHost } from "alchemy/Runtime/Process";
 import * as Effect from "effect/Effect";
 +import * as Schedule from "effect/Schedule";
 

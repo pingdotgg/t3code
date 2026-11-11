@@ -1,5 +1,6 @@
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -8,9 +9,8 @@ import {
   accessibleWindowText,
   compactAccessibilityTree,
   findAccessibleWindow,
-  findCaptureSource,
-  hideAndWaitForBlur,
   isWaylandSession,
+  toElectronAccelerator,
 } from "./snapShot.ts";
 
 describe("accessibleWindowText", () => {
@@ -450,65 +450,18 @@ describe("findAccessibleWindow", () => {
   });
 });
 
-describe("hideAndWaitForBlur", () => {
-  it("waits for a delayed blur after hiding the window", async () => {
-    let blur: (() => void) | undefined;
-    let settled = false;
-    const hidden = hideAndWaitForBlur({
-      hide: () => undefined,
-      once: (_event, listener) => {
-        blur = listener;
-      },
-      removeListener: () => undefined,
-    }).then(() => {
-      settled = true;
-    });
-
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    blur?.();
-    await hidden;
-    expect(settled).toBe(true);
-  });
-});
-
-describe("findCaptureSource", () => {
-  const sources = [
-    { id: "window:42:0", name: "Terminal" },
-    { id: "window:84:0", name: "Editor" },
-  ];
-
-  it("matches the native window id before its title", () => {
-    expect(
-      findCaptureSource(sources, {
-        id: 84,
-        title: "Changed title",
-      }),
-    ).toEqual(sources[1]);
-  });
-
-  it("falls back to a unique title match", () => {
-    expect(
-      findCaptureSource(sources, {
-        id: 100,
-        title: "Terminal",
-      }),
-    ).toEqual(sources[0]);
-  });
-
-  it("does not guess when a title is ambiguous", () => {
-    expect(
-      findCaptureSource(
-        [
-          { id: "window:42:0", name: "Editor" },
-          { id: "window:84:0", name: "Editor" },
-        ],
-        {
-          id: 100,
-          title: "Editor",
-        },
-      ),
-    ).toBeUndefined();
+describe("toElectronAccelerator", () => {
+  // The settings recorder stores shortcuts through parseKeybindingShortcut, which lowercases keys.
+  it.each([
+    ["mod+shift+arrowup", "CommandOrControl+Shift+Up"],
+    ["mod+shift+arrowdown", "CommandOrControl+Shift+Down"],
+    ["ctrl+alt+arrowleft", "Control+Alt+Left"],
+    ["ctrl+alt+arrowright", "Control+Alt+Right"],
+    ["mod+shift+esc", "CommandOrControl+Shift+Esc"],
+    ["mod+shift+space", "CommandOrControl+Shift+Space"],
+    ["mod+shift+2", "CommandOrControl+Shift+2"],
+  ])("maps a recorded %s to an Electron accelerator", (recorded, accelerator) => {
+    expect(toElectronAccelerator(parseKeybindingShortcut(recorded)!)).toBe(accelerator);
   });
 });
 

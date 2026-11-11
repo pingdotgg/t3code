@@ -2,7 +2,7 @@ import type { HighlightScheme } from "../../lib/highlights";
 
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   highlightNativeReviewDiffVisibleRows,
@@ -48,6 +48,9 @@ export function useNativeReviewDiffHighlighting(input: {
     ),
   );
 
+  // Effect on purpose: the native highlighter's token stream and the scheduler's timers must
+  // reset with the diff the view shows, and be cancelled when it unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the native highlighter's scheduler and token stream with the diff, cancelling its timers on cleanup
   useEffect(() => {
     traceDiffHighlight("viewport-reset", {
       reset: diffHighlightTraceId(resetKey),
@@ -57,6 +60,7 @@ export function useNativeReviewDiffHighlighting(input: {
     const previousRange = scheduler.reset();
     highlightedRowIdsRef.current = new Set();
     pendingPatchesRef.current = [];
+    // oxlint-disable-next-line react/set-state-in-effect -- Resetting the native highlighter clears the viewport and token-patch snapshots together.
     setViewport({ scope: viewportScope, range: null });
     setTokensPatchJson(createEmptyTokenPatch(resetKey));
     // A token reset need not produce another native range event. Reuse only an
@@ -65,6 +69,8 @@ export function useNativeReviewDiffHighlighting(input: {
     return () => scheduler.cancel();
   }, [enabled, resetKey, rows.length, scheduler, viewportScope]);
 
+  // Effect on purpose: abortable async highlighting tied to the visible range's lifetime.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs abortable native highlighting for the visible range and aborts it when the range or diff changes
   useEffect(() => {
     if (!enabled || rows.length === 0 || !viewport.range || viewport.scope !== viewportScope) {
       return;
@@ -176,7 +182,7 @@ export function useNativeReviewDiffHighlighting(input: {
     };
   }, [collapsedFileIds, enabled, files, resetKey, rows, scheme, viewport, viewportScope]);
 
-  const acknowledgeTokenPatch = useCallback((payload: Readonly<Record<string, unknown>>) => {
+  const acknowledgeTokenPatch = (payload: Readonly<Record<string, unknown>>) => {
     const pending = pendingPatchesRef.current;
     const head = pending[0];
     traceDiffHighlight("patch-ack", {
@@ -190,25 +196,22 @@ export function useNativeReviewDiffHighlighting(input: {
       return;
     pending.shift();
     setTokensPatchJson(pending[0]?.json ?? createEmptyTokenPatch(head.resetKey));
-  }, []);
+  };
 
-  const rejectTokenPatch = useCallback(
-    (payload: Readonly<Record<string, unknown>>) => {
-      const head = pendingPatchesRef.current[0];
-      traceDiffHighlight("patch-rejected", {
-        reset: diffHighlightTraceId(payload.resetKey),
-        chunk: typeof payload.chunkIndex === "number" ? payload.chunkIndex : -1,
-        matches:
-          !!head && payload.resetKey === head.resetKey && payload.chunkIndex === head.chunkIndex,
-      });
-      if (!head || payload.resetKey !== head.resetKey || payload.chunkIndex !== head.chunkIndex)
-        return;
-      for (const rowId of head.rowIds) highlightedRowIdsRef.current.delete(rowId);
-      // Retry these rows only on a later viewport request, not in a failure loop.
-      acknowledgeTokenPatch(payload);
-    },
-    [acknowledgeTokenPatch],
-  );
+  const rejectTokenPatch = (payload: Readonly<Record<string, unknown>>) => {
+    const head = pendingPatchesRef.current[0];
+    traceDiffHighlight("patch-rejected", {
+      reset: diffHighlightTraceId(payload.resetKey),
+      chunk: typeof payload.chunkIndex === "number" ? payload.chunkIndex : -1,
+      matches:
+        !!head && payload.resetKey === head.resetKey && payload.chunkIndex === head.chunkIndex,
+    });
+    if (!head || payload.resetKey !== head.resetKey || payload.chunkIndex !== head.chunkIndex)
+      return;
+    for (const rowId of head.rowIds) highlightedRowIdsRef.current.delete(rowId);
+    // Retry these rows only on a later viewport request, not in a failure loop.
+    acknowledgeTokenPatch(payload);
+  };
 
   return {
     rejectTokenPatch,

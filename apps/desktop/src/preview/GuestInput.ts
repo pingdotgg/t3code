@@ -92,13 +92,93 @@ const evaluate = async (debuggee: Electron.Debugger, expression: string) => {
   return reply.result?.value;
 };
 
+/** Host focus shared by the presses in flight in one window, so a later press keeps the field an earlier one saved. */
+const HOST_FOCUS = "globalThis.__t3PreviewFocus";
+
+/** A CDP pointer press focuses the guest's native view even with focus emulation enabled. */
+const sendPointerPress = async (
+  webContents: Electron.WebContents,
+  debuggee: Electron.Debugger,
+  method: string,
+  params: Record<string, unknown>,
+  sessionId: string | undefined,
+) => {
+  const host = webContents.hostWebContents;
+  if (!host || host.isDestroyed() || webContents.focusedFrame) {
+    return debuggee.sendCommand(method, params, sessionId);
+  }
+  // Focus in a webview with a press in flight came from that press, so keep the earlier save.
+  await host.executeJavaScript(`(() => {
+    const state = (${HOST_FOCUS} ??= { saved: null, presses: [] });
+    const active = document.activeElement;
+    let pressed = false;
+    try {
+      pressed = active?.tagName === "WEBVIEW" && state.presses.includes(active.getWebContentsId());
+    } catch {}
+    if (!pressed) {
+      state.saved = active && active !== document.body && active.tagName !== "WEBVIEW" ? active : null;
+    }
+    state.presses.push(${webContents.id});
+  })()`);
+  try {
+    return await debuggee.sendCommand(method, params, sessionId);
+  } finally {
+    if (!host.isDestroyed()) {
+      // Membership check: a host reload starts a new state without this press.
+      await host.executeJavaScript(`(() => {
+        const state = ${HOST_FOCUS};
+        const index = state ? state.presses.indexOf(${webContents.id}) : -1;
+        if (index < 0) return;
+        state.presses.splice(index, 1);
+        if (state.presses.length === 0) delete ${HOST_FOCUS};
+        const current = document.activeElement;
+        try {
+          if (state.saved?.isConnected && current?.tagName === "WEBVIEW" &&
+              current.getWebContentsId() === ${webContents.id}) state.saved.focus({ preventScroll: true });
+        } catch {}
+      })()`);
+    }
+  }
+};
+
+const pointerCommands = new WeakMap<Electron.WebContents, Promise<unknown>>();
+
+/** Focus capture crosses processes; later pointer events must not overtake the press. */
+const sendPointerCommand = async (
+  webContents: Electron.WebContents,
+  debuggee: Electron.Debugger,
+  method: string,
+  params: Record<string, unknown>,
+  sessionId: string | undefined,
+) => {
+  const previous = pointerCommands.get(webContents) ?? Promise.resolve();
+  const current = previous
+    .catch(() => {})
+    .then(() =>
+      params["type"] === "mousePressed" || params["type"] === "touchStart"
+        ? sendPointerPress(webContents, debuggee, method, params, sessionId)
+        : debuggee.sendCommand(method, params, sessionId),
+    );
+  pointerCommands.set(webContents, current);
+  try {
+    return await current;
+  } finally {
+    if (pointerCommands.get(webContents) === current) pointerCommands.delete(webContents);
+  }
+};
+
 /** Sends one command to the guest's page, keeping reloads and input inside it. */
 export const sendPageCommand = async (
   webContents: Electron.WebContents,
   debuggee: Electron.Debugger,
   method: string,
   params: Record<string, unknown>,
+  sessionId?: string,
 ): Promise<unknown> => {
+  if (method === "Input.dispatchMouseEvent" || method === "Input.dispatchTouchEvent") {
+    return sendPointerCommand(webContents, debuggee, method, params, sessionId);
+  }
+  if (sessionId !== undefined) return debuggee.sendCommand(method, params, sessionId);
   // Electron's debugger routes Page.reload on a webview to its embedder window.
   if (method === "Page.reload") {
     if (params["ignoreCache"] === true) webContents.reloadIgnoringCache();

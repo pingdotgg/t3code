@@ -8,7 +8,7 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { showThreadUndoNotice } from "../hooks/showThreadUndoNotice";
-import * as ThreadUndo from "../hooks/threadUndo";
+import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { releaseDraftAttachments } from "./attachmentUploadQueue";
 
 export function discardComposerDraft(target: ComposerThreadTarget): void {
@@ -18,7 +18,6 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
   if (key === null) return;
   const session = store.draftThreadsByThreadKey[key];
   if (!draft && !session) return;
-  const attachments = draft ? [...draft.images, ...draft.files] : [];
   const logicalProjectKeys = Object.entries(store.logicalProjectDraftThreadKeyByLogicalProjectKey)
     .filter(([, draftKey]) => draftKey === key)
     .map(([logicalProjectKey]) => logicalProjectKey);
@@ -31,6 +30,17 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
     store.clearComposerContent(target);
   }
 
+  const releaseDiscardedDraft = () => {
+    if (!draft) return;
+    releaseDraftAttachments([...draft.images, ...draft.files]);
+    // Draft-session removal already revoked these previews.
+    if (!discardsSession) {
+      for (const image of draft.images) {
+        if (image.previewUrl.startsWith("blob:")) URL.revokeObjectURL(image.previewUrl);
+      }
+    }
+  };
+
   showThreadUndoNotice({
     action: "Discarded",
     claim,
@@ -38,7 +48,7 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
     undo: async () => {
       const current = useComposerDraftStore.getState().draftsByThreadKey[key];
       if (current && composerDraftHasUserContent(current)) {
-        releaseDraftAttachments(attachments);
+        releaseDiscardedDraft();
         return AsyncResult.failure(Cause.fail(new Error("The draft has new content.")));
       }
       useComposerDraftStore.setState((state) => {
@@ -72,6 +82,6 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
       });
       return AsyncResult.success(undefined);
     },
-    commit: () => releaseDraftAttachments(attachments),
+    commit: releaseDiscardedDraft,
   });
 }
