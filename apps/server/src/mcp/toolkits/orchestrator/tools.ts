@@ -9,6 +9,10 @@ import {
   OrchestratorMcpEnvironmentUnlinkResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
+  OrchestratorMcpTeamGrowInput,
+  OrchestratorMcpTeamGrowResult,
+  OrchestratorMcpTeamShrinkInput,
+  OrchestratorMcpTeamShrinkResult,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpDeleteScheduledTaskInput,
@@ -222,6 +226,32 @@ const CreateThreadsTool = Tool.make("create_threads", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const TeamGrowTool = Tool.make("t3_team_grow", {
+  description:
+    "Add seats to a running project team without stopping anyone else (OpenRig `rig grow`). New seat: omit `threadId`. Restore after shrink: pass the archived seat's `threadId` (optional `prompt`). In your reply, name each seat as its `link` verbatim.",
+  parameters: OrchestratorMcpTeamGrowInput,
+  success: OrchestratorMcpTeamGrowResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Grow a running team")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
+const TeamShrinkTool = Tool.make("t3_team_shrink", {
+  description:
+    "Remove seats from a running project team without stopping the rest (OpenRig `rig shrink`). Stops and archives each listed seat and its own delegates only. Reverse with `t3_team_grow` and that seat's `threadId`. Cannot shrink the calling thread.",
+  parameters: OrchestratorMcpTeamShrinkInput,
+  success: OrchestratorMcpTeamShrinkResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Shrink a running team")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true);
+
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
     "List threads newest first, in one project or with `allProjects`. Page with `cursor`.",
@@ -361,6 +391,8 @@ export const OrchestratorToolkit = Toolkit.make(
   DeleteScheduledTaskTool,
   RequestSecretTool,
   CreateThreadsTool,
+  TeamGrowTool,
+  TeamShrinkTool,
   ThreadListTool,
   ThreadReadTool,
   ThreadUpdateTool,

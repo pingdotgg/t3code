@@ -20,6 +20,11 @@ import {
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
   type OrchestratorMcpCreatedThread,
+  type OrchestratorMcpTeamGrowInput,
+  type OrchestratorMcpTeamGrowResult,
+  type OrchestratorMcpTeamShrinkInput,
+  type OrchestratorMcpTeamShrinkResult,
+  type OrchestratorMcpTeamShrunkSeat,
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpDeleteScheduledTaskInput,
@@ -176,6 +181,16 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpCreateThreadsInput,
   ) => Effect.Effect<OrchestratorMcpCreateThreadsResult, OrchestratorMcpFailure>;
+  /** Add seats to the running project team without stopping anyone else. */
+  readonly growTeam: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpTeamGrowInput,
+  ) => Effect.Effect<OrchestratorMcpTeamGrowResult, OrchestratorMcpFailure>;
+  /** Remove seats without stopping the rest of the team. */
+  readonly shrinkTeam: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpTeamShrinkInput,
+  ) => Effect.Effect<OrchestratorMcpTeamShrinkResult, OrchestratorMcpFailure>;
   readonly scheduleTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpScheduleTaskInput,
@@ -1991,6 +2006,183 @@ const make = Effect.gen(function* () {
     return task;
   });
 
+  const createThreads: OrchestratorMcpServiceShape["createThreads"] = Effect.fn(
+    "OrchestratorMcpService.createThreads",
+  )(function* (callerScope, input) {
+    const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
+    const parentRun = ThreadManagementService.latestActiveRun(parent);
+    if (
+      parentRun === undefined ||
+      parentRun.rootNodeId === null ||
+      parentRun.providerInstanceId !== scope.thread.providerInstanceId
+    ) {
+      return yield* failure(
+        "parent_not_active",
+        "Thread creation requires an active run owned by this MCP provider session.",
+      );
+    }
+    const parentNodeId = parentRun.rootNodeId;
+    const providers = yield* loadProviders;
+    const key = yield* requestKey(input.clientRequestId);
+    const created = yield* Effect.forEach(
+      input.threads,
+      (request, index) =>
+        Effect.gen(function* () {
+          const commandId = stableCommandId({
+            scope,
+            requestKey: key,
+            operation: "create-thread",
+            index,
+          });
+          const threadId = stableThreadId({
+            scope,
+            requestKey: key,
+            index,
+          });
+          const isRetryOfAcceptedCreation = yield* threadManagement.hasReceipt(commandId);
+          const committedThread = isRetryOfAcceptedCreation
+            ? yield* threadManagement
+                .getThreadShell(threadId)
+                .pipe(Effect.mapError(threadManagementFailure))
+            : null;
+          const target = yield* resolveTargetRechecking({
+            parent,
+            target:
+              committedThread === null
+                ? request.target
+                : {
+                    ...request.target,
+                    providerInstanceId: committedThread.modelSelection.instanceId,
+                  },
+            providers,
+            skipProjectEnablementFilter: isRetryOfAcceptedCreation,
+          });
+          const runtimeMode = yield* resolveRuntimeMode(
+            parent.thread.runtimeMode,
+            request.runtimeMode,
+            target,
+          );
+          const interactionMode = yield* resolveInteractionMode(
+            parent.thread.interactionMode,
+            request.interactionMode,
+          );
+          yield* assertTargetEnabledForProject(parent, commandId, target);
+          const title = threadTitle({
+            parentTitle: parent.thread.title,
+            prompt: request.prompt,
+            title: request.title,
+            index,
+          });
+          yield* threadManagement
+            .dispatch({
+              type: "thread.create",
+              createdBy: "agent",
+              creationSource: "mcp",
+              commandId,
+              threadId,
+              projectId: parent.thread.projectId,
+              title,
+              modelSelection: target.modelSelection,
+              runtimeMode,
+              interactionMode,
+              branch: parent.thread.branch,
+              worktreePath: parent.thread.worktreePath,
+              ...(parent.thread.linkOrigin === undefined
+                ? {}
+                : { linkOrigin: parent.thread.linkOrigin }),
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "orchestration_error",
+                  `Unable to create thread ${index + 1}: ${errorMessage(error)}`,
+                ),
+              ),
+            );
+          // A receipt can appear after target resolution; use the committed thread's selection.
+          const resolvedModelSelection = (yield* threadManagement
+            .getThreadRecords(threadId, [])
+            .pipe(Effect.mapError(threadManagementFailure))).thread.modelSelection;
+          if (request.prompt !== undefined) {
+            yield* threadManagement
+              .dispatch({
+                type: "message.dispatch",
+                createdBy: "agent",
+                creationSource: "mcp",
+                commandId: stableCommandId({
+                  scope,
+                  requestKey: key,
+                  operation: "dispatch-thread",
+                  index,
+                }),
+                threadId,
+                senderThreadId: scope.thread.threadId,
+                messageId: stableMessageId({
+                  scope,
+                  requestKey: key,
+                  index,
+                }),
+                text: request.prompt,
+                attachments: [],
+                modelSelection: resolvedModelSelection,
+                dispatchMode: { type: "start_immediately" },
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  error._tag === "ThreadManagementProviderInstanceDisabledError"
+                    ? threadManagementFailure(error)
+                    : failure(
+                        "orchestration_error",
+                        `Unable to start thread ${index + 1}: ${errorMessage(error)}`,
+                      ),
+                ),
+              );
+          }
+          const projection = yield* loadThreadRecords(threadId, ["runs"]);
+          const run = projection.runs.at(-1);
+          yield* threadManagement
+            .dispatch({
+              type: "thread.created.record",
+              commandId: stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "record-created-thread",
+                index,
+              }),
+              parentThreadId: scope.thread.threadId,
+              parentRunId: parentRun.id,
+              parentNodeId,
+              targetThreadId: threadId,
+              targetRunId: run?.id ?? null,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "orchestration_error",
+                  `Unable to record thread ${index + 1} in the parent timeline: ${errorMessage(error)}`,
+                ),
+              ),
+            );
+          return {
+            threadId,
+            link: formatThreadLink(
+              { environmentId: scope.environmentId, threadId },
+              projection.thread.title,
+            ),
+            runId: run?.id ?? null,
+            status: run?.status ?? "idle",
+            title: projection.thread.title,
+            createdBy: projection.thread.createdBy,
+            creationSource: projection.thread.creationSource,
+            providerInstanceId: resolvedModelSelection.instanceId,
+            model: resolvedModelSelection.model,
+          } satisfies OrchestratorMcpCreatedThread;
+        }),
+      { concurrency: 1 },
+    );
+    return { threads: created };
+  });
+
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
       const { parent, limits } = yield* loadCaller(scope, ["runs"]);
@@ -2775,182 +2967,243 @@ const make = Effect.gen(function* () {
         status: "cancel_requested",
       };
     }),
-    createThreads: Effect.fn("OrchestratorMcpService.createThreads")(
-      function* (callerScope, input) {
-        const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
-        const parentRun = ThreadManagementService.latestActiveRun(parent);
-        if (
-          parentRun === undefined ||
-          parentRun.rootNodeId === null ||
-          parentRun.providerInstanceId !== scope.thread.providerInstanceId
-        ) {
+    createThreads,
+    growTeam: Effect.fn("OrchestratorMcpService.growTeam")(function* (callerScope, input) {
+      const { scope, parent } = yield* loadThreadCaller(callerScope, "t3_team_grow");
+      const parentRun = ThreadManagementService.latestActiveRun(parent);
+      if (
+        parentRun === undefined ||
+        parentRun.rootNodeId === null ||
+        parentRun.providerInstanceId !== scope.thread.providerInstanceId
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          "Growing the team requires an active run owned by this MCP provider session.",
+        );
+      }
+      const key = yield* requestKey(input.clientRequestId);
+      const seats: Array<OrchestratorMcpCreatedThread> = [];
+      for (const [index, seat] of input.seats.entries()) {
+        if (seat.threadId === undefined) {
+          const created = yield* createThreads(callerScope, {
+            threads: [
+              {
+                ...(seat.prompt === undefined ? {} : { prompt: seat.prompt }),
+                ...(seat.title === undefined ? {} : { title: seat.title }),
+                ...(seat.target === undefined ? {} : { target: seat.target }),
+                ...(seat.runtimeMode === undefined ? {} : { runtimeMode: seat.runtimeMode }),
+                ...(seat.interactionMode === undefined
+                  ? {}
+                  : { interactionMode: seat.interactionMode }),
+              },
+            ],
+            clientRequestId: `${key}:grow:${index}`,
+          });
+          seats.push(created.threads[0]!);
+          continue;
+        }
+
+        const threadId = seat.threadId;
+        if (threadId === parent.thread.id) {
           return yield* failure(
-            "parent_not_active",
-            "Thread creation requires an active run owned by this MCP provider session.",
+            "invalid_request",
+            "Cannot restore the calling thread as a new team seat.",
           );
         }
-        const parentNodeId = parentRun.rootNodeId;
-        const providers = yield* loadProviders;
-        const key = yield* requestKey(input.clientRequestId);
-        const created = yield* Effect.forEach(
-          input.threads,
-          (request, index) =>
-            Effect.gen(function* () {
-              const commandId = stableCommandId({
+        if (
+          seat.target !== undefined ||
+          seat.runtimeMode !== undefined ||
+          seat.interactionMode !== undefined ||
+          seat.title !== undefined
+        ) {
+          return yield* failure(
+            "invalid_request",
+            "Restoring a seat ignores title, target, and modes; pass only threadId and optional prompt.",
+          );
+        }
+        const target = yield* loadTargetThread(threadId);
+        if (target.thread.projectId !== parent.thread.projectId) {
+          return yield* failure(
+            "invalid_request",
+            `Thread ${threadId} is not in this project team.`,
+          );
+        }
+        if (target.thread.archivedAt !== null) {
+          yield* threadManagement
+            .dispatch({
+              type: "thread.unarchive",
+              commandId: stableCommandId({
                 scope,
                 requestKey: key,
-                operation: "create-thread",
+                operation: "team-grow-unarchive",
                 index,
-              });
-              const threadId = stableThreadId({
-                scope,
-                requestKey: key,
-                index,
-              });
-              const isRetryOfAcceptedCreation = yield* threadManagement.hasReceipt(commandId);
-              const committedThread = isRetryOfAcceptedCreation
-                ? yield* threadManagement
-                    .getThreadShell(threadId)
-                    .pipe(Effect.mapError(threadManagementFailure))
-                : null;
-              const target = yield* resolveTargetRechecking({
-                parent,
-                target:
-                  committedThread === null
-                    ? request.target
-                    : {
-                        ...request.target,
-                        providerInstanceId: committedThread.modelSelection.instanceId,
-                      },
-                providers,
-                skipProjectEnablementFilter: isRetryOfAcceptedCreation,
-              });
-              const runtimeMode = yield* resolveRuntimeMode(
-                parent.thread.runtimeMode,
-                request.runtimeMode,
-                target,
-              );
-              const interactionMode = yield* resolveInteractionMode(
-                parent.thread.interactionMode,
-                request.interactionMode,
-              );
-              yield* assertTargetEnabledForProject(parent, commandId, target);
-              const title = threadTitle({
-                parentTitle: parent.thread.title,
-                prompt: request.prompt,
-                title: request.title,
-                index,
-              });
-              yield* threadManagement
-                .dispatch({
-                  type: "thread.create",
-                  createdBy: "agent",
-                  creationSource: "mcp",
-                  commandId,
-                  threadId,
-                  projectId: parent.thread.projectId,
-                  title,
-                  modelSelection: target.modelSelection,
-                  runtimeMode,
-                  interactionMode,
-                  branch: parent.thread.branch,
-                  worktreePath: parent.thread.worktreePath,
-                  ...(parent.thread.linkOrigin === undefined
-                    ? {}
-                    : { linkOrigin: parent.thread.linkOrigin }),
-                })
-                .pipe(
-                  Effect.mapError((error) =>
-                    failure(
-                      "orchestration_error",
-                      `Unable to create thread ${index + 1}: ${errorMessage(error)}`,
-                    ),
-                  ),
-                );
-              // A receipt can appear after target resolution; use the committed thread's selection.
-              const resolvedModelSelection = (yield* threadManagement
-                .getThreadRecords(threadId, [])
-                .pipe(Effect.mapError(threadManagementFailure))).thread.modelSelection;
-              if (request.prompt !== undefined) {
-                yield* threadManagement
-                  .dispatch({
-                    type: "message.dispatch",
-                    createdBy: "agent",
-                    creationSource: "mcp",
-                    commandId: stableCommandId({
-                      scope,
-                      requestKey: key,
-                      operation: "dispatch-thread",
-                      index,
-                    }),
-                    threadId,
-                    senderThreadId: scope.thread.threadId,
-                    messageId: stableMessageId({
-                      scope,
-                      requestKey: key,
-                      index,
-                    }),
-                    text: request.prompt,
-                    attachments: [],
-                    modelSelection: resolvedModelSelection,
-                    dispatchMode: { type: "start_immediately" },
-                  })
-                  .pipe(
-                    Effect.mapError((error) =>
-                      error._tag === "ThreadManagementProviderInstanceDisabledError"
-                        ? threadManagementFailure(error)
-                        : failure(
-                            "orchestration_error",
-                            `Unable to start thread ${index + 1}: ${errorMessage(error)}`,
-                          ),
-                    ),
-                  );
-              }
-              const projection = yield* loadThreadRecords(threadId, ["runs"]);
-              const run = projection.runs.at(-1);
-              yield* threadManagement
-                .dispatch({
-                  type: "thread.created.record",
-                  commandId: stableCommandId({
-                    scope,
-                    requestKey: key,
-                    operation: "record-created-thread",
-                    index,
-                  }),
-                  parentThreadId: scope.thread.threadId,
-                  parentRunId: parentRun.id,
-                  parentNodeId,
-                  targetThreadId: threadId,
-                  targetRunId: run?.id ?? null,
-                })
-                .pipe(
-                  Effect.mapError((error) =>
-                    failure(
-                      "orchestration_error",
-                      `Unable to record thread ${index + 1} in the parent timeline: ${errorMessage(error)}`,
-                    ),
-                  ),
-                );
-              return {
-                threadId,
-                link: formatThreadLink(
-                  { environmentId: scope.environmentId, threadId },
-                  projection.thread.title,
+              }),
+              threadId,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "orchestration_error",
+                  `Unable to restore seat ${threadId}: ${errorMessage(error)}`,
                 ),
-                runId: run?.id ?? null,
-                status: run?.status ?? "idle",
-                title: projection.thread.title,
-                createdBy: projection.thread.createdBy,
-                creationSource: projection.thread.creationSource,
-                providerInstanceId: resolvedModelSelection.instanceId,
-                model: resolvedModelSelection.model,
-              } satisfies OrchestratorMcpCreatedThread;
-            }),
-          { concurrency: 1 },
+              ),
+            );
+        }
+        if (seat.prompt !== undefined) {
+          yield* threadManagement
+            .sendToThread({
+              projectId: target.thread.projectId,
+              commandId: stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "team-grow-send",
+                index,
+              }),
+              threadId,
+              senderThreadId: scope.thread.threadId,
+              messageId: stableMessageId({
+                scope,
+                requestKey: key,
+                index,
+              }),
+              text: seat.prompt,
+              attachments: [],
+              mode: "auto",
+              createdBy: "agent",
+              creationSource: "mcp",
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                isThreadManagementError(error)
+                  ? threadManagementFailure(error)
+                  : failure(
+                      "orchestration_error",
+                      `Unable to message restored seat ${threadId}: ${errorMessage(error)}`,
+                    ),
+              ),
+            );
+        }
+        const projection = yield* loadThreadRecords(threadId, ["runs"]);
+        const run = projection.runs.at(-1);
+        seats.push({
+          threadId,
+          link: formatThreadLink(
+            { environmentId: scope.environmentId, threadId },
+            projection.thread.title,
+          ),
+          runId: run?.id ?? null,
+          status: run?.status ?? "idle",
+          title: projection.thread.title,
+          createdBy: projection.thread.createdBy,
+          creationSource: projection.thread.creationSource,
+          providerInstanceId: projection.thread.modelSelection.instanceId,
+          model: projection.thread.modelSelection.model,
+        });
+      }
+      return { seats };
+    }),
+    shrinkTeam: Effect.fn("OrchestratorMcpService.shrinkTeam")(function* (callerScope, input) {
+      const { scope, parent } = yield* loadThreadCaller(callerScope, "t3_team_shrink");
+      const parentRun = ThreadManagementService.latestActiveRun(parent);
+      if (
+        parentRun === undefined ||
+        parentRun.providerInstanceId !== scope.thread.providerInstanceId
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          "Shrinking the team requires an active run owned by this MCP provider session.",
         );
-        return { threads: created };
-      },
-    ),
+      }
+      const key = yield* requestKey(input.clientRequestId);
+      const seats: Array<OrchestratorMcpTeamShrunkSeat> = [];
+      for (const [index, threadId] of input.threadIds.entries()) {
+        if (threadId === parent.thread.id) {
+          return yield* failure(
+            "invalid_request",
+            "Cannot shrink the calling thread; shrink another seat on the team.",
+          );
+        }
+        const target = yield* loadTargetThread(threadId);
+        if (target.thread.projectId !== parent.thread.projectId) {
+          return yield* failure(
+            "invalid_request",
+            `Thread ${threadId} is not in this project team.`,
+          );
+        }
+        const link = formatThreadLink(
+          { environmentId: scope.environmentId, threadId },
+          target.thread.title,
+        );
+        if (target.thread.archivedAt !== null) {
+          seats.push({
+            threadId,
+            link,
+            title: target.thread.title,
+            status: "already_archived",
+          });
+          continue;
+        }
+        const stopCommandId = stableCommandId({
+          scope,
+          requestKey: key,
+          operation: "team-shrink-stop",
+          index,
+        });
+        const stopFailed = (error: unknown) =>
+          Effect.logWarning("orchestrator-mcp.team-shrink-stop-failed", {
+            threadId,
+            error,
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                failure("orchestration_error", `Unable to stop seat ${threadId} before shrinking.`),
+              ),
+            ),
+          );
+        // Stop only this seat and its own delegates; siblings and the caller keep running.
+        yield* threadManagement
+          .dispatch({
+            type: "thread.stop",
+            commandId: stopCommandId,
+            threadId,
+            ...(input.reason === undefined ? {} : { reason: input.reason }),
+          })
+          .pipe(Effect.catch(stopFailed));
+        yield* threadManagement
+          .stopDelegatedTasks({
+            threadId,
+            commandId: stopCommandId,
+            reason: input.reason,
+          })
+          .pipe(Effect.catch(stopFailed));
+        yield* threadManagement
+          .dispatch({
+            type: "thread.archive",
+            commandId: stableCommandId({
+              scope,
+              requestKey: key,
+              operation: "team-shrink-archive",
+              index,
+            }),
+            threadId,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to archive seat ${threadId}: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        seats.push({
+          threadId,
+          link,
+          title: target.thread.title,
+          status: "shrunk",
+        });
+      }
+      return { seats };
+    }),
     listThreads: Effect.fn("OrchestratorMcpService.listThreads")(function* (scope, input) {
       const { parent } = yield* loadCaller(scope, []);
       const projectId = input.allProjects

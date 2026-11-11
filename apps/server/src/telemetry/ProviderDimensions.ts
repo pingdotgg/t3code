@@ -150,6 +150,18 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
         targetChosen: threads.some((thread) => asFields(thread).target !== undefined),
       };
     }
+    case "t3_team_grow": {
+      const seats = Array.isArray(input.seats) ? input.seats : [];
+      return {
+        batchSize: seats.length,
+        restoreCount: seats.filter((seat) => asFields(seat).threadId !== undefined).length,
+        targetChosen: seats.some((seat) => asFields(seat).target !== undefined),
+      };
+    }
+    case "t3_team_shrink": {
+      const threadIds = Array.isArray(input.threadIds) ? input.threadIds : [];
+      return { batchSize: threadIds.length };
+    }
     case "t3_thread_launch":
       return defined({
         targetChosen: input.modelSelection !== undefined,

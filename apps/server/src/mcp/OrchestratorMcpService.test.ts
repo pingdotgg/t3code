@@ -3938,6 +3938,202 @@ describe("OrchestratorMcpService thread stop", () => {
       }),
   });
 
+  it.effect("shrinks one team seat without stopping the caller, and grow restores it", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:mcp-team-parent");
+      const seatThreadId = ThreadId.make("thread:mcp-team-seat");
+      const otherProjectSeatId = ThreadId.make("thread:mcp-team-other-project");
+      const parentRunId = RunId.make("run:mcp-team-parent");
+      const teamProjectId = ProjectId.make("project:mcp-team");
+      const codexInstanceId = ProviderInstanceId.make("codex");
+      const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
+      const stoppedDelegates = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+      const archived = yield* Ref.make(false);
+      const parentProjection = {
+        thread: {
+          id: parentThreadId,
+          projectId: teamProjectId,
+          title: "Lead",
+          modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          archivedAt: null,
+          deletedAt: null,
+        },
+        runs: [
+          {
+            id: parentRunId,
+            ordinal: 1,
+            status: "running",
+            providerInstanceId: codexInstanceId,
+            rootNodeId: NodeId.make("node:mcp-team-parent-root"),
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const seatShell = (isArchived: boolean) => ({
+        ...liveThreadShell(seatThreadId, { activeRunId: RunId.make("run:mcp-team-seat") }),
+        projectId: teamProjectId,
+        title: "Seat",
+        archivedAt: isArchived ? DateTime.makeUnsafe("2026-10-03T10:00:00Z") : null,
+      });
+      const seatProjection = (isArchived: boolean) => {
+        const shell = seatShell(isArchived);
+        return {
+          ...idleThreadProjection(shell),
+          runs: [
+            {
+              id: RunId.make("run:mcp-team-seat"),
+              ordinal: 1,
+              status: "running",
+              providerInstanceId: codexInstanceId,
+            },
+          ],
+        } as unknown as OrchestrationV2ThreadProjection;
+      };
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.gen(function* () {
+              if (threadId === parentThreadId) return parentProjection;
+              const isArchived = yield* Ref.get(archived);
+              return seatProjection(isArchived);
+            }),
+          getThreadShell: (threadId) =>
+            Effect.gen(function* () {
+              if (threadId === parentThreadId) {
+                return liveThreadShell(parentThreadId, { activeRunId: parentRunId });
+              }
+              if (threadId === otherProjectSeatId) {
+                return {
+                  ...liveThreadShell(otherProjectSeatId),
+                  projectId: ProjectId.make("project:other"),
+                };
+              }
+              return seatShell(yield* Ref.get(archived));
+            }),
+          getProjectThreadRecords: ({ threadId }) =>
+            Effect.gen(function* () {
+              const isArchived = yield* Ref.get(archived);
+              if (threadId === otherProjectSeatId) {
+                const foreign = seatProjection(false);
+                return {
+                  ...foreign,
+                  thread: {
+                    ...foreign.thread,
+                    id: otherProjectSeatId,
+                    projectId: ProjectId.make("project:other"),
+                  },
+                } as unknown as OrchestrationV2ThreadProjection;
+              }
+              return seatProjection(isArchived);
+            }),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.andThen(
+                command.type === "thread.archive"
+                  ? Ref.set(archived, true)
+                  : command.type === "thread.unarchive"
+                    ? Ref.set(archived, false)
+                    : Effect.void,
+              ),
+              Effect.as({ storedEvents: [] } as never),
+            ),
+          stopDelegatedTasks: ({ threadId }) =>
+            Ref.update(stoppedDelegates, (ids) => [...ids, threadId]),
+          sendToThread: () =>
+            Effect.succeed({
+              threadId: seatThreadId,
+              runId: RunId.make("run:mcp-team-seat"),
+              delivery: "started",
+            } as never),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-team"),
+        requestNamespace: "provider-session:mcp-team",
+        thread: {
+          threadId: parentThreadId,
+          providerSessionId: "provider-session:mcp-team",
+          providerInstanceId: codexInstanceId,
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const selfShrink = yield* service
+          .shrinkTeam(scope, { threadIds: [parentThreadId], clientRequestId: "shrink-self" })
+          .pipe(Effect.flip);
+        assert.equal(selfShrink.code, "invalid_request");
+
+        const foreign = yield* service
+          .shrinkTeam(scope, {
+            threadIds: [otherProjectSeatId],
+            clientRequestId: "shrink-foreign",
+          })
+          .pipe(Effect.flip);
+        assert.equal(foreign.code, "invalid_request");
+
+        const shrunk = yield* service.shrinkTeam(scope, {
+          threadIds: [seatThreadId],
+          reason: "capacity",
+          clientRequestId: "shrink-seat",
+        });
+        assert.equal(shrunk.seats[0]?.threadId, seatThreadId);
+        assert.equal(shrunk.seats[0]?.status, "shrunk");
+        assert.equal(shrunk.seats[0]?.title, "Seat");
+        assert.isTrue(shrunk.seats[0]?.link?.includes(String(seatThreadId)) === true);
+        assert.equal(yield* Ref.get(archived), true);
+
+        const commands = yield* Ref.get(dispatched);
+        assert.deepEqual(
+          commands.flatMap((command) =>
+            command.type === "thread.stop" || command.type === "thread.archive"
+              ? [{ type: command.type, threadId: command.threadId }]
+              : [],
+          ),
+          [
+            { type: "thread.stop", threadId: seatThreadId },
+            { type: "thread.archive", threadId: seatThreadId },
+          ],
+        );
+        assert.deepEqual(yield* Ref.get(stoppedDelegates), [seatThreadId]);
+        assert.isFalse(
+          commands.some((command) => "threadId" in command && command.threadId === parentThreadId),
+        );
+
+        const again = yield* service.shrinkTeam(scope, {
+          threadIds: [seatThreadId],
+          clientRequestId: "shrink-again",
+        });
+        assert.equal(again.seats[0]?.status, "already_archived");
+
+        const restored = yield* service.growTeam(scope, {
+          seats: [{ threadId: seatThreadId, prompt: "Welcome back." }],
+          clientRequestId: "grow-restore",
+        });
+        assert.equal(restored.seats[0]?.threadId, seatThreadId);
+        assert.equal(yield* Ref.get(archived), false);
+        assert.isTrue(
+          (yield* Ref.get(dispatched)).some((command) => command.type === "thread.unarchive"),
+        );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect.each([
     { name: "a running turn", queued: false },
     { name: "a running turn with a queued message", queued: true },

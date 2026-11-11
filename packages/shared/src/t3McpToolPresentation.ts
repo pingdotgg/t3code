@@ -163,6 +163,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
   create_threads: tool(["Create", "Creating", "Created", "T3 threads"], "thread-create"),
+  t3_team_grow: tool(["Grow", "Growing", "Grew", "the project team"], "thread-create"),
+  t3_team_shrink: tool(["Shrink", "Shrinking", "Shrunk", "the project team"], "thread-organize"),
   t3_thread_start: tool(["Start", "Starting", "Started", "a T3 thread"], "thread-create"),
   t3_thread_list: tool(["List", "Listing", "Listed", "T3 threads"], "thread-list"),
   t3_thread_read: tool(["Read", "Reading", "Read", "a T3 thread"], "thread-read"),

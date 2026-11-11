@@ -311,6 +311,64 @@ export const OrchestratorMcpCreateThreadsResult = Schema.Struct({
 });
 export type OrchestratorMcpCreateThreadsResult = typeof OrchestratorMcpCreateThreadsResult.Type;
 
+/**
+ * Add a seat to a running project team without stopping anyone else (OpenRig `rig grow`).
+ * Omit `threadId` to create; pass an archived seat's id to restore after shrink.
+ */
+export const OrchestratorMcpTeamGrowSeat = Schema.Struct({
+  threadId: Schema.optional(
+    ThreadId.annotate({
+      description:
+        "Archived seat to restore (reverse of `t3_team_shrink`). Omit to create a new seat.",
+    }),
+  ),
+  prompt: Schema.optional(OrchestratorMcpPrompt),
+  title: Schema.optional(OrchestratorMcpTitle),
+  target: Schema.optional(OrchestratorMcpTarget),
+  runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
+  interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+});
+export type OrchestratorMcpTeamGrowSeat = typeof OrchestratorMcpTeamGrowSeat.Type;
+
+export const OrchestratorMcpTeamGrowInput = Schema.Struct({
+  seats: Schema.Array(OrchestratorMcpTeamGrowSeat).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(20),
+  ),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpTeamGrowInput = typeof OrchestratorMcpTeamGrowInput.Type;
+
+export const OrchestratorMcpTeamGrowResult = Schema.Struct({
+  seats: Schema.Array(OrchestratorMcpCreatedThread),
+});
+export type OrchestratorMcpTeamGrowResult = typeof OrchestratorMcpTeamGrowResult.Type;
+
+/** Remove seats from a running team without stopping the rest (OpenRig `rig shrink`). */
+export const OrchestratorMcpTeamShrinkInput = Schema.Struct({
+  threadIds: Schema.Array(ThreadId).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+  reason: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(2_000)).annotate({
+      description: "Why this seat is leaving the team.",
+    }),
+  ),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpTeamShrinkInput = typeof OrchestratorMcpTeamShrinkInput.Type;
+
+export const OrchestratorMcpTeamShrunkSeat = Schema.Struct({
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  title: Schema.String,
+  status: Schema.Literals(["shrunk", "already_archived"]),
+});
+export type OrchestratorMcpTeamShrunkSeat = typeof OrchestratorMcpTeamShrunkSeat.Type;
+
+export const OrchestratorMcpTeamShrinkResult = Schema.Struct({
+  seats: Schema.Array(OrchestratorMcpTeamShrunkSeat),
+});
+export type OrchestratorMcpTeamShrinkResult = typeof OrchestratorMcpTeamShrinkResult.Type;
+
 export const OrchestratorMcpThreadStatus = Schema.Union([
   Schema.Literal("idle"),
   OrchestrationV2RunStatus,
