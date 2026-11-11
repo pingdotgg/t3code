@@ -19,6 +19,7 @@ import {
   type ProviderOptionSelection,
   type RuntimeMode,
   type ScopedThreadRef,
+  type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -1572,6 +1573,9 @@ export function subscribeComposerDraftModelReconciliation(input: {
   readonly shellStateAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, unknown>>;
+  readonly providersAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<ReadonlyArray<ServerProvider> | null>;
   readonly pendingThreadIdsAtom: (environmentId: EnvironmentId) => Atom.Atom<ReadonlySet<ThreadId>>;
 }): () => void {
   const draftsAtom = Atom.make(appAtomRegistry.get(composerDraftsAtom));
@@ -1590,7 +1594,11 @@ export function subscribeComposerDraftModelReconciliation(input: {
       const ref = parseScopedThreadKey(key);
       if (!ref || !threadKeys.has(key)) continue;
       const thread = get(input.threadShellAtom(ref));
-      if (!thread || !draftModelPickMatchesThread(draft.modelSelection, thread.modelSelection))
+      const providers = get(input.providersAtom(ref.environmentId));
+      if (
+        !thread ||
+        !draftModelPickMatchesThread(draft.modelSelection, thread.modelSelection, providers)
+      )
         continue;
       // The pick can match an old model while an earlier pick in flight still replaces it.
       if (get(input.pendingThreadIdsAtom(ref.environmentId)).has(ref.threadId)) continue;
@@ -1602,7 +1610,11 @@ export function subscribeComposerDraftModelReconciliation(input: {
       );
       if (
         authoritativeThread &&
-        draftModelPickMatchesThread(draft.modelSelection, authoritativeThread.modelSelection)
+        draftModelPickMatchesThread(
+          draft.modelSelection,
+          authoritativeThread.modelSelection,
+          providers,
+        )
       ) {
         matches.push([key, draft]);
       }

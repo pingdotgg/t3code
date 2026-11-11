@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelCapabilities,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
 import {
   applyClaudePromptEffortPrefix,
@@ -7,6 +12,7 @@ import {
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
+  draftModelPickMatchesThread,
   getProviderOptionCurrentLabel,
   getProviderOptionDescriptors,
   readCustomModelEntries,
@@ -97,6 +103,74 @@ describe("descriptor helpers", () => {
       }),
     ).toBe(false);
     expect(modelSelectionsEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
+  });
+
+  it("ignores options the pick's model does not advertise only once the catalog knows it", () => {
+    const instanceId = ProviderInstanceId.make("codex");
+    const pick = createModelSelection(instanceId, "gpt-5.4", [
+      { id: "reasoningEffort", value: "high" },
+      { id: "contextWindow", value: "1m" },
+    ]);
+    const thread = createModelSelection(instanceId, "gpt-5.4", [
+      { id: "reasoningEffort", value: "high" },
+    ]);
+    const providers: ReadonlyArray<ServerProvider> = [
+      {
+        instanceId,
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: [
+          { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: codexCaps },
+          {
+            slug: "ultracode-model",
+            name: "Ultracode model",
+            isCustom: false,
+            capabilities: createModelCapabilities({
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [
+                    { id: "high", label: "High", isDefault: true },
+                    { id: "xhigh", label: "Extra High" },
+                  ],
+                },
+                { id: "ultracode", label: "Ultracode", type: "boolean" },
+              ],
+            }),
+          },
+        ],
+        slashCommands: [],
+        skills: [],
+      },
+    ];
+
+    expect(draftModelPickMatchesThread(pick, thread, providers)).toBe(true);
+    expect(draftModelPickMatchesThread(pick, thread, [])).toBe(false);
+    expect(draftModelPickMatchesThread(pick, thread, null)).toBe(false);
+    const fastPick = createModelSelection(instanceId, "gpt-5.4", [
+      { id: "reasoningEffort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+    expect(draftModelPickMatchesThread(fastPick, thread, providers)).toBe(false);
+    const staleValuePick = createModelSelection(instanceId, "gpt-5.4", [
+      { id: "reasoningEffort", value: "max" },
+    ]);
+    expect(draftModelPickMatchesThread(staleValuePick, thread, providers)).toBe(true);
+    const legacyUltracodePick = createModelSelection(instanceId, "ultracode-model", [
+      { id: "effort", value: "ultracode" },
+    ]);
+    const ultracodeThread = createModelSelection(instanceId, "ultracode-model", [
+      { id: "effort", value: "xhigh" },
+      { id: "ultracode", value: true },
+    ]);
+    expect(draftModelPickMatchesThread(legacyUltracodePick, ultracodeThread, providers)).toBe(true);
   });
 });
 

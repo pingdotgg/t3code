@@ -1345,6 +1345,7 @@ function modelReconciliationHarness(
       ),
     };
   });
+  const noProvidersAtom = Atom.make(null);
   const pendingThreadIdsAtom = Atom.map(
     inFlightPickAtom,
     (pick): ReadonlySet<ThreadId> => new Set(pick ? [threadId] : []),
@@ -1363,6 +1364,7 @@ function modelReconciliationHarness(
       threadRefsAtom: shells.threadRefsAtom,
       shellStateAtom: () => shellResultAtom,
       pendingThreadIdsAtom: () => pendingThreadIdsAtom,
+      providersAtom: () => noProvidersAtom,
     }),
   );
   flush();
