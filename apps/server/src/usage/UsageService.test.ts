@@ -43,7 +43,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as CodexUsageHistory from "./CodexUsageHistory.ts";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
-import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -56,14 +55,20 @@ import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import { makeScanCacheWriter, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
 
 vi.mock("node:fs/promises", { spy: true });
-vi.mock("../../../../packages/provider-muse/src/server/sdk.ts", async (importOriginal) => ({
-  ...(await importOriginal<typeof MuseSdk>()),
-  createMuseSdkHostEffect: vi.fn(() =>
-    Effect.try(() => {
-      throw new Error("Muse is not installed in this test");
-    }),
-  ),
-}));
+vi.mock("../../../../packages/provider-muse/src/server/sdk.ts", async (importOriginal) => {
+  const original = await importOriginal<typeof MuseSdk>();
+  return {
+    ...original,
+    createMuseSdkHostEffect: vi.fn(() =>
+      Effect.fail(
+        new original.MuseSdkError({
+          operation: "start",
+          cause: new Error("Muse is not installed in this test"),
+        }),
+      ),
+    ),
+  };
+});
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -153,9 +158,7 @@ const layerService = (input: {
   readonly hostname?: string;
   readonly secretStore?: Partial<ServerSecretStore.ServerSecretStore["Service"]>;
 }) =>
-  layerCursorUsageAccounts(
-    CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer)),
-  ).pipe(
+  layerCursorUsageAccounts(CursorAccountReader.layer).pipe(
     Layer.provideMerge(AntigravityUsage.layer),
     Layer.provideMerge(MuseUsageHome.layer),
     Layer.provideMerge(ProviderHostLive.layer),
@@ -284,13 +287,6 @@ function makeFakeCursor() {
     });
   return { state, read };
 }
-
-const writeCursorLogin = (home: string) =>
-  Effect.promise(async () => {
-    const authPath = NodePath.join(home, "config", "cursor", "auth.json");
-    await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
-    await NodeFSP.writeFile(authPath, "{}");
-  });
 
 function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
   return summary.sources.find((source) => source.fingerprint.provider === "cursor");
@@ -1269,11 +1265,27 @@ describe("UsageService", () => {
   it.live("discovers Pi history in its default home and directory overrides", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;
-      for (const [agentDir, sessionDir, relativeDir] of [
-        [undefined, undefined, ".pi/agent/sessions"],
-        ["~/custom-pi", undefined, "custom-pi/sessions"],
-        ["~/ignored-pi", "~/custom-sessions", "custom-sessions"],
-        ["~/ignored-pi", NodePath.join(home, "absolute-sessions"), "absolute-sessions"],
+      for (const [agentDir, sessionDir, relativeDir, launchArgs, instanceHome, platform] of [
+        [undefined, undefined, ".pi/agent/sessions", undefined],
+        ["~/custom-pi", undefined, "custom-pi/sessions", undefined],
+        ["~/ignored-pi", "~/custom-sessions", "custom-sessions", undefined],
+        ["~/ignored-pi", NodePath.join(home, "absolute-sessions"), "absolute-sessions", undefined],
+        ["~/ignored-pi", undefined, "launch-sessions", "--session-dir ~/launch-sessions"],
+        [
+          "~/ignored-pi",
+          undefined,
+          "instance-home /launch-sessions",
+          "--session-dir ~/launch-sessions",
+          "instance-home ",
+        ],
+        [
+          "~/ignored-pi",
+          undefined,
+          "windows-profile/launch-sessions",
+          "--session-dir ~/launch-sessions",
+          "windows-profile",
+          "win32",
+        ],
       ] as const) {
         const dir = NodePath.join(home, relativeDir);
         yield* Effect.promise(async () => {
@@ -1312,11 +1324,34 @@ describe("UsageService", () => {
             layerService({
               prefix: "usage-pi-" + relativeDir.replaceAll("/", "-"),
               home,
-              settings,
+              settings:
+                launchArgs === undefined
+                  ? settings
+                  : {
+                      ...settings,
+                      providerInstances: {
+                        ...settings.providerInstances,
+                        [ProviderInstanceId.make("pi")]: {
+                          driver: ProviderDriverKind.make("pi"),
+                          config: { launchArgs },
+                          environment:
+                            instanceHome === undefined
+                              ? []
+                              : [
+                                  {
+                                    name: platform === "win32" ? "USERPROFILE" : "HOME",
+                                    value: NodePath.join(home, instanceHome),
+                                    sensitive: false,
+                                  },
+                                ],
+                        },
+                      },
+                    },
               environment: {
                 PI_CODING_AGENT_DIR: agentDir,
                 PI_CODING_AGENT_SESSION_DIR: sessionDir,
               },
+              platform: platform ?? "linux",
             }),
           ),
           Effect.provideService(HostProcess.HomeDirectory, home),
@@ -1405,29 +1440,9 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("keeps Cursor credential errors visible when a saved login cannot be read", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const authPath = NodePath.join(home, "config", "cursor", "auth.json");
-      yield* Effect.promise(async () => {
-        await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
-        await NodeFSP.writeFile(authPath, "invalid json");
-      });
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({ prefix: "usage-service-cursor-invalid-login", home, settings }),
-        ),
-      );
-      const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
-      const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
-      assert.strictEqual(cursor?.message, "Cursor credentials could not be read.");
-    }).pipe(Effect.scoped),
-  );
-
   it.live("restores the Cursor account cache after a restart", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
-      yield* writeCursorLogin(home);
       yield* TestClock.setTime(CURSOR_NOW);
       const before = makeFakeCursor();
       before.state.events = [
@@ -1455,104 +1470,16 @@ describe("UsageService", () => {
           { sinceMs: CURSOR_NOW - HOUR_MS, untilMs: CURSOR_NOW + 2 * 60 * 1000 },
         ]);
       }).pipe(
-        Effect.provide(layerService({ prefix: "usage-service-cursor-restart", home, settings })),
-      );
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-  );
-
-  it.live("does not read the macOS Cursor Keychain before account usage is enabled", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const service = yield* UsageService.make.pipe(
         Effect.provide(
           layerService({
-            prefix: "usage-service-cursor-keychain-disabled",
+            prefix: "usage-service-cursor-restart",
             home,
             settings,
-            platform: "darwin",
-            environment: {},
+            environment: { CURSOR_API_KEY: "test-key" },
           }),
         ),
       );
-      const summary = yield* service.readSummary(WINDOW);
-      const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
-      assert.strictEqual(cursor?.status, "missing");
-      assert.strictEqual(cursor?.action, "enableCursorKeychain");
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("ignores a stale macOS Keychain login when Cursor is not installed", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const cursor = makeFakeCursor();
-      cursor.state.error = "Sign in to Cursor again to read account usage.";
-      const readCursorSource = Effect.gen(function* () {
-        const service = yield* makeWithCursor(cursor.read);
-        const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
-        return cursorSource(summary);
-      }).pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-cursor-keychain-uninstalled",
-            home,
-            settings: { ...settings, cursorKeychainUsageEnabled: true },
-            platform: "darwin",
-            environment: {},
-          }),
-        ),
-      );
-
-      assert.isUndefined(yield* readCursorSource);
-      assert.lengthOf(cursor.state.calls, 0);
-
-      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(home, ".cursor")));
-      const installed = yield* readCursorSource;
-      assert.strictEqual(installed?.message, "Sign in to Cursor again to read account usage.");
-      assert.lengthOf(cursor.state.calls, 1);
-    }).pipe(Effect.scoped),
-  );
-
-  it.live("ignores stale Cursor file logins when the active credential store differs", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      for (const [index, testCase] of [
-        {
-          platform: "darwin" as const,
-          environment: { AGENT_CLI_CREDENTIAL_STORE: "memory" },
-          authPath: [".cursor", "auth.json"],
-        },
-        {
-          platform: "linux" as const,
-          environment: { AGENT_CLI_CREDENTIAL_STORE: "memory" },
-          authPath: ["config", "cursor", "auth.json"],
-        },
-      ].entries()) {
-        const authPath = NodePath.join(home, ...testCase.authPath);
-        yield* Effect.promise(async () => {
-          await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
-          await NodeFSP.writeFile(
-            authPath,
-            encodeUnknownJsonString({ accessToken: "stale-token" }),
-          );
-        });
-        const service = yield* UsageService.make.pipe(
-          Effect.provide(
-            layerService({
-              prefix: `usage-service-cursor-store-${index}`,
-              home,
-              settings,
-              platform: testCase.platform,
-              environment: testCase.environment,
-            }),
-          ),
-        );
-        const summary = yield* service.readSummary(WINDOW);
-        const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
-        assert.strictEqual(cursor?.status, "missing");
-        assert.include(cursor?.message ?? "", "Cursor CLI login");
-        assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "cursor"));
-      }
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("reads the Cursor account of an API key or T3 sign-in instead of a CLI login", () =>
@@ -1566,9 +1493,17 @@ describe("UsageService", () => {
           createdAtMs: 0,
         }),
       );
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.join(home, ".cursor"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(home, ".cursor", "auth.json"),
+          '{"accessToken":"stale-cli-token"}',
+        );
+      });
       for (const [index, testCase] of [
         { environment: { CURSOR_API_KEY: "environment-key" }, stored: Option.none() },
         { environment: {}, stored: Option.some(signIn) },
+        { environment: {}, stored: Option.none() },
       ].entries()) {
         const cursor = makeFakeCursor();
         const summary = yield* Effect.gen(function* () {
@@ -1586,6 +1521,11 @@ describe("UsageService", () => {
             }),
           ),
         );
+        if (index === 2) {
+          assert.deepStrictEqual(cursor.state.credentials, []);
+          assert.isUndefined(cursorSource(summary));
+          continue;
+        }
         assert.deepStrictEqual(cursor.state.credentials, [
           { kind: "apiKey", apiKey: index === 0 ? "environment-key" : "signed-in-key" },
         ]);
@@ -1640,6 +1580,8 @@ describe("UsageService", () => {
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
       const cursor = makeFakeCursor();
+      let inFlight = 0;
+      let mostInFlight = 0;
       const started = yield* Deferred.make<void>();
       const gate = yield* Deferred.make<void>();
       yield* Effect.gen(function* () {
@@ -1647,17 +1589,28 @@ describe("UsageService", () => {
           layerCursorUsageAccounts(
             Layer.succeed(CursorAccountReader.CursorAccountReader, {
               read: (credential, sinceMs, untilMs) =>
-                (credential as { apiKey?: string }).apiKey === "failing-key"
-                  ? Effect.succeed({
+                Effect.gen(function* () {
+                  inFlight++;
+                  mostInFlight = Math.max(mostInFlight, inFlight);
+                  if (credential.apiKey === "failing-key") {
+                    yield* Deferred.await(started);
+                    return {
                       accountKey: null,
                       records: [],
                       missing: false,
                       error: "Cursor account usage could not be read.",
-                    })
-                  : Deferred.succeed(started, undefined).pipe(
-                      Effect.andThen(Deferred.await(gate)),
-                      Effect.andThen(cursor.read(credential, sinceMs, untilMs)),
-                    ),
+                    };
+                  }
+                  yield* Deferred.succeed(started, undefined);
+                  yield* Deferred.await(gate);
+                  return yield* cursor.read(credential, sinceMs, untilMs);
+                }).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      inFlight--;
+                    }),
+                  ),
+                ),
             }),
           ),
         );
@@ -1673,8 +1626,15 @@ describe("UsageService", () => {
                 instanceId: ProviderInstanceId.make("cursor-work"),
                 environment: { CURSOR_API_KEY: "new-key" },
               },
+              {
+                instanceId: ProviderInstanceId.make("cursor-third"),
+                environment: { CURSOR_API_KEY: "third-key" },
+              },
+              {
+                instanceId: ProviderInstanceId.make("cursor-fourth"),
+                environment: { CURSOR_API_KEY: "fourth-key" },
+              },
             ],
-            keychainUsageEnabled: false,
             windowStartMs: 0,
             retentionCutoffMs: 0,
             awaitRefresh,
@@ -1685,6 +1645,8 @@ describe("UsageService", () => {
         assert.isTrue(sources.some((source) => source.refreshing === true));
         yield* Deferred.succeed(gate, undefined);
         yield* Fiber.join(first);
+        assert.strictEqual(mostInFlight, 2);
+        assert.strictEqual(inFlight, 0);
       }).pipe(
         Effect.provide(
           layerService({
