@@ -387,6 +387,34 @@ export const OrchestratorMcpFindOrOpenSpecialistResult = Schema.Struct({
 export type OrchestratorMcpFindOrOpenSpecialistResult =
   typeof OrchestratorMcpFindOrOpenSpecialistResult.Type;
 
+/**
+ * Stop and archive a durable specialist seat without clearing its binding
+ * (OpenRig-style shrink). Reverse with `find_or_open_specialist`.
+ */
+export const OrchestratorMcpRetireSpecialistInput = Schema.Struct({
+  projectId: OrchestratorMcpProjectTarget,
+  key: ThreadSpecialistKey.annotate({
+    description: "Specialist key to stop and archive. Binding is kept for later restore.",
+  }),
+  reason: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(2_000)).annotate({
+      description: "Why this specialist is stepping down.",
+    }),
+  ),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpRetireSpecialistInput = typeof OrchestratorMcpRetireSpecialistInput.Type;
+
+export const OrchestratorMcpRetireSpecialistResult = Schema.Struct({
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  title: Schema.String,
+  specialist: ThreadSpecialist,
+  status: Schema.Literals(["retired", "already_archived"]),
+});
+export type OrchestratorMcpRetireSpecialistResult =
+  typeof OrchestratorMcpRetireSpecialistResult.Type;
+
 export const OrchestratorMcpThreadListInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   projectId: OrchestratorMcpProjectTarget,

@@ -22,6 +22,8 @@ import {
   type OrchestratorMcpCreatedThread,
   type OrchestratorMcpFindOrOpenSpecialistInput,
   type OrchestratorMcpFindOrOpenSpecialistResult,
+  type OrchestratorMcpRetireSpecialistInput,
+  type OrchestratorMcpRetireSpecialistResult,
   type OrchestratorMcpDelegateTaskInput,
   type ThreadSpecialist,
   type OrchestratorMcpDelegateTaskResult,
@@ -184,6 +186,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpFindOrOpenSpecialistInput,
   ) => Effect.Effect<OrchestratorMcpFindOrOpenSpecialistResult, OrchestratorMcpFailure>;
+  readonly retireSpecialist: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpRetireSpecialistInput,
+  ) => Effect.Effect<OrchestratorMcpRetireSpecialistResult, OrchestratorMcpFailure>;
   readonly scheduleTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpScheduleTaskInput,
@@ -3289,6 +3295,124 @@ const make = Effect.gen(function* () {
           status: run?.status ?? "idle",
           title: projection.thread.title,
         } satisfies OrchestratorMcpFindOrOpenSpecialistResult;
+      },
+    ),
+    retireSpecialist: Effect.fn("OrchestratorMcpService.retireSpecialist")(
+      function* (callerScope, input) {
+        const { parent: listParent } = yield* loadCaller(callerScope, ["runs"]);
+        const projectId = yield* resolveProjectTarget(
+          listParent,
+          input.projectId,
+          "Pass projectId: this MCP client is not running inside a T3 thread.",
+        );
+        const key = yield* requestKey(input.clientRequestId);
+        const snapshot = yield* threadManagement
+          .getShellSnapshot({ projectId })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to look up specialists: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        const existing = [...snapshot.threads, ...snapshot.archivedThreads]
+          .filter(
+            (thread) =>
+              thread.deletedAt === null &&
+              thread.specialist?.key === input.key &&
+              isListedThreadLineage(thread.lineage),
+          )
+          .toSorted(
+            (left, right) =>
+              (left.archivedAt === null ? 0 : 1) - (right.archivedAt === null ? 0 : 1) ||
+              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+          )[0];
+        if (existing === undefined || existing.specialist === undefined) {
+          return yield* failure(
+            "invalid_request",
+            `No durable specialist with key '${input.key}' in this project.`,
+          );
+        }
+        const specialist = existing.specialist;
+        const link = threadLinkFor(callerScope, existing.id, existing.title);
+        if (existing.archivedAt !== null) {
+          return {
+            threadId: existing.id,
+            link,
+            title: existing.title,
+            specialist,
+            status: "already_archived",
+          } satisfies OrchestratorMcpRetireSpecialistResult;
+        }
+        if (listParent !== undefined && existing.id === listParent.thread.id) {
+          return yield* failure(
+            "invalid_request",
+            "Cannot retire the calling thread; retire another specialist seat.",
+          );
+        }
+        const target = yield* loadTargetThread(existing.id);
+        yield* assertLiveCallerForOtherThread(callerScope, listParent, target);
+        const stopCommandId = stableCommandId({
+          scope: callerScope,
+          requestKey: key,
+          operation: "retire-specialist-stop",
+        });
+        const stopFailed = (error: unknown) =>
+          Effect.logWarning("orchestrator-mcp.retire-specialist-stop-failed", {
+            threadId: existing.id,
+            error,
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                failure(
+                  "orchestration_error",
+                  `Unable to stop specialist ${existing.id} before retiring.`,
+                ),
+              ),
+            ),
+          );
+        // Stop only this seat and its own delegates; siblings and the caller keep running.
+        yield* threadManagement
+          .dispatch({
+            type: "thread.stop",
+            commandId: stopCommandId,
+            threadId: existing.id,
+            ...(input.reason === undefined ? {} : { reason: input.reason }),
+          })
+          .pipe(Effect.catch(stopFailed));
+        yield* threadManagement
+          .stopDelegatedTasks({
+            threadId: existing.id,
+            commandId: stopCommandId,
+            reason: input.reason,
+          })
+          .pipe(Effect.catch(stopFailed));
+        yield* threadManagement
+          .dispatch({
+            type: "thread.archive",
+            commandId: stableCommandId({
+              scope: callerScope,
+              requestKey: key,
+              operation: "retire-specialist-archive",
+            }),
+            threadId: existing.id,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to archive specialist ${existing.id}: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        return {
+          threadId: existing.id,
+          link,
+          title: existing.title,
+          specialist,
+          status: "retired",
+        } satisfies OrchestratorMcpRetireSpecialistResult;
       },
     ),
     listThreads: Effect.fn("OrchestratorMcpService.listThreads")(function* (scope, input) {

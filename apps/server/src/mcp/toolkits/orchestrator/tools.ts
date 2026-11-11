@@ -11,6 +11,8 @@ import {
   OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpFindOrOpenSpecialistInput,
   OrchestratorMcpFindOrOpenSpecialistResult,
+  OrchestratorMcpRetireSpecialistInput,
+  OrchestratorMcpRetireSpecialistResult,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpDeleteScheduledTaskInput,
@@ -226,7 +228,7 @@ const CreateThreadsTool = Tool.make("create_threads", {
 
 const FindOrOpenSpecialistTool = Tool.make("find_or_open_specialist", {
   description:
-    "Resume or create a durable specialist thread by stable `key` (e.g. `dev-ui`) in a project. Keeps context across days; not a turn-scoped `delegate_task`. Creating needs an active run. In your reply, name it as its `link` verbatim.",
+    "Add or restore a durable specialist thread by stable `key` (e.g. `dev-ui`) in a project: resume an existing binding, unarchive a retired seat, or create one. Keeps context across days; not a turn-scoped `delegate_task`. Creating needs an active run. Pair with `retire_specialist` to stop-archive. In your reply, name it as its `link` verbatim.",
   parameters: OrchestratorMcpFindOrOpenSpecialistInput,
   success: OrchestratorMcpFindOrOpenSpecialistResult,
   failure: OrchestratorMcpFailure,
@@ -236,6 +238,19 @@ const FindOrOpenSpecialistTool = Tool.make("find_or_open_specialist", {
   .annotate(Tool.Title, "Find or open a durable specialist")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true)
+  .annotate(Tool.Idempotent, true);
+
+const RetireSpecialistTool = Tool.make("retire_specialist", {
+  description:
+    "Stop and archive a durable specialist by `key` without clearing its binding (siblings keep running). Reverse with `find_or_open_specialist`. Not a team manager; membership stays the thread binding.",
+  parameters: OrchestratorMcpRetireSpecialistInput,
+  success: OrchestratorMcpRetireSpecialistResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Retire a durable specialist")
+  .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, true);
 
 const ThreadListTool = Tool.make("t3_thread_list", {
@@ -378,6 +393,7 @@ export const OrchestratorToolkit = Toolkit.make(
   RequestSecretTool,
   CreateThreadsTool,
   FindOrOpenSpecialistTool,
+  RetireSpecialistTool,
   ThreadListTool,
   ThreadReadTool,
   ThreadUpdateTool,
