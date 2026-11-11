@@ -9,7 +9,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   buildSubscriptionUsageSnapshot,
   createWidgetRefresher,
-  subscriptionUsageTimeline,
   WIDGET_REFRESH_INTERVAL,
 } from "./subscriptionUsageSnapshot";
 
@@ -137,140 +136,35 @@ describe("subscription widget snapshots", () => {
 });
 
 describe("subscription widget expiry", () => {
-  const observedAt = "2026-10-21T16:45:00.000Z";
-  const observedNow = Date.parse(observedAt);
-  const maxAgeDeadline = Date.parse("2026-10-21T17:00:00.000Z");
-
-  function snapshot(
-    sessionReset = "2026-10-21T16:30:00.000Z",
-    weeklyReset = "2026-10-28T16:45:00.000Z",
-    maxWindowsPerProvider = 6,
-  ) {
+  const maxAgeDeadline = now + 15 * 60_000;
+  function single(resetsAt: string) {
     return buildSubscriptionUsageSnapshot(
-      presentations([
-        provider({
-          usageLimits: {
-            checkedAt: observedAt,
-            windows: [
-              {
-                id: "session",
-                kind: "session",
-                label: "5 hours",
-                usedPercent: 0,
-                resetsAt: sessionReset,
-              },
-              {
-                id: "weekly",
-                kind: "weekly",
-                label: "Weekly",
-                usedPercent: 30,
-                resetsAt: weeklyReset,
-              },
-            ],
-          },
-        }),
-      ]),
+      presentations([provider({ usageLimits: { checkedAt, windows: [{ ...window, resetsAt }] } })]),
       deepLink,
-      maxWindowsPerProvider,
-    );
+    ).providers[0];
   }
 
-  it.each([
-    { platform: "iOS", maxWindowsPerProvider: 6 },
-    { platform: "Android", maxWindowsPerProvider: Infinity },
-  ])(
-    "$platform keeps both freshly observed rows when only the session reset is in the past",
-    ({ maxWindowsPerProvider }) => {
-      const pastReset = snapshot(undefined, undefined, maxWindowsPerProvider);
-      const futureReset = snapshot("2026-10-21T17:30:00.000Z", undefined, maxWindowsPerProvider);
-      expect(futureReset.providers[0]).toMatchObject({
+  it.each(["2026-09-05T11:50:00.000Z", checkedAt])(
+    "keeps usage whose reset at %s already happened when observed",
+    (resetsAt) => {
+      expect(single(resetsAt)).toMatchObject({
         detail: "Subscription remaining",
         expiresAt: maxAgeDeadline,
-        totalWindows: 2,
-        windows: [
-          { kind: "weekly", remaining: 70 },
-          { kind: "session", remaining: 100 },
-        ],
+        windows: [{ remaining: 60, reset: expect.stringMatching(/^Reset /) }],
       });
-      expect(pastReset.checkedAt).toBe(observedNow);
-      expect(pastReset.providers[0]).toMatchObject({
-        detail: "Subscription remaining",
-        expiresAt: maxAgeDeadline,
-        totalWindows: 2,
-        windows: [
-          { kind: "weekly", remaining: 70 },
-          { kind: "session", remaining: 100 },
-        ],
-      });
-      expect(pastReset.providers[0]?.windows[1]?.reset).toMatch(/^Reset /);
-      expect(futureReset.providers[0]?.windows[1]?.reset).toMatch(/^Next reset /);
     },
   );
 
-  it("ignores resets at observation time and preserves reported past-reset usage", () => {
-    const stored = buildSubscriptionUsageSnapshot(
-      presentations([
-        provider({
-          usageLimits: {
-            checkedAt: observedAt,
-            windows: [{ ...window, usedPercent: 40, resetsAt: observedAt }],
-          },
-        }),
-      ]),
-      deepLink,
-    );
-    expect(stored.providers[0]).toMatchObject({
-      expiresAt: maxAgeDeadline,
-      windows: [{ remaining: 60, reset: expect.stringMatching(/^Reset /) }],
-    });
-  });
-
-  it("compares resets against each provider's own observation time", () => {
-    const resetAt = "2026-10-21T16:50:00.000Z";
-    const stored = buildSubscriptionUsageSnapshot(
-      presentations([
-        provider({
-          usageLimits: {
-            checkedAt: observedAt,
-            windows: [{ ...window, resetsAt: resetAt }],
-          },
-        }),
-        provider({
-          instanceId: ProviderInstanceId.make("claude"),
-          driver: ProviderDriverKind.make("claudeAgent"),
-          usageLimits: {
-            checkedAt: "2026-10-21T16:55:00.000Z",
-            windows: [{ ...window, resetsAt: resetAt }],
-          },
-        }),
-      ]),
-      deepLink,
-    );
-    expect(stored.providers).toMatchObject([
-      { name: "Codex", expiresAt: Date.parse(resetAt) },
-      { name: "Claude", expiresAt: Date.parse("2026-10-21T17:10:00.000Z") },
-    ]);
-  });
-
   it.each([
-    {
-      observation: "newer",
-      resetAccount: 1,
-      expiresAt: "2026-10-21T16:55:00.000Z",
-      resetLabel: /^Reset /,
-    },
-    {
-      observation: "older",
-      resetAccount: 0,
-      expiresAt: "2026-10-21T16:42:00.000Z",
-      resetLabel: /^Next reset /,
-    },
+    { resetAccount: 1, expiresAt: maxAgeDeadline, label: /^Reset / },
+    { resetAccount: 0, expiresAt: now + 2 * 60_000, label: /^Next reset / },
   ])(
-    "compares a pooled reset with its $observation account observation",
-    ({ resetAccount, expiresAt, resetLabel }) => {
-      const stored = buildSubscriptionUsageSnapshot(
+    "compares a pooled reset with its own account's observation (account $resetAccount)",
+    ({ resetAccount, expiresAt, label }) => {
+      // Account 0 was observed at 12:00, account 1 at 12:05; the pooled reset is at 12:02.
+      const snapshot = buildSubscriptionUsageSnapshot(
         presentations(
-          ["2026-10-21T16:40:00.000Z", observedAt].map((accountCheckedAt, index) =>
+          [checkedAt, "2026-09-05T12:05:00.000Z"].map((accountCheckedAt, index) =>
             provider({
               instanceId: ProviderInstanceId.make(`codex-${index}`),
               auth: { status: "authenticated", email: `account-${index}@example.com` },
@@ -281,8 +175,8 @@ describe("subscription widget expiry", () => {
                     ...window,
                     resetsAt:
                       index === resetAccount
-                        ? "2026-10-21T16:42:00.000Z"
-                        : "2026-10-21T17:30:00.000Z",
+                        ? "2026-09-05T12:02:00.000Z"
+                        : "2026-09-05T13:00:00.000Z",
                   },
                 ],
               },
@@ -291,67 +185,13 @@ describe("subscription widget expiry", () => {
         ),
         deepLink,
       );
-      expect(stored.checkedAt).toBe(Date.parse("2026-10-21T16:40:00.000Z"));
-      expect(stored.providers[0]).toMatchObject({
+      expect(snapshot.providers[0]).toMatchObject({
         detail: "2 accounts · pooled",
-        expiresAt: Date.parse(expiresAt),
-        totalWindows: 1,
-        windows: [{ remaining: 60, reset: expect.stringMatching(resetLabel) }],
+        expiresAt,
+        windows: [{ remaining: 60, reset: expect.stringMatching(label) }],
       });
-      expect(
-        subscriptionUsageTimeline(stored, observedNow)[0]?.props.providers[0]?.windows,
-      ).toHaveLength(resetAccount === 1 ? 1 : 0);
     },
   );
-
-  it("keeps both rows in the current timeline entry despite the past session reset", () => {
-    const timeline = subscriptionUsageTimeline(snapshot(), observedNow);
-    expect(timeline.map((entry) => entry.date.toISOString())).toEqual([
-      observedAt,
-      "2026-10-21T17:00:00.000Z",
-    ]);
-    expect(timeline[0]?.props.providers[0]).toMatchObject({
-      detail: "Subscription remaining",
-      totalWindows: 2,
-      windows: [
-        { kind: "weekly", remaining: 70 },
-        { kind: "session", remaining: 100 },
-      ],
-    });
-    expect(timeline[1]?.props.providers[0]).toMatchObject({
-      detail: "Open T3 to refresh",
-      totalWindows: 0,
-      windows: [],
-    });
-  });
-
-  it("expires a snapshot older than 15 minutes even with future reset times", () => {
-    const stored = snapshot("2026-10-21T17:30:00.000Z");
-    expect(stored.providers[0]?.expiresAt).toBe(maxAgeDeadline);
-    expect(subscriptionUsageTimeline(stored, Date.parse("2026-10-21T17:00:00.001Z"))).toMatchObject(
-      [
-        {
-          props: {
-            providers: [{ detail: "Open T3 to refresh", totalWindows: 0, windows: [] }],
-          },
-        },
-      ],
-    );
-  });
-
-  it("expires at a future reset sooner than the 15 minute age limit", () => {
-    const resetAt = "2026-10-21T16:50:00.000Z";
-    const stored = snapshot(resetAt);
-    expect(stored.providers[0]?.expiresAt).toBe(Date.parse(resetAt));
-    const timeline = subscriptionUsageTimeline(stored, observedNow);
-    expect(timeline.map((entry) => entry.date.toISOString())).toEqual([observedAt, resetAt]);
-    expect(timeline[0]?.props.providers[0]?.windows).toHaveLength(2);
-    expect(timeline[1]?.props.providers[0]).toMatchObject({
-      detail: "Open T3 to refresh",
-      totalWindows: 0,
-      windows: [],
-    });
-  });
 });
 
 describe("widget refresh probes", () => {

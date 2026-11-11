@@ -2,6 +2,7 @@ import {
   collectLimitAccounts,
   collectLimitPools,
   type LimitAccount,
+  type LimitPoolWindow,
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
 
@@ -44,6 +45,10 @@ export function createWidgetRefresher<Id>(refresh: (id: Id) => Promise<unknown>)
   };
 }
 
+// A reset at or before its account's observation already happened, so it cannot expire the snapshot.
+const isUpcoming = (reset: LimitPoolWindow["resets"][number]) =>
+  reset.at > Date.parse(reset.member.account.limits.checkedAt);
+
 function subscriptionUsageProps(
   accounts: readonly LimitAccount[],
   now: number,
@@ -76,9 +81,7 @@ function subscriptionUsageProps(
         const expiresAt = Math.min(
           checkedAt + SNAPSHOT_MAX_AGE,
           ...pool.windows.flatMap((window) =>
-            window.resets
-              .filter((reset) => reset.at > Date.parse(reset.member.account.limits.checkedAt))
-              .map((reset) => reset.at),
+            window.resets.filter(isUpcoming).map((reset) => reset.at),
           ),
         );
         const fresh = Number.isFinite(expiresAt) && expiresAt > now;
@@ -110,12 +113,9 @@ function subscriptionUsageProps(
                 label: window.label,
                 remaining: Math.round(window.remainingPercent),
                 reset: window.resets[0]
-                  ? `${
-                      window.resets[0].at >
-                      Date.parse(window.resets[0].member.account.limits.checkedAt)
-                        ? "Next reset"
-                        : "Reset"
-                    } ${new Date(window.resets[0].at).toLocaleString(undefined, {
+                  ? `${isUpcoming(window.resets[0]) ? "Next reset" : "Reset"} ${new Date(
+                      window.resets[0].at,
+                    ).toLocaleString(undefined, {
                       month: "short",
                       day: "numeric",
                       hour: "numeric",
