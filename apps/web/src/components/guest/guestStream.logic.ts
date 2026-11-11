@@ -182,8 +182,8 @@ export function applyGuestStreamEvent(
 /**
  * The guest's messages to show after the transcript, oldest first. Pending ones always show. A
  * sent or dismissed one shows only while it awaits a row (see `awaitingRowIds`): a queued send, or
- * a dismissal to report until the guest clears it. The transcript is a bounded window, so any other resolved message is old
- * history, not something to place at the end.
+ * a dismissal to report until the guest clears it. The transcript is a bounded window, so any other
+ * resolved message is old history, not something to place at the end.
  */
 export function unplacedGuestMessages(
   messages: ReadonlyArray<ThreadGuestMessage>,

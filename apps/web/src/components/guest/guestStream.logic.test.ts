@@ -187,7 +187,7 @@ describe("applyGuestStreamEvent", () => {
     const placed = apply([itemEvent(2, guestMessageRow("u1", waiting.id)), snapshot(3)], queued);
     expect(placed.awaitingRowIds.size).toBe(0);
 
-    // regression: #27719 a dismissed message never gets a row, so only the guest can clear it.
+    // A dismissed message never gets a row, so only the guest can clear it.
     const dismissed = apply([
       { type: "view", view: { ...view, messages: [waiting] } },
       snapshot(1),
