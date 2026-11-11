@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ServerInstallation } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -12,7 +12,7 @@ import {
   dismissVersionMismatch,
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
-  manualServerUpdateCommand,
+  manualServerUpdate,
   resolveVersionMismatch,
 } from "./versionSkew";
 
@@ -20,14 +20,72 @@ const MISMATCH_HINT =
   "Version mismatch. Try syncing the client and server to the same T3 Code version.";
 
 describe("versionSkew", () => {
+  const command = (installation?: ServerInstallation) =>
+    manualServerUpdate("0.0.45", "vm", installation).command;
+  const userUnit = { name: "t3.service", scope: "user" } as const;
+
   it("updates only the proven npm prefix and safely quotes its path", () => {
-    expect(manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
+    expect(command({ kind: "npm-global", prefix: "/opt/node" })).toBe(
       "npm install --global --prefix '/opt/node' t3@0.0.45",
     );
-    expect(
-      manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/maria's node" }),
-    ).toBe("npm install --global --prefix '/opt/maria'\\''s node' t3@0.0.45");
+    expect(command({ kind: "npm-global", prefix: "/opt/maria's node" })).toBe(
+      "npm install --global --prefix '/opt/maria'\\''s node' t3@0.0.45",
+    );
   });
+
+  it("relaunches with the subcommand the server runs", () => {
+    expect(command()).toBe("npx t3@0.0.45");
+    expect(manualServerUpdate("0.0.45", "vm").description).toContain("same subcommand and options");
+    expect(command({ kind: "unknown", subcommand: "serve" })).toBe("npx t3@0.0.45 serve");
+    expect(command({ kind: "bunx", subcommand: "serve" })).toBe("bunx t3@0.0.45 serve");
+  });
+
+  it("goes through the systemd unit that would restart the old version", () => {
+    expect(command({ kind: "npx", subcommand: "serve", systemdUnit: userUnit })).toBe(
+      "systemctl --user daemon-reload && systemctl --user restart 't3.service'",
+    );
+    expect(command({ kind: "npm-global", prefix: "/opt/node", systemdUnit: userUnit })).toBe(
+      "npm install --global --prefix '/opt/node' t3@0.0.45 && systemctl --user restart 't3.service'",
+    );
+    expect(
+      manualServerUpdate("0.0.45", "vm", {
+        kind: "npx",
+        systemdUnit: { name: "t3.service", scope: "system" },
+      }),
+    ).toMatchObject({
+      command: "sudo systemctl daemon-reload && sudo systemctl restart 't3.service'",
+      description: expect.stringContaining("ExecStart"),
+    });
+  });
+
+  it("restarts the existing unit without replacing its launch configuration", () => {
+    expect(
+      command({
+        kind: "npx",
+        systemdUnit: { name: "t3@my\\x2dinstance.service", scope: "user" },
+      }),
+    ).toBe(
+      "systemctl --user daemon-reload && systemctl --user restart 't3@my\\x2dinstance.service'",
+    );
+  });
+  it("tells users to preserve launch options when editing a service", () => {
+    const update = manualServerUpdate("0.0.45", "vm", { kind: "npx", systemdUnit: userUnit });
+    expect(update.label).toBe("Copy restart command");
+    expect(update.description).toContain("ExecStart");
+    expect(update.description).toContain("keep its existing subcommand and options");
+    expect(update.description).toContain("t3@0.0.45");
+  });
+
+  it("updates a standalone service's executable instead of an npm spec", () => {
+    const update = manualServerUpdate("0.0.45", "vm", { kind: "unknown", systemdUnit: userUnit });
+    expect(update.description).toContain("update the executable");
+    expect(update.description).toContain("0.0.45");
+    expect(update.description).not.toContain("t3@");
+    expect(update.command).toBe(
+      "systemctl --user daemon-reload && systemctl --user restart 't3.service'",
+    );
+  });
+
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
   });

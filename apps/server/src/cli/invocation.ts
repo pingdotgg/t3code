@@ -4,11 +4,12 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import type { ServerInstallation } from "@t3tools/contracts";
+import type { ServerInstallation, ServerSystemdUnit } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as ProcessRunner from "../processRunner.ts";
 
 export type CliRunner = "npx" | "pnpm dlx" | "bunx";
 
@@ -92,6 +93,64 @@ export const resolveServerInstallation = Effect.gen(function* () {
   const globalBin = yield* fs.realPath(path.join(prefix, "bin/t3"));
   if (globalBin !== bin || bin !== entry) return null;
   return { kind: "npm-global", prefix } satisfies ServerInstallation;
+}).pipe(Effect.orElseSucceed(() => null));
+
+/** Find the owning service even when Delegate=yes puts the process in a child cgroup. */
+export function parseSystemdUnit(cgroup: string): ServerSystemdUnit | null {
+  const path = cgroup
+    .split("\n")
+    .map((line) => /^(?:0::|\d+:name=systemd:)(\/.*)$/.exec(line.trim())?.[1])
+    .find((match) => match !== undefined);
+  const name = path
+    ?.split("/")
+    .find((segment) => segment.endsWith(".service") && !/^user@\d+\.service$/.test(segment));
+  if (path === undefined || name === undefined) return null;
+  return { name, scope: /\/user@\d+\.service\//.test(path) ? "user" : "system" };
+}
+
+export function systemdUnitLaunchesT3(
+  execStart: string,
+  entry: string,
+  executable: string,
+): boolean {
+  const command = /(?:^| )argv\[\]=(.+?) ;/.exec(execStart)?.[1];
+  if (command === undefined) return false;
+  if (
+    [entry, `${executable} ${entry}`].some(
+      (launch) => command === launch || command.startsWith(`${launch} `),
+    )
+  )
+    return true;
+  return /^(?:\S*\/)?(?:t3(?: |$)|(?:npx|bunx)(?: -y| --yes)* t3(?:@[\w.+-]+)?(?: |$)|pnpm dlx t3(?:@[\w.+-]+)?(?: |$))/.test(
+    command,
+  );
+}
+
+export const resolveSystemdUnit = Effect.gen(function* () {
+  if ((yield* HostProcess.Platform) !== "linux") return null;
+  const fs = yield* FileSystem.FileSystem;
+  const unit = parseSystemdUnit(yield* fs.readFileString("/proc/self/cgroup"));
+  if (unit === null) return null;
+  const runner = yield* ProcessRunner.ProcessRunner;
+  const result = yield* runner.run({
+    command: "systemctl",
+    args: [
+      ...(unit.scope === "user" ? ["--user"] : []),
+      "show",
+      "--property=ExecStart",
+      "--value",
+      "--",
+      unit.name,
+    ],
+    timeout: "2 seconds",
+    env: yield* HostProcess.Environment,
+    maxOutputBytes: 16 * 1024,
+  });
+  // An IDE terminal can inherit its editor's service cgroup without being launched by the unit.
+  return result.code === 0 &&
+    systemdUnitLaunchesT3(result.stdout, yield* resolveEntryPath, yield* HostProcess.ExecutablePath)
+    ? unit
+    : null;
 }).pipe(Effect.orElseSucceed(() => null));
 
 /** The original package spec is unavailable at startup; infer its channel from the version. */

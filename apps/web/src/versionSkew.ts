@@ -95,17 +95,56 @@ export function supportsDesktopAppUpdate(
   return serverConfig?.environment.capabilities.desktopAppUpdate === true;
 }
 
-export function manualServerUpdateCommand(
+export interface ManualServerUpdate {
+  readonly command: string;
+  readonly label: string;
+  readonly title: string;
+  readonly description: string;
+}
+
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+export function manualServerUpdate(
   targetVersion: string,
+  serverLabel: string,
   installation?: ServerInstallation,
-): string {
+): ManualServerUpdate {
+  const unit = installation?.systemdUnit;
+  // systemd-escape writes `\x2d` into instance names; unquoted, the shell drops the backslash.
+  const unitName = unit ? shellQuote(unit.name) : "";
+  const systemctl = unit?.scope === "user" ? "systemctl --user" : "sudo systemctl";
   if (installation?.kind === "npm-global") {
-    const prefix = `'${installation.prefix.replaceAll("'", "'\\''")}'`;
-    return `npm install --global --prefix ${prefix} t3@${targetVersion}`;
+    const install = `npm install --global --prefix ${shellQuote(installation.prefix)} t3@${targetVersion}`;
+    return {
+      command: unit ? `${install} && ${systemctl} restart ${unitName}` : install,
+      label: "Copy update command",
+      title: "Update command copied",
+      description: unit
+        ? `Run it on ${serverLabel}. It also restarts ${unit.name}, which runs this server.`
+        : `Run it on ${serverLabel}, then restart t3 there with your usual options.`,
+    };
   }
   const runner =
     installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
-  return `${runner} t3@${targetVersion}`;
+  const launch = `${runner} t3@${targetVersion}`;
+  if (unit) {
+    return {
+      // Without a reload, restart reuses the ExecStart systemd loaded before the edit.
+      command: `${systemctl} daemon-reload && ${systemctl} restart ${unitName}`,
+      label: "Copy restart command",
+      title: "Restart command copied",
+      description:
+        installation?.kind === "unknown"
+          ? `On ${serverLabel}, update the executable used by ${unit.name} to ${targetVersion}; keep its existing launch configuration. Then run the command. Restarting stops running agents.`
+          : `On ${serverLabel}, change only the t3 version in ${unit.name}'s ExecStart to t3@${targetVersion}; keep its existing subcommand and options. Then run the command. Restarting stops running agents.`,
+    };
+  }
+  return {
+    command: installation?.subcommand ? `${launch} ${installation.subcommand}` : launch,
+    label: "Copy relaunch command",
+    title: "Relaunch command copied",
+    description: `On ${serverLabel}, stop t3 (Ctrl+C where it runs) and wait for it to exit, then run the command with the same subcommand and options. If a service manages t3, update its launch command and restart that service instead. This does not update an installed t3 command.`,
+  };
 }
 
 export function buildVersionMismatchDismissalKey(
