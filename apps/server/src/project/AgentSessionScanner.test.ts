@@ -1512,6 +1512,166 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect(
+      "imports Codex Desktop chats assigned to a local project when the state database has none",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const nowMs = Date.parse("2026-11-11T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const homeDir = yield* makeTempDir("t3code-home-");
+          const projectDir = path.join(homeDir, "code", "my-project");
+          const scratchRoot = path.join(homeDir, "Documents", "Codex", "2026-11-11");
+          yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+
+          const projectId = "local-project-1";
+          const chats = [
+            {
+              id: "019a6000-0000-7000-8000-00000000000a",
+              cwd: path.join(scratchRoot, "new-chat"),
+              message: "Moved in Codex Desktop",
+              assignment: { projectKind: "local", projectId },
+            },
+            {
+              id: "019a6000-0000-7000-8000-00000000000b",
+              cwd: path.join(scratchRoot, "new-chat-2"),
+              message: "Still with no project",
+              assignment: undefined,
+            },
+            {
+              id: "019a6000-0000-7000-8000-00000000000c",
+              cwd: path.join(scratchRoot, "new-chat-3"),
+              message: "Assigned to a remote project",
+              assignment: { projectKind: "remote", projectId },
+            },
+          ];
+          const rolloutPaths: Array<string> = [];
+          for (const [index, chat] of chats.entries()) {
+            yield* fileSystem.makeDirectory(chat.cwd, { recursive: true });
+            const filePath = path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "11",
+              "11",
+              `rollout-2026-11-11T08-0${index}-00-${chat.id}.jsonl`,
+            );
+            rolloutPaths.push(filePath);
+            yield* writeTranscript({
+              filePath,
+              contents: [
+                encodeTranscriptRecord({
+                  type: "session_meta",
+                  payload: { id: chat.id, cwd: chat.cwd },
+                }),
+                encodeTranscriptRecord({ type: "turn_context", payload: { cwd: chat.cwd } }),
+                encodeTranscriptRecord({
+                  type: "event_msg",
+                  payload: { type: "user_message", message: chat.message },
+                }),
+              ].join("\n"),
+              mtimeMs: nowMs - 60_000 + index,
+            });
+          }
+          // The state database has the threads but no project for any of them.
+          yield* Effect.sync(() => {
+            const db = new NodeSqlite.DatabaseSync(path.join(codexHomePath, "state_5.sqlite"));
+            try {
+              db.exec(`
+                CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+                CREATE TABLE project_roots (
+                  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                  position INTEGER NOT NULL,
+                  path TEXT NOT NULL,
+                  PRIMARY KEY (project_id, position)
+                );
+                CREATE TABLE threads (
+                  id TEXT PRIMARY KEY,
+                  rollout_path TEXT NOT NULL,
+                  cwd TEXT NOT NULL,
+                  project_id TEXT REFERENCES projects(id) ON DELETE SET NULL
+                );
+              `);
+              const insertThread = db.prepare("INSERT INTO threads VALUES (?, ?, ?, NULL)");
+              for (const [index, chat] of chats.entries()) {
+                insertThread.run(chat.id, rolloutPaths[index]!, chat.cwd);
+              }
+            } finally {
+              db.close();
+            }
+          });
+          // Codex Desktop records the move only in its global state.
+          yield* fileSystem.writeFileString(
+            path.join(codexHomePath, ".codex-global-state.json"),
+            JSON.stringify({
+              "thread-project-assignments": Object.fromEntries(
+                chats.flatMap((chat) =>
+                  chat.assignment === undefined ? [] : [[chat.id, chat.assignment]],
+                ),
+              ),
+              "local-projects": {
+                [projectId]: {
+                  id: projectId,
+                  name: "my-project",
+                  rootPaths: [projectDir],
+                  createdAt: nowMs,
+                  updatedAt: nowMs,
+                },
+              },
+            }),
+          );
+
+          const threads = yield* runRecentThreads({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: projectDir,
+          }).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
+          expect(threads.map((thread) => thread.title)).toEqual(["Moved in Codex Desktop"]);
+
+          const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
+            Effect.provideService(HostProcess.HomeDirectory, homeDir),
+          );
+          expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual(
+            [{ path: projectDir, threadCount: 1 }],
+          );
+        }),
+    );
+
+    it.effect("keeps Codex rollout cwds when the Codex Desktop global state is malformed", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        yield* writeTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "05",
+            "03",
+            "rollout-2026-05-03T00-00-00-019a5f00-0000-7000-8000-00000000000a.jsonl",
+          ),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-05-03T00:00:00.000Z"),
+        });
+        yield* fileSystem.writeFileString(
+          path.join(codexHomePath, ".codex-global-state.json"),
+          '{"thread-project-assignments": {"019a5f00-0000-7000-8000-00000000000a": ',
+        );
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
+          { path: workspace, threadCount: 1 },
+        ]);
+      }),
+    );
+
     it.effect("imports a rewound Codex thread with the history its new rollout inherits", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

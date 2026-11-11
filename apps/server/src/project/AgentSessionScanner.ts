@@ -173,6 +173,45 @@ const CODEX_ROLLOUT_ID_PATTERN =
   /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?\.jsonl$/i;
 // Codex records a chat's project only here; moving a chat leaves its rollout cwd unchanged.
 const CODEX_STATE_DATABASE = "state_5.sqlite";
+// Codex Desktop can record a move only in its global state, leaving `threads.project_id` NULL.
+const CODEX_DESKTOP_GLOBAL_STATE = ".codex-global-state.json";
+const MAX_CODEX_DESKTOP_GLOBAL_STATE_BYTES = 32 * 1024 * 1024;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+// Thread ID → root paths of the local Codex Desktop project the thread is explicitly assigned to.
+const parseCodexDesktopProjectRoots = (
+  contents: string,
+): ReadonlyMap<string, ReadonlyArray<string>> => {
+  const rootsByThread = new Map<string, ReadonlyArray<string>>();
+  let state: unknown;
+  try {
+    state = JSON.parse(contents);
+  } catch {
+    return rootsByThread;
+  }
+  if (!isRecord(state)) return rootsByThread;
+  const assignments = state["thread-project-assignments"];
+  const projects = state["local-projects"];
+  if (!isRecord(assignments) || !isRecord(projects)) return rootsByThread;
+  for (const [threadId, assignment] of Object.entries(assignments)) {
+    if (
+      !isRecord(assignment) ||
+      assignment.projectKind !== "local" ||
+      typeof assignment.projectId !== "string"
+    ) {
+      continue;
+    }
+    const project = projects[assignment.projectId];
+    if (!isRecord(project) || !Array.isArray(project.rootPaths)) continue;
+    const roots = project.rootPaths.filter(
+      (root): root is string => typeof root === "string" && root.trim().length > 0,
+    );
+    if (roots.length > 0) rootsByThread.set(threadId, roots);
+  }
+  return rootsByThread;
+};
 const decodeCodexSessionIndexEntry = Schema.decodeUnknownOption(
   Schema.fromJsonString(CodexSessionIndexEntry),
 );
@@ -1319,6 +1358,24 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed((): ReadonlyMap<string, ReadonlyArray<string>> => new Map()));
   });
 
+  const readCodexDesktopProjectRoots = Effect.fn(
+    "AgentSessionScanner.readCodexDesktopProjectRoots",
+  )(function* (homePath: string) {
+    const statePath = path.join(homePath, CODEX_DESKTOP_GLOBAL_STATE);
+    const stats = yield* statOption(statePath);
+    if (
+      Option.isNone(stats) ||
+      stats.value.type !== "File" ||
+      Number(stats.value.size) > MAX_CODEX_DESKTOP_GLOBAL_STATE_BYTES
+    ) {
+      return new Map<string, ReadonlyArray<string>>();
+    }
+    return yield* fileSystem.readFileString(statePath).pipe(
+      Effect.map(parseCodexDesktopProjectRoots),
+      Effect.orElseSucceed((): ReadonlyMap<string, ReadonlyArray<string>> => new Map()),
+    );
+  });
+
   // Only chats left in an excluded folder, such as Codex's scratch folder, take their project's root.
   const projectCwd = (cwd: string, projectRoots: ReadonlyArray<string> | undefined) =>
     projectRoots !== undefined &&
@@ -1388,10 +1445,15 @@ export const make = Effect.gen(function* () {
         }
       }
       const projectRoots = yield* readCodexProjectRoots(homePath);
+      const desktopProjectRoots = yield* readCodexDesktopProjectRoots(homePath);
       return {
         transcripts: transcripts.map((transcript) => {
           const threadId = CODEX_ROLLOUT_ID_PATTERN.exec(transcript.filePath)?.[1];
-          const roots = threadId === undefined ? undefined : projectRoots.get(threadId);
+          // The state database wins; Desktop assignments only fill threads it has no project for.
+          const roots =
+            threadId === undefined
+              ? undefined
+              : (projectRoots.get(threadId) ?? desktopProjectRoots.get(threadId));
           return roots === undefined ? transcript : { ...transcript, projectRoots: roots };
         }),
         truncated,
