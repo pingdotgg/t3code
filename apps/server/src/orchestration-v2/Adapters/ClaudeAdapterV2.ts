@@ -11984,9 +11984,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(Path.Path, path),
             );
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
-            // The turn can end while the moves are answered. A steer offered
-            // then would start a new turn the orchestrator never asked for, so
-            // the steer fails and the orchestrator starts the follow-up turn.
+            if (liveSteerSelection !== undefined) {
+              yield* applySelectionLive(existing, liveSteerSelection);
+            }
+            // The turn can end while the moves or the selection change are answered.
+            // A steer offered then would start a new turn the orchestrator never
+            // asked for, so the steer fails and the orchestrator starts the follow-up turn.
             if (
               (yield* Ref.get(activeTurn))?.providerTurnId !== turnInput.providerTurnId ||
               (yield* Ref.get(queryContext)) !== existing
@@ -11995,9 +11998,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
               });
-            }
-            if (liveSteerSelection !== undefined) {
-              yield* applySelectionLive(existing, liveSteerSelection);
             }
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
