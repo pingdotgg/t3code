@@ -34,9 +34,13 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
   >;
   readonly timeoutMs?: number;
   readonly omitIdleSubagents?: boolean;
+  readonly omitOlderSettled?: boolean;
 }) {
   const endpoint = {
-    query: input.omitIdleSubagents === true ? { omitIdleSubagents: "1" } : {},
+    query: {
+      ...(input.omitIdleSubagents === true ? { omitIdleSubagents: "1" } : {}),
+      ...(input.omitOlderSettled === true ? { omitOlderSettled: "1" } : {}),
+    },
   };
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
@@ -85,7 +89,7 @@ export class ShellSnapshotLoader extends Context.Service<
   {
     readonly load: (
       prepared: PreparedConnection,
-      options?: { readonly omitIdleSubagents?: boolean },
+      options?: { readonly omitIdleSubagents?: boolean; readonly omitOlderSettled?: boolean },
     ) => Effect.Effect<Option.Option<DeferredShellSnapshot>>;
   }
 >()("@t3tools/client-runtime/state/shellSnapshotHttp/ShellSnapshotLoader") {}
@@ -101,12 +105,13 @@ export const layer: Layer.Layer<ShellSnapshotLoader, never, HttpClient.HttpClien
       RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
     );
     return ShellSnapshotLoader.of({
-      load: (prepared, options) =>
-        fetchEnvironmentShellSnapshot({
+      load: Effect.fn("ShellSnapshotLoader.load")(function (prepared, options) {
+        return fetchEnvironmentShellSnapshot({
           prepared,
           signer,
           remoteAuthorization,
           ...(options?.omitIdleSubagents === true ? { omitIdleSubagents: true } : {}),
+          ...(options?.omitOlderSettled === true ? { omitOlderSettled: true } : {}),
         }).pipe(
           Effect.map(Option.some<DeferredShellSnapshot>),
           Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -118,7 +123,8 @@ export const layer: Layer.Layer<ShellSnapshotLoader, never, HttpClient.HttpClien
               Effect.as(Option.none<DeferredShellSnapshot>()),
             ),
           ),
-        ),
+        );
+      }),
     });
   }),
 );
