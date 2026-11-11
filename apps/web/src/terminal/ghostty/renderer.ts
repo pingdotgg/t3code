@@ -146,10 +146,12 @@ export function renderGhosttySnapshot(options: {
   const selectionBackground = options.selectionBackground ?? DEFAULT_SELECTION_BACKGROUND;
   const hoveredLinkRange = options.hoveredLinkRange ?? null;
   const originY = options.originY ?? padding;
-  // Rows start on whole device pixels, so repainting a row replaces every pixel
-  // the last frame drew in it, including a blinking cursor's edges.
-  const scale = context.getTransform().d;
-  const rowTop = (row: number) => Math.round((originY + row * metrics.height) * scale) / scale;
+  // Rows start on whole device pixels and clear the full canvas width, so repainting
+  // a row replaces every pixel the last frame drew in it, including a cursor's edges.
+  const transform = context.getTransform();
+  const rowTop = (row: number) =>
+    Math.round((originY + row * metrics.height) * transform.d) / transform.d;
+  const rowWidth = context.canvas.width / transform.a;
   const rowsToDraw = forceFull
     ? Array.from({ length: snapshot.rows }, (_, index) => index)
     : [...snapshot.dirtyRows];
@@ -181,7 +183,7 @@ export function renderGhosttySnapshot(options: {
     const height = rowTop(rowIndex + 1) - top;
 
     context.fillStyle = cssColor(snapshot.background);
-    context.fillRect(padding, top, snapshot.cols * metrics.width, height);
+    context.fillRect(0, top, rowWidth, height);
 
     let backgroundStart = 0;
     while (backgroundStart < row.cells.length) {

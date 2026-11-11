@@ -41,7 +41,7 @@ function scaledContext(scale: number): CanvasRenderingContext2D {
 }
 
 const layout = {
-  metrics: { width: 8, height: 17, baseline: 13 },
+  metrics: { width: 7.8, height: 17, baseline: 13 },
   fontSize: 13,
   fontFamily: "monospace",
   padding: 4,
@@ -62,7 +62,7 @@ describe.each([1.25, 2.2])("renderGhosttySnapshot at a %sx device pixel ratio", 
       foreground: { r: 0, g: 0, b: 0 },
       background,
       cursor: { r: 0, g: 0, b: 0 },
-      cursorX: 1,
+      cursorX: 2,
       cursorY: 1,
       cursorVisible: true,
       cursorBlinking: true,
