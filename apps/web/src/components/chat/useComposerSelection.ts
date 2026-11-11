@@ -19,7 +19,11 @@ import { useNavigate } from "@tanstack/react-router";
 import { toastManager } from "../ui/toast";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
 import { resolveNewDraftStartFromOrigin } from "../../lib/chatThreadActions";
-import { type DraftThreadEnvMode, useComposerDraftStore } from "../../composerDraftStore";
+import {
+  type DraftThreadEnvMode,
+  isSameModel,
+  useComposerDraftStore,
+} from "../../composerDraftStore";
 import {
   getStartedThreadModelChangeBlockReason,
   deriveLockedProvider,
@@ -169,7 +173,13 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     const pickOptions =
       rememberedOptions !== undefined && rememberedOptions.length > 0
         ? rememberedOptions
-        : threadSelection.instanceId === instanceId && threadSelection.model === resolvedModel
+        : threadSelection.instanceId === instanceId &&
+            entry !== undefined &&
+            isSameModel(
+              { providers: providerStatuses, selectedProvider: entry.driver, settings },
+              threadSelection,
+              { instanceId, model: resolvedModel },
+            )
           ? threadSelection.options
           : undefined;
     const nextModelSelection: ModelSelection =

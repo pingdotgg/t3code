@@ -1241,7 +1241,7 @@ interface InstanceModel {
   readonly model: string | undefined;
 }
 
-function isSameModel(
+export function isSameModel(
   input: {
     readonly providers: ReadonlyArray<ServerProvider>;
     readonly selectedProvider: ProviderDriverKind;
