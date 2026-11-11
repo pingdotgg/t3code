@@ -22,9 +22,15 @@ export function createTailnetDeviceAtoms<R, E>(
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
     }),
-    updateSettings: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:tailnet-devices:update-settings",
-      tag: WS_METHODS.tailnetDevicesUpdateSettings,
+    admit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:tailnet-devices:admit",
+      tag: WS_METHODS.tailnetDevicesAdmit,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+    }),
+    setAppAccess: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:tailnet-devices:set-app-access",
+      tag: WS_METHODS.tailnetDevicesSetAppAccess,
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
     }),

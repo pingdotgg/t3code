@@ -61,7 +61,7 @@ export const mergeRoster = <K, A extends { readonly updatedAt: TailnetHlc }>(
 const ACCESS_RANK: ReadonlyArray<string> = ["revoked", ...ACCESS_ORDER];
 
 /** `to` gives less than `from`: its sessions were minted for more than it may now do. */
-export const narrows = (from: string, to: string) =>
+const narrows = (from: string, to: string) =>
   ACCESS_RANK.indexOf(to) < ACCESS_RANK.indexOf(from);
 
 interface MemberRow {
