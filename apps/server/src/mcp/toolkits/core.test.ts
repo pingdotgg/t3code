@@ -409,6 +409,7 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(layerNoProviders),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
@@ -688,7 +689,7 @@ it.effect("t3_thread_configure refuses a model the provider instance does not ad
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -877,6 +878,7 @@ it.effect.each([
       McpHttpServer.layerThreadToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(layerNoProviders),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
         Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
