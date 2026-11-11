@@ -224,10 +224,17 @@ export const make = Effect.gen(function* () {
                 }
               : null;
 
+          // A PR the user checked out stays with the threads made for it, however long ago it closed.
+          const dropsHistorical =
+            detected !== null &&
+            first.branch !== null &&
+            group.some((thread) => pullRequestPredatesThread(detected, thread.createdAt)) &&
+            !(yield* git.checkedOutPullRequest({ cwd, branch: first.branch, url: detected.url }));
+
           const plans = yield* Effect.forEach(group, (thread) =>
             Effect.gen(function* () {
               let branchPullRequest =
-                detected !== null && pullRequestPredatesThread(detected, thread.createdAt)
+                dropsHistorical && pullRequestPredatesThread(detected, thread.createdAt)
                   ? null
                   : detectedReference;
               if (

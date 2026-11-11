@@ -140,6 +140,12 @@ export class GitManager extends Context.Service<
       input: { readonly cwd: string; readonly branch: string },
       options?: { readonly refresh?: boolean; readonly freshGitState?: boolean },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
+    /** Whether T3 checked this pull request out onto the branch, which ties it to later threads. */
+    readonly checkedOutPullRequest: (input: {
+      readonly cwd: string;
+      readonly branch: string;
+      readonly url: string;
+    }) => Effect.Effect<boolean>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -2754,6 +2760,9 @@ export const make = Effect.gen(function* () {
       repositoryKey: pullRequestRepositoryKey(latest.url),
     };
   });
+
+  const checkedOutPullRequestKey = (branch: string) => `branch.${branch}.t3-pull-request`;
+
   const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
     "branchPullRequest",
   )(function* ({ cwd, branch }, options) {
@@ -2798,6 +2807,16 @@ export const make = Effect.gen(function* () {
     }
     return confirmed;
   });
+
+  const checkedOutPullRequest: GitManager["Service"]["checkedOutPullRequest"] = Effect.fn(
+    "checkedOutPullRequest",
+  )(function* ({ cwd, branch, url }) {
+    const checkedOutUrl = yield* gitCore
+      .readConfigValue(cwd, checkedOutPullRequestKey(branch))
+      .pipe(Effect.orElseSucceed(() => null));
+    return checkedOutUrl === url;
+  });
+
   const invalidateLocalStatus: GitManager["Service"]["invalidateLocalStatus"] = Effect.fn(
     "invalidateLocalStatus",
   )(function* (cwd) {
@@ -3132,7 +3151,25 @@ export const make = Effect.gen(function* () {
         worktreePath: worktree.worktree.path,
         isOnPullRequestHead: true,
       };
-    }).pipe(Effect.ensuring(invalidateStatus(input.cwd)));
+    }).pipe(
+      Effect.tap((result) =>
+        gitCore
+          .writeConfigValue({
+            cwd: input.cwd,
+            key: checkedOutPullRequestKey(result.branch),
+            value: result.pullRequest.url,
+          })
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("GitManager.preparePullRequestThread could not mark the branch", {
+                branch: result.branch,
+                cause,
+              }),
+            ),
+          ),
+      ),
+      Effect.ensuring(invalidateStatus(input.cwd)),
+    );
   }, asUserAction);
 
   const runFeatureBranchStep = Effect.fn("runFeatureBranchStep")(function* (
@@ -3391,6 +3428,7 @@ export const make = Effect.gen(function* () {
     remoteStatus,
     status,
     branchPullRequest,
+    checkedOutPullRequest,
     invalidateLocalStatus,
     invalidateRemoteStatus,
     invalidateStatus,

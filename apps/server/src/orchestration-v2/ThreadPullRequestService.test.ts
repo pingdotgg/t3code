@@ -556,9 +556,14 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     ),
   );
 
-  it.effect.each(["open", "merged", "closed"] as const)(
-    "associates a $state branch PR only with threads that predate its completion",
-    (state) =>
+  it.effect.each([
+    { state: "open", checkedOut: false },
+    { state: "merged", checkedOut: false },
+    { state: "closed", checkedOut: false },
+    { state: "merged", checkedOut: true },
+  ] as const)(
+    "associates a $state branch PR (checkedOut=$checkedOut) only with threads that predate its completion",
+    ({ state, checkedOut }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const reference = {
@@ -618,6 +623,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             }),
             Layer.mock(GitManager.GitManager)({
               branchPullRequest: () => Effect.succeed(detected),
+              checkedOutPullRequest: () => Effect.succeed(checkedOut),
             }),
             Layer.mock(PullRequestService.PullRequestService)({
               summary: () =>
@@ -667,7 +673,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               return [command.threadId, command.branchPullRequest];
             }),
           ).toEqual(
-            state === "open"
+            state === "open" || checkedOut
               ? ["older", "same-time", "new", "explicit"].map((id) => [id, reference])
               : [
                   ["older", reference],
