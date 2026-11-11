@@ -7,8 +7,6 @@ import * as NodePath from "node:path";
 import type { AppImageUpdater } from "electron-updater";
 import type { InstallOptions } from "electron-updater/out/BaseUpdater.js";
 
-type CopyFile = (from: string, to: string) => void;
-
 function syncPath(path: string): void {
   const fd = NodeFS.openSync(path, "r");
   try {
@@ -43,7 +41,7 @@ function verifyAndSync(path: string, sourceSize: number, sha512: string): void {
 // A partial cross-device move would truncate the app, so copy into a private stage
 // on the destination filesystem, verify it, then rename it into place.
 function installAcrossFilesystems(
-  input: { readonly installerPath: string; readonly sha512: string; readonly copyFile?: CopyFile },
+  input: { readonly installerPath: string; readonly sha512: string },
   destination: string,
   sourceSize: number,
   bestEffort: (operation: () => void) => void,
@@ -53,11 +51,7 @@ function installAcrossFilesystems(
   );
   const staged = NodePath.join(stageDirectory, "update.AppImage");
   try {
-    if (input.copyFile) {
-      input.copyFile(input.installerPath, staged);
-    } else {
-      NodeFS.copyFileSync(input.installerPath, staged, NodeFS.constants.COPYFILE_EXCL);
-    }
+    NodeFS.copyFileSync(input.installerPath, staged, NodeFS.constants.COPYFILE_EXCL);
     verifyAndSync(staged, sourceSize, input.sha512);
     NodeFS.renameSync(staged, destination);
   } finally {
@@ -71,7 +65,6 @@ export function installAppImageUpdate(input: {
   readonly sha512: string;
   readonly size?: number | undefined;
   readonly logger?: NonNullable<AppImageUpdater["logger"]> | undefined;
-  readonly copyFile?: CopyFile;
 }): string {
   const installedName = NodePath.basename(input.appImageFile);
   // Match electron-updater: retain custom names, but advance versioned filenames.
@@ -139,7 +132,7 @@ interface AppImageUpdaterInternals {
   doInstall(options: InstallOptions): boolean;
 }
 
-export function verifyAppImageInstalls(updater: AppImageUpdater, copyFile?: CopyFile): void {
+export function verifyAppImageInstalls(updater: AppImageUpdater): void {
   const internals = updater as unknown as AppImageUpdaterInternals;
   internals.doInstall = function (options) {
     const appImageFile = process.env.APPIMAGE;
@@ -161,7 +154,6 @@ export function verifyAppImageInstalls(updater: AppImageUpdater, copyFile?: Copy
       sha512,
       size: this.downloadedUpdateHelper?.fileInfo?.info.size,
       logger: this.logger ?? undefined,
-      ...(copyFile === undefined ? {} : { copyFile }),
     });
     if (destination !== appImageFile) {
       this.emit("appimage-filename-updated", destination);
