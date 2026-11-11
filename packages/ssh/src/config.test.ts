@@ -56,6 +56,53 @@ describe("ssh config", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("skips directories and implicit dotfile Include matches but keeps explicit ones", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDir = yield* makeTempHomeDir();
+      const sshDir = path.join(homeDir, ".ssh");
+      yield* fs.makeDirectory(path.join(sshDir, "config.d", "ignored"), { recursive: true });
+      yield* fs.makeDirectory(path.join(sshDir, "explicit-directory"));
+      yield* fs.writeFileString(
+        path.join(sshDir, "config"),
+        "Include config.d/*\nInclude config.d/.literal.conf\nInclude config.d/.enabled-*.conf\nInclude explicit-directory\nHost real\n  HostName real.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "config.d", "team.conf"),
+        "Host team\n  HostName team.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "config.d", ".backup.conf"),
+        "Host *\n  HostName obsolete.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "config.d", ".literal.conf"),
+        "Host literal\n  HostName literal.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "config.d", ".enabled-one.conf"),
+        "Host enabled\n  HostName enabled.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "known_hosts"),
+        "known.example.com ssh-ed25519 AAAA\n",
+      );
+
+      const hosts = yield* discoverSshHosts({ homeDir });
+      assert.deepEqual(
+        hosts.map((host) => [host.alias, host.hostname, host.source]),
+        [
+          ["enabled", "enabled.example.com", "ssh-config"],
+          ["known.example.com", "known.example.com", "known-hosts"],
+          ["literal", "literal.example.com", "ssh-config"],
+          ["real", "real.example.com", "ssh-config"],
+          ["team", "team.example.com", "ssh-config"],
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("discovers ssh config hosts across included files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
