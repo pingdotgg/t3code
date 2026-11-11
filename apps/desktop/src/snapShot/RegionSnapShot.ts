@@ -175,10 +175,9 @@ export function makeRegionSnapShotPool(
 export async function captureRegionWindowSnapshot(
   pool: Pick<RegionSnapShotPool, "capture">,
   active: ActiveWindow,
-  region: Electron.Rectangle,
   maxSize: Electron.Size,
 ): Promise<{ readonly source: RegionSnapShotSource; readonly png: Buffer }> {
-  const shot = await pool.capture(region);
+  const shot = await pool.capture(active.bounds);
   const scale = Math.min(maxSize.width / shot.width, maxSize.height / shot.height, 1);
   const png =
     scale < 1
