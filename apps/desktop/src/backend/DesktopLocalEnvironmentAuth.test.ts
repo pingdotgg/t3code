@@ -260,7 +260,6 @@ describe("DesktopLocalEnvironmentAuth", () => {
       const fiber = yield* auth.getBearerToken.pipe(Effect.forkChild);
       yield* TestClock.adjust(Duration.seconds(30));
       yield* Deferred.succeed(resumed, undefined);
-      yield* TestClock.adjust(Duration.seconds(11));
 
       assert.strictEqual(yield* Fiber.join(fiber), "desktop-bearer-token");
     }).pipe(Effect.provide(TestClock.layer())),
