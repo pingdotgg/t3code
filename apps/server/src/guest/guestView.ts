@@ -9,15 +9,33 @@ import type {
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2ThreadProjection,
   ServerProvider,
+  ThreadPullRequestLink,
 } from "@t3tools/contracts";
 
 // Stands in for paths and refs the schema requires but the guest page never reads.
 const HIDDEN = ".";
 
+// Clients read a link's state and watch, not its branches.
+const guestPullRequestLink = (link: ThreadPullRequestLink): ThreadPullRequestLink => ({
+  ...link,
+  snapshot:
+    link.snapshot === null ? null : { ...link.snapshot, headBranch: HIDDEN, baseBranch: HIDDEN },
+  stack:
+    link.stack === null
+      ? null
+      : {
+          ...link.stack,
+          base: HIDDEN,
+          layers: link.stack.layers.map((layer) => ({ ...layer, headBranch: HIDDEN })),
+        },
+});
 const guestThread = (thread: OrchestrationV2AppThread): OrchestrationV2AppThread => ({
   ...thread,
   branch: null,
   worktreePath: null,
+  ...(thread.pullRequests === undefined
+    ? {}
+    : { pullRequests: thread.pullRequests.map(guestPullRequestLink) }),
 });
 const guestProviderSession = (
   session: OrchestrationV2ProviderSession,
@@ -85,6 +103,8 @@ export function projectDomainEventForGuest(
     case "thread.provider-switched":
     case "thread.guest-share-updated":
       return { ...event, payload: guestThread(event.payload) };
+    case "thread.pull-request-link-updated":
+      return { ...event, payload: guestPullRequestLink(event.payload) };
     case "run.created":
     case "run.updated":
       return { ...event, payload: guestRun(event.payload) };

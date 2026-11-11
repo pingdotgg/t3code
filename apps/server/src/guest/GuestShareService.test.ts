@@ -348,6 +348,35 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
       rowLimit: 10,
     })).projection.runs;
     if (ownerRunRecord === undefined) return assert.fail("Expected the owner's run.");
+    const linkedPullRequest = (id: string, title: string) =>
+      ownerEvent(`event:${id}`, {
+        type: "thread.pull-request-link-updated",
+        payload: {
+          host: "github.com",
+          repository: "acme/app",
+          number: 7,
+          url: "https://github.com/acme/app/pull/7",
+          source: "created",
+          linkedAt: DateTime.formatIso(now),
+          snapshot: {
+            state: "open",
+            title,
+            headBranch: branch,
+            baseBranch: branch,
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: DateTime.formatIso(now),
+          },
+          stack: {
+            kind: "native",
+            id: "stack:owner",
+            number: 7,
+            url: "https://github.com/acme/app/pull/7",
+            base: branch,
+            layers: [{ number: 7, headBranch: branch, state: "open" }],
+          },
+        },
+      });
     const preparedRun = (
       id: string,
       workspacePreparation: NonNullable<(typeof ownerRunRecord)["workspacePreparation"]>,
@@ -364,12 +393,19 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
       threadId,
       branch,
       worktreePath,
+      linkedPullRequest: {
+        projectId: ProjectId.make("project:guest-share-service"),
+        repository: "acme/app",
+        number: 7,
+        url: "https://github.com/acme/app/pull/7",
+      },
     });
     yield* eventSink.write({
       events: [
         providerSession("provider-session.attached"),
         checkpointScope("scope:before"),
         preparedRun("run:before", { type: "existing_worktree", worktreePath, branch }),
+        linkedPullRequest("pr:before", "Fix the login bug"),
       ],
     });
     const events = yield* guestShares.stream(session);
@@ -385,6 +421,7 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
         providerSession("provider-session.updated"),
         checkpointScope("scope:live"),
         preparedRun("run:live", { type: "worktree", baseRef: branch, branch }),
+        linkedPullRequest("pr:live", "Fix the login bug, take two"),
       ],
     });
     yield* orchestrator.dispatch({
@@ -403,6 +440,7 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
     assert.equal(snapshot.item.projection.providerSessions.length, 1);
     assert.equal(snapshot.item.projection.checkpointScopes.length, 1);
     assert.equal(snapshot.item.projection.runs[0]?.workspacePreparation?.type, "existing_worktree");
+    assert.equal(snapshot.item.projection.thread.pullRequests?.[0]?.snapshot?.state, "open");
     assert.includeMembers(
       received.flatMap((event) =>
         event.type === "thread" && event.item.kind === "event" ? [event.item.event.type] : [],
@@ -412,6 +450,7 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
         "provider-session.updated",
         "checkpoint-scope.created",
         "run.updated",
+        "thread.pull-request-link-updated",
       ],
     );
     const wire = JSON.stringify(received);
