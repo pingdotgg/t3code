@@ -12,7 +12,6 @@ const MAX_LOOKUPS_PER_RUN = 300;
 const MERGEABLE_ATTEMPTS = 3;
 const MERGEABLE_RETRY_MS = 30_000;
 const MERGEABLE_LOOKUP_RETRY_MS = 5_000;
-const RECENT_ACTIVITY_MS = 15 * 60 * 1000;
 
 const REBASE_LABEL = "needs-rebase";
 const CLOSING_LABEL = "triage:closing";
@@ -46,13 +45,15 @@ const PR_DETAIL_QUERY = `
       pullRequest(number: $number) {
         state
         mergeable
-        updatedAt
+        author { login }
         labels(first: 100) { nodes { name } }
         timelineItems(itemTypes: [LABELED_EVENT], last: 100) {
           nodes { ... on LabeledEvent { createdAt label { name } } }
         }
         comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { author { login } } }
         reviews(first: 100) { pageInfo { hasNextPage endCursor } nodes { author { login } } }
+        recentComments: comments(last: 30) { nodes { createdAt author { login } } }
+        commits(last: 1) { nodes { commit { committedDate } } }
       }
     }
   }`;
@@ -124,21 +125,32 @@ function maintainerOn(activity, exemptions) {
 // Reads every page, so a long thread can neither hide a maintainer nor pass for one.
 // Each further page spends a lookup; with none left the answer is OUT_OF_LOOKUPS, never "nobody".
 async function findMaintainer(github, repo, number, detail, exemptions, spend) {
+  // A finished connection answers its last cursor with an empty page and no cursor; keep the last
+  // real one, or the next request would start that connection over from its first page.
+  const cursors = { comments: null, reviews: null };
   for (let activity = detail; ;) {
     const login = maintainerOn(activity, exemptions);
     if (login) return login;
     const { comments, reviews } = activity;
     if (!comments.pageInfo.hasNextPage && !reviews.pageInfo.hasNextPage) return undefined;
     if (!spend()) return OUT_OF_LOOKUPS;
-    activity = (
-      await github.graphql(PR_ACTIVITY_QUERY, {
-        ...repo,
-        number,
-        comments: comments.pageInfo.endCursor,
-        reviews: reviews.pageInfo.endCursor,
-      })
-    ).repository.pullRequest;
+    cursors.comments = comments.pageInfo.endCursor ?? cursors.comments;
+    cursors.reviews = reviews.pageInfo.endCursor ?? cursors.reviews;
+    activity = (await github.graphql(PR_ACTIVITY_QUERY, { ...repo, number, ...cursors })).repository
+      .pullRequest;
   }
+}
+
+// What the author-activity job reacts to, read directly so a late or failed job cannot cost the
+// author their answer: a push answers both windows, a reply answers a triage notice.
+function answeredSince(detail, since, step) {
+  const pushedAt = Date.parse(detail.commits.nodes[0]?.commit.committedDate ?? "");
+  if (pushedAt > since) return true;
+  if (step !== "closing-window") return false;
+  const author = detail.author?.login;
+  return detail.recentComments.nodes.some(
+    (comment) => comment.author?.login === author && Date.parse(comment.createdAt) > since,
+  );
 }
 
 function labeledAt(detail, name) {
@@ -278,10 +290,13 @@ async function sweep({ github, context, core, dryRun }) {
       core.warning(`#${number}: cannot tell when ${labelOf(step)} was applied, leaving it open.`);
       continue;
     }
+    if (answeredSince(detail, since, step)) {
+      plan.push({ number, action: "clear-answered" });
+      if (!dryRun) await removeLabel(github, context, number, labelOf(step));
+      continue;
+    }
     if (now - since < windowOf(step)) continue;
     if (closes >= MAX_CLOSES_PER_RUN) continue;
-    // A reply or push clears the label from another job; give that job time before closing.
-    if (Date.now() - Date.parse(detail.updatedAt) < RECENT_ACTIVITY_MS) continue;
     closes += 1;
     plan.push({ number, action: step === "closing-window" ? "close-triage" : "close-conflict" });
     if (dryRun) continue;
@@ -307,7 +322,7 @@ async function sweep({ github, context, core, dryRun }) {
   core.info(
     `${dryRun ? "Dry run. " : ""}${candidates.length} candidates: ` +
       `${count("warn-conflict")} conflict warnings, ${count("close-conflict")} conflict closes, ` +
-      `${count("close-triage")} triage closes, ${count("clear-rebase")} labels cleared, ` +
+      `${count("close-triage")} triage closes, ${count("clear-rebase") + count("clear-answered")} labels cleared, ` +
       `${count("leave-open")} left to maintainers.`,
   );
   for (const entry of plan) {
