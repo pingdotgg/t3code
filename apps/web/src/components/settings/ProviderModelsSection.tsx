@@ -485,7 +485,7 @@ function ProviderModelRow({
     <div
       data-model-slug={model.slug}
       className={cn(
-        "grid grid-cols-[1.5rem_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-row px-2 py-1 transition-colors hover:surface-ghost-hover",
+        "grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 rounded-row px-2 py-1 transition-colors hover:surface-ghost-hover sm:grid-cols-[1.5rem_minmax(0,1fr)_auto_auto] sm:gap-2",
         isHidden && "opacity-50",
       )}
     >
@@ -512,8 +512,12 @@ function ProviderModelRow({
         </TooltipPopup>
       </Tooltip>
       <Tooltip>
-        <TooltipTrigger render={<span tabIndex={0} className="flex min-w-0 flex-col" />}>
-          <span className={cn(nameClassName, "truncate")}>{model.name}</span>
+        <TooltipTrigger
+          render={<span tabIndex={0} className="col-span-2 flex min-w-0 flex-col sm:col-span-1" />}
+        >
+          <span className={cn(nameClassName, "max-sm:wrap-anywhere sm:truncate")}>
+            {model.name}
+          </span>
         </TooltipTrigger>
         <TooltipPopup side="top" align="start">
           <div>{model.name}</div>
@@ -524,7 +528,7 @@ function ProviderModelRow({
           ))}
         </TooltipPopup>
       </Tooltip>
-      <span className="flex shrink-0 items-center justify-end gap-0.5">
+      <span className="col-start-2 flex shrink-0 items-center justify-end gap-0.5 sm:col-start-auto">
         {!isHidden && !isFiltering ? (
           <>
             <Tooltip>
