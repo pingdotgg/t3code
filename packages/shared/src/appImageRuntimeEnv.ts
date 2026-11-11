@@ -25,14 +25,14 @@ export function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessE
     for (const [key, separator] of Object.entries(APPIMAGE_PATH_LIKE_ENV_SEPARATORS)) {
       const value = scrubbed[key];
       if (value === undefined) continue;
-      // Empty entries mean the current directory, so they stay unless nothing else does.
-      const kept = value
-        .split(separator)
-        .filter((segment) => !isPathSegmentUnderAppDir(segment, appDir));
-      if (kept.some((segment) => segment.length > 0)) {
-        scrubbed[key] = kept.join(":");
-      } else {
+      const segments = value.split(separator);
+      const kept = segments.filter((segment) => !isPathSegmentUnderAppDir(segment, appDir));
+      if (kept.length === segments.length) continue;
+      if (kept.length === 0) {
         delete scrubbed[key];
+      } else {
+        // Empty entries mean the current directory; a lone one must stay ":" since "" means none.
+        scrubbed[key] = kept.length === 1 && kept[0] === "" ? ":" : kept.join(":");
       }
     }
   }
