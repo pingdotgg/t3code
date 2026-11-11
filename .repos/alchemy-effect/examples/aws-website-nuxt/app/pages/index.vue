@@ -8,9 +8,7 @@ useHead({ title: "Nuxt on AWS" });
 // payload so the client render matches.
 const greeting = useState("greeting", () => {
   if (import.meta.server) {
-    return typeof process.env.GREETING === "string"
-      ? process.env.GREETING
-      : "Hello!";
+    return typeof process.env.GREETING === "string" ? process.env.GREETING : "Hello!";
   }
   return "Hello!";
 });
@@ -23,8 +21,6 @@ const greeting = useState("greeting", () => {
       title="Styled with Tailwind CSS"
       body="This card is a Vue component styled with Tailwind utilities."
     />
-    <NuxtLink class="mt-4 inline-block underline" to="/about"
-      >about (prerendered)</NuxtLink
-    >
+    <NuxtLink class="mt-4 inline-block underline" to="/about">about (prerendered)</NuxtLink>
   </main>
 </template>
