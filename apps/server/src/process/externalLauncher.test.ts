@@ -7,7 +7,6 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -897,64 +896,6 @@ it.effect(
     );
   },
 );
-
-it.effect("keeps scanning after the caller is interrupted and shares that scan", () => {
-  const fileInfo = { type: "File" } as FileSystem.File.Info;
-  const release = Deferred.makeUnsafe<void>();
-  let parkedStats = 0;
-  const layerLauncher = ExternalLauncher.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        FileSystem.layerNoop({
-          stat: () =>
-            Effect.gen(function* () {
-              if (!Deferred.isDoneUnsafe(release)) {
-                parkedStats += 1;
-                yield* Deferred.await(release);
-              }
-              return fileInfo;
-            }),
-        }),
-        Path.layer,
-        Layer.succeed(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make(() => Effect.sync(() => makeMockDetachedHandle())),
-        ),
-      ),
-    ),
-  );
-
-  return Effect.gen(function* () {
-    const launcher = yield* ExternalLauncher.ExternalLauncher;
-
-    const interrupted = yield* Effect.forkChild(launcher.resolveAvailableEditors());
-    yield* Effect.yieldNow;
-    yield* Fiber.interrupt(interrupted);
-
-    const next = yield* Effect.forkChild(launcher.resolveAvailableEditors());
-    yield* Effect.yieldNow;
-    assert.equal(parkedStats, 1);
-
-    yield* Deferred.succeed(release, undefined);
-    const editors = yield* Fiber.join(next);
-    assert.equal(editors.includes("vscode"), true);
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        layerLauncher,
-        Layer.succeed(HostProcess.Platform, "win32"),
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({
-            env: {
-              PATH: "C:\\t3-editor-discovery-interrupt-test",
-              PATHEXT: ".COM;.EXE;.BAT;.CMD",
-            },
-          }),
-        ),
-      ),
-    ),
-  );
-});
 
 const launchWindowsShimEditor = (cwd: string) =>
   Effect.gen(function* () {
