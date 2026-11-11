@@ -1229,18 +1229,24 @@ const make = Effect.gen(function* () {
 
   // A background subagent keeps calling tools after the run that started it settles. Its
   // delegations join that latest run, whose completion cohort wakes the thread once they finish.
-  const backgroundSubagentRun = (
-    scope: McpInvocationScope,
-    parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
-  ) =>
-    threadManagement.getThreadShell(parent.thread.id).pipe(
-      Effect.mapError(threadManagementFailure),
-      Effect.map((shell) =>
-        shell?.activeRunId === null && isLiveCallerShell(shell, scope.thread?.providerInstanceId)
-          ? parent.runs.find((run) => run.id === shell.latestRunId)
-          : undefined,
-      ),
-    );
+  const backgroundSubagentRun = Effect.fn("OrchestratorMcpService.backgroundSubagentRun")(
+    function* (scope: McpInvocationScope, threadId: ThreadId) {
+      const shell = yield* threadManagement
+        .getThreadShell(threadId)
+        .pipe(Effect.mapError(threadManagementFailure));
+      if (
+        shell?.activeRunId !== null ||
+        shell.latestRunId === null ||
+        !isLiveCallerShell(shell, scope.thread?.providerInstanceId)
+      ) {
+        return undefined;
+      }
+      const { runs } = yield* loadThreadRecords(threadId, ["runs"], {
+        runIds: [shell.latestRunId],
+      });
+      return runs[0];
+    },
+  );
 
   const loadReadableThread = Effect.fn("OrchestratorMcpService.loadReadableThread")(function* (
     scope: McpInvocationScope,
@@ -2407,7 +2413,7 @@ const make = Effect.gen(function* () {
       }
       const parentRun =
         ThreadManagementService.latestActiveRun(parent) ??
-        (yield* backgroundSubagentRun(scope, parent));
+        (yield* backgroundSubagentRun(scope, parent.thread.id));
       if (
         parentRun === undefined ||
         parentRun.rootNodeId === null ||
