@@ -148,10 +148,7 @@ const handlers = {
       const service = yield* CourseService.CourseService;
       const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
       const units = [...new Set(input.units)].sort((a, b) => a - b);
-      if (
-        units.length === 0 ||
-        units.some((unit) => !Number.isInteger(unit) || unit < 1 || unit > course.units.length)
-      )
+      if (units.length === 0 || units.some((unit) => unit < 1 || unit > course.units.length))
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "units must name one or more course units",
@@ -178,6 +175,32 @@ const handlers = {
         })
         .pipe(Effect.mapError(fail));
       return { started: true, units };
+    }),
+  ),
+  course_problems: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "course_problems");
+      if (input.reveal && input.pset === undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "pset is required with reveal",
+        });
+      const service = yield* CourseService.CourseService;
+      const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
+      if (input.unit !== undefined && (input.unit < 1 || input.unit > course.units.length))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "unit must name a course unit",
+        });
+      return yield* service
+        .problems({
+          courseId: course.id,
+          ...(input.unit === undefined ? {} : { unit: input.unit }),
+          ...(input.pset === undefined ? {} : { pset: input.pset }),
+          ...(input.reveal === undefined ? {} : { reveal: input.reveal }),
+        })
+        .pipe(Effect.mapError(fail));
     }),
   ),
 } satisfies McpToolAccess.Handlers<typeof CourseToolkit.tools>;

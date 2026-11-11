@@ -388,6 +388,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   course_read: tool(["Read", "Reading", "Read", "a course"], "course-read"),
   course_update: tool(["Update", "Updating", "Updated", "a course"], "course-update"),
   course_prepare: tool(["Prepare", "Preparing", "Prepared", "course units"], "course-update"),
+  course_problems: tool(["Read", "Reading", "Read", "course problems"], "course-read"),
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));

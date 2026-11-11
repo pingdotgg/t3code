@@ -13,8 +13,17 @@ export const CourseUnit = Schema.Struct({
   pages: Schema.optional(Schema.Tuple([Schema.Int, Schema.Int])),
   hasText: Schema.Boolean,
   prepared: Prepared,
+  section: Schema.optional(Schema.String),
 });
 export type CourseUnit = typeof CourseUnit.Type;
+
+export const CourseProblemSet = Schema.Struct({
+  title: TrimmedNonEmptyString,
+  section: Schema.optional(Schema.String),
+  hasSolution: Schema.Boolean,
+  workedExampleUnits: Schema.optional(Schema.Array(Schema.Int)),
+});
+export type CourseProblemSet = typeof CourseProblemSet.Type;
 
 export const CoursePosition = Schema.Struct({
   unit: Schema.Int,
@@ -32,6 +41,7 @@ export const Course = Schema.Struct({
   lessonThreadId: ThreadId,
   createdAt: Schema.String,
   units: Schema.Array(CourseUnit),
+  problemSets: Schema.optional(Schema.Array(CourseProblemSet)),
   position: Schema.optional(CoursePosition),
   prepThreadIds: Schema.Array(ThreadId),
 });

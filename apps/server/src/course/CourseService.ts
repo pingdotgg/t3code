@@ -38,6 +38,20 @@ export interface CourseReadUnit {
   readonly quiz?: string;
 }
 
+export interface CourseProblems {
+  readonly attribution?: string;
+  readonly problemSets: ReadonlyArray<{
+    readonly number: number;
+    readonly title: string;
+    readonly section?: string;
+    readonly text?: string;
+    readonly solution?: string | null;
+    readonly note?: string;
+    readonly workedExampleUnits?: ReadonlyArray<{ readonly unit: number; readonly title: string }>;
+  }>;
+  readonly note?: string;
+}
+
 export class CourseService extends Context.Service<
   CourseService,
   {
@@ -52,6 +66,12 @@ export class CourseService extends Context.Service<
       readonly unit: number;
       readonly at?: number;
     }) => Effect.Effect<CourseReadUnit, CourseError, ProcessRunner.ProcessRunner>;
+    readonly problems: (input: {
+      readonly courseId: string;
+      readonly unit?: number;
+      readonly pset?: number;
+      readonly reveal?: boolean;
+    }) => Effect.Effect<CourseProblems, CourseError>;
     readonly update: (input: {
       readonly courseId: string;
       readonly position?: CoursePosition;
@@ -109,6 +129,43 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
   const root = path.join(stateDir, "courses");
   const unitFile = (id: string, unit: number, ext: string) =>
     path.join(root, id, "units", `${String(unit).padStart(2, "0")}.${ext}`);
+  const psetFile = (baseDir: string, pset: number, solution = false) =>
+    path.join(
+      baseDir,
+      "psets",
+      `${String(pset).padStart(2, "0")}${solution ? ".solution" : ""}.txt`,
+    );
+  const problemSetMetadata = (
+    source: IngestedCourse,
+    remap?: (unit: number) => number | undefined,
+  ) =>
+    source.problemSets?.map((pset) => ({
+      title: pset.title.trim(),
+      ...(pset.section ? { section: pset.section } : {}),
+      hasSolution: pset.solution !== undefined,
+      ...(pset.workedExampleUnits?.length
+        ? {
+            workedExampleUnits: pset.workedExampleUnits
+              .map((unit) => (remap ? remap(unit) : unit))
+              .filter((unit): unit is number => unit !== undefined),
+          }
+        : {}),
+    }));
+  const writeProblemSets = (
+    baseDir: string,
+    problemSets: NonNullable<IngestedCourse["problemSets"]>,
+  ) =>
+    Effect.forEach(
+      problemSets,
+      (pset, index) =>
+        Effect.gen(function* () {
+          yield* fs.makeDirectory(path.join(baseDir, "psets"), { recursive: true });
+          yield* fs.writeFileString(psetFile(baseDir, index + 1), pset.text);
+          if (pset.solution !== undefined)
+            yield* fs.writeFileString(psetFile(baseDir, index + 1, true), pset.solution);
+        }),
+      { discard: true },
+    );
   const locked = <A, E extends { readonly message: string }, R>(effect: Effect.Effect<A, E, R>) =>
     lock
       .withPermit(effect)
@@ -126,6 +183,13 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
       if (!(yield* fs.exists(oldUnits)) && (yield* fs.exists(units)))
         yield* fs.rename(units, oldUnits);
       yield* fs.rename(path.join(staged, "units"), units);
+    }
+    if (yield* fs.exists(path.join(staged, "psets"))) {
+      const oldPsets = path.join(staged, "old-psets");
+      const psets = path.join(directory, "psets");
+      if (!(yield* fs.exists(oldPsets)) && (yield* fs.exists(psets)))
+        yield* fs.rename(psets, oldPsets);
+      yield* fs.rename(path.join(staged, "psets"), psets);
     }
     yield* fs.rename(metadata, path.join(directory, "course.json"));
     yield* fs.remove(staged, { recursive: true });
@@ -183,14 +247,45 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
       });
     }
     const matched = [...matches.filter((index) => index >= 0), ...available];
-    if (matched.every((index, position) => index === position)) return course;
-    const reordered = matched.map((index) => course.units[index]!);
+    const remap = (unit: number) => {
+      const old = matches[unit - 1];
+      const next = old === undefined ? undefined : matched.indexOf(old);
+      return next === undefined || next < 0 ? undefined : next + 1;
+    };
+    const remapExisting = (unit: number) => {
+      const next = matched.indexOf(unit - 1);
+      return next < 0 ? undefined : next + 1;
+    };
+    const problemSets = source.problemSets
+      ? problemSetMetadata(source, remap)
+      : course.problemSets?.map((pset) => ({
+          ...pset,
+          ...(pset.workedExampleUnits
+            ? {
+                workedExampleUnits: pset.workedExampleUnits
+                  .map(remapExisting)
+                  .filter((unit): unit is number => unit !== undefined),
+              }
+            : {}),
+        }));
+    const next = {
+      ...course,
+      units: matched.map((index) => ({
+        ...course.units[index]!,
+        ...(source.units[matches.indexOf(index)]?.section
+          ? { section: source.units[matches.indexOf(index)]!.section }
+          : {}),
+      })),
+      ...(problemSets ? { problemSets } : {}),
+    };
+    if (matched.every((index, position) => index === position) && !source.problemSets)
+      return course;
     const positionIndex = course.position ? matched.indexOf(course.position.unit - 1) : -1;
     const position =
       course.position && positionIndex >= 0
         ? { ...course.position, unit: positionIndex + 1 }
         : course.position;
-    const next = { ...course, units: reordered, ...(position ? { position } : {}) };
+    const positioned = { ...next, ...(position ? { position } : {}) };
     const staged = path.join(root, course.id, ".reorder");
     yield* fs.remove(staged, { recursive: true, force: true });
     yield* fs.makeDirectory(path.join(staged, "units"), { recursive: true });
@@ -204,13 +299,17 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
           );
       }
     }
-    const json = yield* encodeCourse(next).pipe(
+    if (source.problemSets) {
+      yield* fs.makeDirectory(path.join(staged, "psets"), { recursive: true });
+      yield* writeProblemSets(staged, source.problemSets);
+    }
+    const json = yield* encodeCourse(positioned).pipe(
       Effect.mapError(() => failure("The reordered course is invalid and was not saved.")),
     );
     yield* fs.writeFileString(path.join(staged, "course.json.tmp"), `${json}\n`);
     yield* fs.rename(path.join(staged, "course.json.tmp"), path.join(staged, "course.json"));
     yield* finishRepair(course.id);
-    return next;
+    return positioned;
   });
 
   const add = Effect.fn("CourseService.add")(function* (input: CourseAddInput) {
@@ -249,9 +348,15 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
             ...(unit.youtubeId ? { youtubeId: unit.youtubeId } : {}),
             ...(unit.pages ? { pages: unit.pages } : {}),
             hasText: unit.text !== undefined,
+            ...(unit.section ? { section: unit.section } : {}),
             prepared: { plan: false, quiz: false },
           })),
           prepThreadIds: [],
+          ...(source.problemSets
+            ? {
+                problemSets: problemSetMetadata(source),
+              }
+            : {}),
         };
         yield* write(course);
         yield* Effect.forEach(
@@ -262,6 +367,9 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
               : fs.writeFileString(unitFile(id, index + 1, "txt"), unit.text),
           { discard: true },
         );
+        if (source.problemSets) {
+          yield* writeProblemSets(path.join(root, id), source.problemSets);
+        }
         // One course per lesson: the new one replaces the lesson's old course.
         yield* Effect.forEach(
           linked,
@@ -428,6 +536,87 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
     );
   });
 
+  const problems = Effect.fn("CourseService.problems")(function* (input: {
+    readonly courseId: string;
+    readonly unit?: number;
+    readonly pset?: number;
+    readonly reveal?: boolean;
+  }) {
+    return yield* locked(
+      Effect.gen(function* () {
+        const course = yield* read(input.courseId);
+        const attribution = course.attribution ? { attribution: course.attribution } : {};
+        if (!course.problemSets)
+          return {
+            ...attribution,
+            problemSets: [],
+            note:
+              course.kind === "ocw"
+                ? "No problem sets saved for this course. Call course_add with the course source again to fetch them."
+                : "This course has no problem sets.",
+          };
+        const selected =
+          input.pset !== undefined
+            ? course.problemSets.slice(input.pset - 1, input.pset)
+            : input.unit !== undefined
+              ? course.problemSets.filter(
+                  (pset) =>
+                    course.units[input.unit! - 1]?.section !== undefined &&
+                    pset.section === course.units[input.unit! - 1]?.section,
+                )
+              : course.problemSets;
+        if (input.pset !== undefined && !selected.length)
+          return yield* failure(`Problem set ${input.pset} was not found.`);
+        const result = yield* Effect.forEach(selected, (pset) =>
+          Effect.gen(function* () {
+            const number = course.problemSets!.indexOf(pset) + 1;
+            const item = {
+              number,
+              title: pset.title,
+              ...(pset.section ? { section: pset.section } : {}),
+              ...(pset.workedExampleUnits
+                ? {
+                    workedExampleUnits: pset.workedExampleUnits.map((unit) => ({
+                      unit,
+                      title: course.units[unit - 1]?.title ?? "",
+                    })),
+                  }
+                : {}),
+            };
+            if (!input.reveal || input.pset === undefined) {
+              if (input.pset === undefined && input.unit === undefined) return item;
+              return {
+                ...item,
+                text: yield* fs.readFileString(psetFile(path.join(root, course.id), number)),
+              };
+            }
+            const text = yield* fs.readFileString(psetFile(path.join(root, course.id), number));
+            const solution =
+              pset.hasSolution &&
+              (yield* fs.exists(psetFile(path.join(root, course.id), number, true)))
+                ? yield* fs.readFileString(psetFile(path.join(root, course.id), number, true))
+                : null;
+            const examples = (pset.workedExampleUnits ?? [])
+              .map((unit) => course.units[unit - 1]?.title)
+              .filter(Boolean)
+              .join(", ");
+            return {
+              ...item,
+              text,
+              solution,
+              ...(solution === null
+                ? {
+                    note: `No official solution exists; work the problem yourself, check against the listed worked-example units where they match (${examples || "none listed"}), say plainly where they disagree, and tell the learner: graded against my own worked solution, not MIT's.`,
+                  }
+                : {}),
+            };
+          }),
+        );
+        return { ...attribution, problemSets: result };
+      }),
+    );
+  });
+
   const remove = Effect.fn("CourseService.remove")(function* (id: string) {
     if (!isCourseId(id)) return yield* failure("Invalid course id.");
     yield* locked(fs.remove(path.join(root, id), { recursive: true }));
@@ -477,6 +666,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
     list,
     get,
     readUnit,
+    problems,
     update,
     remove,
     recordPrepThread,
@@ -498,6 +688,7 @@ export const unavailable = CourseService.of({
   list: Effect.fail(failure("Courses are unavailable.")),
   get: () => Effect.fail(failure("Courses are unavailable.")),
   readUnit: () => Effect.fail(failure("Courses are unavailable.")),
+  problems: () => Effect.fail(failure("Courses are unavailable.")),
   update: () => Effect.fail(failure("Courses are unavailable.")),
   remove: () => Effect.fail(failure("Courses are unavailable.")),
   recordPrepThread: () => Effect.fail(failure("Courses are unavailable.")),
