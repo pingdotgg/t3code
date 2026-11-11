@@ -477,7 +477,7 @@ function MiniPlayerShell({
   ) => {
     if (!frame) return;
     handleTappedRef.current = false;
-    if (gesture.begin(event, direction)) {
+    if (gesture.begin(event, direction, sourceSize)) {
       event.preventDefault();
       event.stopPropagation();
     }

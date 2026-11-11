@@ -21,11 +21,15 @@ interface CaptureTarget {
   releasePointerCapture(pointerId: number): void;
   closest(selector: string): Element | null;
 }
-interface Gesture extends PointerInput {
+interface Gesture {
+  readonly pointerId: number;
   readonly pointerType: string;
   readonly target: CaptureTarget;
-  readonly frame: PreviewMiniPlayerFrame;
   readonly direction: Direction;
+  origin: { x: number; y: number };
+  frame: PreviewMiniPlayerFrame;
+  source: PreviewMiniPlayerSize;
+  last: { x: number; y: number };
   currentFrame: PreviewMiniPlayerFrame;
   moved: boolean;
 }
@@ -33,6 +37,23 @@ type Commit = (frame: PreviewMiniPlayerFrame, direction: Direction) => void;
 interface Space {
   readonly container: PreviewMiniPlayerSize;
   readonly source: PreviewMiniPlayerSize;
+}
+
+// Computed CSS geometry preserves fractional coordinates in the player's local space.
+function readRenderedFrame(target: CaptureTarget): PreviewMiniPlayerFrame | null {
+  const preview = target.closest("[data-preview-mini-player]");
+  if (!preview) return null;
+  const style = getComputedStyle(preview);
+  const frame = {
+    x: Number.parseFloat(style.left),
+    y: Number.parseFloat(style.top),
+    width: Number.parseFloat(style.width),
+    height: Number.parseFloat(style.height),
+  };
+  if (!Object.values(frame).every(Number.isFinite) || frame.width <= 0 || frame.height <= 0) {
+    return null;
+  }
+  return frame;
 }
 
 export function createPreviewMiniPlayerGesture() {
@@ -64,22 +85,12 @@ export function createPreviewMiniPlayerGesture() {
         readonly currentTarget: CaptureTarget;
       },
       direction: Direction,
+      source: PreviewMiniPlayerSize,
     ) {
       if (gesture && !gesture.target.hasPointerCapture(gesture.pointerId)) gesture = null;
       if (event.button !== 0 || gesture) return false;
-      const preview = event.currentTarget.closest("[data-preview-mini-player]");
-      if (!preview) return false;
-      // Computed CSS geometry preserves fractional coordinates in the player's local space.
-      const style = getComputedStyle(preview);
-      const frame = {
-        x: Number.parseFloat(style.left),
-        y: Number.parseFloat(style.top),
-        width: Number.parseFloat(style.width),
-        height: Number.parseFloat(style.height),
-      };
-      if (!Object.values(frame).every(Number.isFinite) || frame.width <= 0 || frame.height <= 0) {
-        return false;
-      }
+      const frame = readRenderedFrame(event.currentTarget);
+      if (!frame) return false;
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
@@ -88,10 +99,11 @@ export function createPreviewMiniPlayerGesture() {
       gesture = {
         pointerId: event.pointerId,
         pointerType: event.pointerType,
-        clientX: event.clientX,
-        clientY: event.clientY,
         target: event.currentTarget,
+        origin: { x: event.clientX, y: event.clientY },
         frame,
+        source,
+        last: { x: event.clientX, y: event.clientY },
         currentFrame: frame,
         direction,
         moved: false,
@@ -106,9 +118,23 @@ export function createPreviewMiniPlayerGesture() {
         return;
       }
       if (!space) return;
-      const delta = { x: event.clientX - active.clientX, y: event.clientY - active.clientY };
+      if (
+        active.source.width !== space.source.width ||
+        active.source.height !== space.source.height
+      ) {
+        // The player re-rendered at the new source ratio; continue from what is on screen.
+        const rendered = readRenderedFrame(active.target);
+        if (rendered) {
+          active.frame = rendered;
+          active.currentFrame = rendered;
+          active.origin = active.last;
+        }
+      }
+      active.source = space.source;
+      const delta = { x: event.clientX - active.origin.x, y: event.clientY - active.origin.y };
       if (!active.moved && Math.hypot(delta.x, delta.y) < HANDLE_TAP_SLOP_PX) return;
       active.moved = true;
+      active.last = { x: event.clientX, y: event.clientY };
       active.currentFrame =
         active.direction === null
           ? {
