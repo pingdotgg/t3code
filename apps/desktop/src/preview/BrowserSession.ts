@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -431,9 +432,23 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     }
     const prompt = { trust, key, callbacks: [callback] };
     certificatePrompt = prompt;
+    // A prompt for a tab that closed or moved on would approve a page nobody is waiting for.
+    const dismiss = new AbortController();
+    const abandon = () => dismiss.abort();
+    const navigated = (
+      event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
+    ) => {
+      if (event.isMainFrame && !event.isSameDocument) abandon();
+    };
+    contents.once("destroyed", abandon);
+    contents.on("did-start-navigation", navigated);
     const settle = (trusted: boolean) =>
       Effect.sync(() => {
         certificatePrompt = null;
+        if (!contents.isDestroyed()) {
+          contents.off("destroyed", abandon);
+          contents.off("did-start-navigation", navigated);
+        }
         for (const waiter of prompt.callbacks) waiter(trusted);
       });
     const host = new URL(approval.origin).host;
@@ -446,6 +461,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             buttons: ["Trust and Remember", "Cancel"],
             defaultId: 1,
             cancelId: 1,
+            signal: dismiss.signal,
             message: `${host} has an untrusted certificate`,
             detail: [
               reason,
@@ -464,7 +480,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         )
         .pipe(
           Effect.flatMap(({ response }) =>
-            response === 0
+            response === 0 && !dismiss.signal.aborted
               ? rememberCertificate(trust, key, approval, revocations).pipe(
                   Effect.catch((cause) =>
                     Effect.logWarning("Failed to save a certificate approval.", { cause }).pipe(
@@ -528,6 +544,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     const hadApprovals = trust.approvals.size > 0;
     trust.revocations += 1;
     trust.approvals.clear();
+    const saved = yield* saveCertificateApprovals(trust).pipe(Effect.result);
     // An open connection already passed its certificate check.
     if (hadApprovals) {
       yield* Effect.tryPromise({
@@ -535,9 +552,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         catch: (cause) => new BrowserSessionStorageClearError({ partition, cause }),
       });
     }
-    yield* saveCertificateApprovals(trust).pipe(
-      Effect.mapError((cause) => new BrowserSessionStorageClearError({ partition, cause })),
-    );
+    if (Result.isFailure(saved)) {
+      return yield* new BrowserSessionStorageClearError({ partition, cause: saved.failure });
+    }
   });
 
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
@@ -679,7 +696,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         selectSessions(sessions, partitions),
         ([partition, browserSession]) =>
           Effect.gen(function* () {
-            yield* Effect.tryPromise({
+            const cleared = yield* Effect.tryPromise({
               try: () =>
                 browserSession.clearStorageData({
                   storages: [
@@ -695,8 +712,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                   partition,
                   cause,
                 }),
-            });
+            }).pipe(Effect.result);
+            // Approvals go even when the storage clear fails, since the user asked to forget them.
             yield* revokeCertificates(partition, browserSession);
+            if (Result.isFailure(cleared)) return yield* cleared.failure;
           }),
         { concurrency: "unbounded", discard: true },
       );

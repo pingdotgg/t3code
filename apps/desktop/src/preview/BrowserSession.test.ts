@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as NodeEvents from "node:events";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { fromPartition, sessions } = vi.hoisted(() => ({
@@ -98,7 +99,11 @@ const certificateError = (
 ) => {
   const listener = appListeners.get("certificate-error");
   assert.isDefined(listener, "preview sessions should handle certificate errors");
-  const guest = { session: browserSession, hostWebContents: null, isDestroyed: () => false };
+  const guest = Object.assign(new NodeEvents.EventEmitter(), {
+    session: browserSession,
+    hostWebContents: null,
+    isDestroyed: () => false,
+  });
   const event = { preventDefault: vi.fn() };
   const decision = Deferred.makeUnsafe<boolean>();
   const callback = vi.fn((trusted: boolean) => {
@@ -113,7 +118,7 @@ const certificateError = (
     callback,
     input.isMainFrame ?? true,
   );
-  return { event, callback, trusted: Deferred.await(decision) };
+  return { guest, event, callback, trusted: Deferred.await(decision) };
 };
 
 /** Answers the certificate prompt with its "Trust…" button. */
@@ -482,7 +487,10 @@ describe("BrowserSession", () => {
       assert.isTrue(yield* certificateError(browserSession, { url }).trusted);
       assert.strictEqual(showMessageBox.mock.calls.length, 1);
 
-      yield* browserSessions.clearCookies([partition]);
+      // A failed storage clear still forgets the approvals the user asked to clear.
+      browserSession!.clearStorageData.mockRejectedValueOnce(new Error("disk busy"));
+      const failure = yield* browserSessions.clearCookies([partition]).pipe(Effect.flip);
+      assert.strictEqual(failure._tag, "BrowserSessionStorageClearError");
       showMessageBox.mockReset();
       showMessageBox.mockReturnValue(1);
       assert.isFalse(yield* certificateError(browserSession, { url }).trusted);
@@ -560,6 +568,38 @@ describe("BrowserSession", () => {
         ),
       );
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layer, NodeServices.layer))),
+  );
+
+  it.effect("a tab that closes or navigates away dismisses its certificate prompt", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const browserSession = sessions.get(partition);
+      const url = "https://localhost:18443/";
+
+      for (const leave of [
+        (guest: NodeEvents.EventEmitter) =>
+          guest.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false }),
+        (guest: NodeEvents.EventEmitter) => guest.emit("destroyed"),
+      ]) {
+        showMessageBox.mockReset();
+        // Answering "Trust" as the tab leaves must not approve the certificate.
+        showMessageBox.mockImplementation(
+          (options) =>
+            new Promise((resolve) =>
+              options.signal?.addEventListener("abort", () =>
+                resolve(trustCertificateButton(options)),
+              ),
+            ),
+        );
+        const pending = certificateError(browserSession, { url });
+        pending.guest.emit("did-start-navigation", { isMainFrame: true, isSameDocument: true });
+        leave(pending.guest);
+        assert.isFalse(yield* pending.trusted);
+        assert.strictEqual(showMessageBox.mock.calls.length, 1);
+      }
+    }).pipe(Effect.provide(layer)),
   );
 
   it.effect("does not trust a certificate whose approval cannot be saved", () =>

@@ -301,6 +301,7 @@ describe("DesktopBrowserHost", () => {
 
       yield* command(host, 1, "Network.clearBrowserCache");
       yield* command(host, 2, "Network.clearBrowserCookies");
+      yield* settle;
       debuggee.release();
       expect([yield* Queue.take(replies), yield* Queue.take(replies)]).toEqual([1, 2]);
       expect(cleared).toEqual([2]);
