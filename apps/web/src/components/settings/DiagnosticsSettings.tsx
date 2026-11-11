@@ -1027,9 +1027,12 @@ function DiagnosticsSettingsBody() {
 
       <SettingsSection
         title="Trace diagnostics"
+        className="max-sm:[&>[data-settings-scroll-target]]:flex-wrap max-sm:[&>[data-settings-scroll-target]]:gap-2"
         headerAction={
-          <div className="flex items-center gap-1.5">
-            <DiagnosticsLastChecked checkedAt={data?.readAt ?? null} />
+          <div className="flex flex-wrap items-center gap-1.5 sm:flex-nowrap">
+            <span className="max-sm:basis-full sm:contents">
+              <DiagnosticsLastChecked checkedAt={data?.readAt ?? null} />
+            </span>
             <Button
               size="xs"
               variant="secondary"
