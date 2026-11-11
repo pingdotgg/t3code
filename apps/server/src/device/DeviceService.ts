@@ -756,6 +756,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             yield* Effect.forEach(hosts.values(), (host) => host.stop, { discard: true });
           } else if (input.agentAccessEnabled === false) {
             yield* Effect.forEach(hosts.values(), (host) => host.stopAgent, { discard: true });
+            yield* launcherLock.withPermit(
+              Effect.gen(function* () {
+                boundLaunchers.clear();
+                hostSessionLaunchers.clear();
+                yield* launchers?.prune(new Set()) ?? Effect.void;
+              }),
+            );
           }
           yield* publish((state) => ({
             ...state,

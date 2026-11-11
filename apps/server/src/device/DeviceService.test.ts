@@ -1396,6 +1396,19 @@ it.effect.each(["shutdown", "close"] as const)(
       expect((yield* service.state).sessions).toEqual([]);
       expect(launchers).toEqual(new Set());
       yield* bind(input);
+      yield* service.configure({ agentAccessEnabled: false });
+      expect((yield* service.state).sessions).toHaveLength(1);
+      expect(launchers).toEqual(new Set());
+      releaseError = new DeviceOperationError({
+        operation: "close",
+        reason: "command_failed",
+        cause: new Error("Agent daemon was stopped"),
+      });
+      if (operation === "shutdown") yield* service.shutdown(input);
+      else yield* service.close({ threadId });
+      expect((yield* service.state).sessions).toEqual([]);
+      releaseError = undefined;
+      yield* bind(input);
       failingLauncher = undefined;
       releaseError = new DeviceOperationError({
         operation: "close",
