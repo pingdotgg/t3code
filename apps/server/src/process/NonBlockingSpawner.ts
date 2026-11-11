@@ -213,6 +213,8 @@ const make = Effect.gen(function* () {
     const command = input.options.shell ? shellMode(input) : input;
     const { cwd } = command.options;
     if (command.command.length === 0 || command.command.includes("\0")) return command;
+    // env misreads these even after `--`, and dash would drop exported bash functions.
+    if (command.command === "-" || command.command.includes("=")) return command;
     const workingDirectory = cwd === undefined ? undefined : yield* enter(command, cwd);
     const base = workingDirectory ?? process.cwd();
     const explicit = under(base, command.command);
@@ -226,9 +228,7 @@ const make = Effect.gen(function* () {
       try: () => findExecutable(candidates, command.command.includes("/")),
       catch: (code) => spawnFailure(command, code as SpawnFailure),
     });
-    return envChdir && command.command !== "-" && !command.command.includes("=")
-      ? viaEnv(command, workingDirectory)
-      : viaShell(command, workingDirectory);
+    return envChdir ? viaEnv(command, workingDirectory) : viaShell(command, workingDirectory);
   });
 
   const prepare = (
