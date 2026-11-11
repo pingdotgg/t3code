@@ -344,6 +344,18 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
           createdAt: now,
         },
       });
+    const [ownerRunRecord] = (yield* orchestrator.getThreadSnapshotWindow(threadId, {
+      rowLimit: 10,
+    })).projection.runs;
+    if (ownerRunRecord === undefined) return assert.fail("Expected the owner's run.");
+    const preparedRun = (
+      id: string,
+      workspacePreparation: NonNullable<(typeof ownerRunRecord)["workspacePreparation"]>,
+    ) =>
+      ownerEvent(`event:${id}`, {
+        type: "run.updated",
+        payload: { ...ownerRunRecord, workspacePreparation },
+      });
 
     // Before the guest connects, so the opening snapshot carries them.
     yield* orchestrator.dispatch({
@@ -354,7 +366,11 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
       worktreePath,
     });
     yield* eventSink.write({
-      events: [providerSession("provider-session.attached"), checkpointScope("scope:before")],
+      events: [
+        providerSession("provider-session.attached"),
+        checkpointScope("scope:before"),
+        preparedRun("run:before", { type: "existing_worktree", worktreePath, branch }),
+      ],
     });
     const events = yield* guestShares.stream(session);
     // While the guest watches, so the live events carry them.
@@ -365,7 +381,11 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
       title: "Renamed",
     });
     yield* eventSink.write({
-      events: [providerSession("provider-session.updated"), checkpointScope("scope:live")],
+      events: [
+        providerSession("provider-session.updated"),
+        checkpointScope("scope:live"),
+        preparedRun("run:live", { type: "worktree", baseRef: branch, branch }),
+      ],
     });
     yield* orchestrator.dispatch({
       type: "thread.guest-share.close",
@@ -382,11 +402,17 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
     }
     assert.equal(snapshot.item.projection.providerSessions.length, 1);
     assert.equal(snapshot.item.projection.checkpointScopes.length, 1);
+    assert.equal(snapshot.item.projection.runs[0]?.workspacePreparation?.type, "existing_worktree");
     assert.includeMembers(
       received.flatMap((event) =>
         event.type === "thread" && event.item.kind === "event" ? [event.item.event.type] : [],
       ),
-      ["thread.metadata-updated", "provider-session.updated", "checkpoint-scope.created"],
+      [
+        "thread.metadata-updated",
+        "provider-session.updated",
+        "checkpoint-scope.created",
+        "run.updated",
+      ],
     );
     const wire = JSON.stringify(received);
     assert.notInclude(wire, worktreePath);

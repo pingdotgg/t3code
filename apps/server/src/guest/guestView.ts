@@ -5,12 +5,14 @@ import type {
   OrchestrationV2CheckpointScope,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
+  OrchestrationV2Run,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2ThreadProjection,
   ServerProvider,
 } from "@t3tools/contracts";
 
-// The schema requires a cwd; the guest page never reads one.
-const GUEST_CWD = ".";
+// Stands in for paths and refs the schema requires but the guest page never reads.
+const HIDDEN = ".";
 
 const guestThread = (thread: OrchestrationV2AppThread): OrchestrationV2AppThread => ({
   ...thread,
@@ -19,18 +21,36 @@ const guestThread = (thread: OrchestrationV2AppThread): OrchestrationV2AppThread
 });
 const guestProviderSession = (
   session: OrchestrationV2ProviderSession,
-): OrchestrationV2ProviderSession => ({ ...session, cwd: GUEST_CWD });
+): OrchestrationV2ProviderSession => ({ ...session, cwd: HIDDEN });
 const guestCheckpointScope = (
   scope: OrchestrationV2CheckpointScope,
-): OrchestrationV2CheckpointScope => ({ ...scope, cwd: GUEST_CWD });
+): OrchestrationV2CheckpointScope => ({ ...scope, cwd: HIDDEN });
+// Clients read only the strategy's type.
+const guestWorkspacePreparation = (
+  preparation: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+): OrchestrationV2ThreadLaunchWorkspaceStrategy => {
+  switch (preparation.type) {
+    case "root":
+      return { type: "root" };
+    case "existing_worktree":
+      return { type: "existing_worktree", worktreePath: HIDDEN };
+    case "worktree":
+      return { type: "worktree", baseRef: HIDDEN };
+  }
+};
+const guestRun = (run: OrchestrationV2Run): OrchestrationV2Run =>
+  run.workspacePreparation === undefined
+    ? run
+    : { ...run, workspacePreparation: guestWorkspacePreparation(run.workspacePreparation) };
 
-/** The thread as its guest's stream sends it: without the owner's branch or paths on disk. */
+/** The thread as its guest's stream sends it: without the owner's branches or paths on disk. */
 export function projectThreadProjectionForGuest(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection {
   return {
     ...projection,
     thread: guestThread(projection.thread),
+    runs: projection.runs.map(guestRun),
     providerSessions: projection.providerSessions.map(guestProviderSession),
     checkpointScopes: projection.checkpointScopes.map(guestCheckpointScope),
   };
@@ -65,6 +85,9 @@ export function projectDomainEventForGuest(
     case "thread.provider-switched":
     case "thread.guest-share-updated":
       return { ...event, payload: guestThread(event.payload) };
+    case "run.created":
+    case "run.updated":
+      return { ...event, payload: guestRun(event.payload) };
     case "provider-session.attached":
     case "provider-session.updated":
       return { ...event, payload: guestProviderSession(event.payload) };
