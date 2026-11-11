@@ -990,6 +990,28 @@ describe("MessagesTimeline messages", () => {
       ),
     );
   });
+
+  it("offers to show the full message only while it overflows the fold", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message("The service launcher speaks an older protocol. ".repeat(13), {}, "wide"),
+      message("Step.\n\n".repeat(12), {}, "tall"),
+    ]);
+    const [wideBody, tallBody] = screen.container.querySelectorAll<HTMLElement>(
+      "[data-user-message-body]",
+    );
+    await vi.waitFor(() => expect(screen.buttons("Show full message")).toHaveLength(2));
+
+    const root = document.documentElement;
+    using _fullWidth = { [Symbol.dispose]: () => delete root.dataset.chatWidth };
+    await act(() => {
+      root.dataset.chatWidth = "full";
+      screen.container.style.width = "1600px";
+    });
+    await vi.waitFor(() => expect(screen.buttons("Show full message")).toHaveLength(1));
+    expect(wideBody!.dataset.userMessageFade).toBe("false");
+    expect(tallBody!.dataset.userMessageFade).toBe("true");
+  });
 });
 
 function usageLimitEntries(resetAt: string) {

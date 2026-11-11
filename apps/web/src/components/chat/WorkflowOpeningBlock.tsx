@@ -13,7 +13,6 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { ChevronRightIcon, WorkflowIcon } from "lucide-react";
-import { useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { providersIgnoringCheckedAtAtom } from "../../state/server";
@@ -22,7 +21,7 @@ import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { AgentElapsed } from "./AgentElapsed";
-import { findRevealRef } from "./markdownFindContext";
+import { useOverflowFold } from "./useOverflowFold";
 import { shouldCollapseUserMessage } from "./MessagesTimeline.logic";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { EnvironmentSubagentAvatar } from "./V2LifecycleRow";
@@ -202,15 +201,14 @@ function WorkflowMemberRow(props: {
 }
 
 function WorkflowScript(props: { readonly script: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const revealRef = findRevealRef(() => setExpanded(true));
-  const canFold = shouldCollapseUserMessage(props.script);
-  const folded = canFold && !expanded;
+  const { foldRef, expanded, clamped, folded, toggleable, toggle } = useOverflowFold(
+    shouldCollapseUserMessage(props.script),
+  );
   return (
     <div>
       <div
-        ref={revealRef}
-        className={cn("relative", folded && "max-h-44 overflow-hidden")}
+        ref={foldRef}
+        className={cn("relative", clamped && "max-h-44 overflow-hidden")}
         data-thread-find-text="true"
         data-thread-find-fold={folded ? "" : undefined}
         style={
@@ -221,7 +219,7 @@ function WorkflowScript(props: { readonly script: string }) {
       >
         <ChatMarkdown text={scriptMarkdown(props.script)} cwd={undefined} />
       </div>
-      {canFold ? (
+      {toggleable ? (
         <div className="-ms-1">
           <Button
             type="button"
@@ -229,7 +227,7 @@ function WorkflowScript(props: { readonly script: string }) {
             variant="ghost-muted"
             aria-expanded={expanded}
             data-scroll-anchor-ignore
-            onClick={() => setExpanded((value) => !value)}
+            onClick={toggle}
           >
             {expanded ? "Show less" : "Show full script"}
           </Button>

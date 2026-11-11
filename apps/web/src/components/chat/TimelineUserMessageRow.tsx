@@ -58,6 +58,7 @@ import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { formatBytes } from "../../lib/formatBytes";
 import { shouldCollapseUserMessage } from "./MessagesTimeline.logic";
+import { useOverflowFold } from "./useOverflowFold";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   asKnownContextRecord,
@@ -1126,29 +1127,25 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   markdownCwd: string | undefined;
   collapsible?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const revealForFind = () => setExpanded(true);
-  const revealRef = findRevealRef(revealForFind);
   const hasVisibleBody = props.text.trim().length > 0;
-  const canCollapse =
-    props.collapsible !== false && hasVisibleBody && shouldCollapseUserMessage(props.text);
-  const isCollapsed = canCollapse && !expanded;
-  const showCollapseControl = canCollapse;
+  const { foldRef, expanded, clamped, folded, toggleable, toggle } = useOverflowFold(
+    props.collapsible !== false && hasVisibleBody && shouldCollapseUserMessage(props.text),
+  );
 
   return (
     <div>
       {hasVisibleBody ? (
         <div
-          ref={revealRef}
-          className={cn("relative", isCollapsed && "max-h-44 overflow-hidden")}
+          ref={foldRef}
+          className={cn("relative", clamped && "max-h-44 overflow-hidden")}
           data-user-message-body="true"
           data-thread-find-text="true"
-          data-thread-find-fold={isCollapsed ? "" : undefined}
-          data-user-message-collapsed={isCollapsed ? "true" : "false"}
-          data-user-message-collapsible={canCollapse ? "true" : "false"}
-          data-user-message-fade={isCollapsed ? "true" : "false"}
+          data-thread-find-fold={folded ? "" : undefined}
+          data-user-message-collapsed={folded ? "true" : "false"}
+          data-user-message-collapsible={toggleable ? "true" : "false"}
+          data-user-message-fade={folded ? "true" : "false"}
           style={
-            isCollapsed
+            folded
               ? {
                   WebkitMaskImage: COLLAPSED_USER_MESSAGE_FADE_MASK,
                   maskImage: COLLAPSED_USER_MESSAGE_FADE_MASK,
@@ -1164,21 +1161,19 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           />
         </div>
       ) : null}
-      {showCollapseControl ? (
+      {toggleable ? (
         <div className="mt-1.5 flex items-center justify-end gap-2" data-user-message-footer="true">
-          {showCollapseControl ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost-muted"
-              aria-expanded={expanded}
-              data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
-              className="-ml-1"
-            >
-              {expanded ? "Show less" : "Show full message"}
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            aria-expanded={expanded}
+            data-scroll-anchor-ignore
+            onClick={toggle}
+            className="-ml-1"
+          >
+            {expanded ? "Show less" : "Show full message"}
+          </Button>
         </div>
       ) : null}
     </div>
