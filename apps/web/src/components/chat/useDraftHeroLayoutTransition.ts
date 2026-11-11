@@ -19,6 +19,7 @@ export function useDraftHeroLayoutTransition(
     previousComposerRectRef.current = composerAnchorRef.current?.getBoundingClientRect() ?? null;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the committed composer rect and starts a FLIP Web Animation before paint
   useLayoutEffect(() => {
     const transitionGroup = transitionGroupRef.current;
     const nextComposerRect = composerAnchorRef.current?.getBoundingClientRect() ?? null;

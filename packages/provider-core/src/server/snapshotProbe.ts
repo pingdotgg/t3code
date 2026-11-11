@@ -87,7 +87,6 @@ export interface ServerProviderPresentation {
   readonly showInteractionModeToggle?: boolean;
   readonly reportsContextWindow?: boolean;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
-  readonly requiresNewThreadForModelChange?: boolean;
   readonly supportsConversationRollback?: boolean;
 }
 
@@ -102,6 +101,15 @@ export function nonEmptyTrimmed(value: string | undefined): string | undefined {
 export function isCommandMissingCause(error: unknown): boolean {
   if (isProviderCommandNotFoundError(error)) return true;
   return error instanceof PlatformError.PlatformError && error.reason._tag === "NotFound";
+}
+
+/**
+ * Environment for background status probes. A mise shim for a missing tool would otherwise
+ * download it on every refresh and leave a partial download behind when the probe times out.
+ * Sessions and user-started commands keep the plain environment, so mise still installs there.
+ */
+export function providerProbeEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...environment, MISE_OFFLINE: "1" };
 }
 
 export const spawnAndCollect = Effect.fn("snapshotProbe.spawnAndCollect")(function* (
@@ -135,6 +143,14 @@ export function parseGenericCliVersion(output: string): string | null {
   // Consume v before the digits; v2 has no internal word boundary.
   const match = output.match(/\bv?(\d+\.\d+\.\d+)\b/);
   return match?.[1] ?? null;
+}
+
+/** A failed `--version` run reports no version: its output can be a wrapper's, such as mise's. */
+export function parseCliVersionResult(
+  result: CommandResult,
+  parse: (output: string) => string | null = parseGenericCliVersion,
+): string | null {
+  return result.code === 0 ? parse(`${result.stdout}\n${result.stderr}`) : null;
 }
 
 export function providerModelsFromSettings(
@@ -255,9 +271,6 @@ export function buildServerProvider(input: {
     ...(input.presentation.supportedRuntimeModes === undefined
       ? {}
       : { supportedRuntimeModes: [...input.presentation.supportedRuntimeModes] }),
-    ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
-      ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }
-      : {}),
     enabled: input.enabled,
     installed: input.probe.installed,
     version: input.probe.version,
