@@ -4595,7 +4595,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       turn: Effect.Success<ReturnType<typeof openPlanTurn>>,
       toolName: string,
       toolInput: Record<string, unknown>,
-      options?: { toolUseID: string; agentID?: string },
+      options?: { toolUseID: string; agentID?: string; askFlags?: object },
     ) {
       const decision = yield* Effect.promise(() =>
         turn.canUseTool(toolName, toolInput, {
@@ -4603,6 +4603,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           toolUseID: options?.toolUseID ?? "tool-plan-write",
           requestId: "request-plan-write",
           ...(options?.agentID === undefined ? {} : { agentID: options.agentID }),
+          ...options?.askFlags,
         }),
       ).pipe(Effect.forkScoped);
       const first = yield* Effect.raceFirst(
@@ -4697,6 +4698,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           if (later.first.type !== "decision") return;
           assert.equal(later.first.result?.behavior, "allow");
+        }
+
+        for (const [toolUseID, askFlags] of [
+          ["read-ask-rule", { matchedAskRule: { source: "userSettings", toolName } }],
+          ["read-needs-person", { requiresUserInteraction: true }],
+          ["read-safety-check", { decisionReasonType: "safetyCheck" }],
+        ] as const) {
+          const forced = yield* requestWrite(
+            turn,
+            toolName,
+            { threadId: "thread-dummy" },
+            { toolUseID, askFlags },
+          );
+          assert.equal(forced.first.type, "request", `the session grant answered ${toolUseID}`);
         }
 
         const otherTool = yield* requestWrite(

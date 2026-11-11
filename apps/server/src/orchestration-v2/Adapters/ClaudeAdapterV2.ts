@@ -3789,6 +3789,16 @@ export function permissionResultFromDecision(input: {
   };
 }
 
+// The SDK forwards these at runtime without typing them. Either one marks an ask that
+// no stored grant may answer: the CLI's own session rule would not answer it either.
+function askNeedsPerson(callbackOptions: Parameters<CanUseTool>[2]): boolean {
+  const untyped = callbackOptions as Parameters<CanUseTool>[2] & {
+    readonly requiresUserInteraction?: boolean;
+    readonly decisionReasonType?: string;
+  };
+  return untyped.requiresUserInteraction === true || untyped.decisionReasonType === "safetyCheck";
+}
+
 function wholeToolAllowRules(updates: ReadonlyArray<PermissionUpdate>): Array<string> {
   return updates.flatMap((update) =>
     update.type === "addRules" && update.behavior === "allow"
@@ -10539,7 +10549,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const mayUseStandingGrant =
             liveQuery?.permissionMode === "plan" &&
             callbackOptions.suppressAlwaysAllowRule !== true &&
-            callbackOptions.matchedAskRule === undefined;
+            callbackOptions.matchedAskRule === undefined &&
+            !askNeedsPerson(callbackOptions);
           if (mayUseStandingGrant && liveQuery.sessionAllowedTools.has(toolName)) {
             return {
               behavior: "allow",
