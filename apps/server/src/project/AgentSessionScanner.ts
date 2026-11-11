@@ -339,8 +339,8 @@ function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord)
 const CODEX_TITLE_PREAMBLE =
   /^(?:\s*(?:<(recommended_plugins|environment_context|user_instructions|INSTRUCTIONS|in-app-browser-context)(?:\s[^>]*)?>[\s\S]*?<\/\1>|# AGENTS\.md instructions\b[^\n]*))+/;
 
-// Codex prompts that open with generated context end it at the last request line
-// (its extract_prompt_request); unwrapped prompts are the user's own text.
+// Codex prompts that open with generated context end it at the request line.
+// When that line appears more than once, either side may quote it, so keep the text.
 const CODEX_CONTEXT_OPENERS = [
   "# Context from my IDE setup:",
   "# Files mentioned by the user:",
@@ -352,7 +352,8 @@ const CODEX_REQUEST_MARKER = /\n## My request for Codex:(?=\n|$)/g;
 function codexRequestText(text: string): string {
   const opening = text.trimStart();
   if (!CODEX_CONTEXT_OPENERS.some((opener) => opening.startsWith(opener))) return text;
-  const marker = Array.from(text.matchAll(CODEX_REQUEST_MARKER)).at(-1);
+  const markers = Array.from(text.matchAll(CODEX_REQUEST_MARKER));
+  const marker = markers.length === 1 ? markers[0] : undefined;
   const request = marker === undefined ? "" : text.slice(marker.index + marker[0].length).trim();
   // An attachment sent without text has an empty request; keep the turn as recorded.
   return request || text;
