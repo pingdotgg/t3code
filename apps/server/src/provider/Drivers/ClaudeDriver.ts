@@ -177,38 +177,58 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       modelCatalog,
     );
 
-    // Per-instance capabilities cache: keyed on binary + resolved HOME so
-    // account-specific probes never share auth metadata across instances.
-    // A transient miss may reuse the last account once, but its usage windows keep their age.
-    const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
+    // Per-instance capabilities cache: keyed on binary + resolved HOME + logged-in account so
+    // probes never share auth metadata across instances or across a re-login.
+    // A transient miss may reuse the same key's last probe once; its usage windows keep their age.
+    const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(
+      effectiveConfig,
+      stateDir,
+      processEnv,
+    );
+    const readCapabilitiesKey = ClaudeResetCredits.readClaudeAccountKey(accountConfigPath).pipe(
+      Effect.map((accountKey) => `${capabilitiesCacheKey}\0${accountKey}`),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+    const lastGoodCapabilities = yield* Ref.make<
+      { readonly key: string; readonly capabilities: ClaudeCapabilitiesProbe } | undefined
+    >(undefined);
     const capabilitiesProbeCache = yield* Cache.makeWith(
-      () =>
+      (key: string) =>
         probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
           Effect.flatMap((capabilities) =>
-            ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
-              Effect.map((workspaceId) => ({
-                _tag: "fresh" as const,
-                capabilities:
-                  workspaceId === undefined ? capabilities : { ...capabilities, workspaceId },
-              })),
+            Effect.all([
+              ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath),
+              readCapabilitiesKey,
+            ]).pipe(
+              Effect.map(([workspaceId, currentKey]) =>
+                // A login that landed mid-probe leaves this probe's account unknown: show it once
+                // without the new login's organization, never cache it, re-probe next check.
+                currentKey !== key
+                  ? { _tag: "raced" as const, capabilities }
+                  : {
+                      _tag: "fresh" as const,
+                      capabilities:
+                        workspaceId === undefined ? capabilities : { ...capabilities, workspaceId },
+                    },
+              ),
             ),
           ),
-          Effect.tap(({ capabilities }) => Ref.set(lastGoodCapabilities, capabilities)),
+          Effect.tap((result) =>
+            result._tag === "fresh"
+              ? Ref.set(lastGoodCapabilities, { key, capabilities: result.capabilities })
+              : Effect.void,
+          ),
           Effect.catch((error) =>
-            Ref.getAndSet(lastGoodCapabilities, undefined).pipe(
-              Effect.flatMap((capabilities) =>
-                capabilities === undefined
-                  ? Effect.fail(error)
-                  : ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
-                      Effect.flatMap((workspaceId) =>
-                        workspaceId === capabilities.workspaceId
-                          ? Effect.succeed({
-                              _tag: "fallback" as const,
-                              capabilities: withoutUsage(capabilities),
-                            })
-                          : Effect.fail(error),
-                      ),
-                    ),
+            // Re-read the account: a login can land while the failed probe was running.
+            Effect.all([Ref.getAndSet(lastGoodCapabilities, undefined), readCapabilitiesKey]).pipe(
+              Effect.flatMap(([lastGood, currentKey]) =>
+                lastGood?.key === key && currentKey === key
+                  ? Effect.succeed({
+                      _tag: "fallback" as const,
+                      capabilities: withoutUsage(lastGood.capabilities),
+                    })
+                  : Effect.fail(error),
               ),
             ),
           ),
@@ -226,12 +246,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             : Duration.zero,
       },
     );
-    const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(
-      effectiveConfig,
-      stateDir,
-      processEnv,
-    );
-    const resolveCapabilities = Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+    const resolveCapabilities = readCapabilitiesKey.pipe(
+      Effect.flatMap((key) => Cache.get(capabilitiesProbeCache, key)),
       Effect.map((result) => result.capabilities),
     );
 
