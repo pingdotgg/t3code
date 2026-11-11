@@ -3,15 +3,14 @@ title: Setup
 description: Install Alchemy and connect it to a Kubernetes cluster, whether a local cluster on your machine, any cluster in your kubeconfig, or an explicit connection for CI. Then add a registry for images built from your code.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
-import { effectVersion } from "../../../versions";
+import PackageManagers from "../../../components/PackageManagers.astro";
 
-export const pkgs = `"alchemy@latest" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+export const pkgs = `alchemy@latest @alchemy.run/kubernetes@latest effect @effect/platform-bun @effect/platform-node`;
 
 Alchemy deploys to any Kubernetes cluster whose API server it can
 reach. That includes a cluster on your machine, GKE, AKS, EKS,
 DigitalOcean, k3s, or an on-prem fleet. This page covers what you
-need before the first deploy. You need the alchemy package, a
+need before the first deploy. You need the `alchemy` and `@alchemy.run/kubernetes` packages, a
 cluster to deploy to, a registry for images built from your code,
 and permission to manage objects in the cluster.
 
@@ -32,37 +31,11 @@ and permission to manage objects in the cluster.
 
 ## Create a project directory
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="mkdir my-cluster && cd my-cluster && bun init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="mkdir my-cluster && cd my-cluster && npm init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="mkdir my-cluster && cd my-cluster && pnpm init" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="mkdir my-cluster && cd my-cluster && yarn init -y" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers init dir="my-cluster" />
 
 ## Install
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${pkgs}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={pkgs} />
 
 ## Add the providers
 
@@ -72,7 +45,7 @@ Every Stack that uses Kubernetes resources needs
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Kubernetes from "alchemy/Kubernetes";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(

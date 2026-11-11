@@ -1,7 +1,7 @@
-import * as Playwright from "@alchemy.run/cloudflare-test-tools/e2e/Playwright";
-import { expect, test } from "@playwright/test";
 import * as NodeFs from "node:fs";
 import * as NodePath from "node:path";
+import * as Playwright from "@alchemy.run/cloudflare-test-tools/e2e/Playwright";
+import { expect, test } from "@playwright/test";
 import { greeting, LIB_VERSION } from "../lib/src/greeting.ts";
 
 const FIXTURE_ROOT = NodePath.join(import.meta.dirname, "..");
@@ -12,10 +12,7 @@ for (const method of Playwright.SERVER_METHODS) {
   test.describe(method, () => {
     const it = Playwright.make(method);
 
-    it("renders SSR content imported across the workspace boundary", async ({
-      page,
-      server,
-    }) => {
+    it("renders SSR content imported across the workspace boundary", async ({ page, server }) => {
       const response = await page.goto(server.url.toString());
       expect(response?.status()).toBe(200);
       await expect(page.locator("#greeting")).toHaveText(greeting("ssr"));
@@ -41,9 +38,7 @@ for (const method of Playwright.SERVER_METHODS) {
 test.describe("build output", () => {
   const it = Playwright.make("live");
 
-  it("records lib/ in dist/build.json externalWorkspaces", async ({
-    server,
-  }) => {
+  it("records lib/ in dist/build.json externalWorkspaces", async ({ server }) => {
     void server; // the live fixture guarantees the build ran and was persisted
     const parsed = JSON.parse(NodeFs.readFileSync(BUILD_JSON, "utf8")) as {
       externalWorkspaces?: Array<string>;
@@ -53,9 +48,7 @@ test.describe("build output", () => {
     // (framework-core stringifyBuildOutput).
     expect(parsed.externalWorkspaces ?? []).toContain(LIB_ROOT);
     // And the app root itself must NOT be classified as external.
-    expect(parsed.externalWorkspaces ?? []).not.toContain(
-      NodePath.join(FIXTURE_ROOT, "app"),
-    );
+    expect(parsed.externalWorkspaces ?? []).not.toContain(NodePath.join(FIXTURE_ROOT, "app"));
     expect(parsed.externalWorkspaces ?? []).not.toContain(FIXTURE_ROOT);
     // Sanity: the worker entry made it into the server modules.
     expect(parsed.serverModules?.length ?? 0).toBeGreaterThan(0);
