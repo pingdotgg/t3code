@@ -68,6 +68,8 @@ it("a machine chip stashed in one thread restores with its machine in another", 
     await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
   };
   await vi.waitFor(() => expect(editor.element().textContent).toContain("Deploy on"));
+  // A draft can't stash until the shell snapshot lists its project.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
   await pressStashShortcut();
   await vi.waitFor(() => expect(usePromptStashStore.getState().entries).toHaveLength(1));
 
