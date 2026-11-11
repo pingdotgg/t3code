@@ -1,7 +1,7 @@
 import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { modelPreviewCopy } from "@t3tools/client-runtime/file-preview";
 import type { ModelPreviewFormat } from "@t3tools/shared/filePreview";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
@@ -23,16 +23,24 @@ function modelViewerPageUrl(downloadUrl: string, name: string, appearance: strin
   return page.href;
 }
 
-function readUnavailableMessage(data: string): string | null {
+/** How long after the page loads the viewer has to say it is running. */
+const VIEWER_READY_TIMEOUT_MS = 10_000;
+
+const NO_VIEWER_PAGE = "This server cannot show 3D views yet.";
+
+type ViewerMessage =
+  | { readonly type: "ready" }
+  | { readonly type: "unavailable"; readonly reason: string };
+
+function readViewerMessage(data: string): ViewerMessage | null {
   try {
     const message: unknown = JSON.parse(data);
-    return typeof message === "object" &&
-      message !== null &&
-      "type" in message &&
-      message.type === "unavailable" &&
+    if (typeof message !== "object" || message === null || !("type" in message)) return null;
+    if (message.type === "ready") return { type: "ready" };
+    return message.type === "unavailable" &&
       "reason" in message &&
       typeof message.reason === "string"
-      ? message.reason
+      ? { type: "unavailable", reason: message.reason }
       : null;
   } catch {
     return null;
@@ -47,6 +55,15 @@ function ModelWebView(props: {
 }) {
   const { themeAppearance } = useAppearancePreferences();
   const [loaded, setLoaded] = useState(false);
+  const [ready, setReady] = useState(false);
+  const { onUnavailable } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- times out a viewer that never reports in
+  useEffect(() => {
+    if (!loaded || ready) return;
+    // Older servers answer this path with their own app, which never reports in.
+    const timer = setTimeout(() => onUnavailable(NO_VIEWER_PAGE), VIEWER_READY_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [loaded, ready, onUnavailable]);
   const uri =
     props.downloadUrl === null
       ? null
@@ -69,11 +86,12 @@ function ModelWebView(props: {
           }
           onLoadEnd={() => setLoaded(true)}
           onMessage={(event: WebViewMessageEvent) => {
-            const reason = readUnavailableMessage(event.nativeEvent.data);
-            if (reason !== null) props.onUnavailable(reason);
+            const message = readViewerMessage(event.nativeEvent.data);
+            if (message?.type === "ready") setReady(true);
+            else if (message?.type === "unavailable") props.onUnavailable(message.reason);
           }}
           // Servers from before the 3D view have no viewer page.
-          onHttpError={() => props.onUnavailable("This server cannot show 3D views yet.")}
+          onHttpError={() => props.onUnavailable(NO_VIEWER_PAGE)}
           onError={() => props.onUnavailable("The 3D view could not be loaded.")}
           onRenderProcessGone={() => props.onUnavailable("The 3D view stopped unexpectedly.")}
           onContentProcessDidTerminate={() =>
