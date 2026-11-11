@@ -698,21 +698,26 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
       if (!match) throw new Error("The OCW download page did not contain a course zip.");
       return onOcw(new URL(match[1]!, page)).toString();
     },
-    catch: (cause) => {
-      if (audit && !auditedAttempt)
-        void auditDownload(audit, {
-          url: source,
-          hops: auditHops,
-          status: null,
-          ...(isOcwBlockedError(cause) ? { blocked: cause.reason } : { error: String(cause) }),
-        });
-      return new CourseIngestError({
+    catch: (cause) =>
+      new CourseIngestError({
         message: `Could not find the OCW course download: ${
           isOcwBlockedError(cause) ? cause.reason : String(cause)
         }`,
-      });
-    },
-  });
+      }),
+  }).pipe(
+    Effect.tapError((cause) =>
+      audit && !auditedAttempt
+        ? Effect.promise(() =>
+            auditDownload(audit, {
+              url: source,
+              hops: auditHops,
+              status: null,
+              ...(isOcwBlockedError(cause) ? { blocked: cause.reason } : { error: String(cause) }),
+            }),
+          )
+        : Effect.void,
+    ),
+  );
 };
 
 const ingestOcw = Effect.fn("course.ingestOcw")(function* (
