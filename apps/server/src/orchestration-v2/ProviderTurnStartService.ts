@@ -1189,7 +1189,11 @@ export const layer: Layer.Layer<
               runId,
               errorTag: forked.failure._tag,
             });
-            nativeForkFailure = startFailureMessage(forked.failure);
+            nativeForkFailure = makeProviderFailure({
+              cause: forked.failure,
+              message: startFailureMessage(forked.failure),
+              class: "provider_error",
+            }).message;
           }
           const nativeForkFailed = nativeForkFailure !== undefined;
           const sourceItems = yield* ContextHandoffService.readForkHistoryItems(

@@ -1366,7 +1366,8 @@ const runForkWithFailingNativeSource = (forkFailures: number) => {
                   new ProviderAdapter.ProviderAdapterForkThreadError({
                     driver,
                     providerThreadId: sourceProviderThread.id,
-                    cause: "Session not found: native-deleted-source",
+                    cause:
+                      "Session not found: native-deleted-source; authorization=BearerSyntheticSecret",
                   }),
                 )
               : Effect.succeed({
@@ -1541,6 +1542,7 @@ it.effect("a native fork whose source session is gone starts fresh with the sour
     );
     assert.lengthOf(notices, 1);
     assert.include(notices[0], "Session not found: native-deleted-source");
+    assert.notInclude(notices[0], "BearerSyntheticSecret");
   }),
 );
 
