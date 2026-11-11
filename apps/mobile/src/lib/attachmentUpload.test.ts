@@ -321,11 +321,26 @@ describe("prepareTurnAttachments", () => {
 
   // regression: #9713 read file-backed image drafts before enabling them
   it("uploads a file-backed image from its owned copy without staging base64", async () => {
+    mocks.upload.mockImplementation(
+      async (
+        _uri: string,
+        _url: string,
+        options: { onProgress?: (event: { bytesSent: unknown; totalBytes: unknown }) => void },
+      ) => {
+        // expo-modules-jsi delivers native Int64 progress counts as BigInt.
+        options.onProgress?.({ bytesSent: BigInt(1), totalBytes: BigInt(4) });
+        return { status: 204, body: "", headers: {} };
+      },
+    );
+    const progress: Array<number> = [];
     const prepared = await prepareTurnAttachments({
       environmentId,
       attachments: [fileBackedImage],
       supportsImageUploads: true,
+      onUploadProgress: (_, value) => progress.push(value),
     });
+
+    expect(progress).toEqual([0.25]);
 
     expect(mocks.upload).toHaveBeenCalledWith(
       fileBackedImage.fileUri,
