@@ -155,7 +155,7 @@ describe("stampedEnvironmentProjectsLoading", () => {
   });
 });
 
-describe("unsentDraftResumeDue", () => {
+describe("boundNewTaskDraftKeys", () => {
   it("holds a covered route's draft before its flow writes, so a plain route above skips it", () => {
     const covered = draftRoute("route-covered", "new-task:covered");
     const plain = { key: "route-plain", name: "Thread", params: { draft: {} } };
@@ -165,6 +165,9 @@ describe("unsentDraftResumeDue", () => {
 
     expect(boundNewTaskDraftKeys(state)).toEqual(new Set(["new-task:fresh", "new-task:covered"]));
   });
+});
+
+describe("unsentDraftResumeDue", () => {
   const routeProject = { environmentId: EnvironmentId.make("env"), id: ProjectId.make("route") };
   const fallbackProject = { environmentId: EnvironmentId.make("env"), id: ProjectId.make("first") };
   const flow = { ...INITIAL_NEW_TASK_FLOW_STATE, draftKey: "new-task:fresh" };

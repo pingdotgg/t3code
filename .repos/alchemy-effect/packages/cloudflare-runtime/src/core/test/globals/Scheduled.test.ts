@@ -15,11 +15,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { TestWorker } from "../helpers/runtime.ts";
-import {
-  localRuntimeLayer,
-  poll,
-  startTestWorker,
-} from "../helpers/runtime.ts";
+import { localRuntimeLayer, poll, startTestWorker } from "../helpers/runtime.ts";
 
 // Records every `scheduled()` invocation into a module-global array, read
 // back via `GET /fires`. A `cron` of "throw" makes the handler throw so the
@@ -46,10 +42,9 @@ interface Fire {
   scheduledTime: number;
 }
 
-class ScheduledTestWorker extends Context.Service<
-  ScheduledTestWorker,
-  TestWorker
->()("test/ScheduledTestWorker") {}
+class ScheduledTestWorker extends Context.Service<ScheduledTestWorker, TestWorker>()(
+  "test/ScheduledTestWorker",
+) {}
 
 const ScheduledTestWorkerLive = Layer.effect(
   ScheduledTestWorker,
@@ -112,15 +107,25 @@ layer(ScheduledTestWorkerLive.pipe(Layer.provideMerge(localRuntimeLayer)), {
     }),
   );
 
+  // Miniflare's current path (`CorePaths.SCHEDULED`).
+  it.effect("supports Miniflare's /cdn-cgi/local/scheduled path", () =>
+    Effect.gen(function* () {
+      const worker = yield* ScheduledTestWorker;
+      const response = yield* worker.fetch("/cdn-cgi/local/scheduled?cron=local-case&time=9", {
+        method: "POST",
+      });
+      expect(response.status).toBe(200);
+      const fires = yield* worker.fetchJson<Array<Fire>>("/fires");
+      expect(fires).toContainEqual({ cron: "local-case", scheduledTime: 9 });
+    }),
+  );
+
   it.effect("supports the legacy /cdn-cgi/mf/scheduled path", () =>
     Effect.gen(function* () {
       const worker = yield* ScheduledTestWorker;
-      const response = yield* worker.fetch(
-        "/cdn-cgi/mf/scheduled?cron=legacy-case&time=7",
-        {
-          method: "POST",
-        },
-      );
+      const response = yield* worker.fetch("/cdn-cgi/mf/scheduled?cron=legacy-case&time=7", {
+        method: "POST",
+      });
       expect(response.status).toBe(200);
       const fires = yield* worker.fetchJson<Array<Fire>>("/fires");
       expect(fires).toContainEqual({ cron: "legacy-case", scheduledTime: 7 });
@@ -130,12 +135,9 @@ layer(ScheduledTestWorkerLive.pipe(Layer.provideMerge(localRuntimeLayer)), {
   it.effect("returns 500 when the scheduled handler throws", () =>
     Effect.gen(function* () {
       const worker = yield* ScheduledTestWorker;
-      const response = yield* worker.fetch(
-        "/cdn-cgi/handler/scheduled?cron=throw",
-        {
-          method: "POST",
-        },
-      );
+      const response = yield* worker.fetch("/cdn-cgi/handler/scheduled?cron=throw", {
+        method: "POST",
+      });
       expect(response.status).toBe(500);
     }),
   );
@@ -162,26 +164,17 @@ layer(localRuntimeLayer, { excludeTestServices: true })("cron timer", (it) => {
           name: "scheduled-timer-test",
           compatibilityDate: "2026-03-10",
           compatibilityFlags: [],
-          modules: [
-            { name: "main.js", type: "ESModule", content: SCHEDULED_SCRIPT },
-          ],
+          modules: [{ name: "main.js", type: "ESModule", content: SCHEDULED_SCRIPT }],
           bindings: [],
           crons: [cron],
         });
-        const fires = yield* poll<Array<Fire>>(
-          worker,
-          "/fires",
-          (f) => f.length >= 2,
-          15_000,
-        );
+        const fires = yield* poll<Array<Fire>>(worker, "/fires", (f) => f.length >= 2, 15_000);
         for (const fire of fires.slice(0, 2)) {
           expect(fire.cron).toBe(cron);
           expect(typeof fire.scheduledTime).toBe("number");
         }
         // Consecutive fires land on distinct cron matches (distinct seconds).
-        expect(
-          fires[1].scheduledTime - fires[0].scheduledTime,
-        ).toBeGreaterThanOrEqual(500);
+        expect(fires[1].scheduledTime - fires[0].scheduledTime).toBeGreaterThanOrEqual(500);
       }),
     { timeout: 30_000 },
   );
@@ -192,9 +185,7 @@ layer(localRuntimeLayer, { excludeTestServices: true })("cron timer", (it) => {
         name: "scheduled-invalid-cron",
         compatibilityDate: "2026-03-10",
         compatibilityFlags: [],
-        modules: [
-          { name: "main.js", type: "ESModule", content: SCHEDULED_SCRIPT },
-        ],
+        modules: [{ name: "main.js", type: "ESModule", content: SCHEDULED_SCRIPT }],
         bindings: [],
         crons: ["not a cron"],
       }).pipe(Effect.flip);

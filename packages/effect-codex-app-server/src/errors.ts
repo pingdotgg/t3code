@@ -109,19 +109,10 @@ export type CodexAppServerProtocolParseOperation = typeof CodexAppServerProtocol
 
 export const CodexAppServerTransportOperation = Schema.Literals([
   "read-input-stream",
+  "write-output-stream",
   "read-process-exit-status",
 ]);
 export type CodexAppServerTransportOperation = typeof CodexAppServerTransportOperation.Type;
-
-export const CodexAppServerIdentifierPurpose = Schema.Literals([
-  "provider-event",
-  "command-approval-request",
-  "file-change-approval-request",
-  "mcp-elicitation-request",
-  "app-permission-approval-request",
-  "user-input-request",
-]);
-export type CodexAppServerIdentifierPurpose = typeof CodexAppServerIdentifierPurpose.Type;
 
 export interface CodexAppServerProtocolErrorShape {
   readonly code: number;
@@ -148,13 +139,16 @@ export class CodexAppServerProcessExitedError extends Schema.TaggedError<CodexAp
   {
     code: Schema.optional(Schema.Number),
     pid: Schema.optionalKey(Schema.Int),
+    stderr: Schema.optionalKey(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message() {
-    return this.code === undefined
-      ? "Codex App Server process exited"
-      : `Codex App Server process exited with code ${this.code}`;
+    const base =
+      this.code === undefined
+        ? "Codex App Server process exited"
+        : `Codex App Server process exited with code ${this.code}`;
+    return this.stderr ? `${base}: ${this.stderr}` : base;
   }
 }
 
@@ -244,18 +238,6 @@ export class CodexAppServerTransportError extends Schema.TaggedError<CodexAppSer
   }
 }
 
-export class CodexAppServerIdentifierGenerationError extends Schema.TaggedError<CodexAppServerIdentifierGenerationError>()(
-  "CodexAppServerIdentifierGenerationError",
-  {
-    purpose: CodexAppServerIdentifierPurpose,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message() {
-    return `Failed to generate Codex App Server identifier for ${this.purpose}.`;
-  }
-}
-
 export class CodexAppServerInputStreamEndedError extends Schema.TaggedError<CodexAppServerInputStreamEndedError>()(
   "CodexAppServerInputStreamEndedError",
   {},
@@ -316,39 +298,10 @@ export class CodexAppServerRequestError extends Schema.TaggedError<CodexAppServe
     );
   }
 
-  static parseError(message = "Parse error", data?: unknown) {
-    return new CodexAppServerRequestError({
-      code: -32700,
-      errorMessage: message,
-      ...(data !== undefined ? { data } : {}),
-    });
-  }
-
-  static invalidRequest(message = "Invalid request", data?: unknown) {
-    return new CodexAppServerRequestError({
-      code: -32600,
-      errorMessage: message,
-      ...(data !== undefined ? { data } : {}),
-    });
-  }
-
   static methodNotFound(method: string) {
     return new CodexAppServerRequestError({
       code: -32601,
       errorMessage: `Method not found: ${method}`,
-    });
-  }
-
-  static invalidParams(
-    message = "Invalid params",
-    data?: unknown,
-    diagnostics: CodexAppServerRequestDiagnostics = {},
-  ) {
-    return new CodexAppServerRequestError({
-      code: -32602,
-      errorMessage: message,
-      ...(data !== undefined ? { data } : {}),
-      ...diagnostics,
     });
   }
 
@@ -421,7 +374,6 @@ export const CodexAppServerError = Schema.Union([
   CodexAppServerProcessExitedError,
   CodexAppServerProtocolParseError,
   CodexAppServerTransportError,
-  CodexAppServerIdentifierGenerationError,
   CodexAppServerInputStreamEndedError,
 ]);
 

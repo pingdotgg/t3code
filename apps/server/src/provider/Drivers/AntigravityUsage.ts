@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/provider-core/server/usage";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -28,7 +28,7 @@ export class AntigravityUsage extends Context.Service<
 >()("t3/provider/Drivers/AntigravityUsage") {}
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
@@ -69,7 +69,7 @@ const make = Effect.gen(function* () {
         host.paths.stateDir,
         instanceId,
       ).pipe(
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(Digest.Digest, digest),
         Effect.provideService(Path.Path, path),
         Effect.mapError(
           (cause) =>
