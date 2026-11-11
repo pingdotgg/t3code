@@ -1881,7 +1881,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       assert.lengthOf(context!.stagedSummary.split("\n"), files.length);
     }),
   );
-
   describe("structured errors", () => {
     it.effect("does not retain git arguments or stderr in command failures", () =>
       Effect.gen(function* () {
