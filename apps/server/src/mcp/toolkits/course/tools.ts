@@ -128,7 +128,7 @@ const CourseProblemsTool = Tool.make("course_problems", {
   .annotate(Tool.Title, "Course problems")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
-const CourseReferenceFetchTool = Tool.make("course_reference_fetch", {
+export const CourseReferenceFetchTool = Tool.make("course_reference_fetch", {
   description:
     "Fetch a public HTML or PDF solution reference. PDF results include text and readable page images for up to four requested pages.",
   parameters: Schema.Struct({
@@ -153,5 +153,5 @@ export const CourseToolkit = Toolkit.make(
   CourseUpdateTool,
   CoursePrepareTool,
   CourseProblemsTool,
-  CourseReferenceFetchTool,
 );
+export const CourseReferenceToolkit = Toolkit.make(CourseReferenceFetchTool);

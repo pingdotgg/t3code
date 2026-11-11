@@ -13,7 +13,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import { loadCaller } from "../../threadAccess.ts";
-import { CourseToolkit } from "./tools.ts";
+import { CourseReferenceToolkit, CourseToolkit } from "./tools.ts";
 
 const PREP_BRIEF = `You are a course preparation thread. Work only on the requested units for course {{courseId}} (units: {{units}}). For each unit, call course_read with courseId and its unit number. Write 2–3 likely sticking points, ranked by what the unit needs that knowledge_map_read lacks, what the learner asked before, the transcript, and common misconceptions. Write a four-question quiz with answers first. Save both with course_update using courseId. Do not message, wake, or delegate into the lesson thread; this is background preparation.{{solutionLeads}}`;
 const isCourseIngestError = Schema.is(CourseIngestError);
@@ -53,6 +53,31 @@ const getOwnedCourse = Effect.fn("course.getOwnedCourse")(function* (
   if (caller?.sideChat?.lessonThreadId === course.lessonThreadId) return course;
   return yield* courseOwnershipFailure();
 });
+const courseReferenceFetchHandler = McpToolAccess.readsAsCaller(
+  (input: {
+    readonly url: string;
+    readonly pages?: ReadonlyArray<number>;
+    readonly courseId?: string;
+  }) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const { thread } = yield* McpInvocationContext.requireThreadScope(
+        scope,
+        "course_reference_fetch",
+      );
+      const config = yield* ServerConfig.ServerConfig;
+      return yield* fetchCourseReference({
+        url: input.url,
+        ...(input.pages === undefined ? {} : { pages: input.pages }),
+        audit: {
+          stateDir: config.stateDir,
+          threadId: thread.threadId,
+          courseId: input.courseId ?? null,
+        },
+      }).pipe(Effect.mapError(fail));
+    }),
+);
+
 const handlers = {
   course_add: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
@@ -233,20 +258,8 @@ const handlers = {
         .pipe(Effect.mapError(fail));
     }),
   ),
-  course_reference_fetch: McpToolAccess.readsAsCaller((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const { thread } = yield* McpInvocationContext.requireThreadScope(
-        scope,
-        "course_reference_fetch",
-      );
-      const config = yield* ServerConfig.ServerConfig;
-      return yield* fetchCourseReference({
-        url: input.url,
-        ...(input.pages === undefined ? {} : { pages: input.pages }),
-        audit: { stateDir: config.stateDir, threadId: thread.threadId, courseId: null },
-      }).pipe(Effect.mapError(fail));
-    }),
-  ),
 } satisfies McpToolAccess.Handlers<typeof CourseToolkit.tools>;
 export const layer = McpToolAccess.toLayer(CourseToolkit, handlers);
+export const referenceLayer = McpToolAccess.toLayer(CourseReferenceToolkit, {
+  course_reference_fetch: courseReferenceFetchHandler,
+});

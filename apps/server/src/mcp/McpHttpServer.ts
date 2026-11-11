@@ -87,7 +87,11 @@ import { KnowledgeToolkit } from "./toolkits/knowledge/tools.ts";
 import * as QuizHandlers from "./toolkits/quiz/handlers.ts";
 import { QuizToolkit } from "./toolkits/quiz/tools.ts";
 import * as CourseHandlers from "./toolkits/course/handlers.ts";
-import { CourseToolkit } from "./toolkits/course/tools.ts";
+import {
+  CourseReferenceFetchTool,
+  CourseReferenceToolkit,
+  CourseToolkit,
+} from "./toolkits/course/tools.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   requestUrl(request).pipe(
@@ -651,6 +655,17 @@ interface ImageToolResult {
   readonly [key: string]: unknown;
 }
 
+interface MultiImageToolResult {
+  readonly images: ReadonlyArray<{
+    readonly type: "image";
+    readonly mimeType: "image/png";
+    readonly data: string;
+    readonly width: number;
+    readonly height: number;
+  }>;
+  readonly [key: string]: unknown;
+}
+
 /** Expose only undescribed failures' tags; remote messages may contain renderer or device output. */
 const imageToolFailure =
   <E>(toolName: string, operation: string, failureText: string | ((error: E) => string)) =>
@@ -746,18 +761,36 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
           Effect.matchCauseEffect({
             onFailure: imageToolFailure(tool.name, operation, failureText),
             onSuccess: ({ encodedResult }) => {
-              const { screenshot, ...rest } = encodedResult as ImageToolResult;
+              const result = encodedResult as ImageToolResult | MultiImageToolResult;
               const includeImage =
                 (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !==
                 false;
-              const metadata = {
-                ...rest,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
-              };
+              const metadata =
+                "images" in result
+                  ? {
+                      ...result,
+                      images: result.images.map(({ data: _data, type: _type, ...image }) => image),
+                    }
+                  : (() => {
+                      const { screenshot, ...rest } = result as ImageToolResult;
+                      return {
+                        ...rest,
+                        screenshot: {
+                          mimeType: screenshot.mimeType,
+                          width: screenshot.width,
+                          height: screenshot.height,
+                        },
+                      };
+                    })();
+              const images =
+                "images" in result
+                  ? result.images
+                  : [
+                      {
+                        data: (result as ImageToolResult).screenshot.data,
+                        mimeType: (result as ImageToolResult).screenshot.mimeType,
+                      },
+                    ];
               return Effect.succeed(
                 new McpSchema.CallToolResult({
                   isError: false,
@@ -765,13 +798,11 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
                   content: [
                     { type: "text", text: JSON.stringify(metadata) },
                     ...(includeImage
-                      ? [
-                          {
-                            type: "image" as const,
-                            data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                            mimeType: screenshot.mimeType,
-                          },
-                        ]
+                      ? images.map((image) => ({
+                          type: "image" as const,
+                          data: new Uint8Array(Buffer.from(image.data, "base64")),
+                          mimeType: image.mimeType,
+                        }))
                       : []),
                   ],
                 }),
@@ -836,6 +867,23 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
         : "HTML preview failed.",
   );
 });
+
+const registerCourseReferenceFetch = Effect.fn("McpHttpServer.registerCourseReferenceFetch")(
+  function* () {
+    const built = yield* decodeAsAdvertised(CourseReferenceToolkit);
+    yield* registerImageTool(
+      CourseReferenceFetchTool,
+      (payload) =>
+        built
+          .handle("course_reference_fetch", payload)
+          .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+      (effect) => effect,
+      "reference_fetch",
+      (error) =>
+        isOrchestratorMcpFailure(error) ? error.message : "Course reference fetch failed.",
+    );
+  },
+);
 
 /**
  * Tools that hand work to another thread's agent: they create it, message it,
@@ -1153,6 +1201,10 @@ const layerQuizToolkit = toolkitRegistration(QuizToolkit, QuizHandlers.layer);
 const layerCourseToolkit = toolkitRegistration(CourseToolkit, CourseHandlers.layer).pipe(
   Layer.provide(OrchestratorMcpService.layer),
 );
+const layerCourseReferenceToolkit = imageToolRegistration(
+  registerCourseReferenceFetch(),
+  CourseHandlers.referenceLayer,
+);
 
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
@@ -1271,6 +1323,7 @@ export const layerTools = Layer.mergeAll(
   layerKnowledgeToolkit,
   layerQuizToolkit,
   layerCourseToolkit,
+  layerCourseReferenceToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);
