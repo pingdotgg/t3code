@@ -391,7 +391,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   }, [content, primaryAction]);
   const { secondaryAction, threadTitle } = props;
   // Built from props rather than the rendered buttons so dormant rows still expose them.
-  /* oxlint-disable react/refs -- The actions close the swipeable only when a screen reader invokes them. */
+  /* oxlint-disable react/refs -- The refs are read only when a screen reader invokes an action. */
   const swipeAccessibility = useMemo<ThreadSwipeAccessibility>(() => {
     const secondary = resolveSecondaryAction({ close, onDelete, secondaryAction, threadTitle });
     const menu = secondary?.menu;
@@ -421,8 +421,11 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     ];
     return {
       accessibilityActions: entries.map(({ name, label }) => ({ name, label })),
-      onAccessibilityAction: ({ nativeEvent }) =>
-        entries.find((entry) => entry.name === nativeEvent.actionName)?.run(),
+      onAccessibilityAction: ({ nativeEvent }) => {
+        // The dismissing row ignores pointers, but screen-reader actions bypass pointerEvents.
+        if (dismissalRef.current) return;
+        entries.find((entry) => entry.name === nativeEvent.actionName)?.run();
+      },
     };
   }, [
     close,

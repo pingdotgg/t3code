@@ -79,6 +79,7 @@ vi.mock("../../components/ui/Menu", () => ({
   Menu: ({ children }: { readonly children?: ReactNode }) => children,
 }));
 
+import { withThreadDismissal } from "./thread-dismissal";
 import { ThreadSwipeable } from "./thread-swipe-actions";
 
 type AccessibilityAction = { readonly name: string; readonly label?: string };
@@ -159,6 +160,14 @@ it("exposes the swipe actions to screen readers as row accessibility actions", (
   expect(row.onSettle).toHaveBeenCalledTimes(1);
   expect(row.onSnooze).toHaveBeenCalledTimes(1);
   expect(row.onSnooze).toHaveBeenCalledWith({ nativeEvent: { event: "snooze:next-week" } });
+
+  act(() => {
+    void withThreadDismissal("thread-1", () => Promise.resolve(true), Boolean);
+  });
+  act(() =>
+    swipeAccessibility!.onAccessibilityAction({ nativeEvent: { actionName: settle!.name } }),
+  );
+  expect(row.onSettle, "a dismissing row ignores screen-reader actions").toHaveBeenCalledTimes(1);
 });
 
 it("hides the swipe buttons behind a closed row from screen readers", () => {
