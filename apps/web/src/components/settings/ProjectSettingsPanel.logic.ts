@@ -1,5 +1,9 @@
 import type { ProjectIconOverride } from "@t3tools/contracts";
 
+import type {
+  SidebarProjectGroupMember,
+  SidebarProjectSnapshot,
+} from "../../sidebarProjectGrouping";
 import type { Project } from "../../types";
 
 export const SCRATCH_PROJECT_TITLE = "No project";
@@ -8,6 +12,17 @@ const SCRATCH_PROJECT_ICON = {
   name: "message-square-dashed",
   color: "gray",
 } as const satisfies ProjectIconOverride;
+
+export function scopeProjectSettingsGroup(
+  group: SidebarProjectSnapshot,
+  members: readonly SidebarProjectGroupMember[],
+): SidebarProjectSnapshot {
+  const representative =
+    members.find(
+      (member) => member.environmentId === group.environmentId && member.id === group.id,
+    ) ?? members[0]!;
+  return { ...group, ...representative, memberProjects: members };
+}
 
 export function projectGroupTitleNeedsUpdate(
   memberTitles: ReadonlyArray<string>,
