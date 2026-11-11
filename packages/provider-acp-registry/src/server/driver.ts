@@ -35,7 +35,10 @@ import {
   type ProviderInstance,
   type ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
-import { providerModelsFromSettings } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  providerModelsFromSettings,
+  providerProbeEnvironment,
+} from "@t3tools/provider-core/server/snapshotProbe";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -84,6 +87,7 @@ const makeUnsupportedTextGeneration = (): ProviderTextGeneration => {
     generateBranchName: () => unsupported("generateBranchName"),
     generateThreadTitle: () => unsupported("generateThreadTitle"),
     generateReviewGuide: () => unsupported("generateReviewGuide"),
+    generateTranscriptionPostProcessing: () => unsupported("generateTranscriptionPostProcessing"),
   };
 };
 
@@ -415,7 +419,7 @@ export const checkAcpRegistryProviderStatus = Effect.fn("AcpRegistryDriver.check
         instanceId: input.instanceId,
         settings: input.settings,
         cwd: input.cwd,
-        environment: input.environment,
+        environment: providerProbeEnvironment(input.environment),
       }),
     );
     return Result.isFailure(probed)

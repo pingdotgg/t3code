@@ -344,6 +344,11 @@ interface WeightedSearchField {
 interface SearchFieldsMatch {
   /** Roughly 0.3 (inside a word) to 1.5 (exact title). */
   readonly quality: number;
+  /**
+   * Every non-filler token has three or more characters and matched a whole word at full
+   * weight, before phrase bonuses. Optional filler words don't count either way.
+   */
+  readonly wholeWords: boolean;
   /** Every token matched at a word start, without a typo. */
   readonly strong: boolean;
   /** Source ranges matched in the first field, for highlighting. */
@@ -407,6 +412,7 @@ function matchSearchFields(
   const primaryRanges: SearchRange[] = [];
   let total = 0;
   let counted = 0;
+  let notWhole = false;
   let strong = true;
   for (const token of tokens) {
     let best = 0;
@@ -433,6 +439,9 @@ function matchSearchFields(
     if (bestPrimary) primaryRanges.push(...(bestPrimary.letters ?? [bestPrimary]));
     total += best;
     counted += 1;
+    // Optional filler never decides the whole-word tier; a query of only filler never earns it.
+    if (FILLER_WORDS.has(token)) notWhole ||= !fillerOptional;
+    else notWhole ||= token.length < PICK_PREFIX_MIN_LENGTH || best < WHOLE_WORD;
   }
   let quality = total / counted;
   if (primary) {
@@ -441,6 +450,7 @@ function matchSearchFields(
   }
   return {
     quality,
+    wholeWords: !notWhole,
     strong,
     primaryRanges: mergeRanges(primaryRanges),
   };
@@ -535,6 +545,7 @@ function findMessageToken(
   text: string,
   folded: string,
   token: string,
+  firstOnly: boolean,
 ): { readonly at: ReadonlyArray<number>; readonly quality: number } | null {
   let quality = 0;
   let at: number[] = [];
@@ -559,7 +570,8 @@ function findMessageToken(
     if (found > quality) {
       quality = found;
       at = [index];
-    } else if (found === quality) {
+      if (firstOnly && quality === 1) return { at, quality };
+    } else if (!firstOnly && found === quality) {
       at.push(index);
     }
   }
@@ -611,10 +623,15 @@ export function messageMatcher(query: string): (text: string) => MessageMatch | 
     let quality = 1;
     const positions: Array<ReadonlyArray<number>> = [];
     for (const { token, folded: foldedToken, nonAscii, mustStartWord, grades } of tokens) {
-      let found = findMessageToken(text, plain, token);
+      let found = findMessageToken(text, plain, token, tokens.length === 1);
       // Accents typed or left out: "cafe" finds "Café", also after "cafeteria".
       if (found?.quality !== 1 && foldedToken.length > 0 && (nonAscii || NON_ASCII.test(text))) {
-        found = findMessageToken(text, (folded ??= foldInPlace(text)), foldedToken);
+        found = findMessageToken(
+          text,
+          (folded ??= foldInPlace(text)),
+          foldedToken,
+          tokens.length === 1,
+        );
       }
       if (found === null) return null;
       if (found.quality === MID_WORD && mustStartWord) return null;
@@ -844,7 +861,7 @@ function matchReference(
   };
   return (thread.id && matches(thread.id)) ||
     thread.pullRequests?.some((pullRequest) => pullRequest.references?.some(matches))
-    ? { quality: 0.6, strong: true, primaryRanges: [] }
+    ? { quality: 0.6, wholeWords: false, strong: true, primaryRanges: [] }
     : null;
 }
 
@@ -881,6 +898,7 @@ export interface ThreadSearchMatch {
   readonly score: number;
   /** Match quality alone; see `rankSearchGroups`. */
   readonly quality: number;
+  readonly wholeWords: boolean;
   /** Every token matched at a word start; see `rankSearchGroups`. */
   readonly strong: boolean;
   /** Matched ranges in the title. */
@@ -1036,6 +1054,7 @@ export function scoreThreadSearch(
   return {
     score: match.quality * threadUsageBoost(thread, now),
     quality: match.quality,
+    wholeWords: match.wholeWords,
     // A thread's whole title never lifts its group over a command or project
     // of that name: every new thread is titled "New thread" for a while.
     groupQuality: Math.min(match.quality, WHOLE_NAME - 0.01),
@@ -1139,6 +1158,7 @@ export function rankSearchGroups<
     readonly pickedAt?: number;
     readonly pickedExactly?: boolean;
     readonly groupQuality?: number;
+    readonly wholeWords?: boolean;
   },
 >(
   groups: ReadonlyArray<{ readonly group: G; readonly items: ReadonlyArray<T> }>,
@@ -1166,12 +1186,15 @@ export function rankSearchGroups<
       // A longer-query pick must not pass a whole-name match for the current query.
       const wordMatch = (match: M) => Math.min(matchClass(match.quality), 2);
       const exactPickAt = (match: M) => (match.pickedExactly ? (match.pickedAt ?? 0) : 0);
+      // Use reorders whole words or prefixes among themselves, never a prefix above a whole word.
+      const wholeWord = (match: M) => Number(match.wholeWords ?? match.quality >= WHOLE_WORD);
       const sorted = [...items].sort(
         (left, right) =>
           wordMatch(right.match) - wordMatch(left.match) ||
           exactPickAt(right.match) - exactPickAt(left.match) ||
           matchClass(right.match.quality) - matchClass(left.match.quality) ||
           (right.match.pickedAt ?? 0) - (left.match.pickedAt ?? 0) ||
+          wholeWord(right.match) - wholeWord(left.match) ||
           right.match.score - left.match.score,
       );
       const best = Math.max(
