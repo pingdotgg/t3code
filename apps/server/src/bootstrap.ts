@@ -104,7 +104,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
 
   const stream = yield* makeBootstrapInputStream(fd);
 
-  // Allow cold reads to complete before the desktop supervisor retries startup.
+  // Covers slow cold starts while staying well under the desktop readiness timeout.
   const timeoutMs = options?.timeoutMs ?? 30_000;
 
   return yield* Effect.callback<
