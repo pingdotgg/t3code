@@ -3,93 +3,101 @@ package expo.modules.t3reviewdiff
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.views.ViewDefinitionBuilder
 
 class T3ReviewDiffModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("T3ReviewDiffSurface")
 
     View(T3ReviewDiffView::class) {
-      Prop("tokensResetKey") { view: T3ReviewDiffView, tokensResetKey: String ->
-        view.setTokensResetKey(tokensResetKey)
-      }
-      Prop("contentResetKey") { view: T3ReviewDiffView, contentResetKey: String ->
-        view.setContentResetKey(contentResetKey)
-      }
-      Prop("collapsedFileIdsJson") { view: T3ReviewDiffView, collapsedFileIdsJson: String ->
-        view.setCollapsedFileIdsJson(collapsedFileIdsJson)
-      }
-      Prop("viewedFileIdsJson") { view: T3ReviewDiffView, viewedFileIdsJson: String ->
-        view.setViewedFileIdsJson(viewedFileIdsJson)
-      }
-      Prop("selectedRowIdsJson") { view: T3ReviewDiffView, selectedRowIdsJson: String ->
-        view.setSelectedRowIdsJson(selectedRowIdsJson)
-      }
-      Prop("collapsedCommentIdsJson") { view: T3ReviewDiffView, collapsedCommentIdsJson: String ->
-        view.setCollapsedCommentIdsJson(collapsedCommentIdsJson)
-      }
-      Prop("appearanceScheme") { view: T3ReviewDiffView, appearanceScheme: String ->
-        view.setAppearanceScheme(appearanceScheme)
-      }
-      Prop("themeJson") { view: T3ReviewDiffView, themeJson: String ->
-        view.setThemeJson(themeJson)
-      }
-      Prop("styleJson") { view: T3ReviewDiffView, styleJson: String ->
-        view.setStyleJson(styleJson)
-      }
-      Prop("rowHeight") { view: T3ReviewDiffView, rowHeight: Double ->
-        view.setRowHeight(rowHeight.toFloat())
-      }
-      // Accept the shared prop while deriving Android's scroll range from the drawn text.
-      Prop("contentWidth") { _: T3ReviewDiffView, _: Double -> }
-      Prop("contentInsetBottom") { view: T3ReviewDiffView, value: Double ->
-        view.setContentInsetBottom(value.toFloat())
-      }
-      Prop("scrollEnabled") { view: T3ReviewDiffView, enabled: Boolean ->
-        view.setScrollEnabled(enabled)
-      }
-      Prop("initialRowIndex") { view: T3ReviewDiffView, initialRowIndex: Double ->
-        view.setInitialRowIndex(initialRowIndex)
-      }
-      Prop("initialRowScrollKey") { view: T3ReviewDiffView, initialRowScrollKey: String ->
-        view.setInitialRowScrollKey(initialRowScrollKey)
-      }
-      Prop("initialFileId") { view: T3ReviewDiffView, fileId: String ->
-        view.setInitialFileId(fileId)
-      }
+      defineProps()
+      defineActions()
+    }
+  }
 
-      Events(
-        "onDebug",
-        "onVisibleFileChange",
-        "onToggleFile",
-        "onToggleViewedFile",
-        "onPressLine",
-        "onToggleComment",
-      )
+  private fun ViewDefinitionBuilder<T3ReviewDiffView>.defineProps() {
+    Prop("tokensResetKey") { view: T3ReviewDiffView, tokensResetKey: String ->
+      view.setTokensResetKey(tokensResetKey)
+    }
+    Prop("contentResetKey") { view: T3ReviewDiffView, contentResetKey: String ->
+      view.setContentResetKey(contentResetKey)
+    }
+    Prop("collapsedFileIdsJson") { view: T3ReviewDiffView, collapsedFileIdsJson: String ->
+      view.setCollapsedFileIdsJson(collapsedFileIdsJson)
+    }
+    Prop("viewedFileIdsJson") { view: T3ReviewDiffView, viewedFileIdsJson: String ->
+      view.setViewedFileIdsJson(viewedFileIdsJson)
+    }
+    Prop("selectedRowIdsJson") { view: T3ReviewDiffView, selectedRowIdsJson: String ->
+      view.setSelectedRowIdsJson(selectedRowIdsJson)
+    }
+    Prop("collapsedCommentIdsJson") { view: T3ReviewDiffView, collapsedCommentIdsJson: String ->
+      view.setCollapsedCommentIdsJson(collapsedCommentIdsJson)
+    }
+    Prop("appearanceScheme") { view: T3ReviewDiffView, appearanceScheme: String ->
+      view.setAppearanceScheme(appearanceScheme)
+    }
+    Prop("themeJson") { view: T3ReviewDiffView, themeJson: String ->
+      view.setThemeJson(themeJson)
+    }
+    Prop("styleJson") { view: T3ReviewDiffView, styleJson: String ->
+      view.setStyleJson(styleJson)
+    }
+    Prop("rowHeight") { view: T3ReviewDiffView, rowHeight: Double ->
+      view.setRowHeight(rowHeight.toFloat())
+    }
+    // Accept the shared prop while deriving Android's scroll range from the drawn text.
+    Prop("contentWidth") { _: T3ReviewDiffView, _: Double -> }
+    Prop("contentInsetBottom") { view: T3ReviewDiffView, value: Double ->
+      view.setContentInsetBottom(value.toFloat())
+    }
+    Prop("scrollEnabled") { view: T3ReviewDiffView, enabled: Boolean ->
+      view.setScrollEnabled(enabled)
+    }
+    Prop("initialRowIndex") { view: T3ReviewDiffView, initialRowIndex: Double ->
+      view.setInitialRowIndex(initialRowIndex)
+    }
+    Prop("initialRowScrollKey") { view: T3ReviewDiffView, initialRowScrollKey: String ->
+      view.setInitialRowScrollKey(initialRowScrollKey)
+    }
+    Prop("initialFileId") { view: T3ReviewDiffView, fileId: String ->
+      view.setInitialFileId(fileId)
+    }
+  }
 
-      AsyncFunction("scrollToFile") { view: T3ReviewDiffView, fileId: String, animated: Boolean ->
-        view.scrollToFile(fileId, animated)
-      }
-      AsyncFunction("scrollToTop") { view: T3ReviewDiffView, animated: Boolean ->
-        view.scrollToTop(animated)
-      }
-      AsyncFunction("setRowsJson") { view: T3ReviewDiffView, rowsJson: String, resetKey: String ->
-        view.setContentResetKey(resetKey)
-        view.setRowsJson(rowsJson)
-      }
-      AsyncFunction("setTokensJson") { view: T3ReviewDiffView, tokensJson: String ->
-        view.setTokensJson(tokensJson)
-      }
-      AsyncFunction("setTokensPatchJson") {
-          view: T3ReviewDiffView,
-          tokensPatchJson: String,
-          promise: Promise
-        ->
-        view.setTokensPatchJson(tokensPatchJson) { accepted -> promise.resolve(accepted) }
-      }
+  private fun ViewDefinitionBuilder<T3ReviewDiffView>.defineActions() {
+    Events(
+      "onDebug",
+      "onVisibleFileChange",
+      "onToggleFile",
+      "onToggleViewedFile",
+      "onPressLine",
+      "onToggleComment",
+    )
 
-      OnViewDestroys { view: T3ReviewDiffView ->
-        view.cleanup()
-      }
+    AsyncFunction("scrollToFile") { view: T3ReviewDiffView, fileId: String, animated: Boolean ->
+      view.scrollToFile(fileId, animated)
+    }
+    AsyncFunction("scrollToTop") { view: T3ReviewDiffView, animated: Boolean ->
+      view.scrollToTop(animated)
+    }
+    AsyncFunction("setRowsJson") { view: T3ReviewDiffView, rowsJson: String, resetKey: String ->
+      view.setContentResetKey(resetKey)
+      view.setRowsJson(rowsJson)
+    }
+    AsyncFunction("setTokensJson") { view: T3ReviewDiffView, tokensJson: String ->
+      view.setTokensJson(tokensJson)
+    }
+    AsyncFunction("setTokensPatchJson") {
+        view: T3ReviewDiffView,
+        tokensPatchJson: String,
+        promise: Promise
+      ->
+      view.setTokensPatchJson(tokensPatchJson) { accepted -> promise.resolve(accepted) }
+    }
+
+    OnViewDestroys { view: T3ReviewDiffView ->
+      view.cleanup()
     }
   }
 }
