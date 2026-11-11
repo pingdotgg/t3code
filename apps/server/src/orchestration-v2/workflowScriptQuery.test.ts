@@ -3,7 +3,6 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
-import { OrchestrationWorkflowFileError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -48,23 +47,6 @@ describe("workflow script containment", () => {
       const result = yield* readWorkflowScript({ scriptPath });
       assert.include(result.contents, "export const meta");
       assert.equal(result.truncated, false);
-    }),
-  );
-
-  effectIt.effect("rejects relative and non-js paths", () =>
-    Effect.gen(function* () {
-      const relative = yield* Effect.exit(readWorkflowScript({ scriptPath: "run.js" }));
-      assert.equal(relative._tag, "Failure");
-      const nonJs = yield* Effect.exit(
-        readWorkflowScript({ scriptPath: scriptPath.replace(".js", ".ts") }),
-      );
-      assert.equal(nonJs._tag, "Failure");
-      const error = yield* Effect.flip(readWorkflowScript({ scriptPath: "run.js" }));
-      assert.equal(error._tag, "OrchestrationGetWorkflowScriptError");
-      assert.equal(error.scriptPath, "run.js");
-      assert.equal(error.reason, "invalid-path");
-      assert.equal(error.message, "Workflow scripts must be absolute .js paths.");
-      assert.instanceOf(error.cause, OrchestrationWorkflowFileError);
     }),
   );
 

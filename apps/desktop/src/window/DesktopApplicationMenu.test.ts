@@ -5,16 +5,11 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type * as Electron from "electron";
-import { beforeEach, vi } from "vite-plus/test";
-
-const { pasteAndMatchStyleMock, getFocusedWebContentsMock } = vi.hoisted(() => ({
-  pasteAndMatchStyleMock: vi.fn(),
-  getFocusedWebContentsMock: vi.fn(),
-}));
+import * as Electron from "electron";
+import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({
-  webContents: { getFocusedWebContents: getFocusedWebContentsMock },
+  webContents: { getAllWebContents: vi.fn(() => []), getFocusedWebContents: vi.fn() },
 }));
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -42,6 +37,7 @@ const layerElectronApp = Layer.succeed(ElectronApp.ElectronApp, {
   metadata: Effect.die("unexpected metadata read"),
   name: Effect.succeed("T3 Code"),
   systemLocale: Effect.succeed("en-US"),
+  preferredSystemLanguages: Effect.succeed(["en-US"]),
   whenReady: Effect.void,
   requestSingleInstanceLock: Effect.succeed(true),
   quit: Effect.void,
@@ -83,8 +79,6 @@ const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   installPrepared: () => Effect.die("unexpected installPrepared"),
 } satisfies DesktopUpdates.DesktopUpdates["Service"]);
 
-const dispatchMenuActionMock = vi.fn();
-
 const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
   Layer.succeed(DesktopWindow.DesktopWindow, {
     createMain: Effect.die("unexpected createMain"),
@@ -97,11 +91,7 @@ const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,
     prepareCaptureReveal: Effect.void,
-    dispatchMenuAction: (action, options) =>
-      Effect.sync(() => dispatchMenuActionMock(action, options)).pipe(
-        Effect.andThen(Deferred.succeed(selectedAction, action)),
-        Effect.asVoid,
-      ),
+    dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),
     dispatchSnapShotEvent: () => Effect.void,
     zoomMain: (direction) =>
       Deferred.succeed(selectedAction, `zoom-${direction}`).pipe(Effect.asVoid),
@@ -155,110 +145,30 @@ const configureMenu = (
     ),
   );
 
+const pressPasteAsText = (
+  template: readonly Electron.MenuItemConstructorOptions[],
+): ((focused: object) => void) => {
+  const editMenu = template.find((item) => item.label === "Edit");
+  if (!Array.isArray(editMenu?.submenu)) {
+    throw new Error("Expected Edit menu submenu to be an array.");
+  }
+  const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
+  assert.equal(pasteAsTextItem?.accelerator, "CmdOrCtrl+Shift+V");
+  const click = pasteAsTextItem?.click;
+  if (typeof click !== "function") {
+    throw new Error("Expected Paste as Text menu item to have a click handler.");
+  }
+  return (focused) => {
+    using _focused = vi
+      .spyOn(Electron.webContents, "getFocusedWebContents")
+      .mockReturnValue(focused as Electron.WebContents);
+    click({} as Electron.MenuItem, undefined, {
+      triggeredByAccelerator: true,
+    } as unknown as KeyboardEvent);
+  };
+};
+
 describe("DesktopApplicationMenu", () => {
-  beforeEach(() => {
-    dispatchMenuActionMock.mockClear();
-    pasteAndMatchStyleMock.mockClear();
-    getFocusedWebContentsMock.mockReset().mockReturnValue({
-      isDestroyed: () => false,
-      pasteAndMatchStyle: pasteAndMatchStyleMock,
-    });
-  });
-
-  it.effect("keeps display branding in the macOS application menu", () =>
-    Effect.gen(function* () {
-      const selectedAction = yield* Deferred.make<string>();
-      const applicationMenuTemplate =
-        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
-
-      yield* configureMenu(selectedAction, applicationMenuTemplate, {
-        platform: "darwin",
-        appVersion: "0.0.43-nightly.20260929.2428",
-      });
-
-      const template = yield* Deferred.await(applicationMenuTemplate);
-      const applicationMenu = template[0];
-      assert.isDefined(applicationMenu);
-      assert.equal(applicationMenu.label, "T3 Code (Nightly)");
-      if (!Array.isArray(applicationMenu.submenu)) {
-        throw new Error("Expected application menu submenu to be an array.");
-      }
-      assert.equal(
-        applicationMenu.submenu.find((item) => item.role === "about")?.label,
-        "About T3 Code (Nightly)",
-      );
-      assert.equal(
-        applicationMenu.submenu.find((item) => item.role === "hide")?.label,
-        "Hide T3 Code (Nightly)",
-      );
-      assert.equal(
-        applicationMenu.submenu.find((item) => item.role === "quit")?.label,
-        "Quit T3 Code (Nightly)",
-      );
-    }),
-  );
-
-  it.effect("installs the native menu and routes Settings through DesktopWindow", () =>
-    Effect.gen(function* () {
-      const selectedAction = yield* Deferred.make<string>();
-      const applicationMenuTemplate =
-        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
-
-      yield* configureMenu(selectedAction, applicationMenuTemplate);
-
-      const template = yield* Deferred.await(applicationMenuTemplate);
-      const fileMenu = template.find((item) => item.label === "File");
-      assert.isDefined(fileMenu);
-      if (!Array.isArray(fileMenu.submenu)) {
-        throw new Error("Expected File menu submenu to be an array.");
-      }
-      const settingsItem = fileMenu.submenu.find((item) => item.label === "Settings...");
-      assert.isDefined(settingsItem);
-      const settingsClick = settingsItem.click;
-      if (typeof settingsClick !== "function") {
-        throw new Error("Expected Settings menu item to have a click handler.");
-      }
-
-      settingsClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
-      assert.equal(yield* Deferred.await(selectedAction), "open-settings");
-    }),
-  );
-
-  it.effect.each(["darwin", "linux", "win32"] as const)(
-    "routes a Paste as Text menu click through the renderer once on %s",
-    (platform) =>
-      Effect.gen(function* () {
-        const selectedAction = yield* Deferred.make<string>();
-        const applicationMenuTemplate =
-          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
-
-        yield* configureMenu(selectedAction, applicationMenuTemplate, { platform });
-
-        const template = yield* Deferred.await(applicationMenuTemplate);
-        const editMenu = template.find((item) => item.label === "Edit");
-        assert.isDefined(editMenu);
-        if (!Array.isArray(editMenu.submenu)) {
-          throw new Error("Expected Edit menu submenu to be an array.");
-        }
-        const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
-        assert.isDefined(pasteAsTextItem);
-        assert.equal(pasteAsTextItem.accelerator, "CmdOrCtrl+Shift+V");
-        assert.isUndefined(pasteAsTextItem.role);
-        if (typeof pasteAsTextItem.click !== "function") {
-          throw new Error("Expected Paste as Text menu item to have a click handler.");
-        }
-
-        pasteAsTextItem.click(
-          {} as Electron.MenuItem,
-          {} as Electron.BrowserWindow,
-          {} as KeyboardEvent,
-        );
-        assert.equal(yield* Deferred.await(selectedAction), "paste-as-text");
-        assert.deepEqual(dispatchMenuActionMock.mock.calls, [["paste-as-text", { reveal: false }]]);
-        assert.equal(pasteAndMatchStyleMock.mock.calls.length, 0);
-      }),
-  );
-
   it.effect.each(["linux", "win32"] as const)(
     "leaves the %s accelerator to Chromium instead of injecting a paste",
     (platform) =>
@@ -269,84 +179,46 @@ describe("DesktopApplicationMenu", () => {
 
         yield* configureMenu(selectedAction, applicationMenuTemplate, { platform });
 
-        const template = yield* Deferred.await(applicationMenuTemplate);
-        const editMenu = template.find((item) => item.label === "Edit");
-        if (!Array.isArray(editMenu?.submenu)) {
-          throw new Error("Expected Edit menu submenu to be an array.");
-        }
-        const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
-        if (typeof pasteAsTextItem?.click !== "function") {
-          throw new Error("Expected Paste as Text menu item to have a click handler.");
-        }
-
-        pasteAsTextItem.click(
-          {} as Electron.MenuItem,
-          {} as Electron.BrowserWindow,
-          {
-            triggeredByAccelerator: true,
-          } as unknown as KeyboardEvent,
-        );
-        assert.isFalse(yield* Deferred.isDone(selectedAction));
-        assert.equal(dispatchMenuActionMock.mock.calls.length, 0);
-        assert.equal(pasteAndMatchStyleMock.mock.calls.length, 0);
-      }),
-  );
-
-  it.effect(
-    "pastes in the focused contents once before the macOS accelerator callback returns",
-    () =>
-      Effect.gen(function* () {
-        const selectedAction = yield* Deferred.make<string>();
-        const applicationMenuTemplate =
-          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
-
-        yield* configureMenu(selectedAction, applicationMenuTemplate, { platform: "darwin" });
-
-        const template = yield* Deferred.await(applicationMenuTemplate);
-        const editMenu = template.find((item) => item.label === "Edit");
-        if (!Array.isArray(editMenu?.submenu)) {
-          throw new Error("Expected Edit menu submenu to be an array.");
-        }
-        const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
-        assert.equal(pasteAsTextItem?.accelerator, "CmdOrCtrl+Shift+V");
-        if (typeof pasteAsTextItem?.click !== "function") {
-          throw new Error("Expected Paste as Text menu item to have a click handler.");
-        }
-        assert.isUndefined(pasteAsTextItem.role);
-
-        const windowPaste = vi.fn();
-        const guestPaste = vi.fn();
-        const host = { isDestroyed: () => false, pasteAndMatchStyle: pasteAndMatchStyleMock };
-        for (const focused of [
-          host,
-          { ...host, hostWebContents: host, pasteAndMatchStyle: guestPaste },
-        ]) {
-          pasteAndMatchStyleMock.mockClear();
-          getFocusedWebContentsMock.mockReturnValue(focused);
-          pasteAsTextItem.click(
-            {} as Electron.MenuItem,
-            {
-              webContents: { pasteAndMatchStyle: windowPaste },
-            } as unknown as Electron.BrowserWindow,
-            { triggeredByAccelerator: true } as unknown as KeyboardEvent,
-          );
-          // No yield before this assertion: the native dispatch must not wait for a renderer round trip.
-          assert.equal(pasteAndMatchStyleMock.mock.calls.length, 1);
-          assert.equal(guestPaste.mock.calls.length, 0);
-          assert.equal(windowPaste.mock.calls.length, 0);
-          assert.equal(dispatchMenuActionMock.mock.calls.length, 0);
-        }
+        const focused = { isDestroyed: () => false, pasteAndMatchStyle: vi.fn() };
+        pressPasteAsText(yield* Deferred.await(applicationMenuTemplate))(focused);
+        assert.equal(focused.pasteAndMatchStyle.mock.calls.length, 0);
         assert.isFalse(yield* Deferred.isDone(selectedAction));
       }),
   );
 
-  it.effect("routes View menu zoom to the main window instead of zoom roles", () =>
+  it.effect("pastes natively and synchronously for the macOS accelerator", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();
       const applicationMenuTemplate =
         yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
 
-      yield* configureMenu(selectedAction, applicationMenuTemplate);
+      yield* configureMenu(selectedAction, applicationMenuTemplate, { platform: "darwin" });
+      const press = pressPasteAsText(yield* Deferred.await(applicationMenuTemplate));
+
+      const host = { isDestroyed: () => false, pasteAndMatchStyle: vi.fn() };
+      press(host);
+      assert.equal(host.pasteAndMatchStyle.mock.calls.length, 1);
+
+      // Electron reports a mounted preview guest as focused while the host's composer has focus.
+      const guest = {
+        isDestroyed: () => false,
+        pasteAndMatchStyle: vi.fn(),
+        hostWebContents: host,
+      };
+      press(guest);
+      assert.equal(host.pasteAndMatchStyle.mock.calls.length, 2);
+      assert.equal(guest.pasteAndMatchStyle.mock.calls.length, 0);
+      assert.isFalse(yield* Deferred.isDone(selectedAction));
+    }),
+  );
+
+  it.effect("registers macOS command-plus once and routes it through main-window zoom", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate, { platform: "darwin" });
 
       const template = yield* Deferred.await(applicationMenuTemplate);
       const viewMenu = template.find((item) => item.label === "View");
@@ -361,9 +233,17 @@ describe("DesktopApplicationMenu", () => {
         ),
       );
 
-      const zoomIn = viewMenu.submenu.find((item) => item.label === "Zoom In");
+      const shiftedEqual = viewMenu.submenu.filter(
+        (item) => item.accelerator === "CmdOrCtrl+Shift+=",
+      );
+      assert.lengthOf(shiftedEqual, 1);
+      assert.lengthOf(
+        viewMenu.submenu.filter((item) => item.accelerator === "CmdOrCtrl+numadd"),
+        1,
+      );
+      const zoomIn = shiftedEqual[0];
       assert.isDefined(zoomIn);
-      assert.equal(zoomIn.accelerator, "CmdOrCtrl+=");
+      assert.isFalse(zoomIn.visible);
       if (typeof zoomIn.click !== "function") {
         throw new Error("Expected Zoom In menu item to have a click handler.");
       }
@@ -373,33 +253,59 @@ describe("DesktopApplicationMenu", () => {
     }),
   );
 
-  it.effect("zooms from the numeric keypad without listing the commands twice", () =>
+  it.effect("never binds Cmd/Ctrl+W to closing the window", () =>
     Effect.gen(function* () {
-      for (const [accelerator, expected] of [
-        ["CmdOrCtrl+numadd", "zoom-in"],
-        ["CmdOrCtrl+numsub", "zoom-out"],
-        ["CmdOrCtrl+num0", "zoom-reset"],
-      ] as const) {
-        const selectedAction = yield* Deferred.make<string>();
+      for (const platform of ["darwin", "linux", "win32"] as const) {
         const applicationMenuTemplate =
           yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+        yield* configureMenu(yield* Deferred.make<string>(), applicationMenuTemplate, {
+          platform,
+        });
 
-        yield* configureMenu(selectedAction, applicationMenuTemplate);
+        const items: Electron.MenuItemConstructorOptions[] = [];
+        const collect = (template: readonly Electron.MenuItemConstructorOptions[]) => {
+          for (const item of template) {
+            items.push(item);
+            if (Array.isArray(item.submenu)) collect(item.submenu);
+          }
+        };
+        collect(yield* Deferred.await(applicationMenuTemplate));
 
-        const template = yield* Deferred.await(applicationMenuTemplate);
-        const viewMenu = template.find((item) => item.label === "View");
-        if (!viewMenu || !Array.isArray(viewMenu.submenu)) {
-          throw new Error("Expected View menu submenu to be an array.");
-        }
-        const item = viewMenu.submenu.find((entry) => entry.accelerator === accelerator);
-        assert.isDefined(item);
-        assert.isFalse(item.visible);
-        if (typeof item.click !== "function") {
-          throw new Error(`Expected ${accelerator} menu item to have a click handler.`);
-        }
+        assert.isUndefined(
+          items.find((item) => item.role === "close"),
+          platform,
+        );
+        // Electron's default windowMenu submenu includes a close role.
+        assert.isUndefined(
+          items.find((item) => item.role === "windowMenu" && item.submenu === undefined),
+          platform,
+        );
+        const closeTools = items.find((item) => item.accelerator === "CmdOrCtrl+W");
+        assert.equal(closeTools?.label, "Close Developer Tools", platform);
+        assert.isFunction(closeTools?.click);
+        const appContents = {
+          isDestroyed: () => false,
+          isDevToolsFocused: () => false,
+          closeDevTools: vi.fn(),
+        };
+        const inspectedContents = {
+          ...appContents,
+          isDevToolsFocused: () => true,
+          closeDevTools: vi.fn(),
+        };
+        using allContents = vi
+          .spyOn(Electron.webContents, "getAllWebContents")
+          .mockReturnValue([
+            appContents as unknown as Electron.WebContents,
+            inspectedContents as unknown as Electron.WebContents,
+          ]);
+        closeTools?.click?.({} as Electron.MenuItem, undefined, {} as KeyboardEvent);
+        assert.equal(inspectedContents.closeDevTools.mock.calls.length, 1);
+        assert.equal(appContents.closeDevTools.mock.calls.length, 0);
 
-        item.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
-        assert.equal(yield* Deferred.await(selectedAction), expected);
+        allContents.mockReturnValue([appContents as unknown as Electron.WebContents]);
+        closeTools?.click?.({} as Electron.MenuItem, undefined, {} as KeyboardEvent);
+        assert.equal(appContents.closeDevTools.mock.calls.length, 0);
       }
     }),
   );

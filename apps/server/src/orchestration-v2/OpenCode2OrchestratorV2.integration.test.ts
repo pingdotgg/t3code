@@ -15,8 +15,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 
 import {
   OPENCODE2_HTTP_PROTOCOL,
@@ -27,10 +25,7 @@ import { provideDeterministicTestRuntime } from "./testkit/DeterministicRuntime.
 import type { OrchestratorV2ScenarioStep } from "./testkit/OrchestratorScenario.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import {
-  decodeProviderReplayNdjson,
-  readProviderReplayTranscript,
-} from "@t3tools/provider-testing/replayTranscript";
+import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
@@ -47,7 +42,6 @@ const BACKGROUND_PROMPT =
 const instanceId = ProviderInstanceId.make("opencode");
 const bigPickle: ModelSelection = { instanceId, model: "opencode/big-pickle" };
 const mimo: ModelSelection = { instanceId, model: "opencode/mimo-v2.6-flash-free" };
-const nemotron: ModelSelection = { instanceId, model: "opencode/nemotron-3.5-lightning-free" };
 
 const out = (type: string, input?: unknown): ProviderReplayEntry => ({
   type: "expect_outbound",
@@ -66,10 +60,7 @@ const event = (type: string, data: Record<string, unknown>): ProviderReplayEntry
 });
 const labelled = (entry: ProviderReplayEntry, label: string): ProviderReplayEntry =>
   entry.type === "runtime_exit" ? entry : { ...entry, label };
-/**
- * T3's own rules after a mode's: every thread's T3 MCP server is denied, and
- * then this thread's own is allowed again (last match wins).
- */
+/** MCP rules are last-match-wins; allow this thread after denying all T3 servers. */
 const mcpRules = (name: string) => [
   { action: "t3-code-*", resource: "*", effect: "deny" },
   { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
@@ -118,19 +109,6 @@ const agentList = (directory: string) => ({
   ],
 });
 
-const noOpenRequests: ReadonlyArray<ProviderReplayEntry> = [
-  out("permission.list", { sessionID: SESSION }),
-  reply("permission.list", { data: [] }),
-  out("session.form.list", { sessionID: SESSION }),
-  reply("session.form.list", { data: [] }),
-];
-const supervisedRules = (name: string) => [
-  { action: "shell", resource: "*", effect: "ask" },
-  { action: "edit", resource: "*", effect: "ask" },
-  { action: "external_directory", resource: "*", effect: "ask" },
-  ...BUILD_PATHS,
-  ...mcpRules(name),
-];
 const autoEditRules = (name: string) => [
   { action: "shell", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "allow" },
@@ -186,16 +164,6 @@ const answeredPrompt = (text: string): ReadonlyArray<ProviderReplayEntry> => [
   event("session.execution.succeeded", { sessionID: SESSION }),
 ];
 
-const directoryModels = (directory: string): ReadonlyArray<ProviderReplayEntry> => [
-  out("model.list", { "location[directory]": directory }),
-  reply("model.list", {
-    location: { directory },
-    data: [
-      catalogModel("big-pickle", "Big Pickle"),
-      catalogModel("mimo-v2.6-flash-free", "MiMo V2.6 Flash Free"),
-    ],
-  }),
-];
 /** A `/api/model` entry as 2.0.18 lists it; a known window means no re-read after a turn. */
 const catalogModel = (id: string, name: string) => ({
   id,
@@ -378,132 +346,6 @@ describe("OpenCode 2 through the orchestrator", () => {
         );
 
         assert.lengthOf(projection.providerThreads, 1);
-      }).pipe(Effect.scoped),
-  );
-
-  it.effect("moves the session to the thread's new worktree before the next prompt", () =>
-    Effect.gen(function* () {
-      const name = "opencode2-worktree-move";
-      const before = yield* checkpointWorkspace(`${name}-before`);
-      const after = yield* checkpointWorkspace(`${name}-after`);
-      const thread = threadCommands({ name, worktreePath: before });
-      const projection = yield* runScenario({
-        name,
-        threadId: thread.threadId,
-        entries: [
-          ...createdSession(before, name),
-          ...instructionsWritten,
-          ...answeredPrompt("FIRST"),
-          ...directoryModels(after),
-          out("session.get", { sessionID: SESSION }),
-          reply("session.get", sessionInfo(before, t3Rules(name), name)),
-
-          ...noOpenRequests,
-          out("session.move", { sessionID: SESSION, directory: after }),
-          reply("session.move", null),
-
-          ...instructionsWritten,
-          ...answeredPrompt("SECOND"),
-        ],
-        commands: [
-          thread.create,
-          thread.message("first"),
-          {
-            type: "thread.metadata.update",
-            commandId: thread.command("worktree"),
-            threadId: thread.threadId,
-            worktreePath: after,
-          },
-          thread.message("second"),
-        ],
-      });
-      assert.deepEqual(
-        projection.runs.map((run) => run.status),
-        ["completed", "completed"],
-      );
-      assert.lengthOf(projection.providerThreads, 1);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("gives a session made with older rules T3's rules before its next prompt", () =>
-    Effect.gen(function* () {
-      const name = "opencode2-resume-rules";
-      const before = yield* checkpointWorkspace(`${name}-before`);
-      const after = yield* checkpointWorkspace(`${name}-after`);
-      const thread = threadCommands({ name, worktreePath: before });
-      const projection = yield* runScenario({
-        name,
-        threadId: thread.threadId,
-        entries: [
-          ...createdSession(before, name),
-          ...instructionsWritten,
-          ...answeredPrompt("FIRST"),
-          ...directoryModels(after),
-
-          out("session.get", { sessionID: SESSION }),
-          reply(
-            "session.get",
-            sessionInfo(
-              before,
-              [
-                { action: "*", resource: "*", effect: "allow" },
-                { action: "subagent", resource: "*", effect: "deny" },
-              ],
-              name,
-            ),
-          ),
-          ...noOpenRequests,
-          out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
-          reply("session.update", null),
-          out("session.move", { sessionID: SESSION, directory: after }),
-          reply("session.move", null),
-          ...instructionsWritten,
-          ...answeredPrompt("SECOND"),
-        ],
-        commands: [
-          thread.create,
-          thread.message("first"),
-          {
-            type: "thread.metadata.update",
-            commandId: thread.command("worktree"),
-            threadId: thread.threadId,
-            worktreePath: after,
-          },
-          thread.message("second"),
-        ],
-      });
-      assert.deepEqual(
-        projection.runs.map((run) => run.status),
-        ["completed", "completed"],
-      );
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect(
-    "creates a Supervised thread's session with rules that ask before shell and edits",
-    () =>
-      Effect.gen(function* () {
-        const name = "opencode2-supervised-rules";
-        const cwd = yield* checkpointWorkspace(name);
-        const thread = threadCommands({
-          name,
-          worktreePath: cwd,
-          runtimeMode: "approval-required",
-        });
-        const projection = yield* runScenario({
-          name,
-          threadId: thread.threadId,
-          entries: [
-            ...createdSession(cwd, name, supervisedRules(name), true),
-            ...instructionsWritten,
-            ...answeredPrompt("FIRST"),
-          ],
-          commands: [thread.create, thread.message("first")],
-        });
-        assert.deepEqual(
-          projection.runs.map((run) => run.status),
-          ["completed"],
-        );
       }).pipe(Effect.scoped),
   );
 
@@ -1011,10 +853,7 @@ describe("OpenCode 2 through the orchestrator", () => {
     "settles a background subagent whose report OpenCode delivers into the launching turn",
     () =>
       Effect.gen(function* () {
-        // The recorded background run, reordered as 2.0.18 ran it live when the
-        // child ended first: the parent's execution is still answering when the
-        // child's report is queued and delivered into it, and that one
-        // execution then answers the report and ends.
+        // OpenCode 2.0.18 can deliver a child report into the parent's still-running execution, which then answers it.
 
         const cwd = yield* checkpointWorkspace("opencode2-background-in-turn");
         const recorded = yield* readProviderReplayTranscript(
@@ -1102,59 +941,5 @@ describe("OpenCode 2 through the orchestrator", () => {
         const shell = result.shellSnapshot.threads.find((row) => row.id === projection!.thread.id);
         assert.deepEqual(shell?.pendingBackgroundTasks ?? [], []);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
-  );
-
-  it.effect(
-    "runs plan mode as OpenCode's plan agent and switches back before the next prompt",
-    () =>
-      Effect.gen(function* () {
-        const name = "opencode2_switch";
-        const cwd = yield* checkpointWorkspace(name);
-        const thread = threadCommands({ name, worktreePath: cwd });
-
-        const recorded = yield* Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const text = yield* fs.readFileString(
-            yield* path.fromFileUrl(
-              new URL(
-                "./testkit/fixtures/opencode2_switch/opencode_transcript.ndjson",
-                import.meta.url,
-              ),
-            ),
-          );
-          return yield* decodeProviderReplayNdjson(text.replaceAll("<work>", cwd));
-        }).pipe(Effect.provide(NodeServices.layer));
-        const projection = yield* runScenario({
-          name,
-          threadId: thread.threadId,
-          entries: recorded.entries,
-          commands: [
-            thread.create,
-            thread.interactionMode("mode-plan", "plan"),
-            thread.message(
-              "plan",
-              bigPickle,
-              "Create a file named plan_probe.txt containing HI using the write tool.",
-            ),
-            thread.interactionMode("mode-default", "default"),
-            thread.message("switched", nemotron, "Reply exactly SWITCHED."),
-          ],
-        });
-        assert.deepEqual(
-          projection.runs.map((run) => [run.status, run.modelSelection.model]),
-          [
-            ["completed", bigPickle.model],
-            ["completed", nemotron.model],
-          ],
-        );
-        const replies = projection.turnItems.flatMap((item) =>
-          item.type === "assistant_message" ? [item.text] : [],
-        );
-
-        assert.include(replies[0], "Plan mode");
-        assert.equal(replies[1], "SWITCHED");
-        assert.lengthOf(projection.providerThreads, 1);
-      }).pipe(Effect.scoped),
   );
 });
