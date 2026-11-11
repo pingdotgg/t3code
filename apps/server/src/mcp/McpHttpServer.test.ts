@@ -1200,6 +1200,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
         issuedAt: 1,
       };
       const LinksToolkit = Toolkit.make(
+        Tool.make("orchestrator_capabilities", { success: Schema.String }),
         Tool.make("links", {
           description: "Lists links.",
           success: Schema.Struct({ links: Schema.Number }),
@@ -1220,6 +1221,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
         McpHttpServer.toolkitRegistration(
           LinksToolkit,
           McpToolAccess.toLayer(LinksToolkit, {
+            orchestrator_capabilities: McpToolAccess.reads(() => Effect.succeed("core")),
             links: McpToolAccess.reads(() => Effect.succeed({ links: 0 })),
             where: McpToolAccess.reads(() => Effect.succeed({ ranIn: "here" })),
           }),
@@ -1248,9 +1250,9 @@ it.effect("hides tools for links and refuses another environment while the beta 
           "application/json",
         ),
       });
-      const rpc = (method: string, params: object) =>
+      const rpc = (method: string, params: object, discovery = false) =>
         httpClient
-          .post("/mcp", {
+          .post(discovery ? "/mcp?toolDiscovery=true" : "/mcp", {
             headers: {
               ...headers,
               "mcp-session-id": initialize.headers["mcp-session-id"]!,
@@ -1287,7 +1289,42 @@ it.effect("hides tools for links and refuses another environment while the beta 
         );
       const elsewhere = EnvironmentId.make("environment-elsewhere");
 
-      expect(yield* listed()).toEqual(["where"]);
+      expect(yield* listed()).toEqual(["orchestrator_capabilities", "where"]);
+      const discovered = (query: string) =>
+        rpc("tools/call", { name: "search_tools", arguments: { query } }, true);
+      expect(yield* rpc("tools/list", {}, true)).toMatchObject({
+        result: {
+          tools: [
+            { name: "orchestrator_capabilities" },
+            { name: "search_tools" },
+            { name: "call_tool" },
+          ],
+        },
+      });
+      expect(yield* discovered("links")).toMatchObject({
+        result: { content: [{ type: "text", text: "[]" }] },
+      });
+      expect(yield* discovered("where")).toMatchObject({
+        result: { content: [{ text: expect.stringContaining('"environmentId"') }] },
+      });
+      const proxy = (name: string, args: object) =>
+        rpc("tools/call", { name: "call_tool", arguments: { name, arguments: args } }, true);
+      expect(yield* proxy("where", { environmentId })).toMatchObject({
+        result: { structuredContent: { ranIn: "here" } },
+      });
+      expect(yield* proxy("where", { environmentId: elsewhere })).toMatchObject({
+        result: {
+          isError: true,
+          content: [
+            { text: expect.stringContaining("Linked environments is off on this machine") },
+          ],
+        },
+      });
+      expect(yield* proxy("links", {})).toHaveProperty("error");
+      expect(yield* proxy("call_tool", { name: "call_tool", arguments: {} })).toHaveProperty(
+        "error",
+      );
+
       expect(yield* ranIn(elsewhere)).toMatchObject({
         isError: true,
         content: [{ text: expect.stringContaining("Linked environments is off on this machine") }],
@@ -1295,7 +1332,10 @@ it.effect("hides tools for links and refuses another environment while the beta 
       expect((yield* ranIn(environmentId)).structuredContent).toEqual({ ranIn: "here" });
 
       yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
-      expect(yield* listed()).toEqual(["links", "where"]);
+      expect(yield* listed()).toEqual(["orchestrator_capabilities", "links", "where"]);
+      expect(yield* discovered("links")).toMatchObject({
+        result: { content: [{ text: expect.stringContaining('"name":"links"') }] },
+      });
       // On, the call goes on to the forwarding, which this server lacks.
       expect(yield* ranIn(elsewhere)).toMatchObject({
         isError: true,
@@ -1479,7 +1519,11 @@ it.effect(
           ),
         );
         /** Starts a thread as the client, with `limit` as T3-Mode-Limit; the HTTP status or the outcome. */
-        const start = (limit: string | undefined, args: Record<string, string> = {}) =>
+        const start = (
+          limit: string | undefined,
+          args: Record<string, string> = {},
+          discovery = false,
+        ) =>
           Effect.gen(function* () {
             const headers = {
               accept: "application/json, text/event-stream",
@@ -1494,22 +1538,27 @@ it.effect(
               ),
             });
             if (initialize.status !== 200) return initialize.status;
-            const response = yield* httpClient.post("/mcp", {
-              headers: {
-                ...headers,
-                "mcp-session-id": initialize.headers["mcp-session-id"]!,
-                "mcp-protocol-version": "2025-06-18",
+            const response = yield* httpClient.post(
+              discovery ? "/mcp?toolDiscovery=true" : "/mcp",
+              {
+                headers: {
+                  ...headers,
+                  "mcp-session-id": initialize.headers["mcp-session-id"]!,
+                  "mcp-protocol-version": "2025-06-18",
+                },
+                body: HttpBody.text(
+                  JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: 2,
+                    method: "tools/call",
+                    params: discovery
+                      ? { name: "call_tool", arguments: { name: "starts", arguments: args } }
+                      : { name: "starts", arguments: args },
+                  }),
+                  "application/json",
+                ),
               },
-              body: HttpBody.text(
-                JSON.stringify({
-                  jsonrpc: "2.0",
-                  id: 2,
-                  method: "tools/call",
-                  params: { name: "starts", arguments: args },
-                }),
-                "application/json",
-              ),
-            });
+            );
             const body = yield* decodeOutcome(yield* response.text);
             const outcome = yield* decodeText(
               body.result.content.map((part) => part.text).join(""),
@@ -1521,6 +1570,7 @@ it.effect(
         expect(yield* start(undefined)).toBe("auto/default");
         // The header narrows both modes, and asking above it is refused.
         expect(yield* start("approval-required/plan")).toBe("approval-required/plan");
+        expect(yield* start("approval-required/plan", {}, true)).toBe("approval-required/plan");
         expect(yield* start("approval-required/plan", { runtimeMode: "auto" })).toBe(
           "runtime_mode_escalation_denied",
         );

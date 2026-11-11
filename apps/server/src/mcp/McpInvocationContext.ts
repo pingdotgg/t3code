@@ -131,6 +131,7 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  readonly toolDiscovery?: boolean;
 }
 
 /**

@@ -1209,18 +1209,21 @@ describe("AcpRegistryAdapterV2", () => {
         {
           type: "http",
           name: "t3-code",
-          url: endpoint,
+          url: `${endpoint}?toolDiscovery=true`,
           headers: [{ name: "Authorization", value: authorization }],
         },
       ];
-      const stdio = (authorization: string) => [
+      const stdio = (authorization: string, discovery = true) => [
         {
           name: "t3-code",
           command: selfInvocation.command,
           args: [...selfInvocationArgs(selfInvocation, ["acp-mcp-bridge"])],
           env: [
             { name: "ELECTRON_RUN_AS_NODE", value: "1" },
-            { name: "T3_ACP_MCP_ENDPOINT", value: endpoint },
+            {
+              name: "T3_ACP_MCP_ENDPOINT",
+              value: discovery ? `${endpoint}?toolDiscovery=true` : endpoint,
+            },
             { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
           ],
         },
@@ -1243,8 +1246,8 @@ describe("AcpRegistryAdapterV2", () => {
         load: stdio("Bearer rotated-token"),
       });
       assert.deepEqual(yield* sessionMcpServers({ agentId: "gemini" }, { T3_ACP_MCP_HTTP: "1" }), {
-        new: stdio("Bearer opened-token"),
-        load: stdio("Bearer rotated-token"),
+        new: stdio("Bearer opened-token", false),
+        load: stdio("Bearer rotated-token", false),
       });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );

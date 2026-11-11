@@ -1080,9 +1080,10 @@ const T3_MCP_TITLE_SUFFIX_CALL =
  * titled "<tool>: <description>" cannot impersonate an inventory entry.
  */
 const T3_MCP_BARE_TITLE_CALL = /^(?:Running )?(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
+const ACP_T3_MCP_TOOL_NAMES = new Set([...T3_MCP_TOOL_NAMES, "call_tool", "search_tools"]);
 
 /** ACP lacks typed MCP calls; recognize provider metadata and terminal fallback commands. */
-export function extractMcpToolCallIdentity(
+function extractRawMcpToolCallIdentity(
   toolCall: AcpToolCallState,
   options?: {
     readonly embeddedTerminalCommands?: ReadonlyArray<string>;
@@ -1116,7 +1117,7 @@ export function extractMcpToolCallIdentity(
   const metaServerId = typeof meta?.serverId === "string" ? meta.serverId.trim() : "";
   const metaToolName = typeof meta?.toolName === "string" ? meta.toolName.trim() : "";
   if (/^t3[-_ ]?code$/i.test(metaServerId) && metaToolName.length > 0) {
-    for (const knownTool of T3_MCP_TOOL_NAMES) {
+    for (const knownTool of ACP_T3_MCP_TOOL_NAMES) {
       const boundary = metaToolName.length - knownTool.length - 1;
       if (
         metaToolName === knownTool ||
@@ -1168,7 +1169,7 @@ export function extractMcpToolCallIdentity(
       T3_MCP_TITLE_SUFFIX_CALL.exec(trimmed) ??
       T3_MCP_BARE_TITLE_CALL.exec(trimmed);
     const candidateTool = match?.groups?.tool;
-    if (candidateTool !== undefined && T3_MCP_TOOL_NAMES.has(candidateTool)) {
+    if (candidateTool !== undefined && ACP_T3_MCP_TOOL_NAMES.has(candidateTool)) {
       return { server: "t3-code", tool: candidateTool };
     }
   }
@@ -1186,6 +1187,25 @@ export function extractMcpToolCallIdentity(
     }
   }
   return undefined;
+}
+
+export function extractMcpToolCallIdentity(
+  toolCall: AcpToolCallState,
+  options?: { readonly embeddedTerminalCommands?: ReadonlyArray<string> },
+): AcpMcpToolCallIdentity | undefined {
+  const identity = extractRawMcpToolCallIdentity(toolCall, options);
+  if (identity?.server !== "t3-code" || identity.tool !== "call_tool") return identity;
+  const raw =
+    identity.input ?? (isRecord(toolCall.data.rawInput) ? toolCall.data.rawInput : undefined);
+  const params =
+    typeof raw?.name === "string" ? raw : isRecord(raw?.arguments) ? raw.arguments : undefined;
+  if (
+    typeof params?.name !== "string" ||
+    !T3_MCP_TOOL_NAMES.has(params.name) ||
+    !isRecord(params.arguments)
+  )
+    return identity;
+  return { server: "t3-code", tool: params.name, input: params.arguments };
 }
 
 /** Capture IDs before resolveEmbeddedTerminalContent replaces them with text, to recover commands later. */

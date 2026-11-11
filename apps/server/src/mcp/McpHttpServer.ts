@@ -41,6 +41,7 @@ import {
   toolOutcome,
 } from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import { directToolNames, ToolDiscoveryToolkit, searchToolDefinitions } from "./toolDiscovery.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -235,7 +236,9 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
-    return { ...limited, linkedEnvironments };
+    const toolDiscovery =
+      Option.getOrUndefined(requestUrl(request))?.searchParams.get("toolDiscovery") === "true";
+    return { ...limited, linkedEnvironments, toolDiscovery };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {
@@ -1237,6 +1240,91 @@ export const layerInProcessMcpServer = McpServer.middleware<{
   { global: true },
 ).pipe(Layer.provideMerge(McpServer.McpServer.layer));
 
+const discoveryTools = new Set(Object.keys(ToolDiscoveryToolkit.tools));
+const isMcpInvalidParams = Schema.is(McpSchema.InvalidParams);
+
+const layerToolDiscovery = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const querySchema = ToolDiscoveryToolkit.tools.search_tools.parametersSchema;
+    const callSchema = ToolDiscoveryToolkit.tools.call_tool.parametersSchema;
+    const invalidInput = new McpSchema.InvalidParams({
+      message: "Invalid discovery tool arguments.",
+    });
+    yield* server.addTool({
+      tool: new McpSchema.Tool({
+        name: "search_tools",
+        description: Tool.getDescription(ToolDiscoveryToolkit.tools.search_tools),
+        inputSchema: advertisedJsonSchema(ToolDiscoveryToolkit.tools.search_tools),
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      }),
+      annotations: Context.empty(),
+      handle: Effect.fn("McpHttpServer.searchTools")(function* (input: unknown) {
+        const { query } = yield* Schema.decodeUnknownEffect(querySchema)(input).pipe(
+          Effect.mapError(() => invalidInput),
+        );
+        const client = yield* McpSchema.McpRequestContext;
+        const tools = server.tools
+          .filter(({ tool, annotations }) => {
+            if (discoveryTools.has(tool.name)) return false;
+            const enabled = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
+            if (
+              enabled &&
+              !enabled({
+                protocolVersion: client.protocolVersion,
+                capabilities: client.clientCapabilities,
+                clientInfo: client.clientInfo,
+              })
+            )
+              return false;
+            return true;
+          })
+          .map(({ tool }) => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+          }));
+        const matches = searchToolDefinitions(tools, query);
+        return new McpSchema.CallToolResult({
+          content: [{ type: "text", text: encodeJsonText(matches) }],
+        });
+      }),
+    });
+    yield* server.addTool({
+      tool: new McpSchema.Tool({
+        name: "call_tool",
+        description: Tool.getDescription(ToolDiscoveryToolkit.tools.call_tool),
+        inputSchema: advertisedJsonSchema(ToolDiscoveryToolkit.tools.call_tool),
+      }),
+      annotations: Context.empty(),
+      handle: Effect.fn("McpHttpServer.callDiscoveredTool")(function* (input: unknown) {
+        const params = yield* Schema.decodeUnknownEffect(callSchema)(input).pipe(
+          Effect.mapError(() => invalidInput),
+        );
+        if (discoveryTools.has(params.name)) return yield* invalidInput;
+        const client = yield* Effect.serviceOption(McpSchema.McpServerClient);
+        if (Option.isNone(client)) return yield* invalidInput;
+        return yield* server.callTool(params).pipe(
+          Effect.provideService(McpSchema.McpServerClient, client.value),
+          Effect.mapError((error) =>
+            isMcpInvalidParams(error)
+              ? error
+              : new McpSchema.InvalidParams({ message: "The target tool is unavailable." }),
+          ),
+        );
+      }),
+    });
+  }),
+);
+
+const discoveryVisibility = McpServer.visibility(({ method, target }) =>
+  Effect.map(McpInvocationContext.McpInvocationContext, (scope) =>
+    discoveryTools.has(target)
+      ? scope.toolDiscovery === true
+      : method !== "tools/list" || scope.toolDiscovery !== true || directToolNames.has(target),
+  ),
+);
+
 export const layerMcpTransport = <RA, RE, RR>(registrations: Layer.Layer<RA, RE, RR>) =>
   McpServer.layerHttp({
     name: "T3 Code",
@@ -1244,7 +1332,9 @@ export const layerMcpTransport = <RA, RE, RR>(registrations: Layer.Layer<RA, RE,
     path: "/mcp",
     protocols: [McpProtocol.v2025_06_18],
     allowSessionTermination: true,
-    registrations,
+    registrations: Layer.mergeAll(registrations, layerToolDiscovery).pipe(
+      Layer.provide(discoveryVisibility.layerGlobal),
+    ),
   }).pipe(Layer.provide(layerMcpAuthMiddleware));
 
 /** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */

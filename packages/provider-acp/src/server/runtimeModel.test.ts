@@ -1271,6 +1271,27 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("preserves the target identity and arguments of discovered T3 tools", () => {
+    for (const rawInput of [
+      { name: "html_render", arguments: { previewId: "preview-1" } },
+      { arguments: { name: "html_render", arguments: { previewId: "preview-1" } } },
+    ]) {
+      const call = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "discovered-html",
+        title: "t3-code-call_tool",
+        kind: "other",
+        status: "completed",
+        rawInput,
+      });
+      expect(extractMcpToolCallIdentity(call)).toEqual({
+        server: "t3-code",
+        tool: "html_render",
+        input: { previewId: "preview-1" },
+      });
+    }
+  });
+
   it("recovers T3 identity from acp-mcp-call fallback commands", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",

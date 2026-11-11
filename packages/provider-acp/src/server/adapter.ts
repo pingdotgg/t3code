@@ -333,6 +333,7 @@ export interface AcpAdapterV2Flavor {
     EffectAcpSchema.InitializeRequest["clientCapabilities"]
   >["_meta"];
   readonly mcpOverHttp?: boolean;
+  readonly mcpToolDiscovery?: boolean;
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
@@ -838,9 +839,15 @@ function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
   mcpOverHttp: boolean | undefined,
+  toolDiscovery: boolean | undefined,
 ): AcpMcpContext {
   if (session === undefined) {
     return { servers: [], acpServers: [], httpServers: [] };
+  }
+  if (toolDiscovery === true) {
+    const endpoint = new URL(session.endpoint);
+    endpoint.searchParams.set("toolDiscovery", "true");
+    session = { ...session, endpoint: endpoint.toString() };
   }
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers, so HTTP is opt-in per flavor.
   return {
@@ -1687,10 +1694,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const { flavor, selfInvocation: self } = options;
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
-      ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp))
+      ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp, flavor.mcpToolDiscovery))
       : mcpSessions
           .read(threadId)
-          .pipe(Effect.map((session) => acpMcpContext(session, self, flavor.mcpOverHttp)));
+          .pipe(
+            Effect.map((session) =>
+              acpMcpContext(session, self, flavor.mcpOverHttp, flavor.mcpToolDiscovery),
+            ),
+          );
   const driver = flavor.driver;
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =
@@ -3092,7 +3103,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 mcpIdentity === undefined
                   ? (merged.title ?? merged.kind ?? "Tool")
                   : `${mcpIdentity.server}.${mcpIdentity.tool}`,
-              input: merged.data.rawInput ?? null,
+              input: mcpIdentity?.input ?? merged.data.rawInput ?? null,
               output: merged.data.rawOutput ?? merged.data.content ?? null,
             },
           });
