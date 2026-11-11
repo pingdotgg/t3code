@@ -1055,6 +1055,73 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       }),
   );
 
+  it.effect("acknowledging a queued wake's results rewrites it, then cancels it", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("queued-wake-ack-parent");
+      const runId = RunId.make("queued-wake-ack-origin");
+      const taskId = NodeId.make("queued-wake-ack-first");
+      const siblingId = NodeId.make("queued-wake-ack-sibling");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make("queued-wake-ack-project"),
+        runId,
+        rootNodeId: NodeId.make("queued-wake-ack-root"),
+        taskId,
+        deliveryState: "claimed",
+        deliveryTaskIds: [taskId, siblingId],
+        siblingTasks: [{ id: siblingId, deliveryState: "claimed" }],
+        completionWake: "always",
+        now,
+      });
+      const delivery = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!
+        .delegatedCompletion!.delivery!;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "agent",
+        creationSource: "server",
+        commandId: CommandId.make("queued-wake-ack-wake"),
+        threadId,
+        messageId: delivery.messageId,
+        text: "Delegated tasks completed",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+        delegatedCompletion: {
+          parentRunId: runId,
+          generation: delivery.generation,
+          taskIds: delivery.taskIds,
+        },
+      });
+      const acknowledge = (id: NodeId) =>
+        orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make(`queued-wake-ack:${id}`),
+          parentThreadId: threadId,
+          taskId: id,
+          observedByRunId: runId,
+        });
+
+      yield* acknowledge(taskId);
+      const rewritten = yield* orchestrator.getThreadProjection(threadId);
+      const wake = rewritten.runs.find((run) => run.userMessageId === delivery.messageId)!;
+      assert.equal(wake.status, "queued");
+      const message = rewritten.messages.find((row) => row.id === delivery.messageId);
+      assert.deepEqual(message?.delegatedCompletion?.taskIds, [siblingId]);
+      assert.equal(message?.text, `Delegated task ${siblingId} [completed]:\nchild finished`);
+
+      yield* acknowledge(siblingId);
+      const cancelled = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(cancelled.runs.find((run) => run.id === wake.id)?.status, "cancelled");
+      assert.equal(
+        cancelled.nodes.find((node) => node.id === wake.rootNodeId)?.status,
+        "cancelled",
+      );
+      assert.isNull(cancelled.runs.find((run) => run.id === runId)?.delegatedCompletion?.delivery);
+    }),
+  );
+
   it.effect.each([
     { command: "acknowledge", before: "running", after: "failed", capture: false },
     { command: "acknowledge", before: "waiting", after: "completed", capture: true },
@@ -2508,7 +2575,8 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             creationSource: outcome === "failed" ? "web" : "mcp",
             commandId: CommandId.make(`command:followup-send-${outcome}`),
             threadId: child.childThreadId,
-            senderThreadId: parentThreadId,
+            // `t3 thread send` and unscoped MCP sessions carry no sender thread.
+            ...(outcome === "completed" ? {} : { senderThreadId: parentThreadId }),
             messageId,
             text: "Check the same work again.",
             attachments: [],

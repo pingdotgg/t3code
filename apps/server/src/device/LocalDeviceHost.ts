@@ -47,7 +47,9 @@ import {
   isAgentDeviceInstalled,
   isDeviceHubInstalled,
   deviceToolVersions,
+  AGENT_DEVICE_VERSION,
   DEVICE_HUB_VERSION,
+  installedAgentDeviceEntry,
 } from "./DeviceToolchain.ts";
 
 const HUB_READY_TIMEOUT_MS = 30_000;
@@ -666,14 +668,32 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       timeoutBehavior: "timedOutResult",
     });
 
-  const stopAgentDeviceDaemon = (
-    agentTool: { readonly entryPath: string; readonly nodePath: string } | null,
-  ) =>
-    agentTool
-      ? runAgentDeviceDaemonStop(agentTool, Duration.seconds(10)).pipe(Effect.ignore)
-      : Effect.void;
-
-  let agentToolRef: { readonly entryPath: string; readonly nodePath: string } | null = null;
+  // The daemon may predate this process (an earlier server was killed, possibly on an
+  // older pin), so stop it with the CLI of its recorded version when that is installed.
+  const stopAgentDeviceDaemon = Effect.gen(function* () {
+    if (!(yield* fs.exists(daemonFilePath()))) return;
+    const recorded = yield* readDaemonFile().pipe(Effect.option);
+    if (
+      Option.isSome(recorded) &&
+      recorded.value.pid &&
+      !(yield* isProcessAlive(recorded.value.pid))
+    ) {
+      return yield* fs.remove(daemonFilePath(), { force: true });
+    }
+    const entryPath = yield* installedAgentDeviceEntry(config.baseDir, [
+      ...(Option.isSome(recorded) && recorded.value.version ? [recorded.value.version] : []),
+      AGENT_DEVICE_VERSION,
+    ]);
+    if (!entryPath) return;
+    const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
+      Effect.provideService(HostProcess.Platform, hostPlatform),
+    );
+    yield* runAgentDeviceDaemonStop({ entryPath, nodePath }, Duration.seconds(10));
+  }).pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.ignore,
+  );
 
   const ensureHubReady = Effect.fn("LocalDeviceHost.ensureHubReady")(function* (
     onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
@@ -788,7 +808,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               }),
           ),
         );
-        agentToolRef = { entryPath: agentTool.entryPath, nodePath: running.hub.nodePath };
         yield* onPhase("starting");
         const agentDevice = yield* startAgentDeviceDaemon(agentTool, running.hub.nodePath);
         yield* pruneLocalDeviceTools(config.baseDir, running.hub.nodePath, "agent").pipe(
@@ -871,7 +890,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const stopAgent: DeviceHost.DeviceHost["Service"]["stopAgent"] = startLock.withPermits(1)(
     Effect.gen(function* () {
-      yield* stopAgentDeviceDaemon(agentToolRef);
+      yield* stopAgentDeviceDaemon;
       yield* Ref.update(runningRef, (running) =>
         running ? { ...running, agentDevice: null } : running,
       );
@@ -883,7 +902,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       const running = yield* Ref.getAndSet(runningRef, null);
       yield* stopHub(running?.hub);
       yield* fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore);
-      yield* stopAgentDeviceDaemon(agentToolRef);
+      yield* stopAgentDeviceDaemon;
     }),
   );
 

@@ -40,6 +40,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     stateDir: string,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
+  previousDaemon?: typeof LocalDeviceHost.__testing.AgentDeviceDaemonFile.Type,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -51,6 +52,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const commands: Array<string> = [];
   const stopResult = yield* Ref.make(processOutput(0));
   const daemonFileAtStop: Array<boolean> = [];
+  const runs: Array<ProcessRunner.ProcessRunInput> = [];
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
     ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
@@ -60,6 +62,10 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
     yield* fs.writeFileString(entryPath, "");
     yield* fs.writeFileString(path.join(installDir, ".install-complete"), version!);
+  }
+  if (previousDaemon) {
+    yield* fs.makeDirectory(stateDir, { recursive: true });
+    yield* fs.writeFileString(path.join(stateDir, "daemon.json"), JSON.stringify(previousDaemon));
   }
   const host = yield* LocalDeviceHost.make().pipe(
     Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
@@ -97,6 +103,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) => {
+        runs.push(input);
         if (input.args.includes("devices") || input.args.includes("daemon"))
           commands.push(input.args.slice(1, 3).join(" "));
         if (input.args.includes("daemon"))
@@ -134,6 +141,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   return {
     host,
     fs,
+    baseDir,
     stateDir,
     hub,
     daemonHealthy,
@@ -141,6 +149,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     commands,
     stopResult,
     daemonFileAtStop,
+    runs,
   };
 });
 
@@ -364,6 +373,75 @@ describe("AgentDevice startup", () => {
       hub.spawnFails = false;
       yield* host.ensureReady(() => Effect.void);
       expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stops a previous server's daemon with the agent-device version it recorded", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { host, fs, baseDir, runs } = yield* agentFixture(
+        () => Effect.die("A session that never readies agent tools must not start the daemon"),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: process.pid, version: "0.0.1" },
+      );
+      const olderInstall = path.join(baseDir, "tools", "agent-device", "0.0.1");
+      const olderEntry = path.join(
+        olderInstall,
+        "node_modules",
+        "agent-device",
+        "bin",
+        "agent-device.mjs",
+      );
+      yield* fs.makeDirectory(path.dirname(olderEntry), { recursive: true });
+      yield* fs.writeFileString(olderEntry, "");
+      yield* fs.writeFileString(path.join(olderInstall, ".install-complete"), "0.0.1");
+      yield* host.stop;
+      expect(runs.find((run) => run.args.includes("daemon"))?.args[0]).toBe(olderEntry);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // regression: #33552 a daemon left by a previous server survived every later graceful quit
+  it.effect("stops a previous server's daemon with the current pin when its version is gone", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { host, baseDir, stateDir, runs } = yield* agentFixture(
+        () => Effect.die("A session that never readies agent tools must not start the daemon"),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: process.pid, version: "0.0.1" },
+      );
+      yield* host.stop;
+      expect(runs.find((run) => run.args.includes("daemon"))?.args).toEqual([
+        path.join(
+          baseDir,
+          "tools",
+          "agent-device",
+          AGENT_DEVICE_VERSION,
+          "node_modules",
+          "agent-device",
+          "bin",
+          "agent-device.mjs",
+        ),
+        "daemon",
+        "stop",
+        "--state-dir",
+        stateDir,
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("drops a dead daemon's record without running agent-device when the host stops", () =>
+    Effect.gen(function* () {
+      // Above the Linux and macOS PID limits, so never a live process.
+      const deadPid = 4_194_305;
+      const path = yield* Path.Path;
+      const { host, fs, stateDir, runs } = yield* agentFixture(
+        () => Effect.die("A session that never readies agent tools must not start the daemon"),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: deadPid, version: AGENT_DEVICE_VERSION },
+      );
+      yield* host.stop;
+      expect(runs.filter((run) => run.args.includes("daemon"))).toEqual([]);
+      expect(yield* fs.exists(path.join(stateDir, "daemon.json"))).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
