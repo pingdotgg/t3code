@@ -32,6 +32,10 @@ const FOLD_CLASSES = {
     row: "hidden items-center gap-1 @sm/diff-toolbar:flex",
     menu: "flex @sm/diff-toolbar:hidden",
   },
+  md: {
+    row: "hidden items-center gap-1 @md/diff-toolbar:flex",
+    menu: "flex @md/diff-toolbar:hidden",
+  },
   "2xl": {
     row: "hidden items-center gap-1 @2xl/diff-toolbar:flex",
     menu: "flex @2xl/diff-toolbar:hidden",
