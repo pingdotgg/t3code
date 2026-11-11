@@ -444,10 +444,7 @@ export const make = Effect.gen(function* () {
         cause,
       });
     if (!(yield* fileSystem.exists(backupPath).pipe(Effect.mapError(preserveError)))) {
-      const suffix = (yield* crypto.randomUUIDv4().pipe(Effect.mapError(preserveError))).replace(
-        /-/g,
-        "",
-      );
+      const suffix = (yield* random.uuidV4()).replace(/-/g, "");
       // Back up the document that failed to decrypt, not the file at `catalogPath`: a
       // concurrent `set` may already have replaced it.
       yield* writeDocument({ fileSystem, path, catalogPath: backupPath, document, suffix }).pipe(
