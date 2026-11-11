@@ -22,6 +22,7 @@ import { describe, expect } from "vite-plus/test";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -1149,6 +1150,48 @@ describe("AcpSessionRuntime", () => {
       expect((yield* runtime.start()).sessionSetupResult).toBe(started.sessionSetupResult);
       const model = (yield* runtime.getConfigOptions).find((option) => option.id === "model");
       expect(model?.currentValue).toBe("gpt-5.4");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("drops a late session/load response when the agent changed mode before it", () =>
+    Effect.gen(function* () {
+      const lateLoadLogged = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: {
+            T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+            T3_ACP_NOTIFY_MODE_BEFORE_LOAD_REPLY: "code",
+          },
+        },
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "100 millis",
+        // The mock speaks ACP v2, which has no current_mode_update; decode it as a v1 agent's.
+        transformSessionUpdate: (notification) =>
+          notification.update.sessionUpdate === "_t3_unknown" &&
+          notification.update.originalSessionUpdate === "current_mode_update"
+            ? {
+                ...notification,
+                update: notification.update.raw as EffectAcpSchema.SessionNotification["update"],
+              }
+            : notification,
+        requestLogger: (event) =>
+          event.method === "session/load" &&
+          event.status === "succeeded" &&
+          (event.result as { readonly configOptions?: unknown } | undefined)?.configOptions !==
+            undefined
+            ? Deferred.succeed(lateLoadLogged, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      });
+      const started = yield* runtime.start();
+      // No mode metadata yet, so the notification leaves the mode state as is.
+      expect(yield* runtime.getModeState).toBeUndefined();
+      yield* Deferred.await(lateLoadLogged).pipe(Effect.timeout("5 seconds"));
+
+      expect((yield* runtime.start()).sessionSetupResult).toBe(started.sessionSetupResult);
+      expect(yield* runtime.getModeState).toBeUndefined();
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

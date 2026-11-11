@@ -1300,10 +1300,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       >;
     }>
   >(Option.none());
-  // Counts mode, config, and model writes sent to the agent. A late
-  // session/load response predates any write sent after the provisional
-  // start, even one whose reply is still pending.
-  const sessionWriteCountRef = yield* Ref.make(0);
+  // Counts mode, config, and model writes sent to the agent and the mode and
+  // config notifications it sent back. A late session/load response predates
+  // all of them, even a write still pending or a notification that left the
+  // mode state unchanged.
+  const sessionChangeCountRef = yield* Ref.make(0);
 
   const ensureConnected = Effect.gen(function* () {
     const error = yield* Ref.get(terminationErrorRef);
@@ -1368,7 +1369,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     payload: unknown,
     effect: Effect.Effect<A, EffectAcpErrors.AcpError>,
   ): Effect.Effect<A, EffectAcpErrors.AcpError> =>
-    Ref.update(sessionWriteCountRef, (count) => count + 1).pipe(
+    Ref.update(sessionChangeCountRef, (count) => count + 1).pipe(
       Effect.andThen(runLoggedRequest(method, payload, effect)),
     );
 
@@ -1722,8 +1723,12 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const configOptionUpdates = yield* Ref.make(0);
   const processSessionUpdate = (notification: EffectAcpSchema.SessionNotification) =>
     (notification.update.sessionUpdate === "config_option_update"
-      ? Ref.update(configOptionUpdates, (count) => count + 1)
-      : Effect.void
+      ? Ref.update(configOptionUpdates, (count) => count + 1).pipe(
+          Effect.andThen(Ref.update(sessionChangeCountRef, (count) => count + 1)),
+        )
+      : notification.update.sessionUpdate === "current_mode_update"
+        ? Ref.update(sessionChangeCountRef, (count) => count + 1)
+        : Effect.void
     ).pipe(
       Effect.andThen(
         handleSessionUpdate({
@@ -2001,7 +2006,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     const { payload, response: lateFiber } = late.value;
     const provisionalConfigOptions = yield* SubscriptionRef.get(configOptionsRef);
     const provisionalModeState = yield* Ref.get(modeStateRef);
-    const provisionalWriteCount = yield* Ref.get(sessionWriteCountRef);
+    const provisionalChangeCount = yield* Ref.get(sessionChangeCountRef);
     const adoptLateResponse = Effect.fn("AcpSessionRuntime.adoptLateSessionLoad")(function* (
       response: EffectAcpSchema.LoadSessionResponse,
     ) {
@@ -2015,7 +2020,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         (yield* Ref.get(stoppingRef)) ||
         (yield* SubscriptionRef.get(configOptionsRef)) !== provisionalConfigOptions ||
         (yield* Ref.get(modeStateRef)) !== provisionalModeState ||
-        (yield* Ref.get(sessionWriteCountRef)) !== provisionalWriteCount
+        (yield* Ref.get(sessionChangeCountRef)) !== provisionalChangeCount
       ) {
         return;
       }

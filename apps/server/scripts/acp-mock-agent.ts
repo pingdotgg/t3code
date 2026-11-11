@@ -65,6 +65,7 @@ const failLoadSessionAfterConfigReplay =
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
 const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
 const loadSessionDelayMs = Number(process.env.T3_ACP_LOAD_SESSION_DELAY_MS ?? "5000");
+const modeNotifiedBeforeDelayedLoadReply = process.env.T3_ACP_NOTIFY_MODE_BEFORE_LOAD_REPLY;
 const holdSetConfigOptionUntilLoadReply =
   process.env.T3_ACP_HOLD_SET_CONFIG_OPTION_UNTIL_LOAD_REPLY === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
@@ -703,6 +704,14 @@ const program = Effect.gen(function* () {
         // Answer with the configuration as of the load, like an agent whose
         // response was built before later selections landed.
         const loadedConfigOptions = configOptions();
+        if (modeNotifiedBeforeDelayedLoadReply !== undefined) {
+          yield* Effect.sleep(loadSessionDelayMs / 2);
+          currentModeId = modeNotifiedBeforeDelayedLoadReply;
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: { sessionUpdate: "current_mode_update", currentModeId },
+          });
+        }
         yield* Effect.sleep(loadSessionDelayMs);
         yield* Deferred.succeed(delayedLoadReplied, undefined);
         return {
