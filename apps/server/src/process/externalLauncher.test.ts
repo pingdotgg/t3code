@@ -664,7 +664,7 @@ it.effect.skipIf(windowsHost)("does not open Zed with the OpenZFS zed daemon on 
       Effect.provide(
         layerTest({
           platform: "linux",
-          env: { HOME: home, PATH: binDir },
+          env: { HOME: home, PATH: binDir, DISPLAY: ":0" },
           onSpawn: (command) => spawned.push(command),
           spawnResult: (command) => (command.args[0] === "--version" ? { exitCode: 1 } : undefined),
         }),
