@@ -11173,10 +11173,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             opened += 1;
             const sdkMessages = yield* Queue.unbounded<SDKMessage>();
             return {
-              // The first CLI exits without writing a frame.
+              // The first CLI dies without writing a frame.
               messages:
                 opened === 1
-                  ? Stream.empty.pipe(Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)))
+                  ? Stream.fail(
+                      new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                        method: "fromAsyncIterable",
+                        cause: new ClaudeAdapterV2.ClaudeCodeRootRefusalError({
+                          cause: new Error("stderr: startup refusal"),
+                        }),
+                      }),
+                    ).pipe(Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)))
                   : Stream.fromQueue(sdkMessages),
               offer: () => Effect.void,
               setModel: () => Effect.void,
@@ -11241,6 +11248,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             Cause.pretty(started.cause),
             "Claude provider query ended before the turn could start.",
           );
+          // Why the CLI died reaches the turn failure and the server log.
+          assert.equal(
+            makeProviderFailure({ cause: started.cause, class: "provider_error" }).message,
+            new ClaudeAdapterV2.ClaudeCodeRootRefusalError({ cause: undefined }).message,
+          );
+          assert.include(Cause.pretty(started.cause), "stderr: startup refusal");
         }
         const followUp = yield* harness.runtime
           .startTurn(harness.turnInput("b", 2))

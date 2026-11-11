@@ -37,6 +37,7 @@ import {
 } from "../../provider/ClaudeTurnTokenUsage.ts";
 import { toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
 import {
+  AbortError as ClaudeAbortError,
   type CanUseTool,
   type ElicitationRequest,
   type ElicitationResult,
@@ -621,6 +622,21 @@ class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegi
 ) {
   override get message(): string {
     return "Claude timed out while registering its MCP tools. Retry the turn; if it keeps failing, check Claude and the server logs.";
+  }
+}
+
+// The CLI's stderr can hold private paths, tokens or settings, so only its cause chain, which reaches server logs, carries it.
+class ClaudeCodeStartupExitError extends Schema.TaggedError<ClaudeCodeStartupExitError>()(
+  "ClaudeCodeStartupExitError",
+  {
+    exitCode: Schema.NullOr(Schema.Number),
+    signal: Schema.NullOr(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const exit = this.exitCode === null ? `signal ${this.signal}` : `code ${this.exitCode}`;
+    return `Claude Code exited with ${exit} before it responded. Check the server log for details.`;
   }
 }
 
@@ -1250,13 +1266,15 @@ export const layerQueryRunner: Layer.Layer<
                 windowsHide: true,
                 stdio: ["pipe", "pipe", "pipe"],
               });
-              child.stderr
-                .setEncoding("utf8")
-                .on("data", (chunk: string) => options.stderr?.(chunk));
+              child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+                appendStderr(chunk);
+                options.stderr?.(chunk);
+              });
               return child;
             });
           let spawnedProcess: ClaudeSpawnedProcess | undefined;
           let processExited = false;
+          let exitStatus: { exitCode: number | null; signal: string | null } | undefined;
           let processExit: Promise<void> | undefined;
           const spawnClaudeCodeProcess = (spawnOptions: ClaudeSpawnOptions) => {
             const child = spawnProcess(spawnOptions);
@@ -1266,11 +1284,15 @@ export const layerQueryRunner: Layer.Layer<
             child.once("exit", releaseAgent);
             child.on("error", releaseAgent);
             processExited = child.exitCode !== null || child.signalCode != null;
+            if (processExited) {
+              exitStatus = { exitCode: child.exitCode, signal: child.signalCode ?? null };
+            }
             processExit = new Promise<void>((resolve) => {
               if (processExited) resolve();
               else
-                child.once("exit", () => {
+                child.once("exit", (exitCode, signal) => {
                   processExited = true;
+                  exitStatus = { exitCode, signal };
                   resolve();
                 });
             });
@@ -1375,9 +1397,20 @@ export const layerQueryRunner: Layer.Layer<
                         Effect.timeoutOption(CLAUDE_STDERR_DRAIN_TIMEOUT),
                       );
                     }
-                    const refusedRoot = !answered && stderrTail.includes(CLAUDE_ROOT_REFUSAL);
+                    // An aborted SDK query is a stop T3 asked for, not a CLI that died.
+                    const exit =
+                      answered || cause instanceof ClaudeAbortError ? undefined : exitStatus;
+                    const stderr = stderrTail.trim();
                     return yield* queryRunnerError(
-                      refusedRoot ? new ClaudeCodeRootRefusalError({ cause }) : cause,
+                      !answered && stderrTail.includes(CLAUDE_ROOT_REFUSAL)
+                        ? new ClaudeCodeRootRefusalError({ cause })
+                        : exit === undefined || exit.exitCode === 0
+                          ? cause
+                          : new ClaudeCodeStartupExitError({
+                              ...exit,
+                              cause:
+                                stderr === "" ? cause : new Error(`stderr: ${stderr}`, { cause }),
+                            }),
                       "fromAsyncIterable",
                     );
                   }),
@@ -4471,6 +4504,8 @@ interface ClaudeLiveQueryContext {
   claudeCodeVersion: string | undefined;
   permissionMode: PermissionMode;
   stopping: boolean;
+  // Why the CLI died before any turn claimed it; the turn start reports it.
+  exitCause: Cause.Cause<ClaudeAgentSdkQueryRunnerError> | undefined;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
   // Subagents this process still ran when a replacement took over; only its exit can end them.
   handedOffSubagents: ReadonlySet<ActiveClaudeSubagent>;
@@ -11131,6 +11166,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             claudeCodeVersion: undefined,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
+            exitCause: undefined,
             handedOffSubagents: new Set(),
             subagentsFromEarlierProcesses: new Set(
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
@@ -11202,6 +11238,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
+                if (exit._tag === "Failure") context.exitCause = exit.cause;
                 const heldContext = yield* Ref.get(activeTurn);
                 if (
                   (yield* Ref.get(queryContext))?.query === querySession &&
@@ -11378,6 +11415,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver: CLAUDE_PROVIDER,
                   detail: "Claude provider query ended before the turn could start.",
+                  cause: querySession.exitCause,
                 });
               }
               if (
