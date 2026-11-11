@@ -16,7 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { request, subscribe, subscribeDynamicWithSession } from "../rpc/client.ts";
-import { GATEWAY_PORT_METHODS, type GatewayGrants } from "./bridgeClient.ts";
+import { GATEWAY_PORT_METHODS, type GatewayGrants, wireTaskError } from "./bridgeClient.ts";
 import type { GatewayEnvironmentSummary, GatewayRuntimePort } from "./port.ts";
 import { type ModeLimit, withinModes } from "./portModes.ts";
 import { describeGatewayScopes, gatewayPortCallScopes, unmetGatewayScopes } from "./portScopes.ts";
@@ -206,10 +206,14 @@ export function serveGatewayPortRelays<R>(
                 const json = toMcpGatewayRelayJson(result);
                 return json === undefined ? {} : { result: json };
               })
-              .catch((error: unknown) => ({
-                error: error instanceof Error ? error.message : String(error),
-                ...(isGatewayRelayUnreachable(error) ? { unreachable: true as const } : {}),
-              }))
+              .catch((error: unknown) => {
+                const taskError = wireTaskError(error);
+                return {
+                  error: error instanceof Error ? error.message : String(error),
+                  ...(isGatewayRelayUnreachable(error) ? { unreachable: true as const } : {}),
+                  ...(taskError === undefined ? {} : { taskError }),
+                };
+              })
               .then((outcome) =>
                 runResponse(
                   session.client[WS_METHODS.mcpGatewayRespond]({

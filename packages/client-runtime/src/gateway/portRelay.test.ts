@@ -1,4 +1,4 @@
-import { McpGatewayRelayResponse, WS_METHODS } from "@t3tools/contracts";
+import { McpGatewayRelayResponse, ThreadTaskError, WS_METHODS } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -123,6 +123,66 @@ it("refuses a relayed call whose scope this app's grant for the environment lack
       unreachable: true,
     },
   ]);
+});
+
+it("answers a relayed task call with its typed task error, and any other error untyped", async () => {
+  const encode = Schema.encodeUnknownSync(Schema.toCodecJson(McpGatewayRelayResponse));
+  const lookalike = { _tag: "ThreadTaskError", code: "bogus", detail: "No task for helper." };
+  const cases: ReadonlyArray<{ thrown: unknown; taskError?: unknown }> = [
+    {
+      thrown: new ThreadTaskError({ code: "task_not_found", detail: "No task for helper." }),
+      taskError: { _tag: "ThreadTaskError", code: "task_not_found", detail: "No task for helper." },
+    },
+    {
+      thrown: new Error("Task call failed.", {
+        cause: new ThreadTaskError({ code: "scope_denied", detail: "Not your task." }),
+      }),
+      taskError: { _tag: "ThreadTaskError", code: "scope_denied", detail: "Not your task." },
+    },
+    { thrown: new Error("task_not_found: No task for helper.") },
+    { thrown: Object.assign(new Error("task_not_found"), lookalike) },
+  ];
+  for (const { thrown, taskError } of cases) {
+    const answered = Promise.withResolvers<unknown>();
+    const session = {
+      client: {
+        [WS_METHODS.mcpGatewayRespond]: (response: unknown) =>
+          Effect.sync(() => answered.resolve(encode(response))),
+      },
+    };
+    const registry = {
+      followStream: (_environmentId: string) =>
+        Stream.make([
+          session,
+          {
+            type: "invoke",
+            connectionId: "connection",
+            invocationId: "invocation",
+            method: "threadTask",
+            args: ["remote", { action: "read", input: { threadId: "helper" } }],
+          },
+        ] as const).pipe(Stream.concat(Stream.never)),
+    } as unknown as EnvironmentRegistry["Service"];
+    const stop = serveGatewayPortRelays(
+      Context.make(EnvironmentRegistry, registry),
+      {
+        threadTask: async () => {
+          throw thrown;
+        },
+        listEnvironments,
+      } as unknown as GatewayRuntimePort,
+      { remote: ["read"] },
+      () => undefined,
+    );
+    const response = await answered.promise;
+    stop();
+    expect(response).toEqual({
+      connectionId: "connection",
+      invocationId: "invocation",
+      error: (thrown as Error).message,
+      ...(taskError === undefined ? {} : { taskError }),
+    });
+  }
 });
 
 const fullThread = { runtimeMode: "full-access", interactionMode: "default" };
