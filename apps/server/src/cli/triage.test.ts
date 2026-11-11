@@ -30,11 +30,15 @@ it.live("a failed agent launch points at the prompt it could not run", () =>
     const fs = yield* FileSystem.FileSystem;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-triage-cli-" });
     const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-triage-bin-" });
+    const codexHome = NodePath.join(baseDir, "codex-home");
     NodeFS.writeFileSync(NodePath.join(binDir, "codex"), FAILING_AGENT_POSIX, { mode: 0o755 });
     NodeFS.writeFileSync(NodePath.join(binDir, "codex.cmd"), FAILING_AGENT_WINDOWS);
     yield* Effect.acquireRelease(
       // PATH holds only the fake agent, so a broken fixture can never fall through to a real codex.
-      Effect.sync(() => vi.stubEnv("PATH", binDir)),
+      Effect.sync(() => {
+        vi.stubEnv("PATH", binDir);
+        vi.stubEnv("CODEX_HOME", codexHome);
+      }),
       () => Effect.sync(() => vi.unstubAllEnvs()),
     );
     const previousExitCode = process.exitCode;
@@ -61,6 +65,8 @@ it.live("a failed agent launch points at the prompt it could not run", () =>
     assert.include(output, promptFilePath);
     assert.include(output, buildTriageLaunchPrompt(promptFilePath));
     assert.include(output, NodePath.join(NodePath.dirname(promptFilePath), "context.md"));
+    assert.include(output, `Codex keeps its state in ${codexHome}.`);
+    assert.include(output, "set CODEX_HOME to a folder on another drive");
   }).pipe(
     Effect.provide(
       Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),

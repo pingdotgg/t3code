@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeReadlinePromises from "node:readline/promises";
 
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -23,12 +25,29 @@ interface TriageAgent {
   readonly id: "claude" | "codex";
   readonly command: string;
   readonly label: string;
+  readonly stateDirEnv: string;
+  readonly defaultStateDir: string;
 }
 
 const TRIAGE_AGENTS: ReadonlyArray<TriageAgent> = [
-  { id: "claude", command: "claude", label: "Claude Code" },
-  { id: "codex", command: "codex", label: "Codex" },
+  {
+    id: "claude",
+    command: "claude",
+    label: "Claude Code",
+    stateDirEnv: "CLAUDE_CONFIG_DIR",
+    defaultStateDir: ".claude",
+  },
+  {
+    id: "codex",
+    command: "codex",
+    label: "Codex",
+    stateDirEnv: "CODEX_HOME",
+    defaultStateDir: ".codex",
+  },
 ];
+
+const resolveAgentStateDir = (agent: TriageAgent) =>
+  process.env[agent.stateDirEnv]?.trim() || NodePath.join(NodeOS.homedir(), agent.defaultStateDir);
 
 export class TriageAgentUnavailableError extends Schema.TaggedError<TriageAgentUnavailableError>()(
   "TriageAgentUnavailableError",
@@ -202,6 +221,9 @@ export const triageCommand = Command.make("triage", {
           [
             "",
             `${selected.label} exited with code ${String(exitCode)}.`,
+            "",
+            `${selected.label} keeps its state in ${resolveAgentStateDir(selected)}.`,
+            `If that drive is out of space, free some up or set ${selected.stateDirEnv} to a folder on another drive.`,
             "",
             ...describeTriageFiles(session),
             "",
