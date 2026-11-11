@@ -356,21 +356,25 @@ const checkLiveReachability = Effect.fn("cloud.cli.check_live_reachability")(fun
 });
 
 /** Asks the running server for its tunnel hostname. `null` when no server answers or no tunnel is up. */
-const readLiveTunnelHostname = Effect.fn("cloud.cli.read_live_tunnel_hostname")(function* () {
-  const config = yield* ServerConfig.ServerConfig;
-  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-  if (Option.isNone(runtimeState)) return null;
-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  return yield* withCloudCliSessionToken(environmentAuth, AuthRelayReadScope, (token) =>
-    HttpApiClient.make(EnvironmentHttpApi, { baseUrl: runtimeState.value.origin }).pipe(
-      Effect.flatMap((client) =>
-        client.connect.linkState({ headers: { authorization: `Bearer ${token}` } }),
+const readLiveTunnelHostname = Effect.fn("cloud.cli.read_live_tunnel_hostname")(
+  function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+    // A killed server leaves its record behind, and another process may own its port by now.
+    if (Option.isNone(runtimeState) || !isProcessAlive(runtimeState.value.pid)) return null;
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    return yield* withCloudCliSessionToken(environmentAuth, AuthRelayReadScope, (token) =>
+      HttpApiClient.make(EnvironmentHttpApi, { baseUrl: runtimeState.value.origin }).pipe(
+        Effect.flatMap((client) =>
+          client.connect.linkState({ headers: { authorization: `Bearer ${token}` } }),
+        ),
+        Effect.map((state) => state.tunnelHostname ?? null),
+        Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
       ),
-      Effect.map((state) => state.tunnelHostname ?? null),
-      Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
-    ),
-  ).pipe(Effect.orElseSucceed(() => null));
-});
+    );
+  },
+  Effect.orElseSucceed(() => null),
+);
 
 function formatAlertBox(text: string): string {
   const lines = text.split("\n");
