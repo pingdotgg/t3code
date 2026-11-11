@@ -238,6 +238,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
       assert.strictEqual(yield* Ref.get(requestCount), 1);
     }).pipe(Effect.provide(TestClock.layer())),
   );
+
   it.effect("waits out a backend that stays unresponsive for 30 seconds after launch", () =>
     Effect.gen(function* () {
       // A stopped backend accepts connections but answers nothing until resumed.
@@ -251,7 +252,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
       const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
         Effect.provide(
           DesktopLocalEnvironmentAuth.layer.pipe(
-            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
+            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient, NodeCrypto.layerMac)),
           ),
         ),
       );
