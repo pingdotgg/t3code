@@ -182,7 +182,7 @@ export function ViewedImagesTimelineRow({
   const { threadRef, workspaceRoot, onImageExpand } = use(TimelineRowCtx);
   if (!threadRef) return null;
   return (
-    <div className="flex flex-wrap items-start gap-2 px-0.5">
+    <div className="flex flex-wrap items-start gap-2 px-0.5" data-image-gallery>
       {row.paths.map((path) => {
         const image = resolveViewedImageAsset(path, {
           threadId: threadRef.threadId,

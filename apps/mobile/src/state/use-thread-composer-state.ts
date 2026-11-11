@@ -3,7 +3,7 @@ import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "./session";
 import { useAtomValue } from "@effect/atom-react";
-import { resolveCompactBeforeSendTokens } from "@t3tools/client-runtime/state/context-window";
+import { compactBeforeSendTokens } from "@t3tools/client-runtime/state/context-window";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
@@ -121,6 +121,17 @@ import { useAtomCommand } from "./use-atom-command";
 const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make<null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-workflow:empty"),
 );
+// Threads whose next send keeps the full history instead of compacting first.
+const fullHistoryThreadKeysAtom = Atom.make<Readonly<Record<string, true>>>({}).pipe(
+  Atom.keepAlive,
+);
+
+function setKeepFullHistory(threadKey: string, keep: boolean) {
+  const { [threadKey]: kept, ...rest } = appAtomRegistry.get(fullHistoryThreadKeysAtom);
+  if ((kept === true) === keep) return;
+  appAtomRegistry.set(fullHistoryThreadKeysAtom, keep ? { ...rest, [threadKey]: true } : rest);
+}
+
 const EMPTY_CHECKPOINT_SUMMARIES_ATOM = Atom.make<ReadonlyArray<ThreadCheckpointSummary>>([]);
 const EMPTY_THREAD_SEQUENCE_ATOM = Atom.make(0);
 
@@ -399,60 +410,37 @@ export function useThreadComposerState(input: {
     : null;
 
   const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
-  const interruptibleRunId = threadRuntimeHasInterruptibleRun(selectedThreadRuntime)
-    ? (selectedThreadRuntime?.activeRunId ?? null)
-    : null;
-
-  const resolveThreadCompactBeforeSendTokens = (send: {
-    readonly modelSelection: ModelSelection;
-    readonly text: string;
-    readonly now: string;
-  }) =>
+  const resumeCompactionTokens = (selection: ModelSelection | null, text: string, now: string) =>
     selectedEnvironmentRuntime?.connectionState === "connected" &&
     selectedThreadProjection !== null &&
-    serverConfig != null
-      ? resolveCompactBeforeSendTokens({
+    serverConfig != null &&
+    selection !== null
+      ? compactBeforeSendTokens({
           projection: selectedThreadProjection.projection,
           visibleTurnItems: selectedThreadVisibleTurnItems,
-          selection: send.modelSelection,
+          selection,
           providers: serverConfig.providers,
           settings: serverConfig.settings,
-          text: send.text,
+          text,
           threadIdle:
             !activeThreadBusy &&
             !runlessWorkActive &&
             !isCompacting &&
             selectedThreadQueuedMessages.length === 0,
-          now: send.now,
+          now,
         })
       : null;
   const nowMinuteMs = useNowMinuteMs();
-  const compactBeforeSendTokens =
-    modelSelection === null || queuedRunEdit !== null || selectedDraft.freshContext === true
+  const compactTokens =
+    selectedDraft.freshContext === true
       ? null
-      : resolveThreadCompactBeforeSendTokens({
-          modelSelection,
-          text: "",
-          now: new Date(nowMinuteMs).toISOString(),
-        });
-  // Per thread and for one send, as on web: the next send compacts again unless kept again.
-  const [fullHistoryThreadKeys, setFullHistoryThreadKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
+      : resumeCompactionTokens(modelSelection, "", new Date(nowMinuteMs).toISOString());
+  const fullHistoryThreadKeys = useAtomValue(fullHistoryThreadKeysAtom);
   const keepFullHistory =
-    selectedThreadKey !== null && fullHistoryThreadKeys.has(selectedThreadKey);
-  const setKeepFullHistory = (threadKey: string, keep: boolean) => {
-    setFullHistoryThreadKeys((current) => {
-      if (current.has(threadKey) === keep) return current;
-      const next = new Set(current);
-      if (keep) next.add(threadKey);
-      else next.delete(threadKey);
-      return next;
-    });
-  };
-  const toggleKeepFullHistory = () => {
-    if (selectedThreadKey !== null) setKeepFullHistory(selectedThreadKey, !keepFullHistory);
-  };
+    selectedThreadKey !== null && fullHistoryThreadKeys[selectedThreadKey] === true;
+  const interruptibleRunId = threadRuntimeHasInterruptibleRun(selectedThreadRuntime)
+    ? (selectedThreadRuntime?.activeRunId ?? null)
+    : null;
 
   const cancelQueuedRunEdit = () => {
     if (selectedThreadKey === null || savingQueuedEditRef.current) return;
@@ -783,13 +771,14 @@ export function useThreadComposerState(input: {
     // A redirect belongs to the approval it answers; the armed session waits for the next message.
     const freshContext = beforeDispatch === undefined && isFreshSessionPending(threadKey);
     const metadata = makeQueuedMessageMetadata();
-    // A fresh session drops the context a compaction would summarize.
+    // A fresh session drops the context a compaction would summarize. Only a send the notice
+    // announced compacts, since the notice's minute clock can trail the exact deadline.
     const compactBeforeSend =
+      compactTokens !== null &&
       !freshContext &&
-      !keepFullHistory &&
       followUpDispatchMode === null &&
-      resolveThreadCompactBeforeSendTokens({ modelSelection, text, now: metadata.createdAt }) !==
-        null;
+      appAtomRegistry.get(fullHistoryThreadKeysAtom)[threadKey] !== true &&
+      resumeCompactionTokens(modelSelection, text, metadata.createdAt) !== null;
     const messageId = MessageId.make(metadata.messageId);
     onWillEnqueue?.();
     clearThreadComposerError(threadKey);
@@ -814,9 +803,11 @@ export function useThreadComposerState(input: {
     });
     clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
     if (freshContext) setFreshSessionPending(threadKey, false);
-    if (keepFullHistory) setKeepFullHistory(threadKey, false);
     enqueuePromise.then(
-      () => scheduleUnusedComposerAttachmentCleanup(attachments),
+      () => {
+        setKeepFullHistory(threadKey, false);
+        scheduleUnusedComposerAttachmentCleanup(attachments);
+      },
       (error: unknown) => {
         // Restore with uncapped append; capped merge could drop attachments added during the failed write.
         void mergeComposerDraftContent(threadKey, {
@@ -900,9 +891,13 @@ export function useThreadComposerState(input: {
     ),
     providerSubagentStatus,
     isCompacting,
-    compactBeforeSendTokens,
-    keepFullHistory,
-    toggleKeepFullHistory,
+    compactBeforeSend:
+      compactTokens === null || selectedThreadKey === null || keepFullHistory
+        ? null
+        : {
+            tokens: compactTokens,
+            keepFullHistory: () => setKeepFullHistory(selectedThreadKey, true),
+          },
     composerDraftKey,
     followUpBehavior,
     canSteerActiveTurn,

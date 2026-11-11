@@ -235,10 +235,11 @@ export function shouldOfferResumeCompaction(input: {
 
 /**
  * The tokens a plain send into an idle thread compacts first, as web's composer does under
- * "When you return", or null when it sends as is. A send that hands off to another
- * conversation starts that one fresh, so only the resumed one counts.
+ * "When you return", or null when it sends as is. Web reads the same state for its "Compact and
+ * send" button. A send that hands off to another conversation starts that one fresh, so only the
+ * resumed one counts.
  */
-export function resolveCompactBeforeSendTokens(input: {
+export function compactBeforeSendTokens(input: {
   readonly projection: Pick<
     ThreadStructure,
     | "thread"

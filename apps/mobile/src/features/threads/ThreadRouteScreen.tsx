@@ -985,15 +985,7 @@ function ThreadRouteContent(
               : composer.activeWorkStartedAt
           }
           isCompacting={composer.isCompacting}
-          compactBeforeSend={
-            composer.compactBeforeSendTokens === null
-              ? null
-              : {
-                  tokens: composer.compactBeforeSendTokens,
-                  keepFullHistory: composer.keepFullHistory,
-                  onToggleKeepFullHistory: composer.toggleKeepFullHistory,
-                }
-          }
+          compactBeforeSend={composer.compactBeforeSend}
           runlessWorkActive={composer.runlessWorkActive}
           extensionStatuses={composer.extensionStatuses}
           providerSubagentStatus={composer.providerSubagentStatus}

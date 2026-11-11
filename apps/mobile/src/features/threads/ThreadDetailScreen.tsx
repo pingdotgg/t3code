@@ -175,8 +175,9 @@ import type {
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
-import { CompactBeforeSendNotice } from "./CompactBeforeSendNotice";
 import { FreshSessionNotice } from "./FreshSessionNotice";
+import { Notice } from "../../components/ui/Notice";
+import { formatTokens } from "@t3tools/shared/usageFormat";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -248,8 +249,7 @@ export interface ThreadDetailScreenProps {
   /** Set while the next send compacts the thread first. */
   readonly compactBeforeSend?: {
     readonly tokens: number;
-    readonly keepFullHistory: boolean;
-    readonly onToggleKeepFullHistory: () => void;
+    readonly keepFullHistory: () => void;
   } | null;
   readonly creationState:
     | {
@@ -1688,13 +1688,16 @@ function ThreadDetailBody(
                     {freshSessionAvailable ? (
                       <FreshSessionNotice threadKey={selectedThreadKey} />
                     ) : null}
-                    {props.compactBeforeSend && !props.draftMode ? (
-                      <CompactBeforeSendNotice
-                        tokens={props.compactBeforeSend.tokens}
-                        keepFullHistory={props.compactBeforeSend.keepFullHistory}
-                        disabled={!props.canOperateThread}
-                        onToggleKeepFullHistory={props.compactBeforeSend.onToggleKeepFullHistory}
-                      />
+                    {props.compactBeforeSend ? (
+                      <View className="px-4 pb-3">
+                        <Notice
+                          message={`Your next message compacts ${formatTokens(props.compactBeforeSend.tokens)} tokens of history first.`}
+                          icon="arrow.down.right.and.arrow.up.left"
+                          floating
+                          onDismiss={props.compactBeforeSend.keepFullHistory}
+                          dismissLabel="Keep the full history"
+                        />
+                      </View>
                     ) : null}
                     {props.canOperateThread ? (
                       <ManagedRuntimeModeNotice
