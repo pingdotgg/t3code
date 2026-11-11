@@ -1,4 +1,4 @@
-import * as Prisma from "alchemy/Prisma";
+import * as Prisma from "@alchemy.run/prisma";
 import * as Effect from "effect/Effect";
 
 export const Project = Prisma.Project("Project", {

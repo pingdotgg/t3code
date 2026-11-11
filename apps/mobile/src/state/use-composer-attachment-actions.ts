@@ -65,9 +65,7 @@ export function useComposerAttachmentActions(props: {
     await withDraftOperation(key, async (signal) => {
       const result = await pickComposerMedia({
         existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
-        maxVideoBytes: capabilities?.attachmentUploads
-          ? capabilities.fileAttachments?.maxUploadBytes
-          : undefined,
+        maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
       });
       report(
         "Could not attach photo or video",
@@ -119,9 +117,7 @@ export function useComposerAttachmentActions(props: {
   const onNativePasteText = async (paste: ComposerTextPaste) => {
     const key = props.draftKey;
     if (!key || props.locked) return;
-    const maxBytes = capabilities?.attachmentUploads
-      ? capabilities.fileAttachments?.maxUploadBytes
-      : undefined;
+    const maxBytes = capabilities?.fileAttachments?.maxUploadBytes;
     if (maxBytes === undefined) return;
     const names = reservedNames.current.get(key) ?? new Set<string>();
     reservedNames.current.set(key, names);

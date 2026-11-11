@@ -56,9 +56,7 @@ export function resolvePendingThreadCreation(input: {
   readonly previous: PendingThreadCreation | null;
   readonly detail: {
     readonly messages: ReadonlyArray<{ readonly id: string }>;
-    readonly runs?: ReadonlyArray<{ readonly status: string }>;
-    readonly latestTurn?: { readonly turnId: string } | null;
-    readonly session?: { readonly status: string } | null;
+    readonly runs: ReadonlyArray<{ readonly status: string }>;
   } | null;
 }): PendingThreadCreation | null {
   const creation = input.pending ?? input.previous;
@@ -70,20 +68,18 @@ export function resolvePendingThreadCreation(input: {
   }
   if (creation.outcome?.kind === "failed") return creation;
   const detail = input.detail;
-  const latestRun = detail?.runs?.at(-1);
-  const terminalStatus = latestRun?.status ?? detail?.session?.status;
+  const latestRun = detail?.runs.at(-1);
+  const terminalStatus = latestRun?.status;
   if (
     terminalStatus === "failed" ||
-    terminalStatus === "error" ||
     terminalStatus === "cancelled" ||
-    terminalStatus === "stopped" ||
     terminalStatus === "interrupted"
   )
     return null;
   // Message delivery can precede startup; wait for turn timing before replacing the preparing pill.
   if (
     detail !== null &&
-    (latestRun !== undefined || detail.latestTurn != null) &&
+    latestRun !== undefined &&
     !isPendingThreadCreationVisible({
       creationMessageId: creation.message.messageId,
       loadedMessageIds: detail.messages.map((message) => message.id),
@@ -117,7 +113,7 @@ export function clearPendingThreadCreationOutcome(threadKey: string): void {
 }
 
 /** Thread shell and empty detail precede the prompt: worktree setup runs between creation and turn start. */
-export function isPendingThreadCreationVisible(input: {
+function isPendingThreadCreationVisible(input: {
   readonly creationMessageId: string;
   readonly loadedMessageIds: ReadonlyArray<string> | null;
 }): boolean {
