@@ -4250,10 +4250,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : Effect.map(realLocation(parent), (real) => path.join(real, path.basename(target)));
       }),
     );
-  const isWithin = (parent: string, child: string) => {
-    const relative = path.relative(parent, child);
-    return relative === "" || (!path.isAbsolute(relative) && relative.split(path.sep)[0] !== "..");
-  };
   const isSymbolicLink = (target: string) =>
     fileSystem.readLink(target).pipe(
       Effect.as(true),
@@ -4348,7 +4344,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     const lexical = path.resolve(cwd, worktreePath);
     const destination = yield* realLocation(lexical);
-    if (checkouts.linked.some((linked) => isWithin(linked, destination))) {
+    if (checkouts.linked.some((linked) => isPathWithinRoot(linked, destination))) {
       return yield* refuse(
         "The worktree folder is inside another worktree. Choose another folder.",
       );
@@ -4356,11 +4352,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const { main, listedMain } = checkouts;
     if (main === null || listedMain === null) return;
     // Lexical first, so a link inside the checkout is caught below instead of followed out of it.
-    const relative = isWithin(main, lexical)
+    const relative = isPathWithinRoot(main, lexical)
       ? path.relative(main, lexical)
-      : isWithin(listedMain, lexical)
+      : isPathWithinRoot(listedMain, lexical)
         ? path.relative(listedMain, lexical)
-        : isWithin(main, destination)
+        : isPathWithinRoot(main, destination)
           ? path.relative(main, destination)
           : null;
     if (relative === null) return;
