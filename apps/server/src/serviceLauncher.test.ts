@@ -26,7 +26,6 @@ import {
   compareExactServiceVersions,
   decodeServiceState,
   isExactServiceVersion,
-  parseServiceState,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
@@ -187,7 +186,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       }),
   );
 
-  it.effect("migrates a legacy install atomically before the launcher spawns its runtime", () =>
+  it.effect("adopts a legacy install record without rewriting it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -200,34 +199,20 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         path,
         versionDir,
         `
-import { readFileSync, writeFileSync } from "node:fs";
-writeFileSync(new URL("./started", import.meta.url), readFileSync(new URL("../../service-state.json", import.meta.url)));
+import { writeFileSync } from "node:fs";
+writeFileSync(new URL("./started", import.meta.url), "");
 process.exit(0);
 `,
       );
       const legacyContents = `{ "protocol": 2, "activeVersion": "${activeVersion}" }`;
       yield* fs.writeFileString(statePath, legacyContents);
-      const previousDocument = path.join(root, "previous-state.json");
-      yield* fs.link(statePath, previousDocument);
 
-      assert.isUndefined(decodeServiceState({ protocol: 2, activeVersion }));
-      assert.isUndefined(parseServiceState(legacyContents));
-      yield* Effect.promise(() =>
-        expect(readServiceState(statePath)).rejects.toThrow(
-          "Service state is invalid or unsupported.",
-        ),
-      );
       yield* Effect.promise(() =>
         expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
       );
 
-      const migrated = { protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion };
-      assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), migrated);
-      assert.deepEqual(
-        yield* Effect.promise(() => readServiceState(path.join(versionDir, "started"))),
-        migrated,
-      );
-      assert.equal(yield* fs.readFileString(previousDocument), legacyContents);
+      assert.isTrue(yield* fs.exists(path.join(versionDir, "started")));
+      assert.equal(yield* fs.readFileString(statePath), legacyContents);
     }),
   );
 

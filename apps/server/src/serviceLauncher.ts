@@ -939,9 +939,9 @@ export async function main(): Promise<void> {
       throw new Error(`Selected t3@${legacy.activeVersion} runtime is missing or incomplete.`);
     }
     // An older coordinator can write protocol 2 beside a protocol-3 runtime.
-    // Adopt only its install record; update state needs its original launcher.
+    // Adopt only its install record, in memory: rewriting it here could replace
+    // state a concurrent install wrote after this read.
     state = { protocol: 3, activeVersion: legacy.activeVersion };
-    await writeServiceState(statePath, state);
   }
   await new Launcher(baseDir, state, { environment }).run();
 }
