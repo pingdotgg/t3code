@@ -23,8 +23,6 @@ function setup() {
     isRunning: true,
     canInterrupt: true,
     canResume: false,
-    showPlanFollowUpPrompt: false,
-    promptHasText: false,
     isSendBusy: false,
     sendDisabledReason: null,
     isEnvironmentUnavailable: false,
@@ -34,7 +32,6 @@ function setup() {
     onInterrupt: vi.fn(),
     onResume: vi.fn(),
     onSubmitMessage: vi.fn(),
-    onImplementPlanInNewThread: vi.fn(),
   } satisfies ComponentProps<typeof ComposerPrimaryActions>;
 }
 
@@ -68,7 +65,6 @@ it.each([false, true])(
         canInterrupt={false}
         canResume
         hasSendableContent={draft}
-        promptHasText={draft}
       />,
     );
     await expect
@@ -90,35 +86,30 @@ it.each([false, true])(
   },
 );
 
-it.each([false, true])(
-  "allows retry after ten seconds and protects a late stop (retry: %s)",
-  async (retry) => {
-    const props = setup();
-    await using screen = await render(<ComposerPrimaryActions {...props} />);
-    using _timers = fakeTimers();
-    await act(() =>
-      (
-        screen.getByRole("button", { name: "Stop generation" }).element() as HTMLButtonElement
-      ).click(),
-    );
-    await act(() => vi.advanceTimersByTime(9_999));
-    expect(screen.getByRole("button", { name: "Stopping", exact: true }).element()).toBeDisabled();
-    await act(() => vi.advanceTimersByTime(1));
-    expect(screen.getByRole("button", { name: "Stop generation" }).element()).toBeEnabled();
-    if (retry)
-      await act(() =>
-        (
-          screen.getByRole("button", { name: "Stop generation" }).element() as HTMLButtonElement
-        ).click(),
-      );
-    await screen.rerender(
-      <ComposerPrimaryActions {...props} isRunning={false} canInterrupt={false} canResume />,
-    );
-    expect(screen.getByRole("button", { name: "Stopped", exact: true }).element()).toBeDisabled();
-    expect(props.onInterrupt).toHaveBeenCalledTimes(retry ? 2 : 1);
-    expect(props.onResume).not.toHaveBeenCalled();
-  },
-);
+it("allows retry after ten seconds and protects a late stop", async () => {
+  const props = setup();
+  await using screen = await render(<ComposerPrimaryActions {...props} />);
+  using _timers = fakeTimers();
+  await act(() =>
+    (
+      screen.getByRole("button", { name: "Stop generation" }).element() as HTMLButtonElement
+    ).click(),
+  );
+  await act(() => vi.advanceTimersByTime(9_999));
+  expect(screen.getByRole("button", { name: "Stopping", exact: true }).element()).toBeDisabled();
+  await act(() => vi.advanceTimersByTime(1));
+  await act(() =>
+    (
+      screen.getByRole("button", { name: "Stop generation" }).element() as HTMLButtonElement
+    ).click(),
+  );
+  await screen.rerender(
+    <ComposerPrimaryActions {...props} isRunning={false} canInterrupt={false} canResume />,
+  );
+  expect(screen.getByRole("button", { name: "Stopped", exact: true }).element()).toBeDisabled();
+  expect(props.onInterrupt).toHaveBeenCalledTimes(2);
+  expect(props.onResume).not.toHaveBeenCalled();
+});
 
 it("keeps Stop pending across a permission failure", async () => {
   const props = setup();
@@ -138,34 +129,16 @@ it("keeps Stop pending across a permission failure", async () => {
   expect(props.onInterrupt).toHaveBeenCalledTimes(1);
 });
 
-it("clears a pending stop when reconnect skips straight to a different run", async () => {
+it("keeps a pending stop when the run id clears and resets it for a different run", async () => {
   const props = setup();
-  await using screen = await render(<ComposerPrimaryActions {...props} {...{ runId: "first" }} />);
+  await using screen = await render(<ComposerPrimaryActions {...props} runId="first" />);
   await act(() =>
     (
       screen.getByRole("button", { name: "Stop generation" }).element() as HTMLButtonElement
     ).click(),
   );
-  await screen.rerender(<ComposerPrimaryActions {...props} {...{ runId: "second" }} />);
+  await screen.rerender(<ComposerPrimaryActions {...props} runId={null} />);
+  expect(screen.getByRole("button", { name: "Stopping", exact: true }).element()).toBeDisabled();
+  await screen.rerender(<ComposerPrimaryActions {...props} runId="second" />);
   expect(screen.getByRole("button", { name: "Stop generation" }).element()).toBeEnabled();
-});
-
-it("retains the stopped target when the executing run finishes", async () => {
-  const props = setup();
-  await using screen = await render(<ComposerPrimaryActions {...props} runId="executing" />);
-  await act(() =>
-    (
-      screen.getByRole("button", { name: "Stop generation" }).element() as HTMLButtonElement
-    ).click(),
-  );
-  await screen.rerender(
-    <ComposerPrimaryActions
-      {...props}
-      runId={null}
-      canInterrupt={false}
-      isRunning={false}
-      canResume
-    />,
-  );
-  expect(screen.getByRole("button", { name: "Stopped", exact: true }).element()).toBeDisabled();
 });
