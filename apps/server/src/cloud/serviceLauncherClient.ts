@@ -12,6 +12,7 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   type ServiceLauncherChildMessage,
   type ServiceLauncherParentMessage,
+  type SupportedLauncherProtocol,
 } from "./serviceProtocol.ts";
 
 export class ServiceLauncherClientError extends Schema.TaggedError<ServiceLauncherClientError>()(
@@ -97,6 +98,9 @@ export class ServiceLauncherClient extends Context.Service<
   ServiceLauncherClient,
   {
     readonly managed: boolean;
+    /** The supervising launcher's protocol. A remote update never replaces the launcher,
+        so it can be older than this runtime's own. */
+    readonly protocol: SupportedLauncherProtocol | undefined;
     readonly requestUpdate: (input: {
       readonly targetVersion: string;
       readonly dbPath: string;
@@ -240,6 +244,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
 
   return ServiceLauncherClient.of({
     managed,
+    protocol: context?.protocol,
     requestUpdate,
     prepareTrial,
   });
