@@ -1005,7 +1005,7 @@ export function TakingPartRow({
     const consequence = controls.lastFullAccess ? " It is the last machine in your network." : "";
     if (
       !(await confirmDestructive(
-        `Leave your network on ${host.label}? Its links to the other machines end, apps that reach it through the network are signed out, and the others see it as left.${consequence} To bring it back, choose Allow joining on ${host.label}, then Add again from a full-access machine. If this app loses its connection to ${host.label}, pair with it directly first.`,
+        `Leave your network on ${host.label}? Its links to the other machines end, other apps that reach it through the network are signed out, and the others see it as left.${consequence} This app stays connected to it. To bring it back, choose Allow joining on ${host.label}, then Add again from a full-access machine.`,
       ))
     )
       return;

@@ -336,12 +336,12 @@ machine in the network picks them up.
 - **Forget** removes a machine from the list. A member is revoked everywhere
   first, so it cannot rejoin by itself. If it is still on your tailnet, it
   shows up again as a machine you can add.
-- **Leave network** takes a machine out of the network. Apps that reach it
-  through the network are signed out, and the others see it as left. The only full-access machine cannot leave while other members
+- **Leave network** takes a machine out of the network. Other apps that reach
+  it through the network are signed out, and the others see it as left; the app
+  you leave from stays connected to it. The only full-access machine cannot leave while other members
   remain: give another machine full access first. The others then show it as
   **Left the network**; to bring it back, choose **Allow joining** on it, then
-  **Add again** on its row from a full-access machine. If your app loses its
-  connection to it, pair with it directly first.
+  **Add again** on its row from a full-access machine.
 - After updating from a version before machines were tied to their Tailscale
   identity, existing members show **Needs re-adding after the update**, and the
   other machines refuse them until then. On that machine, choose **Allow

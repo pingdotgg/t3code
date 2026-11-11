@@ -250,9 +250,9 @@ function TakingPartRow(props: {
   const leaveNetwork = () =>
     Dialog.confirm({
       title: `Leave your network on ${host.label}?`,
-      message: `Its links to the other machines end, apps that reach it through the network are signed out, and the others see it as left.${
+      message: `Its links to the other machines end, other apps that reach it through the network are signed out, and the others see it as left.${
         controls.lastFullAccess ? " It is the last machine in your network." : ""
-      } To bring it back, choose Allow joining on ${host.label}, then Add again from a full-access machine. If this app loses its connection to ${host.label}, pair with it directly first.`,
+      } This app stays connected to it. To bring it back, choose Allow joining on ${host.label}, then Add again from a full-access machine.`,
       confirmText: "Leave",
       destructive: true,
       onConfirm: () => {
