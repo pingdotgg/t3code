@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -15,7 +16,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 export class ResourceCleanupError extends Schema.TaggedError<ResourceCleanupError>()(
   "ResourceCleanupError",
   {
-    operation: Schema.Literals(["terminal", "preview", "attachment", "scheduled-tasks"]),
+    operation: Schema.Literals(["terminal", "preview", "device", "attachment", "scheduled-tasks"]),
     threadId: Schema.optional(Schema.String),
     attachmentId: Schema.optional(Schema.String),
     cause: Schema.Defect(),
@@ -26,6 +27,8 @@ export class ResourceCleanupService extends Context.Reference<{
   readonly cleanupScheduledTasks: (threadId: ThreadId) => Effect.Effect<void, ResourceCleanupError>;
   readonly cleanupTerminals: (threadId: string) => Effect.Effect<void, ResourceCleanupError>;
   readonly cleanupPreviews: (threadId: string) => Effect.Effect<void, ResourceCleanupError>;
+  /** Releases the thread's device claims, as `device_close` does; the devices stay booted. */
+  readonly cleanupDevices: (threadId: ThreadId) => Effect.Effect<void, ResourceCleanupError>;
   readonly cleanupAttachments: (
     attachmentIds: ReadonlyArray<string>,
   ) => Effect.Effect<void, ResourceCleanupError>;
@@ -34,6 +37,7 @@ export class ResourceCleanupService extends Context.Reference<{
     cleanupScheduledTasks: () => Effect.void,
     cleanupTerminals: () => Effect.void,
     cleanupPreviews: () => Effect.void,
+    cleanupDevices: () => Effect.void,
     cleanupAttachments: () => Effect.void,
   }),
 }) {}
@@ -43,6 +47,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const terminals = yield* TerminalManager.TerminalManager;
     const previews = yield* PreviewManager.PreviewManager;
+    const devices = yield* DeviceService.DeviceService;
     const fileSystem = yield* FileSystem.FileSystem;
     const config = yield* ServerConfig.ServerConfig;
     const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
@@ -80,6 +85,21 @@ export const layer = Layer.effect(
               (cause) => new ResourceCleanupError({ operation: "preview", threadId, cause }),
             ),
           );
+      }),
+      cleanupDevices: Effect.fn("ResourceCleanupService.cleanupDevices")(function* (
+        threadId: ThreadId,
+      ) {
+        // One close per session, so a reconnecting host does not keep the other hosts' claims.
+        const sessions = yield* devices.sessionsForThread(threadId);
+        const [, failures] = yield* Effect.partition(
+          sessions,
+          (session) =>
+            devices.close({ threadId, hostId: session.hostId, deviceId: session.deviceId }),
+          { concurrency: 1 },
+        );
+        const [failure] = failures;
+        if (failure !== undefined)
+          return yield* new ResourceCleanupError({ operation: "device", threadId, cause: failure });
       }),
       cleanupAttachments: Effect.fn("ResourceCleanupService.cleanupAttachments")(function (
         attachmentIds: ReadonlyArray<string>,
