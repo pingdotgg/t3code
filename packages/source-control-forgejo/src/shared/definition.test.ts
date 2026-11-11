@@ -104,6 +104,22 @@ describe("Forgejo change request URLs", () => {
   });
 });
 
+describe("Forgejo repository pages", () => {
+  it("reads the repository from branch, tag and commit views", () => {
+    const repositoryUrl = (url: string) => definition.repositoryUrlFromPage?.(new URL(url), true);
+    expect(repositoryUrl("https://codeberg.org/forgejo/forgejo/src/branch/forgejo/README.md")).toBe(
+      "https://codeberg.org/forgejo/forgejo",
+    );
+    expect(repositoryUrl("http://git.example.test:3000/git/team/repo/src/tag/v1.0")).toBe(
+      "http://git.example.test:3000/git/team/repo",
+    );
+    expect(repositoryUrl("https://codeberg.org/forgejo/forgejo/src/commit/abc123")).toBe(
+      "https://codeberg.org/forgejo/forgejo",
+    );
+    expect(repositoryUrl("https://codeberg.org/forgejo/forgejo")).toBeNull();
+  });
+});
+
 describe("Forgejo remotes", () => {
   it("recognises Codeberg and Forgejo or Gitea hosts, keeping an HTTP remote's origin", () => {
     for (const host of ["codeberg.org", "forgejo.example.test", "gitea.example.test"]) {
@@ -117,6 +133,21 @@ describe("Forgejo remotes", () => {
       recognizeRemoteWith(definition, "ssh://git@forgejo.example.test:2222/team/repo.git")?.baseUrl,
     ).toBe("https://forgejo.example.test");
     expect(recognizeRemoteWith(definition, "https://git.example.test/team/repo")).toBeNull();
+  });
+});
+
+describe("Forgejo CLI commands", () => {
+  it("recognizes shell merges and closes under every spelling tea accepts", () => {
+    for (const command of [
+      "tea pulls merge 7",
+      "tea pull merge 7",
+      "tea pr m 7",
+      "tea pull close 7",
+      "fj pr close 7",
+    ]) {
+      expect(definition.changeRequestCloseCommand.test(command), command).toBe(true);
+    }
+    expect(definition.changeRequestCloseCommand.test("tea pull checkout 7")).toBe(false);
   });
 });
 

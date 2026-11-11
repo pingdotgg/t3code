@@ -7,7 +7,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { makeStaleWhileRevalidate } from "./staleWhileRevalidate.ts";
+
 const SSH_PORT = 22;
+const TARGETS_CACHE_TTL = "60 seconds";
 
 export class RemoteOpenTargets extends Context.Service<
   RemoteOpenTargets,
@@ -21,7 +24,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const net = yield* NetService.NetService;
 
-  const resolveTargets = Effect.gen(function* () {
+  const discoverTargets = Effect.gen(function* () {
     // Check both loopback families: sshd can be bound IPv6-only.
     const sshdListening = yield* Effect.zipWith(
       net.hasListenerOnHost(SSH_PORT, "127.0.0.1"),
@@ -77,6 +80,10 @@ export const make = Effect.gen(function* () {
 
     return targets;
   });
+
+  // Advertised on every client connect; probing sshd and tailscaled is slow
+  // on a loaded host, so serve the last result while it refreshes.
+  const resolveTargets = yield* makeStaleWhileRevalidate(discoverTargets, TARGETS_CACHE_TTL);
 
   return RemoteOpenTargets.of({
     resolveTargets: Effect.fn("RemoteOpenTargets.resolveTargets")(function () {
