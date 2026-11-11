@@ -1,8 +1,9 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-import type {
-  EnvironmentId,
-  PullRequestRef,
-  PullRequestReviewerCandidate,
+import {
+  PULL_REQUEST_REVIEWER_CHANGE_LIMIT,
+  type EnvironmentId,
+  type PullRequestRef,
+  type PullRequestReviewerCandidate,
 } from "@t3tools/contracts";
 import {
   hostReviewerQuery,
@@ -87,16 +88,22 @@ export function PullRequestReviewerPicker({
     requested: boolean,
   ): Promise<boolean> => {
     if (reviewers.length === 0) return true;
-    const logins = reviewers.map((reviewer) => reviewer.login).join(", ");
-    const result = await requestReviewers({
-      environmentId,
-      input: {
-        ...reference,
-        reviewers: reviewers.map((reviewer) => ({ id: reviewer.id, kind: reviewer.kind })),
-        requested,
-      },
-    });
-    if (result._tag === "Failure") {
+    for (let start = 0; start < reviewers.length; start += PULL_REQUEST_REVIEWER_CHANGE_LIMIT) {
+      const result = await requestReviewers({
+        environmentId,
+        input: {
+          ...reference,
+          reviewers: reviewers
+            .slice(start, start + PULL_REQUEST_REVIEWER_CHANGE_LIMIT)
+            .map((reviewer) => ({ id: reviewer.id, kind: reviewer.kind })),
+          requested,
+        },
+      });
+      if (result._tag !== "Failure") continue;
+      const logins = reviewers
+        .slice(start)
+        .map((reviewer) => reviewer.login)
+        .join(", ");
       toastManager.add({
         type: "error",
         title: requested

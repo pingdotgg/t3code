@@ -893,11 +893,13 @@ export const PullRequestReactionInput = Schema.Struct({
 });
 export type PullRequestReactionInput = typeof PullRequestReactionInput.Type;
 
+export const PULL_REQUEST_REVIEWER_CHANGE_LIMIT = 25;
+
 export const PullRequestReviewerRequestInput = Schema.Struct({
   ...PullRequestRef.fields,
   reviewers: Schema.Array(
     Schema.Struct({ id: TrimmedNonEmptyString, kind: PullRequestReviewerKind }),
-  ).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(PULL_REQUEST_REVIEWER_CHANGE_LIMIT)),
   requested: Schema.Boolean,
 });
 export type PullRequestReviewerRequestInput = typeof PullRequestReviewerRequestInput.Type;

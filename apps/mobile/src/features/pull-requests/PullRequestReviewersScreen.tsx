@@ -11,7 +11,10 @@ import {
   reviewerCandidateView,
   type ReviewerTruncation,
 } from "@t3tools/client-runtime/pull-request-reviewers";
-import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
+import {
+  PULL_REQUEST_REVIEWER_CHANGE_LIMIT,
+  type PullRequestReviewerCandidate,
+} from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { FlatList, Pressable, ScrollView, View } from "react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
@@ -73,23 +76,30 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
     reviewers: ReadonlyArray<PullRequestReviewerCandidate>,
     requested: boolean,
   ): Promise<boolean> => {
-    if (reviewers.length === 0) return true;
-    const response = await request({
-      ...target,
-      input: {
-        ...target.input,
-        reviewers: reviewers.map((reviewer) => ({ id: reviewer.id, kind: reviewer.kind })),
-        requested,
-      },
-    });
-    if (!AsyncResult.isFailure(response)) return true;
-    const cause = squashAtomCommandFailure(response);
-    const logins = reviewers.map((reviewer) => reviewer.login).join(", ");
-    Dialog.alert(
-      requested ? `Couldn't ask ${logins} for a review` : `Couldn't remove ${logins}`,
-      cause instanceof Error ? cause.message : "The provider refused the change. Try again.",
-    );
-    return false;
+    for (let start = 0; start < reviewers.length; start += PULL_REQUEST_REVIEWER_CHANGE_LIMIT) {
+      const response = await request({
+        ...target,
+        input: {
+          ...target.input,
+          reviewers: reviewers
+            .slice(start, start + PULL_REQUEST_REVIEWER_CHANGE_LIMIT)
+            .map((reviewer) => ({ id: reviewer.id, kind: reviewer.kind })),
+          requested,
+        },
+      });
+      if (!AsyncResult.isFailure(response)) continue;
+      const cause = squashAtomCommandFailure(response);
+      const logins = reviewers
+        .slice(start)
+        .map((reviewer) => reviewer.login)
+        .join(", ");
+      Dialog.alert(
+        requested ? `Couldn't ask ${logins} for a review` : `Couldn't remove ${logins}`,
+        cause instanceof Error ? cause.message : "The provider refused the change. Try again.",
+      );
+      return false;
+    }
+    return true;
   };
   const debouncedQuery = useDebouncedValue(query.trim(), 250);
   const searchInput = {
