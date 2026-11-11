@@ -32,11 +32,6 @@ export function citeAssistantText(
     Dialog.alert("Selection is too long to cite", "Select a shorter passage and try again.");
     return;
   }
-  // Same draft the composer shows: a queued message's edit draft while one is open.
-  const threadKey = scopedThreadKey(source.environmentId, source.threadId);
-  const edit = getQueuedRunEdit(threadKey);
-  const draftKey = edit === null ? threadKey : queuedEditDraftKey(threadKey, edit.runId);
-  const insertion = captureComposerDraftInsertion(draftKey);
   const start = Math.max(0, selection.start);
   // Native offsets are per rendered block, not per message, and carry no surrounding context;
   // web resolves the quote by its text when the offsets do not line up.
@@ -63,6 +58,11 @@ export function citeAssistantText(
           ]);
           return;
         }
+        // Resolved on confirm: a queued edit can end while the prompt is open.
+        const threadKey = scopedThreadKey(source.environmentId, source.threadId);
+        const edit = getQueuedRunEdit(threadKey);
+        const draftKey = edit === null ? threadKey : queuedEditDraftKey(threadKey, edit.runId);
+        const insertion = captureComposerDraftInsertion(draftKey);
         const before = insertion.text.slice(0, insertion.start);
         const lead = before.length > 0 && !/\s$/.test(before) ? " " : "";
         insertComposerDraftText(
