@@ -1843,6 +1843,27 @@ it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
         wake,
         completeSibling,
       } = yield* queueCompletionWakeBesideRunningSibling("sibling-queued-cancel");
+      const questionMessageId = MessageId.make("sibling-queued-cancel-question");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("sibling-queued-cancel-question"),
+        threadId,
+        messageId: questionMessageId,
+        text: "Delegated task has a question",
+        notification: {
+          source: {
+            kind: "delegated_task",
+            taskIds: [sibling.id],
+            childThreadId: sibling.childThreadId!,
+          },
+          outcome: "updated",
+          summary: "Delegated task has a question",
+        },
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      });
       const cancelled = yield* orchestrator.dispatch({
         type: "queued-run.cancel",
         commandId: CommandId.make("sibling-queued-cancel-cancel"),
@@ -1866,6 +1887,10 @@ it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
       assert.equal(
         afterCancel.runs.find((run) => run.id === originRunId)?.delegatedCompletion?.disposition,
         "open",
+      );
+      assert.equal(
+        afterCancel.runs.find((run) => run.userMessageId === questionMessageId)?.status,
+        "queued",
       );
 
       const afterSequence = yield* completeSibling;

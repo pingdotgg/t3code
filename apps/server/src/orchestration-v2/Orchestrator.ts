@@ -3074,7 +3074,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (cohort === undefined && tasks.length === 0) {
       return;
     }
-    yield* cancelQueuedDelegatedRequests({ ...input, taskIds: tasks.map((task) => task.id) });
     const emitEvent = emit(input.events, input.command);
     const wakeTaskIds = input.interruptedWakeTaskIds;
     const keptTaskIds = new Set(
@@ -3090,6 +3089,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .map((task) => task.id)
         : [],
     );
+    yield* cancelQueuedDelegatedRequests({
+      ...input,
+      taskIds: tasks.filter((task) => !keptTaskIds.has(task.id)).map((task) => task.id),
+    });
     const nextCohort =
       keptTaskIds.size > 0
         ? cohort!
