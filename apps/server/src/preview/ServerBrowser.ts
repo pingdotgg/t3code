@@ -2464,12 +2464,10 @@ const make = Effect.gen(function* () {
           ),
         });
         viewer.pressedKeys.set(code || key, { key, code });
-        // Read outside the input queue: a busy frame answers late and must not hold later input.
-        if (copying)
-          return async () => {
-            const copied = await takeCopiedText(tab, since);
-            if (copied) viewer.push({ _tag: "clipboard", text: copied });
-          };
+        if (copying) {
+          const copied = await takeCopiedText(tab, since);
+          if (copied) viewer.push({ _tag: "clipboard", text: copied });
+        }
         return;
       }
       case "text":
@@ -2726,9 +2724,8 @@ const make = Effect.gen(function* () {
                   : {}),
               });
             } else {
-              const dispatch = async (input: Record<string, unknown>) => {
-                await dispatchViewerInput(tab, session, viewer, input);
-              };
+              const dispatch = (input: Record<string, unknown>) =>
+                dispatchViewerInput(tab, session, viewer, input);
               if (
                 message.type === "mouse" &&
                 message.action === "move" &&
@@ -2755,10 +2752,7 @@ const make = Effect.gen(function* () {
                   }),
                 );
               } else {
-                const readCopy = await tab.control.human(viewer.id, () =>
-                  dispatchViewerInput(tab, session, viewer, message),
-                );
-                await readCopy?.();
+                await tab.control.human(viewer.id, () => dispatch(message));
               }
             }
           } catch {
