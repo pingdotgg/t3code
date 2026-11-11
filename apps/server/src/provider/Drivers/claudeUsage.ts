@@ -61,20 +61,24 @@ function parseClaudeRecord(parsed: unknown): readonly UsageRecord[] {
     : [];
   // After a server-side fallback the top-level usage can name the declined model and merge
   // attempts; the serving `fallback_message` iteration holds what its own model billed.
-  const servingIndex = iterations.findLastIndex(
+  const fallbackIndex = iterations.findLastIndex(
     (iteration) => iterationRecord(iteration)?.["type"] === "fallback_message",
   );
-  const serving = iterationRecord(iterations[servingIndex]);
+  const fallback = iterationRecord(iterations[fallbackIndex]);
+  const fallbackModel = fallback === null ? null : iterationModel(fallback);
+  const serving = fallbackModel === null ? null : fallback;
+  const servingIndex = serving === null ? -1 : fallbackIndex;
 
   const executor: UsageRecord = {
     provider: "claude",
     timestampMs,
-    model: (serving === null ? null : iterationModel(serving)) ?? model,
+    model: fallbackModel ?? model,
     sessionId: typeof record["sessionId"] === "string" ? record["sessionId"] : "",
     totals: usageTotals(serving ?? usageRecord),
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     speed: usageRecord["speed"] === "fast" ? "fast" : "standard",
-    dedupeKey,
+    dedupeKey: serving === null || dedupeKey === null ? dedupeKey : `${dedupeKey}:fallback`,
+    ...(serving === null || dedupeKey === null ? {} : { supersedesDedupeKey: dedupeKey }),
   };
 
   // Advisor calls and declined attempts bill at their own model's rates. Anthropic bills a

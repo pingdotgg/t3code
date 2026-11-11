@@ -220,7 +220,7 @@ describe("Claude advisor iterations", () => {
 describe("Claude fallback iterations", () => {
   // Shaped like Claude Code's records of a server-side fallback: after a mid-stream decline the
   // top-level usage names the requested model and merges cache writes across both attempts.
-  const fallbackTurn = (declinedOutputTokens: number) => ({
+  const fallbackTurn = (declinedOutputTokens: number, fallbackModel: string | undefined) => ({
     type: "assistant",
     timestamp: "2026-11-02T03:04:05.000Z",
     sessionId: "5a128faa-8253-489e-b935-6c08e8e670c0",
@@ -244,7 +244,7 @@ describe("Claude fallback iterations", () => {
           },
           {
             type: "fallback_message",
-            model: "claude-opus-4-8",
+            model: fallbackModel,
             input_tokens: 6,
             cache_read_input_tokens: 0,
             cache_creation_input_tokens: 10000,
@@ -268,14 +268,28 @@ describe("Claude fallback iterations", () => {
     },
     reportedCostUsd: null,
     speed: "standard",
+    dedupeKey: "msg_fallback:req_fallback:fallback",
+    supersedesDedupeKey: "msg_fallback:req_fallback",
+  };
+  const unattributed = {
+    ...served,
+    model: "claude-opus-5-5",
+    totals: { ...served.totals, cacheCreationTokens: 30000 },
     dedupeKey: "msg_fallback:req_fallback",
+    supersedesDedupeKey: undefined,
   };
 
   it.each([
-    { declined: "before any output", declinedOutputTokens: 0, expected: [served] },
+    {
+      declined: "before any output",
+      declinedOutputTokens: 0,
+      fallbackModel: "claude-opus-4-8",
+      expected: [served],
+    },
     {
       declined: "mid-stream",
       declinedOutputTokens: 250,
+      fallbackModel: "claude-opus-4-8",
       expected: [
         served,
         {
@@ -289,13 +303,20 @@ describe("Claude fallback iterations", () => {
             reasoningTokens: 0,
           },
           dedupeKey: "msg_fallback:req_fallback:attempt:0",
+          supersedesDedupeKey: undefined,
         },
       ],
     },
+    ...[undefined, "", "<synthetic>"].map((fallbackModel) => ({
+      declined: `mid-stream with unavailable serving model ${String(fallbackModel)}`,
+      declinedOutputTokens: 250,
+      fallbackModel,
+      expected: [unattributed],
+    })),
   ])(
-    "prices the serving fallback under its own model when the request declined $declined",
-    ({ declinedOutputTokens, expected }) => {
-      const turn = fallbackTurn(declinedOutputTokens);
+    "attributes usage when the request declined $declined",
+    ({ declinedOutputTokens, fallbackModel, expected }) => {
+      const turn = fallbackTurn(declinedOutputTokens, fallbackModel);
 
       expect(claudeUsageFormat.parseLine(JSON.stringify(turn), undefined)).toEqual(expected);
       expect(claudeUsageFormat.parseProjected(turn, undefined)).toEqual(expected);

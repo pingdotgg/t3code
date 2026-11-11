@@ -244,17 +244,20 @@ describe("scan cache round trip", () => {
     },
   );
 
-  it.each([11, 12])("re-parses v%s Claude transcripts for corrected attempt usage", (version) => {
-    const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
-    const legacy = { ...parse(makeScanCacheWriter()(original, {})), version };
+  it.each([11, 12, 13])(
+    "re-parses v%s Claude transcripts for corrected attempt usage",
+    (version) => {
+      const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
+      const legacy = { ...parse(makeScanCacheWriter()(original, {})), version };
 
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
-    expect(restored.get("/claude.jsonl")).toEqual({
-      ...original.get("/claude.jsonl"),
-      size: -1,
-      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-    });
-  });
+      const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
+      expect(restored.get("/claude.jsonl")).toEqual({
+        ...original.get("/claude.jsonl"),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
+    },
+  );
 
   it("rewrites only changed entries and still restores the whole cache", () => {
     const write = makeScanCacheWriter();

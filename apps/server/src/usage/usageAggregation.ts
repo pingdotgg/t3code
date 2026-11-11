@@ -173,6 +173,7 @@ interface Contribution {
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
   readonly #seen = new Map<string, Contribution>();
+  readonly #supersededKeys = new Set<string>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
@@ -204,6 +205,15 @@ export class UsageAggregator {
   }
 
   add(input: UsageRecord, sourcePath?: string): boolean {
+    // A completed fallback replaces provisional snapshots even when its serving model is filtered out.
+    if (input.supersedesDedupeKey !== undefined) {
+      this.#supersededKeys.add(input.supersedesDedupeKey);
+      if (this.#seen.delete(input.supersedesDedupeKey)) this.#duplicatesDropped += 1;
+    }
+    if (input.dedupeKey !== null && this.#supersededKeys.has(input.dedupeKey)) {
+      this.#duplicatesDropped += 1;
+      return false;
+    }
     if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
@@ -344,8 +354,10 @@ export class UsageAggregator {
       if (bucket !== null) this.#accumulate(bucket, record);
     }
     this.#seen.clear();
+    this.#supersededKeys.clear();
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
+      if (bucket.records === 0) continue;
       const [day = "", hourStart = "", provider = "", model = "", sourcePath = ""] =
         key.split("\u0000");
       const category = bucket.categoryCostUsd;
