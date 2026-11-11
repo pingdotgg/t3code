@@ -865,6 +865,9 @@ describe("instance-scoped model selection", () => {
     expect(optionsFor({ [claude]: claudePick, [codex]: fastOff })?.[codex]).toEqual(
       fastOff.options,
     );
+    // A stored alias of the shown model still counts as that model.
+    const storedAlias = createModelSelection(codex, "gpt-5-codex", stored.options);
+    expect(optionsFor({ [claude]: claudePick }, storedAlias)?.[codex]).toEqual(stored.options);
     const storedOtherModel = createModelSelection(codex, "gpt-5.4", stored.options);
     expect(
       optionsFor(

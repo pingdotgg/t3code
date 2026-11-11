@@ -1177,10 +1177,14 @@ export function deriveEffectiveComposerModelState(input: {
     });
   const draftOptions = optionsFrom(input.draft?.modelSelectionByProvider ?? null);
   const storedSelection = input.threadModelSelection ?? input.projectModelSelection;
+  const storedIsShownModel =
+    storedSelection != null &&
+    isSameModel(input, storedSelection, {
+      instanceId: input.selectedInstanceId ?? storedSelection.instanceId,
+      model: selectedModel,
+    });
   const storedOptions = optionsFrom(
-    draftOptions === null || storedSelection?.model === selectedModel
-      ? selectionsByInstance(storedSelection)
-      : null,
+    draftOptions === null || storedIsShownModel ? selectionsByInstance(storedSelection) : null,
   );
 
   return {
@@ -1218,9 +1222,36 @@ function withFallbackInstanceOptions(input: {
   const requestedProvider = input.providers.find(
     (provider) => provider.instanceId === requestedInstanceId,
   );
-  const requestedModel = input.optionSelections?.[requestedInstanceId]?.model;
+  const sameModel = isSameModel(
+    input,
+    {
+      instanceId: requestedInstanceId,
+      model: input.optionSelections?.[requestedInstanceId]?.model,
+    },
+    { instanceId: selectedInstanceId, model: input.selectedModel },
+  );
+  if (!requestedOptions || requestedProvider?.driver !== input.selectedProvider || !sameModel) {
+    return modelOptions;
+  }
+  return { ...modelOptions, [selectedInstanceId]: requestedOptions };
+}
+
+interface InstanceModel {
+  readonly instanceId: ProviderInstanceId;
+  readonly model: string | undefined;
+}
+
+function isSameModel(
+  input: {
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly selectedProvider: ProviderDriverKind;
+    readonly settings: UnifiedSettings;
+  },
+  a: InstanceModel,
+  b: InstanceModel,
+): boolean {
   // Static aliases are shared across instances; exact custom slugs and catalog aliases are not.
-  const modelIdentity = (instanceId: ProviderInstanceId, model: string | undefined) => {
+  const modelIdentity = ({ instanceId, model }: InstanceModel) => {
     const isCustom =
       input.providers
         .find((provider) => provider.instanceId === instanceId)
@@ -1230,14 +1261,7 @@ function withFallbackInstanceOptions(input: {
       );
     return isCustom ? model : normalizeModelSlug(model, input.selectedProvider);
   };
-  const sameModel =
-    requestedModel === input.selectedModel ||
-    modelIdentity(requestedInstanceId, requestedModel) ===
-      modelIdentity(selectedInstanceId, input.selectedModel);
-  if (!requestedOptions || requestedProvider?.driver !== input.selectedProvider || !sameModel) {
-    return modelOptions;
-  }
-  return { ...modelOptions, [selectedInstanceId]: requestedOptions };
+  return a.model === b.model || modelIdentity(a) === modelIdentity(b);
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {
