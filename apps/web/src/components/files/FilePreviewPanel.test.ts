@@ -5,7 +5,13 @@ import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
+import { buildFileReviewComment } from "~/reviewCommentContext";
+
+import {
+  fileCommentAnnotationsFromReviewComments,
+  pruneFileCommentAnnotations,
+  remapFileCommentAnnotations,
+} from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
@@ -62,6 +68,64 @@ describe("file comment annotations", () => {
         },
       },
     ]);
+  });
+  it("groups this file's stored comments under their end line", () => {
+    const contents = "a\nb\nc\n";
+    const comment = (id: string, filePath: string, startLine: number, endLine: number) =>
+      buildFileReviewComment({ id, filePath, startLine, endLine, text: id, contents });
+    expect(
+      fileCommentAnnotationsFromReviewComments(
+        [
+          comment("range", "a.ts", 1, 3),
+          comment("other-file", "b.ts", 3, 3),
+          { ...comment("diff-section", "a.ts", 3, 3), sectionId: "turn:1" },
+          comment("single", "a.ts", 3, 3),
+        ],
+        "a.ts",
+      ),
+    ).toEqual([
+      {
+        lineNumber: 3,
+        metadata: {
+          entries: [
+            { id: "range", kind: "comment", startLine: 1, endLine: 3, text: "range" },
+            { id: "single", kind: "comment", startLine: 3, endLine: 3, text: "single" },
+          ],
+        },
+      },
+    ]);
+  });
+  it("prunes only completed comments the composer draft no longer holds", () => {
+    const contents = "a\nb\nc\n";
+    const stored = buildFileReviewComment({
+      id: "kept",
+      filePath: "a.ts",
+      startLine: 1,
+      endLine: 1,
+      text: "kept",
+      contents,
+    });
+    const annotations = fileCommentAnnotationsFromReviewComments([stored], "a.ts");
+    expect(pruneFileCommentAnnotations(annotations, [stored])).toBe(annotations);
+
+    const draft = { id: "draft", kind: "draft", startLine: 2, endLine: 2, text: "" } as const;
+    const removed = {
+      id: "removed",
+      kind: "comment",
+      startLine: 2,
+      endLine: 2,
+      text: "x",
+    } as const;
+    expect(
+      pruneFileCommentAnnotations(
+        [
+          ...annotations,
+          { lineNumber: 2, metadata: { entries: [draft, removed] } },
+          { lineNumber: 3, metadata: { entries: [{ ...removed, id: "gone" }] } },
+        ],
+        [stored],
+      ),
+    ).toEqual([...annotations, { lineNumber: 2, metadata: { entries: [draft] } }]);
   });
 });
 

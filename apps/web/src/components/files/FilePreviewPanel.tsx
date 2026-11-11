@@ -66,8 +66,8 @@ import { isHostPath } from "@t3tools/shared/path";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
-import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { buildFileReviewComment } from "~/reviewCommentContext";
+import { composerTargetKey, type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { buildFileReviewComment, type ReviewCommentContext } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
@@ -91,10 +91,12 @@ import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
-  type FileCommentLineAnnotation,
+  appendFileCommentEntry,
+  fileCommentAnnotationsFromReviewComments,
   formatFileCommentRange,
   nextFileCommentId,
   normalizeFileCommentRange,
+  pruneFileCommentAnnotations,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
@@ -129,6 +131,7 @@ import {
 } from "./projectFilesQueryState";
 
 const NO_FILE_REVISION_ATOM = Atom.make(null);
+const EMPTY_REVIEW_COMMENTS: ReadonlyArray<ReviewCommentContext> = [];
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
@@ -428,6 +431,7 @@ interface FileRevealState {
   cancelGuard: (() => void) | null;
   handledRequestId: number | null;
   latestRequestId: number | null;
+  scrollContainer: HTMLElement | null;
 }
 
 function useFileLineReveal(
@@ -446,6 +450,7 @@ function useFileLineReveal(
       cancelGuard: null,
       handledRequestId: null,
       latestRequestId: null,
+      scrollContainer: null,
     };
     if (!existingState) revealStatesByPath.set(relativePath, state);
 
@@ -482,6 +487,11 @@ function useFileLineReveal(
 
     const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
     if (!scrollContainer) return;
+    // A remounted surface starts at the top, so reveal the current request again.
+    if (state.scrollContainer !== scrollContainer) {
+      state.scrollContainer = scrollContainer;
+      state.handledRequestId = null;
+    }
     fileContainer.style.minHeight = `${Math.ceil(
       Math.max(instance.height, scrollContainer.clientHeight),
     )}px`;
@@ -683,7 +693,17 @@ function EditableFileSurface({
 }: EditableFileSurfaceProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
-  const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
+  const reviewComments = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS,
+  );
+  const [lineAnnotations, setLineAnnotations] = useState(() =>
+    fileCommentAnnotationsFromReviewComments(reviewComments, relativePath),
+  );
+  // The composer draft decides which comments exist; the editor decides where they sit.
+  const prunedLineAnnotations = pruneFileCommentAnnotations(lineAnnotations, reviewComments);
+  if (prunedLineAnnotations !== lineAnnotations) {
+    setLineAnnotations(prunedLineAnnotations);
+  }
   const [selectionOverride, setSelectionOverride] = useState<FileSelectionOverride | null>(null);
   const selectedRange =
     selectionOverride?.revealRequestId === revealRequestId ? selectionOverride.range : null;
@@ -730,6 +750,7 @@ function EditableFileSurface({
     for (const annotation of remapped) {
       for (const entry of annotation.metadata.entries) {
         if (entry.kind !== "comment") continue;
+        if (!reviewComments.some((comment) => comment.id === entry.id)) continue;
         addReviewComment(
           composerDraftTarget,
           buildFileReviewComment({
@@ -804,26 +825,7 @@ function EditableFileSurface({
         const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
         return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
       });
-      const existingIndex = withoutDraft.findIndex(
-        (annotation) => annotation.lineNumber === endLine,
-      );
-      if (existingIndex < 0) {
-        return [
-          ...withoutDraft,
-          {
-            lineNumber: endLine,
-            metadata: { entries: [draftEntry] },
-          },
-        ];
-      }
-      return withoutDraft.map((annotation, index) =>
-        index === existingIndex
-          ? {
-              ...annotation,
-              metadata: { entries: [...annotation.metadata.entries, draftEntry] },
-            }
-          : annotation,
-      );
+      return appendFileCommentEntry(withoutDraft, draftEntry);
     });
   };
   const hasOpenCommentForm = lineAnnotations.some((annotation) =>
@@ -1527,7 +1529,7 @@ export default function FilePreviewPanel({
             ) : (
               <DiffWorkerPoolProvider>
                 <EditableFileSurface
-                  key={`${relativePath}:${resolvedTheme}`}
+                  key={`${composerTargetKey(composerDraftTarget)}:${relativePath}:${resolvedTheme}`}
                   environmentId={environmentId}
                   projectId={projectId}
                   cwd={cwd}
