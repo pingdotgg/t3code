@@ -137,7 +137,9 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
       return state;
     };
     if (!canManageLink()) return false;
-    const wantsLink = desired.managedTunnel || desired.publish;
+    // Without managed tunnels the link is also the way in, so turning access off unlinks.
+    const accessTurnedOff = !managedTunnels && managedTunnelActive && !desired.managedTunnel;
+    const wantsLink = !accessTurnedOff && (desired.managedTunnel || desired.publish);
     if (wantsLink && readLinkState() === null) return false;
     const tokenResult = await settlePromise(() => getToken());
     if (!canManageLink()) return false;
@@ -179,7 +181,8 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         reportUpdateFailure(new Error("Sign in to T3 Connect before enabling this."));
         return false;
       }
-      const currentManagedTunnel = isManagedTunnelActive(currentLinkState, relayProviderKind);
+      const currentManagedTunnel =
+        managedTunnels && isManagedTunnelActive(currentLinkState, relayProviderKind);
       const desiredManagedTunnel = desired.managedTunnel && managedTunnels;
       if (
         !currentLinkState.linked ||

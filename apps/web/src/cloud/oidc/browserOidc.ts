@@ -7,7 +7,8 @@ import {
   type OidcController,
 } from "@t3tools/client-runtime/relay";
 
-// Storage throws in some private-browsing modes; a session then lasts until the tab closes.
+// Storage throws when the browser blocks site data. Memory keeps the app from crashing, though a
+// redirect sign-in cannot finish then.
 const storageOrMemory = (read: () => Storage): KeyValueStore => {
   try {
     return read();

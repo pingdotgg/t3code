@@ -253,6 +253,15 @@ it.effect.each([
 
 const OIDC_ISSUER = "https://sso.example.test/realms/t3";
 const OIDC_ENV = { T3CODE_OIDC_ISSUER: OIDC_ISSUER, T3CODE_OIDC_CLIENT_ID: "t3-code" };
+// What an OIDC sign-in stored; `expiredStoredToken` has no provider, so Clerk issued it.
+const oidcStoredToken = new TextEncoder().encode(
+  JSON.stringify({
+    accessToken: "expired",
+    refreshToken: "refresh-token-1",
+    expiresAtEpochMs: 0,
+    provider: `oidc:${OIDC_ISSUER}|t3-code`,
+  }),
+);
 
 const OidcClaimsJson = Schema.fromJsonString(
   Schema.Struct({
@@ -297,7 +306,7 @@ const oidcProvider = (input: {
 it.effect("refreshes against the discovered OIDC token endpoint and keeps the ID token", () => {
   const requests: Array<RecordedTokenRequest> = [];
   const idToken = oidcIdToken(4_000_000_000);
-  let stored = expiredStoredToken;
+  let stored = oidcStoredToken;
   const secrets = Layer.mock(ServerSecretStore.ServerSecretStore)({
     get: () => Effect.sync(() => Option.some(stored)),
     set: (_name, value) =>
@@ -346,11 +355,25 @@ it.effect("refuses an OIDC token response that carries no ID token", () =>
         requests: [],
         tokenResponse: { access_token: "opaque", expires_in: 300, token_type: "bearer" },
       }),
-      undefined,
+      Layer.mock(ServerSecretStore.ServerSecretStore)({
+        get: () => Effect.succeedSome(oidcStoredToken),
+      }),
       OIDC_ENV,
     ),
   ),
 );
+
+it.effect("never refreshes a credential another provider issued", () => {
+  const requests: Array<RecordedTokenRequest> = [];
+  return Effect.gen(function* () {
+    const manager = yield* CliTokenManager.CloudCliTokenManager;
+    assert.isTrue(Option.isNone(yield* manager.getExisting));
+    assert.isFalse(yield* manager.hasCredential);
+    assert.deepEqual(requests, []);
+  }).pipe(
+    provideRefreshManager(oidcProvider({ requests, tokenResponse: {} }), undefined, OIDC_ENV),
+  );
+});
 
 it.effect("reports a provider without device authorization instead of calling Clerk", () => {
   const requests: Array<RecordedTokenRequest> = [];

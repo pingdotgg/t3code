@@ -21,6 +21,7 @@ const testState = vi.hoisted(() => ({
   snapshot: null as EnvironmentCloudLinkStateResult | null,
   renderedSnapshot: null as EnvironmentCloudLinkStateResult | null,
   relayProviderKind: null as RelayManagedEndpointProviderKind | null,
+  managedTunnels: true,
   getToken: vi.fn<() => Promise<string | null>>(),
   link: vi.fn(),
   unlink: vi.fn(),
@@ -77,6 +78,16 @@ vi.mock(import("./linkEnvironmentAtoms"), async (original) => ({
   unlinkEnvironment: testState.unlink as never,
   updateEnvironmentPreferences: testState.preferences as never,
 }));
+vi.mock(import("./publicConfig"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    resolveCloudPublicConfig: () => ({
+      ...actual.resolveCloudPublicConfig(),
+      managedTunnels: testState.managedTunnels,
+    }),
+  };
+});
 vi.mock(import("./cloudLinkState"), async (original) => ({
   ...(await original()),
   readCachedCloudLinkState: () => testState.snapshot,
@@ -146,6 +157,7 @@ function setup() {
   testState.snapshot = linkedState;
   testState.renderedSnapshot = linkedState;
   testState.relayProviderKind = null;
+  testState.managedTunnels = true;
   testState.getToken.mockReset().mockResolvedValue("clerk-token");
   for (const command of [
     testState.link,
@@ -220,6 +232,34 @@ describe("useCloudLinkController", () => {
     expect(testState.unlink).toHaveBeenCalledExactlyOnceWith({ target, clerkToken: null });
     expect(testState.link).not.toHaveBeenCalled();
     expect(testState.preferences).not.toHaveBeenCalled();
+  });
+
+  it("unlinks a relay without managed tunnels when T3 Connect is turned off, even while publishing", async () => {
+    using _setup = setup();
+    testState.managedTunnels = false;
+    testState.snapshot = { ...linkedState, publishAgentActivity: true };
+    testState.renderedSnapshot = testState.snapshot;
+    await using screen = await mountController();
+
+    expect(await screen.reconcile({ managedTunnel: false, publish: true })).toBe(true);
+    expect(testState.unlink).toHaveBeenCalledOnce();
+    expect(testState.link).not.toHaveBeenCalled();
+  });
+
+  it("keeps the link on a relay without managed tunnels before its endpoint kind is known", async () => {
+    using _setup = setup();
+    testState.managedTunnels = false;
+    await using screen = await mountController();
+
+    expect(
+      await screen.reconcile({
+        managedTunnel: true,
+        publish: false,
+        holdWebhooksWhileOffline: true,
+      }),
+    ).toBe(true);
+    expect(testState.link).not.toHaveBeenCalled();
+    expect(testState.unlink).not.toHaveBeenCalled();
   });
 
   it("reports a relay tunnel cap refusal as tunnelLimit instead of an error", async () => {

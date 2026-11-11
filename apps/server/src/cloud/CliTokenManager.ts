@@ -4,6 +4,7 @@ import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
+import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -139,6 +140,8 @@ const PersistedToken = Schema.Struct({
   refreshToken: Schema.String,
   expiresAtEpochMs: Schema.Number,
   identity: Schema.optional(Schema.String),
+  /** `clerk`, or the OIDC issuer and client id that issued the credential. */
+  provider: Schema.optional(Schema.String),
 });
 export type PersistedToken = typeof PersistedToken.Type;
 
@@ -504,7 +507,8 @@ export const deviceAuthorizationLogin = Effect.fn("cloud.cli_token.device_author
     const metadata = yield* resolveCloudCliOAuth();
     if (metadata.deviceAuthorizationEndpoint === null) {
       return yield* new CloudCliAuthorizationError({
-        cause: "The identity provider does not support device authorization.",
+        cause:
+          "This OpenID Connect provider does not support device authorization, which a headless sign-in needs. Turn on its device flow, or sign in where a browser can open.",
       });
     }
     const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
@@ -550,10 +554,19 @@ export const make = Effect.gen(function* () {
   const terminal = yield* Terminal.Terminal;
   const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
   const semaphore = yield* Semaphore.make(1);
+  // A credential works only with the provider that issued it; unstamped ones came from Clerk.
+  const currentProvider = Config.map(
+    oidcSettingsConfig,
+    Option.match({
+      onNone: () => "clerk",
+      onSome: ({ issuer, clientId }) => `oidc:${issuer}|${clientId}`,
+    }),
+  );
   const persist = Effect.fn("cloud.cli_token.persist")(function* (token: PersistedToken) {
-    const encoded = yield* encodePersistedToken(token);
+    const stamped = { ...token, provider: yield* currentProvider };
+    const encoded = yield* encodePersistedToken(stamped);
     yield* secrets.set(CLOUD_CLI_OAUTH_TOKEN_SECRET, stringToBytes(encoded));
-    return token;
+    return stamped;
   });
 
   const clear = secrets
@@ -563,7 +576,10 @@ export const make = Effect.gen(function* () {
   const read = Effect.fn("cloud.cli_token.read")(function* () {
     const encoded = yield* secrets.get(CLOUD_CLI_OAUTH_TOKEN_SECRET);
     if (Option.isNone(encoded)) return Option.none<PersistedToken>();
-    return Option.some(yield* decodePersistedToken(bytesToString(encoded.value)));
+    const token = yield* decodePersistedToken(bytesToString(encoded.value));
+    return (token.provider ?? "clerk") === (yield* currentProvider)
+      ? Option.some(token)
+      : Option.none<PersistedToken>();
   });
 
   const refresh = Effect.fn("cloud.cli_token.refresh")(function* (token: PersistedToken) {

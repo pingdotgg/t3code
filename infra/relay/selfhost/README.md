@@ -26,6 +26,7 @@ Run these from the repository root.
 
    Set `RELAY_DOMAIN` and `RELAY_PUBLIC_ORIGIN` to the host name that resolves to this server,
    `OIDC_ISSUER` to your provider's issuer URL, and `POSTGRES_PASSWORD` to a real password.
+   It goes into `DATABASE_URL` as is, so use URL-safe characters, for example `openssl rand -hex 32`.
    Keep the generated mint keys and the Postgres password in your secret manager.
 
 3. In your identity provider, create one public OAuth client (authorization code with PKCE, no
@@ -103,7 +104,8 @@ serves it at `RELAY_PUBLIC_ORIGIN/env/<key>/`, forwarding HTTP and WebSocket tra
 socket with the prefix stripped and named in `X-Forwarded-Prefix`. Nothing to open on the
 environment's network and no extra DNS or certificate. All of that environment's traffic passes
 through the relay host, and channels live in the relay process, so keep a single replica. Clients
-need a T3 Code version that keeps an environment's path prefix.
+need a T3 Code version that keeps an environment's path prefix. The relay also checks carried
+environments through its own public address, so this host must be able to reach `RELAY_PUBLIC_ORIGIN`.
 
 **At an address you expose.** With `RELAY_MANUAL_ENDPOINTS=public` (the default here), an
 environment can publish an HTTPS address you already expose (reverse proxy, port forward) and the

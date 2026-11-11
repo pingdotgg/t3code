@@ -87,18 +87,19 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
     };
   }
   const oidcIssuer = trimNonEmpty(import.meta.env.VITE_OIDC_ISSUER as string | undefined);
+  const oidcClientId = trimNonEmpty(import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined);
   return {
     clerkPublishableKey: trimNonEmpty(
       import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined,
     ),
     clerkJwtTemplate: trimNonEmpty(import.meta.env.VITE_CLERK_JWT_TEMPLATE as string | undefined),
     oidcIssuer,
-    oidcClientId: trimNonEmpty(import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined),
+    oidcClientId,
     relayUrl: normalizeSecureRelayUrl(
       (import.meta.env.VITE_T3CODE_RELAY_URL as string | undefined) ?? "",
     ),
     // A build configured for OIDC targets a self-hosted relay, which has no managed tunnels.
-    managedTunnels: oidcIssuer === null,
+    managedTunnels: oidcIssuer === null || oidcClientId === null,
     relayTracing: {
       tracesUrl: normalizeSecureUrl(
         (import.meta.env.VITE_RELAY_OTLP_TRACES_URL as string | undefined) ?? "",

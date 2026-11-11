@@ -105,6 +105,7 @@ export function resolveCloudPublicConfig(
     };
   }
   const oidcIssuer = trimNonEmpty(extra?.oidc?.issuer);
+  const oidcClientId = trimNonEmpty(extra?.oidc?.clientId);
   return {
     clerk: {
       publishableKey: trimNonEmpty(extra?.clerk?.publishableKey),
@@ -112,12 +113,12 @@ export function resolveCloudPublicConfig(
     },
     oidc: {
       issuer: oidcIssuer,
-      clientId: trimNonEmpty(extra?.oidc?.clientId),
+      clientId: oidcClientId,
     },
     relay: {
       url: normalizeSecureRelayUrl(trimNonEmpty(extra?.relay?.url) ?? ""),
       // A build configured for OIDC targets a self-hosted relay, which has no managed tunnels.
-      managedTunnels: oidcIssuer === null,
+      managedTunnels: oidcIssuer === null || oidcClientId === null,
     },
     observability: {
       tracesUrl: normalizeSecureUrl(extra?.observability?.tracesUrl),

@@ -74,4 +74,17 @@ describe("resolveCloudPublicConfig", () => {
     expect(configured.observability.tracesUrl).toBeNull();
     expect(cloudAuthProvider(configured)).toBe("oidc");
   });
+
+  it("keeps managed tunnels for a Clerk build whose OIDC setting has no client id", () => {
+    const configured = resolveCloudPublicConfig(
+      {
+        clerk: { publishableKey: "pk_test_example", jwtTemplate: "t3-relay" },
+        oidc: { issuer: "https://sso.example.test" },
+        relay: { url: "https://relay.t3.example" },
+      },
+      null,
+    );
+    expect(cloudAuthProvider(configured)).toBe("clerk");
+    expect(configured.relay.managedTunnels).toBe(true);
+  });
 });

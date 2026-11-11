@@ -1257,7 +1257,14 @@ const make = Effect.gen(function* () {
     "environment.cloud.releaseManagedTunnelOnShutdown",
   )(function* () {
     const runtimeConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
-    if (Option.isNone(runtimeConfig)) {
+    // A relay channel has no tunnel to release, and the next start needs its config.
+    if (
+      Option.isNone(runtimeConfig) ||
+      Option.exists(
+        decodeRuntimeConfig(bytesToString(runtimeConfig.value)),
+        (config) => config.providerKind === "t3_relay",
+      )
+    ) {
       return false;
     }
     // CLI authorization releases only CLI-desired managed links; web/mobile links recover by credential and expire through the relay reaper.

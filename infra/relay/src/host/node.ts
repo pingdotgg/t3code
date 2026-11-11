@@ -234,13 +234,19 @@ export const makeNodeHost = Effect.fn("relay.node.host")(function* (options: Nod
           Effect.catchCause((cause) => {
             if (Cause.hasInterrupts(cause)) return Effect.failCause(cause);
             const attempts = job.attempts + 1;
+            const failure = Cause.pretty(cause);
             if (attempts >= consumerOptions.maxRetries) {
               return Effect.logWarning("Dropping relay delivery job after retries", {
                 queue: name,
                 attempts,
+                failure,
               });
             }
-            return Effect.logWarning("Retrying relay delivery job", { queue: name, attempts }).pipe(
+            return Effect.logWarning("Retrying relay delivery job", {
+              queue: name,
+              attempts,
+              failure,
+            }).pipe(
               Effect.andThen(
                 Effect.forkScoped(
                   Effect.sleep(consumerOptions.retryDelay).pipe(

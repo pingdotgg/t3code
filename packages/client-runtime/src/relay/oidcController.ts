@@ -72,7 +72,8 @@ const parseJson = <A>(value: string | null): A | null => {
 
 // The return path comes from this tab's own storage, but still must never leave the origin.
 const safeReturnTo = (value: string): string =>
-  value.startsWith("/") && !value.startsWith("//") ? value : "/";
+  // Browsers read "\" as "/" and drop tabs and newlines, so "/\evil" or "/<tab>/evil" leave too.
+  value.startsWith("/") && !/^\/[\t\n\r]*[/\\]/u.test(value) ? value : "/";
 
 export function createOidcController(deps: OidcControllerDeps) {
   const now = deps.now ?? Date.now;
@@ -83,6 +84,7 @@ export function createOidcController(deps: OidcControllerDeps) {
   const readSession = (): StoredSession | null =>
     parseJson<StoredSession>(deps.sessions.getItem(storageKey));
   let session = readSession();
+  let signOuts = 0;
   const toSnapshot = (value: StoredSession | null): OidcSnapshot =>
     value === null ? SIGNED_OUT : { userId: value.userId, label: value.label };
   let snapshot = toSnapshot(session);
@@ -165,6 +167,7 @@ export function createOidcController(deps: OidcControllerDeps) {
         message: "The sign-in response does not match a request from this tab.",
       });
     }
+    const signOutsBefore = signOuts;
     const tokens = await exchangeAuthorizationCode({
       metadata: await metadata(),
       clientId: deps.config.clientId,
@@ -174,7 +177,8 @@ export function createOidcController(deps: OidcControllerDeps) {
       nonce: request.nonce,
       fetch: fetchImpl,
     });
-    publish(toStored(tokens));
+    // A sign-out while the code was being exchanged wins over this sign-in.
+    if (signOuts === signOutsBefore) publish(toStored(tokens));
     return safeReturnTo(request.returnTo);
   };
 
@@ -228,6 +232,7 @@ export function createOidcController(deps: OidcControllerDeps) {
   };
 
   const signOut = async (): Promise<void> => {
+    signOuts += 1;
     deps.pending.removeItem(PENDING_KEY);
     publish(null);
   };

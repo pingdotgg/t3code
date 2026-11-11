@@ -176,21 +176,24 @@ describe("sign-in redirect", () => {
     expect(harness.pending.entries.size).toBe(0);
   });
 
-  it("never returns to another origin", async () => {
-    const harness = makeHarness();
-    await harness.controller.signIn("https://evil.example.com/");
-    const authorize = new URL(harness.navigations[0]!);
-    harness.tokenReply = () =>
-      Response.json({
-        id_token: idToken({ exp: 2_000_000, nonce: authorize.searchParams.get("nonce") }),
-      });
+  it.each(["https://evil.example.com/", "/\\evil.example.com", "/\t/evil.example.com"])(
+    "never returns to another origin from %j",
+    async (returnTo) => {
+      const harness = makeHarness();
+      await harness.controller.signIn(returnTo);
+      const authorize = new URL(harness.navigations[0]!);
+      harness.tokenReply = () =>
+        Response.json({
+          id_token: idToken({ exp: 2_000_000, nonce: authorize.searchParams.get("nonce") }),
+        });
 
-    expect(
-      await harness.controller.completeSignIn(
-        `${REDIRECT_URI}?code=c&state=${authorize.searchParams.get("state")}`,
-      ),
-    ).toBe("/");
-  });
+      expect(
+        await harness.controller.completeSignIn(
+          `${REDIRECT_URI}?code=c&state=${authorize.searchParams.get("state")}`,
+        ),
+      ).toBe("/");
+    },
+  );
 });
 
 describe("tokens", () => {
@@ -285,6 +288,33 @@ describe("tokens", () => {
     expect(harness.sessions.getItem(harness.controller.storageKey)).toBe(
       kept === null ? null : JSON.stringify(kept),
     );
+  });
+
+  it("keeps a sign-out made while the sign-in's code exchange was out", async () => {
+    const harness = makeHarness();
+    await harness.controller.signIn("/");
+    const authorize = new URL(harness.navigations[0]!);
+    let answer!: () => void;
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    harness.tokenReply = () =>
+      answered.then(() =>
+        Response.json({
+          id_token: idToken({ exp: 2_000_000, nonce: authorize.searchParams.get("nonce") }),
+          refresh_token: "refresh-1",
+        }),
+      );
+
+    const completing = harness.controller.completeSignIn(
+      `${REDIRECT_URI}?code=c&state=${authorize.searchParams.get("state")}`,
+    );
+    await harness.controller.signOut();
+    answer();
+    await completing;
+
+    expect(harness.controller.getSnapshot().userId).toBeNull();
+    expect(harness.sessions.entries.size).toBe(0);
   });
 
   it("clears the session and the in-flight sign-in on sign out", async () => {

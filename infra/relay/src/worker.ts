@@ -238,7 +238,16 @@ export const layer = Api.make(
               Stream.runForEach((message) =>
                 handler(message.body).pipe(
                   Effect.matchEffect({
-                    onFailure: () => Effect.sync(() => message.retry()),
+                    // Cloudflare keeps the first ack/retry decision, so retry before logging.
+                    onFailure: (error) =>
+                      Effect.sync(() => message.retry()).pipe(
+                        Effect.andThen(
+                          Effect.logWarning(`Relay ${name} delivery failed; retrying message`, {
+                            messageId: message.id,
+                            error: error.message,
+                          }),
+                        ),
+                      ),
                     onSuccess: () => Effect.sync(() => message.ack()),
                   }),
                 ),
