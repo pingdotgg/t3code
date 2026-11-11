@@ -33,7 +33,7 @@ export const resolveSshServerHome = Effect.gen(function* () {
     platform === "darwin"
       ? path.join(home, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
       : path.join(
-          (yield* readSystemdUnitDirectory()) ??
+          (yield* readSystemdUnitDirectory(yield* ProcessRunner.ProcessRunner, path)) ??
             defaultSystemdUnitDir(path, home, environment.XDG_CONFIG_HOME ?? ""),
           BOOT_SERVICE_UNIT_FILE,
         );
