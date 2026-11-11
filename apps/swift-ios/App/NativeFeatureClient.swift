@@ -9316,6 +9316,13 @@ extension NativeFeatureClient {
         }
     }
 
+    /// Waits for the passive computers `initialSnapshot` left loading, then
+    /// returns what Home now shows. Tests use this boundary instead of events.
+    func settledStartupSnapshot() async -> FeatureSnapshot? {
+        await cacheStartupRefreshTask?.value
+        return latestSnapshot
+    }
+
     /// Waits for this client's queued mutations, then flushes its coalesced writes.
     /// Tests use this boundary instead of timers.
     func flushClientReadCache() async throws {

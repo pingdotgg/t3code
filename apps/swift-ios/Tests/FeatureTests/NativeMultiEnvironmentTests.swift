@@ -736,9 +736,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         }
 
         await fixture.transport.setShell(source, host: "two.example")
-        let overridden = try await fixture.client.hydratedInitialSnapshot {
-            $0.projects.first { $0.environmentID == "two" }?.defaultSelection?.modelID == "gpt-5.6-sol"
-        }
+        let overridden = try await fixture.client.hydratedInitialSnapshot()
         XCTAssertEqual(overridden.projects.first { $0.environmentID == "two" }?.defaultSelection?.modelID, "gpt-5.6-sol")
         await fixture.client.disconnect()
     }
@@ -995,9 +993,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         _ = try await fixture.client.hydratedInitialSnapshot()
         await fixture.transport.setReachable(false, host: "two.example")
 
-        let passiveFailure = try await fixture.client.hydratedInitialSnapshot {
-            $0.environments.first(where: { $0.id == "two" })?.connectionState == .disconnected
-        }
+        let passiveFailure = try await fixture.client.hydratedInitialSnapshot()
         XCTAssertEqual(
             Set(passiveFailure.threads.compactMap(\.wireID)),
             ["thread-one", "thread-two"]
@@ -1011,9 +1007,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.transport.setReachable(false, host: "one.example")
         await fixture.transport.setReachable(true, host: "two.example")
 
-        let activeFailure = try await fixture.client.hydratedInitialSnapshot {
-            $0.environments.first(where: { $0.id == "two" })?.connectionState == .connected
-        }
+        let activeFailure = try await fixture.client.hydratedInitialSnapshot()
         XCTAssertEqual(
             Set(activeFailure.threads.compactMap(\.wireID)),
             ["thread-one", "thread-two"]
@@ -1033,7 +1027,6 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         await fixture.transport.holdNextShellRead(host: "two.example")
-        var events = fixture.client.events().makeAsyncIterator()
 
         let activeStartup = expectation(description: "Active startup must return before a passive computer answers")
         var startupReturned = false
@@ -1058,15 +1051,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         XCTAssertEqual(initial.connection.state, .connected)
         XCTAssertNil(initial.environments.first(where: { $0.id == "two" })?.connectionState)
 
-        var hydrated: FeatureSnapshot?
-        while let event = await events.next() {
-            if case let .snapshot(snapshot) = event,
-               snapshot.environments.first(where: { $0.id == "two" })?.connectionState != nil {
-                hydrated = snapshot
-                break
-            }
-        }
-        let passive = try XCTUnwrap(hydrated)
+        let passive = try XCTUnwrap(await fixture.client.settledStartupSnapshot())
         XCTAssertEqual(Set(passive.threads.compactMap(\.wireID)), ["thread-one", "thread-two"])
         XCTAssertEqual(passive.environments.first(where: { $0.id == "two" })?.connectionState, .connected)
         XCTAssertEqual(passive.connection.state, .connected)
@@ -1086,9 +1071,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             settledOverride: "settled", settledAt: "2026-07-31T12:01:00.000Z"
         )
         await fixture.transport.setShell(updated, host: "two.example")
-        let refreshed = try await fixture.client.hydratedInitialSnapshot {
-            $0.threads.first { $0.id == original.id }?.isSettled == true
-        }
+        let refreshed = try await fixture.client.hydratedInitialSnapshot()
         let settled = try XCTUnwrap(refreshed.threads.first { $0.id == original.id })
         XCTAssertEqual(settled.updatedAt, original.updatedAt)
         XCTAssertEqual(settled.supportsSettlement, true)
@@ -1111,9 +1094,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             ),
             host: "two.example"
         )
-        let removed = try await fixture.client.hydratedInitialSnapshot {
-            !$0.threads.contains { $0.id == original.id }
-        }
+        let removed = try await fixture.client.hydratedInitialSnapshot()
         XCTAssertFalse(removed.threads.contains { $0.id == original.id })
         XCTAssertEqual(removed.projects.first { $0.environmentID == "two" }?.threadCount, 0)
         do {
@@ -2124,40 +2105,10 @@ private actor ControllableAggregateRefreshSleep {
 
 extension NativeFeatureClient {
     /// Cold start returns once the active computer loads; passive computers
-    /// publish afterwards. Folds those events onto the returned snapshot the
-    /// way Home does, until `isHydrated` holds. The default waits until every
-    /// enabled computer has been probed, which `nil` reachability rules out.
-    func hydratedInitialSnapshot(
-        until isHydrated: (FeatureSnapshot) -> Bool = { snapshot in
-            snapshot.environments.allSatisfy { !$0.isEnabled || $0.connectionState != nil }
-        }
-    ) async throws -> FeatureSnapshot {
-        var snapshot = try await initialSnapshot()
-        var iterator = events().makeAsyncIterator()
-        while !isHydrated(snapshot) {
-            guard let event = await iterator.next() else { throw CancellationError() }
-            switch event {
-            case let .snapshot(value):
-                snapshot = value
-            case let .connection(value, environmentID):
-                snapshot.connection = value
-                if let index = snapshot.environments.firstIndex(where: { $0.id == environmentID }) {
-                    snapshot.environments[index].connectionState = value.state
-                    snapshot.environments[index].connectionDetail = value.detail
-                }
-            case let .thread(value):
-                if let index = snapshot.threads.firstIndex(where: { $0.id == value.id }) {
-                    snapshot.threads[index] = value
-                } else {
-                    snapshot.threads.append(value)
-                }
-            case let .threadRemoved(id):
-                snapshot.threads.removeAll { $0.id == id }
-            case .detail, .detailDelta, .threadSync, .failure:
-                break
-            }
-        }
-        return snapshot
+    /// publish afterwards. Returns the snapshot once they have.
+    func hydratedInitialSnapshot() async throws -> FeatureSnapshot {
+        let initial = try await initialSnapshot()
+        return await settledStartupSnapshot() ?? initial
     }
 }
 
