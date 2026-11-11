@@ -586,6 +586,10 @@ export interface ClaudeAgentSdkQuerySession {
     ReadonlyArray<ClaudePermissionRule>,
     ClaudeAgentSdkQueryRunnerError
   >;
+  readonly renameSession: (input: {
+    readonly sessionId: string;
+    readonly title: string;
+  }) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -726,11 +730,11 @@ function closeClaudeQuery(queryRuntime: ClaudeQuery) {
   });
 }
 
-// SDK 0.3.316 types `mcp_call` and `list_permission_rules` but has no Query method for them; its own readMcpResource sends control requests this way.
+// The SDK types `mcp_call`, `list_permission_rules` and `rename_session` but has no typed Query method for them; its own readMcpResource sends control requests this way.
 async function sendClaudeControlRequest(
   queryRuntime: ClaudeQuery,
   request: {
-    readonly subtype: "mcp_call" | "list_permission_rules";
+    readonly subtype: "mcp_call" | "list_permission_rules" | "rename_session";
     readonly [key: string]: unknown;
   },
 ): Promise<unknown> {
@@ -1522,6 +1526,17 @@ export const layerQueryRunner: Layer.Layer<
               Effect.map(({ state }) => state.rules),
               Effect.mapError((cause) => queryRunnerError(cause, "listPermissionRules")),
             ),
+            renameSession: ({ sessionId, title }) =>
+              Effect.tryPromise({
+                try: () =>
+                  sendClaudeControlRequest(queryRuntime, {
+                    subtype: "rename_session",
+                    title,
+                    source: "host",
+                    session_id: sessionId,
+                  }),
+                catch: (cause) => queryRunnerError(cause, "renameSession"),
+              }).pipe(Effect.asVoid),
             interrupt: Effect.tryPromise({
               try: () => queryRuntime.interrupt(),
               catch: (cause) => queryRunnerError(cause, "interrupt"),
@@ -4469,6 +4484,10 @@ interface ClaudeLiveQueryContext {
   // From system/init; feature-detects control requests such as MCP Apps.
   capabilities: ReadonlySet<string>;
   claudeCodeVersion: string | undefined;
+  // The name the native session is known to have; on resume Claude keeps its persisted name over `title`.
+  nativeTitle: string | undefined;
+  // Latest `session_title_changed` name; startup frames repeat old names, so only `/rename` adopts it.
+  reportedTitle: string | undefined;
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
@@ -11124,6 +11143,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             receivedInit: false,
             capabilities: new Set(),
             claudeCodeVersion: undefined,
+            nativeTitle: shouldResume ? undefined : turnInput.appThread.title,
+            reportedTitle: undefined,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
             handedOffSubagents: new Set(),
@@ -11173,6 +11194,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     context.permissionMode = message.permissionMode;
                   }
+                  // SDK 0.3.321 does not type `session_title_changed`.
+                  const reportedSubtype: unknown = Reflect.get(message, "subtype");
+                  const reportedTitle: unknown = Reflect.get(message, "title");
+                  if (
+                    message.type === "system" &&
+                    reportedSubtype === "session_title_changed" &&
+                    typeof reportedTitle === "string"
+                  ) {
+                    context.reportedTitle = reportedTitle;
+                  }
+                  const renamedTitle =
+                    message.type === "result" &&
+                    message.subtype === "success" &&
+                    !message.is_error &&
+                    message.local_command === "rename"
+                      ? context.reportedTitle?.trim()
+                      : undefined;
                   if (message.type === "result") {
                     const ledger = claudeModelLedger(message.modelUsage);
                     const growth = claudeLedgerDelta(context.modelLedger, ledger);
@@ -11190,7 +11228,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       resultsReportingNewContextWindow.add(message);
                     }
                   }
-                  return handleSdkMessage({ query: querySession, message });
+                  const renamedThreadId = context.lastTurn?.input.threadId;
+                  if (
+                    renamedTitle === undefined ||
+                    renamedTitle.length === 0 ||
+                    renamedThreadId === undefined
+                  ) {
+                    return handleSdkMessage({ query: querySession, message });
+                  }
+                  context.nativeTitle = renamedTitle;
+                  return emitProviderEvent({
+                    type: "app_thread.title.updated",
+                    driver: CLAUDE_PROVIDER,
+                    threadId: renamedThreadId,
+                    title: renamedTitle,
+                  }).pipe(Effect.andThen(handleSdkMessage({ query: querySession, message })));
                 }),
               ),
             ),
@@ -11303,6 +11355,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(Path.Path, path),
                   );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
+            if (querySession.nativeTitle !== turnInput.appThread.title) {
+              yield* querySession.query
+                .renameSession({ sessionId: nativeThreadId, title: turnInput.appThread.title })
+                .pipe(
+                  Effect.timeout("5 seconds"),
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      querySession.nativeTitle = turnInput.appThread.title;
+                    }),
+                  ),
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("Claude session rename failed", { nativeThreadId, cause }),
+                  ),
+                );
+            }
             const autoCompactWindow = yield* resolveAutoCompactWindow(
               querySession.settingsCwd,
               turnInput.modelSelection,

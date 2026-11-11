@@ -87,6 +87,13 @@ export const ProviderAdapterV2Event = Schema.Union([
     appThread: OrchestrationV2AppThread,
     createOnly: Schema.optional(Schema.Boolean),
   }),
+  /** The user renamed the native session from inside the provider, e.g. Claude's `/rename`. */
+  Schema.Struct({
+    type: Schema.Literal("app_thread.title.updated"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    title: OrchestrationV2AppThread.fields.title,
+  }),
   Schema.Struct({
     type: Schema.Literal("provider_session.updated"),
     driver: ProviderDriverKind,

@@ -493,6 +493,23 @@ export const layer: Layer.Layer<
                 }),
               ];
             }
+            case "app_thread.title.updated": {
+              const existing = yield* projections.getThread(input.event.threadId).pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+              );
+              if (existing === null || existing.title === input.event.title) return [];
+              const now = yield* DateTime.now;
+              return [
+                yield* makeDomainEvent(input, {
+                  type: "thread.metadata-updated",
+                  threadId: existing.id,
+                  payload: { ...existing, title: input.event.title, updatedAt: now },
+                  occurredAt: now,
+                }),
+              ];
+            }
             case "provider_session.updated":
               return [
                 yield* makeDomainEvent(input, {
@@ -849,7 +866,9 @@ export const layer: Layer.Layer<
               (effect) =>
                 input.event.type === "app_thread.created"
                   ? threadCommands.withLock(input.event.appThread.id, effect)
-                  : effect,
+                  : input.event.type === "app_thread.title.updated"
+                    ? threadCommands.withLock(input.event.threadId, effect)
+                    : effect,
             ),
         ),
     });

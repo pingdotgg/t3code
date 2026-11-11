@@ -2145,7 +2145,7 @@ layer("ProviderEventIngestorV2", (it) => {
   );
 
   it.effect(
-    "recovers a missing Claude child once and preserves saved metadata on later recovery",
+    "recovers a missing Claude child once, preserves saved metadata, and takes native renames",
     () =>
       Effect.gen(function* () {
         const now = yield* DateTime.now;
@@ -2210,6 +2210,25 @@ layer("ProviderEventIngestorV2", (it) => {
         assert.equal(saved.modelSelection.model, "claude-opus-4-6");
         assert.deepEqual(yield* ingest(recovered, true), []);
         assert.deepEqual(yield* projectionStore.getThread(childThreadId), saved);
+
+        const retitle = () =>
+          ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId,
+            threadId: rootEvent.threadId,
+            event: {
+              type: "app_thread.title.updated",
+              driver,
+              threadId: rootEvent.threadId,
+              title: "Native Name",
+            },
+          });
+        assert.deepEqual(
+          (yield* retitle()).map((stored) => stored.event.type),
+          ["thread.metadata-updated"],
+        );
+        assert.equal((yield* projectionStore.getThread(rootEvent.threadId)).title, "Native Name");
+        assert.deepEqual(yield* retitle(), []);
       }),
   );
 

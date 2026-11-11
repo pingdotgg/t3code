@@ -946,6 +946,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -1072,6 +1073,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
               callMcpTool: () => Effect.die("unexpected MCP tool call"),
               listPermissionRules: Effect.die("unexpected permission rules read"),
+              renameSession: () => Effect.void,
               stopTask: () => Effect.void,
               interrupt: Effect.void,
               close: Effect.void,
@@ -1385,6 +1387,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
             callMcpTool: () => Effect.die("unexpected MCP tool call"),
             listPermissionRules: Effect.die("unexpected permission rules read"),
+            renameSession: () => Effect.void,
             stopTask: () => Effect.void,
             interrupt: Effect.void,
             close: Effect.void,
@@ -1576,6 +1579,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -1966,6 +1970,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
+                    renameSession: () => Effect.void,
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(messages),
@@ -2516,6 +2521,7 @@ describe("ClaudeAdapterV2 native fork", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -2864,6 +2870,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -3234,6 +3241,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const changes = yield* makeChangeSignal;
       const offeredMessages: Array<SDKUserMessage> = [];
       const permissionModeChanges: Array<string> = [];
+      const sessionRenames: Array<{ readonly sessionId: string; readonly title: string }> = [];
       const liveSelectionChanges: Array<unknown> = [];
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
@@ -3331,6 +3339,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  renameSession: () => Effect.void,
                   stopTask: options?.stopTask ?? (() => Effect.void),
                   interrupt: Effect.void,
                   close: Queue.shutdown(processMessages),
@@ -3365,6 +3374,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 callMcpTool:
                   options?.mcp?.callMcpTool ?? (() => Effect.die("unexpected MCP tool call")),
                 listPermissionRules: options?.mcp?.listPermissionRules ?? Effect.succeed([]),
+                renameSession: (rename) =>
+                  Effect.sync(() => {
+                    sessionRenames.push(rename);
+                  }),
                 stopTask: options?.stopTask ?? (() => Effect.void),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
@@ -3442,6 +3455,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           return uuid;
         },
         permissionModeChanges,
+        sessionRenames,
         liveSelectionChanges,
         continuationRequests,
         continuationReceipts,
@@ -7553,6 +7567,82 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps the native session name and the thread title in sync", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const turn = Effect.fnUntraced(function* (
+        index: number,
+        title: string,
+        frames: ReadonlyArray<SDKMessage>,
+      ) {
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`title-sync-${index}`),
+          text: index === 3 ? "/rename Native Name" : "Reply OK",
+          attachments: [],
+          providerTurnOrdinal: index,
+        });
+        yield* harness.runtime.startTurn({ ...input, appThread: { ...input.appThread, title } });
+        yield* Queue.offerAll(harness.sdkMessages, [
+          ...frames,
+          claudeSdkFrame({
+            ...makeResultFrame({
+              uuid: `00000000-0000-4000-8000-00000000070${index}`,
+              result: "OK",
+            }),
+            ...(index === 3 ? { local_command: "rename" } : {}),
+          }),
+        ]);
+        yield* Queue.take(harness.terminalReceipts);
+      });
+      const titleChanged = (title: string) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "session_title_changed",
+          title,
+          uuid: "00000000-0000-4000-8000-000000000710",
+          session_id: WAKE_NATIVE_SESSION,
+        });
+
+      // A new session takes the title as a query option.
+      yield* turn(1, "Seed Title", [titleChanged("Seed Title")]);
+      assert.equal(harness.getOpenedOptions()?.title, "Seed Title");
+      assert.isEmpty(harness.sessionRenames);
+
+      yield* turn(2, "Renamed In T3", []);
+      assert.deepEqual(harness.sessionRenames, [
+        { sessionId: WAKE_NATIVE_SESSION, title: "Renamed In T3" },
+      ]);
+
+      yield* turn(3, "Renamed In T3", [titleChanged("Renamed In T3"), titleChanged("Native Name")]);
+      assert.deepEqual(
+        harness.events.filter((event) => event.type === "app_thread.title.updated"),
+        [
+          {
+            type: "app_thread.title.updated",
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            threadId: harness.threadId,
+            title: "Native Name",
+          },
+        ],
+      );
+
+      yield* turn(4, "Native Name", []);
+      assert.lengthOf(harness.sessionRenames, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     { name: "parent limit", parentErrors: ["rate_limit"], expectedLimit: true },
     {
@@ -10989,6 +11079,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: isFirstProcess
@@ -11184,6 +11275,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
               callMcpTool: () => Effect.die("unexpected MCP tool call"),
               listPermissionRules: Effect.die("unexpected permission rules read"),
+              renameSession: () => Effect.void,
               stopTask: () => Effect.void,
               interrupt: Effect.void,
               close: Queue.shutdown(sdkMessages),
@@ -11318,6 +11410,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
+                    renameSession: () => Effect.void,
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(queue),
@@ -13566,6 +13659,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                renameSession: () => Effect.void,
                 interrupt: Effect.void,
                 close:
                   closeSignal === undefined
@@ -16506,6 +16600,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -16684,6 +16779,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
+                    renameSession: () => Effect.void,
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
@@ -16865,6 +16961,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -17064,6 +17161,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.sync(() => {
@@ -17211,6 +17309,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
+                    renameSession: () => Effect.void,
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
