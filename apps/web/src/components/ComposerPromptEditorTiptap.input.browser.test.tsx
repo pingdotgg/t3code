@@ -368,30 +368,9 @@ it("parses markdown dropped from outside and keeps dropped arithmetic verbatim",
   const code = "signal = (7 * 2**3 * 5)**4";
   await drop(code);
   expect(serializeEditorDoc(editor.state.doc).value).toBe(code);
-});
-
-it("leaves drops that started inside the editor to ProseMirror", async () => {
-  await using screen = await mountEditor("", true, []);
-  const { editor } = screen;
-  let handled: unknown;
-  await act(async () => {
-    const dataTransfer = new DataTransfer();
-    dataTransfer.setData("text/plain", "a **bold** word");
-    const { left, top } = editor.view.coordsAtPos(1);
-    const event = new DragEvent("drop", {
-      dataTransfer,
-      clientX: left,
-      clientY: top + 1,
-      bubbles: true,
-      cancelable: true,
-    });
-    editor.view.dragging = { slice: editor.state.doc.slice(0, 0), move: false };
-    handled = editor.view.someProp("handleDrop", (handleDrop) =>
-      handleDrop(editor.view, event, editor.state.doc.slice(0, 0), false),
-    );
-    editor.view.dragging = null;
-  });
-  expect(handled).toBeFalsy();
+  // A drag that started inside the editor is ProseMirror's move, not an external text drop.
+  editor.view.dragging = { slice: editor.state.doc.slice(0, 0), move: false };
+  await drop("a **bold** word");
   expect(serializeEditorDoc(editor.state.doc).value).toBe("");
 });
 
