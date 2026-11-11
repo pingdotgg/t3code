@@ -5830,6 +5830,11 @@ describe("AcpAdapterV2", () => {
     { name: "a value the agent leaves unchanged", options: [approvedAgent], set: "ignore" },
     { name: "an idle update resets the option", options: [approvedAgent], set: "drift" },
     {
+      name: "the agent refuses to restore an idle update",
+      options: [approvedAgent],
+      set: "drift-reject",
+    },
+    {
       name: "a value a later option's write resets",
       options: [approvedAgent, { id: "mode", value: "code" }],
       set: "reset",
@@ -5839,7 +5844,7 @@ describe("AcpAdapterV2", () => {
       options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: "missing" }],
     },
   ] as const)(
-    "a delegated task's session fails on $name, which an ordinary session skips",
+    "a delegated task restores or refuses $name before prompting, which an ordinary session skips",
     ({ options, ...agent }) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -5850,6 +5855,8 @@ describe("AcpAdapterV2", () => {
         const instanceId = ProviderInstanceId.make("acp-test-strict-options");
         let resetAgent: () => Effect.Effect<unknown, EffectAcpErrors.AcpError> = () => Effect.void;
         let prompts = 0;
+        let restoring = false;
+        const prompted = yield* Deferred.make<void>();
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           flavor: {
@@ -5860,16 +5867,32 @@ describe("AcpAdapterV2", () => {
               mockAgentPath,
               environment: { T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION: "1" },
               wrapRuntime: (runtime) => {
-                resetAgent = () => runtime.setConfigOption("agent", "");
+                resetAgent = () =>
+                  runtime.setConfigOption("agent", "").pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        restoring = true;
+                      }),
+                    ),
+                  );
                 return {
                   ...runtime,
                   prompt: (...args) => {
                     prompts += 1;
-                    return runtime.prompt(...args);
+                    return Deferred.succeed(prompted, undefined).pipe(
+                      Effect.andThen(runtime.prompt(...args)),
+                    );
                   },
                   setConfigOption: (configId, value, setOptions) => {
                     const write = runtime.setConfigOption(configId, value, setOptions);
                     if (!("set" in agent) || agent.set === "drift") return write;
+                    if (agent.set === "drift-reject") {
+                      return restoring && configId === "agent"
+                        ? Effect.fail(
+                            EffectAcpErrors.AcpRequestError.invalidParams("Mock restore refusal"),
+                          )
+                        : write;
+                    }
                     if (agent.set === "reset") {
                       // The mode write's snapshot puts the agent back to its default.
                       return configId === "mode"
@@ -5909,7 +5932,11 @@ describe("AcpAdapterV2", () => {
               modelSelection,
               runtimePolicy,
             });
-            if (strictModelOptions && "set" in agent && agent.set === "drift") {
+            if (
+              strictModelOptions &&
+              "set" in agent &&
+              (agent.set === "drift" || agent.set === "drift-reject")
+            ) {
               const providerThread = yield* session.ensureThread({
                 threadId,
                 modelSelection,
@@ -5926,16 +5953,18 @@ describe("AcpAdapterV2", () => {
                   now: yield* DateTime.now,
                 }),
               );
+              yield* Deferred.await(prompted);
             }
           }).pipe(Effect.scoped);
 
         yield* open(false);
         const result = yield* open(true).pipe(Effect.result);
-        assert.equal(result._tag, "Failure");
+        const restored = "set" in agent && agent.set === "drift";
+        assert.equal(result._tag, restored ? "Success" : "Failure");
         if (result._tag === "Failure") {
           assert.equal(
             result.failure._tag,
-            "set" in agent && agent.set === "drift"
+            "set" in agent && agent.set === "drift-reject"
               ? "ProviderAdapterTurnStartError"
               : "ProviderAdapterOpenSessionError",
           );
@@ -5944,7 +5973,7 @@ describe("AcpAdapterV2", () => {
             "AcpModelOptionError",
           );
         }
-        assert.equal(prompts, 0);
+        assert.equal(prompts, restored ? 1 : 0);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

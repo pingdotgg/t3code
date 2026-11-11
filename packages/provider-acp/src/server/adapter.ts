@@ -7304,7 +7304,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             modelOptionContext(modelSelection, runtimePolicy, finalOptions);
           for (const selection of requestedSelections) {
             const nativeId = ownedNativeId(selection.id) ?? selection.id;
-            if (runtimePolicy.interactionMode === "plan" && isModeChoice(nativeId)) continue;
+            if (
+              runtimePolicy.interactionMode === "plan" &&
+              isModeChoice(nativeId) &&
+              ownedNativeId(selection.id) === undefined
+            )
+              continue;
             const current =
               selection === modeSelection
                 ? finalModeId
@@ -8151,10 +8156,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             } else {
               const configuredSelection = yield* Ref.get(activeSelection);
               const configuredInteractionMode = yield* Ref.get(activeInteractionMode);
+              const optionsChanged = yield* validateModelOptions(
+                turnInput.modelSelection,
+                turnInput.runtimePolicy,
+              ).pipe(
+                Effect.as(false),
+                Effect.catchTags({ AcpModelOptionError: () => Effect.succeed(true) }),
+              );
               if (
                 configuredSelection === null ||
                 !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
-                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode
+                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode ||
+                optionsChanged
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {

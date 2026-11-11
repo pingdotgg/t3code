@@ -301,6 +301,7 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
   readonly options?: ModelSelection["options"];
   readonly runtimeMode?: RuntimeMode;
   readonly strictModelOptions?: boolean;
+  readonly interactionMode?: "default" | "plan";
   /** Holds the script's inbound frames at labels the test releases. */
   readonly replayGate?: ProviderReplayGate;
   readonly testHooks?: Parameters<typeof makeKiroAdapterV2>[0]["testHooks"];
@@ -379,7 +380,7 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
   };
   const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
     runtimeMode: input.runtimeMode ?? "approval-required",
-    interactionMode: "default",
+    interactionMode: input.interactionMode ?? "default",
     cwd: replayDir,
     ...(input.strictModelOptions === undefined
       ? {}
@@ -407,7 +408,7 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
           providerInstanceId: instanceId,
           modelSelection: turnSelection,
           runtimeMode: runtimePolicy.runtimeMode,
-          interactionMode: "default",
+          interactionMode: runtimePolicy.interactionMode,
           branch: null,
           worktreePath: null,
           activeProviderThreadId: providerThread.id,
@@ -973,6 +974,20 @@ describe("KiroAdapterV2 delegated task options", () => {
       frames: [],
     },
     {
+      name: "an approved agent replaced by plan mode",
+      options: [{ id: "mode", value: "vibe" }],
+      interactionMode: "plan" as const,
+      frames: [],
+      planFrames: [
+        setConfig("mode", "plan"),
+        configResult([
+          { ...modeOption, currentValue: "plan" },
+          kiroModelOption("auto"),
+          autopilotOption("off"),
+        ]),
+      ],
+    },
+    {
       name: "an effort the model does not offer",
       options: reasoning("xhigh"),
       model: "claude-opus-4.6",
@@ -991,6 +1006,7 @@ describe("KiroAdapterV2 delegated task options", () => {
       const refused = yield* runKiroScript({
         scenario: `strict-${input.options[0]!.id}`,
         strictModelOptions: true,
+        ...("interactionMode" in input ? { interactionMode: input.interactionMode } : {}),
         options: input.options,
         ...(input.model === undefined ? {} : { model: input.model }),
         frames: [
@@ -1006,14 +1022,18 @@ describe("KiroAdapterV2 delegated task options", () => {
             autopilotOption("off"),
             ...(input.model === undefined ? [] : [effortOption("high", CLAUDE_4_6_EFFORT_LEVELS)]),
           ]),
+          ...("planFrames" in input ? input.planFrames : []),
           ...closeSession,
         ],
         drive: () => Effect.void,
-      }).pipe(Effect.flip);
-      assert.equal(
-        (refused as { readonly cause?: { readonly _tag?: string } }).cause?._tag,
-        "AcpModelOptionError",
-      );
+      }).pipe(Effect.result);
+      assert.equal(refused._tag, "Failure");
+      if (refused._tag === "Failure") {
+        assert.equal(
+          (refused.failure as { readonly cause?: { readonly _tag?: string } }).cause?._tag,
+          "AcpModelOptionError",
+        );
+      }
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 });
