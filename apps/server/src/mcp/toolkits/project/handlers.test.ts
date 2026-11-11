@@ -604,6 +604,44 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
   }),
 );
 
+it.effect("a launch into a new worktree creates nothing when its branch collides", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
+        Effect.fail(
+          new ThreadLaunch.ThreadLaunchBranchConflictError({
+            projectId,
+            projectTitle: "Client target",
+            branch: workspaceStrategy.branch ?? "",
+            conflictingBranch: "werkstatt",
+          }),
+        ),
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const refused = (yield* toolkit
+      .handle("t3_thread_launch", {
+        title: "Fix",
+        projectId,
+        workspaceStrategy: { type: "worktree", baseRef: "main", branch: "werkstatt/baseline" },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies))).at(-1)?.result;
+
+    expect(refused).toMatchObject({
+      code: "invalid_request",
+      message:
+        'Branch "werkstatt/baseline" cannot be created in project "Client target": branch "werkstatt" exists. No thread was created. Use a name that does not nest under or contain an existing branch, such as "werkstatt-baseline".',
+    });
+    expect(launched).toHaveLength(0);
+  }),
+);
+
 it.effect("a retried worktree launch replays after its base ref is gone", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
