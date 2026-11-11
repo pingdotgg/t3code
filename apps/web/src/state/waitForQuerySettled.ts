@@ -1,4 +1,3 @@
-import * as Option from "effect/Option";
 import { AsyncResult, type Atom, type AtomRegistry } from "effect/reactivity";
 
 /**
@@ -27,7 +26,7 @@ export function waitForQuerySettled<A, E, R>(input: {
     const onAbort = () => finish(undefined);
     const check = (result: AsyncResult.AsyncResult<A, E>) => {
       if (AsyncResult.isFailure(result)) return finish(undefined);
-      const settled = settle(Option.getOrNull(AsyncResult.value(result)));
+      const settled = settle(AsyncResult.getOrElse(result, () => null));
       if (settled !== undefined) finish(settled);
     };
     if (signal.aborted) return finish(undefined);

@@ -3,13 +3,19 @@ title: Setup
 description: Connect alchemy to PlanetScale — account, credentials, and profiles.
 ---
 
+import PackageManagers from "../../../components/PackageManagers.astro";
+
 Sign up at [planetscale.com](https://planetscale.com) and create a
 [service token](https://planetscale.com/docs/concepts/service-tokens).
-Register the provider next to your cloud's:
+Install `@alchemy.run/planetscale`:
+
+<PackageManagers add="@alchemy.run/planetscale" />
+
+Then register the provider next to your cloud's:
 
 ```typescript
 // alchemy.run.ts
-import * as Planetscale from "alchemy/Planetscale";
+import * as Planetscale from "@alchemy.run/planetscale";
 
 providers: Layer.mergeAll(Cloudflare.providers(), Planetscale.providers()),
 ```
