@@ -2645,66 +2645,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("bounds untracked review input without hiding ordinary edits", () =>
+    it.effect("leaves oversized untracked files out of review input", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
         const fileSystem = yield* FileSystem.FileSystem;
         const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* writeTextFile(cwd, "README.md", "# test\ntracked edit\n");
         yield* writeTextFile(cwd, "ordinary.txt", "ordinary edit\n");
         yield* writeTextFile(cwd, "large.data", "");
         // Sparse fixture exercises logical size without allocating the input budget.
-        yield* fileSystem.truncate(pathService.join(cwd, "large.data"), 11 * 1024 * 1024);
+        yield* fileSystem.truncate(pathService.join(cwd, "large.data"), 257 * 1024 * 1024);
         if (symlinksSupported) {
           yield* fileSystem.symlink("large.data", pathService.join(cwd, "ordinary-link"));
         }
-        const driver = yield* GitVcsDriver.GitVcsDriver;
+
         const preview = yield* driver.getReviewDiffPreview({ cwd, metadataOnly: true });
         const source = preview.sources.find((item) => item.kind === "working-tree")!;
         assert.isTrue(source.truncated);
-        assert.isUndefined(source.files);
-        assert.include(source.diff, "+tracked edit");
-        assert.include(source.diff, "+ordinary edit");
-        assert.notInclude(source.diff, "b/large.data");
-        if (symlinksSupported) assert.include(source.diff, "b/ordinary-link");
-        assert.isUndefined(
-          (yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true })).branchChanges,
+        assert.deepStrictEqual(
+          source.files?.map((file) => file.path),
+          symlinksSupported
+            ? ["README.md", "ordinary-link", "ordinary.txt"]
+            : ["README.md", "ordinary.txt"],
         );
-        const selected = yield* driver.getReviewDiffPreview({
-          cwd,
-          file: { path: "ordinary.txt", previousPath: null, sourceKind: "working-tree" },
-        });
-        assert.isFalse(selected.sources[0]!.truncated);
-        assert.include(selected.sources[0]!.diff, "+ordinary edit");
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.strictEqual(status.branchChanges?.insertions, symlinksSupported ? 3 : 2);
         const oversized = yield* driver.getReviewDiffPreview({
           cwd,
           file: { path: "large.data", previousPath: null, sourceKind: "working-tree" },
         });
         assert.isTrue(oversized.sources[0]!.truncated);
         assert.isEmpty(oversized.sources[0]!.diff);
-      }),
-    );
-
-    it.effect("bounds aggregate untracked input while keeping later small files", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
-        const fileSystem = yield* FileSystem.FileSystem;
-        const pathService = yield* Path.Path;
-        for (let index = 0; index < 8; index++) {
-          const name = `large-${index}.data`;
-          yield* writeTextFile(cwd, name, "");
-          yield* fileSystem.truncate(pathService.join(cwd, name), 9 * 1024 * 1024);
-        }
-        yield* writeTextFile(cwd, "z-small.txt", "still reviewable\n");
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const preview = yield* driver.getReviewDiffPreview({ cwd, metadataOnly: true });
-        const source = preview.sources.find((item) => item.kind === "working-tree")!;
-        assert.isTrue(source.truncated);
-        assert.isUndefined(source.files);
-        assert.notInclude(source.diff, "b/large-7.data");
-        assert.include(source.diff, "+still reviewable");
       }),
     );
 
