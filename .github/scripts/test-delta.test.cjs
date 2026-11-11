@@ -9,7 +9,7 @@ new file mode 100644
 +++ b/apps/web/src/Panel.browser.test.tsx
 @@ -0,0 +1,4 @@
 +it("opens", async () => {});
-+  it.each([1, 2])("renders %i", async () => {});
++  it.each<{ n: number }>([{ n: 1 }])("renders $n", async () => {});
 +// it("is a comment, still counted only when it starts the line")
 diff --git a/apps/server/src/thing.test.ts b/apps/server/src/thing.test.ts
 --- a/apps/server/src/thing.test.ts
@@ -24,6 +24,14 @@ deleted file mode 100644
 +++ /dev/null
 @@ -1,1 +0,0 @@
 -it("goes", () => {});
+diff --git a/apps/web/src/Menu.test.tsx b/apps/web/src/Menu.browser.test.tsx
+similarity index 100%
+rename from apps/web/src/Menu.test.tsx
+rename to apps/web/src/Menu.browser.test.tsx
+diff --git a/apps/web/src/Old.browser.test.tsx b/apps/web/src/New.browser.test.tsx
+similarity index 100%
+rename from apps/web/src/Old.browser.test.tsx
+rename to apps/web/src/New.browser.test.tsx
 diff --git a/apps/web/src/Panel.tsx b/apps/web/src/Panel.tsx
 --- a/apps/web/src/Panel.tsx
 +++ b/apps/web/src/Panel.tsx
@@ -31,11 +39,11 @@ diff --git a/apps/web/src/Panel.tsx b/apps/web/src/Panel.tsx
 +it("is not a test file", () => {});
 `;
 
-test("counts added and removed cases by kind, including deleted files", () => {
+test("counts cases by kind, including deleted files, and finds new or renamed browser files", () => {
   assert.deepEqual(countTestDelta(diff), {
     kinds: { browser: 2, server: -1, unit: -1 },
     net: 0,
-    newBrowserFiles: ["apps/web/src/Panel.browser.test.tsx"],
+    newBrowserFiles: ["apps/web/src/Panel.browser.test.tsx", "apps/web/src/Menu.browser.test.tsx"],
   });
 });
 

@@ -4,10 +4,12 @@
 const MARKER = "<!-- test-delta -->";
 const NET_CASES_TO_REPORT = 20;
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
-const TEST_CASE = /^\s*(?:it|test)(?:\.\w+)*\s*\(/;
+// `<` admits type arguments, as in `it.each<Row>(...)`, which may span lines.
+const TEST_CASE = /^\s*(?:it|test)(?:\.\w+)*\s*[(<]/;
+const isBrowserTest = (path) => path.includes(".browser.test.");
 
 function kindOf(path) {
-  if (path.includes(".browser.test.")) return "browser";
+  if (isBrowserTest(path)) return "browser";
   if (path.startsWith("apps/server/") || path.includes(".integration.")) return "server";
   return "unit";
 }
@@ -17,11 +19,20 @@ function countTestDelta(diff) {
   const kinds = { browser: 0, server: 0, unit: 0 };
   const newBrowserFiles = [];
   let path = null;
+  // A browser test file is new when it is added, or renamed from a file that was not one.
+  let file = null;
+  const flush = () => {
+    if (file?.isNew && isBrowserTest(file.target)) newBrowserFiles.push(file.target);
+  };
   for (const line of diff.split("\n")) {
     if (line.startsWith("diff --git ")) {
+      flush();
       path = null;
+      file = { target: line.replace(/^diff --git a\/\S+ b\//, ""), isNew: false };
       continue;
     }
+    if (line.startsWith("new file mode") && file) file.isNew = true;
+    if (line.startsWith("rename from ") && file) file.isNew = !isBrowserTest(line.slice(12));
     if (line.startsWith("--- ")) {
       const source = line.slice(4).replace(/^a\//, "");
       path = TEST_FILE.test(source) ? source : null;
@@ -37,9 +48,7 @@ function countTestDelta(diff) {
     const sign = line[0] === "+" ? 1 : line[0] === "-" ? -1 : 0;
     if (sign !== 0 && TEST_CASE.test(line.slice(1))) kinds[kindOf(path)] += sign;
   }
-  for (const match of diff.matchAll(/^diff --git a\/\S+ b\/(\S+)\nnew file mode/gm)) {
-    if (match[1].includes(".browser.test.")) newBrowserFiles.push(match[1]);
-  }
+  flush();
   return { kinds, net: kinds.browser + kinds.server + kinds.unit, newBrowserFiles };
 }
 
