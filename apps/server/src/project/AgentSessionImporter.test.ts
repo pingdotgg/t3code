@@ -257,10 +257,10 @@ const makeImporter = Effect.fn(function* (
           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)(
             getAdapter === undefined ? {} : { get: getAdapter },
           ),
-          Layer.succeed(
-            ThreadCommandExecutor.ThreadCommandExecutor,
-            threadCommands ?? (yield* KeyedLock.make<ThreadId>()),
-          ),
+          Layer.succeed(ThreadCommandExecutor.ThreadCommandExecutor, {
+            ...(threadCommands ?? (yield* KeyedLock.make<ThreadId>())),
+            withWorkspaceLock: (effect) => effect,
+          }),
         ),
       ),
     ),

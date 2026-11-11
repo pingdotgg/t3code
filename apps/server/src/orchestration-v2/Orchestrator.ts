@@ -4945,7 +4945,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       threadId: command.threadId,
       providerInstanceId: thread.providerInstanceId,
       occurredAt: now,
-      payload: { ...thread, projectId: command.projectId, worktreePath: null, updatedAt: now },
+      payload: {
+        ...thread,
+        projectId: command.projectId,
+        worktreePath: null,
+        workspaceBindingId: command.commandId,
+        updatedAt: now,
+      },
     });
   });
 
@@ -14493,6 +14499,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { updateDelegatedCompletionOnlyRunId: plan.updateDelegatedCompletionOnlyRunId }),
       })
       .pipe(
+        // Cleanup holds the thread lock before this lock; only publication waits on deletion.
+        (commit) =>
+          plan.events.some(
+            (event) => event.type === "thread.created" || event.type === "thread.metadata-updated",
+          )
+            ? threadDispatch.withWorkspaceLock(commit)
+            : commit,
         Effect.mapError(
           (cause) =>
             new OrchestratorDispatchError({

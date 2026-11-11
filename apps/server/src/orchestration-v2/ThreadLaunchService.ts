@@ -734,44 +734,61 @@ const make = Effect.gen(function* () {
           ) {
             if (branchRename !== null) yield* Fiber.interrupt(branchRename);
             const removedPath = createdWorktreePath;
-            // Serialize adoption with removal; dispatch below must take the lock separately.
-            const cleanup = yield* threadDispatch.withLock(
-              threadId,
-              Effect.gen(function* () {
-                const binding = yield* threads
-                  .getThreadShell(threadId)
-                  .pipe(Effect.orElseSucceed(() => null));
-                if (binding === null) return null;
-                const bindingId = binding.workspaceBindingId ?? null;
-                const ownsBinding =
-                  bindingId === input.workspaceBindingId || bindingId === workspaceCommandId;
-                if (!ownsBinding && binding.worktreePath === removedPath) return null;
-                const removed = yield* git
-                  .removeWorktree({ cwd: project.workspaceRoot, path: removedPath, force: true })
-                  .pipe(
-                    Effect.as(true),
-                    Effect.catchCause((removeCause) =>
-                      Effect.logWarning("Failed to remove an abandoned thread worktree", {
-                        commandId: input.commandId,
-                        threadId,
+            // Match publication lock order; dispatch below reacquires these locks separately.
+            const cleanup = yield* threadDispatch
+              .withLock(
+                threadId,
+                threadDispatch.withWorkspaceLock(
+                  Effect.gen(function* () {
+                    const binding = yield* threads
+                      .getThreadShell(threadId)
+                      .pipe(Effect.orElseSucceed(() => null));
+                    if (binding === null) return null;
+                    const bindingId = binding.workspaceBindingId ?? null;
+                    const ownsBinding =
+                      bindingId === input.workspaceBindingId || bindingId === workspaceCommandId;
+                    if (!ownsBinding && binding.worktreePath === removedPath) return null;
+                    const currentProject = yield* projects.getById(binding.projectId);
+                    if (
+                      binding.worktreePath === null &&
+                      Option.isSome(currentProject) &&
+                      currentProject.value.workspaceRoot === removedPath
+                    )
+                      return null;
+                    const sharing = yield* threads.getShellSnapshot({ worktreePath: removedPath });
+                    if (sharing.threads.some((thread) => thread.id !== threadId)) return null;
+                    const removed = yield* git
+                      .removeWorktree({
+                        cwd: project.workspaceRoot,
                         path: removedPath,
-                        cause: removeCause,
-                      }).pipe(Effect.as(false)),
-                    ),
-                  );
-                const removedBranch = renamedWorktreeBranch ?? createdWorktreeBranch;
-                if (removed && removedBranch !== null) {
-                  yield* git
-                    .deleteLocalBranch({
-                      cwd: project.workspaceRoot,
-                      refName: removedBranch,
-                      force: true,
-                    })
-                    .pipe(Effect.ignoreCause({ log: true }));
-                }
-                return { binding, bindingId, ownsBinding, removed };
-              }),
-            );
+                        force: true,
+                      })
+                      .pipe(
+                        Effect.as(true),
+                        Effect.catchCause((removeCause) =>
+                          Effect.logWarning("Failed to remove an abandoned thread worktree", {
+                            commandId: input.commandId,
+                            threadId,
+                            path: removedPath,
+                            cause: removeCause,
+                          }).pipe(Effect.as(false)),
+                        ),
+                      );
+                    const removedBranch = renamedWorktreeBranch ?? createdWorktreeBranch;
+                    if (removed && removedBranch !== null) {
+                      yield* git
+                        .deleteLocalBranch({
+                          cwd: project.workspaceRoot,
+                          refName: removedBranch,
+                          force: true,
+                        })
+                        .pipe(Effect.ignoreCause({ log: true }));
+                    }
+                    return { binding, bindingId, ownsBinding, removed };
+                  }),
+                ),
+              )
+              .pipe(Effect.orElseSucceed(() => null));
             if (cleanup?.ownsBinding && (cleanup.removed || workspaceRecorded)) {
               yield* threads
                 .dispatch({

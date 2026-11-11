@@ -8584,6 +8584,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       const moved = shell.threads.find((thread) => thread.id === idleThreadId);
       assert.equal(moved?.projectId, folderProjectId);
       assert.isNull(moved?.worktreePath);
+      assert.equal(moved?.workspaceBindingId, CommandId.make(`${idleThreadId}-adopt-folder`));
       const stayed = shell.threads.find((thread) => thread.id === busyThreadId);
       assert.equal(stayed?.projectId, scratchProjectId);
     }),
