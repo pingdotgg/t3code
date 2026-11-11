@@ -14,14 +14,11 @@ import { createAssetsIgnoreFunction, getContentType } from "../helpers.ts";
 describe("assets", () => {
   const tmpDir = mkdtempSync(join(tmpdir(), "wrangler-tests"));
   const platform = Layer.merge(NodeFileSystem.layer, NodePath.layer);
-  const makeAssetsIgnore = createAssetsIgnoreFunction(tmpDir).pipe(
-    Effect.provide(platform),
-  );
+  const makeAssetsIgnore = createAssetsIgnoreFunction(tmpDir).pipe(Effect.provide(platform));
 
   describe(".assetsignore", () => {
     it("should ignore metafiles by default", async ({ expect }) => {
-      const { assetsIgnoreFunction } =
-        await Effect.runPromise(makeAssetsIgnore);
+      const { assetsIgnoreFunction } = await Effect.runPromise(makeAssetsIgnore);
 
       expect(assetsIgnoreFunction(".assetsignore")).toBeTruthy();
       expect(assetsIgnoreFunction("_redirects")).toBeTruthy();
@@ -34,12 +31,8 @@ describe("assets", () => {
     });
 
     it("should allow users to force opt-in metafiles", async ({ expect }) => {
-      await writeFile(
-        join(tmpDir, "./.assetsignore"),
-        "!.assetsignore\n!_redirects\n!_headers",
-      );
-      const { assetsIgnoreFunction } =
-        await Effect.runPromise(makeAssetsIgnore);
+      await writeFile(join(tmpDir, "./.assetsignore"), "!.assetsignore\n!_redirects\n!_headers");
+      const { assetsIgnoreFunction } = await Effect.runPromise(makeAssetsIgnore);
 
       expect(assetsIgnoreFunction(".assetsignore")).toBeFalsy();
       expect(assetsIgnoreFunction("_redirects")).toBeFalsy();
@@ -51,8 +44,7 @@ describe("assets", () => {
         join(tmpDir, "./.assetsignore"),
         "logo.png\nchild/**/*.svg\n!child/nope.svg\n/*.js",
       );
-      const { assetsIgnoreFunction } =
-        await Effect.runPromise(makeAssetsIgnore);
+      const { assetsIgnoreFunction } = await Effect.runPromise(makeAssetsIgnore);
 
       expect(assetsIgnoreFunction("abc")).toBeFalsy();
       expect(assetsIgnoreFunction("logo.png")).toBeTruthy();
@@ -60,9 +52,7 @@ describe("assets", () => {
       expect(assetsIgnoreFunction("foo.js")).toBeTruthy();
       expect(assetsIgnoreFunction(join("child", "foo.js"))).toBeFalsy();
       expect(assetsIgnoreFunction(join("child", "yup.svg"))).toBeTruthy();
-      expect(
-        assetsIgnoreFunction(join("child", "a", "b", "c", "yup.svg")),
-      ).toBeTruthy();
+      expect(assetsIgnoreFunction(join("child", "a", "b", "c", "yup.svg"))).toBeTruthy();
       expect(assetsIgnoreFunction(join("child", "nope.svg"))).toBeFalsy();
     });
   });
