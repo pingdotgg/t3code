@@ -571,7 +571,11 @@ export function PullRequestsPage() {
       });
     } else if (sentCursors !== null) {
       const held = new Set(ordered.entries.map(pullRequestEntryKey));
-      const arrived = answered.entries.filter((entry) => !held.has(pullRequestEntryKey(entry)));
+      // A renamed repository's aliases can list one pull request under each name.
+      const heldUrls = new Set(ordered.entries.map((entry) => entry.url));
+      const arrived = answered.entries.filter(
+        (entry) => !held.has(pullRequestEntryKey(entry)) && !heldUrls.has(entry.url),
+      );
       const appended = rankPullRequestMatches(
         arrived.toSorted(comparePullRequestsByRecency),
         sentParsed.text,
