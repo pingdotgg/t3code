@@ -5,7 +5,7 @@ import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
@@ -119,7 +119,8 @@ function claudeManagedSettingsPath(
   return "/etc/claude-code/managed-settings.json";
 }
 
-function skillOverrideSettingsPaths(
+/** Claude Code settings files, lowest precedence first. */
+function claudeSettingsPaths(
   path: Path.Path,
   configDirPath: string,
   cwd: string | undefined,
@@ -142,7 +143,8 @@ function skillOverrideSettingsPaths(
   ];
 }
 
-const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
+// Untraced: skill discovery resolves every distinct plugin project path, too often for spans.
+const findRepositoryRoot = Effect.fnUntraced(function* (
   cwd: string,
 ): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -163,7 +165,7 @@ const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
   }
 });
 
-const findPluginRepositoryRoot = Effect.fn("findPluginRepositoryRoot")(function* (cwd: string) {
+const findPluginRepositoryRoot = Effect.fnUntraced(function* (cwd: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* findRepositoryRoot(cwd);
@@ -247,7 +249,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   const enabledPlugins = new Map<string, boolean>();
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
 
-  for (const settingsPath of skillOverrideSettingsPaths(
+  for (const settingsPath of claudeSettingsPaths(
     path,
     configDirPath,
     cwd,
@@ -335,6 +337,8 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
     cwd === undefined
       ? undefined
       : yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
+  // Install records repeat project paths, often hundreds of times per discovery.
+  const projectRepositoryRoots = new Map<string, string | undefined>();
   const repositoryRoot =
     workspace === undefined ? undefined : yield* findPluginRepositoryRoot(workspace);
 
@@ -346,11 +350,13 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
         Effect.gen(function* () {
           if (record.scope === "user" || record.scope === "managed") return true;
           if (record.projectPath === undefined || workspace === undefined) return false;
-          if (path.resolve(record.projectPath) === workspace) return true;
-          return (
-            repositoryRoot !== undefined &&
-            (yield* findPluginRepositoryRoot(record.projectPath)) === repositoryRoot
-          );
+          const projectPath = path.resolve(record.projectPath);
+          if (projectPath === workspace) return true;
+          if (repositoryRoot === undefined) return false;
+          if (!projectRepositoryRoots.has(projectPath)) {
+            projectRepositoryRoots.set(projectPath, yield* findPluginRepositoryRoot(projectPath));
+          }
+          return projectRepositoryRoots.get(projectPath) === repositoryRoot;
         }),
     );
     // The native loader keeps registry order, preferring the first install that exists.
@@ -427,6 +433,76 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   return path.join(home, ".claude");
 });
 
+const SettingsEnv = Schema.Struct({
+  ANTHROPIC_BASE_URL: Schema.optional(Schema.String),
+  CLAUDE_CODE_ENTRYPOINT: Schema.optional(Schema.String),
+  // Unquoted JSON values must not fail the decode and drop ANTHROPIC_BASE_URL with them.
+  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: Schema.optional(Schema.Unknown),
+  CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS: Schema.optional(Schema.Unknown),
+});
+const decodeSettingsEnv = Schema.decodeUnknownEffect(
+  fromLenientJson(Schema.Struct({ env: Schema.optional(SettingsEnv) })),
+);
+
+/** The `env` values T3 Code reads from Claude's user and managed settings; later files win. */
+export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<typeof SettingsEnv.Type, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+  const settingsEnv: typeof SettingsEnv.Type = {};
+  for (const settingsPath of claudeSettingsPaths(
+    path,
+    configDirPath,
+    undefined,
+    platform,
+    environment,
+  )) {
+    const contents = yield* fileSystem
+      .readFileString(settingsPath)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (contents === undefined) continue;
+    const parsed = yield* decodeSettingsEnv(contents).pipe(Effect.orElseSucceed(() => undefined));
+    Object.assign(settingsEnv, parsed?.env);
+  }
+  return settingsEnv;
+});
+
+/** The host of an `ANTHROPIC_BASE_URL` that is not Anthropic's own API. */
+export function customClaudeApiEndpointHost(baseUrl: string | undefined): string | undefined {
+  const endpoint = URL.parse(baseUrl?.trim() ?? "");
+  return endpoint !== null &&
+    (endpoint.protocol === "http:" || endpoint.protocol === "https:") &&
+    endpoint.hostname !== "" &&
+    endpoint.hostname !== "api.anthropic.com"
+    ? endpoint.hostname
+    : undefined;
+}
+
+// Claude's --add-dir is repeatable and variadic; parseCliArgs keeps only one value.
+export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<string> {
+  const directories: string[] = [];
+  let collecting = false;
+  for (const token of tokenizeCliArgs(launchArgs)) {
+    if (token === "--") break;
+    if (token === "--add-dir") {
+      collecting = true;
+    } else if (token.startsWith("--add-dir=")) {
+      directories.push(token.slice("--add-dir=".length));
+      collecting = false;
+    } else if (token.startsWith("-")) {
+      collecting = false;
+    } else if (collecting) {
+      directories.push(token);
+    }
+  }
+  return directories;
+}
+
 /** First name wins, matching Claude Code's precedence of user skills over project skills. */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath"> & Partial<Pick<ClaudeSettings, "launchArgs">>,
@@ -442,22 +518,15 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     environment ?? process.env,
   );
 
-  const additionalDirectory = parseCliArgs(config.launchArgs ?? "").flags["add-dir"];
   const roots: ReadonlyArray<ClaudeSkillRoot> = [
     { directory: path.join(configDirPath, "skills"), scope: "user" },
     ...(cwd ? [{ directory: path.join(cwd, ".claude", "skills"), scope: "project" as const }] : []),
-    ...(additionalDirectory && (cwd || path.isAbsolute(additionalDirectory))
-      ? [
-          {
-            directory: path.join(
-              path.resolve(cwd ?? ".", additionalDirectory),
-              ".claude",
-              "skills",
-            ),
-            scope: "project" as const,
-          },
-        ]
-      : []),
+    ...claudeLaunchArgDirectories(config.launchArgs)
+      .filter((directory) => directory && (cwd || path.isAbsolute(directory)))
+      .map((directory) => ({
+        directory: path.join(path.resolve(cwd ?? ".", directory), ".claude", "skills"),
+        scope: "project" as const,
+      })),
     ...(yield* discoverPluginSkillRoots(
       configDirPath,
       cwd,

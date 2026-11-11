@@ -19,6 +19,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestSheetContent as SheetContent } from "./PullRequestSheetContent";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
+import { usePullRequestCompletions } from "./usePullRequestCompletions";
 
 function useActionSubmission(params: PullRequestParams) {
   const navigation = useNavigation();
@@ -81,6 +83,13 @@ export function PullRequestReviewSheet({
       ...draft,
       ...(params.mode === "review" ? { summary: body } : { comment: body }),
     }));
+  const completions = usePullRequestCompletions({
+    environmentId: params.environmentId,
+    projectId: params.projectId,
+    value: body,
+    onChangeValue: setBody,
+    support: result.data?.capabilities ?? null,
+  });
   const stale = store.draft.comments.some((comment) => comment.headSha !== result.data?.headSha);
   const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
   const offered = VERDICTS.filter((option) => permissions.verdicts.includes(option.value));
@@ -169,8 +178,12 @@ export function PullRequestReviewSheet({
       <Text className="px-4 text-xs text-foreground-muted">
         {reviewing ? "Summary" : "Comment"}
       </Text>
+      <PullRequestCompletionSuggestions completions={completions} />
       <TextInput
         multiline
+        selection={completions.selection}
+        onSelectionChange={completions.onSelectionChange}
+        onBlur={completions.onBlur}
         accessibilityLabel={reviewing ? "Review summary" : "Comment"}
         placeholder={
           reviewing

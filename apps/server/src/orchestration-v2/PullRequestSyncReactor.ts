@@ -20,7 +20,7 @@ import { sourceControlDefinitions } from "../sourceControl/sourceControlDefiniti
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -44,6 +44,9 @@ const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 // requested refreshes, watches and a host CLI's merge command still read it at once.
 const QUIET_AFTER_MS = 30 * 60 * 1_000;
 const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
+// A pull request closed this long ago is rarely reopened, so the sweep stops reading it, as it
+// does merged ones. A reader that sees it open, or a requested refresh, still reads it at once.
+const CLOSED_FINAL_AFTER_MS = 24 * 60 * 60 * 1_000;
 
 const isChangeRequestCloseCommand = (command: string) =>
   sourceControlDefinitions.definitions.some(
@@ -139,7 +142,7 @@ type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "comma
  * does, existed before it ran. More URLs than create commands means something else printed
  * some, such as `gh pr list`, so none are taken.
  */
-function changeRequestsCreatedBy(input: string, output: string) {
+export function changeRequestsCreatedBy(input: string, output: string) {
   if (!CREATE_COMMANDS.some(({ command }) => command.test(input))) return [];
   const script = shellScript(input);
   const code = shellCode(script);
@@ -212,6 +215,23 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
     ...(summary.checksState === undefined ? {} : { checksState: summary.checksState }),
     ...(summary.mergeability === undefined ? {} : { mergeability: summary.mergeability }),
   };
+}
+
+// GitHub briefly returns unknown after base pushes; other hosts may mean a lasting condition.
+function withKnownMergeability(
+  previous: ThreadPullRequestSnapshot | null,
+  fields: SnapshotFields,
+  provider: PullRequestSummary["provider"],
+): SnapshotFields {
+  if (
+    provider !== "github" ||
+    fields.state !== "open" ||
+    fields.mergeability !== "unknown" ||
+    previous?.updatedAt !== fields.updatedAt
+  )
+    return fields;
+  const known = previous?.state === "open" ? previous.mergeability : undefined;
+  return known === undefined || known === "unknown" ? fields : { ...fields, mergeability: known };
 }
 
 // Rotating ghe.com avatar tokens should not make otherwise identical snapshots differ.
@@ -316,7 +336,7 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const git = yield* GitManager.GitManager;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   const lastSyncedAt = new Map<string, number>();
   const requested = new Set<string>();
@@ -334,13 +354,12 @@ export const make = Effect.gen(function* () {
     if (entries.some((entry) => entry.link.snapshot === null)) return true;
     const active = entries.filter((entry) => isUnsettled(entry.thread));
     // Merged snapshots without mergedAt cannot settle threads; reread slowly until supplied.
-    if (
-      active.every(
-        (entry) => entry.link.snapshot?.state === "merged" && entry.link.snapshot.mergedAt != null,
-      )
-    ) {
-      return false;
-    }
+    const isFinal = ({ link: { snapshot } }: LinkEntry) =>
+      snapshot?.state === "merged"
+        ? snapshot.mergedAt != null
+        : snapshot?.state === "closed" &&
+          nowMs - Date.parse(snapshot.closedAt ?? "") >= CLOSED_FINAL_AFTER_MS;
+    if (active.every(isFinal)) return false;
     const last = lastSyncedAt.get(key);
     const sinceLastMs = last === undefined ? Number.POSITIVE_INFINITY : nowMs - last;
     const open = active.filter((entry) => entry.link.snapshot?.state === "open");
@@ -392,12 +411,16 @@ export const make = Effect.gen(function* () {
     const stacksReadThisSweep = new Map<string, ThreadPullRequestStack | null>();
     const persistence = yield* Semaphore.make(1);
 
-    const syncEntry = Effect.fn("PullRequestSyncReactor.syncEntry")(function* (
+    // Effect.fn's stack frames close over these sweep-scoped bodies and their arguments, and a
+    // cache lookup forked inside keeps those frames, so a plain span leaves the sweep collectable.
+    const syncEntry = Effect.fnUntraced(function* (
       entry: LinkEntry,
-      fields: SnapshotFields,
+      hostFields: SnapshotFields,
       fetchedStack: { readonly stack: ThreadPullRequestStack | null } | null,
+      provider: PullRequestSummary["provider"],
     ) {
       const { thread, link } = entry;
+      const fields = withKnownMergeability(link.snapshot, hostFields, provider);
       const nextStack = fetchedStack === null ? link.stack : fetchedStack.stack;
       const changed =
         link.snapshot === null ||
@@ -422,7 +445,7 @@ export const make = Effect.gen(function* () {
         }
         const url = siblingChangeRequestUrl(link.url, layer.number);
         if (url === null) continue;
-        const uuid = yield* crypto.randomUUIDv4();
+        const uuid = yield* random.uuidV4();
         yield* engine.dispatch({
           type: "thread.pull-request.link",
           commandId: CommandId.make(`server:pr-stack-link:${thread.id}:${uuid}`),
@@ -434,7 +457,7 @@ export const make = Effect.gen(function* () {
         linkedThisSweep.add(dedupeKey);
       }
       if (changed) {
-        const uuid = yield* crypto.randomUUIDv4();
+        const uuid = yield* random.uuidV4();
         yield* engine.dispatch({
           type: "thread.pull-request-link.sync",
           commandId: CommandId.make(`server:pr-sync:${thread.id}:${uuid}`),
@@ -446,12 +469,9 @@ export const make = Effect.gen(function* () {
           stack: nextStack,
         });
       }
-    });
+    }, Effect.withSpan("PullRequestSyncReactor.syncEntry"));
 
-    const syncGroup = Effect.fn("PullRequestSyncReactor.syncGroup")(function* (
-      key: string,
-      entries: ReadonlyArray<LinkEntry>,
-    ) {
+    const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;
       const ref = {
         projectId: first.thread.projectId,
@@ -476,7 +496,10 @@ export const make = Effect.gen(function* () {
         entries.some(
           (entry) =>
             entry.link.snapshot === null ||
-            !snapshotFieldsEqual(entry.link.snapshot, fields) ||
+            !snapshotFieldsEqual(
+              entry.link.snapshot,
+              withKnownMergeability(entry.link.snapshot, fields, summary.provider),
+            ) ||
             (summary.stack !== undefined &&
               (entry.link.stack?.number ?? null) !== (summary.stack?.number ?? null)),
         );
@@ -543,7 +566,7 @@ export const make = Effect.gen(function* () {
       yield* Effect.forEach(
         entries,
         (entry) =>
-          syncEntry(entry, fields, fetchedStack).pipe(
+          syncEntry(entry, fields, fetchedStack, summary.provider).pipe(
             persistence.withPermits(1),
             Effect.catchCause((cause) => {
               if (!Cause.hasInterruptsOnly(cause)) retryStacks.add(key);
@@ -554,7 +577,7 @@ export const make = Effect.gen(function* () {
           ),
         { discard: true },
       );
-    });
+    }, Effect.withSpan("PullRequestSyncReactor.syncGroup"));
 
     const skips = new Map<string, { count: number; readonly key: string }>();
     const readGroup = (key: string, entries: ReadonlyArray<LinkEntry>, pauseKey: string) =>
@@ -600,19 +623,19 @@ export const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker((scope: "all" | "requested") =>
     Effect.suspend(() => {
       if (scope === "requested") requestedSweepQueued = false;
-      return sweep(scope);
+      return pullRequests.withSharedProjectReads(sweep(scope));
     }).pipe(Effect.catchCause(logSkipped("pull request sync sweep failed", {}))),
   );
 
   // Threads that ran a close command this run, with the commands already read for.
   const closeCommands = new Map<ThreadId, Set<string>>();
-  const refreshOpenLinks = (threadId: ThreadId) =>
+  const refreshUnmergedLinks = (threadId: ThreadId) =>
     projections.getThreadsWithPullRequests(threadId).pipe(
       Effect.flatMap((threads) =>
         Effect.forEach(
           threads.flatMap((thread) =>
             visibleThreadPullRequests(thread.pullRequests ?? []).filter(
-              (link) => link.snapshot?.state === "open",
+              (link) => link.snapshot?.state === "open" || link.snapshot?.state === "closed",
             ),
           ),
           requestSync,
@@ -677,7 +700,7 @@ export const make = Effect.gen(function* () {
               { discard: true },
             );
           // An agent can merge or close its pull request from a shell with its host's CLI, which
-          // sends no merge notification. Read the thread's open links fresh once that command
+          // sends no merge notification. Read the thread's unmerged links fresh once that command
           // ends, while the agent usually still replies, so settlement can land before the run
           // ends. Read again when the run ends, since `merge --auto` returns before it merges.
           case "turn-item.updated": {
@@ -689,11 +712,11 @@ export const make = Effect.gen(function* () {
             closeCommands.set(event.threadId, ended);
             if (isOrchestrationV2WorkActive(item.status) || ended.has(item.id)) return linked;
             ended.add(item.id);
-            return Effect.andThen(linked, refreshOpenLinks(event.threadId));
+            return Effect.andThen(linked, refreshUnmergedLinks(event.threadId));
           }
           case "run.updated":
             return isTerminalRunStatus(event.payload.status) && closeCommands.delete(event.threadId)
-              ? refreshOpenLinks(event.threadId)
+              ? refreshUnmergedLinks(event.threadId)
               : Effect.void;
           default:
             return Effect.void;

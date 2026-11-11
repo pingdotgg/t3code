@@ -1,25 +1,32 @@
 // Relay JSON-RPC verbatim; schema decoding would reject foreign payloads.
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off
-import * as NodeReadline from "node:readline";
-
+// @effect-diagnostics globalJsonInEffect:off
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as Result from "effect/Result";
+import * as Option from "effect/Option";
 import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
 /** ACP mandates stdio MCP support; HTTP/SSE support varies. */
 
-export class AcpMcpBridgeError extends Error {
-  readonly _tag = "AcpMcpBridgeError";
-}
+export class AcpMcpBridgeError extends Schema.TaggedError<AcpMcpBridgeError>()(
+  "AcpMcpBridgeError",
+  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}
+
+const isAcpMcpBridgeError = Schema.is(AcpMcpBridgeError);
 
 const bridgeError = (cause: unknown): AcpMcpBridgeError =>
-  cause instanceof AcpMcpBridgeError
+  isAcpMcpBridgeError(cause)
     ? cause
-    : new AcpMcpBridgeError(cause instanceof Error ? cause.message : String(cause), { cause });
+    : new AcpMcpBridgeError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      });
+
+const decodeJsonLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 interface JsonRpcEnvelope {
   readonly id?: unknown;
@@ -101,9 +108,9 @@ export const mcpToolSession = (
     sessionId = response.headers.get("mcp-session-id") ?? sessionId;
     if (!response.ok) {
       yield* discardResponseBody(response);
-      return yield* Effect.fail(
-        new AcpMcpBridgeError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`),
-      );
+      return yield* new AcpMcpBridgeError({
+        message: `T3 Code MCP endpoint responded with HTTP ${response.status}.`,
+      });
     }
     const payloads = yield* Stream.runCollect(responsePayloads(response, bridgeError));
     for (const payload of payloads) {
@@ -120,11 +127,9 @@ export const mcpToolSession = (
     const responses = yield* send({ jsonrpc: "2.0", id, method, params });
     const envelope = asEnvelope(responses.find((entry) => asEnvelope(entry)?.id === id));
     if (envelope === null || envelope.error !== undefined) {
-      return yield* Effect.fail(
-        new AcpMcpBridgeError(
-          `T3 Code MCP ${method} failed${envelope?.error === undefined ? "." : `: ${JSON.stringify(envelope.error)}`}`,
-        ),
-      );
+      return yield* new AcpMcpBridgeError({
+        message: `T3 Code MCP ${method} failed${envelope?.error === undefined ? "." : `: ${JSON.stringify(envelope.error)}`}`,
+      });
     }
     return envelope;
   });
@@ -132,9 +137,11 @@ export const mcpToolSession = (
   const terminate = Effect.suspend(() =>
     sessionId === null
       ? Effect.void
-      : Effect.tryPromise(() =>
-          fetchImplementation(options.endpoint, { method: "DELETE", headers: headers() }),
-        ).pipe(Effect.flatMap(discardResponseBody), Effect.ignore),
+      : Effect.tryPromise({
+          try: () =>
+            fetchImplementation(options.endpoint, { method: "DELETE", headers: headers() }),
+          catch: bridgeError,
+        }).pipe(Effect.flatMap(discardResponseBody), Effect.ignore),
   );
 
   // Registered before the handshake so a session the server opened is ended
@@ -274,11 +281,11 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
       line: string,
     ): Effect.fn.Return<void> {
       if (line.trim().length === 0) return;
-      const parsed = yield* Effect.try((): unknown => JSON.parse(line)).pipe(Effect.result);
-      if (Result.isFailure(parsed)) {
+      const parsed = decodeJsonLine(line);
+      if (Option.isNone(parsed)) {
         return yield* respondWithError(null, "Parse error", -32700);
       }
-      const envelope = asEnvelope(parsed.success);
+      const envelope = asEnvelope(parsed.value);
       if (envelope === null) return;
       const isResponse = envelope.id !== undefined && ("result" in envelope || "error" in envelope);
       const isSessionHandshake =
@@ -311,8 +318,12 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
       return yield* launch(task);
     });
 
-    const reader = NodeReadline.createInterface({ input: options.input });
-    yield* Stream.runForEach(Stream.fromAsyncIterable(reader, bridgeError), dispatch).pipe(
+    // node:readline also splits on U+2028/U+2029, which JSON.stringify leaves raw inside strings.
+    yield* Stream.fromAsyncIterable(options.input, bridgeError).pipe(
+      Stream.map((chunk) => (typeof chunk === "string" ? Buffer.from(chunk) : chunk)),
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.runForEach(dispatch),
       Effect.ignoreCause,
     );
     yield* Fiber.awaitAll(running);
@@ -361,7 +372,7 @@ export async function runAcpMcpCliFastPath(
     process.exitCode = 2;
     return;
   }
-  const result = await Effect.runPromise(
+  let result = await Effect.runPromise(
     callAcpMcpTool({
       endpoint,
       authorization,
@@ -369,5 +380,30 @@ export async function runAcpMcpCliFastPath(
       arguments: parsed as Record<string, unknown>,
     }),
   );
+  // Terminal callers see both fields, unlike native MCP clients that choose one.
+  if (
+    typeof result === "object" &&
+    result !== null &&
+    "structuredContent" in result &&
+    result.structuredContent !== undefined &&
+    "content" in result &&
+    Array.isArray(result.content)
+  ) {
+    const encoded = JSON.stringify(result.structuredContent);
+    result = {
+      ...result,
+      content: result.content.filter(
+        (part: unknown) =>
+          !(
+            typeof part === "object" &&
+            part !== null &&
+            "type" in part &&
+            part.type === "text" &&
+            "text" in part &&
+            part.text === encoded
+          ),
+      ),
+    };
+  }
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

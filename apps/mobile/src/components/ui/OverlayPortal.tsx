@@ -38,6 +38,7 @@ export function OverlayPortal(props: { readonly children: ReactNode }) {
   // happen after commit. No dependency array: re-project after every render so
   // the host always shows the current content (menus re-render while open —
   // drill-in, theme).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- projects children into the out-of-tree overlay host store after every commit
   useEffect(() => {
     entries.set(key, props.children);
     emit();
@@ -45,6 +46,7 @@ export function OverlayPortal(props: { readonly children: ReactNode }) {
 
   // Removal is unmount-only: deleting on every re-projection would move the
   // entry to the end of the map and restack it above overlays opened later.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- removes this entry from the overlay host store on unmount
   useEffect(
     () => () => {
       entries.delete(key);

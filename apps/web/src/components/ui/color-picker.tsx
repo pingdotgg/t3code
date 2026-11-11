@@ -182,6 +182,11 @@ export function ColorHueSlider({
   }, onInteractionEnd);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      onChange(event.key === "Home" ? 0 : 360);
+      return;
+    }
     if (!["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"].includes(event.key)) return;
     event.preventDefault();
     const step = event.shiftKey ? 10 : 1;

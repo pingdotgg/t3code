@@ -2,6 +2,7 @@ import type {
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderThread,
   OrchestrationV2Run,
+  OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
   ThreadId,
   ThreadPullRequestLink,
@@ -107,12 +108,24 @@ function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind
   }
 }
 
+/** A monitor wakes the agent once per line, so a progress wake run's completion waits for the monitor to end. */
+export function monitorHoldsWakeCompletion(
+  thread: Pick<OrchestrationV2ThreadShell, "latestRunBackgroundWake" | "pendingBackgroundTasks">,
+): boolean {
+  return (
+    thread.latestRunBackgroundWake === true &&
+    (thread.pendingBackgroundTasks ?? []).some((task) => task.kind === "monitor")
+  );
+}
+
 type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "status">;
 
 type PendingBackgroundWorkPullRequest = Pick<
   ThreadPullRequestLink,
   "host" | "repository" | "number" | "url" | "source" | "watch"
->;
+> & {
+  readonly snapshot: Pick<NonNullable<ThreadPullRequestLink["snapshot"]>, "state"> | null;
+};
 
 type PendingBackgroundWorkProviderThread = Pick<
   OrchestrationV2ProviderThread,
@@ -291,7 +304,10 @@ function pullRequestWatchTasks(
   pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
 ): Array<PendingBackgroundWorkTask> {
   return (pullRequests ?? []).flatMap((link) =>
-    link.watch === undefined || link.source === "stack-dismissed"
+    // The watch reactor ends a merged PR's watch without waking the agent, so it holds nothing.
+    link.watch === undefined ||
+    link.source === "stack-dismissed" ||
+    link.snapshot?.state === "merged"
       ? []
       : [
           {

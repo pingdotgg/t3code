@@ -3,9 +3,11 @@
 // chat and settings routes, the sidebar and the right panel, through the same stores and
 // atoms the app reads. See renderScenarios.renders.tsx for the counting rules.
 import { createMemoryHistory } from "@tanstack/react-router";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
+import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { commands, page, userEvent } from "vite-plus/test/browser";
 
@@ -13,11 +15,16 @@ import "~/index.css";
 
 import { AppRoot } from "~/AppRoot";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter, type AppRouter } from "~/router";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { vcsEnvironment } from "~/state/vcs";
 import {
   ENVIRONMENT_ID,
   assistantItem,
+  emitTerminalMetadata,
   emitThreadEvent,
+  emitVcsStatus,
   installFakeEnvironment,
   isThreadSubscribed,
   runningRun,
@@ -47,9 +54,11 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
+const GIT_STATUS_UPDATES = 20;
 const HISTORY_TURNS = 20;
 const STREAM_DELTAS = 30;
 const TYPED_TEXT = "fix the flaky tests!";
+const TERMINAL_UPDATES = 20;
 // The stream scenario leaves a turn on its thread, so it streams into one no other scenario opens.
 const THREADS = ["thread-warm", "thread-a", "thread-b", "thread-live"].map((name) =>
   threadWithHistory(name, HISTORY_TURNS),
@@ -61,7 +70,9 @@ const [WARM, A, B, LIVE] = THREADS.map((thread) => thread.id) as [
   ThreadId,
 ];
 
-installFakeEnvironment(THREADS);
+const SIDE_CHAT = { ...threadWithHistory("thread-side", HISTORY_TURNS), sideChatOf: WARM };
+
+installFakeEnvironment([...THREADS, SIDE_CHAT]);
 // Desktop-sized, so the sidebar, composer and right panel lay out as they do in the app.
 await page.viewport(1400, 900);
 // A returning user: the first-run gate would otherwise wait on onboarding evidence.
@@ -182,7 +193,7 @@ it("app-stream-assistant-turn", async () => {
   const counted = await measure(async () => {
     let text = "";
     for (let delta = 0; delta < STREAM_DELTAS; delta++) {
-      text += `word${delta} `;
+      text += `word${delta}\n\n`;
       await act(() =>
         emitThreadEvent(LIVE, {
           type: "turn-item.updated",
@@ -201,7 +212,45 @@ it("app-stream-assistant-turn", async () => {
       .element(page.getByText(`word${STREAM_DELTAS - 1}`, { exact: false }))
       .toBeVisible();
   });
+  // Only the streaming row changes. The timeline renders for the new item and its layout, not
+  // per delta, and history rows not at all.
+  expect(counted.components.ConversationTimeline).toBeLessThanOrEqual(3);
+  expect(counted.components.UserTimelineRow).toBeUndefined();
+  expect(counted.components.AssistantTimelineRow).toBe(STREAM_DELTAS);
+  // Each delta adds a paragraph; finished blocks keep their render.
+  expect(counted.components.MarkdownParagraph).toBe(STREAM_DELTAS);
   await report("app-stream-assistant-turn", [counted], { commits: false });
+});
+
+it("app-terminal-updates-in-other-thread", async () => {
+  using _clock = frozenClock();
+  await using _app = (await openThread(A)).screen;
+  const counted = await measure(async () => {
+    for (let update = 0; update < TERMINAL_UPDATES; update++) {
+      await act(() =>
+        emitTerminalMetadata({
+          type: "upsert",
+          terminal: {
+            threadId: B,
+            terminalId: "default",
+            cwd: "/repo",
+            worktreePath: null,
+            status: "running",
+            pid: 42,
+            exitCode: null,
+            exitSignal: null,
+            hasRunningSubprocess: true,
+            label: `command ${update}`,
+            updatedAt: `2026-03-18T09:01:${String(update).padStart(2, "0")}.000Z`,
+          },
+        }),
+      );
+    }
+  });
+  // Only thread B's sidebar row shows these updates.
+  expect(counted.components.ChatView).toBeUndefined();
+  expect(counted.components.SidebarThreadRow).toBe(TERMINAL_UPDATES);
+  await report("app-terminal-updates-in-other-thread", [counted]);
 });
 
 it("app-type-in-composer", async () => {
@@ -229,7 +278,10 @@ it("app-switch-thread", async () => {
     );
     await expect.element(lastAnswer(threadId)).toBeVisible();
   };
-  await report("app-switch-thread", [await measure(go(B)), await measure(go(A))]);
+  const windows = [await measure(go(B)), await measure(go(A))];
+  // Only the rows losing and gaining the active highlight change.
+  for (const window of windows) expect(window.components.SidebarThreadRow).toBe(2);
+  await report("app-switch-thread", windows);
 });
 
 // Through the diff.toggle shortcut, the same handler as the header's diff button.
@@ -252,7 +304,7 @@ const openSettings =
   (router: AppRouter, to: "/settings/general" | "/settings/appearance") => async () => {
     await act(() => router.navigate({ to }));
     // A section title from each page, since neither page has a heading that names it.
-    const name = to === "/settings/general" ? "Time format" : "Motion";
+    const name = to === "/settings/general" ? "Time format" : "Interface";
     await expect.element(page.getByRole("heading", { name, exact: true })).toBeVisible();
     // Appearance highlights its code font preview off-thread, then attaches it in a shadow root.
     if (to === "/settings/appearance") {
@@ -279,4 +331,77 @@ it("app-switch-settings-section", async () => {
   await report("app-switch-settings-section", [
     await measure(openSettings(router, "/settings/appearance")),
   ]);
+});
+
+// ChatView reads only a few status fields, so changing file counts should not reach it.
+// Keep git scenarios last: the status they leave cached adds renders to later scenarios.
+it("app-git-file-counts-with-side-chat", async () => {
+  using _clock = frozenClock();
+  useRightPanelStore.getState().openSideChat(scopeThreadRef(ENVIRONMENT_ID, WARM), SIDE_CHAT.id);
+  await using _app = (await openThread(WARM)).screen;
+  await expect.element(lastAnswer(SIDE_CHAT.id)).toBeVisible();
+  const gitStatus = vcsEnvironment.status({
+    environmentId: ENVIRONMENT_ID,
+    input: { cwd: "/workspace/render" },
+  });
+  const local = (insertions: number, refName = "main") => ({
+    isRepo: true,
+    hasPrimaryRemote: true,
+    isDefaultRef: true,
+    refName,
+    hasWorkingTreeChanges: true,
+    workingTree: {
+      files: [{ path: "src/app.ts", insertions, deletions: 0 }],
+      insertions,
+      deletions: 0,
+    },
+  });
+  await act(() => emitVcsStatus({ _tag: "snapshot", local: local(0), remote: null }));
+  const counted = await measure(async () => {
+    for (let update = 1; update <= GIT_STATUS_UPDATES; update++) {
+      await act(() => emitVcsStatus({ _tag: "localUpdated", local: local(update) }));
+    }
+    // Zero renders only counts if the last update arrived inside this window.
+    await vi.waitFor(() => {
+      const status = AsyncResult.getOrElse(appAtomRegistry.get(gitStatus), () => null);
+      expect(status?.workingTree.insertions).toBe(GIT_STATUS_UPDATES);
+    });
+  });
+  expect(counted.components.ChatView).toBeUndefined();
+  // A field the chat view does read still reaches both chats.
+  const branchSwitch = await measure(() =>
+    act(() => emitVcsStatus({ _tag: "localUpdated", local: local(0, "feature") })),
+  );
+  expect(branchSwitch.components.ChatView).toBe(2);
+  await report("app-git-file-counts-with-side-chat", [counted]);
+});
+
+// ChatView re-renders when the tree goes dirty or clean; the composer and side chat timeline should not.
+it("app-git-status-updates-with-side-chat", async () => {
+  using _clock = frozenClock();
+  useRightPanelStore.getState().openSideChat(scopeThreadRef(ENVIRONMENT_ID, WARM), SIDE_CHAT.id);
+  await using _app = (await openThread(WARM)).screen;
+  await expect.element(lastAnswer(SIDE_CHAT.id)).toBeVisible();
+  const local = (insertions: number) => ({
+    isRepo: true,
+    hasPrimaryRemote: true,
+    isDefaultRef: true,
+    refName: "main",
+    hasWorkingTreeChanges: insertions % 2 === 1,
+    workingTree: {
+      files: [{ path: "src/app.ts", insertions, deletions: 0 }],
+      insertions,
+      deletions: 0,
+    },
+  });
+  await act(() => emitVcsStatus({ _tag: "snapshot", local: local(0), remote: null }));
+  const counted = await measure(async () => {
+    for (let update = 1; update <= GIT_STATUS_UPDATES; update++) {
+      await act(() => emitVcsStatus({ _tag: "localUpdated", local: local(update) }));
+    }
+  });
+  expect(counted.components.ChatView).toBe(GIT_STATUS_UPDATES * 2);
+  expect(counted.components.ChatComposer).toBeUndefined();
+  expect(counted.components.ConversationTimeline).toBeUndefined();
+  await report("app-git-status-updates-with-side-chat", [counted]);
 });

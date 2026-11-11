@@ -59,7 +59,7 @@ export function GuideOutline({
       </View>
       {guide.stops[0]?.summary ? (
         <View className="mb-6">
-          <PullRequestMarkdown markdown={guide.stops[0].summary} />
+          <PullRequestMarkdown lineBreaks={false} markdown={guide.stops[0].summary} />
         </View>
       ) : null}
       {guide.stops.map((stop, position) => {

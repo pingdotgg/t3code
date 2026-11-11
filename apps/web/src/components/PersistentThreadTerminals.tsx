@@ -162,6 +162,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const reconcileTerminalIds = useTerminalUiStateStore((state) => state.reconcileTerminalIds);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the terminal UI store's ids with the server's terminal list when they diverge
   useEffect(() => {
     if (terminalIdListsEqual(serverOrderedTerminalIds, terminalUiState.terminalIds)) {
       return;
@@ -293,7 +294,7 @@ export interface PersistentThreadTerminalPanelProps {
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
   onActiveTerminalChange: (terminalId: string) => void;
-  onCloseTerminal: (terminalId: string) => void;
+  onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
   splitShortcutLabel?: string | undefined;
   splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;

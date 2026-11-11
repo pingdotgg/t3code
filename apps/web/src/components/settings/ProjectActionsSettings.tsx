@@ -59,14 +59,6 @@ export function ProjectActionsSettings() {
       );
       if (!environment?.serverConfig) return [];
       const member = candidate.projectId ? memberById.get(candidate.projectId) : undefined;
-      // Older servers ignore override records; exclude them from edits and retain their legacy per-project
-      // map.
-      if (
-        member &&
-        environment.serverConfig.environment?.capabilities.projectSettingsOverrides !== true
-      ) {
-        return [];
-      }
       return [
         {
           environmentId: candidate.environmentId,
@@ -99,6 +91,7 @@ export function ProjectActionsSettings() {
       runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
       waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
       runOnSettle: fileScript.runOnSettle ?? false,
+      stopOnSettle: fileScript.stopOnSettle ?? false,
       keybinding: null,
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,

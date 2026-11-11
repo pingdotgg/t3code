@@ -1,0 +1,55 @@
+name: Agent Context Budget
+
+# Fails when a PR raises a value in agentContextBudget.json above main's. AgentContextBudget.test.ts
+# keeps that file equal to the measured context, so the context cannot grow by editing the file.
+# To accept growth on purpose, a maintainer adds the agent-context-increase label.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-context-budget-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  budget:
+    name: Agent context budget
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      BUDGET: apps/server/src/provider/agentContextBudget.json
+      ALLOW_INCREASE: ${{ contains(github.event.pull_request.labels.*.name, 'agent-context-increase') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: apps/server/src/provider/agentContextBudget.json
+          sparse-checkout-cone-mode: false
+
+      - name: Compare with main
+        run: |
+          git fetch --quiet --depth=1 origin main
+          if ! git cat-file -e "FETCH_HEAD:$BUDGET" 2>/dev/null; then
+            echo "main has no agent context budget yet."
+            exit 0
+          fi
+          git show "FETCH_HEAD:$BUDGET" > "$RUNNER_TEMP/main.json"
+          grown=$(jq -r --slurpfile main "$RUNNER_TEMP/main.json" '
+            to_entries[]
+            | select($main[0][.key] != null and .value > $main[0][.key])
+            | "\(.key): \($main[0][.key]) -> \(.value) (+\(.value - $main[0][.key]))"
+          ' "$BUDGET")
+          if [ -z "$grown" ]; then
+            echo "Agent context is not larger than main."
+            exit 0
+          fi
+          printf 'Agent context grew compared to main:\n%s\n' "$grown"
+          if [ "$ALLOW_INCREASE" = "true" ]; then
+            echo "Accepted by the agent-context-increase label."
+            exit 0
+          fi
+          echo "::error file=$BUDGET::Agent context grew compared to main. Cut the added text and rerun the evals that cover it (evals/README.md), or ask a maintainer to add the agent-context-increase label."
+          exit 1

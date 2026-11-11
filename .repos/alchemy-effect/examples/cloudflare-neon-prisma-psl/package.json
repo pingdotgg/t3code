@@ -18,6 +18,9 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/neon": "workspace:*",
+    "@alchemy.run/prisma": "workspace:*",
     "@cloudflare/workers-types": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
@@ -26,6 +29,8 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "prisma": "catalog:"
+    "@alchemy.run/test": "workspace:*",
+    "prisma": "catalog:",
+    "typescript": "catalog:"
   }
 }

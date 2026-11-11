@@ -1,7 +1,7 @@
-import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Fly from "@alchemy.run/fly";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -33,10 +33,7 @@ const getBodyWhenReady = (url: string, expected: string) =>
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
       schedule: Schedule.max([
-        Schedule.min([
-          Schedule.exponential("500 millis"),
-          Schedule.spaced("3 seconds"),
-        ]),
+        Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
         Schedule.recurs(20),
       ]),
     }),
@@ -66,9 +63,7 @@ const base = Effect.map(stack, ({ url }) => {
 
 // Resolve an asset href from index.html against the site base.
 const resolve = (baseUrl: string, href: string) =>
-  href.startsWith("http")
-    ? href
-    : `${baseUrl}${href.startsWith("/") ? "" : "/"}${href}`;
+  href.startsWith("http") ? href : `${baseUrl}${href.startsWith("/") ? "" : "/"}${href}`;
 
 test(
   "deploys and exposes a url",
@@ -98,10 +93,7 @@ test(
     const html = yield* getBodyWhenReady(url, '<script type="module"');
     const script = html.match(/<script[^>]*type="module"[^>]*src="([^"]+)"/);
     expect(script).not.toBeNull();
-    const js = yield* getBodyWhenReady(
-      resolve(url, script![1]!),
-      "Hello from Foldkit!",
-    );
+    const js = yield* getBodyWhenReady(resolve(url, script![1]!), "Hello from Foldkit!");
     expect(js).toContain("Hello from Foldkit!");
     expect(js).toContain("Styled with Tailwind CSS");
   }),
@@ -116,9 +108,7 @@ test(
     // compiled rule for a utility used in src/main.ts only exists if the
     // @tailwindcss/vite plugin from the project's own vite.config.ts ran.
     const html = yield* getBodyWhenReady(url, "stylesheet");
-    const link = html.match(
-      /<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/,
-    );
+    const link = html.match(/<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/);
     expect(link).not.toBeNull();
     const css = yield* getBodyWhenReady(resolve(url, link![1]!), ".text-3xl");
     expect(css).toContain(".text-3xl");
