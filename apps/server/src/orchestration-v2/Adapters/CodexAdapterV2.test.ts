@@ -1239,6 +1239,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
     onUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"],
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
+    // Answers a request instead of the transcript, for reads the adapter may issue at any point.
+    answerRequest?: (method: string, params: unknown) => Effect.Effect<unknown> | undefined,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1275,7 +1277,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       ...client,
                       request: (method, params) =>
                         onRequest(method, params).pipe(
-                          Effect.andThen(client.request(method, params)),
+                          Effect.andThen(
+                            (answerRequest?.(method, params) as ReturnType<
+                              typeof client.request<typeof method>
+                            >) ?? client.request(method, params),
+                          ),
                         ),
                       raw: {
                         ...client.raw,
@@ -9923,6 +9929,177 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ["file-read", "file-read"],
           ],
         );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+  });
+
+  describe("steering a skill mention", () => {
+    const nativeThreadId = "skill-steer-thread";
+    const nativeTurnId = "skill-steer-turn";
+    const prompt = "run sleep 40";
+
+    // Codex injects a skill only on turn/start; a turn/steer carrying `$skill` is plain text.
+    const steerWhileRunning = (
+      scenario: string,
+      steerText: string,
+      createdBy: "user" | "agent" = "user",
+      stallSkillsList = false,
+    ) =>
+      Effect.gen(function* () {
+        const skillsListed = yield* Deferred.make<void>();
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+            {
+              type: "expect_outbound",
+              label: "turn/steer",
+              frame: {
+                id: 4,
+                method: "turn/steer",
+                params: {
+                  expectedTurnId: nativeTurnId,
+                  input: [{ type: "text", text: steerText }],
+                  threadId: nativeThreadId,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/steer",
+              frame: { id: 4, result: { turnId: nativeTurnId } },
+            },
+          ],
+        });
+        const requests: Array<string> = [];
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            Effect.sync(() => {
+              requests.push(method);
+            }),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          (method, params) => {
+            if (method !== "skills/list") return undefined;
+            if (stallSkillsList) {
+              return Deferred.succeed(skillsListed, undefined).pipe(Effect.andThen(Effect.never));
+            }
+            const cwds =
+              Predicate.isObject(params) && Array.isArray(params.cwds) ? params.cwds : [];
+            return Effect.succeed({
+              data: cwds.map((cwd) => ({
+                cwd,
+                errors: [],
+                skills: [
+                  {
+                    name: "zebra-probe",
+                    description: "Explicit-only probe skill",
+                    enabled: true,
+                    path: "/workspace/.agents/skills/zebra-probe/SKILL.md",
+                    scope: "repo",
+                  },
+                ],
+              })),
+            } satisfies CodexSchema.V2SkillsListResponse);
+          },
+        );
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`${scenario}-attempt`),
+          text: prompt,
+        });
+        yield* harness.runtime.startTurn(turnInput);
+        const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+          nativeTurnId,
+        });
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.id === providerTurnId &&
+              event.providerTurn.status === "running",
+          ),
+        );
+        const steering = yield* harness.runtime
+          .steerTurn({
+            threadId: harness.threadId,
+            runId: turnInput.runId,
+            providerThread: harness.providerThread,
+            providerTurnId,
+            message: {
+              ...turnInput.message,
+              messageId: MessageId.make(`message-${scenario}-steer`),
+              text: steerText,
+              createdBy,
+            },
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+        if (stallSkillsList) {
+          yield* Deferred.await(skillsListed);
+          yield* TestClock.adjust("5 seconds");
+        }
+        const steer = yield* Fiber.join(steering);
+        return { steer, requests };
+      });
+
+    it.effect("does not steer a mention of an enabled Codex skill into the running turn", () =>
+      Effect.gen(function* () {
+        const { steer, requests } = yield* steerWhileRunning("skill-steer", "$zebra-probe");
+
+        assert.notInclude(
+          requests,
+          "turn/steer",
+          "Codex ignores skills sent with turn/steer, so `$zebra-probe` must wait for a new turn",
+        );
+        assert.isTrue(Exit.isFailure(steer), "the steer must fail so the message is re-dispatched");
+        const failure = Exit.isFailure(steer) ? Cause.squash(steer.cause) : undefined;
+        assert.propertyVal(failure, "_tag", "ProviderAdapterSteerRunError");
+        assert.propertyVal(failure, "requiresNewTurn", true);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect.each([
+      { label: "a skill mention an agent sent", text: "$zebra-probe", createdBy: "agent" },
+      { label: "a `$` mention that is not a Codex skill", text: "echo $PATH", createdBy: "user" },
+      { label: "a skill mention when skills/list stalls", text: "$zebra-probe", stall: true },
+    ] as const)("still steers $label", ({ label, text, ...rest }) =>
+      Effect.gen(function* () {
+        const { steer, requests } = yield* steerWhileRunning(
+          `skill-steer-${label}`,
+          text,
+          "createdBy" in rest ? rest.createdBy : "user",
+          "stall" in rest,
+        );
+
+        assert.include(requests, "turn/steer");
+        assert.isTrue(Exit.isSuccess(steer));
       }).pipe(
         Effect.scoped,
         Effect.provide(

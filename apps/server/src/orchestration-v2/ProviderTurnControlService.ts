@@ -38,6 +38,7 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
     operation: Schema.Literals(["interrupt", "restart", "steer"]),
     providerTurnId: ProviderTurnId,
     turnCompleted: Schema.optional(Schema.Boolean),
+    requiresNewTurn: Schema.optional(Schema.Boolean),
     /** The provider never confirmed the stop; Force stop is the way out. */
     unresponsive: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
@@ -401,6 +402,9 @@ export const layer: Layer.Layer<
                     operation: "steer",
                     providerTurnId: input.providerTurnId,
                     turnCompleted: current.providerTurn?.status === "completed",
+                    ...(cause._tag === "ProviderAdapterSteerRunError" && cause.requiresNewTurn
+                      ? { requiresNewTurn: true }
+                      : {}),
                     cause,
                   });
                 }),

@@ -356,6 +356,8 @@ export class ProviderAdapterSteerRunError extends Schema.TaggedError<ProviderAda
     driver: ProviderDriverKind,
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
+    // The provider cannot honour this message mid-turn; it must run as its own next turn.
+    requiresNewTurn: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

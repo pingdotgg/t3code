@@ -443,6 +443,23 @@ function codexSkillMentionText(text: string): string {
   return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
 }
 
+// Codex loads skills only on turn/start; a steered skill mention reaches the model as plain text.
+const mentionsEnabledCodexSkill = Effect.fn("CodexAdapterV2.mentionsEnabledCodexSkill")(function* (
+  client: CodexClient.CodexAppServerClient["Service"],
+  text: string,
+  cwd: string | null,
+) {
+  const names = new Set(Array.from(text.matchAll(SKILL_MENTION_PATTERN), (match) => match[2]));
+  if (names.size === 0) return false;
+  // A steer waits on this lookup, so a stalled app-server falls back to a plain steer.
+  const response = yield* client
+    .request("skills/list", { cwds: cwd === null ? [] : [cwd] })
+    .pipe(Effect.timeout("5 seconds"));
+  return response.data.some((entry) =>
+    entry.skills.some((skill) => skill.enabled && names.has(skill.name)),
+  );
+});
+
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
 const BACKGROUND_COMMAND_DETAIL_OUTPUT_TAIL_MAX_LENGTH = 1_000;
 
@@ -7475,6 +7492,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               }
 
+              // Only a user invokes skills; agent messages and delegated results stay plain steers.
+              const requiresNewTurn =
+                turnInput.message.createdBy === "user" &&
+                (yield* mentionsEnabledCodexSkill(
+                  client,
+                  turnInput.message.text,
+                  activeTurn.input.runtimePolicy.cwd,
+                ).pipe(Effect.orElseSucceed(() => false)));
+              if (requiresNewTurn) {
+                return yield* new ProviderAdapter.ProviderAdapterSteerRunError({
+                  driver: CODEX_PROVIDER,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId: turnInput.providerTurnId,
+                  requiresNewTurn,
+                });
+              }
+
               const codexInput = yield* toCodexInput(turnInput);
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
@@ -7484,14 +7518,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             },
             (effect, turnInput) =>
               effect.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterSteerRunError({
-                      driver: CODEX_PROVIDER,
-                      providerThreadId: turnInput.providerThread.id,
-                      providerTurnId: turnInput.providerTurnId,
-                      cause,
-                    }),
+                Effect.mapError((cause) =>
+                  cause._tag === "ProviderAdapterSteerRunError"
+                    ? cause
+                    : new ProviderAdapter.ProviderAdapterSteerRunError({
+                        driver: CODEX_PROVIDER,
+                        providerThreadId: turnInput.providerThread.id,
+                        providerTurnId: turnInput.providerTurnId,
+                        cause,
+                      }),
                 ),
               ),
           ),
