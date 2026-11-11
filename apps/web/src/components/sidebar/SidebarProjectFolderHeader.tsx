@@ -1,6 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { resolveSourceControlThreadStatus } from "@t3tools/client-runtime/state/vcs";
+import {
+  resolveSourceControlThreadStatus,
+  vcsStackedActionThreadKey,
+} from "@t3tools/client-runtime/state/vcs";
 import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
 import { memo } from "react";
@@ -64,7 +67,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         {
           sourceControlStatusForThread: (thread) =>
             resolveSourceControlThreadStatus(
-              stackedActionThreads.get(`${thread.environmentId}:${thread.id}`),
+              stackedActionThreads.get(vcsStackedActionThreadKey(thread.environmentId, thread.id)),
             ),
         },
       )

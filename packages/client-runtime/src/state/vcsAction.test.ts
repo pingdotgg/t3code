@@ -771,6 +771,12 @@ describe("threadIdsLinkedToPullRequest", () => {
             pullRequests: [{ repository: "owner/repo", number: 8 }],
           },
           {
+            environmentId,
+            id: ThreadId.make("thread-d"),
+            pullRequests: [],
+            branchPullRequest: { repository: "owner/repo", number: 7 },
+          },
+          {
             environmentId: EnvironmentId.make("other"),
             id: threadC,
             pullRequests: [{ repository: "owner/repo", number: 7, host: "github.com" }],
@@ -779,7 +785,7 @@ describe("threadIdsLinkedToPullRequest", () => {
         environmentId,
         { repository: "owner/repo", number: 7, host: "github.com" },
       ),
-    ).toEqual([threadA]);
+    ).toEqual([threadA, ThreadId.make("thread-d")]);
   });
 });
 

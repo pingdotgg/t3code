@@ -281,6 +281,7 @@ export function threadIdsLinkedToPullRequest(
       readonly repository: string;
       readonly number: number;
     }>;
+    readonly branchPullRequest?: { readonly repository: string; readonly number: number } | null;
   }>,
   environmentId: EnvironmentIdType,
   reference: {
@@ -298,7 +299,10 @@ export function threadIdsLinkedToPullRequest(
         link.repository === reference.repository &&
         (reference.host === undefined || link.host === reference.host),
     );
-    if (linked) ids.push(shell.id);
+    const branchLinked =
+      shell.branchPullRequest?.number === reference.number &&
+      shell.branchPullRequest.repository === reference.repository;
+    if (linked || branchLinked) ids.push(shell.id);
   }
   return ids;
 }

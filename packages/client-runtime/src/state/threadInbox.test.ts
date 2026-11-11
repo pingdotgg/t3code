@@ -52,6 +52,12 @@ describe("isThreadWorkingOrSourceControlBusy", () => {
     ).toBe(false);
     expect(
       isThreadWorkingOrSourceControlBusy(
+        { ...thread("a", false), pendingGuestMessageCount: 1 },
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      isThreadWorkingOrSourceControlBusy(
         { ...thread("a", false), pendingSubagentRequest: "approval" },
         true,
       ),

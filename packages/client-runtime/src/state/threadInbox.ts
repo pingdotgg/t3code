@@ -32,16 +32,17 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
 
 /**
  * Working-shelf placement for agent work or an in-flight source-control action.
- * Approvals and user-input stay in the active list, matching `isThreadWorking`.
+ * Approvals, user-input, and guest requests stay in the active list.
  */
 export function isThreadWorkingOrSourceControlBusy(
-  thread: WorkingThreadInput,
+  thread: WorkingThreadInput & Pick<EnvironmentThreadShell, "pendingGuestMessageCount">,
   sourceControlBusy: boolean,
 ): boolean {
   if (isThreadWorking(thread)) return true;
   if (!sourceControlBusy) return false;
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.pendingSubagentRequest != null) return false;
+  if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
   return true;
 }
 
