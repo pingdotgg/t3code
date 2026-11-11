@@ -290,6 +290,14 @@ Select a server to open it in the browser panel. **Stop** ends the server's job
 and keeps the agent, the terminal, and T3 Code running. Stop needs terminal
 access to the environment and is not available on Windows.
 
+**Running** in the thread details card lists commands the agent left running in
+the background, such as a dev server, and terminals with a running process.
+Select an agent command to follow its output, or a terminal to open it. When the
+command sends its output to a log file, such as `> dev.log 2>&1`, that file is
+followed instead. Stop on
+an agent command ends only that command; on a terminal it sends Ctrl+C. Output
+and single-command Stop are available for Claude.
+
 To choose what the thread details card shows, right-click the card or open
 **Settings → Appearance → Thread details**. Hidden rows keep their keyboard
 shortcuts, such as Open in editor and project scripts. **Reset to default** brings

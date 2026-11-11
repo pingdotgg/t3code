@@ -1,7 +1,7 @@
 import type { CommandOutputView } from "@t3tools/client-runtime/state/command-output";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { TERMINAL_PALETTES, terminalOutputSpans } from "@t3tools/shared/terminalOutput";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
 import { useServerConfigs } from "../../state/entities";
@@ -31,11 +31,45 @@ export function CommandOutputPanel(props: {
   readonly source?: TurnItemSource["commandOutput"] | undefined;
 }) {
   const input = { threadId: props.threadId, itemId: props.itemId };
-  const { data, error } = useEnvironmentQuery<CommandOutputView, unknown>(
-    props.source
-      ? props.source(input)
-      : orchestrationEnvironment.v2.commandOutput({ environmentId: props.environmentId, input }),
+  return (
+    <CommandOutputBody
+      query={
+        props.source
+          ? props.source(input)
+          : orchestrationEnvironment.v2.commandOutput({ environmentId: props.environmentId, input })
+      }
+      onInitialOutputReady={props.onInitialOutputReady}
+    />
   );
+}
+
+/** Follows a command the agent left running; mount only while its details are open. */
+export function BackgroundTaskOutputPanel(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly taskId: string;
+  readonly compact?: boolean;
+}) {
+  // A task runs until it leaves the roster, so a quiet one says so rather than showing nothing.
+  return (
+    <CommandOutputBody
+      query={orchestrationEnvironment.v2.backgroundTaskOutput({
+        environmentId: props.environmentId,
+        input: { threadId: props.threadId, taskId: props.taskId },
+      })}
+      compact={props.compact}
+      runningEmpty={<div className="text-muted-foreground italic">No output yet.</div>}
+    />
+  );
+}
+
+function CommandOutputBody(props: {
+  readonly query: Parameters<typeof useEnvironmentQuery<CommandOutputView, unknown>>[0];
+  readonly onInitialOutputReady?: (() => void) | undefined;
+  readonly compact?: boolean | undefined;
+  readonly runningEmpty?: ReactNode;
+}) {
+  const { data, error } = useEnvironmentQuery<CommandOutputView, unknown>(props.query);
   useInitialOutputReady(data === null && !error, props.onInitialOutputReady);
   const scrollRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
@@ -51,7 +85,11 @@ export function CommandOutputPanel(props: {
   if (text.length === 0) {
     if (error) return <div className="text-destructive">Couldn&apos;t load output: {error}</div>;
     if (data === null) return <div className="text-muted-foreground italic">Loading output…</div>;
-    return data.running ? null : <div className="text-muted-foreground italic">No output.</div>;
+    return data.running ? (
+      (props.runningEmpty ?? null)
+    ) : (
+      <div className="text-muted-foreground italic">No output.</div>
+    );
   }
   // Parse after all hooks to preserve the text/theme compiler cache.
   const spans = terminalOutputSpans(text, TERMINAL_PALETTES[resolvedTheme]);
@@ -63,7 +101,7 @@ export function CommandOutputPanel(props: {
         followRef.current =
           element.scrollHeight - element.scrollTop - element.clientHeight <= FOLLOW_SLACK_PX;
       }}
-      className="max-h-80 overflow-auto text-muted-foreground"
+      className={`${props.compact ? "max-h-48" : "max-h-80"} overflow-auto text-muted-foreground`}
     >
       {data?.output.truncated ? <div className="italic">Earlier output not shown</div> : null}
       {spans.map((span, index) =>

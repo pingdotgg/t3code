@@ -1,4 +1,8 @@
-import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
+import {
+  type OrchestrationV2PendingBackgroundTask,
+  type OrchestrationV2ProviderTurn,
+  type RunAttemptId,
+} from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
@@ -1465,6 +1469,25 @@ export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure |
       pullRequests: projection.thread.pullRequests,
     }),
   ];
+}
+
+const NO_RUNNING_BACKGROUND_TASKS: ReadonlyArray<OrchestrationV2PendingBackgroundTask> = [];
+
+/**
+ * The agent's background commands as its provider reports them, without the hold rules of
+ * `deriveThreadPendingBackgroundTasks`: a dev server keeps running while a new turn works.
+ */
+export function deriveThreadRunningBackgroundTasks(
+  projection: ThreadStructure | null,
+): ReadonlyArray<OrchestrationV2PendingBackgroundTask> {
+  if (projection === null) return NO_RUNNING_BACKGROUND_TASKS;
+  const activeId = projection.thread.activeProviderThreadId;
+  const tasks = projection.providerThreads
+    .filter((thread) => activeId == null || thread.id === activeId)
+    .flatMap((thread) => thread.pendingBackgroundTasks ?? [])
+    // Subagents are listed under Lineage.
+    .filter((task) => task.kind !== "subagent");
+  return tasks.length === 0 ? NO_RUNNING_BACKGROUND_TASKS : tasks;
 }
 
 /**

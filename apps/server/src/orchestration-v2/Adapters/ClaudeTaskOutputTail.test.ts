@@ -22,6 +22,39 @@ const makeTaskFile = Effect.gen(function* () {
 
 // TestClock cannot interleave with real filesystem I/O; tests that wait on a poll use the live clock.
 describe("tailClaudeTaskOutput", () => {
+  it.effect("reads nothing for ids that would leave the session's tasks folder", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { root } = yield* makeTaskFile;
+        // Where `../../secret` as a task id, and `..` as a session id, would lead.
+        for (const outside of [
+          path.join(root, "-private-tmp-project", "secret.output"),
+          path.join(root, "tasks", "secret.output"),
+        ]) {
+          yield* fileSystem.makeDirectory(path.dirname(outside), { recursive: true });
+          yield* fileSystem.writeFileString(outside, "secret\n");
+        }
+        const stop = yield* Deferred.make<void>();
+        yield* Deferred.succeed(stop, undefined);
+        const chunks: Array<string> = [];
+        for (const ids of [
+          { sessionId: SESSION_ID, taskId: "../../secret" },
+          { sessionId: "..", taskId: "secret" },
+        ]) {
+          yield* tailClaudeTaskOutput({
+            root,
+            ...ids,
+            stop,
+            onChunk: (chunk) => Effect.sync(() => chunks.push(chunk)),
+          });
+        }
+        assert.deepEqual(chunks, []);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("follows a file that appears after the task starts, across split characters", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -164,5 +197,20 @@ describe("claudeTaskOutputRoot", () => {
           `/work/claude/${user}`,
         );
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("uses Claude Code's shared claude folder in the Windows temp dir", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const temp = path.resolve("Users", "me", "AppData", "Local", "Temp");
+      const root = (environment: Record<string, string>) =>
+        claudeTaskOutputRoot(environment, path, null, "win32");
+      assert.equal(root({ TEMP: temp, TMP: "ignored" }), path.join(temp, "claude"));
+      assert.equal(root({ TMP: temp }), path.join(temp, "claude"));
+      assert.equal(
+        root({ CLAUDE_CODE_TMPDIR: path.resolve("srv"), TEMP: temp }),
+        path.resolve("srv", "claude"),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

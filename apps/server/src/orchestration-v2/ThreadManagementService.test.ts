@@ -558,6 +558,130 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
     }),
 );
 
+// One provider thread listing a running dev server, served by a runtime with the given methods.
+const backgroundTaskService = Effect.fn("test.backgroundTaskService")(function* (
+  runtimeMethods: Partial<ProviderAdapter.ProviderAdapterV2SessionRuntime> | null,
+) {
+  const threadId = ThreadId.make("thread:background-task");
+  const providerThreadId = ProviderThreadId.make("provider-thread:background-task");
+  const providerSessionId = ProviderSessionId.make("provider-session:background-task");
+  const driver = ProviderDriverKind.make("claudeAgent");
+  const now = yield* DateTime.now;
+  const providerThread: OrchestrationV2ProviderThread = {
+    id: providerThreadId,
+    driver,
+    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+    providerSessionId,
+    appThreadId: threadId,
+    ownerNodeId: null,
+    nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
+    nativeConversationHeadRef: null,
+    status: "idle",
+    firstRunOrdinal: 1,
+    lastRunOrdinal: 1,
+    handoffIds: [],
+    forkedFrom: null,
+    pendingBackgroundTasks: [{ taskId: "dev-server", kind: "command", individualControl: true }],
+    contextUsage: null,
+    nativeMetadata: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const runtime = {
+    driver,
+    providerSessionId,
+    ...runtimeMethods,
+  } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+  const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { id: threadId, deletedAt: null, activeProviderThreadId: providerThreadId },
+              providerThreads: [providerThread],
+            } as unknown as OrchestrationV2ThreadProjection),
+        }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+          get: () => Effect.succeed(runtimeMethods === null ? Option.none() : Option.some(runtime)),
+        }),
+      ),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerReceiptsTest),
+  );
+  const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+    Effect.provide(Layer.merge(layerTest, ThreadCommandExecutor.layer)),
+  );
+  return { service, threadId, providerThreadId };
+});
+
+it.effect.each(["live", "not-running", "no-session", "unsupported-runtime"] as const)(
+  "stops one background task through the provider thread that lists it, with state %s",
+  (state) =>
+    Effect.gen(function* () {
+      const stopped: Array<string> = [];
+      const { service, threadId, providerThreadId } = yield* backgroundTaskService(
+        state === "no-session"
+          ? null
+          : state === "unsupported-runtime"
+            ? {}
+            : {
+                stopBackgroundTask: (input) =>
+                  Effect.sync(() => {
+                    stopped.push(`${input.providerThread.id}:${input.taskId}`);
+                  }),
+              },
+      );
+      const result = yield* service
+        .stopBackgroundTask({
+          threadId,
+          taskId: state === "not-running" ? "finished" : "dev-server",
+        })
+        .pipe(Effect.result);
+
+      if (state === "live") {
+        expect(result).toMatchObject({ _tag: "Success" });
+        expect(stopped).toEqual([`${providerThreadId}:dev-server`]);
+      } else {
+        expect(result).toMatchObject({
+          failure: {
+            _tag: "OrchestrationV2StopBackgroundTaskError",
+            reason: {
+              "not-running": "not-running",
+              "no-session": "unavailable",
+              "unsupported-runtime": "unsupported",
+            }[state],
+          },
+        });
+        expect(stopped).toEqual([]);
+      }
+    }),
+);
+
+it.effect("streams a background task's output in bounded frames and says when it ends", () =>
+  Effect.gen(function* () {
+    const { service, threadId } = yield* backgroundTaskService({
+      backgroundTaskOutput: () => Stream.make("ready\n", "x".repeat(20_000)),
+    });
+    const frames = Array.from(
+      yield* Stream.runCollect(
+        service.subscribeBackgroundTaskOutput({ threadId, taskId: "dev-server" }),
+      ),
+    );
+
+    expect(frames.map(({ kind, running }) => [kind, running])).toEqual([
+      ["replace", true],
+      ["append", true],
+      // A read larger than one append resyncs viewers from the bounded tail.
+      ["replace", true],
+      ["append", false],
+    ]);
+    expect(frames[1]?.text).toBe("ready\n");
+    expect(frames[2]?.text).toBe(`ready\n${"x".repeat(20_000)}`);
+  }),
+);
+
 it.effect.each([
   { status: "completed" as const, followUp: "none", settles: true },
   { status: "failed" as const, followUp: "none", settles: false },

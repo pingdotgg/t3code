@@ -99,6 +99,10 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./shellStdoutFile": {
+      "types": "./src/shellStdoutFile.ts",
+      "import": "./src/shellStdoutFile.ts"
+    },
     "./semver": {
       "types": "./src/semver.ts",
       "import": "./src/semver.ts"

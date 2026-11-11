@@ -173,6 +173,18 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
             Stream.filter((view) => view !== EMPTY_COMMAND_OUTPUT),
           ),
       }),
+      // A background command's output, only while its details are open. It never completes:
+      // the task's own roster entry, not this stream, says when it stops.
+      backgroundTaskOutput: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+        label: "environment-data:orchestration-v2:background-task-output",
+        tag: ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput,
+        idleTtlMs: 0,
+        transform: (frames) =>
+          frames.pipe(
+            Stream.scan(() => EMPTY_COMMAND_OUTPUT, applyCommandOutputFrame),
+            Stream.filter((view) => view !== EMPTY_COMMAND_OUTPUT),
+          ),
+      }),
       // The open thread's predicted next prompt, while its composer is mounted.
       promptSuggestion: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
         label: "environment-data:orchestration-v2:prompt-suggestion",
@@ -201,6 +213,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     stopWorkflow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:orchestration:stop-workflow",
       tag: ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
+    }),
+    stopBackgroundTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:stop-background-task",
+      tag: ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask,
     }),
     forceStopThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:orchestration:force-stop-thread",

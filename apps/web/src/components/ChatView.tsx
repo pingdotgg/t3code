@@ -10,6 +10,7 @@ import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnounce
 import {
   deriveAvailableRevertTurnCounts,
   deriveThreadPendingBackgroundTasks,
+  deriveThreadRunningBackgroundTasks,
   presentThreadShellFromProjection,
 } from "./ChatView.logic";
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
@@ -1448,6 +1449,7 @@ export default function ChatView(props: ChatViewProps) {
     activeProviderThread,
   );
   const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
+  const runningBackgroundTasks = deriveThreadRunningBackgroundTasks(serverProjection);
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
@@ -2397,6 +2399,7 @@ export default function ChatView(props: ChatViewProps) {
     showBranchMismatchBanner,
     threadStatusLine,
     shortcuts: threadLifecycleShortcuts,
+    backgroundWork,
   } = useThreadLifecycle({
     environmentId,
     routeThreadKey,
@@ -2416,6 +2419,7 @@ export default function ChatView(props: ChatViewProps) {
     runtimeMode,
     isWorking,
     pendingBackgroundTasks,
+    runningBackgroundTasks,
     turnItems: serverProjection?.turnItems ?? EMPTY_TURN_ITEMS,
     activePendingApproval,
     activePendingUserInput,
@@ -3892,6 +3896,7 @@ export default function ChatView(props: ChatViewProps) {
                   onAddProjectScript={saveProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
+                  backgroundWork={backgroundWork}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,
