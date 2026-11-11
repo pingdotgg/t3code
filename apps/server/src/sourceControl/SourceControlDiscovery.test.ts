@@ -193,17 +193,18 @@ it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         `#!/bin/sh\nexport HOME=${home}\n. "$HOME/.profile"\nshift\nexec /bin/sh -c "$1"\n`,
         { mode: 0o755 },
       );
+      const env = yield* HostProcess.Environment;
       yield* Effect.acquireRelease(
         Effect.sync(() => {
-          const saved = { PATH: process.env.PATH, SHELL: process.env.SHELL };
-          process.env.SHELL = loginShell;
+          const saved = { PATH: env.PATH, SHELL: env.SHELL };
+          env.SHELL = loginShell;
           return saved;
         }),
         (saved) =>
           Effect.sync(() => {
-            process.env.PATH = saved.PATH;
-            if (saved.SHELL === undefined) delete process.env.SHELL;
-            else process.env.SHELL = saved.SHELL;
+            env.PATH = saved.PATH;
+            if (saved.SHELL === undefined) delete env.SHELL;
+            else env.SHELL = saved.SHELL;
           }),
       );
 
