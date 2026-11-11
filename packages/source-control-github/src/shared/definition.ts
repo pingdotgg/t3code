@@ -44,11 +44,12 @@ function isRepositoryPath(repository: string): boolean {
   );
 }
 
-const ABSOLUTE_OR_PAGE_LOCAL = /^(?:[a-z][a-z\d+.-]*:|[#?]|$)/iu;
+// The forms GitHub writes against the PR page. Bare paths stay workspace-relative: they 404 there.
+const PAGE_RELATIVE = /^(?:\.\.\/|\/(?![/\\]))/u;
 
 /** As github.com's browser reads a body's destinations: relative to the pull request's page. */
 function resolveRelativeUrl(url: string, changeRequestUrl: string): string | null {
-  if (ABSOLUTE_OR_PAGE_LOCAL.test(url)) return null;
+  if (!PAGE_RELATIVE.test(url)) return null;
   try {
     const page = new URL(changeRequestUrl);
     const resolved = new URL(url, page);

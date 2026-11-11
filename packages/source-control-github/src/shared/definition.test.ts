@@ -193,6 +193,9 @@ describe("GitHub relative URLs", () => {
     for (const url of [
       "https://example.com/shot.png",
       "#x",
+      "README.md",
+      "apps/web/src/x.ts",
+      "docs/shot.png",
       "mailto:a@example.com",
       "//evil.example/shot.png",
       "\\\\evil.example\\shot.png",
