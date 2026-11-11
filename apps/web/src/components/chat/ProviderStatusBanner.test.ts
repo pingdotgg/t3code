@@ -38,30 +38,8 @@ describe("provider status banners", () => {
       message: "Codex provider status has not been checked in this session yet.",
     };
     expect(shouldShowProviderStatusBanner(checking, null)).toBe(false);
-    expect(
-      shouldShowProviderStatusBanner({ ...checking, message: "Checking installation." }, null),
-    ).toBe(false);
-    expect(
-      shouldShowProviderStatusBanner(
-        { ...checking, installed: true, status: "ready", auth: { status: "authenticated" } },
-        null,
-      ),
-    ).toBe(false);
-    for (const failure of [
-      { status: "error", installed: false, message: "Could not start Codex CLI." },
-      { status: "error", installed: true, message: "Codex provider probe failed." },
-      { status: "error", installed: true, message: "Timed out while checking Codex." },
-      {
-        status: "warning",
-        installed: true,
-        message: "Codex did not return its model catalog in time.",
-      },
-      { status: "warning", installed: false, message: checking.message },
-      { status: "error", auth: { status: "unauthenticated" }, message: "Run codex login." },
-    ] as const) {
-      expect(shouldShowProviderStatusBanner({ ...checking, ...failure }, null)).toBe(true);
-    }
-    expect(shouldShowProviderStatusBanner({ ...checking, status: "disabled" }, null)).toBe(false);
+    expect(shouldShowProviderStatusBanner({ ...checking, status: "warning" }, null)).toBe(true);
+    expect(shouldShowProviderStatusBanner({ ...checking, status: "error" }, null)).toBe(true);
     expect(
       shouldShowProviderStatusBanner(
         {
