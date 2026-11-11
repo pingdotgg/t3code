@@ -61,7 +61,7 @@ export function buildMenuItems(
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
+  const hasPr = gitStatus.pr !== null;
   const isBehind = gitStatus.behindCount > 0;
   const canPushWithoutUpstream = hasOriginRemote && !gitStatus.hasUpstream;
   const canCommit = !isBusy && hasChanges;
@@ -75,11 +75,11 @@ export function buildMenuItems(
   const canCreatePr =
     !isBusy &&
     hasBranch &&
-    !hasOpenPr &&
+    !hasPr &&
     (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0 &&
     !isBehind &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
-  const canOpenPr = !isBusy && hasOpenPr;
+  const canOpenPr = !isBusy && hasPr;
 
   return [
     {
@@ -98,7 +98,7 @@ export function buildMenuItems(
       kind: "open_dialog",
       dialogAction: "push",
     },
-    hasOpenPr
+    hasPr
       ? {
           id: "pr",
           label: `View ${terminology.shortLabel}`,
@@ -246,11 +246,11 @@ export function resolveQuickAction(
     };
   }
 
-  if (hasOpenPr && gitStatus.hasUpstream) {
+  if (gitStatus.pr !== null && gitStatus.hasUpstream) {
     return { label: `View ${terminology.shortLabel}`, disabled: false, kind: "open_pr" };
   }
 
-  if (hasDefaultBranchDelta && !isDefaultBranch) {
+  if (hasDefaultBranchDelta && !isDefaultBranch && gitStatus.pr === null) {
     return {
       label: `Create ${terminology.shortLabel}`,
       disabled: false,
@@ -283,7 +283,6 @@ export function getGitActionDisabledReason(input: {
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
   const terminology = changeRequestTerminologyFor(gitStatus);
@@ -314,7 +313,7 @@ export function getGitActionDisabledReason(input: {
     return "Push is currently unavailable.";
   }
 
-  if (hasOpenPr) {
+  if (gitStatus.pr !== null) {
     return `View ${terminology.shortLabel} is currently unavailable.`;
   }
   if (!hasBranch) {

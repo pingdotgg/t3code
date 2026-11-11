@@ -121,7 +121,7 @@ export function buildMenuItems(
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
+  const hasPr = gitStatus.pr !== null;
   const isBehind = gitStatus.behindCount > 0;
   const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const canPushWithoutUpstream = hasPrimaryRemote && !gitStatus.hasUpstream;
@@ -135,7 +135,7 @@ export function buildMenuItems(
   const canCreatePr =
     !isBusy &&
     hasBranch &&
-    !hasOpenPr &&
+    !hasPr &&
     hasDefaultBranchDelta &&
     !isBehind &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
@@ -162,7 +162,7 @@ export function buildMenuItems(
     dialogAction: "push",
   };
 
-  if (hasOpenPr) {
+  if (hasPr) {
     return [commitItem, pushItem];
   }
 
@@ -310,7 +310,7 @@ export function resolveQuickAction(
     };
   }
 
-  if (hasOpenPr && gitStatus.hasUpstream) {
+  if (gitStatus.pr !== null && gitStatus.hasUpstream) {
     return {
       label: "Commit",
       disabled: true,
@@ -319,7 +319,7 @@ export function resolveQuickAction(
     };
   }
 
-  if (hasDefaultBranchDelta && !isDefaultRef) {
+  if (hasDefaultBranchDelta && !isDefaultRef && gitStatus.pr === null) {
     return {
       label: `Create ${terminology.shortLabel}`,
       disabled: false,

@@ -53,6 +53,20 @@ describe("resolveQuickAction", () => {
     expect(resolveQuickAction(status({ aheadOfDefaultCount: 1 }), false, true).disabled).toBe(true);
   });
 
+  it.each([
+    { state: "closed" as const, label: "closed" },
+    { state: "merged" as const, label: "merged into a non-default base" },
+  ])("views a $label PR instead of creating another when ahead of default", ({ state }) => {
+    const pr = { ...openPr, state, ...(state === "merged" ? { baseRef: "release" } : {}) };
+    expect(resolveQuickAction(status({ aheadOfDefaultCount: 1, pr }), false)).toMatchObject({
+      label: "View PR",
+      disabled: false,
+      kind: "open_pr",
+    });
+    const [, , prItem] = buildMenuItems(status({ aheadOfDefaultCount: 1, pr }), false);
+    expect(prItem).toMatchObject({ label: "View PR", kind: "open_pr", disabled: false });
+  });
+
   it("keeps the full action for changes but claims nothing else before remote state loads", () => {
     const pending = { isRemoteStatusPending: true, hasUpstream: false };
     expect(

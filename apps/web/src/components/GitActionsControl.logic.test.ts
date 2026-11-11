@@ -77,6 +77,39 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
       false,
     );
   });
+
+  it.each([
+    { state: "closed" as const, baseRef: "main" },
+    { state: "merged" as const, baseRef: "release" },
+  ])(
+    "does not offer create PR when a $state PR is already linked and ahead of default",
+    ({ state, baseRef }) => {
+      const linked = status({
+        aheadCount: 0,
+        behindCount: 0,
+        aheadOfDefaultCount: 1,
+        pr: {
+          number: 13,
+          title: "Linked PR",
+          url: "https://example.com/pr/13",
+          baseRef,
+          headRef: "feature/test",
+          state,
+        },
+      });
+
+      assert.deepInclude(resolveQuickAction(linked, false), {
+        label: "Commit",
+        disabled: true,
+        kind: "show_hint",
+        hint: "Branch is up to date. No action needed.",
+      });
+      assert.equal(
+        buildMenuItems(linked, false).some((item) => item.id === "pr"),
+        false,
+      );
+    },
+  );
 });
 
 describe("when: on default ref without open PR", () => {
