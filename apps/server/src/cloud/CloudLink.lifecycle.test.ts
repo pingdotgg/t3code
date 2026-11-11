@@ -634,7 +634,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       [CLOUD_LINKED_USER_ID, "user-123"],
       [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
       ...(revoked ? [[CLOUD_LINK_REVOKED, "true"] as const] : []),
-      ...(startup ? [[CLOUD_CLI_DESIRED_LINK_SECRET, "publish_only"] as const] : []),
+      [CLOUD_CLI_DESIRED_LINK_SECRET, startup ? "publish_only" : "managed"],
     ]);
     const cloudMintPublicKey =
       "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----";
@@ -674,12 +674,14 @@ describe("releaseManagedTunnelOnShutdown", () => {
         expect(new TextDecoder().decode(values.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET))).toBe(
           "fresh-credential",
         );
+        expect(values.has(CLOUD_CLI_DESIRED_LINK_SECRET)).toBe(false);
       } else {
         expect(Option.getOrThrow(result)).toBeInstanceOf(CloudLink.CloudLinkAccountMismatchError);
         expect(yield* link.linkState()).toMatchObject({
           cloudUserId: "user-123",
           linkRevoked: revoked,
         });
+        expect(values.has(CLOUD_CLI_DESIRED_LINK_SECRET)).toBe(true);
       }
     }).pipe(
       provideReleaseHarness({
