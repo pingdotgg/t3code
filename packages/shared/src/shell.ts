@@ -620,7 +620,7 @@ const findOnPath = Effect.fnUntraced(function* (
   commandCandidates: ReadonlyArray<string>,
   platform: NodeJS.Platform,
   windowsPathExtensions: ReadonlyArray<string>,
-  limit: number,
+  isLast: (match: string) => boolean,
 ): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   // Keep case variants: Windows can make PATH directories case-sensitive.
@@ -647,7 +647,7 @@ const findOnPath = Effect.fnUntraced(function* (
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
         matches.push(candidatePath);
-        if (matches.length === limit) return matches;
+        if (isLast(candidatePath)) return matches;
         break;
       }
     }
@@ -699,7 +699,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     commandCandidates,
     platform,
     windowsPathExtensions,
-    1,
+    () => true,
   );
   cacheCommandResolution(cache, cacheKey, resolvedPath, nowNanos);
   return resolvedPath;
@@ -715,10 +715,10 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
   });
 });
 
-// All matches for a bare command, in PATH order, without the single-match cache.
+// Matches for a bare command in PATH order, up to the first one `until` accepts; not cached.
 export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths")(function* (
   command: string,
-  options: CommandAvailabilityOptions = {},
+  options: CommandAvailabilityOptions & { readonly until: (match: string) => boolean },
 ) {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
@@ -729,7 +729,7 @@ export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths")(functi
     resolveCommandCandidates(command, platform, windowsPathExtensions, path.extname),
     platform,
     windowsPathExtensions,
-    Infinity,
+    options.until,
   );
 });
 

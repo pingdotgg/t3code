@@ -70,19 +70,19 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const preferBundle = platform === "darwin" && editor.id === "zed";
   const preferZeditor = platform === "linux" && editor.id === "zed";
   if (platform === "win32" && editor.id === "zed") {
-    const installs: Array<{ readonly command: string; readonly resolved: string }> = [];
+    const isStable = (resolved: string) => !isPrereleaseZedPath(resolved);
+    let firstCommand: string | undefined;
     for (const command of editor.commands) {
-      for (const resolved of yield* resolveCommandPaths(command, { env })) {
-        installs.push({ command, resolved });
+      const matches = yield* resolveCommandPaths(command, { env, until: isStable });
+      const stable = matches.find(isStable);
+      // Bypass PATH only when stable is behind a prerelease install.
+      if (stable !== undefined) {
+        const isFirst = firstCommand === undefined && stable === matches[0];
+        return Option.some({ command: isFirst ? command : stable, baseArgs });
       }
+      if (firstCommand === undefined && matches.length > 0) firstCommand = command;
     }
-    const [first] = installs;
-    const preferred = installs.find((install) => !isPrereleaseZedPath(install.resolved)) ?? first;
-    // Bypass PATH only when stable is behind a prerelease install.
-    if (preferred) {
-      const command = preferred === first ? preferred.command : preferred.resolved;
-      return Option.some({ command, baseArgs });
-    }
+    if (firstCommand !== undefined) return Option.some({ command: firstCommand, baseArgs });
   } else if (!preferBundle && !preferZeditor) {
     for (const command of editor.commands) {
       if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
