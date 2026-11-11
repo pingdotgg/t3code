@@ -1257,6 +1257,7 @@ function ThreadDetailBody(
   const handleSendMessage = async (
     followUp?: ActiveTurnComposerAction,
     stillSendable?: () => boolean,
+    keepFocus = false,
   ) => {
     const scope = threadScope.current.signal;
     const targetThreadKey = selectedThreadKey;
@@ -1303,6 +1304,7 @@ function ThreadDetailBody(
     const messageId = await props.onSendMessage(followUp, declineBeforeDispatch, () => {
       if (
         scope.aborted ||
+        keepFocus ||
         Platform.OS !== "ios" ||
         !hasUserMessage ||
         !KeyboardController.isVisible()
@@ -1326,7 +1328,7 @@ function ThreadDetailBody(
       deliveryDeferred: props.connectionStateLabel !== "connected",
     });
     setAnchorMessageId(nextAnchorMessageId);
-    if (!dismissingKeyboard) composerEditorRef.current?.blur();
+    if (!dismissingKeyboard && !keepFocus) composerEditorRef.current?.blur();
     const followSubmission =
       contentPresentationKind === "ready" &&
       (dismissingKeyboard || nextAnchorMessageId === messageId);
@@ -1335,7 +1337,7 @@ function ThreadDetailBody(
       requestAnimationFrame(() => {
         if (scope.aborted) return;
         // Scrolling freezes the keyboard inset, so wait until dismissal has removed it.
-        void KeyboardController.dismiss()
+        void (keepFocus ? Promise.resolve() : KeyboardController.dismiss())
           .then(() => {
             if (!followSubmission || scope.aborted) return;
             return scrollMessageToEnd({ animated: !reduceMotion, closeKeyboard: false });
