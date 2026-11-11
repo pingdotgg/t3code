@@ -10,7 +10,7 @@ import type { ScopedSettingsPatch } from "./scopedSettings";
 type WritingStyle = typeof DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
 const state = vi.hoisted(() => ({
   styles: [] as WritingStyle[],
-  updateSettings: vi.fn<(patch: ScopedSettingsPatch) => Promise<boolean>>(),
+  updateSettings: vi.fn<(patch: ScopedSettingsPatch) => void>(),
 }));
 
 vi.mock(import("@tanstack/react-router"), async (original) => ({
@@ -87,7 +87,6 @@ async function setup() {
   state.updateSettings.mockReset().mockImplementation((patch) => {
     state.styles = state.styles.map((style) => ({ ...style, ...patch.sourceControlWritingStyle }));
     void screen.rerender(content());
-    return Promise.resolve(true);
   });
   return screen;
 }
@@ -101,7 +100,10 @@ describe("mixed source control instructions", () => {
     }));
 
     await userEvent.click(page.getByRole("button", { name: "Advanced" }));
-    await userEvent.click(resetButton("change request templates"));
+    // Mid-open, Playwright scrolls the clipped panel to reach the button, then the growing panel
+    // shifts it between press and release and the click misses. Wait until the panel shows it.
+    await expect.element(resetButton("pull request templates")).toBeInViewport({ ratio: 1 });
+    await userEvent.click(resetButton("pull request templates"));
 
     expect(state.updateSettings).toHaveBeenCalledTimes(1);
     expect(state.styles.map((style) => style.followChangeRequestTemplates)).toEqual([

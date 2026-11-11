@@ -12,6 +12,14 @@ export function isAppActive(): boolean {
   return AppState.currentState === "active";
 }
 
+/** Runs `onActive` each time the app returns to the foreground. */
+export function subscribeAppActive(onActive: Listener): () => void {
+  const subscription = AppState.addEventListener("change", (state) => {
+    if (state === "active") onActive();
+  });
+  return () => subscription.remove();
+}
+
 export function useAppActive(): boolean {
   return useSyncExternalStore(subscribeAppState, isAppActive);
 }

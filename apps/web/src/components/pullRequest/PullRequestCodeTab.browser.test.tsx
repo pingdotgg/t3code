@@ -1,3 +1,5 @@
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex } from "@noble/hashes/utils";
 import {
   EnvironmentId,
   ProjectId,
@@ -8,6 +10,8 @@ import {
 import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
+import { __setClientSettingsForTests } from "../../hooks/useSettings";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
@@ -34,11 +38,13 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
   };
   const pages: Record<string, PullRequestDiffResult> = {
     first: {
-      patch: Array.from({ length: 40 }, (_, index) => filePatch(`early-${index}.ts`)).join(""),
+      patch: Array.from({ length: 40 }, (_, index) =>
+        filePatch(index === 1 ? "early-1.test.ts" : `early-${index}.ts`),
+      ).join(""),
       truncated: true,
       nextCursor: "page-2",
     },
-    "page-2": { patch: filePatch("late.ts"), truncated: false, nextCursor: null },
+    "page-2": { patch: filePatch("late.test.ts"), truncated: false, nextCursor: null },
   };
   return {
     // An environment query whose refetch returns equal content hands back the previous value
@@ -50,7 +56,7 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
   };
 });
 
-const mocks = vi.hoisted(() => ({ paged: false }));
+const mocks = vi.hoisted(() => ({ paged: false, diffCommits: [] as Array<string | undefined> }));
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -62,8 +68,10 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     ...actual,
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
-      diff: (({ input }: { input: { cursor?: string } }) =>
-        mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom) as never,
+      diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
+        mocks.diffCommits.push(input.commit);
+        return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
+      }) as never,
     },
   };
 });
@@ -124,12 +132,17 @@ const detail: PullRequestDetailView = {
 };
 
 function setup({ paged }: { paged: boolean }) {
+  window.localStorage.removeItem("t3code.diffHideTestFiles");
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
+  mocks.diffCommits = [];
 }
 
 const tab = (
   refreshToken: number,
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
+  revealUrl?: string,
+  onRevealSettled?: (url: string) => void,
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
@@ -141,6 +154,8 @@ const tab = (
     onRefresh={() => {}}
     refreshToken={refreshToken}
     revealRequest={revealRequest}
+    revealUrl={revealUrl}
+    onRevealSettled={onRevealSettled}
   />
 );
 
@@ -165,7 +180,6 @@ function pagedContainer() {
   return container;
 }
 
-// Rows are virtualized, so a header far down is not rendered until the view scrolls to it.
 async function expectFileHeaderShown(
   screen: Awaited<ReturnType<typeof render>>,
   container: HTMLElement,
@@ -174,10 +188,10 @@ async function expectFileHeaderShown(
   const header = screen.getByText(path, { exact: true }).first();
   await expect.element(header).toBeInTheDocument();
   await vi.waitFor(() => {
-    const top = header.element().getBoundingClientRect().top;
-    const bounds = container.getBoundingClientRect();
+    const bounds = container.querySelector(".diff-render-surface")!.getBoundingClientRect();
+    const { top, bottom } = header.element().getBoundingClientRect();
     expect(top).toBeGreaterThanOrEqual(bounds.top);
-    expect(top).toBeLessThan(bounds.top + bounds.height / 2);
+    expect(bottom).toBeLessThanOrEqual(bounds.bottom);
   });
 }
 
@@ -191,11 +205,96 @@ it("scrolls to a file asked for as the tab opens", async () => {
 
 it("pages forward to a file asked for that is not loaded yet, then scrolls to it", async () => {
   setup({ paged: true });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
+  using _preferences = {
+    [Symbol.dispose]() {
+      window.localStorage.removeItem("t3code.diffHideTestFiles");
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
   const container = pagedContainer();
   await using screen = await render(tab(0), { container });
   await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
+  await screen.getByRole("button", { name: "Hide test files" }).click();
 
-  await screen.rerender(tab(0, { path: "late.ts", nonce: 1 }));
+  const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode("late.test.ts")))}R4-R5`;
+  const settled = vi.fn();
+  await screen.rerender(tab(0, null, url, settled));
 
-  await expectFileHeaderShown(screen, container, "late.ts");
+  await expectFileHeaderShown(screen, container, "late.test.ts");
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+  await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+  // A settled link keeps its test file past the filter, and a later click reveals it again.
+  await screen.rerender(tab(0, { path: "early-0.ts", nonce: 1 }));
+  await expectFileHeaderShown(screen, container, "early-0.ts");
+  await screen.rerender(tab(0, { path: "early-0.ts", nonce: 1 }, url, settled));
+  await expectFileHeaderShown(screen, container, "late.test.ts");
+});
+
+it("never requests the diff of a selected commit the pull request no longer has", async () => {
+  setup({ paged: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  // The timeline can open a commit that a force-push removed from the pull request.
+  await using screen = await render(
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={{
+        ...detail,
+        commits: [
+          {
+            oid: "kept",
+            messageHeadline: "Kept commit",
+            committedDate: "2026-09-01T00:00:00Z",
+          },
+        ],
+      }}
+      selectedCommitOid="gone"
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+    />,
+    { container },
+  );
+
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+  await expect
+    .element(screen.getByRole("button", { name: "Diff scope: All commits" }))
+    .toBeVisible();
+  expect(mocks.diffCommits).not.toContain("gone");
+});
+
+it("answers a commit's diff link only once that commit's diff is shown", async () => {
+  setup({ paged: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  const oid = "c".repeat(40);
+  const withCommit = {
+    ...detail,
+    commits: [{ oid, messageHeadline: "Linked commit", committedDate: "2026-09-01T00:00:00Z" }],
+  };
+  const url = `${detail.url}/commits/${oid}#diff-${bytesToHex(sha256(new TextEncoder().encode("a.ts")))}R2`;
+  const settled = vi.fn();
+  const scoped = (selectedCommitOid: string | null, revealUrl?: string) => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={withCommit}
+      selectedCommitOid={selectedCommitOid}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+      revealUrl={revealUrl}
+      onRevealSettled={settled}
+    />
+  );
+  await using screen = await render(scoped(null), { container });
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+
+  // The panel selects the link's commit after this tab has already seen the link.
+  await screen.rerender(scoped(null, url));
+  expect(settled).not.toHaveBeenCalled();
+  await screen.rerender(scoped(oid, url));
+  await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
 });
