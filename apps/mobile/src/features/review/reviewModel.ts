@@ -535,13 +535,15 @@ export function buildReviewSectionItems(input: {
     },
   );
 
+  const repositorySectionId = (id: string) =>
+    input.repositoryPath ? `${id}:${input.repositoryPath}` : id;
   const gitItems = input.gitSections
     .filter(
       (section): section is typeof section & { kind: ReviewSectionKind } =>
         section.kind !== "commit",
     )
     .map<ReviewSectionItem>((section) => ({
-      id: `git:${section.kind}${input.repositoryPath ? ":" + input.repositoryPath : ""}`,
+      id: repositorySectionId(`git:${section.kind}`),
       kind: section.kind,
       title: section.title,
       subtitle: gitSubtitle(section),
@@ -556,7 +558,7 @@ export function buildReviewSectionItems(input: {
     input.loadingGitSections && !hasChangesItem
       ? [
           {
-            id: CHANGES_SECTION_ID + (input.repositoryPath ? ":" + input.repositoryPath : ""),
+            id: repositorySectionId(CHANGES_SECTION_ID),
             kind: "branch-range",
             title: CHANGES_TITLE,
             subtitle: null,

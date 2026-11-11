@@ -167,6 +167,7 @@ export function useReviewSections(input: {
 
   const selectRepository = (cwd: string) => {
     if (!repositories.some((repo) => repo.cwd === cwd)) return;
+    if (selectedRepository?.cwd === cwd) return;
     setRepositoryChoice({ threadKey: reviewCache.threadKey, cwd });
     if (reviewCache.threadKey) setReviewSelectedSectionId(reviewCache.threadKey, null);
   };
