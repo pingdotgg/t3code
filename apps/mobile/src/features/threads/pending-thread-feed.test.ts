@@ -10,6 +10,7 @@ import {
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import {
   appendPendingThreadMessages,
+  createThreadFeedGrouping,
   isCompactionCommandFeedEntry,
   selectPendingAcknowledgedMessages,
 } from "./pending-thread-feed";
@@ -25,6 +26,71 @@ const pending = (id: string): QueuedThreadMessage => ({
 });
 
 describe("pending timeline messages", () => {
+  it("keeps unchanged row identities while text streams and updates adjacent grouping", () => {
+    const group = createThreadFeedGrouping();
+    const [first, second, third] = appendPendingThreadMessages(
+      [],
+      [],
+      [pending("first"), pending("second"), pending("third")],
+    );
+    if (first?.type !== "message" || second?.type !== "message" || third?.type !== "message") {
+      throw new Error("Expected message rows");
+    }
+    const reply = {
+      ...third,
+      id: "reply",
+      message: { ...third.message, role: "assistant" as const, text: "start" },
+    };
+    const initial = group([first, second, reply], {});
+    const streamed = group(
+      [first, second, { ...reply, message: { ...reply.message, text: "streamed" } }],
+      {},
+    );
+    expect(streamed[0]).toBe(initial[0]);
+    expect(streamed[1]).toBe(initial[1]);
+    expect(streamed[2]).not.toBe(initial[2]);
+    const appended = group([first, second, third, reply], {});
+    expect(appended[0]).toBe(initial[0]);
+    expect(appended[1]).not.toBe(initial[1]);
+    expect(appended[1]?.userMessageGrouping.groupedWithNext).toBe(true);
+    expect(appended[2]?.userMessageGrouping.groupedWithPrevious).toBe(true);
+    const removed = group([first, second, reply], {});
+    expect(removed[1]?.userMessageGrouping.groupedWithNext).toBe(false);
+    const steer = {
+      ...second,
+      message: { ...second.message, inputIntent: "promoted_queued_to_steer" as const },
+    };
+    const singleSteer = group([first, steer], {});
+    const steers = group(
+      [{ ...first, message: { ...first.message, inputIntent: "steer" } }, steer],
+      {},
+    );
+    expect(steers[1]?.userMessageGrouping.continuesSteer).toBe(true);
+    expect(singleSteer[1]?.userMessageGrouping.continuesSteer).toBe(false);
+    expect(steers[1]).not.toBe(singleSteer[1]);
+  });
+
+  it("preserves setup, workflow, and compaction grouping boundaries", () => {
+    const group = createThreadFeedGrouping();
+    const feed = appendPendingThreadMessages([], [], [pending("first"), pending("second")]);
+    expect(group(feed, {})[0]?.userMessageGrouping.groupedWithNext).toBe(true);
+    for (const options of [{ setupAnchorIndex: 0 }, { workflowOpeningMessageId: "first" }]) {
+      const rows = group(feed, options);
+      expect(rows[0]?.userMessageGrouping.groupedWithNext).toBe(false);
+      expect(rows[1]?.userMessageGrouping.groupedWithPrevious).toBe(false);
+    }
+    const compact = appendPendingThreadMessages(
+      [],
+      [],
+      [{ ...pending("compact"), text: "/compact" }],
+    )[0]!;
+    expect(group([feed[0]!, compact], {})[0]?.userMessageGrouping.groupedWithNext).toBe(true);
+    expect(
+      group([feed[0]!, { ...compact, pendingMessage: undefined }], {})[0]?.userMessageGrouping
+        .groupedWithNext,
+    ).toBe(false);
+  });
+
   it.each([false, true])(
     "keeps a queued compact command in the pending message row (attachment: %s)",
     (withAttachment) => {
@@ -114,14 +180,17 @@ describe("pending timeline messages", () => {
     expect(appendPendingThreadMessages([], [delivered], [queued])).toEqual([]);
   });
 
-  it("stops showing an acknowledged message once the projection holds it, even when the feed hides it", () => {
+  it("stops showing an acknowledged message once the thread catches up, even when the feed hides it", () => {
     // A rolled-back or cancelled queued run keeps its message in projection.messages
     // while its user_message item leaves the visible feed.
     const echoed = pending("rolled-back");
-    const waiting = pending("waiting");
-    const shown = selectPendingAcknowledgedMessages([echoed, waiting], {
+    // A bounded projection pages an applied message out; it must not come back as pending.
+    const pagedOut = { ...pending("paged-out"), sequence: 40 };
+    const waiting = { ...pending("waiting"), sequence: 50 };
+    const shown = selectPendingAcknowledgedMessages([echoed, pagedOut, waiting], {
       threadKey: "env:thread",
       queuedMessages: [],
+      sequence: 45,
       projectedMessages: [{ id: echoed.messageId }],
     });
     expect(shown).toEqual([waiting]);

@@ -1,4 +1,5 @@
 import {
+  EnvironmentAuthorizationError,
   EnvironmentId,
   EventId,
   MessageId,
@@ -79,13 +80,18 @@ const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
   thread: { ...v2Projection.thread, title: "Cached thread" },
 };
 
-type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
+const TEST_DEFECT = { defect: "Malformed snapshot" } as const;
 
-function testSession(client: WsRpcProtocolClient): RpcSession.RpcSession {
+type TestThreadInput = OrchestrationV2ThreadStreamItem | Error | typeof TEST_DEFECT;
+
+function testSession(
+  client: WsRpcProtocolClient,
+  initialConfig: Effect.Effect<object> = Effect.succeed({}),
+): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.succeed({} as never),
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+    initialConfig: initialConfig as never,
+    subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
@@ -118,6 +124,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly loadCached?: ReturnType<Persistence.EnvironmentCacheStore["Service"]["loadThread"]>;
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
   readonly historyPaging?: "enabled" | "no-http" | "no-controller";
+  readonly socketSnapshots?: true;
+  readonly initialConfig?: Effect.Effect<object>;
   readonly historyHttpClient?: HttpClient.HttpClient;
   readonly getTurnItem?: (input: {
     readonly itemId: TurnItemId;
@@ -142,7 +150,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const streamFrom = (queue: Queue.Queue<TestThreadInput>) =>
     Stream.fromQueue(queue).pipe(
       Stream.mapEffect((input) =>
-        input instanceof Error ? Effect.fail(input) : Effect.succeed(input),
+        input === TEST_DEFECT
+          ? Effect.die(input)
+          : input instanceof Error
+            ? Effect.fail(input)
+            : Effect.succeed(input),
       ),
     );
   const client = {
@@ -170,8 +182,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input: { readonly itemId: TurnItemId }) =>
       options?.getTurnItem?.(input) ?? Effect.die("Unexpected getTurnItem request"),
   } as unknown as WsRpcProtocolClient;
+  const sessionConfig =
+    options?.initialConfig ??
+    Effect.succeed(options?.socketSnapshots ? { threadSnapshotPagination: true } : {});
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
-    Option.some(testSession(client)),
+    Option.some(testSession(client, sessionConfig)),
   );
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
     Option.some(PREPARED),
@@ -290,7 +305,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     savedThreads,
     removedThreads,
     wakeups,
-    replaceSession: SubscriptionRef.set(supervisorSession, Option.some(testSession(client))),
+    replaceSession: SubscriptionRef.set(
+      supervisorSession,
+      Option.some(testSession(client, sessionConfig)),
+    ),
   };
 });
 
@@ -315,6 +333,32 @@ const PENDING_QUESTION = {
   responseCapability: { type: "message" as const },
   createdAt: v2Now,
   resolvedAt: null,
+};
+
+const QUESTION_CARD: OrchestrationV2TurnItem = {
+  id: TurnItemId.make("question-card"),
+  threadId: THREAD_ID,
+  runId: null,
+  nodeId: PENDING_QUESTION.nodeId,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 1,
+  status: "running",
+  title: null,
+  startedAt: v2Now,
+  completedAt: null,
+  updatedAt: v2Now,
+  type: "user_input_request",
+  requestId: PENDING_QUESTION.id,
+  questions: [{ id: "scope", header: "Scope", question: "Which scope?", options: [] }],
+};
+
+const PROJECTION_WITH_QUESTION = {
+  ...BASE_PROJECTION,
+  runtimeRequests: [PENDING_QUESTION],
+  turnItems: [QUESTION_CARD],
 };
 
 const questionResolved = (sequence: number): OrchestrationV2ThreadStreamItem => ({
@@ -360,6 +404,62 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect.each([
+    ["disk", false],
+    ["retained", false],
+    ["disk", true],
+    ["retained", true],
+  ] as const)(
+    "recovers a %s cache only when its pending question card is missing: %s",
+    ([cacheKind, hasCard]) =>
+      Effect.gen(function* () {
+        const projection = {
+          ...PROJECTION_WITH_QUESTION,
+          turnItems: hasCard ? [QUESTION_CARD] : [],
+        };
+        const schema = Schema.fromJsonString(StoredOrchestrationThreadSnapshot);
+        const encoded = yield* Schema.encodeEffect(schema)({
+          schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+          environmentId: TARGET.environmentId,
+          threadId: THREAD_ID,
+          snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection },
+        });
+        const stored = yield* Schema.decodeEffect(schema)(encoded);
+        const h = yield* makeHarness({
+          loadCached: Effect.succeedSome(stored.snapshot),
+          ...(cacheKind === "retained"
+            ? {
+                resumeCache: {
+                  owner: undefined,
+                  snapshot: {
+                    state: {
+                      ...EMPTY_ENVIRONMENT_THREAD_STATE,
+                      data: Option.some(projection),
+                      status: "live",
+                    },
+                    sequence: CACHED_SNAPSHOT_SEQUENCE,
+                    persisted: true,
+                  },
+                },
+              }
+            : {}),
+          httpSnapshot: {
+            _tag: "present",
+            snapshot: {
+              snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+              projection: PROJECTION_WITH_QUESTION,
+            },
+          },
+          completionMarker: true,
+        });
+        yield* Queue.offer(h.inputs, synchronized());
+        const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+        expect(yield* Ref.get(h.loaderCalls)).toBe(hasCard ? 0 : 1);
+        expect(Option.getOrThrow(state.data)).toEqual(PROJECTION_WITH_QUESTION);
+        expect(yield* Ref.get(h.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      }),
+  );
+
   it.effect("discards an oversized version-4 cache and requests a fresh bounded snapshot", () =>
     Effect.gen(function* () {
       const item: OrchestrationV2TurnItem = {
@@ -559,7 +659,7 @@ describe("EnvironmentThreads", () => {
         Scope.close(scope, Exit.void),
       );
       const old = yield* makeHarness({
-        cached: { ...BASE_PROJECTION, runtimeRequests: [PENDING_QUESTION] },
+        cached: PROJECTION_WITH_QUESTION,
         resumeCache,
       }).pipe(Effect.provideService(Scope.Scope, oldScope));
       yield* awaitThreadState(old.observed, (value) => value.status === "live");
@@ -673,12 +773,152 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("asks the server again after an HTTP miss, since the thread may not exist yet", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const first = yield* makeHarness({ httpSnapshot: { _tag: "missing" }, resumeCache });
+          yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
+        }),
+      );
+      const resumed = yield* makeHarness({
+        resumeCache,
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection: BASE_PROJECTION },
+        },
+      });
+      const state = yield* awaitThreadState(resumed.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(resumed.loaderCalls)).toBe(1);
+    }),
+  );
+
+  it.effect.each([
+    // The HTTP retry decides, so a missing thread never flashes an error.
+    {
+      label: "a socket-only open asks HTTP",
+      socketSnapshots: true,
+      httpSnapshot: { _tag: "missing" },
+      failure: new Error("Thread not found"),
+      status: "deleted",
+      loads: [0, 1],
+    },
+    // A defect never retries on its own, so the socket-only open resubscribes once.
+    {
+      label: "a socket-only open that hits a defect asks HTTP",
+      socketSnapshots: true,
+      httpSnapshot: { _tag: "missing" },
+      failure: TEST_DEFECT,
+      status: "deleted",
+      loads: [0, 1],
+    },
+    // Authorization failures are never retried, so the error must show at once.
+    {
+      label: "a socket-only open shows an authorization error",
+      socketSnapshots: true,
+      httpSnapshot: { _tag: "missing" },
+      failure: new EnvironmentAuthorizationError({
+        message: "Not allowed",
+        requiredScope: "orchestration:read",
+      }),
+      status: "empty",
+      loads: [0, 0],
+    },
+    // HTTP already answered this attempt, so the error shows before the usual retry.
+    {
+      label: "an HTTP open shows the error",
+      socketSnapshots: undefined,
+      httpSnapshot: { _tag: "unavailable" },
+      failure: new Error("Socket closed"),
+      status: "empty",
+      loads: [1, 2],
+    },
+  ] as const)(
+    "after a cold open fails, $label",
+    ({ socketSnapshots, httpSnapshot, failure, status, loads: [before, after] }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          httpSnapshot,
+          ...(socketSnapshots ? { socketSnapshots } : {}),
+        });
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 1),
+          Stream.runHead,
+        );
+        expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
+        expect(yield* Ref.get(harness.loaderCalls)).toBe(before);
+
+        yield* Queue.offer(harness.inputs, failure);
+        yield* TestClock.adjust("250 millis");
+        const settled = yield* awaitThreadState(
+          harness.observed,
+          (value) => value.status === "deleted" || Option.isSome(value.error),
+        );
+        expect(settled.status).toBe(status);
+        expect(yield* Ref.get(harness.loaderCalls)).toBe(after);
+      }),
+  );
+
+  it.effect("retries a defective socket-only open over HTTP only once", () =>
+    Effect.gen(function* () {
+      let configReads = 0;
+      const harness = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+        // The retry's config read dies too, so a stale flag would resubscribe forever.
+        initialConfig: Effect.suspend(() =>
+          ++configReads === 1
+            ? Effect.succeed({ threadSnapshotPagination: true })
+            : Effect.die("Config lost"),
+        ),
+      });
+      yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+        Stream.filter((count) => count === 1),
+        Stream.runHead,
+      );
+
+      yield* Queue.offer(harness.inputs, TEST_DEFECT);
+      const settled = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.error),
+      );
+      expect(settled.status).toBe("empty");
+      expect(configReads).toBe(2);
+    }),
+  );
+
+  it.effect("asks HTTP when a socket-only open loses its session before any data", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+        socketSnapshots: true,
+      });
+      yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+        Stream.filter((count) => count === 1),
+        Stream.runHead,
+      );
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+
+      // A timed-out session never reaches onExpectedFailure.
+      yield* harness.replaceSession;
+      const settled = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted",
+      );
+      expect(settled.status).toBe("deleted");
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+    }),
+  );
+
   it.effect("resumes a warm cache via afterSequence without an HTTP fetch", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION });
 
       yield* Queue.offer(harness.inputs, titleUpdated("Live title", CACHED_SNAPSHOT_SEQUENCE + 1));
-      yield* awaitThreadState(
+      const live = yield* awaitThreadState(
         harness.observed,
         (value) =>
           value.status === "live" &&
@@ -686,6 +926,8 @@ describe("EnvironmentThreads", () => {
           value.data.value.thread.title === "Live title",
       );
 
+      // Readers compare this to a command's commit sequence; it moves with the data it describes.
+      expect(live.sequence).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
     }),
@@ -1288,6 +1530,7 @@ describe("EnvironmentThreads", () => {
               status: "cached",
               error: Option.none(),
               history: { ...EMPTY_THREAD_HISTORY_META, historyCursor: null, expanded: true },
+              sequence: CACHED_SNAPSHOT_SEQUENCE,
             },
             sequence: CACHED_SNAPSHOT_SEQUENCE,
             persisted: true,
@@ -2118,7 +2361,7 @@ describe("EnvironmentThreads", () => {
         (unsubscribe) => Effect.sync(unsubscribe),
       );
       const harness = yield* makeHarness({
-        cached: { ...BASE_PROJECTION, runtimeRequests: [PENDING_QUESTION] },
+        cached: PROJECTION_WITH_QUESTION,
         completionMarker: true,
       });
       yield* awaitThreadState(
