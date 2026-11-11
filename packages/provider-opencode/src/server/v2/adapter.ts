@@ -2553,14 +2553,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const runs = [...state.calls.values()].filter(
         (candidate) => candidate.child?.sessionId === childId && candidate.joined === undefined,
       );
-      // OpenCode labels each run's report with the description of the call that started the run.
-      const call = runs.find((candidate) => candidate.title === payload.description) ?? runs[0];
-      // Runs are serial, so open calls before the reported one ran earlier and lost their reports.
-      const lost = runs.slice(0, call === undefined ? 0 : runs.indexOf(call));
       const groupOf = (root: SubagentCall) =>
         [...state.calls.values()].filter(
           (candidate) => candidate === root || candidate.joined === root,
         );
+      // OpenCode labels a run's report with the description of one of the calls in that run.
+      const call =
+        runs.find((root) => groupOf(root).some((each) => each.title === payload.description)) ??
+        runs[0];
+      // Runs are serial, so open calls before the reported one ran earlier and lost their reports.
+      const lost = runs.slice(0, call === undefined ? 0 : runs.indexOf(call));
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
         inboxId,
