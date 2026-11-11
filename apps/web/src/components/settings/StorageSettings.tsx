@@ -155,20 +155,31 @@ function RetentionControl({
   const commit = () => {
     const parsed = Number(draft);
     edited.current = false;
-    if (draft.trim() !== "" && Number.isInteger(parsed) && parsed >= minimum && parsed <= MAX_RETENTION_DAYS) {
+    if (
+      draft.trim() !== "" &&
+      Number.isInteger(parsed) &&
+      parsed >= minimum &&
+      parsed <= MAX_RETENTION_DAYS
+    ) {
       setDraft(String(parsed));
       if (parsed !== value) save(parsed);
     } else setDraft(String(value ?? DEFAULT_RETENTION_DAYS));
   };
   return (
-    <div ref={row} className="flex items-center gap-2" onBlur={(event) => {
-      if (menuOpen.current || event.currentTarget.contains(event.relatedTarget)) return;
-      if (edited.current) commit();
-      else if (value === null) setCustomRequested(false);
-    }}>
+    <div
+      ref={row}
+      className="flex items-center gap-2"
+      onBlur={(event) => {
+        if (menuOpen.current || event.currentTarget.contains(event.relatedTarget)) return;
+        if (edited.current) commit();
+        else if (value === null) setCustomRequested(false);
+      }}
+    >
       <Select
         value={selected}
-        onOpenChange={(open) => { menuOpen.current = open; }}
+        onOpenChange={(open) => {
+          menuOpen.current = open;
+        }}
         onValueChange={(next) => {
           edited.current = false;
           if (next === "off") {
@@ -183,24 +194,52 @@ function RetentionControl({
           }
         }}
       >
-        <SelectTrigger size="sm" aria-label={label} leadingIcon={<CalendarIcon />} className="w-auto min-w-36">
-          <SelectValue>{selected === "off" ? "Off" : selected === "custom" ? "Custom" : formatRetentionDays(Number(selected))}</SelectValue>
+        <SelectTrigger
+          size="sm"
+          aria-label={label}
+          leadingIcon={<CalendarIcon />}
+          className="w-auto min-w-36"
+        >
+          <SelectValue>
+            {selected === "off"
+              ? "Off"
+              : selected === "custom"
+                ? "Custom"
+                : formatRetentionDays(Number(selected))}
+          </SelectValue>
         </SelectTrigger>
         <SelectPopup align="end" alignItemWithTrigger={false}>
           <SelectItem value="off">Off</SelectItem>
-          {RETENTION_PRESET_DAYS.map((days) => <SelectItem key={days} value={String(days)}>{formatRetentionDays(days)}</SelectItem>)}
+          {RETENTION_PRESET_DAYS.map((days) => (
+            <SelectItem key={days} value={String(days)}>
+              {formatRetentionDays(days)}
+            </SelectItem>
+          ))}
           <SelectItem value="custom">Custom</SelectItem>
         </SelectPopup>
       </Select>
       {custom ? (
         <InputGroup className="w-24">
-          <InputGroupInput size="sm" type="number" min={minimum} max={MAX_RETENTION_DAYS} value={draft} aria-label={`${label} in days`}
-            onChange={(event) => { edited.current = true; setDraft(event.target.value); }}
+          <InputGroupInput
+            size="sm"
+            type="number"
+            min={minimum}
+            max={MAX_RETENTION_DAYS}
+            value={draft}
+            aria-label={`${label} in days`}
+            onChange={(event) => {
+              edited.current = true;
+              setDraft(event.target.value);
+            }}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-              if (event.key === "Enter") { commit(); event.currentTarget.blur(); }
-              else if (event.key === "Escape") {
-                event.preventDefault(); event.stopPropagation(); edited.current = false;
+              if (event.key === "Enter") {
+                commit();
+                event.currentTarget.blur();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                edited.current = false;
                 setDraft(String(value ?? DEFAULT_RETENTION_DAYS));
                 if (value === null) setCustomRequested(false);
               }

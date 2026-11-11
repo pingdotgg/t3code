@@ -2222,7 +2222,9 @@ function ScheduledTaskEditorForm({
                     <Input
                       type="time"
                       id="scheduled-task-time"
-                      aria-describedby={runAtZone === undefined ? undefined : "scheduled-task-time-zone"}
+                      aria-describedby={
+                        runAtZone === undefined ? undefined : "scheduled-task-time-zone"
+                      }
                       nativeInput
                       size="sm"
                       className="w-32"
@@ -2231,7 +2233,14 @@ function ScheduledTaskEditorForm({
                         setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
                       }
                     />
-                    {runAtZone === undefined ? null : <span id="scheduled-task-time-zone" className="text-meta text-muted-foreground">{runAtZone}</span>}
+                    {runAtZone === undefined ? null : (
+                      <span
+                        id="scheduled-task-time-zone"
+                        className="text-meta text-muted-foreground"
+                      >
+                        {runAtZone}
+                      </span>
+                    )}
                   </div>
                 </Field>
               </div>
