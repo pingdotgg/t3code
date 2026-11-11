@@ -249,7 +249,6 @@ function forDestinationModels(
   patch: ServerSettingsPatch,
   modelSource: ScopedModelSource | null | undefined,
   destination: ScopedSettingsEnvironment,
-  matched: Map<string, ServerProvider[]>,
 ): ServerSettingsPatch | null {
   if (!modelSource || destination.environmentId === modelSource.target.environmentId) return patch;
   const { target: source, providersByEnvironment } = modelSource;
@@ -274,16 +273,13 @@ function forDestinationModels(
       continue;
     }
     if (!providers) return null;
-    const peers = matched.get(key) ?? [];
     const instanceId = resolveScopedModelInstanceId(
       selection.instanceId,
       { providers: providersByEnvironment.get(source.environmentId) ?? [] },
       { providers, settings },
-      peers,
       key,
     );
     if (instanceId === null) return null;
-    matched.set(key, [...peers, providers.find((provider) => provider.instanceId === instanceId)!]);
     Object.assign(next, { [key]: { ...selection, instanceId } });
   }
   return next;
@@ -314,9 +310,8 @@ export function planScopedSettingsPatch(
     ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
     : [];
   const unmatched = new Set<string>();
-  const matched = new Map<string, ServerProvider[]>();
   const serverPatchFor = (environment: ScopedSettingsEnvironment) => {
-    const mapped = forDestinationModels(serverPatch, modelSource, environment, matched);
+    const mapped = forDestinationModels(serverPatch, modelSource, environment);
     if (mapped === null) unmatched.add(environment.label);
     return mapped ?? serverPatch;
   };

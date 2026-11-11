@@ -1,8 +1,4 @@
-import {
-  type ProviderInstanceId,
-  type ServerProvider,
-  type UnifiedSettings,
-} from "@t3tools/contracts";
+import { type ProviderInstanceId, type UnifiedSettings } from "@t3tools/contracts";
 
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -34,7 +30,6 @@ export function useScopedModelDisabledReason(
       providers: (source && providersByEnvironment.get(source.environmentId)) ?? [],
     };
     const shownGenerator = scopedTextGenerator(settings, instanceId, key);
-    const peers: ServerProvider[] = [];
     for (const candidate of targets) {
       const environment = environments.find(
         (entry) => entry.environmentId === candidate.environmentId,
@@ -59,13 +54,11 @@ export function useScopedModelDisabledReason(
         instanceId,
         sourceEnvironment,
         { providers, settings: candidate.settings },
-        peers,
         key,
       );
       if (localId === null) {
         return `A unique matching account could not be verified on ${environment.label}. Select that environment to choose its model separately.`;
       }
-      peers.push(providers.find((provider) => provider.instanceId === localId)!);
       const entry = applyProviderInstanceSettings(
         deriveProviderInstanceEntries(providers),
         candidate.settings,
