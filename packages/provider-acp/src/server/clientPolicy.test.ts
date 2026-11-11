@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -122,100 +123,104 @@ describe("acpPermissionDisposition", () => {
     }
   });
 
-  it.effect("denies mutations through workspace symlinks that escape the writable roots", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-permission-workspace-",
-      });
-      const outside = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-permission-outside-",
-      });
-      const outsideFile = path.join(outside, "existing.ts");
-      yield* fileSystem.writeFileString(outsideFile, "outside");
-      yield* fileSystem.symlink(outsideFile, path.join(workspace, "linked-file.ts"));
-      yield* fileSystem.symlink(outside, path.join(workspace, "linked-directory"));
+  it.effect.skipIf(!symlinksSupported)(
+    "denies mutations through workspace symlinks that escape the writable roots",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-permission-workspace-",
+        });
+        const outside = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-permission-outside-",
+        });
+        const outsideFile = path.join(outside, "existing.ts");
+        yield* fileSystem.writeFileString(outsideFile, "outside");
+        yield* fileSystem.symlink(outsideFile, path.join(workspace, "linked-file.ts"));
+        yield* fileSystem.symlink(outside, path.join(workspace, "linked-directory"));
 
-      const realPolicy: AcpRuntimePolicy = {
-        runtimeMode: "full-access",
-        cwd: workspace,
-        approvalPolicy: "never",
-        sandboxPolicy: {
-          type: "workspaceWrite",
-          writableRoots: [],
-          networkAccess: false,
-        },
-      };
+        const realPolicy: AcpRuntimePolicy = {
+          runtimeMode: "full-access",
+          cwd: workspace,
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "workspaceWrite",
+            writableRoots: [],
+            networkAccess: false,
+          },
+        };
 
-      assert.equal(
-        acpPermissionDisposition(
-          realPolicy,
-          permissionRequest("edit", [{ path: "linked-file.ts" }]),
-        ),
-        "deny",
-      );
-      assert.equal(
-        acpPermissionDisposition(
-          realPolicy,
-          permissionRequest("edit", [{ path: "linked-directory/new-file.ts" }]),
-        ),
-        "deny",
-        "a missing leaf below an escaping directory symlink must not be auto-approved",
-      );
-      assert.equal(
-        acpPermissionDisposition(
-          realPolicy,
-          permissionRequest("edit", [{ path: "linked-directory/../escaped-file.ts" }]),
-        ),
-        "deny",
-        "physical symlink traversal must be resolved before parent segments",
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
+        assert.equal(
+          acpPermissionDisposition(
+            realPolicy,
+            permissionRequest("edit", [{ path: "linked-file.ts" }]),
+          ),
+          "deny",
+        );
+        assert.equal(
+          acpPermissionDisposition(
+            realPolicy,
+            permissionRequest("edit", [{ path: "linked-directory/new-file.ts" }]),
+          ),
+          "deny",
+          "a missing leaf below an escaping directory symlink must not be auto-approved",
+        );
+        assert.equal(
+          acpPermissionDisposition(
+            realPolicy,
+            permissionRequest("edit", [{ path: "linked-directory/../escaped-file.ts" }]),
+          ),
+          "deny",
+          "physical symlink traversal must be resolved before parent segments",
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("allows existing and new files beneath canonical writable roots", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-permission-workspace-",
-      });
-      const workspaceLinkParent = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-permission-link-parent-",
-      });
-      const workspaceLink = path.join(workspaceLinkParent, "workspace-link");
-      yield* fileSystem.makeDirectory(path.join(workspace, "src"), { recursive: true });
-      yield* fileSystem.writeFileString(path.join(workspace, "src", "existing.ts"), "existing");
-      yield* fileSystem.symlink(workspace, workspaceLink);
+  it.effect.skipIf(!symlinksSupported)(
+    "allows existing and new files beneath canonical writable roots",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-permission-workspace-",
+        });
+        const workspaceLinkParent = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-permission-link-parent-",
+        });
+        const workspaceLink = path.join(workspaceLinkParent, "workspace-link");
+        yield* fileSystem.makeDirectory(path.join(workspace, "src"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(workspace, "src", "existing.ts"), "existing");
+        yield* fileSystem.symlink(workspace, workspaceLink);
 
-      const realPolicy: AcpRuntimePolicy = {
-        runtimeMode: "full-access",
-        cwd: workspaceLink,
-        approvalPolicy: "never",
-        sandboxPolicy: {
-          type: "workspaceWrite",
-          writableRoots: [],
-          networkAccess: false,
-        },
-      };
+        const realPolicy: AcpRuntimePolicy = {
+          runtimeMode: "full-access",
+          cwd: workspaceLink,
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "workspaceWrite",
+            writableRoots: [],
+            networkAccess: false,
+          },
+        };
 
-      assert.equal(
-        acpPermissionDisposition(
-          realPolicy,
-          permissionRequest("edit", [{ path: "src/existing.ts" }]),
-        ),
-        "allow",
-      );
-      assert.equal(
-        acpPermissionDisposition(
-          realPolicy,
-          permissionRequest("edit", [{ path: "src/generated/new-file.ts" }]),
-        ),
-        "allow",
-        "non-existent descendants of a real in-root ancestor remain writable",
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
+        assert.equal(
+          acpPermissionDisposition(
+            realPolicy,
+            permissionRequest("edit", [{ path: "src/existing.ts" }]),
+          ),
+          "allow",
+        );
+        assert.equal(
+          acpPermissionDisposition(
+            realPolicy,
+            permissionRequest("edit", [{ path: "src/generated/new-file.ts" }]),
+          ),
+          "allow",
+          "non-existent descendants of a real in-root ancestor remain writable",
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

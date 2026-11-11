@@ -17,6 +17,7 @@ import {
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -340,26 +341,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("saves through a symlinked settings file without replacing the link", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const service = yield* ServerSettingsModule.ServerSettingsService;
-      const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
-      const linkedSettingsPath = path.join(dotfiles, "settings.json");
-      yield* fs.writeFileString(linkedSettingsPath, `{ "responseStreamingMode": "turn" }`);
-      yield* fs.remove(config.settingsPath, { force: true });
-      yield* fs.symlink(linkedSettingsPath, config.settingsPath);
+  it.effect.skipIf(!symlinksSupported)(
+    "saves through a symlinked settings file without replacing the link",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+        const linkedSettingsPath = path.join(dotfiles, "settings.json");
+        yield* fs.writeFileString(linkedSettingsPath, `{ "responseStreamingMode": "turn" }`);
+        yield* fs.remove(config.settingsPath, { force: true });
+        yield* fs.symlink(linkedSettingsPath, config.settingsPath);
 
-      yield* service.updateSettings({ responseStreamingMode: "paragraph" });
+        yield* service.updateSettings({ responseStreamingMode: "paragraph" });
 
-      assert.equal(yield* fs.readLink(config.settingsPath), linkedSettingsPath);
-      const persisted = yield* decodeServerSettingsJson(
-        yield* fs.readFileString(linkedSettingsPath),
-      );
-      assert.equal(persisted.responseStreamingMode, "paragraph");
-    }).pipe(Effect.provide(layerServerSettings())),
+        assert.equal(yield* fs.readLink(config.settingsPath), linkedSettingsPath);
+        const persisted = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(linkedSettingsPath),
+        );
+        assert.equal(persisted.responseStreamingMode, "paragraph");
+      }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("retries a failed settings read instead of keeping the failure", () =>

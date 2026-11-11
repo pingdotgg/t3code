@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -314,7 +315,7 @@ describe("readOpenCodeUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("never follows symlinks in the legacy OpenCode store", () =>
+  it.effect.skipIf(!symlinksSupported)("never follows symlinks in the legacy OpenCode store", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -370,56 +371,59 @@ describe("readOpenCodeUsage", () => {
 import * as NodeSqlite from "node:sqlite";
 
 describe("openCodeUsageReader", () => {
-  it.effect("scans canonical instance roots once, including XDG and home defaults", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const temp = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-instances-test-" });
-      const home = yield* fileSystem.realPath(temp);
-      const defaultRoot = path.join(home, ".local", "share", "opencode");
-      const instanceRoot = path.join(home, "instance");
-      const dataHome = path.join(home, "xdg");
-      const xdgRoot = path.join(dataHome, "opencode");
-      const alias = path.join(home, "default-alias");
-      for (const root of [defaultRoot, instanceRoot, xdgRoot]) {
-        yield* fileSystem.makeDirectory(root, { recursive: true });
-      }
-      yield* fileSystem.symlink(defaultRoot, alias);
-      const instances = [
-        { id: "opencode", environment: {}, configured: false },
-        {
-          id: "opencode-list",
-          environment: { OPENCODE_DATA_DIR: ` ${instanceRoot}, ${alias}, ${defaultRoot}, , ` },
-          configured: true,
-        },
-        {
-          id: "opencode-xdg",
-          environment: { XDG_DATA_HOME: dataHome },
-          configured: true,
-        },
-      ];
-      if (openCodeUsageReader.kind !== "scan") throw new Error("Expected an OpenCode scan reader");
-      const sources = yield* openCodeUsageReader
-        .scan({
-          instances: instances.map(({ id, environment, configured }) => ({
-            instanceId: ProviderInstanceId.make(id),
-            config: undefined,
-            environment,
-            configured,
-          })),
-          settings: DEFAULT_SERVER_SETTINGS,
-          windowStartMs: 0,
-          retentionCutoffMs: 0,
-          awaitRefresh: true,
-        })
-        .pipe(
-          Effect.provideService(HostProcess.Environment, {}),
-          Effect.provideService(HostProcess.HomeDirectory, home),
+  it.effect.skipIf(!symlinksSupported)(
+    "scans canonical instance roots once, including XDG and home defaults",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temp = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-instances-test-" });
+        const home = yield* fileSystem.realPath(temp);
+        const defaultRoot = path.join(home, ".local", "share", "opencode");
+        const instanceRoot = path.join(home, "instance");
+        const dataHome = path.join(home, "xdg");
+        const xdgRoot = path.join(dataHome, "opencode");
+        const alias = path.join(home, "default-alias");
+        for (const root of [defaultRoot, instanceRoot, xdgRoot]) {
+          yield* fileSystem.makeDirectory(root, { recursive: true });
+        }
+        yield* fileSystem.symlink(defaultRoot, alias);
+        const instances = [
+          { id: "opencode", environment: {}, configured: false },
+          {
+            id: "opencode-list",
+            environment: { OPENCODE_DATA_DIR: ` ${instanceRoot}, ${alias}, ${defaultRoot}, , ` },
+            configured: true,
+          },
+          {
+            id: "opencode-xdg",
+            environment: { XDG_DATA_HOME: dataHome },
+            configured: true,
+          },
+        ];
+        if (openCodeUsageReader.kind !== "scan")
+          throw new Error("Expected an OpenCode scan reader");
+        const sources = yield* openCodeUsageReader
+          .scan({
+            instances: instances.map(({ id, environment, configured }) => ({
+              instanceId: ProviderInstanceId.make(id),
+              config: undefined,
+              environment,
+              configured,
+            })),
+            settings: DEFAULT_SERVER_SETTINGS,
+            windowStartMs: 0,
+            retentionCutoffMs: 0,
+            awaitRefresh: true,
+          })
+          .pipe(
+            Effect.provideService(HostProcess.Environment, {}),
+            Effect.provideService(HostProcess.HomeDirectory, home),
+          );
+        assert.deepStrictEqual(
+          sources.map((source) => source.dir).sort(),
+          [defaultRoot, instanceRoot, xdgRoot].sort(),
         );
-      assert.deepStrictEqual(
-        sources.map((source) => source.dir).sort(),
-        [defaultRoot, instanceRoot, xdgRoot].sort(),
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
