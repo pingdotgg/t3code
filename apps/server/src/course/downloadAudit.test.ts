@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
@@ -59,6 +59,8 @@ describe("course download audit", () => {
       const auditDir = NodePath.join(dir, "audit");
       await NodeFSP.mkdir(auditDir);
       const monthName = (offset: number) => {
+        // Retention is calendar based, so the test must derive the current month.
+        // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- required for month rollover coverage.
         const date = new Date();
         date.setUTCDate(1);
         date.setUTCMonth(date.getUTCMonth() - offset);

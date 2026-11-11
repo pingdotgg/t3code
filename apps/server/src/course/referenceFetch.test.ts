@@ -185,7 +185,7 @@ describe("course reference fetch", () => {
       "5 0 obj << /Type /XObject /Subtype /Image /Width 32000 /Height 32000 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length 8 >> stream\nx\x9c\x03\x00\x00\x00\x00\x01\nendstream endobj\n" +
       "trailer << /Root 1 0 R /Size 6 >>\n%%EOF";
     const result = await extractPdf(Buffer.from(pdf), [1]);
-    assert.strictEqual(result.images.length, 0);
+    assert.strictEqual(result.images?.length, 0);
   });
 
   it("skips a page with too many image objects before decoding them", async () => {
@@ -200,7 +200,7 @@ describe("course reference fetch", () => {
       images +
       "trailer << /Root 1 0 R /Size 15 >>\n%%EOF";
     const result = await extractPdf(Buffer.from(pdf), [1]);
-    assert.isAtMost(result.images.length, 1);
+    assert.isAtMost(result.images?.length ?? 0, 1);
   });
 
   it("caps extracted PDF text across requested pages", async () => {
@@ -237,7 +237,7 @@ describe("course reference fetch", () => {
     );
     const result = await extractPdf(pdf, [1]);
     assert.deepStrictEqual(
-      result.pages.map((page) => page.page),
+      result.pages?.map((page) => page.page),
       [1],
     );
   });

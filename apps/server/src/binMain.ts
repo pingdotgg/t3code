@@ -22,9 +22,17 @@ export async function runCliCommand() {
   } else if (command === "__course-pdf") {
     const { extractRequestedPdfPages } = await import("./course/course-pdf-worker.ts");
     const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    const input = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { bytes: string; pages: number[] };
-    process.stdout.write(JSON.stringify(await extractRequestedPdfPages(Buffer.from(input.bytes, "base64"), input.pages)));
+    for await (const chunk of process.stdin)
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const input = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      bytes: string;
+      pages: number[];
+    };
+    process.stdout.write(
+      JSON.stringify(
+        await extractRequestedPdfPages(Buffer.from(input.bytes, "base64"), input.pages),
+      ),
+    );
   } else if (command === "__managed-chatgpt-token") {
     const { runManagedChatGptTokenCli } = await import("./cli/managedChatGptToken.ts");
     await runManagedChatGptTokenCli(process.argv.slice(3));
