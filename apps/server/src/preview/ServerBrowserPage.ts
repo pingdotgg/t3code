@@ -64,9 +64,7 @@ export const toOperationError = (
       detail: timeoutMs === undefined ? undefined : { timeoutMs },
     });
   }
-  if (
-    /while parsing selector|Unknown engine|Unexpected token|strict mode violation/i.test(message)
-  ) {
+  if (/while parsing selector|Unknown engine|Unexpected token/i.test(message)) {
     return new ServerBrowserOperationError({
       tag: "PreviewAutomationInvalidSelectorError",
       message: firstLine,
@@ -892,8 +890,10 @@ export const evaluate = async (
   timeoutMs: number,
 ) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      timedOut = true;
       // Stops a busy script; an awaited promise is abandoned and settles unread.
       void cdp.send("Runtime.terminateExecution").catch(constVoid);
       reject(
@@ -904,10 +904,23 @@ export const evaluate = async (
       );
     }, timeoutMs);
   });
-  const evaluation = cdp.send("Runtime.evaluate", {
+  const params = {
     expression: input.expression,
     awaitPromise: input.awaitPromise ?? true,
-    returnByValue: input.returnByValue ?? true,
+    returnByValue: true,
+  };
+  // The devtools console's replMode allows top-level await but returns a trailing promise unawaited,
+  // so it only retries what the page's parser rejected. A parse error has a scriptId but no stack and
+  // ran nothing; a browser-internal rejection has neither.
+  const evaluation = cdp.send("Runtime.evaluate", params).then((classic) => {
+    const failure = classic.exceptionDetails;
+    const unparsed =
+      failure?.exception?.className === "SyntaxError" &&
+      failure.scriptId !== undefined &&
+      failure.stackTrace === undefined;
+    return unparsed && !timedOut && input.expression.includes("await")
+      ? cdp.send("Runtime.evaluate", { ...params, replMode: true })
+      : classic;
   });
   void evaluation.catch(constVoid);
   const result = await Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));

@@ -20,8 +20,20 @@ function t3Home() {
   return path.resolve(raw);
 }
 
+const isTransient = (status) => status === 408 || status === 429 || status >= 500;
+
 async function get(url) {
-  const response = await fetch(url);
+  let response;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      response = await fetch(url);
+      if (attempt === 4 || !isTransient(response.status)) break;
+      await response.body?.cancel();
+    } catch (error) {
+      if (attempt === 4) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** (attempt - 1)));
+  }
   if (response.status === 404) {
     throw new Error(
       `${url} does not exist yet. If ${version} was just released, try again in a few minutes.`,
