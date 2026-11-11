@@ -5951,13 +5951,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect(
-    "holds a limited provider's queue through another provider's turn until its reset passes",
-    () =>
+  it.effect.each(["the reset passes", "the user resumes"] as const)(
+    "holds a limited provider's queue through another provider's turn until %s",
+    (release) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
-        const threadId = ThreadId.make("runtime-layer-queue-limit-switch");
+        const threadId = ThreadId.make(`runtime-layer-queue-limit-switch-${release}`);
         const switchedSelection = { instanceId: alternateInstanceId, model: "gpt-5.5" };
         yield* orchestrator.dispatch({
           type: "thread.create",
@@ -6067,18 +6067,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* orchestrator.resumeQueuedRuns;
         const held = yield* orchestrator.getThreadProjection(threadId);
         assert.equal(held.runs.find((run) => run.id === queued.id)?.status, "queued");
-        const blocked = yield* orchestrator
-          .dispatch({
-            type: "queue.resume",
-            commandId: CommandId.make(`${threadId}:blocked`),
-            threadId,
-          })
-          .pipe(Effect.flip);
-        assert.equal(blocked._tag, "OrchestratorDispatchError");
 
-        // Once the reported reset passes, the queued message starts on its own provider.
-        yield* TestClock.adjust("61 minutes");
-        yield* orchestrator.resumeQueuedRuns;
+        if (release === "the reset passes") {
+          yield* TestClock.adjust("61 minutes");
+          yield* orchestrator.resumeQueuedRuns;
+        } else {
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`${threadId}:resume`),
+            threadId,
+          });
+        }
         const reset = yield* orchestrator.getThreadProjection(threadId);
         const resumed = reset.runs.find((run) => run.id === queued.id);
         assert.equal(resumed?.status, "starting");
