@@ -66,6 +66,7 @@ describe("HistorySwipeNavigation", () => {
       "back",
     ],
   ])("%s", async (_name, scroller, scrollLeft, steps, navigates) => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     const listeners = { begin: new Set<() => void>(), end: new Set<() => void>() };
     using _bridge = stubGlobal("desktopBridge", {
       onTrackpadScrollBegin: (listener: () => void) => {
@@ -110,5 +111,19 @@ describe("HistorySwipeNavigation", () => {
 
     expect(back).toHaveBeenCalledTimes(navigates === "back" ? 1 : 0);
     expect(forward).toHaveBeenCalledTimes(navigates === "forward" ? 1 : 0);
+  });
+
+  it("a horizontal mouse wheel tick off macOS keeps the thread", async () => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    await using screen = await render(<HistorySwipeNavigation />);
+    using back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+    using _canGoBack = vi.spyOn(window.navigation, "canGoBack", "get").mockReturnValue(true);
+    const { content } = mountPanel(screen.container, "none", 0);
+
+    for (const deltaX of [-120, 0]) {
+      content.dispatchEvent(new WheelEvent("wheel", { deltaX, bubbles: true, composed: true }));
+    }
+
+    expect(back).not.toHaveBeenCalled();
   });
 });
