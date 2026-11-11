@@ -13,6 +13,7 @@ import {
   clampTimingViewWindow,
   deriveThreadTimingTrace,
   layoutThreadFlameChart,
+  threadTimingNeedsNowMs,
   timingBarPlacement,
   timingViewZoomAt,
 } from "./threadTimingTrace.ts";
@@ -411,6 +412,30 @@ describe("timing view window", () => {
       startMs: 2_500,
       durationMs: 5_000,
     });
+  });
+});
+
+describe("threadTimingNeedsNowMs", () => {
+  it("is true only for live runs or active turn items", () => {
+    expect(
+      threadTimingNeedsNowMs({
+        runs: [run({ id: "r1", ordinal: 1, requestedAt: "2026-05-22T12:00:00.000Z" })],
+        turnItems: [],
+      }),
+    ).toBe(false);
+    expect(
+      threadTimingNeedsNowMs({
+        runs: [
+          run({
+            id: "r1",
+            ordinal: 1,
+            status: "running",
+            requestedAt: "2026-05-22T12:00:00.000Z",
+          }),
+        ],
+        turnItems: [],
+      }),
+    ).toBe(true);
   });
 });
 

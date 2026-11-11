@@ -173,11 +173,12 @@ function truncateLabel(text: string, max = 40): string {
   return `${oneLine.slice(0, Math.max(1, max - 1))}…`;
 }
 
-function turnLabel(run: TimingRun, messages: ReadonlyArray<TimingMessage> | undefined): string {
-  const message = messages?.find(
-    (candidate) => candidate.id === run.userMessageId && candidate.role === "user",
-  );
-  if (message?.text.trim()) return truncateLabel(message.text);
+function turnLabel(
+  run: TimingRun,
+  messagesById: ReadonlyMap<TimingMessage["id"], TimingMessage> | undefined,
+): string {
+  const message = messagesById?.get(run.userMessageId);
+  if (message?.role === "user" && message.text.trim()) return truncateLabel(message.text);
   return `Turn ${run.ordinal}`;
 }
 
@@ -190,6 +191,20 @@ function isRunTimingLive(status: TimingRun["status"]): boolean {
   return (
     status === "queued" || status === "preparing" || status === "starting" || status === "running"
   );
+}
+
+/** True when `deriveThreadTimingTrace` needs a ticking `nowMs` (live run or item). */
+export function threadTimingNeedsNowMs(input: {
+  readonly runs: ReadonlyArray<Pick<TimingRun, "status">>;
+  readonly turnItems: ReadonlyArray<Pick<TimingTurnItem, "status">>;
+}): boolean {
+  for (const run of input.runs) {
+    if (isRunTimingLive(run.status)) return true;
+  }
+  for (const item of input.turnItems) {
+    if (isOrchestrationV2WorkActive(item.status)) return true;
+  }
+  return false;
 }
 
 function runEndMs(run: TimingRun, runItems: ReadonlyArray<TimingTurnItem>, nowMs: number): number {
@@ -502,22 +517,28 @@ function mapRealToDisplay(
   const last = segments[segments.length - 1]!;
   if (realMs >= last.realEndMs) return last.displayEndMs;
 
-  for (const segment of segments) {
-    if (realMs < segment.realStartMs || realMs > segment.realEndMs) continue;
+  // Segments are monotonic in real time; binary-search the covering interval.
+  let low = 0;
+  let high = segments.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const segment = segments[mid]!;
+    if (realMs < segment.realStartMs) {
+      high = mid - 1;
+      continue;
+    }
+    if (realMs > segment.realEndMs) {
+      low = mid + 1;
+      continue;
+    }
     const realSpan = Math.max(1, segment.realEndMs - segment.realStartMs);
     const displaySpan = segment.displayEndMs - segment.displayStartMs;
     const ratio = (realMs - segment.realStartMs) / realSpan;
     return segment.displayStartMs + ratio * displaySpan;
   }
 
-  // Between segments (shouldn't happen with contiguous cover): snap to nearest.
-  for (let index = 0; index < segments.length - 1; index++) {
-    const left = segments[index]!;
-    const right = segments[index + 1]!;
-    if (realMs > left.realEndMs && realMs < right.realStartMs) {
-      return left.displayEndMs;
-    }
-  }
+  // Between segments (shouldn't happen with contiguous cover): snap to left edge.
+  if (high >= 0) return segments[high]!.displayEndMs;
   return Math.min(displayTotalMs, Math.max(0, last.displayEndMs));
 }
 
@@ -527,13 +548,25 @@ function mapDisplayToReal(segments: ReadonlyArray<TimingAxisSegment>, displayMs:
   const last = segments[segments.length - 1]!;
   if (displayMs >= last.displayEndMs) return last.realEndMs;
 
-  for (const segment of segments) {
-    if (displayMs < segment.displayStartMs || displayMs > segment.displayEndMs) continue;
+  let low = 0;
+  let high = segments.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const segment = segments[mid]!;
+    if (displayMs < segment.displayStartMs) {
+      high = mid - 1;
+      continue;
+    }
+    if (displayMs > segment.displayEndMs) {
+      low = mid + 1;
+      continue;
+    }
     const displaySpan = Math.max(1, segment.displayEndMs - segment.displayStartMs);
     const realSpan = segment.realEndMs - segment.realStartMs;
     const ratio = (displayMs - segment.displayStartMs) / displaySpan;
     return segment.realStartMs + ratio * realSpan;
   }
+  if (high >= 0) return segments[high]!.realEndMs;
   return last.realEndMs;
 }
 
@@ -560,6 +593,11 @@ export function deriveThreadTimingTrace(input: {
     if (list) list.push(item);
     else itemsByRun.set(item.runId, [item]);
   }
+
+  const messagesById =
+    input.messages === undefined
+      ? undefined
+      : new Map(input.messages.map((message) => [message.id, message]));
 
   const turns: ThreadTimingTurn[] = [];
   for (const run of runs) {
@@ -622,7 +660,7 @@ export function deriveThreadTimingTrace(input: {
     turns.push({
       runId: run.id,
       ordinal: run.ordinal,
-      label: turnLabel(run, input.messages),
+      label: turnLabel(run, messagesById),
       status: run.status,
       requestedAtMs,
       startMs: workStartedAtMs,

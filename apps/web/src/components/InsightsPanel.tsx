@@ -6,6 +6,7 @@ import {
   clampTimingViewWindow,
   deriveThreadTimingTrace,
   layoutThreadFlameChart,
+  threadTimingNeedsNowMs,
   timingViewZoomAt,
   type CompressedTimingAxis,
   type FlameChartNode,
@@ -79,7 +80,13 @@ export function InsightsPanel({
   readonly visible: boolean;
 }) {
   const projection = useQuietThreadProjection(visible ? threadRef : null);
-  const nowMs = useNowSecond();
+  const needsNowMs =
+    projection !== null &&
+    threadTimingNeedsNowMs({
+      runs: projection.projection.runs,
+      turnItems: projection.projection.turnItems,
+    });
+  const nowMs = useNowSecond(visible && needsNowMs);
   const trace =
     projection === null
       ? null
@@ -642,14 +649,10 @@ function OverviewStrip({
     }
   }
 
+  // Pointer-only overview; zoom buttons and the flame viewport own keyboard focus.
   return (
     <div
-      role="slider"
-      aria-label="Timeline overview"
-      aria-valuemin={0}
-      aria-valuemax={totalMs}
-      aria-valuenow={view.startMs}
-      tabIndex={0}
+      aria-hidden
       className="relative h-8 shrink-0 cursor-pointer overflow-hidden rounded-md border border-border/50 bg-muted/30"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
