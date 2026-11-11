@@ -53,12 +53,13 @@ function useCitationSourceLinkProps(citation: AssistantCitation) {
 const flat = (text: string) => text.replace(/\s+/g, " ");
 
 /**
- * The card a response shows as inside a message. Clicking it goes to the source. `leading` and
- * `trailing` say it starts or ends its block, which already has spacing.
+ * The card a response shows as inside a message. Clicking it goes to the source; a comment follows
+ * as text. `leading` and `trailing` say it starts or ends its block, which already has spacing.
  */
 function ResponseCard({
   citation,
   copyMarkdown,
+  cardCopyMarkdown = copyMarkdown,
   label,
   title,
   preview,
@@ -68,6 +69,7 @@ function ResponseCard({
 }: {
   citation: AssistantCitation;
   copyMarkdown: string;
+  cardCopyMarkdown?: string;
   label: string;
   title?: string | undefined;
   preview: ReactNode;
@@ -75,7 +77,7 @@ function ResponseCard({
   leading: boolean;
   trailing: boolean;
 }) {
-  const { "data-markdown-copy": _linkCopy, ...linkProps } = useCitationSourceLinkProps(citation);
+  const linkProps = useCitationSourceLinkProps(citation);
   return (
     // One copy boundary for the card and its comment, so a copied card carries the comment once.
     <span
@@ -84,6 +86,8 @@ function ResponseCard({
     >
       <Link
         {...linkProps}
+        // A selection inside the card's boundary copies the card here and the comment as text.
+        data-markdown-copy={cardCopyMarkdown}
         // The response is findable in its own message; here it is clamped and mostly hidden.
         data-thread-find-ignore
         aria-label={label}
@@ -124,6 +128,7 @@ export function AssistantCitationEmbed({
     <ResponseCard
       citation={citation}
       copyMarkdown={serializeAssistantCitation(citation)}
+      cardCopyMarkdown={serializeAssistantCitation(quoted)}
       label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
       comment={comment}
       leading={leading}
