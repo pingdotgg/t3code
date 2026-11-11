@@ -4885,7 +4885,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const progress = parseCodexRetryProgress(payload.error.message);
             const retry: OrchestrationV2ProviderRetry = {
               attempt: progress?.attempt ?? (previous?.retry.attempt ?? 0) + 1,
-              maxAttempts: progress?.maxAttempts ?? previous?.retry.maxAttempts ?? null,
+              // Codex drops the count once it starts waiting for the network, which has no limit.
+              maxAttempts: progress?.maxAttempts ?? null,
               retryDelayMs: null,
             };
             const code = codexErrorInfoCode(payload.error.codexErrorInfo);
