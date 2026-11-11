@@ -285,7 +285,11 @@ export function readHtmlRenderImageRequest(
   if (typeof params !== "object" || params === null) return undefined;
   const { src, name } = params as Record<string, unknown>;
   if (typeof src !== "string" || !/^(?:https?:\/\/|data:image\/)/i.test(src)) return undefined;
-  const label = typeof name === "string" ? name.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) : "";
+  const trimmed = typeof name === "string" ? name.trim() : "";
+  // The page sends any alt text; never end the label on half an emoji.
+  const last = trimmed.charCodeAt(HTML_RENDER_MAX_TITLE_LENGTH - 1);
+  const end = HTML_RENDER_MAX_TITLE_LENGTH - (last >= 0xd800 && last <= 0xdbff ? 1 : 0);
+  const label = trimmed.slice(0, end);
   return { src, name: label || "Image" };
 }
 
