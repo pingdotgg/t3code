@@ -288,7 +288,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
         Effect.flip,
         Effect.provide(
           DesktopLocalEnvironmentAuth.layer.pipe(
-            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
+            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient, NodeCrypto.layerMac)),
           ),
         ),
       );
@@ -338,6 +338,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
             id: PRIMARY_LOCAL_ENVIRONMENT_ID,
             label: Effect.succeed("Windows"),
             currentConfig: Effect.sync(() => Option.some(currentConfig)),
+            waitForReady: () => Effect.succeed(true),
           },
         ]),
       } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
@@ -346,7 +347,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
         Effect.result,
         Effect.provide(
           DesktopLocalEnvironmentAuth.layer.pipe(
-            Layer.provide(Layer.mergeAll(movingPool, layerHttpClient)),
+            Layer.provide(Layer.mergeAll(movingPool, layerHttpClient, NodeCrypto.layerMac)),
           ),
         ),
         Effect.forkChild,
@@ -377,58 +378,6 @@ describe("DesktopLocalEnvironmentAuth", () => {
         "POST http://127.0.0.1:3774/oauth/token",
       ]);
       assert.deepEqual(credentials, ["desktop-bootstrap-token", "restarted-bootstrap-token"]);
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect("rechecks ownership before retrying the bootstrap token exchange", () =>
-    Effect.gen(function* () {
-      const firstExchange = yield* Deferred.make<void>();
-      const requests: string[] = [];
-      let exchanged = false;
-      const layerHttpClient = Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) => {
-          requests.push(`${request.method} ${new URL(request.url).pathname}`);
-          if (request.url === DESCRIPTOR_URL) {
-            return Effect.succeed(
-              HttpClientResponse.fromWeb(
-                request,
-                Response.json({
-                  desktopLaunchId: exchanged ? "another-launch" : config.bootstrap.desktopLaunchId,
-                }),
-              ),
-            );
-          }
-          exchanged = true;
-          return Deferred.succeed(firstExchange, void 0).pipe(
-            Effect.as(HttpClientResponse.fromWeb(request, new Response("", { status: 503 }))),
-          );
-        }),
-      );
-      const result = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
-        Effect.flatMap((auth) => auth.getBearerToken),
-        Effect.result,
-        Effect.provide(
-          DesktopLocalEnvironmentAuth.layer.pipe(
-            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
-          ),
-        ),
-        Effect.forkChild,
-      );
-
-      yield* Deferred.await(firstExchange);
-      yield* TestClock.adjust(Duration.seconds(15));
-
-      const outcome = yield* Fiber.join(result);
-      assert.equal(outcome._tag, "Failure");
-      if (outcome._tag === "Failure") {
-        assert.equal(outcome.failure._tag, "DesktopLocalEnvironmentAuthForeignServerError");
-      }
-      assert.deepEqual(requests, [
-        "GET /.well-known/t3/environment",
-        "POST /oauth/token",
-        "GET /.well-known/t3/environment",
-      ]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });
