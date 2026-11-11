@@ -2,7 +2,7 @@
 import * as NodeHttp from "node:http";
 import * as NodeZlib from "node:zlib";
 
-import * as NodeSocket from "@effect/platform-node/NodeSocket";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import { WsRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -106,13 +106,13 @@ export interface WebSocketTransferRecorder {
   readonly awaitOpen: Effect.Effect<void>;
 }
 
-interface NodeWebSocketWithTransport extends NodeSocket.NodeWS.WebSocket {
+interface NodeWebSocketWithTransport extends NodeWS.WebSocket {
   readonly _socket?: {
     readonly bytesRead: number;
   };
 }
 
-function rawDataBytes(data: NodeSocket.NodeWS.RawData): number {
+function rawDataBytes(data: NodeWS.RawData): number {
   if (Array.isArray(data)) {
     return data.reduce((total, chunk) => total + chunk.byteLength, 0);
   }
@@ -132,7 +132,7 @@ function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
 
   return {
     connect: (url, protocols, cookie) => {
-      const nextSocket = new NodeSocket.NodeWS.WebSocket(url, protocols, {
+      const nextSocket = new NodeWS.WebSocket(url, protocols, {
         headers: { cookie },
         perMessageDeflate: true,
       }) as NodeWebSocketWithTransport;
