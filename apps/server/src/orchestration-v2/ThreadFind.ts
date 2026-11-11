@@ -12,6 +12,7 @@ import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import * as Cache from "effect/Cache";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as RcRef from "effect/RcRef";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -232,17 +233,18 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           });
     });
   });
-  // Scans visit every message; a cache smaller than the thread churns without hits.
-  const textCache = yield* Cache.make({
-    capacity: 8192,
-    timeToLive: "1 minute",
-    lookup: (key: TextKey) => Effect.sync(() => parseText(key)),
-  });
-  // Bounded separately because each entry can hold a large body; typing reuses the parse.
-  const largeTextCache = yield* Cache.make({
-    capacity: 32,
-    timeToLive: "1 minute",
-    lookup: (key: TextKey) => Effect.sync(() => parseText(key)),
+  const makeTextCache = (capacity: number) =>
+    Cache.make({ capacity, lookup: (key: TextKey) => Effect.sync(() => parseText(key)) });
+  // Keys are message content, so entries never go stale. Cache TTL only expires on access and
+  // would keep the text of the last searched threads forever, so drop it all once Find is idle.
+  const textCaches = yield* RcRef.make({
+    acquire: Effect.all({
+      // Scans visit every message; a cache smaller than the thread churns without hits.
+      text: makeTextCache(8192),
+      // Bounded separately because each entry can hold a large body; typing reuses the parse.
+      largeText: makeTextCache(32),
+    }),
+    idleTimeToLive: "1 minute",
   });
   const scans = new Map<
     string,
@@ -330,6 +332,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         const data = yield* snapshot(input);
         if (data.result) return Stream.succeed(data.result);
         const { payloads, cwd, sequence, cacheKey, sourceThreadIds } = data;
+        const textCache = yield* RcRef.get(textCaches);
         const decode = (row: FindPayload) =>
           decodeItem(row.payload).pipe(
             Effect.map((item) => ({ ...row, item })),
@@ -357,7 +360,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           const decoded = yield* decode(row);
           const key = textKey(decoded.item, cwd, input.skills ?? []);
           const segments = yield* Cache.get(
-            key.text.length <= 32_768 ? textCache : largeTextCache,
+            key.text.length <= 32_768 ? textCache.text : textCache.largeText,
             key,
           );
           const document = documentFor(decoded, countSegments(segments, input.query));

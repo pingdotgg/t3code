@@ -1,4 +1,5 @@
 import { assert, it, describe } from "@effect/vitest";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import {
   EventId,
   MessageId,
@@ -19,6 +20,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -30,6 +33,8 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+
+vi.mock("@t3tools/shared/threadFindText", { spy: true });
 
 const layerTest = Layer.mergeAll(EventStore.layer, ProjectionStore.layer, ProjectStore.layer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -457,6 +462,25 @@ describe("V2 thread find", () => {
       assert.equal(first.totalMatches, 2);
       assert.equal(first.match?.entryId, "message:8");
       assert.equal(last.match?.entryId, "message:510");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps parsed text while Find is in use and drops it after one idle minute", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      yield* putItems([item("kept", 1, "idle needle")]);
+      const parses = vi.mocked(searchableMessageSegments).mock.calls;
+      const search = (query: string) => projection.searchThread({ threadId, query });
+      yield* search("a");
+      const first = parses.length;
+      yield* TestClock.adjust("40 seconds");
+      yield* search("b");
+      yield* TestClock.adjust("40 seconds");
+      yield* search("c");
+      assert.equal(parses.length, first);
+      yield* TestClock.adjust("1 minute");
+      yield* search("d");
+      assert.equal(parses.length, first + 1);
     }).pipe(Effect.provide(layerTest)),
   );
 
