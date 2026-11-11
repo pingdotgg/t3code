@@ -73,7 +73,7 @@ it.each([
   expect(result()).toEqual({ loading: false, files: [["wanted.ts", "FRESH\n"]] });
 });
 
-it("walks more cached pages than React's re-render limit to reach the requested file", async () => {
+it("walks more cached pages than React's re-render limit and stops at the requested file", async () => {
   setup();
   await using stack = new AsyncDisposableStack();
   const registry = stack.adopt(AtomRegistry.make(), (value) => value.dispose());
@@ -84,40 +84,16 @@ it("walks more cached pages than React's re-render limit to reach the requested 
       index === 0 ? null : `cursor-${index}`,
       Atom.make<AsyncResult.AsyncResult<PullRequestDiffResult>>(
         AsyncResult.success(
-          page(
-            last ? "wanted.ts" : `file-${index}.ts`,
-            "FOUND",
-            last ? null : `cursor-${index + 1}`,
-          ),
+          page(last ? "wanted.ts" : `file-${index}.ts`, "FOUND", `cursor-${index + 1}`),
         ),
       ),
     );
   }
-  await using screen = await render(
-    <RegistryContext.Provider value={registry}>
-      <Probe wantedPaths={["wanted.ts"]} />
-    </RegistryContext.Provider>,
-  );
-  const result = JSON.parse(screen.container.querySelector("output")!.textContent!);
-  expect(result.loading).toBe(false);
-  expect(result.files).toContainEqual(["wanted.ts", "FOUND\n"]);
-});
-
-it("does not request the next page once the requested file is loaded", async () => {
-  setup();
-  await using stack = new AsyncDisposableStack();
-  const registry = stack.adopt(AtomRegistry.make(), (value) => value.dispose());
-  let nextPageReads = 0;
+  let pastPageReads = 0;
   state.pages.set(
-    null,
-    Atom.make<AsyncResult.AsyncResult<PullRequestDiffResult>>(
-      AsyncResult.success(page("wanted.ts", "FOUND", "cursor-1")),
-    ),
-  );
-  state.pages.set(
-    "cursor-1",
+    `cursor-${pageCount}`,
     Atom.make((): AsyncResult.AsyncResult<PullRequestDiffResult> => {
-      nextPageReads++;
+      pastPageReads++;
       return AsyncResult.initial(true);
     }),
   );
@@ -126,11 +102,10 @@ it("does not request the next page once the requested file is loaded", async () 
       <Probe wantedPaths={["wanted.ts"]} />
     </RegistryContext.Provider>,
   );
-  expect(JSON.parse(screen.container.querySelector("output")!.textContent!)).toEqual({
-    loading: false,
-    files: [["wanted.ts", "FOUND\n"]],
-  });
-  expect(nextPageReads).toBe(0);
+  const result = JSON.parse(screen.container.querySelector("output")!.textContent!);
+  expect(result.loading).toBe(false);
+  expect(result.files).toContainEqual(["wanted.ts", "FOUND\n"]);
+  expect(pastPageReads).toBe(0);
 });
 
 it("waits for a later cached page that is still refreshing", async () => {
