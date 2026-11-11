@@ -1748,6 +1748,7 @@ describe("EnvironmentSupervisor routes", () => {
   it.effect.each([
     { grants: "no grants", lanGrant: undefined, relayGrant: undefined },
     { grants: "an equal grant", lanGrant: STANDARD_GRANT, relayGrant: STANDARD_GRANT },
+    { grants: "an incomparable grant", lanGrant: LEGACY_GRANT, relayGrant: FILES_ONLY_GRANT },
   ])(
     "moves back to the LAN route when the network changes and it answers again, with $grants",
     ({ lanGrant, relayGrant }) =>

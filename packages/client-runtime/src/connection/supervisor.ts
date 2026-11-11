@@ -36,7 +36,6 @@ import {
   connectionRoutes,
   type ConnectionRouteKind,
   entryWithRoutes,
-  grantCovers,
   grantIsBroader,
   grantsEveryScope,
   insertRoute,
@@ -421,7 +420,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   });
 
   // Routes ahead of the active one may be better, unless their known grant
-  // lacks some of the active one's. With a known active grant that is not
+  // is strictly narrower than the active one's. With a known active grant that is not
   // already everything, routes behind it whose grant is unknown may be too.
   const betterRouteCandidates = Effect.fn("EnvironmentSupervisor.betterRouteCandidates")(function* (
     lease: ConnectedLease,
@@ -447,7 +446,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             );
     const ahead = (current <= 0 ? [] : routes.slice(0, current)).filter((route) => {
       const grant = grants.get(connectionRouteId(route.target));
-      return activeGrant === undefined || grant === undefined || grantCovers(grant, activeGrant);
+      return (
+        activeGrant === undefined || grant === undefined || !grantIsBroader(activeGrant, grant)
+      );
     });
     return { latest, activeGrant, ahead, unknown };
   });
@@ -470,7 +471,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     });
     // Against a known active grant, a route's own grant decides, so the host
     // is asked for it over the route: a route behind must grant more, and one
-    // ahead at least as much. T3 Connect has no address to check.
+    // ahead must not grant strictly less. T3 Connect has no address to check.
     const checkGrant = (route: ConnectionRoute, wins: (grant: RouteGrant) => boolean) =>
       driver.routeGrant(latest, route).pipe(
         Effect.flatMap(
@@ -490,7 +491,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           ? driver.preflight(latest, route)
           : unknown.includes(route)
             ? checkGrant(route, (grant) => grantIsBroader(grant, activeGrant))
-            : checkGrant(route, (grant) => grantCovers(grant, activeGrant)),
+            : checkGrant(route, (grant) => !grantIsBroader(activeGrant, grant)),
       { concurrency: "unbounded" },
     );
     if ((yield* Ref.get(silentRoutes)).generation !== silent.generation) return;
