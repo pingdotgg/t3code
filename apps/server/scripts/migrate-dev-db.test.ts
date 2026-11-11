@@ -38,8 +38,33 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         '{"lineage":{"parentThreadId":"stopped-thread","relationshipToParent":"fork","rootThreadId":"stopped-thread"}}';
       const subagentPayload =
         '{"lineage":{"parentThreadId":"subagent-parent","relationshipToParent":"subagent","rootThreadId":"subagent-parent"},"forkedFrom":{"type":"node","nodeId":"node-1"}}';
+      const watchedPayload = JSON.stringify({
+        pullRequests: [
+          {
+            host: "github.com",
+            repository: "owner/repo",
+            number: 7,
+            url: "https://github.com/owner/repo/pull/7",
+            source: "agent",
+            linkedAt: "2026-08-01T00:00:00.000Z",
+            snapshot: null,
+            stack: null,
+            watch: {
+              startedAt: "2026-08-01T00:00:00.000Z",
+              headSha: null,
+              failedChecks: [],
+              passed: false,
+              passedChecks: [],
+              remarksThrough: "2026-08-01T00:00:00.000Z",
+              remarkIds: [],
+              conflicting: false,
+              wakes: 0,
+            },
+          },
+        ],
+      });
       const threads = [
-        ["stopped-thread", "project-kept", "completed", "{}", "2026-08-01"],
+        ["stopped-thread", "project-kept", "completed", watchedPayload, "2026-08-01"],
         ["fork-thread", "project-kept", "completed", forkPayload, "2026-08-02"],
         ["running-thread", "project-kept", "running", "{}", "2026-08-05"],
         ["settled-thread", "project-kept", "completed", '{"settledAt":"2026-08-01"}', "2026-08-05"],
@@ -129,6 +154,11 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             SELECT stream_id FROM orchestration_events ORDER BY stream_id`;
           const sessions = yield* sql<{ provider_session_id: string }>`
             SELECT provider_session_id FROM orchestration_v2_projection_provider_sessions`;
+          const [pullRequest] = yield* sql<{ url: string | null; watch: string | null }>`
+            SELECT
+              json_extract(payload_json, '$.pullRequests[0].url') AS url,
+              json_extract(payload_json, '$.pullRequests[0].watch') AS watch
+            FROM orchestration_v2_projection_threads WHERE thread_id = 'stopped-thread'`;
           const [leftovers] = yield* sql<{
             auth: number;
             tasks: number;
@@ -143,7 +173,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
                 (SELECT COUNT(*) FROM scheduled_task_webhook_pending) AS webhooks,
               (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers,
               (SELECT COUNT(*) FROM peer_environment_links) AS links`;
-          return { threads, events, sessions, leftovers };
+          return { threads, events, sessions, pullRequest, leftovers };
         }),
       );
       assert.deepStrictEqual(
@@ -157,6 +187,11 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       assert.deepStrictEqual(
         kept.sessions.map((row) => row.provider_session_id),
         ["session-shared"],
+      );
+      assert.deepStrictEqual(
+        kept.pullRequest,
+        { url: "https://github.com/owner/repo/pull/7", watch: null },
+        "copied pull request links keep their history but stop being watched",
       );
       assert.deepStrictEqual(kept.leftovers, {
         auth: 0,
@@ -250,6 +285,73 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         { sharedHome: sourceDir },
       );
       assert.include(result.executedMigrations, "55_OrchestrationV2");
+    }),
+  );
+
+  it.effect("seeds from a source that recorded another migration below V2", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-local-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-local-dest-" });
+      const source = yield* createFixtureSource(sourceDir);
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`UPDATE effect_sql_migrations SET name = 'SiteLocalMigration'
+            WHERE migration_id = 51`;
+        }),
+      );
+
+      const result = yield* runMigrateDevDb(
+        { baseDir: destDir, source, projects: 5, threadsPerProject: 2 },
+        { sharedHome: sourceDir },
+      );
+      const threads = yield* withDatabase(
+        result.databasePath,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql<{ thread_id: string }>`
+            SELECT thread_id FROM orchestration_v2_projection_threads ORDER BY thread_id`;
+        }),
+      );
+      assert.deepStrictEqual(
+        threads.map((row) => row.thread_id),
+        ["fork-thread", "settled-thread", "stopped-thread"],
+      );
+    }),
+  );
+
+  it.effect("refuses a source whose V2 migration history clashes with this checkout", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-clash-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-clash-dest-" });
+      const source = yield* createFixtureSource(sourceDir);
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`UPDATE effect_sql_migrations SET name = 'OtherBuildMigration'
+            WHERE migration_id = 60`;
+        }),
+      );
+
+      const destination = yield* createFixtureSource(destDir);
+      const sourceBefore = yield* fs.readFile(source);
+      const destinationBefore = yield* fs.readFile(destination);
+
+      const error = yield* runMigrateDevDb(
+        { baseDir: destDir, source, projects: 5, threadsPerProject: 2 },
+        { sharedHome: sourceDir },
+      ).pipe(Effect.flip);
+      assert.equal(error._tag, "MigrateDevDbPhaseError");
+      if (error._tag === "MigrateDevDbPhaseError") {
+        assert.equal(error.phase, "migrate");
+        assert.include(String(error.cause), "60_ThreadSnapshotWindowIndexes");
+      }
+      assert.deepStrictEqual(yield* fs.readFile(source), sourceBefore);
+      assert.deepStrictEqual(yield* fs.readFile(destination), destinationBefore);
     }),
   );
 

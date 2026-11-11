@@ -15,9 +15,7 @@ import {
 export interface ViteModule {
   readonly version?: string;
   readonly build: (config: Record<string, unknown>) => Promise<unknown>;
-  readonly createServer: (
-    config: Record<string, unknown>,
-  ) => Promise<ViteDevServer>;
+  readonly createServer: (config: Record<string, unknown>) => Promise<ViteDevServer>;
   /**
    * `vite.resolveConfig` — used to read the project's resolved `build.outDir`
    * (and root) without duplicating vite's config-file discovery. Optional in
@@ -43,14 +41,8 @@ export interface ViteDevServer {
    * Native Node HTTP server. `null` in middleware mode; optional so older
    * vite slices without the field still typecheck.
    */
-  readonly httpServer?:
-    | { readonly closeAllConnections?: () => void }
-    | null
-    | undefined;
-  readonly resolvedUrls?:
-    | { readonly local: ReadonlyArray<string> }
-    | null
-    | undefined;
+  readonly httpServer?: { readonly closeAllConnections?: () => void } | null | undefined;
+  readonly resolvedUrls?: { readonly local: ReadonlyArray<string> } | null | undefined;
 }
 
 /**
@@ -110,8 +102,7 @@ export type ViteTargetInput = DeployTargetInput<ViteTarget, ViteTargetConfig>;
  * projects through its native Vite plugin — `Cloudflare.Website.Vite` —
  * so no Cloudflare target exists here.)
  */
-export const DEFAULT_TARGET_SPECIFIER =
-  "@alchemy.run/frontend-frameworks/vite/aws";
+export const DEFAULT_TARGET_SPECIFIER = "@alchemy.run/frontend-frameworks/vite/aws";
 
 export interface ViteOptions {
   /**
@@ -164,80 +155,68 @@ const fail = (message: string, cause?: unknown) =>
  */
 export const make: (
   options?: ViteOptions,
-) => Effect.Effect<
-  Framework["Service"],
-  never,
-  FileSystem.FileSystem | Path.Path
-> = Effect.fnUntraced(function* (options?: ViteOptions) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
+) => Effect.Effect<Framework["Service"], never, FileSystem.FileSystem | Path.Path> =
+  Effect.fnUntraced(function* (options?: ViteOptions) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
 
-  const targetConfig: ViteTargetConfig = {
-    vite: options?.vite,
-    notFoundHandling: options?.notFoundHandling,
-    htmlHandling: options?.htmlHandling,
-  };
+    const targetConfig: ViteTargetConfig = {
+      vite: options?.vite,
+      notFoundHandling: options?.notFoundHandling,
+      htmlHandling: options?.htmlHandling,
+    };
 
-  const resolveTarget = (root: string) =>
-    FrameworkCore.resolveDeployTarget<ViteTarget, ViteTargetConfig>(
+    const resolveTarget = (root: string) =>
+      FrameworkCore.resolveDeployTarget<ViteTarget, ViteTargetConfig>(
+        root,
+        options?.target ?? DEFAULT_TARGET_SPECIFIER,
+        targetConfig,
+      ).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
+
+    const loadVite = (root: string) =>
+      FrameworkCore.loadProjectModule<ViteModule>(root, "vite").pipe(
+        Effect.mapError((error) => fail("Failed to load the project's Vite install", error.cause)),
+      );
+
+    /**
+     * The inline config merged over the project's `vite.config.*` on both
+     * `build` and `resolveConfig`, so the resolved `outDir` and the actual
+     * build always agree.
+     */
+    const inlineConfig = (root: string): Record<string, unknown> => ({
       root,
-      options?.target ?? DEFAULT_TARGET_SPECIFIER,
-      targetConfig,
-    ).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
-
-  const loadVite = (root: string) =>
-    FrameworkCore.loadProjectModule<ViteModule>(root, "vite").pipe(
-      Effect.mapError((error) =>
-        fail("Failed to load the project's Vite install", error.cause),
-      ),
-    );
-
-  /**
-   * The inline config merged over the project's `vite.config.*` on both
-   * `build` and `resolveConfig`, so the resolved `outDir` and the actual
-   * build always agree.
-   */
-  const inlineConfig = (root: string): Record<string, unknown> => ({
-    root,
-    logLevel: "warn",
-    // Resolve against the project root, not the cwd vite would use, so
-    // "relative to rootDir" semantics hold regardless of where the engine
-    // (or the build child) happens to run.
-    ...(options?.vite?.configFile !== undefined
-      ? { configFile: path.resolve(root, options.vite.configFile) }
-      : undefined),
-    ...(options?.vite?.base !== undefined
-      ? { base: options.vite.base }
-      : undefined),
-    ...(options?.vite?.outDir !== undefined
-      ? { build: { outDir: options.vite.outDir } }
-      : undefined),
-  });
-
-  /** Resolve the absolute assets output directory for a build at `root`. */
-  const resolveOutDir = (vite: ViteModule, root: string) =>
-    Effect.gen(function* () {
-      if (options?.vite?.outDir !== undefined) {
-        return path.resolve(root, options.vite.outDir);
-      }
-      if (vite.resolveConfig === undefined) {
-        return path.resolve(root, "dist");
-      }
-      const resolved = yield* Effect.tryPromise({
-        try: async () =>
-          await vite.resolveConfig!(
-            { ...inlineConfig(root), logLevel: "error" },
-            "build",
-          ),
-        catch: (error) =>
-          fail("Failed to resolve the project's vite config", error),
-      });
-      return path.resolve(resolved.root ?? root, resolved.build.outDir);
+      logLevel: "warn",
+      // Resolve against the project root, not the cwd vite would use, so
+      // "relative to rootDir" semantics hold regardless of where the engine
+      // (or the build child) happens to run.
+      ...(options?.vite?.configFile !== undefined
+        ? { configFile: path.resolve(root, options.vite.configFile) }
+        : undefined),
+      ...(options?.vite?.base !== undefined ? { base: options.vite.base } : undefined),
+      ...(options?.vite?.outDir !== undefined
+        ? { build: { outDir: options.vite.outDir } }
+        : undefined),
     });
 
-  const build: Framework["Service"]["build"] = Effect.fn(
-    function* (buildOptions) {
+    /** Resolve the absolute assets output directory for a build at `root`. */
+    const resolveOutDir = (vite: ViteModule, root: string) =>
+      Effect.gen(function* () {
+        if (options?.vite?.outDir !== undefined) {
+          return path.resolve(root, options.vite.outDir);
+        }
+        if (vite.resolveConfig === undefined) {
+          return path.resolve(root, "dist");
+        }
+        const resolved = yield* Effect.tryPromise({
+          try: async () =>
+            await vite.resolveConfig!({ ...inlineConfig(root), logLevel: "error" }, "build"),
+          catch: (error) => fail("Failed to resolve the project's vite config", error),
+        });
+        return path.resolve(resolved.root ?? root, resolved.build.outDir);
+      });
+
+    const build: Framework["Service"]["build"] = Effect.fn(function* (buildOptions) {
       const root = buildOptions?.root ?? baseRoot;
       const target = yield* resolveTarget(root);
       const targetContext = { root, framework: "vite", env: buildOptions?.env };
@@ -264,86 +243,77 @@ export const make: (
         Effect.provideService(FileSystem.FileSystem, fs),
       );
 
-      return yield* FrameworkCore.applyDeployTargetFinish(
-        target,
-        output,
-        targetContext,
-      ).pipe(
+      return yield* FrameworkCore.applyDeployTargetFinish(target, output, targetContext).pipe(
         Effect.mapError((error) => fail(error.message, error.cause)),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-    },
-  );
+    });
 
-  const dev: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
-    const root = devOptions?.root ?? baseRoot;
-    const vite = yield* loadVite(root);
-    // `port: 0` (true OS-assigned) on Vite >= 8.2.1, probed ephemeral port
-    // on older Vite — see `resolveViteDevPort`.
-    const port = yield* FrameworkCore.resolveViteDevPort(
-      vite.version,
-      devOptions?.port ?? options?.dev?.port,
-    );
-    const host = devOptions?.host;
+    const dev: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
+      const root = devOptions?.root ?? baseRoot;
+      const vite = yield* loadVite(root);
+      // `port: 0` (true OS-assigned) on Vite >= 8.2.1, probed ephemeral port
+      // on older Vite — see `resolveViteDevPort`.
+      const port = yield* FrameworkCore.resolveViteDevPort(
+        vite.version,
+        devOptions?.port ?? options?.dev?.port,
+      );
+      const host = devOptions?.host;
 
-    const server = yield* Effect.acquireRelease(
-      Effect.tryPromise({
+      const server = yield* Effect.acquireRelease(
+        Effect.tryPromise({
+          try: async () => {
+            const server = await vite.createServer({
+              root,
+              ...(options?.vite?.configFile !== undefined
+                ? { configFile: path.resolve(root, options.vite.configFile) }
+                : undefined),
+              ...(options?.vite?.base !== undefined ? { base: options.vite.base } : undefined),
+              server: {
+                port,
+                ...(host !== undefined ? { host } : undefined),
+              },
+            });
+            await server.listen();
+            return server;
+          },
+          catch: (error) => fail("Failed to start the Vite dev server", error),
+        }),
+        (server) =>
+          Effect.promise(async () => {
+            try {
+              server.httpServer?.closeAllConnections?.();
+              await server.close();
+            } catch {
+              // teardown is best-effort
+            }
+          }).pipe(
+            Effect.timeout("3 seconds"),
+            Effect.orElseSucceed(() => undefined),
+          ),
+      );
+
+      const url = server.resolvedUrls?.local[0];
+      if (url === undefined) {
+        return yield* fail("Could not determine the dev server URL");
+      }
+
+      // Bounded readiness probe: any HTTP response counts (vite serves
+      // lazily; we only need the listener to answer).
+      yield* Effect.tryPromise({
         try: async () => {
-          const server = await vite.createServer({
-            root,
-            ...(options?.vite?.configFile !== undefined
-              ? { configFile: path.resolve(root, options.vite.configFile) }
-              : undefined),
-            ...(options?.vite?.base !== undefined
-              ? { base: options.vite.base }
-              : undefined),
-            server: {
-              port,
-              ...(host !== undefined ? { host } : undefined),
-            },
-          });
-          await server.listen();
-          return server;
+          const response = await fetch(url, { redirect: "manual" });
+          await response.arrayBuffer().catch(() => {});
         },
-        catch: (error) => fail("Failed to start the Vite dev server", error),
-      }),
-      (server) =>
-        Effect.promise(async () => {
-          try {
-            server.httpServer?.closeAllConnections?.();
-            await server.close();
-          } catch {
-            // teardown is best-effort
-          }
-        }).pipe(
-          Effect.timeout("3 seconds"),
-          Effect.orElseSucceed(() => undefined),
-        ),
-    );
+        catch: (error) => fail("The dev server did not become reachable", error),
+      }).pipe(Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }));
 
-    const url = server.resolvedUrls?.local[0];
-    if (url === undefined) {
-      return yield* Effect.fail(fail("Could not determine the dev server URL"));
-    }
+      return { url };
+    });
 
-    // Bounded readiness probe: any HTTP response counts (vite serves
-    // lazily; we only need the listener to answer).
-    yield* Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(url, { redirect: "manual" });
-        await response.arrayBuffer().catch(() => {});
-      },
-      catch: (error) => fail("The dev server did not become reachable", error),
-    }).pipe(
-      Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }),
-    );
-
-    return { url };
+    return Framework.of({ build, dev });
   });
-
-  return Framework.of({ build, dev });
-});
 
 /**
  * Map a plain Vite build's on-disk output onto the `BuildOutput` contract:
@@ -354,23 +324,12 @@ export const make: (
 export const readViteOutput = (options: {
   /** Absolute assets output directory (the resolved `build.outDir`). */
   readonly outDir: string;
-}): Effect.Effect<
-  FrameworkCore.BuildOutput,
-  FrameworkError,
-  FileSystem.FileSystem
-> =>
+}): Effect.Effect<FrameworkCore.BuildOutput, FrameworkError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const exists = yield* Effect.orElseSucceed(
-      fs.exists(options.outDir),
-      () => false,
-    );
+    const exists = yield* Effect.orElseSucceed(fs.exists(options.outDir), () => false);
     if (!exists) {
-      return yield* Effect.fail(
-        fail(
-          `The Vite build produced no output directory at ${options.outDir}`,
-        ),
-      );
+      return yield* fail(`The Vite build produced no output directory at ${options.outDir}`);
     }
     return {
       distDirectory: options.outDir,
