@@ -576,6 +576,7 @@ it.effect("steers a working main agent by queueing, then interrupting only its t
     const runtime = yield* makeCopilotSdkRuntime({ cwd: "/repo", client: fakes.client });
     const prompt = yield* startPrompt(runtime);
     fakes.emit(event("assistant.turn_start"));
+    fakes.emit(event("assistant.idle", {}, "agent-1"));
 
     const steered = yield* runtime.request(COPILOT_SDK_STEER_METHOD, { text: "change course" });
 
@@ -586,6 +587,21 @@ it.effect("steers a working main agent by queueing, then interrupting only its t
     fakes.emit(event("assistant.turn_start"));
     fakes.emit(event("assistant.idle"));
     fakes.emit(event("session.idle"));
+    assert.strictEqual((yield* Fiber.join(prompt)).stopReason, "end_turn");
+  }).pipe(Effect.scoped),
+);
+
+it.effect("keeps a steer's abort from counting as a cancel when a subagent starts", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    const runtime = yield* makeCopilotSdkRuntime({ cwd: "/repo", client: fakes.client });
+    const prompt = yield* startPrompt(runtime);
+    fakes.emit(event("assistant.turn_start"));
+    yield* runtime.request(COPILOT_SDK_STEER_METHOD, { text: "change course" });
+
+    fakes.emit(event("assistant.turn_start", {}, "agent-1"));
+    fakes.emit(event("session.idle", { aborted: true }));
+
     assert.strictEqual((yield* Fiber.join(prompt)).stopReason, "end_turn");
   }).pipe(Effect.scoped),
 );
@@ -614,6 +630,7 @@ it.effect("sends without interrupting once the main agent has finished", () =>
     const prompt = yield* startPrompt(runtime);
     fakes.emit(event("assistant.turn_start"));
     fakes.emit(event("assistant.idle"));
+    fakes.emit(event("assistant.turn_start", {}, "agent-1"));
 
     yield* runtime.request(COPILOT_SDK_STEER_METHOD, { text: "change course" });
 
@@ -661,6 +678,18 @@ it.effect("cancels an Autopilot turn when session.autopilot_stopped reports abor
     yield* runtime.cancel;
     fakes.emit(event("session.autopilot_stopped", { reason: "aborted", requestId: "message:go" }));
     assert.strictEqual((yield* Fiber.join(prompt)).stopReason, "cancelled");
+  }).pipe(Effect.scoped),
+);
+
+it.effect("fails an Autopilot turn when session.autopilot_stopped reports error", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    const runtime = yield* makeCopilotSdkRuntime({ cwd: "/repo", client: fakes.client });
+    const prompt = yield* startPrompt(runtime);
+    fakes.emit(event("session.autopilot_stopped", { reason: "error", requestId: "message:go" }));
+    const failure = yield* Fiber.join(prompt).pipe(Effect.flip);
+    assert.isTrue(failure instanceof AcpErrors.AcpRequestError);
+    assert.strictEqual(failure.code, -32603);
   }).pipe(Effect.scoped),
 );
 
