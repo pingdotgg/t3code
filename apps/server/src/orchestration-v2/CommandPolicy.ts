@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -122,6 +123,15 @@ export function isActiveRun(run: OrchestrationV2Run): boolean {
     run.status === "starting" ||
     run.status === "running" ||
     run.status === "waiting"
+  );
+}
+
+/** The run a follow-up to a finished child binds to: the latest active one, else the last that ran. */
+export function followUpOwnerRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): OrchestrationV2Run | null {
+  return (
+    runs.filter(isActiveRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ?? latestExecutedRun(runs)
   );
 }
 

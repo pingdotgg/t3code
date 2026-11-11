@@ -475,6 +475,24 @@ export const captureViewport = async (
   return data;
 };
 
+export const captureFinalRecordingFrame = (cdp: CDPSession, quality: number) =>
+  answered(
+    cdp
+      .send("Runtime.evaluate", {
+        // Capture the destination of finite transitions, not their initially transparent frame.
+        expression: `(async () => {
+          const paint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          await paint();
+          await Promise.allSettled(document.getAnimations()
+            .filter(animation => animation.playState === "running" && animation.effect?.getComputedTiming().iterations !== Infinity)
+            .map(animation => animation.finished));
+          await paint();
+        })()`,
+        awaitPromise: true,
+      })
+      .then(() => captureViewport(cdp, { format: "jpeg", quality })),
+  );
+
 /** Runs in the page's own isolated world, as the server has no image library. */
 const SHRINK_PNG = `async function (png, width, height) {
   const bytes = Uint8Array.from(atob(png), (char) => char.charCodeAt(0));
