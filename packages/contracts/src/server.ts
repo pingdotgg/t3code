@@ -917,6 +917,8 @@ export const ServerSelfUpdateInput = Schema.Struct({
   channel: Schema.optionalKey(DesktopUpdateChannelSchema),
   /** The target release's highest migration; the host refuses to leave Nightly without it. */
   targetDatabaseMigration: Schema.optionalKey(Schema.Int),
+  /** Older clients cannot decode the `draining` progress stage, so it streams only when set. */
+  acceptsDrainingStage: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
 

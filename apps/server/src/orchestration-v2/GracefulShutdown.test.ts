@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -21,6 +22,8 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 const makeGracefulHarness = Effect.fn("test.make_graceful_shutdown_harness")(function* (input: {
   readonly shells: Ref.Ref<ReadonlyArray<OrchestrationV2ThreadShell>>;
   readonly resumeCalls?: Ref.Ref<number>;
+  readonly runsByThread?: ReadonlyMap<ThreadId, ReadonlyArray<Partial<OrchestrationV2Run>>>;
+  readonly promptSaveWork?: boolean;
 }) {
   const resumeCalls = input.resumeCalls ?? (yield* Ref.make(0));
   const dispatches = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -29,18 +32,24 @@ const makeGracefulHarness = Effect.fn("test.make_graceful_shutdown_harness")(fun
     getShellSnapshot: () =>
       Ref.get(input.shells).pipe(Effect.map((threads) => ({ threads, sequence: 0 }))),
     listProjectThreads: () => Effect.succeed([]),
-    getThreadRecords: () => Effect.succeed({ runs: [] }),
-    dispatch: (command: { readonly type: string }) =>
-      Ref.update(dispatches, (existing) => [...existing, command.type]).pipe(
-        Effect.as({ sequence: 0, storedEvents: [], replayed: false }),
-      ),
+    getThreadRecords: (threadId: ThreadId) =>
+      Effect.succeed({
+        runs: input.runsByThread?.get(threadId) ?? [],
+        providerSessions: [{ id: "session-a", providerInstanceId: "provider-a", status: "ready" }],
+        providerThreads: [],
+      }),
+    dispatch: (command: { readonly type: string; readonly threadId: ThreadId }) =>
+      Ref.update(dispatches, (existing) => [
+        ...existing,
+        `${command.type}:${command.threadId}`,
+      ]).pipe(Effect.as({ sequence: 0, storedEvents: [], replayed: false })),
   } as unknown as ThreadManagementService.ThreadManagementService["Service"]);
   const orchestratorLayer = Layer.succeed(Orchestrator.OrchestratorV2, {
     resumeQueuedRuns: Ref.update(resumeCalls, (count) => count + 1).pipe(Effect.as(1)),
   } as unknown as Orchestrator.OrchestratorV2["Service"]);
   const settingsLayer = Layer.succeed(ServerSettings.ServerSettingsService, {
     getSettings: Effect.succeed({
-      promptSaveWorkOnGracefulShutdown: false,
+      promptSaveWorkOnGracefulShutdown: input.promptSaveWork ?? false,
     }),
   } as unknown as ServerSettings.ServerSettingsService["Service"]);
 
@@ -135,6 +144,39 @@ it.effect("beginAndAwait fails when complete clears the drain before it finishes
       const error = yield* Fiber.join(drain).pipe(Effect.flip);
       assert.strictEqual(error.reason, "That graceful shutdown is no longer active.");
       assert.isFalse(GracefulShutdownGate.isDrainActive(yield* gate.getState));
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("save-work prompts reach only threads with an active run", () =>
+  Effect.gen(function* () {
+    const busy = ThreadId.make("thread-busy");
+    const idle = ThreadId.make("thread-idle");
+    const shell = (id: ThreadId) =>
+      ({
+        id,
+        archivedAt: null,
+        deletedAt: null,
+        providerInstanceId: ProviderInstanceId.make("provider-a"),
+        activeRunId: null,
+        activityRunStatus: null,
+      }) as OrchestrationV2ThreadShell;
+    const shells = yield* Ref.make<ReadonlyArray<OrchestrationV2ThreadShell>>([
+      shell(busy),
+      shell(idle),
+    ]);
+    const harness = yield* makeGracefulHarness({
+      shells,
+      promptSaveWork: true,
+      runsByThread: new Map([
+        [busy, [{ status: "running", providerInstanceId: ProviderInstanceId.make("provider-a") }]],
+      ]),
+    });
+
+    yield* Effect.gen(function* () {
+      const graceful = yield* GracefulShutdown.GracefulShutdown;
+      yield* graceful.beginAndAwait({ scope: { type: "environment" } });
+      assert.deepStrictEqual(yield* Ref.get(harness.dispatches), [`message.dispatch:${busy}`]);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

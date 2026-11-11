@@ -521,7 +521,11 @@ export const updateProgressStream = (
       Queue.offer(queue, event).pipe(Effect.ignore);
 
     return selfUpdate
-      .update(input, (stage) => offer({ type: "progress", stage }))
+      .update(input, (stage) =>
+        stage === "draining" && input.acceptsDrainingStage !== true
+          ? Effect.void
+          : offer({ type: "progress", stage }),
+      )
       .pipe(
         Effect.flatMap((result) => offer({ type: "complete", result })),
         Effect.catchTags({

@@ -171,18 +171,15 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
         LIVE_SESSION_STATUSES.has(session.status),
       );
       const activeRun = records.runs.find(isActiveRun);
+      // Idle threads have no unfinished work; prompting them would start a commit/push turn.
+      if (activeRun === undefined) continue;
 
       const inScope = (() => {
         switch (input.scope.type) {
           case "environment":
-            return activeRun !== undefined || liveSessions.length > 0;
-          case "provider": {
-            const providerId = input.scope.providerInstanceId;
-            return (
-              (activeRun !== undefined && activeRun.providerInstanceId === providerId) ||
-              liveSessions.some((session) => session.providerInstanceId === providerId)
-            );
-          }
+            return true;
+          case "provider":
+            return activeRun.providerInstanceId === input.scope.providerInstanceId;
           case "session": {
             const sessionId = input.scope.providerSessionId;
             return liveSessions.some((session) => session.id === sessionId);

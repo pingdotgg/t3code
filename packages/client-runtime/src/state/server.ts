@@ -897,7 +897,10 @@ export function createServerEnvironmentAtoms<R, E>(
                   const streamExit = yield* environmentRegistry
                     .runStream(
                       target.environmentId,
-                      runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
+                      runStream(WS_METHODS.serverUpdateServerWithProgress, {
+                        ...target.input,
+                        acceptsDrainingStage: true,
+                      }),
                     )
                     .pipe(
                       Stream.runForEach((event) =>

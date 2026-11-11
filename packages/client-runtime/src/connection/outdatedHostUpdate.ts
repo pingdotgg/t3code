@@ -142,9 +142,10 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
             ? yield* Effect.gen(function* () {
                 const terminal = yield* Ref.make(Option.none<ServerSelfUpdateResult>());
                 let receivedProgress = false;
-                const streamExit = yield* client[WS_METHODS.serverUpdateServerWithProgress](
-                  input,
-                ).pipe(
+                const streamExit = yield* client[WS_METHODS.serverUpdateServerWithProgress]({
+                  ...input,
+                  acceptsDrainingStage: true,
+                }).pipe(
                   Stream.runForEach((event) =>
                     event.type === "complete"
                       ? Ref.set(terminal, Option.some(event.result))

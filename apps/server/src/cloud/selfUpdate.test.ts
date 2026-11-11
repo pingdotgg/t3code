@@ -337,6 +337,19 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(yield* Ref.get(completedShutdownIds)).toEqual([
         GracefulShutdownId.make("test-shutdown-1"),
       ]);
+      const streamedStages = (acceptsDrainingStage: boolean) =>
+        ServerSelfUpdate.updateProgressStream(selfUpdate, {
+          targetVersion: "1.1.0",
+          ...(acceptsDrainingStage ? { acceptsDrainingStage } : {}),
+        }).pipe(
+          Stream.flatMap((event) =>
+            event.type === "progress" ? Stream.succeed(event.stage) : Stream.empty,
+          ),
+          Stream.runCollect,
+        );
+      // Older clients decode only downloading and installing.
+      expect(yield* streamedStages(false)).toEqual(["downloading", "installing"]);
+      expect(yield* streamedStages(true)).toEqual(["draining", "downloading", "installing"]);
     }),
   );
 
