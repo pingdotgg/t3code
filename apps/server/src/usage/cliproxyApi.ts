@@ -1,5 +1,6 @@
 import {
   ProviderDriverKind,
+  TrimmedNonEmptyString,
   UsageLimitSourceError,
   type ProviderConsumeResetCreditResult,
   type UsageLimitSourceAccount,
@@ -105,7 +106,9 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
 });
-const ClaudeProfile = Schema.Struct({ organization: Schema.Struct({ uuid: Schema.String }) });
+const ClaudeProfile = Schema.Struct({
+  organization: Schema.Struct({ uuid: TrimmedNonEmptyString }),
+});
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
