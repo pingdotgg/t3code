@@ -94,7 +94,8 @@ function ShortcutTooltip(props: {
   );
 }
 
-export function ComposerSpeechCancelButton(props: {
+function ComposerSpeechCancelButton(props: {
+  inPill?: boolean;
   state: VoiceInputState;
   shortcutLabel?: string | null;
   onCancel(): void;
@@ -104,17 +105,29 @@ export function ComposerSpeechCancelButton(props: {
 
   return (
     <ShortcutTooltip label={label} shortcut={props.shortcutLabel}>
-      <Button
-        type="button"
-        size="icon-sm-pill"
-        variant="ghost"
-        aria-label={label}
-        onPointerDown={keepFocus}
-        onClick={props.onCancel}
-        className="shrink-0"
-      >
-        <XIcon />
-      </Button>
+      {props.inPill ? (
+        <button
+          type="button"
+          className={COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME}
+          aria-label={label}
+          onPointerDown={keepFocus}
+          onClick={props.onCancel}
+        >
+          <XIcon className="size-3.5 text-composer-icon" />
+        </button>
+      ) : (
+        <Button
+          type="button"
+          size="icon-sm-pill"
+          variant="ghost"
+          aria-label={label}
+          onPointerDown={keepFocus}
+          onClick={props.onCancel}
+          className="shrink-0"
+        >
+          <XIcon />
+        </Button>
+      )}
     </ShortcutTooltip>
   );
 }
@@ -188,7 +201,9 @@ export function ComposerSpeechButton(props: {
    * a spinner while busy (click skips post-processing). Without it the mic hides and the
    * recording pill takes over.
    */
-  dictation?: { level: number; onStop(): void; onSkipPostProcessing(): void } | undefined;
+  dictation?:
+    | { level: number; onStop(): void; onCancel(): void; onSkipPostProcessing(): void }
+    | undefined;
   onStart(): void;
 }) {
   const inPill = props.inPill ?? false;
@@ -232,44 +247,53 @@ export function ComposerSpeechButton(props: {
   };
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          inPill ? (
-            <button
-              type="button"
-              {...accessibilityProps}
-              disabled={phase === "idle" && props.disabled}
-              onPointerDown={keepFocus}
-              onClick={onClick}
-              className={
-                unavailable
-                  ? COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME
-                  : COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME
-              }
-            />
-          ) : (
-            <Button
-              type="button"
-              size={props.size === "compact" ? "icon-xs" : "icon-sm"}
-              variant="ghost"
-              {...accessibilityProps}
-              disabled={phase === "idle" && props.disabled}
-              onPointerDown={keepFocus}
-              onClick={onClick}
-              className="shrink-0"
-            />
-          )
-        }
-      >
-        {glyph}
-      </TooltipTrigger>
-      <TooltipPopup side="top">
-        {unavailable ?? label}
-        {showsShortcut && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
-        {phase !== "idle" && !isRecording ? " (Esc cancels)" : ""}
-      </TooltipPopup>
-    </Tooltip>
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            inPill ? (
+              <button
+                type="button"
+                {...accessibilityProps}
+                disabled={phase === "idle" && props.disabled}
+                onPointerDown={keepFocus}
+                onClick={onClick}
+                className={
+                  unavailable
+                    ? COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME
+                    : COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME
+                }
+              />
+            ) : (
+              <Button
+                type="button"
+                size={props.size === "compact" ? "icon-xs" : "icon-sm"}
+                variant="ghost"
+                {...accessibilityProps}
+                disabled={phase === "idle" && props.disabled}
+                onPointerDown={keepFocus}
+                onClick={onClick}
+                className="shrink-0"
+              />
+            )
+          }
+        >
+          {glyph}
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {unavailable ?? label}
+          {showsShortcut && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
+        </TooltipPopup>
+      </Tooltip>
+      {phase !== "idle" && dictation ? (
+        <ComposerSpeechCancelButton
+          inPill={inPill}
+          state={props.state}
+          shortcutLabel="Esc"
+          onCancel={dictation.onCancel}
+        />
+      ) : null}
+    </>
   );
 }
 
