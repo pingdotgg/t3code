@@ -1893,9 +1893,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return false;
     const source = notification.source;
     const task = projection.subagents.find((candidate) => source.taskIds.includes(candidate.id));
-    const childThreadId = task?.childThreadId ?? null;
+    // An unknown task gives no evidence the question is obsolete.
+    if (task === undefined) return false;
+    const childThreadId = task.childThreadId;
     if (
-      task === undefined ||
       childThreadId === null ||
       ["completed", "failed", "cancelled", "interrupted"].includes(task.status)
     )
