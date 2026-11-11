@@ -284,10 +284,10 @@ it("highlights a code block's own source when an earlier block of the same lengt
   const second = 'const commitSha = "cb06f8d135b3";';
   {
     await using screen = await renderText(`\`\`\`ts\n${first}\n\`\`\``);
-    await expect.poll(() => highlightedText(screen.container)).toBe(first);
+    await vi.waitFor(() => expect(highlightedText(screen.container)).toBe(first));
   }
   await using screen = await renderText(`\`\`\`ts\n${second}\n\`\`\``);
-  await expect.poll(() => highlightedText(screen.container)).toBe(second);
+  await vi.waitFor(() => expect(highlightedText(screen.container)).toBe(second));
 });
 
 describe("ChatMarkdown favicon privacy", () => {
