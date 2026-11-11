@@ -281,9 +281,9 @@ describe("course reference fetch", () => {
     child.stdin = Object.assign(new NodeEvents.EventEmitter(), {
       end: () => {
         queueMicrotask(() => {
-          child.stdin.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
           child.exitCode = 1;
           child.emit("close", 1);
+          child.stdin.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
         });
       },
     });
