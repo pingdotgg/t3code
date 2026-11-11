@@ -1506,16 +1506,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           hostPlatform === "darwin" ? "MacIntel" : hostPlatform,
         ),
       );
-    // The guest preload runs only in the main frame, so only there can it report
-    // a key the page left unhandled.
-    const mainFrameHoldsFocus = (contents: Electron.WebContents) => {
-      const focused = contents.focusedFrame;
-      return (
-        focused !== null &&
-        focused.processId === contents.mainFrame.processId &&
-        focused.routingId === contents.mainFrame.routingId
-      );
-    };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
       syncMenuShortcuts(wc, input);
       const host = wc.hostWebContents;
@@ -1534,7 +1524,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           altKey: input.alt,
         });
       if (forwarded && host) {
-        if (PAGE_FIRST_FORWARDED_COMMANDS.has(forwarded.command) && mainFrameHoldsFocus(wc)) return;
+        // The page keeps these keys. Only the main-frame preload can report one it
+        // left unhandled, so a focused iframe (e.g. Google Docs' input) keeps its own find.
+        if (PAGE_FIRST_FORWARDED_COMMANDS.has(forwarded.command)) return;
         event.preventDefault();
         if (!input.isAutoRepeat) {
           if (

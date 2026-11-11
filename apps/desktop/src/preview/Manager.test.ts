@@ -818,7 +818,7 @@ describe("PreviewManager", () => {
     ["linux", false],
     ["win32", false],
   ] as const)(
-    "lets the page claim the find shortcut before the host opens find on %s",
+    "lets the page and its iframes claim the find shortcut before the host opens find on %s",
     ([platform, usesMeta]) =>
       withManager(
         (manager) =>
@@ -878,8 +878,8 @@ describe("PreviewManager", () => {
               { preventDefault } as never,
               { ...findKey, shift: false, alt: false } as never,
             );
-            expect(preventDefault).toHaveBeenCalledOnce();
-            expect(send).toHaveBeenCalledTimes(2);
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(send).toHaveBeenCalledOnce();
 
             Object.assign(preview.webContents, { focusedFrame: mainFrame });
             yield* manager.setForwardedShortcuts([
@@ -896,7 +896,7 @@ describe("PreviewManager", () => {
                 altKey: true,
               },
             );
-            expect(send).toHaveBeenCalledTimes(usesMeta ? 3 : 2);
+            expect(send).toHaveBeenCalledTimes(usesMeta ? 2 : 1);
           }),
         platform,
       ),
