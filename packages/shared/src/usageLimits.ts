@@ -417,32 +417,32 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
 export function collectLimitNotices(presentations: LimitPresentations): readonly string[] {
   const label = (environmentLabel: string, subject: string) =>
     presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
-  const notices: string[] = [];
+  const notices = new Set<string>();
   for (const presentation of presentations.values()) {
     const environmentLabel = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (provider.usageLimits?.unavailable?.reason === "unsupported") continue;
       const notice = provider.usageLimits ? limitsNotice(provider.usageLimits) : null;
       const name = provider.displayName?.trim() || String(provider.driver);
-      if (notice) notices.push(`${label(environmentLabel, name)}: ${notice}`);
+      if (notice) notices.add(`${label(environmentLabel, name)}: ${notice}`);
       if (provider.usageLimits?.stale)
-        notices.push(`${label(environmentLabel, name)}: ${STALE_USAGE_NOTICE}`);
+        notices.add(`${label(environmentLabel, name)}: ${STALE_USAGE_NOTICE}`);
     }
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       for (const account of source.accounts) {
         if (account.usageLimits.stale)
-          notices.push(
+          notices.add(
             `${label(environmentLabel, account.email ?? source.label)}: ${STALE_USAGE_NOTICE}`,
           );
       }
       if (source.error) {
-        notices.push(`${label(environmentLabel, source.label)}: ${source.error}`);
+        notices.add(`${label(environmentLabel, source.label)}: ${source.error}`);
       } else if (source.accounts.length === 0) {
-        notices.push(`${label(environmentLabel, source.label)}: No accounts reported.`);
+        notices.add(`${label(environmentLabel, source.label)}: No accounts reported.`);
       }
     }
   }
-  return notices;
+  return [...notices];
 }
 
 export interface LimitPoolMember {
