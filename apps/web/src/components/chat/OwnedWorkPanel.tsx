@@ -37,19 +37,28 @@ export function OwnedWorkPanel({ threadRef }: { readonly threadRef: ScopedThread
           Owned work
         </div>
         <ul className="flex flex-col gap-1.5">
-          {openItems.map((item) => (
-            <li key={item.id} className="flex flex-col gap-0.5 text-sm">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="truncate font-medium">{item.title}</span>
-                <span className="text-muted-foreground shrink-0 text-xs">
-                  {statusLabel(item.status)}
-                </span>
-              </div>
-              {item.progress ? (
-                <p className="text-muted-foreground line-clamp-2 text-xs">{item.progress}</p>
-              ) : null}
-            </li>
-          ))}
+          {openItems.map((item) => {
+            const ownerThreadId = item.claimedByThreadId ?? item.assigneeThreadId;
+            return (
+              <li key={item.id} className="flex flex-col gap-0.5 text-sm">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="truncate font-medium">{item.title}</span>
+                  <span className="text-muted-foreground shrink-0 text-xs">
+                    {statusLabel(item.status)}
+                  </span>
+                </div>
+                {ownerThreadId ? (
+                  <p className="text-muted-foreground truncate text-xs">{ownerThreadId}</p>
+                ) : null}
+                {item.handoffNote ? (
+                  <p className="text-muted-foreground line-clamp-2 text-xs">{item.handoffNote}</p>
+                ) : null}
+                {item.progress ? (
+                  <p className="text-muted-foreground line-clamp-2 text-xs">{item.progress}</p>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       </div>
     </div>
