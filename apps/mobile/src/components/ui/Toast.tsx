@@ -1,5 +1,6 @@
+import { cn } from "../../lib/cn";
 import { MOBILE_MOTION, MOBILE_SHAPE } from "../../lib/designTokens";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { AccessibilityInfo, Platform, StyleSheet, View, useWindowDimensions } from "react-native";
 import { GestureDetector, usePanGesture } from "react-native-gesture-handler";
 import Animated, {
@@ -45,7 +46,7 @@ export function Toast(props: ToastProps) {
 function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
   const { fontScale } = useWindowDimensions();
   const { colorScheme } = useControlTheme();
-  const borderRadius = Platform.OS === "ios" ? 31 : MOBILE_SHAPE.toast;
+  const borderRadius = Platform.OS === "ios" ? 28 : MOBILE_SHAPE.toast;
   // Explicit single-line notices reserve the action's width and truncate the text.
   const inlineAction = props.singleLine || (!props.description && fontScale < 1.5);
   const message =
@@ -53,8 +54,13 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
       ? `${props.message}: ${props.description}`
       : props.message;
   const action = props.action ? (
-    <Button label={props.action.label} onPress={props.action.onPress} />
+    <Button
+      label={props.action.label}
+      onPress={props.action.onPress}
+      size={Platform.OS === "ios" ? "compact" : "default"}
+    />
   ) : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- announces the toast message to VoiceOver through AccessibilityInfo
   useEffect(() => {
     if (Platform.OS === "ios") AccessibilityInfo.announceForAccessibility(props.message);
   }, [props.message]);
@@ -63,10 +69,16 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
       key={props.glassReady === false ? "entering" : "settled"}
       chrome={Platform.OS === "ios" && colorScheme === "dark" ? "none" : undefined}
       tintColor={Platform.OS === "ios" ? null : undefined}
-      className={Platform.OS === "ios" ? "bg-transparent p-3" : "p-3"}
+      className={Platform.OS === "ios" ? "bg-transparent p-2" : "p-3"}
       style={{ borderRadius }}
     >
-      <View className="flex-row items-center gap-3">
+      <View
+        className={cn(
+          "flex-row items-center gap-3",
+          // Match the leading inset to the action label's, which sits inside the button's padding.
+          Platform.OS === "ios" && inlineAction && action && "pl-5",
+        )}
+      >
         {props.busy ? (
           <AppActivityIndicator />
         ) : (
@@ -133,22 +145,20 @@ function SwipeableToast(props: ToastProps & { readonly onDismiss: () => void }) 
   const [glassReady, setGlassReady] = useState(Platform.OS !== "ios");
   const finishEntering = useCallback(() => setGlassReady(true), []);
   // UIKit can skip glass on a moving host; remount the surface after entry so its blur installs.
-  const toastEntering = useMemo(
-    () => (values: EntryAnimationsValues) => {
-      "worklet";
-      return {
-        initialValues: { originY: values.targetOriginY + values.targetHeight + 12 },
-        animations: { originY: withTiming(values.targetOriginY, ENTER_TIMING) },
-        callback: (finished: boolean) => {
-          if (finished) runOnJS(finishEntering)();
-        },
-      };
-    },
-    [finishEntering],
-  );
+  const toastEntering = (values: EntryAnimationsValues) => {
+    "worklet";
+    return {
+      initialValues: { originY: values.targetOriginY + values.targetHeight + 12 },
+      animations: { originY: withTiming(values.targetOriginY, ENTER_TIMING) },
+      callback: (finished: boolean) => {
+        if (finished) runOnJS(finishEntering)();
+      },
+    };
+  };
   const { onDismiss } = props;
   const translation = useSharedValue(0);
   const width = useSharedValue(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the Reanimated swipe translation animation on unmount
   useLayoutEffect(
     () => () => {
       cancelAnimation(translation);

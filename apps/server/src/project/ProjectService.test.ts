@@ -1,7 +1,9 @@
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -17,6 +19,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -37,6 +40,7 @@ import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -121,11 +125,93 @@ const layerTestFor = (
       ServerSettings.layerTest(settings).pipe(Layer.provide(SqlitePersistence.layerMemory)),
     ),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(layerEnrichmentCompletions),
   );
 
 const layerTest = layerTestFor(layerMetadata);
+
+it.effect("resolves only the requested active project page in creation order", () =>
+  Effect.gen(function* () {
+    const inspected = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const note = (workspaceRoot: string) =>
+      Ref.update(inspected, (roots) => new Set([...roots, workspaceRoot]));
+    const metadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) =>
+          note(workspaceRoot).pipe(
+            Effect.as({
+              canonicalKey: `example.test${workspaceRoot}`,
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: `https://example.test${workspaceRoot}.git`,
+              },
+              rootPath: workspaceRoot,
+            }),
+          ),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: (workspaceRoot) => note(workspaceRoot).pipe(Effect.as(null)),
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const service = yield* ProjectService.ProjectService;
+      const enrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+      const changes = yield* enrichment.subscribeChanges;
+      const rows = Arr.makeBy(6, (index) => ({
+        project_id: `page:${index}`,
+        title: `Project ${index}`,
+        workspace_root: `/work/page-${index}`,
+        scripts_json: "[]",
+        created_at: "2026-10-01T00:00:00.000Z",
+        updated_at: "2026-10-01T00:00:00.000Z",
+        deleted_at: index === 1 ? "2026-10-02T00:00:00.000Z" : null,
+        auto_pull: 0,
+      }));
+      yield* sql`INSERT INTO projection_projects ${sql.insert(rows)}`;
+      const first = yield* service.listPage({ cursor: 0, limit: 2 });
+      assert.deepEqual(
+        first.projects.map((project) => project.id),
+        ["page:0", "page:2"],
+      );
+      assert.equal(first.nextCursor, 2);
+      assert.deepEqual(
+        first.projects.map((project) => project.repositoryIdentity?.canonicalKey),
+        ["example.test/work/page-0", "example.test/work/page-2"],
+      );
+      // A sentinel queued after the page lets the enrichment workers finish
+      // earlier requests before checking which workspaces were inspected.
+      yield* enrichment.request("/work/page-sentinel");
+      for (;;) {
+        if ((yield* PubSub.take(changes)).workspaceRoot === "/work/page-sentinel") break;
+      }
+      assert.deepEqual(
+        new Set(yield* Ref.get(inspected)),
+        new Set(["/work/page-0", "/work/page-2", "/work/page-sentinel"]),
+      );
+      const second = yield* service.listPage({ cursor: first.nextCursor!, limit: 2 });
+      assert.deepEqual(
+        second.projects.map((project) => project.id),
+        ["page:3", "page:4"],
+      );
+      assert.equal(second.nextCursor, 4);
+      const last = yield* service.listPage({ cursor: second.nextCursor!, limit: 2 });
+      assert.deepEqual(
+        last.projects.map((project) => project.id),
+        ["page:5"],
+      );
+      assert.isNull(last.nextCursor);
+      assert.isFalse((yield* Ref.get(inspected)).has("/work/page-1"));
+      assert.deepEqual(yield* service.listPage({ cursor: 99, limit: 2 }), {
+        projects: [],
+        nextCursor: null,
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTestFor(metadata)));
+  }),
+);
 
 const layerProjectServiceDependencies = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
@@ -145,8 +231,8 @@ const layerProjectServiceDependencies = Layer.mergeAll(
       Layer.provide(SqlitePersistence.layerMemory),
     ),
   ),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
-  Layer.provide(NodeServices.layer),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* (
@@ -417,15 +503,12 @@ it.layer(layerTest)("ProjectService", (it) => {
         projectIcon: { kind: "monogram" as const, text: "ABC", color: "violet" as const },
       };
       const first = yield* service.update(invalid).pipe(Effect.flip);
-      assert.equal(first._tag, "ProjectOperationError");
+      assert.equal(first._tag, "ProjectInvalidError");
+      assert.include(first.message, "monograms");
       const replayed = yield* service
         .update({ ...invalid, projectIcon: { ...invalid.projectIcon, text: "AB" } })
         .pipe(Effect.flip);
-      assert.equal(replayed._tag, "ProjectOperationError");
-      assert.include(
-        String(replayed._tag === "ProjectOperationError" && replayed.cause),
-        "monograms",
-      );
+      assert.deepEqual(replayed, first);
       const receipts = yield* sql<{ readonly status: string; readonly aggregate_id: string }>`
         SELECT status, aggregate_id FROM orchestration_command_receipts
         WHERE command_id = ${invalid.commandId}
@@ -695,7 +778,7 @@ it.layer(layerTestFor(layerMetadata, { projectSettingsFolded: true }))(
               scripts: [script("lint"), script(id)],
             })
             .pipe(Effect.flip);
-          assert.instanceOf(error, ProjectService.ProjectScriptIdError);
+          assert.instanceOf(error, ProjectService.ProjectInvalidError);
           assert.include(error.message, "Script IDs must be 1-24");
         }
         assert.isUndefined((yield* settings.getSettings).projectSettingsOverrides[project.id]);
@@ -721,7 +804,7 @@ it.layer(layerTestFor(layerMetadata, { projectSettingsFolded: true }))(
         assert.deepEqual((yield* update(edited, "edit")).scripts, edited);
         assert.instanceOf(
           yield* update([...edited, script("another.invalid.id")], "invalid").pipe(Effect.flip),
-          ProjectService.ProjectScriptIdError,
+          ProjectService.ProjectInvalidError,
         );
         assert.deepEqual((yield* update([], "remove")).scripts, []);
       }),
@@ -1114,6 +1197,7 @@ it.effect(
       Effect.provide(
         ServerSettings.layer.pipe(
           Layer.provide(ServerSecretStore.layer),
+          Layer.provide(ManagedPolicy.layerTest()),
           Layer.provide(
             ServerConfig.layerTest(process.cwd(), { prefix: "project-settings-cancel-" }),
           ),

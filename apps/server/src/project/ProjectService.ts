@@ -18,6 +18,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -39,6 +40,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
@@ -91,6 +93,16 @@ export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyErro
   }
 }
 
+/** A change the project's rules refuse, such as an invalid script ID: the caller's input is wrong, nothing failed. */
+export class ProjectInvalidError extends Schema.TaggedError<ProjectInvalidError>()(
+  "ProjectInvalidError",
+  { projectId: ProjectId, detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export class ProjectOperationError extends Schema.TaggedError<ProjectOperationError>()(
   "ProjectOperationError",
   {
@@ -121,15 +133,6 @@ type ProjectSettingsInput = Pick<
 
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
-export class ProjectScriptIdError extends Schema.TaggedError<ProjectScriptIdError>()(
-  "ProjectScriptIdError",
-  { projectId: ProjectId, idLength: Schema.Number },
-) {
-  override get message(): string {
-    return `Script IDs must be 1-${MAX_SCRIPT_ID_LENGTH} lowercase letters, digits or hyphens, starting with a letter or digit (got ${this.idLength} characters).`;
-  }
-}
-
 /**
  * A script's id becomes its `script.<id>.run` shortcut command. Ids saved
  * before that rule stay editable and removable; only new ids must comply.
@@ -148,7 +151,7 @@ export type ProjectServiceError =
   | ProjectNotFoundError
   | ProjectConflictError
   | ProjectNotEmptyError
-  | ProjectScriptIdError
+  | ProjectInvalidError
   | ProjectOperationError;
 
 export class ProjectService extends Context.Service<
@@ -171,7 +174,23 @@ export class ProjectService extends Context.Service<
       workspaceRoot: string,
       options?: { readonly includeDeleted?: boolean },
     ) => Effect.Effect<Option.Option<Project>, ProjectOperationError>;
+    /**
+     * Where to scan `cwd`'s workspace inventory. A thread's removed managed worktree scans its
+     * project, which turn start recreates the worktree from; anything else, or a failure, is `cwd`.
+     */
+    readonly workspaceScanDirectory: (cwd: string) => Effect.Effect<string>;
     readonly snapshot: Effect.Effect<ProjectSnapshot, ProjectOperationError>;
+    /**
+     * A page of active projects in creation order, each with its repository
+     * identity resolved, so a caller can match projects by repository.
+     */
+    readonly listPage: (input: {
+      readonly cursor: number;
+      readonly limit: number;
+    }) => Effect.Effect<
+      { readonly projects: ReadonlyArray<Project>; readonly nextCursor: number | null },
+      ProjectOperationError
+    >;
     readonly getShell: (
       projectId: ProjectId,
     ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectOperationError>;
@@ -192,6 +211,8 @@ export const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
 
@@ -219,6 +240,8 @@ export const make = Effect.gen(function* () {
       autoPull: effective.defaultAutoPull,
       projectIcon: row.projectIcon,
       scripts: resolveProjectScripts(settings, { id: row.projectId, scripts: row.scripts }),
+      pinnedAt: row.pinnedAt,
+      archivedAt: row.archivedAt,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       deletedAt: row.deletedAt,
@@ -243,7 +266,10 @@ export const make = Effect.gen(function* () {
   ) {
     const invalid = next === undefined ? undefined : findInvalidNewScript(current, next);
     if (invalid !== undefined) {
-      return yield* new ProjectScriptIdError({ projectId, idLength: invalid.id.length });
+      return yield* new ProjectInvalidError({
+        projectId,
+        detail: `Script IDs must be 1-${MAX_SCRIPT_ID_LENGTH} lowercase letters, digits or hyphens, starting with a letter or digit (got ${invalid.id.length} characters).`,
+      });
     }
   });
 
@@ -300,6 +326,8 @@ export const make = Effect.gen(function* () {
         });
       case "ProjectCommandMissingProjectError":
         return yield* new ProjectNotFoundError({ projectId });
+      case "ProjectCommandInvariantError":
+        return yield* new ProjectInvalidError({ projectId, detail: rejection.detail });
       default:
         return yield* dispatchError(
           rejection ?? receipt.error ?? "The command was previously rejected.",
@@ -455,6 +483,22 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const workspaceScanDirectory = Effect.fn("ProjectService.workspaceScanDirectory")(
+    function* (cwd: string) {
+      if (yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true))) return cwd;
+      if (!(yield* isManagedWorktreePath(cwd))) return cwd;
+      const snapshot = yield* Effect.flatten(
+        threadProjections.readShellSnapshot({ worktreePath: cwd }),
+      );
+      const thread = [...snapshot.threads, ...snapshot.archivedThreads].find(
+        (candidate) => candidate.branch !== null,
+      );
+      if (thread === undefined) return cwd;
+      return Option.getOrUndefined(yield* readRow(thread.projectId))?.workspaceRoot ?? cwd;
+    },
+    (effect, cwd) => Effect.orElseSucceed(effect, () => cwd),
+  );
+
   const getByWorkspaceRoot: ProjectService["Service"]["getByWorkspaceRoot"] = Effect.fn(
     "ProjectService.getByWorkspaceRoot",
   )(function* (workspaceRoot, options) {
@@ -562,6 +606,8 @@ export const make = Effect.gen(function* () {
           ...(input.defaultThreadEnvMode === null ? { defaultThreadEnvMode: null } : {}),
           ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
           ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
+          ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
+          ...(input.archived === undefined ? {} : { archived: input.archived }),
         },
         {
           ...(input.defaultModelSelection === undefined
@@ -645,15 +691,13 @@ export const make = Effect.gen(function* () {
   ) {
     const { projectId } = input;
     const snapshot = yield* threadProjections
-      .getShellSnapshot()
+      .getShellSnapshot({ projectId })
       .pipe(
         Effect.mapError(
           (cause) => new ProjectOperationError({ operation: "list-threads", projectId, cause }),
         ),
       );
-    const projectThreads = [...snapshot.threads, ...snapshot.archivedThreads].filter(
-      (thread) => thread.projectId === projectId,
-    );
+    const projectThreads = [...snapshot.threads, ...snapshot.archivedThreads];
     if (projectThreads.length > 0 && input.force !== true) {
       return yield* new ProjectNotEmptyError({ projectId });
     }
@@ -745,14 +789,14 @@ export const make = Effect.gen(function* () {
     return yield* Effect.forEach(shells, enrichShell, { concurrency: 16 });
   });
 
+  const listRows = projects
+    .list()
+    .pipe(
+      Effect.mapError((cause) => new ProjectOperationError({ operation: "list-projects", cause })),
+    );
+
   const snapshot = Effect.gen(function* () {
-    const rows = yield* projects
-      .list()
-      .pipe(
-        Effect.mapError(
-          (cause) => new ProjectOperationError({ operation: "list-projects", cause }),
-        ),
-      );
+    const rows = yield* listRows;
     const settings = yield* readSettings;
     const hydrated = yield* Effect.forEach(rows, (row) => hydrate(row, settings), {
       concurrency: 8,
@@ -763,6 +807,28 @@ export const make = Effect.gen(function* () {
     } satisfies ProjectSnapshot;
   });
 
+  const listPage: ProjectService["Service"]["listPage"] = Effect.fn("ProjectService.listPage")(
+    function* ({ cursor, limit }) {
+      const rows = (yield* listRows).filter((project) => project.deletedAt === null);
+      const settings = yield* readSettings;
+      const projects = yield* Effect.forEach(
+        rows.slice(cursor, cursor + limit),
+        (row) =>
+          hydrate(row, settings).pipe(
+            Effect.filterOrElse(
+              (project) => project.repositoryIdentity !== null,
+              (project) =>
+                projectEnrichment
+                  .readRepositoryIdentity(project.workspaceRoot)
+                  .pipe(Effect.map((repositoryIdentity) => ({ ...project, repositoryIdentity }))),
+            ),
+          ),
+        { concurrency: 8 },
+      );
+      return { projects, nextCursor: cursor + limit < rows.length ? cursor + limit : null };
+    },
+  );
+
   return ProjectService.of({
     create,
     bootstrap,
@@ -770,7 +836,9 @@ export const make = Effect.gen(function* () {
     delete: deleteProject,
     getById,
     getByWorkspaceRoot,
+    workspaceScanDirectory,
     snapshot,
+    listPage,
     getShell,
     listShells,
   });
