@@ -100,7 +100,7 @@ function bundledPath(viewBox) {
   return path;
 }
 const packageClients = await Promise.all(
-  ["cursor", "fx", "grok", "kiro", "muse", "opencode", "pi"].map(async (name) => {
+  ["cursor", "fx", "grok", "kiro", "muse", "opencode", "openrig", "pi"].map(async (name) => {
     const module = await import(
       NodeURL.pathToFileURL(
         NodePath.join(repositoryRoot, `packages/provider-${name}/src/client.ts`),

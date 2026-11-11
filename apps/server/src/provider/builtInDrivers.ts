@@ -10,6 +10,7 @@ import { FxDriver, type FxDriverEnv } from "@t3tools/provider-fx/server";
 import { GrokDriver, type GrokDriverEnv } from "@t3tools/provider-grok/server";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "@t3tools/provider-opencode/server";
 import { MuseDriver, type MuseDriverEnv } from "@t3tools/provider-muse/server";
+import { OpenRigDriver, type OpenRigDriverEnv } from "@t3tools/provider-openrig/server";
 import { PiDriver, type PiDriverEnv } from "@t3tools/provider-pi/server";
 import type {
   AnyProviderDriver,
@@ -27,6 +28,7 @@ export type BuiltInDriversEnv =
   | GrokDriverEnv
   | KiroDriverEnv
   | OpenCodeDriverEnv
+  | OpenRigDriverEnv
   | PiDriverEnv
   | MuseDriverEnv;
 
@@ -39,6 +41,7 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   OpenCodeDriver,
   AntigravityDriver,
   KiroDriver,
+  OpenRigDriver,
   PiDriver,
   MuseDriver,
   AcpRegistryDriver,

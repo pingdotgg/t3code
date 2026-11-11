@@ -14,6 +14,7 @@ import { grokClient } from "@t3tools/provider-grok/client";
 import { kiroClient } from "@t3tools/provider-kiro/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
+import { openRigClient } from "@t3tools/provider-openrig/client";
 import { piClient } from "@t3tools/provider-pi/client";
 
 // OpenRouter's Ink and Cloud glyphs from https://openrouter.ai/brand.
@@ -54,6 +55,7 @@ export const providerClients = makeProviderClientRegistry([
     settingsSchema: AntigravitySettings,
   },
   kiroClient,
+  openRigClient,
   museClient,
   piClient,
   acpRegistryClient,

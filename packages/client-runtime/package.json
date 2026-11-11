@@ -575,6 +575,7 @@
     "@t3tools/provider-kiro": "workspace:*",
     "@t3tools/provider-muse": "workspace:*",
     "@t3tools/provider-opencode": "workspace:*",
+    "@t3tools/provider-openrig": "workspace:*",
     "@t3tools/provider-pi": "workspace:*",
     "@t3tools/secret-provider-definitions": "workspace:*",
     "@t3tools/shared": "workspace:*",
