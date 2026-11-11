@@ -1,8 +1,6 @@
 import type * as Stream from "effect/Stream";
 
-export const getRawStream = (
-  stream: Stream.Stream<any, any, any>,
-): ReadableStream | undefined =>
+export const getRawStream = (stream: Stream.Stream<any, any, any>): ReadableStream | undefined =>
   streamHasRaw(stream) ? stream.raw : undefined;
 
 export const streamHasRaw = (
