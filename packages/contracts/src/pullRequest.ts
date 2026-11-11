@@ -173,6 +173,8 @@ export const PullRequestThreadComment = Schema.Struct({
   createdAt: IsoDateTime,
   editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   url: Schema.NullOr(Schema.String),
+  /** The review that posted the comment, so a link to a review with no text finds its comments. */
+  reviewUrl: Schema.optional(Schema.NullOr(Schema.String)),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
   canEdit: Schema.optional(Schema.Boolean),
 });
