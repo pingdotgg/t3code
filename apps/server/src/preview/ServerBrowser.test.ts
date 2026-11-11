@@ -867,12 +867,19 @@ it.effect("an agent's desktop tab's popup windows become its tabs, drawn by the 
         return realClose(input);
       });
       yield* Effect.addFinalizer(() => Effect.sync(() => closes.mockRestore()));
-      yield* broker.invoke({
-        scope,
-        tabId: heldEnableTab.tabId,
-        operation: "dialog",
-        input: { accept: true },
-      });
+      // A native window's dialog is the person's to answer there.
+      expect(
+        yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope,
+            tabId: heldEnableTab.tabId,
+            operation: "dialog",
+            input: { accept: true },
+          })
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "humanControl" });
+      heldEnable.popup.sessions[0]!.emit("Page.javascriptDialogClosed");
+      answered.resolve();
       yield* Effect.promise(() => refused.promise);
       const afterSetUp = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
@@ -2787,9 +2794,24 @@ it.live.each([
                 }),
               ).toBe("evaluated");
             }
-            if (!personAnswers) expect((yield* answerAs(scope)).dialog).toBeNull();
-            expect(pendingDialog.accept).toHaveBeenCalledTimes(accept ? 1 : 0);
-            expect(pendingDialog.dismiss).toHaveBeenCalledTimes(accept ? 0 : 1);
+            if (!personAnswers) {
+              // Electron would leave the native box open, so the agent cannot answer it.
+              expect(yield* answerAs(scope).pipe(Effect.flip)).toMatchObject({
+                reason: "humanControl",
+              });
+              // The person answers in the native window.
+              popup.sessions[0]!.emit("Page.javascriptDialogClosed");
+              answered.resolve();
+              const answeredStatus = yield* broker.invoke<PreviewAutomationStatus>({
+                scope,
+                tabId: adopted.tabId,
+                operation: "status",
+                input: {},
+              });
+              expect(answeredStatus.dialog).toBeNull();
+            }
+            expect(pendingDialog.accept).toHaveBeenCalledTimes(personAnswers && accept ? 1 : 0);
+            expect(pendingDialog.dismiss).not.toHaveBeenCalled();
             if (holding) yield* Effect.promise(() => registered.promise);
             for (const handoff of handoffs) yield* Fiber.join(handoff);
             yield* afterAnswer;

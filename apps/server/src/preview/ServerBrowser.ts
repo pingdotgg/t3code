@@ -2236,6 +2236,12 @@ const make = Effect.gen(function* () {
           message: "A human controls this tab.",
           reason: "humanControl",
         });
+      // Electron keeps a native window's dialog box open when CDP answers it, so the person must.
+      if (tab.dialog && isNativePopup(tab))
+        throw new BrowserControlInterrupted({
+          message: "This dialog waits for the person in its desktop window.",
+          reason: "humanControl",
+        });
       await resolveDialog(tab, input as PreviewAutomationDialogInput);
       return statusWithTitle(tab, request.agentSessionId);
     }
