@@ -31,7 +31,7 @@ describe("diffPanelStore", () => {
     expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({ kind: "unstaged" });
     store.selectBranchBaseRef(ref, "child-only-branch");
     store.clearRepository(ref);
-    store.selectCommit(ref, "linked-parent-commit", true);
+    store.selectCommit(ref, "linked-parent-commit");
     expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[key]).toBeUndefined();
     expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({
       kind: "commit",
