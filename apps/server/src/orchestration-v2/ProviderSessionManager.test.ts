@@ -4648,7 +4648,7 @@ it.effect(
     }),
 );
 
-it.effect.each(["claudeAgent", "codex"] as const)(
+it.effect.each(["cursor", "codex"] as const)(
   "preserves picked skill files through %s start and steer",
   (driver) =>
     Effect.gen(function* () {

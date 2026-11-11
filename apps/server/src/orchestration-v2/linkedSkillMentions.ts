@@ -9,6 +9,7 @@ interface LinkedSkillMention {
 }
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 export function collectLinkedSkillMentions(text: string): ReadonlyArray<LinkedSkillMention> {
   // Tokens need a delimiter after them; a sent prompt may end on a mention.
@@ -34,11 +35,20 @@ export function replaceLinkedSkillMentions(
 }
 
 // Remove the sigil so a provider cannot dispatch a different same-name skill.
-function expandLinkedSkillMentions(text: string): string {
+// A link to the file the provider's plain `$name` already runs stays a native mention.
+export function expandLinkedSkillMentions(
+  text: string,
+  isNative: (mention: LinkedSkillMention) => boolean = () => false,
+): string {
   const mentions = collectLinkedSkillMentions(text);
   if (mentions.length === 0) return text;
-  const body = replaceLinkedSkillMentions(text, mentions, (mention) => mention.name);
-  const skillByPath = new Map(mentions.map((mention) => [mention.path, mention.name]));
+  const body = replaceLinkedSkillMentions(text, mentions, (mention) =>
+    isNative(mention) ? `$${mention.name}` : mention.name,
+  );
+  const skillByPath = new Map(
+    mentions.filter((mention) => !isNative(mention)).map((mention) => [mention.path, mention.name]),
+  );
+  if (skillByPath.size === 0) return body;
   const instructions = [...skillByPath].map(
     ([path, name]) =>
       `The user invoked the \`${name}\` skill defined in ${path}. Read that file and follow its instructions, not those of any other skill named \`${name}\`.`,
@@ -51,6 +61,8 @@ export function spellOutLinkedSkillMentions<
 >(driver: ProviderDriverKind, input: Input, steering: boolean): Input {
   // Codex reads structured skill inputs at turn start but ignores them on turn/steer.
   if (driver === CODEX_DRIVER && !steering) return input;
+  // Claude's adapter knows which copy its native `/name` runs and expands links itself.
+  if (driver === CLAUDE_DRIVER) return input;
   const text = expandLinkedSkillMentions(input.message.text);
   return text === input.message.text ? input : { ...input, message: { ...input.message, text } };
 }

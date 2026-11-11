@@ -124,7 +124,10 @@ describe("mobile slash commands", () => {
         },
         skills,
       }).text;
-    expect(skills.map(select)).toEqual(["$review.v2 ", "[$review.v2](/home/me/review/SKILL.md) "]);
+    expect(skills.map(select)).toEqual([
+      "[$review.v2](/repo/my%20skills/100%25/SKILL.md) ",
+      "[$review.v2](/home/me/review/SKILL.md) ",
+    ]);
   });
 });
 

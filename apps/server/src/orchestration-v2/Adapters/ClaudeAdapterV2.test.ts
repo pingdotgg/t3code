@@ -4862,7 +4862,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           providerThread: harness.providerThread,
           now: yield* DateTime.now,
           attemptId: RunAttemptId.make("skill-dispatch"),
-          text: "$interrogate then $review then $implement the fixes",
+          // A link to the copy Claude runs natively must dispatch exactly like a plain mention.
+          text: `[$interrogate](${path.join(homePath, "skills", "interrogate", "SKILL.md")}) then $review then $implement the fixes`,
           attachments: [],
           runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: homePath },
         });

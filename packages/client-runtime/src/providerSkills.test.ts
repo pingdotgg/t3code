@@ -58,14 +58,14 @@ describe("getProviderSkillsForSlashMenu", () => {
       `${first.path} · Review code`,
       `${second.path} · Review code`,
     ]);
-    const mentions = rows.map((skill) => formatProviderSkillMention(skill, skills));
-    // The first copy is what the provider runs for a plain mention, so it keeps native dispatch.
-    expect(mentions[0]).toBe("$review.v2");
-    expect(collectComposerInlineTokens(`${mentions[1]} `)[0]).toMatchObject({
-      type: "skill",
-      value: "review.v2",
-      path: second.path,
-    });
+    expect(
+      rows.map(
+        (skill) => collectComposerInlineTokens(`${formatProviderSkillMention(skill, skills)} `)[0],
+      ),
+    ).toMatchObject([
+      { type: "skill", value: "review.v2", path: first.path },
+      { type: "skill", value: "review.v2", path: second.path },
+    ]);
   });
 
   it("keeps unique and native mentions plain while binding enabled local collisions", () => {
@@ -77,13 +77,10 @@ describe("getProviderSkillsForSlashMenu", () => {
         { ...skill, path: "/other/SKILL.md", enabled: false },
       ]),
     ).toBe("$review");
-    expect(formatProviderSkillMention(skill, [skill, { ...skill, path: "/other/SKILL.md" }])).toBe(
-      "$review",
-    );
     expect(
       formatProviderSkillMention(skill, [
-        { ...skill, path: "/other/SKILL.md", userInvocable: false },
         skill,
+        { ...skill, path: "/other/SKILL.md", userInvocable: false },
       ]),
     ).toBe("[$review](/repo/review/SKILL.md)");
 

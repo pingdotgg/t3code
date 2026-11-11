@@ -164,6 +164,7 @@ import {
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
+import { expandLinkedSkillMentions } from "../linkedSkillMentions.ts";
 import {
   claudeLaunchArgDirectories,
   customClaudeApiEndpointHost,
@@ -2553,9 +2554,13 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   readonly pdfReservation: Effect.Success<ReturnType<typeof reserveClaudePdfBudget>>;
   readonly skills?: ReadonlyMap<string, ClaudeSkillTarget>;
 }) {
+  const text = expandLinkedSkillMentions(
+    input.text,
+    (mention) => input.skills?.get(mention.name)?.path === mention.path,
+  );
   if (input.attachments.length === 0) {
     const message = makeClaudeUserMessage({
-      text: input.text,
+      text,
       ...(input.skills === undefined ? {} : { skills: input.skills }),
       ...(input.priority === undefined ? {} : { priority: input.priority }),
       ...(input.uuid === undefined ? {} : { uuid: input.uuid }),
@@ -2567,7 +2572,7 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   }
 
   const textWithAttachmentPaths = yield* providerMessageTextWithAttachmentPaths({
-    text: input.text,
+    text,
     attachments: input.attachments,
     resolveExtractedTextPath: (path) =>
       DocumentText.resolveExtractedTextPath(path).pipe(
