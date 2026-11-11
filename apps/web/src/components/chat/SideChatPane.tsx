@@ -11,11 +11,13 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { Trash2Icon, XIcon } from "lucide-react";
+import { CornerUpLeftIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { ComposerHandleContext } from "../../composerHandleContext";
 import { useClientSettings } from "../../hooks/useSettings";
+import { releaseComposerDraftUploads } from "../../lib/composerDraftUploads";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
 import { readLocalApi } from "../../localApi";
 import { hostRightPanel, useRightPanelStore } from "../../rightPanelStore";
@@ -25,12 +27,12 @@ import { useEnvironmentShellHasSnapshot } from "../../state/shell";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import ChatView from "../ChatView";
+import { PanelTabActions, useInPanelTabBar } from "../PanelTabBreadcrumb";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
 
-/** A side chat tab: its title, Bring back, Delete and Close, over the side chat's own chat. */
 export default function SideChatPane(props: {
   readonly parentRef: ScopedThreadRef;
   readonly threadId: ThreadId;
@@ -38,6 +40,7 @@ export default function SideChatPane(props: {
   readonly onClose: () => void;
 }) {
   const { parentRef, threadId } = props;
+  const inPanelTabBar = useInPanelTabBar();
   const threadRef = scopeThreadRef(parentRef.environmentId, threadId);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the parent panel as host in the panel store
   useEffect(
@@ -111,6 +114,8 @@ export default function SideChatPane(props: {
     });
     setDeleting(false);
     if (result._tag === "Success") {
+      releaseComposerDraftUploads(threadRef);
+      useComposerDraftStore.getState().clearDraftThread(threadRef);
       useRightPanelStore.getState().closeSurface(parentRef, `side-chat:${threadId}`);
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -122,42 +127,71 @@ export default function SideChatPane(props: {
     }
   };
 
-  return (
-    <div data-side-chat-pane className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
-        <span className="min-w-0 flex-1 truncate text-xs font-medium">
-          {shell?.title ?? "Side chat"}
-        </span>
+  const actions = (
+    <div className="flex shrink-0 items-center gap-1.5">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Bring back"
+              aria-disabled={bringBackBlockedReason !== null || bringingBack || undefined}
+              onClick={() => void bringBack()}
+            >
+              <CornerUpLeftIcon className="size-3.5" />
+            </Button>
+          }
+        />
+        <TooltipPopup side="bottom">
+          Bring back
+          {bringBackBlockedReason ? <span className="block">{bringBackBlockedReason}</span> : null}
+        </TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger render={<span className="flex shrink-0" />}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Delete side chat"
+            disabled={!canOperate || shell === null || deleting}
+            onClick={() => void deleteSideChat()}
+          >
+            <Trash2Icon className="size-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">Delete side chat</TooltipPopup>
+      </Tooltip>
+      {inPanelTabBar ? null : (
         <Tooltip>
           <TooltipTrigger
             render={
               <Button
                 variant="ghost"
-                size="xs"
-                aria-disabled={bringBackBlockedReason !== null || bringingBack || undefined}
-                onClick={() => void bringBack()}
+                size="icon-sm"
+                aria-label="Close side chat"
+                onClick={props.onClose}
               >
-                Bring back
+                <XIcon className="size-3.5" />
               </Button>
             }
           />
-          <TooltipPopup side="bottom">
-            {bringBackBlockedReason ?? "Adds this side chat to the main thread's next message."}
-          </TooltipPopup>
+          <TooltipPopup side="bottom">Close side chat</TooltipPopup>
         </Tooltip>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Delete side chat"
-          disabled={!canOperate || shell === null || deleting}
-          onClick={() => void deleteSideChat()}
-        >
-          <Trash2Icon />
-        </Button>
-        <Button variant="ghost" size="icon-xs" aria-label="Close side chat" onClick={props.onClose}>
-          <XIcon />
-        </Button>
-      </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div data-side-chat-pane className="flex h-full min-h-0 flex-col">
+      {inPanelTabBar ? (
+        <PanelTabActions>{actions}</PanelTabActions>
+      ) : (
+        <div className="flex h-9 shrink-0 items-center gap-1 pr-1 pl-3">
+          <span className="min-w-0 flex-1 truncate text-meta">{shell?.title ?? "Side chat"}</span>
+          {actions}
+        </div>
+      )}
       {shell === null ? (
         snapshotLoaded ? (
           <p className="p-3 text-xs text-muted-foreground">This side chat was deleted.</p>

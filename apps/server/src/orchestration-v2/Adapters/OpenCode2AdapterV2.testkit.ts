@@ -54,6 +54,16 @@ const operationOf = (
   query: Record<string, unknown>,
   body: unknown,
 ) => {
+  if (method === "GET" && path === "/api/experimental/job")
+    return { type: "imageJobs", input: query };
+  if (method === "GET" && path.startsWith("/api/fs/read/"))
+    return { type: "image.read", input: { path, ...query } };
+  const rpc = /^\/api\/rpc\/([^/]+)\/([^/]+)$/.exec(path);
+  if (method === "POST" && rpc !== null)
+    return {
+      type: "rpc.call",
+      input: { rpcID: rpc[1], method: rpc[2], ...query, ...(body as object) },
+    };
   const session = /^\/api\/session\/([^/]+)(\/.*)?$/.exec(path);
   if (method === "GET" && path === "/api/event") return { type: "event.subscribe" };
   if (method === "GET" && path === "/api/model") return { type: "model.list", input: query };
@@ -170,6 +180,11 @@ const replayHttpClient = (
         }
         // Recorded responses are the raw HTTP bodies; `null` is an empty 204.
         const body = await controller.response(operation.type);
+        if (typeof body === "object" && body !== null && "imageBase64" in body) {
+          return new Response(Buffer.from(String(body.imageBase64), "base64"), {
+            headers: { "content-type": "image/png" },
+          });
+        }
         if (body === "<hang>") return new Promise<Response>(() => {});
         if (typeof body === "object" && body !== null && "status" in body && "body" in body) {
           return new Response(encodeJson(body.body), {
@@ -292,6 +307,7 @@ export const openCode2ReplayRuntime = (
   entries: ReadonlyArray<ProviderReplayEntry>,
   options?: {
     readonly external?: boolean;
+    readonly version?: string;
     readonly onPrompt?: (input: unknown) => void;
     readonly borrowers?: { current: number };
     readonly replayGate?: ProviderReplayGate;
@@ -306,7 +322,7 @@ export const openCode2ReplayRuntime = (
       {
         provider: OPENCODE_PROVIDER,
         protocol: OPENCODE2_HTTP_PROTOCOL,
-        version: "2.0.18",
+        version: options?.version ?? "2.0.18",
         scenario: "opencode2_adapter",
         entries,
       },

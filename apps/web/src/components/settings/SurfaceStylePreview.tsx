@@ -37,32 +37,34 @@ export function SurfaceStylePicker({
             onClick={() => onChange(style)}
             type="button"
           >
-            <span
-              aria-hidden
-              className="flex h-24 items-center justify-center gap-2 bg-settings-preview-fill"
-              data-surface-preview={style}
-              inert
-            >
-              <Button render={<span />} size="sm">
-                Approve
-              </Button>
-              <Button
-                render={<span />}
-
-                size="sm"
-                variant="secondary"
+            <span className="max-sm:block max-sm:h-full">
+              <span
+                aria-hidden
+                className="flex h-24 flex-col items-center justify-center gap-2 bg-settings-preview-fill sm:flex-row"
+                data-surface-preview={style}
+                inert
               >
-                Button
-              </Button>
-            </span>
-            {/* px-3 like the theme cards above, so names in a column share one line. */}
-            <span className="flex items-center gap-1.5 border-t border-divider px-3 py-3">
-              <span className="min-w-0 flex-1 truncate text-label text-foreground">
-                {SURFACE_STYLE_LABELS[style]}
+                <Button render={<span />} size="sm">
+                  Approve
+                </Button>
+                <Button
+                  render={<span />}
+
+                  size="sm"
+                  variant="secondary"
+                >
+                  Button
+                </Button>
               </span>
-              {style === defaultValue ? (
-                <span className="shrink-0 text-meta text-dim-foreground">Default</span>
-              ) : null}
+              {/* px-3 like the theme cards above, so names in a column share one line. */}
+              <span className="flex flex-col items-start gap-1.5 border-t border-divider px-3 py-3 sm:flex-row sm:items-center">
+                <span className="min-w-0 flex-1 text-label text-foreground max-sm:wrap-anywhere sm:truncate">
+                  {SURFACE_STYLE_LABELS[style]}
+                </span>
+                {style === defaultValue ? (
+                  <span className="shrink-0 text-meta text-dim-foreground">Default</span>
+                ) : null}
+              </span>
             </span>
           </ContentButton>
         );

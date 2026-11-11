@@ -75,5 +75,6 @@ export function useAvailableSettingsSearchItems() {
     hasFastWorktreeCheckoutEnvironment,
     hasTextGeneratorsEnvironment,
     scrollingWorkspaces,
+    hasPrimaryEnvironment: primaryEnvironmentId !== null,
   });
 }
