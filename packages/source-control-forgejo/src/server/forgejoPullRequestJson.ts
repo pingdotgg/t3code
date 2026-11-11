@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import type { ProviderChangeRequest } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
+import { forgejoHeadBranch } from "./forgejoPullRequests.ts";
 
 export const ForgejoUser = Schema.Struct({
   login: Schema.String,
@@ -36,6 +37,7 @@ export const ForgejoRepository = Schema.Struct({
 });
 const Branch = Schema.Struct({
   ref: Schema.String,
+  label: Schema.optional(Schema.String),
   sha: Schema.String,
   repo: Schema.NullOr(ForgejoRepository),
 });
@@ -47,6 +49,7 @@ export const ForgejoPullRequest = Schema.Struct({
   user: Schema.NullOr(ForgejoUser),
   state: Schema.String,
   draft: Schema.optional(Schema.Boolean),
+  flow: Schema.optional(Schema.Int),
   merged: Schema.Boolean,
   mergeable: Schema.optional(Schema.Boolean),
   is_locked: Schema.optional(Schema.Boolean),
@@ -77,6 +80,7 @@ export const ForgejoReview = Schema.Struct({
   body: Schema.String,
   user: Schema.NullOr(ForgejoUser),
   state: Schema.String,
+  dismissed: Schema.optional(Schema.Boolean),
   submitted_at: Schema.String,
   html_url: Schema.optional(Schema.String),
   comments_count: Schema.Int,
@@ -103,6 +107,7 @@ export const ForgejoCommit = Schema.Struct({
   ),
 });
 export const ForgejoStatus = Schema.Struct({
+  id: Schema.optional(Schema.Int),
   context: Schema.String,
   status: Schema.String,
   description: Schema.NullOr(Schema.String),
@@ -128,7 +133,7 @@ export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
     title: pr.title,
     url: pr.html_url,
     author: forgejoActor(pr.user),
-    headBranch: pr.head.ref,
+    headBranch: forgejoHeadBranch(pr),
     baseBranch: pr.base.ref,
     headRepositoryNameWithOwner: pr.head.repo?.full_name ?? null,
     state: pr.merged ? "merged" : pr.state === "closed" ? "closed" : "open",
@@ -172,11 +177,13 @@ export function forgejoReview(review: typeof ForgejoReview.Type): PullRequestCom
     url: review.html_url || null,
     path: null,
     reviewState:
-      review.state === "REQUEST_CHANGES"
-        ? "CHANGES_REQUESTED"
-        : review.state === "COMMENT"
-          ? "COMMENTED"
-          : review.state,
+      review.dismissed === true
+        ? "DISMISSED"
+        : review.state === "REQUEST_CHANGES"
+          ? "CHANGES_REQUESTED"
+          : review.state === "COMMENT"
+            ? "COMMENTED"
+            : review.state,
   };
 }
 
@@ -236,6 +243,7 @@ export function forgejoChecks(
     statuses.map((status) => ({
       workflowName: null,
       at: status.updated_at,
+      ...(status.id === undefined ? {} : { sequence: status.id }),
       check: {
         name: status.context || "check",
         description: status.description || null,
