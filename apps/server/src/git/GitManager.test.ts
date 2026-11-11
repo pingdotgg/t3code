@@ -56,6 +56,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
 import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -3232,6 +3233,36 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         );
         expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(headBefore);
         expect((yield* runGit(repoDir, ["diff"])).stdout).toContain("+unstaged");
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "keeps staged changes when git add refuses a selected file",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nstaged\n");
+        yield* runGit(repoDir, ["add", "README.md"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "a.txt"), "file a\n");
+        NodeFS.mkdirSync(NodePath.join(repoDir, "real"));
+        NodeFS.writeFileSync(NodePath.join(repoDir, "real", "b.txt"), "file b\n");
+        // git add refuses a path beyond a symbolic link.
+        NodeFS.symlinkSync("real", NodePath.join(repoDir, "link"));
+        const stagedBefore = (yield* runGit(repoDir, ["diff", "--cached"])).stdout;
+        const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+
+        const { manager } = yield* makeManager();
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit",
+          commitMessage: "Selected files",
+          filePaths: ["a.txt", "link/b.txt"],
+        }).pipe(Effect.result);
+
+        expect(Result.isFailure(result)).toBe(true);
+        expect((yield* runGit(repoDir, ["diff", "--cached"])).stdout).toBe(stagedBefore);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(headBefore);
       }),
   );
 

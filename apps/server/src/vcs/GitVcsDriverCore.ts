@@ -319,6 +319,14 @@ function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
   return parts.filter((value) => value.length > 0);
 }
 
+// Parses "git version 2.24.3 (Apple Git-128)" or "git version 2.45.1.windows.1".
+export const gitSupportsPathspecFromFile = (versionOutput: string): boolean => {
+  const match = /^git version (\d+)\.(\d+)/.exec(versionOutput);
+  if (match === null) return false;
+  const major = Number(match[1]);
+  return major > 2 || (major === 2 && Number(match[2]) >= 25);
+};
+
 export function splitNullSeparatedGitStdoutPaths(
   result: Pick<GitVcsDriver.ExecuteGitResult, "stdout" | "stdoutTruncated">,
 ): string[] {
@@ -2437,6 +2445,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       })),
     );
 
+  // git add takes --pathspec-from-file from Git 2.25; older Git keeps the argument form.
+  let pathspecFromFileSupported: boolean | undefined;
+  const supportsPathspecFromFile = Effect.fnUntraced(function* (cwd: string) {
+    if (pathspecFromFileSupported !== undefined) return pathspecFromFileSupported;
+    const version = yield* executeGit("GitVcsDriver.version", cwd, ["version"]).pipe(Effect.option);
+    if (Option.isNone(version)) return false;
+    pathspecFromFileSupported = gitSupportsPathspecFromFile(version.value.stdout);
+    return pathspecFromFileSupported;
+  });
+
   const stageCommitChanges = Effect.fnUntraced(function* (
     cwd: string,
     filePaths?: readonly string[],
@@ -2498,16 +2516,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }
         yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset", "--quiet"]);
       }
-      yield* runGit(
-        "GitVcsDriver.commit.addSelected",
-        cwd,
-        [...config, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
-        {
-          env,
+      if (yield* supportsPathspecFromFile(cwd)) {
+        yield* runGit(
+          "GitVcsDriver.commit.addSelected",
+          cwd,
+          [...config, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
+          {
+            env,
+            // Status paths are repository-relative, while cwd can be a subdirectory.
+            stdin: filePaths.map((file) => `:(top,literal)${file}\0`).join(""),
+          },
+        );
+      } else {
+        yield* runGit(
+          "GitVcsDriver.commit.addSelected",
+          cwd,
           // Status paths are repository-relative, while cwd can be a subdirectory.
-          stdin: filePaths.map((file) => `:(top,literal)${file}\0`).join(""),
-        },
-      );
+          [...config, "add", "-A", "--", ...filePaths.map((file) => `:(top,literal)${file}`)],
+          env ? { env } : {},
+        );
+      }
     } else {
       yield* runGit(
         "GitVcsDriver.commit.addAll",

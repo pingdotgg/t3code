@@ -41,6 +41,7 @@ import * as ServerConfig from "../config.ts";
 import {
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
+  gitSupportsPathspecFromFile,
   splitNullSeparatedGitStdoutPaths,
   windowsLongPathConfigEnv,
 } from "./GitVcsDriverCore.ts";
@@ -1379,6 +1380,66 @@ it.effect("reads worktrees from git that rejects worktree list -z", () =>
         paths.map((listed) => NodeFS.realpathSync.native(listed)),
         worktreePath,
       );
+    }),
+  ).pipe(
+    Effect.provide(
+      layerServerConfig.pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
+it("reads from git version whether git add takes --pathspec-from-file", () => {
+  for (const [output, supported] of [
+    ["git version 2.24.4\n", false],
+    ["git version 2.24.3 (Apple Git-128)\n", false],
+    ["git version 2.25.0\n", true],
+    ["git version 2.45.1.windows.1\n", true],
+    ["git version 2.53.0\n", true],
+    ["unexpected output\n", false],
+  ] as const) {
+    assert.equal(gitSupportsPathspecFromFile(output), supported, output);
+  }
+});
+
+it.effect("commits selected files with git that rejects --pathspec-from-file", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // Git before 2.25 has no `add --pathspec-from-file` and exits with a usage error.
+      const oldGitSpawner = ChildProcessSpawner.make((command) => {
+        if (!ChildProcess.isStandardCommand(command)) {
+          return Effect.die("expected a standard Git command");
+        }
+        if (command.args.at(-1) === "version") {
+          return Effect.succeed(makeSuccessfulHandle("git version 2.24.4\n"));
+        }
+        if (command.args.some((arg) => String(arg).startsWith("--pathspec-from-file"))) {
+          return Effect.succeed(makeFailedHandle("error: unknown option `pathspec-from-file=-'"));
+        }
+        return delegate.spawn(command);
+      });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, oldGitSpawner),
+      );
+      yield* Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const selected = ["selected[1].txt", "-dash.txt", "with space.txt"];
+        for (const file of selected) yield* writeTextFile(cwd, file, "selected\n");
+        yield* writeTextFile(cwd, "left.txt", "left\n");
+
+        yield* driver.commit(cwd, "Selected", "", { stage: { filePaths: selected } });
+
+        assert.sameMembers(
+          (yield* git(cwd, ["show", "--pretty=", "--name-only", "-z", "HEAD"]))
+            .split("\0")
+            .filter(Boolean),
+          selected,
+        );
+        assert.equal(yield* git(cwd, ["status", "--porcelain"]), "?? left.txt");
+      }).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
     }),
   ).pipe(
     Effect.provide(
