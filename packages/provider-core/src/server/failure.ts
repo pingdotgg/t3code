@@ -115,6 +115,7 @@ function curatedCauseMessages(cause: unknown): {
         case "CursorModelUnavailableError":
         case "CodexGoalObjectiveTooLongError":
         case "ProviderSetupError":
+        case "ProviderAdapterThreadInUseError":
           return { known: stringField(cause, "message"), category: categoryMessage() };
         case "CodexAppServerRequestError": {
           // Only Codex's fixed-shape goal validation text is actionable and
