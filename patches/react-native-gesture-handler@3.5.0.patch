@@ -53,7 +53,7 @@ index cb0666b9e35dc2b76ff0cb592e0a867e1a28b3dd..7f481d90f9993dbe874676c7393f90e2
    BOOL shouldBegin = [super gestureRecognizerShouldBegin:gestureRecognizer];
    _lastState = savedState;
 diff --git a/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js b/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js
-index 30e6601d1dd2dbb8fa43b077feee374e0af4e509..2d36194b9f8ca25e9b00b95c8aca01d78493fca7 100644
+index 30e6601d1dd2dbb8fa43b077feee374e0af4e509..5e6e99cee482c78aac71fe5ed1dc19e4ccf05ae4 100644
 --- a/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js
 +++ b/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js
 @@ -42,6 +42,8 @@ const Swipeable = props => {
@@ -65,12 +65,23 @@ index 30e6601d1dd2dbb8fa43b077feee374e0af4e509..2d36194b9f8ca25e9b00b95c8aca01d7
      friction = DEFAULT_FRICTION,
      overshootFriction = DEFAULT_OVERSHOOT_FRICTION,
      onSwipeableOpenStartDrag: onSwipeableOpenStartDragProp,
-@@ -312,8 +314,12 @@ const Swipeable = props => {
+@@ -284,6 +286,10 @@ const Swipeable = props => {
+     if (event.canceled) {
+       // Restore the row to where it rested before the gesture.
+       const restingValue = rowState.value === 1 ? leftWidth.value : rowState.value === -1 ? -rightWidth.value : 0;
++      // A caller animating translation (e.g. a dismissal) keeps it.
++      if (onSwipeableRelease?.(appliedTranslation, true)) {
++        return;
++      }
+       animateRow(restingValue, 0, true);
+       return;
+     }
+@@ -312,8 +318,12 @@ const Swipeable = props => {
          toValue = -rightWidth.value;
        }
      }
 +    // Let a UI-thread full-swipe commit take over before the return spring.
-+    if (onSwipeableRelease?.(appliedTranslation)) {
++    if (onSwipeableRelease?.(appliedTranslation, false)) {
 +      return;
 +    }
      animateRow(toValue, velocityX / friction);
@@ -79,7 +90,7 @@ index 30e6601d1dd2dbb8fa43b077feee374e0af4e509..2d36194b9f8ca25e9b00b95c8aca01d7
    const close = useCallback(() => {
      'worklet';
  
-@@ -359,6 +365,8 @@ const Swipeable = props => {
+@@ -359,6 +369,8 @@ const Swipeable = props => {
      enabled: enabled ?? true,
      enableTrackpadTwoFingerGesture: enableTrackpadTwoFingerGesture,
      activeOffsetX: [dragOffsetFromRight, dragOffsetFromLeft],
@@ -89,23 +100,24 @@ index 30e6601d1dd2dbb8fa43b077feee374e0af4e509..2d36194b9f8ca25e9b00b95c8aca01d7
      requireToFail,
      block,
 diff --git a/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts b/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
-index e97b6dbbced1bcbd359cf35293b7f10cbf13b0e7..de07f26423bee66ecd7d0f9bb33233bcb3215751 100644
+index e97b6dbbced1bcbd359cf35293b7f10cbf13b0e7..b7d03718c4ce50a0a69f0f478ae5114d9310d9f3 100644
 --- a/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
 +++ b/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
-@@ -59,6 +59,12 @@ export type SwipeableProps = {
+@@ -59,6 +59,13 @@ export type SwipeableProps = {
       * Called when action panel is closed.
       */
      onSwipeableClose?: (direction: SwipeDirection.LEFT | SwipeDirection.RIGHT) => void;
 +    /**
-+     * UI-thread worklet called on release before the built-in spring starts.
++     * UI-thread worklet called on release before the built-in spring starts,
++     * including a canceled pan (`canceled`), which must not commit an action.
 +     * Return true to consume the release and take ownership of translation.
 +     * The caller must reset or remove the row after its custom animation.
 +     */
-+    onSwipeableRelease?: (translation: SharedValue<number>) => boolean;
++    onSwipeableRelease?: (translation: SharedValue<number>, canceled: boolean) => boolean;
      /**
       * Called when action panel starts animating on open (either right or left).
       */
-@@ -150,6 +156,13 @@ export type SwipeableProps = {
+@@ -150,6 +157,13 @@ export type SwipeableProps = {
       * The horizontal offset from the starting point required to trigger a left-swipe gesture. Defaults to -10.
       */
      dragOffsetFromRight?: number;
@@ -120,7 +132,7 @@ index e97b6dbbced1bcbd359cf35293b7f10cbf13b0e7..de07f26423bee66ecd7d0f9bb33233bc
  export interface SwipeableMethods {
      close: () => void;
 diff --git a/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx b/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx
-index 2b3789a5277404e57607c05db96dc062d6db1b10..0dcf61dcb12fc5d0b676a3312aefc26cd3823ee1 100644
+index 2b3789a5277404e57607c05db96dc062d6db1b10..0c23c2ce6b0a07540c68204a8528b655b5624f84 100644
 --- a/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx
 +++ b/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx
 @@ -80,6 +80,8 @@ const Swipeable = (props: SwipeableProps) => {
@@ -132,19 +144,30 @@ index 2b3789a5277404e57607c05db96dc062d6db1b10..0dcf61dcb12fc5d0b676a3312aefc26c
      friction = DEFAULT_FRICTION,
      overshootFriction = DEFAULT_OVERSHOOT_FRICTION,
      onSwipeableOpenStartDrag: onSwipeableOpenStartDragProp,
-@@ -552,6 +554,11 @@ const Swipeable = (props: SwipeableProps) => {
+@@ -520,6 +522,10 @@ const Swipeable = (props: SwipeableProps) => {
+             : rowState.value === -1
+               ? -rightWidth.value
+               : 0;
++        // A caller animating translation (e.g. a dismissal) keeps it.
++        if (onSwipeableRelease?.(appliedTranslation, true)) {
++          return;
++        }
+         animateRow(restingValue, 0, true);
+         return;
+       }
+@@ -552,6 +558,11 @@ const Swipeable = (props: SwipeableProps) => {
          }
        }
  
 +      // Let a UI-thread full-swipe commit take over before the return spring.
-+      if (onSwipeableRelease?.(appliedTranslation)) {
++      if (onSwipeableRelease?.(appliedTranslation, false)) {
 +        return;
 +      }
 +
        animateRow(toValue, velocityX / friction);
      },
      [
-@@ -563,6 +570,8 @@ const Swipeable = (props: SwipeableProps) => {
+@@ -563,6 +574,8 @@ const Swipeable = (props: SwipeableProps) => {
        rightWidth,
        rowState,
        userDrag,
@@ -153,7 +176,7 @@ index 2b3789a5277404e57607c05db96dc062d6db1b10..0dcf61dcb12fc5d0b676a3312aefc26c
      ]
    );
  
-@@ -640,6 +649,7 @@ const Swipeable = (props: SwipeableProps) => {
+@@ -640,6 +653,7 @@ const Swipeable = (props: SwipeableProps) => {
          typeof dragOffsetFromRight,
          typeof dragOffsetFromLeft,
        ],
@@ -161,7 +184,7 @@ index 2b3789a5277404e57607c05db96dc062d6db1b10..0dcf61dcb12fc5d0b676a3312aefc26c
        simultaneousWith,
        requireToFail,
        block,
-@@ -653,6 +663,7 @@ const Swipeable = (props: SwipeableProps) => {
+@@ -653,6 +667,7 @@ const Swipeable = (props: SwipeableProps) => {
        block,
        dragOffsetFromLeft,
        dragOffsetFromRight,
@@ -170,24 +193,25 @@ index 2b3789a5277404e57607c05db96dc062d6db1b10..0dcf61dcb12fc5d0b676a3312aefc26c
        enabled,
        handleFinalize,
 diff --git a/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts b/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts
-index 1e1246f709feb04c01cf3221472cc1219a8fffac..f526d4fe2d2738becbe8d29c59d1105afa11ae60 100644
+index 1e1246f709feb04c01cf3221472cc1219a8fffac..9099c53aa5e2ff164beeb0f43897fd56eef663fa 100644
 --- a/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts
 +++ b/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts
-@@ -77,6 +77,13 @@ export type SwipeableProps = {
+@@ -77,6 +77,14 @@ export type SwipeableProps = {
      direction: SwipeDirection.LEFT | SwipeDirection.RIGHT
    ) => void;
  
 +  /**
-+   * UI-thread worklet called on release before the built-in spring starts.
++   * UI-thread worklet called on release before the built-in spring starts,
++   * including a canceled pan (`canceled`), which must not commit an action.
 +   * Return true to consume the release and take ownership of translation.
 +   * The caller must reset or remove the row after its custom animation.
 +   */
-+  onSwipeableRelease?: (translation: SharedValue<number>) => boolean;
++  onSwipeableRelease?: (translation: SharedValue<number>, canceled: boolean) => boolean;
 +
    /**
     * Called when action panel starts animating on open (either right or left).
     */
-@@ -196,6 +203,14 @@ export type SwipeableProps = {
+@@ -196,6 +204,14 @@ export type SwipeableProps = {
     * The horizontal offset from the starting point required to trigger a left-swipe gesture. Defaults to -10.
     */
    dragOffsetFromRight?: number;
