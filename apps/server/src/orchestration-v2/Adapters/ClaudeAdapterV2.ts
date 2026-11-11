@@ -10410,6 +10410,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   new Map(current).set(message.task_id, {
                     ...registered,
                     confirmedOutcome: undefined,
+                    handbackText: null,
                     ...(message.run_id === undefined
                       ? {}
                       : { resultNativeItemId: `task:${message.task_id}:result:${message.run_id}` }),
