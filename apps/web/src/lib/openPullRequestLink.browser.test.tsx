@@ -77,7 +77,6 @@ function setup() {
     byThreadKey: {},
     repositoryCwdByThreadKey: {},
     branchBaseRefByThreadKey: {},
-    keepSelectionOnOpenThreadKey: null,
   });
   useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
 }
@@ -176,8 +175,6 @@ it.each(
         [scopedThreadKey(threadRef)]: { kind: "commit", sha, baseRef: expectedBase },
       }),
     );
-    // ChatView resets a pane opened without an explicit request to Changes unless this is set.
-    expect(useDiffPanelStore.getState().consumeKeepSelectionOnOpen(threadRef)).toBe(!diffOpen);
     expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[scopedThreadKey(threadRef)]).toBe(
       repository === "parent" ? "/repo" : undefined,
     );

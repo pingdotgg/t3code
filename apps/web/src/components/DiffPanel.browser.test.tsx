@@ -125,7 +125,6 @@ function setup(failedBaseRef: string | null) {
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
       repositoryCwdByThreadKey: {},
-      keepSelectionOnOpenThreadKey: null,
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
   };
