@@ -2035,6 +2035,49 @@ it.effect("keeps raw GitLab selectors apart from an HTTP checkout's URL", () =>
   }),
 );
 
+it.effect("reads a linked GitLab merge request through its URL when asked by repository", () =>
+  Effect.gen(function* () {
+    const host = "gitlab.localhost";
+    const repository = "gitlab/team/subgroup/project";
+    const webUrl = `http://${host}/gitlab/team/subgroup/project/-/merge_requests/9`;
+    const reads: Array<Parameters<PullRequestProviderApi["getChangeRequest"]>[0]> = [];
+    const gitlab = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "SSH checkout",
+          workspaceRoot: "/gitlab",
+          repository: "team/subgroup/project",
+          host,
+          provider: "gitlab",
+          remoteUrl: `git@${host}:team/subgroup/project.git`,
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          getChangeRequest: (input) =>
+            Effect.sync(() => {
+              reads.push(input);
+              return hostedChangeRequest("");
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, host, repository, number: 9 };
+    // The watch reactor reads with the link's URL; the detail panel asks by repository alone.
+    const linked = { ...reference, webUrl };
+    const rawSelection = { ...reference, webUrl: null };
+    yield* gitlab.detail(linked);
+    yield* gitlab.detail(reference);
+    yield* gitlab.detail(rawSelection);
+    assert.deepStrictEqual(reads, [
+      { cwd: "/gitlab", host, repository, number: 9, webUrl },
+      { cwd: "/gitlab", host, repository, number: 9, webUrl },
+      { cwd: "/gitlab", host, repository, number: 9 },
+    ]);
+  }),
+);
+
 it.effect("routes Azure reads and writes through the requested organization's checkout", () =>
   Effect.gen(function* () {
     const seen: string[] = [];

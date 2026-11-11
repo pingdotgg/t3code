@@ -125,6 +125,7 @@ function supersedesReading(current: PullRequestReading | undefined, next: PullRe
 
 // Providers request one extra row; 99 stays within GitHub/GitLab's 100-row API limit.
 const DEFAULT_REPOSITORY_LIST_LIMIT = 99;
+const LINKED_WEB_URL_CAPACITY = 256;
 const REPOSITORY_CONCURRENCY = 12;
 const REPOSITORY_SEARCH_CHUNK = 100;
 const FILTERED_LIST_READS = 5;
@@ -1009,6 +1010,21 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // A linked change request's URL is the only record of where an SSH checkout's project lives
+  // on a host served under a path prefix, and clients ask by repository alone.
+  const linkedWebUrls = new Map<string, string>();
+  const linkedWebUrl = (key: string, webUrl: string | null | undefined) => {
+    if (typeof webUrl !== "string") return webUrl;
+    const url = withoutUrlCredentials(webUrl);
+    linkedWebUrls.delete(key);
+    linkedWebUrls.set(key, url);
+    if (linkedWebUrls.size > LINKED_WEB_URL_CAPACITY) {
+      const oldest = linkedWebUrls.keys().next().value;
+      if (oldest !== undefined) linkedWebUrls.delete(oldest);
+    }
+    return url;
+  };
+
   // Azure derives organization from the checkout; require the matching repository.
   const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
@@ -1016,10 +1032,16 @@ export const make = Effect.gen(function* () {
         const own = supported[0];
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
+        const webUrl =
+          host === undefined
+            ? ref.webUrl
+            : ref.webUrl === undefined
+              ? linkedWebUrls.get(`${host}/${repository.toLowerCase()}`)
+              : linkedWebUrl(`${host}/${repository.toLowerCase()}`, ref.webUrl);
         const refWebUrl =
-          ref.webUrl === undefined
+          webUrl === undefined
             ? {}
-            : { webUrl: ref.webUrl === null ? null : withoutUrlCredentials(ref.webUrl) };
+            : { webUrl: webUrl === null ? null : withoutUrlCredentials(webUrl) };
         if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
           if (host === undefined || host === own.host)
             return Effect.succeed({ ...own, ...refWebUrl });
