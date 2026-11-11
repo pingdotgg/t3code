@@ -8,10 +8,7 @@ const COMPOSER_GAP = 8;
 
 type Frame = { readonly x: number; readonly y: number; readonly width: number };
 
-/**
- * Android only delivers drags to views inside their parent's bounds, so a popover hung above the
- * composer with `bottom-full` takes taps but its list never scrolls.
- */
+/** Android only delivers drags inside parent bounds; bottom-full popover lists cannot scroll. */
 export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
   const host = useComposerPopoverHost();
   const anchorRef = useRef<ViewInstance>(null);
@@ -30,9 +27,8 @@ export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
     });
   };
 
-  // No dependency array: the composer re-renders when its padding or expanded
-  // state changes, which moves it without resizing the anchor, so measure and
-  // re-project after every render.
+  // Measure every render: composer padding or expansion can move the anchor without resizing it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the anchor view after every commit and hands its popover content to the composer popover host
   useEffect(() => {
     measure();
     host?.setContent(
@@ -55,6 +51,7 @@ export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
   });
 
   const setHostContent = host?.setContent;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the popover host's content and shared height value when the anchor unmounts
   useEffect(
     () => () => {
       setHostContent?.(null);
