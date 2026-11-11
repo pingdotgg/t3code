@@ -1313,8 +1313,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             render={
               <div
                 ref={rowRef}
-                role="treeitem"
-                tabIndex={-1}
+                role="button"
+                tabIndex={0}
                 data-sidebar-row={threadKey}
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
@@ -1366,7 +1366,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 </span>
               ) : (
                 <span className="ml-auto hidden shrink-0 text-meta text-secondary-label tabular-nums @min-[12rem]/sidebar-tile:inline">
-                  <RelativeTimeLabel timestamp={threadTimeTimestamp(thread)} />
+                  <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
                 </span>
               )}
             </div>
