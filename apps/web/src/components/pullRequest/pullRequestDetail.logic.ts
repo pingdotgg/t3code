@@ -701,16 +701,30 @@ function readableBody(raw: string): string | null {
   return readable === "" ? null : readable;
 }
 
-/** Moves collapsed `<details>` sections after the text a reader sees, so a bound keeps that text first. */
+/**
+ * A body too long for the bound, with collapsed `<details>` sections moved after the text a
+ * reader sees so the bound keeps that text. Details shown inside code are source and stay put.
+ */
 function visibleTextFirst(body: string): string {
+  if (body.length <= FINDING_BODY_MAX_LENGTH) return body;
+  const codeLines = new Set<number>();
+  const visit = (node: MdastNodes) => {
+    if (node.type === "code" && node.position !== undefined) {
+      for (let line = node.position.start.line; line <= node.position.end.line; line += 1) {
+        codeLines.add(line);
+      }
+    }
+    if ("children" in node) for (const child of node.children) visit(child);
+  };
+  visit(fromMarkdown(body));
   const shown: string[] = [];
   const folded: string[] = [];
   let depth = 0;
-  for (const line of body.split("\n")) {
-    const opens = /^\s*<details[\s>]/iu.test(line);
-    if (opens) depth += 1;
+  for (const [index, line] of body.split("\n").entries()) {
+    const inCode = codeLines.has(index + 1);
+    if (!inCode && /^\s*<details[\s>]/iu.test(line)) depth += 1;
     (depth > 0 ? folded : shown).push(line);
-    if (depth > 0 && /<\/details>\s*$/iu.test(line)) depth -= 1;
+    if (!inCode && depth > 0 && /<\/details>\s*$/iu.test(line)) depth -= 1;
   }
   return folded.length === 0 ? body : [...shown, "", ...folded].join("\n").trim();
 }

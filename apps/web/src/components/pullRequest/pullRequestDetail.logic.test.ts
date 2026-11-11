@@ -1127,6 +1127,16 @@ describe("adding a remark to the chat", () => {
     expect(context?.text).toMatch(/^octocat: One concern remains\.\n\n<details>/u);
   });
 
+  it("leaves a details tag shown inside code where it is", () => {
+    const body = `\`\`\`html\n<details>\n<summary>Example</summary>\n</details>\n\`\`\`\n${"Explanation. ".repeat(100)}`;
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark("c1", body),
+    });
+
+    expect(context?.text).toMatch(/^octocat: ```html\n<details>/u);
+  });
+
   it("keeps every added remark when a later hand-off lands", () => {
     const added = ["c1", "c2"].flatMap(
       (id) =>
