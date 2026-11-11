@@ -109,7 +109,7 @@ export const COMPOSER_PILL_BUTTON_CLASS_NAME =
   "relative isolate flex h-full items-center justify-center gap-1 overflow-hidden rounded-composer-pill-button text-foreground outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";
 
 const COMPOSER_PILL_SLOT_CLASS_NAME =
-  "relative isolate flex h-full shrink-0 cursor-pointer items-center justify-center rounded-composer-pill-button outline-none transition-colors duration-150 hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&_svg]:pointer-events-none";
+  "relative isolate flex h-full shrink-0 items-center justify-center rounded-composer-pill-button outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:opacity-64 [&_svg]:pointer-events-none";
 
 /** A labeled primary action on the message-action pill; callers add height, padding and split edges. */
 function MessageActionPill({ className, type = "button", ...props }: ComponentProps<"button">) {
@@ -153,29 +153,29 @@ function useStopPhase(input: {
   return [stopPhase, setStopPhase] as const;
 }
 
-function StopGenerationButton({
-  stopPhase,
-  canOperateThread,
-  insidePendingAction,
-  preserveComposerFocusOnPointerDown,
-  onStopRequested,
-  onInterrupt,
-  leading = null,
-  onStopDictation,
-  stopDictationShortcutLabel = null,
-}: {
+interface StopGenerationSlotProps {
   stopPhase: StopPhase;
   canOperateThread: boolean;
   insidePendingAction: boolean;
   preserveComposerFocusOnPointerDown: boolean;
   onStopRequested: () => void;
   onInterrupt: () => void;
-  /** The dictation mic slot that shares the pill. */
-  leading?: ReactNode;
   /** Set while dictation records: the stop slot finishes it instead of interrupting. */
   onStopDictation?: (() => void) | undefined;
   stopDictationShortcutLabel?: string | null;
-}) {
+}
+
+/** The stop square; it sits in its own pill or at the end of the send pill. */
+function StopGenerationSlot({
+  stopPhase,
+  canOperateThread,
+  insidePendingAction,
+  preserveComposerFocusOnPointerDown,
+  onStopRequested,
+  onInterrupt,
+  onStopDictation,
+  stopDictationShortcutLabel = null,
+}: StopGenerationSlotProps) {
   const isStopDisabled = stopPhase === "pending";
   const stopLabel = onStopDictation
     ? "Stop voice input"
@@ -183,43 +183,51 @@ function StopGenerationButton({
       ? "Stopping"
       : "Stop generation";
   return (
-    <ComposerSendPill className={cn(insidePendingAction && "sm:h-7")}>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className={cn(COMPOSER_PILL_SLOT_CLASS_NAME, "w-8", insidePendingAction && "sm:w-6.5")}
+            onPointerDown={preserveComposerFocusOnPointerDown ? preventPointerFocus : undefined}
+            disabled={!onStopDictation && (!canOperateThread || isStopDisabled)}
+            onClick={() => {
+              if (onStopDictation) {
+                onStopDictation();
+                return;
+              }
+              if (!canOperateThread || isStopDisabled) return;
+              onStopRequested();
+              onInterrupt();
+            }}
+            aria-label={stopLabel}
+          />
+        }
+      >
+        <span aria-hidden className="size-2.5 rounded-xs bg-error-foreground" />
+      </TooltipTrigger>
+      <TooltipPopup>
+        {onStopDictation
+          ? `${stopLabel}${stopDictationShortcutLabel ? ` (${stopDictationShortcutLabel})` : ""}`
+          : stopPhase === "pending"
+            ? "Stopping…"
+            : "Interrupt"}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function StopGenerationButton({
+  leading = null,
+  ...props
+}: StopGenerationSlotProps & {
+  /** The dictation mic slot that shares the pill. */
+  leading?: ReactNode;
+}) {
+  return (
+    <ComposerSendPill className={cn(props.insidePendingAction && "sm:h-7")}>
       {leading}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              className={cn(
-                COMPOSER_PILL_SLOT_CLASS_NAME,
-                "w-8",
-                insidePendingAction && "sm:w-6.5",
-              )}
-              onPointerDown={preserveComposerFocusOnPointerDown ? preventPointerFocus : undefined}
-              disabled={!onStopDictation && (!canOperateThread || isStopDisabled)}
-              onClick={() => {
-                if (onStopDictation) {
-                  onStopDictation();
-                  return;
-                }
-                if (!canOperateThread || isStopDisabled) return;
-                onStopRequested();
-                onInterrupt();
-              }}
-              aria-label={stopLabel}
-            />
-          }
-        >
-          <span aria-hidden className="size-2.5 rounded-xs bg-error-foreground" />
-        </TooltipTrigger>
-        <TooltipPopup>
-          {onStopDictation
-            ? `${stopLabel}${stopDictationShortcutLabel ? ` (${stopDictationShortcutLabel})` : ""}`
-            : stopPhase === "pending"
-              ? "Stopping…"
-              : "Interrupt"}
-        </TooltipPopup>
-      </Tooltip>
+      <StopGenerationSlot {...props} />
     </ComposerSendPill>
   );
 }
@@ -332,16 +340,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       {...(stopsDictation ? { onStopDictation } : {})}
       stopDictationShortcutLabel={stopDictationShortcutLabel}
     />
-  );
-
-  // Keep the clicked target at the right edge even if typing changes the primary action.
-  const withStopButton = (action: ReactNode) => (
-    <>
-      {action}
-      {stopPhase === "pending" || stopPhase === "timedOut"
-        ? renderStopGenerationButton(false)
-        : null}
-    </>
   );
 
   if (pendingAction) {
@@ -501,19 +499,32 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <TooltipTrigger render={<span className="flex h-full" />}>{sendButton}</TooltipTrigger>
         <TooltipPopup>{submitTooltip}</TooltipPopup>
       </Tooltip>
+      {/* Keep the clicked stop at the right edge of the same pill when typing changes the action. */}
+      {stopPhase === "pending" || stopPhase === "timedOut" ? (
+        <StopGenerationSlot
+          stopPhase={stopPhase}
+          canOperateThread={canOperateThread}
+          insidePendingAction={false}
+          preserveComposerFocusOnPointerDown={preserveComposerFocusOnPointerDown}
+          onStopRequested={() => setStopPhase("pending")}
+          onInterrupt={onInterrupt}
+          {...(stopsDictation ? { onStopDictation } : {})}
+          stopDictationShortcutLabel={stopDictationShortcutLabel}
+        />
+      ) : null}
     </ComposerSendPill>
   );
   if (compactTokens === null) {
-    return withStopButton(
+    return (
       <>
         {children}
         {submit}
-      </>,
+      </>
     );
   }
   const compactTone = keepFullHistory ? "text-muted-foreground" : "text-warning-foreground";
 
-  return withStopButton(
+  return (
     <div data-chat-composer-compact-send="true" className="flex items-center gap-2">
       <Tooltip>
         <TooltipTrigger
@@ -546,7 +557,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       </Tooltip>
       {children}
       {submit}
-    </div>,
+    </div>
   );
 });
 
