@@ -361,6 +361,7 @@ const make = Effect.gen(function* () {
               attachments: message.attachments,
               ...(message.context ? { context: message.context } : {}),
               modelSelection,
+              projectId: input.projectId,
             })
             .pipe(
               Effect.map((result) => ({

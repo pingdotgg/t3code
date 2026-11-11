@@ -174,6 +174,15 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
+/**
+ * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
+ * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
+ * on the next turn without a restart.
+ */
+export function antigravityCliSessionMode(modeId: string): string {
+  return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
+}
+
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
 export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMode | undefined {
   switch (modeId) {
