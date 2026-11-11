@@ -95,12 +95,14 @@ export function ConfirmDialogHost() {
             Cancel
           </AlertDialogClose>
           {focusConfirm && confirmVariant === "default" ? (
-            <AlertDialogAction size="standard" onClick={onConfirm}>{confirmLabel}</AlertDialogAction>
+            <AlertDialogAction size="standard" onClick={onConfirm}>
+              {confirmLabel}
+            </AlertDialogAction>
           ) : (
-          <Button size="standard" variant={confirmVariant} onClick={onConfirm}>
-            {showDeleteIcon ? <Trash2Icon aria-hidden /> : null}
-            {confirmLabel}
-          </Button>
+            <Button size="standard" variant={confirmVariant} onClick={onConfirm}>
+              {showDeleteIcon ? <Trash2Icon aria-hidden /> : null}
+              {confirmLabel}
+            </Button>
           )}
         </AlertDialogFooter>
       </AlertDialogPopup>
