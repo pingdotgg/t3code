@@ -30,6 +30,11 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 - `setup.priorTurns[].toolCalls[].resultFile`: load a repository-relative file as the tool result instead of copying its contents into the case. An empty `prompt` resumes a top-level thread after its last prior tool result without adding a user message. Side-chat and subagent setups require a nonempty prompt.
 - `expect`: the checks, such as `calls`, `callsMustNot`, `maxCalls`, `order`, `shellMust`, `textMust`, `finalTextMust` (the last text, once the turn ended), and `linked`. A call's `args` match partially: `~text` is a case-insensitive substring, `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths. Device cases also use `device` to check every child brief, forbid raw UI commands, bound failed device actions per user turn, and require artifact paths in completed final answers. Secrets cases use `secret` (see [Secrets cases](#secrets-cases)).
 
+`setup.skills` can load any bundled skill ID from `packages/contracts/src/skills.ts` from this
+checkout's `.agents/skills` into the case context, as an already-selected skill.
+Use `--cases mcp-tool-use/cases/skills.ndjson --dry-run` to check those scenarios.
+This tests the loaded guidance; it does not test provider skill discovery.
+
 Check that the case builds with `--dry-run --case <id>`. Then run it on the text before your fix, where it must fail, and on the text after, where it must pass.
 
 ## Device manager cases

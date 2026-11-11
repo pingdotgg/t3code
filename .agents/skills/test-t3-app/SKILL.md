@@ -44,6 +44,7 @@ Stop verification and explain the blocker only if the tools are absent or
 
 Navigate to the complete startup pairing URL once with
 `preview_navigate`, then use `preview_snapshot` and T3's interaction tools.
+Wait for an authenticated app element before navigating away from pairing.
 If the token was consumed or expired, run `node apps/server/src/bin.ts pair`
 for a fresh one. Keep using the same tab.
 

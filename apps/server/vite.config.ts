@@ -1,4 +1,6 @@
 import "vite-plus/test/config";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- tsdown needs the asset path when it reads this config.
 import * as NodePath from "node:path";
 import { defineConfig, mergeConfig } from "vite-plus";
@@ -8,6 +10,7 @@ import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import rootPackageJson from "../../package.json" with { type: "json" };
 import packageJson from "./package.json" with { type: "json" };
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer.ts";
+import { loadBundledSkillSources } from "./src/skills/bundledSkillSources.ts";
 
 // NSIS install time tracks file count, not bytes.
 import {
@@ -18,6 +21,9 @@ import {
 export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
+const bundledSkillSources = await Effect.runPromise(
+  loadBundledSkillSources().pipe(Effect.provide(NodeServices.layer)),
+);
 const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version)
   ? "nightly"
   : "latest";
@@ -126,6 +132,7 @@ export default mergeConfig(
         js: "#!/usr/bin/env node\n",
       },
       define: {
+        __T3CODE_BUNDLED_SKILLS__: JSON.stringify(bundledSkillSources),
         __T3CODE_BUILD_CHANNEL__: JSON.stringify(cliBuildChannel),
         __T3CODE_TELEMETRY_CHANNEL__: JSON.stringify(telemetryChannel),
         __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.T3CODE_RELAY_URL?.trim() ?? ""),

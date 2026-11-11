@@ -1,4 +1,10 @@
 import {
+  BundledSkillsCatalog,
+  ManageBundledSkillInput,
+  ManagedSkill,
+  SkillManagementError,
+} from "./skills.ts";
+import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -505,6 +511,8 @@ export const WS_METHODS = {
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
+  serverGetBundledSkills: "server.getBundledSkills",
+  serverManageBundledSkill: "server.manageBundledSkill",
   serverGetNpmRelease: "server.getNpmRelease",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
@@ -848,6 +856,18 @@ const WsPeerLinksUnlinkRpc = Rpc.make(WS_METHODS.peerLinksUnlink, {
 const WsPeerLinksAnswerRequestRpc = Rpc.make(WS_METHODS.peerLinksAnswerRequest, {
   payload: PeerLinkRequestAnswerInput,
   error: Schema.Union([PeerLinkRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsServerGetBundledSkillsRpc = Rpc.make(WS_METHODS.serverGetBundledSkills, {
+  payload: Schema.Struct({}),
+  success: BundledSkillsCatalog,
+  error: Schema.Union([SkillManagementError, EnvironmentAuthorizationError]),
+});
+
+const WsServerManageBundledSkillRpc = Rpc.make(WS_METHODS.serverManageBundledSkill, {
+  payload: ManageBundledSkillInput,
+  success: ManagedSkill,
+  error: Schema.Union([SkillManagementError, EnvironmentAuthorizationError]),
 });
 
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
@@ -2094,6 +2114,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRunStorageCleanupRpc,
   WsServerGetStorageCleanupReportRpc,
   WsServerGetDatabaseStorageRpc,
+  WsServerGetBundledSkillsRpc,
+  WsServerManageBundledSkillRpc,
   WsServerReclaimDatabaseSpaceRpc,
   WsServerUpdateSettingsRpc,
   WsPeerLinksListRpc,
