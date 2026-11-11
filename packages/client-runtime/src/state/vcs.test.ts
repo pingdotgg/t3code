@@ -4,7 +4,10 @@ import {
   AuthSourceControlWriteScope,
   WS_METHODS,
   VcsProcessExitError,
+  type VcsListRefsInput,
   type VcsListRefsResult,
+  type VcsStatusResult,
+  type ServerConfig,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -32,11 +35,13 @@ import * as Persistence from "../platform/persistence.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
+import { createGitEnvironmentAtoms } from "./git.ts";
 
 import {
   commitVcsRefsRefresh,
   createVcsEnvironmentAtoms,
   makeCachedVcsRefsChanges,
+  resolveQuickAction,
 } from "./vcs.ts";
 import {
   invalidateCachedVcsRefs,
@@ -91,9 +96,10 @@ function session(client: WsRpcProtocolClient): RpcSession {
   return {
     client,
     initialConfig: Effect.never,
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+    subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
+    inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   };
 }
@@ -118,6 +124,83 @@ function cacheWithRefs(
     ...overrides,
   });
 }
+
+describe("branch subscriptions", () => {
+  it.effect.each([true, false])(
+    "shares and releases branch streams across session replacement (capability %s)",
+    (supported) =>
+      Effect.gen(function* () {
+        const released = yield* Queue.unbounded<string>();
+        let subscriptions = 0;
+        const clientFor = (refName: string, branchSupported: boolean) =>
+          ({
+            [branchSupported ? WS_METHODS.subscribeVcsBranch : WS_METHODS.subscribeVcsStatus]:
+              () => {
+                subscriptions += 1;
+                return Stream.concat(
+                  Stream.make(
+                    branchSupported
+                      ? { refName }
+                      : { _tag: "snapshot", local: status({ refName }), remote: null },
+                  ),
+                  Stream.never,
+                ).pipe(Stream.ensuring(Queue.offer(released, refName)));
+              },
+          }) as unknown as WsRpcProtocolClient;
+        const branchSession = (refName: string, branchSupported: boolean): RpcSession => ({
+          ...session(clientFor(refName, branchSupported)),
+          initialConfig: Effect.succeed({
+            environment: { capabilities: branchSupported ? { vcsBranchStatus: true } : {} },
+          } as ServerConfig),
+        });
+        const activeSession = yield* SubscriptionRef.make(
+          Option.some(branchSession("main", supported)),
+        );
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+          session: activeSession,
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        });
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          followStream: (_environmentId, stream) =>
+            Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+          ),
+        );
+        const atoms = createVcsEnvironmentAtoms(runtime);
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
+          Effect.sync(() => value.dispose()),
+        );
+        const target = { environmentId: TARGET.environmentId, input: { cwd: "/repo" } };
+        const first = yield* Stream.toPull(
+          AtomRegistry.toStreamResult(registry, atoms.branch(target)),
+        );
+        expect(yield* first).toEqual([{ refName: "main" }]);
+        const second = yield* Stream.toPull(
+          AtomRegistry.toStreamResult(registry, atoms.branch(target)),
+        );
+        expect(yield* second).toEqual([{ refName: "main" }]);
+        expect(subscriptions).toBe(1);
+        yield* SubscriptionRef.set(
+          activeSession,
+          Option.some(branchSession("external", !supported)),
+        );
+        expect(yield* Queue.take(released)).toBe("main");
+        expect(yield* first).toEqual([{ refName: "external" }]);
+        expect(yield* second).toEqual([{ refName: "external" }]);
+        registry.dispose();
+        expect(yield* Queue.take(released)).toBe("external");
+      }).pipe(Effect.scoped),
+  );
+});
 
 describe("cached VCS refs", () => {
   it("invalidates all ref streams in the mutated environment", () => {
@@ -150,6 +233,98 @@ describe("cached VCS refs", () => {
     });
     registry.dispose();
   });
+
+  it.effect("bypasses the server ref snapshot when a mounted list is invalidated", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requests = yield* Queue.unbounded<VcsListRefsInput>();
+        const client = {
+          [WS_METHODS.vcsListRefs]: (input: VcsListRefsInput) =>
+            Effect.sync(() => {
+              Queue.offerUnsafe(requests, input);
+              return LIVE_REFS;
+            }),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
+          _environmentId,
+          stream,
+        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          followStream,
+        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+          ),
+        );
+        const atoms = createVcsEnvironmentAtoms(runtime);
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            registry.mount(
+              atoms.listRefs({
+                environmentId: TARGET.environmentId,
+                input: { cwd: "/repo", limit: 100 },
+              }),
+            ),
+          ),
+          (unmount) => Effect.sync(unmount),
+        );
+
+        expect(yield* Queue.take(requests)).toEqual({ cwd: "/repo", limit: 100 });
+
+        invalidateVcsRefs(registry, TARGET);
+
+        expect(yield* Queue.take(requests)).toEqual({ cwd: "/repo", limit: 100, refresh: true });
+
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            registry.mount(
+              atoms.listRefs({
+                environmentId: TARGET.environmentId,
+                input: { cwd: "/other-repo", limit: 100 },
+              }),
+            ),
+          ),
+          (unmount) => Effect.sync(unmount),
+        );
+        expect(yield* Queue.take(requests)).toEqual({
+          cwd: "/other-repo",
+          limit: 100,
+          refresh: true,
+        });
+
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            registry.mount(
+              atoms.listRefs({
+                environmentId: TARGET.environmentId,
+                input: { cwd: "/other-repo", query: "release", limit: 100 },
+              }),
+            ),
+          ),
+          (unmount) => Effect.sync(unmount),
+        );
+        expect(yield* Queue.take(requests)).toEqual({
+          cwd: "/other-repo",
+          query: "release",
+          limit: 100,
+        });
+      }),
+    ),
+  );
 
   it.effect("does not repersist a refresh superseded by ref invalidation", () =>
     Effect.scoped(
@@ -220,6 +395,8 @@ describe("cached VCS refs", () => {
         const client = {
           [WS_METHODS.vcsPull]: () => Effect.fail(expectedError),
           [WS_METHODS.vcsRefreshStatus]: () => Effect.void,
+          [WS_METHODS.gitPreparePullRequestThread]: () =>
+            Effect.succeed({ branch: "feature/pr", worktreePath: null }),
         } as unknown as WsRpcProtocolClient;
         const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
           target: TARGET,
@@ -275,6 +452,17 @@ describe("cached VCS refs", () => {
         expect(AsyncResult.isSuccess(refreshResult)).toBe(true);
         expect(yield* Ref.get(clears)).toBe(2);
         expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
+
+        const prepareResult = yield* Effect.promise(() =>
+          createGitEnvironmentAtoms(runtime).preparePullRequestThread.run(registry, {
+            environmentId: TARGET.environmentId,
+            input: { cwd: "/repo", reference: "42", mode: "local" },
+          }),
+        );
+
+        expect(AsyncResult.isSuccess(prepareResult)).toBe(true);
+        expect(yield* Ref.get(clears)).toBe(3);
+        expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
       }),
     ),
   );
@@ -617,3 +805,47 @@ const grantedSessions = Atom.family((_id: EnvironmentId) =>
     }),
   ),
 );
+
+function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
+  return {
+    isRepo: true,
+    hasPrimaryRemote: true,
+    isDefaultRef: false,
+    refName: "feature/test",
+    hasWorkingTreeChanges: false,
+    workingTree: {
+      files: [],
+      insertions: 0,
+      deletions: 0,
+    },
+    hasUpstream: true,
+    aheadCount: 0,
+    behindCount: 0,
+    pr: null,
+    ...overrides,
+  };
+}
+
+describe("resolveQuickAction", () => {
+  it("commits local changes without pushing when the branch is behind upstream", () => {
+    const behind = status({ hasWorkingTreeChanges: true, behindCount: 2 });
+    const commit = { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
+    expect(resolveQuickAction(behind, false)).toEqual(commit);
+    expect(
+      resolveQuickAction(
+        {
+          ...behind,
+          pr: {
+            number: 13,
+            title: "Open PR",
+            url: "https://example.com/pr/13",
+            baseRef: "main",
+            headRef: "feature/test",
+            state: "open",
+          },
+        },
+        false,
+      ),
+    ).toEqual(commit);
+  });
+});

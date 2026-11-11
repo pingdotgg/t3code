@@ -13,10 +13,36 @@ import { observeResize } from "~/lib/observeResize";
 import { FileSurfaceAction, FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
 import { readBoundedDocument } from "./readBoundedDocument";
 import { openPdf } from "./pdfDocument";
+import {
+  currentPdfPage,
+  pdfFindIncludes,
+  pdfFindMatchRuns,
+  pdfPageOffsets,
+  pdfPageScrollTop,
+  pdfPageText,
+  pdfPageWidth,
+  pdfRestoredScrollTop,
+  PDF_MAX_ZOOM,
+  PDF_MIN_ZOOM,
+  stepPdfZoom,
+  visiblePdfPages,
+} from "./pdfLayout";
 import "./pdfViewer.css";
 
 const MAX_PAGES = 2000;
 const MAX_FIND_TEXT = 4 * 1024 * 1024;
+
+const MAX_POSITIONS = 50;
+type PdfPosition = PdfViewState & { width: number; ratios: readonly number[] };
+// Thread switches unmount the preview; retain only the most recent documents.
+const positions = new Map<string, PdfPosition>();
+
+export type PdfViewState = {
+  page: number;
+  offset: number;
+  zoom: number | null;
+  left: number;
+};
 
 function PdfPage(props: {
   document: PDFDocumentProxy;
@@ -29,7 +55,7 @@ function PdfPage(props: {
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
   const { document: pdf, index, width, onSize, onError } = props;
-  // oxlint-disable-next-line t3code/react-effect-budget -- Render the PDF page canvas and text layer, cancelling tasks and releasing pdf.js page resources on cleanup.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Render the PDF page canvas and text layer, cancelling tasks and releasing pdf.js page resources on cleanup.
   useEffect(() => {
     let cancelled = false;
     let paint: ReturnType<Awaited<ReturnType<PDFDocumentProxy["getPage"]>>["render"]> | undefined;
@@ -78,30 +104,17 @@ function PdfPage(props: {
       void Promise.allSettled([paint?.promise]).then(() => loadedPage?.cleanup());
     };
   }, [pdf, index, width, onSize, onError]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Highlight pdf.js-owned text nodes and observe asynchronous text layer mutations for the current search query.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Highlight pdf.js-owned text nodes and observe asynchronous text layer mutations for the current search query.
   useEffect(() => {
     const node = text.current;
     if (!node) return;
     const mark = () => {
-      const runs = Array.from(node.querySelectorAll('span[role="presentation"], br')).map(
-        (element) => ({
-          element,
-          text: element.tagName === "BR" ? "\n" : (element.textContent ?? "").toLowerCase(),
-        }),
+      const elements = Array.from(node.querySelectorAll('span[role="presentation"], br'));
+      const hits = pdfFindMatchRuns(
+        elements.map((element) => (element.tagName === "BR" ? "\n" : (element.textContent ?? ""))),
+        props.query,
       );
-      const text = runs.map((run) => run.text).join("");
-      const query = props.query.toLowerCase();
-      let match = query.trim() ? text.indexOf(query) : -1;
-      let offset = 0;
-      for (const run of runs) {
-        while (match !== -1 && match + query.length <= offset)
-          match = text.indexOf(query, match + query.length);
-        run.element.classList.toggle(
-          "pdf-find-match",
-          match !== -1 && match < offset + run.text.length,
-        );
-        offset += run.text.length;
-      }
+      elements.forEach((element, index) => element.classList.toggle("pdf-find-match", hits[index]));
     };
     mark();
     const observer = new MutationObserver(mark);
@@ -116,12 +129,24 @@ function PdfPage(props: {
   );
 }
 
-export default function PdfViewer(props: { src: string; title: string }) {
+export default function PdfViewer(props: {
+  src: string;
+  title: string;
+  positionKey?: string;
+  initialView?: PdfViewState;
+  onViewChange?: (view: PdfViewState) => void;
+}) {
+  const [savedPosition] = useState(() =>
+    props.positionKey === undefined ? undefined : positions.get(props.positionKey),
+  );
+  const [initialView] = useState<PdfViewState>(
+    () => savedPosition ?? props.initialView ?? { page: 0, offset: 0, zoom: null, left: 0 },
+  );
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  const [ratios, setRatios] = useState<number[]>([]);
-  const [zoom, setZoom] = useState<number | null>(null);
+  const [ratios, setRatios] = useState<readonly number[]>([]);
+  const [zoom, setZoom] = useState(initialView.zoom);
   const [pageWidth, setPageWidth] = useState(612);
   const [viewport, setViewport] = useState({ width: 600, height: 800 });
   const [scrollTop, setScrollTop] = useState(0);
@@ -133,7 +158,8 @@ export default function PdfViewer(props: { src: string; title: string }) {
   const scroll = useRef<HTMLDivElement>(null);
   const find = useRef<HTMLInputElement>(null);
   const zoomAnchor = useRef<{ page: number; offset: number; width: number } | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
+  const initialPage = initialView.page;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
   useEffect(() => {
     const controller = new AbortController();
     let disposed = false;
@@ -156,9 +182,22 @@ export default function PdfViewer(props: { src: string; title: string }) {
         if (document.numPages > MAX_PAGES)
           throw new Error("Preview limited to 2,000 pages. Save this PDF to read it in full.");
         const first = (await document.getPage(1)).getViewport({ scale: 1 });
+        const sizes = await Promise.all(
+          Array.from({ length: Math.min(initialPage + 1, document.numPages) }, async (_, index) => {
+            const size = (await document.getPage(index + 1)).getViewport({ scale: 1 });
+            return size.height / size.width;
+          }),
+        );
         if (controller.signal.aborted) return;
         setPageWidth(first.width);
-        setRatios(Array.from({ length: document.numPages }, () => first.height / first.width));
+        setRatios(
+          savedPosition?.ratios.length === document.numPages
+            ? savedPosition.ratios
+            : Array.from(
+                { length: document.numPages },
+                (_, index) => sizes[index] ?? first.height / first.width,
+              ),
+        );
         setPdf(document);
       })
       .catch((cause: unknown) => {
@@ -172,8 +211,8 @@ export default function PdfViewer(props: { src: string; title: string }) {
       clearTimeout(timeout);
       void task?.destroy();
     };
-  }, [props.src, revision]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Measure the PDF viewport before paint and observe resizes for fit-width sizing and visible-page selection.
+  }, [props.src, revision, initialPage, savedPosition]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the PDF viewport before paint and observe resizes for fit-width sizing and visible-page selection.
   useLayoutEffect(() => {
     const node = scroll.current;
     if (!node) return;
@@ -181,24 +220,10 @@ export default function PdfViewer(props: { src: string; title: string }) {
     update();
     return observeResize(node, update);
   }, []);
-  const fitWidth = Math.max(1, viewport.width - 32);
-  const scale = zoom ?? fitWidth / pageWidth;
-  const width = zoom === null ? fitWidth : pageWidth * zoom;
-  const offsets = (() => {
-    const result = [16];
-    for (const ratio of ratios) result.push(result[result.length - 1]! + width * ratio + 16);
-    return result;
-  })();
-  const current = Math.max(
-    0,
-    ratios.findIndex((_, index) => offsets[index + 1]! > scrollTop + 17),
-  );
-  const visible = ratios.flatMap((ratio, index) =>
-    offsets[index + 1]! >= scrollTop - viewport.height &&
-    offsets[index]! <= scrollTop + viewport.height * 2
-      ? [{ index, ratio }]
-      : [],
-  );
+  const { scale, width } = pdfPageWidth(viewport.width, pageWidth, zoom);
+  const offsets = pdfPageOffsets(ratios, width);
+  const current = currentPdfPage(offsets, ratios.length, scrollTop);
+  const visible = visiblePdfPages(ratios, offsets, scrollTop, viewport.height);
   // Stable callbacks let page canvases survive scroll and find updates.
   const [onSize] = useState(
     () => (index: number, ratio: number) =>
@@ -207,10 +232,41 @@ export default function PdfViewer(props: { src: string; title: string }) {
       ),
   );
   const jumpToPage = useEffectEvent((index: number) => {
-    scroll.current?.scrollTo({ top: Math.max(0, (offsets[index] ?? 16) - 16) });
+    scroll.current?.scrollTo({ top: pdfPageScrollTop(offsets, index) });
   });
+  const saveView = (node: HTMLDivElement, notify = true) => {
+    const page = currentPdfPage(offsets, ratios.length, node.scrollTop);
+    if (!pdf) return;
+    const view = {
+      page,
+      offset: Math.max(0, node.scrollTop - (offsets[page]! - 16)),
+      zoom,
+      left: node.scrollLeft,
+    };
+    if (notify) props.onViewChange?.(view);
+    if (props.positionKey !== undefined) {
+      positions.delete(props.positionKey);
+      positions.set(props.positionKey, { ...view, width, ratios });
+      const oldest = positions.keys().next();
+      if (positions.size > MAX_POSITIONS && !oldest.done) positions.delete(oldest.value);
+    }
+  };
+  const restoreView = useEffectEvent(() => {
+    const node = scroll.current;
+    if (!pdf || !node) return;
+    node.scrollTo({
+      top: pdfRestoredScrollTop(ratios, width, initialView, savedPosition?.width),
+      left: initialView.left,
+    });
+    setScrollTop(node.scrollTop);
+    saveView(node);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the saved PDF scroll position after the loaded document's page layout commits.
+  useLayoutEffect(() => {
+    if (pdf) restoreView();
+  }, [pdf]);
   const showPage = (index: number) => {
-    scroll.current?.scrollTo({ top: Math.max(0, (offsets[index] ?? 16) - 16) });
+    scroll.current?.scrollTo({ top: pdfPageScrollTop(offsets, index) });
   };
   const changeZoom = (value: number | null) => {
     zoomAnchor.current = {
@@ -220,20 +276,24 @@ export default function PdfViewer(props: { src: string; title: string }) {
     };
     setZoom(value);
   };
-  // oxlint-disable-next-line t3code/react-effect-budget -- Restore the DOM scroll anchor after the new zoom width has committed to page layout.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the DOM scroll anchor after the new zoom width has committed to page layout.
   useLayoutEffect(() => {
     const anchor = zoomAnchor.current;
     zoomAnchor.current = null;
-    if (!anchor || anchor.width === width) return;
-    scroll.current?.scrollTo({
-      top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
-    });
+    const node = scroll.current;
+    if (!node || !pdf) return;
+    if (anchor && anchor.width !== width) {
+      node.scrollTo({
+        top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
+      });
+    }
+    saveView(node, anchor !== null);
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Scroll to the first asynchronous search result after its measured page offsets have committed.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll to the first asynchronous search result after its measured page offsets have committed.
   useLayoutEffect(() => {
     if (matches.length) jumpToPage(matches[0]!);
   }, [matches]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Debounce pdf.js text extraction and cancel obsolete searches when the query or document changes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounce pdf.js text extraction and cancel obsolete searches when the query or document changes.
   useEffect(() => {
     if (!pdf || !query.trim()) {
       // oxlint-disable-next-line react/set-state-in-effect -- A blank query cancels the previous search.
@@ -256,15 +316,13 @@ export default function PdfViewer(props: { src: string; title: string }) {
           const pageSize = page.getViewport({ scale: 1 });
           sizes.push(pageSize.height / pageSize.width);
           const content = await page.getTextContent();
-          const text = content.items
-            .map((item) => ("str" in item ? item.str + (item.hasEOL ? "\n" : "") : ""))
-            .join("");
+          const text = pdfPageText(content.items);
           size += text.length;
           if (size > MAX_FIND_TEXT)
             throw new Error(
               "This PDF has too much text to search. Save it to search in another app.",
             );
-          if (text.toLowerCase().includes(query.toLowerCase())) found.push(index);
+          if (pdfFindIncludes(text, query)) found.push(index);
         }
         if (cancelled) return;
         setRatios(sizes);
@@ -305,8 +363,8 @@ export default function PdfViewer(props: { src: string; title: string }) {
         </FileSurfaceAction>
         <FileSurfaceAction
           label="Zoom out"
-          disabled={scale <= 0.25}
-          onPress={() => changeZoom(Math.max(0.25, scale - 0.25))}
+          disabled={scale <= PDF_MIN_ZOOM}
+          onPress={() => changeZoom(stepPdfZoom(scale, -1))}
         >
           <MinusIcon className="size-3.5" />
         </FileSurfaceAction>
@@ -315,8 +373,8 @@ export default function PdfViewer(props: { src: string; title: string }) {
         </span>
         <FileSurfaceAction
           label="Zoom in"
-          disabled={scale >= 3}
-          onPress={() => changeZoom(Math.min(3, scale + 0.25))}
+          disabled={scale >= PDF_MAX_ZOOM}
+          onPress={() => changeZoom(stepPdfZoom(scale, 1))}
         >
           <PlusIcon className="size-3.5" />
         </FileSurfaceAction>
@@ -370,8 +428,12 @@ export default function PdfViewer(props: { src: string; title: string }) {
         role="region"
         aria-label={props.title}
         tabIndex={0}
-        className="relative min-h-0 min-w-0 w-full flex-1 overflow-auto bg-muted/40"
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        className="relative min-h-0 min-w-0 w-full flex-1 overflow-auto scrollbar-gutter-stable bg-muted/40"
+        onScroll={(event) => {
+          const top = event.currentTarget.scrollTop;
+          setScrollTop(top);
+          saveView(event.currentTarget);
+        }}
         onKeyDown={(event) => {
           if ((event.ctrlKey || event.metaKey) && event.key === "f") {
             event.preventDefault();
