@@ -20,6 +20,8 @@ import {
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
   type OrchestratorMcpCreatedThread,
+  type OrchestratorMcpExecInput,
+  type OrchestratorMcpExecResult,
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpDeleteScheduledTaskInput,
@@ -176,6 +178,11 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpCreateThreadsInput,
   ) => Effect.Effect<OrchestratorMcpCreateThreadsResult, OrchestratorMcpFailure>;
+  /** One-shot harness run: wait for a report without an owned specialist seat. */
+  readonly exec: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpExecInput,
+  ) => Effect.Effect<OrchestratorMcpExecResult, OrchestratorMcpFailure>;
   readonly scheduleTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpScheduleTaskInput,
@@ -2951,6 +2958,187 @@ const make = Effect.gen(function* () {
         return { threads: created };
       },
     ),
+    exec: Effect.fn("OrchestratorMcpService.exec")(function* (callerScope, input) {
+      const { scope, parent } = yield* loadThreadCaller(callerScope, "t3_exec");
+      const parentRun = ThreadManagementService.latestActiveRun(parent);
+      if (
+        parentRun === undefined ||
+        parentRun.rootNodeId === null ||
+        parentRun.providerInstanceId !== scope.thread.providerInstanceId
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          "One-shot exec requires an active run owned by this MCP provider session.",
+        );
+      }
+      if (
+        input.target?.projectId !== undefined &&
+        input.target.projectId !== parent.thread.projectId
+      ) {
+        return yield* failure(
+          "invalid_request",
+          "A local exec runs in this thread's project. Omit target.projectId, or pass target.environmentId to run it in that environment's project.",
+        );
+      }
+      const providers = yield* loadProviders;
+      const key = yield* requestKey(input.clientRequestId);
+      const commandId = stableCommandId({
+        scope,
+        requestKey: key,
+        operation: "exec-create",
+      });
+      const threadId = stableThreadId({
+        scope,
+        requestKey: key,
+        index: 0,
+      });
+      const isRetryOfAcceptedCreation = yield* threadManagement.hasReceipt(commandId);
+      const committedThread = isRetryOfAcceptedCreation
+        ? yield* threadManagement
+            .getThreadShell(threadId)
+            .pipe(Effect.mapError(threadManagementFailure))
+        : null;
+      const target = yield* resolveTargetRechecking({
+        parent,
+        target:
+          committedThread === null
+            ? input.target
+            : {
+                ...input.target,
+                providerInstanceId: committedThread.modelSelection.instanceId,
+              },
+        providers,
+        skipProjectEnablementFilter: isRetryOfAcceptedCreation,
+      });
+      const runtimeMode = yield* resolveRuntimeMode(
+        parent.thread.runtimeMode,
+        input.runtimeMode,
+        target,
+      );
+      const interactionMode = yield* resolveInteractionMode(
+        parent.thread.interactionMode,
+        input.interactionMode,
+      );
+      yield* assertTargetEnabledForProject(parent, commandId, target);
+      const title = threadTitle({
+        parentTitle: parent.thread.title,
+        prompt: input.task,
+        title: input.title,
+        index: 0,
+      });
+      // Ordinary top-level thread: no app_owned subagent seat and no
+      // thread.created.record in the parent timeline. History stays on the thread.
+      yield* threadManagement
+        .dispatch({
+          type: "thread.create",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId,
+          threadId,
+          projectId: parent.thread.projectId,
+          title,
+          modelSelection: target.modelSelection,
+          runtimeMode,
+          interactionMode,
+          branch: parent.thread.branch,
+          worktreePath: parent.thread.worktreePath,
+          ...(parent.thread.linkOrigin === undefined
+            ? {}
+            : { linkOrigin: parent.thread.linkOrigin }),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            failure("orchestration_error", `Unable to start one-shot exec: ${errorMessage(error)}`),
+          ),
+        );
+      const resolvedModelSelection = (yield* threadManagement
+        .getThreadRecords(threadId, [])
+        .pipe(Effect.mapError(threadManagementFailure))).thread.modelSelection;
+      const dispatchCommandId = stableCommandId({
+        scope,
+        requestKey: key,
+        operation: "exec-dispatch",
+      });
+      yield* threadManagement
+        .dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: dispatchCommandId,
+          threadId,
+          senderThreadId: scope.thread.threadId,
+          messageId: stableMessageId({
+            scope,
+            requestKey: key,
+            index: 0,
+          }),
+          text: input.task,
+          attachments: [],
+          modelSelection: resolvedModelSelection,
+          dispatchMode: { type: "start_immediately" },
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "ThreadManagementProviderInstanceDisabledError"
+              ? threadManagementFailure(error)
+              : failure(
+                  "orchestration_error",
+                  `Unable to start one-shot exec: ${errorMessage(error)}`,
+                ),
+          ),
+        );
+      const started = yield* loadThreadRecords(threadId, ["runs"]);
+      const startedRun = started.runs.at(-1);
+      if (startedRun === undefined) {
+        return yield* failure(
+          "orchestration_error",
+          "One-shot exec did not produce a run to wait on.",
+        );
+      }
+      const waited = yield* threadManagement
+        .waitForThread({
+          projectId: parent.thread.projectId,
+          threadId,
+          runId: startedRun.id,
+          timeoutMs: Math.min(
+            MAX_WAIT_TIMEOUT_MS,
+            Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
+          ),
+        })
+        .pipe(Effect.mapError(threadManagementFailure));
+      const status = waited.run === null ? "idle" : runOutcome(waited.run);
+      const link = formatThreadLink(
+        { environmentId: scope.environmentId, threadId },
+        started.thread.title,
+      );
+      const settled =
+        waited.run !== null &&
+        !waited.timedOut &&
+        ThreadManagementService.isTerminalRunStatus(waited.run.status);
+      let report: string | null = null;
+      if (settled && waited.run !== null) {
+        const resultRecords = yield* threadManagement
+          .getThreadRecords(threadId, ["messages", "turnItems", "providerTurns"], {
+            messageRoles: ["assistant"],
+            messageRunIds: [waited.run.id],
+            turnItemRunIds: [waited.run.id],
+            turnItemTypes: ["assistant_message", "error"],
+          })
+          .pipe(Effect.mapError(threadManagementFailure));
+        const reportText = subagentResultForRun(resultRecords, waited.run).text.trim();
+        report = reportText.length > 0 ? reportText : null;
+      }
+      return {
+        threadId,
+        link,
+        runId: waited.run?.id ?? startedRun.id,
+        status,
+        report,
+        timedOut: waited.timedOut,
+        providerInstanceId: resolvedModelSelection.instanceId,
+        model: resolvedModelSelection.model,
+      } satisfies OrchestratorMcpExecResult;
+    }),
     listThreads: Effect.fn("OrchestratorMcpService.listThreads")(function* (scope, input) {
       const { parent } = yield* loadCaller(scope, []);
       const projectId = input.allProjects

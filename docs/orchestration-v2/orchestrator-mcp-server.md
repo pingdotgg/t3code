@@ -225,6 +225,15 @@ user's model order for other providers. `omittedModels` counts the rest, and the
 `search` input finds them, legacy models included. `delegate_task` still accepts
 any catalog model.
 
+### `t3_exec`
+
+One-shot coding harness run (OpenRig `rig exec`): creates an ordinary top-level
+thread, waits for its report, and returns it. Agent-only MCP (no execution
+dashboard). It does **not** create an `app_owned` child seat, so there is no
+durable specialist ownership and no `taskId` to poll; the run stays in ordinary
+thread history. Prefer `delegate_task` when the caller needs a lasting owned
+child to follow up on.
+
 ### `delegate_task`
 
 Creates a T3-owned child thread and immediately dispatches the supplied task

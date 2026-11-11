@@ -882,6 +882,7 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
 const HANDOFF_TOOLS: ReadonlySet<string> = new Set([
   "delegate_task",
   "create_threads",
+  "t3_exec",
   "t3_thread_launch",
   "t3_thread_send",
   "t3_thread_send_attachments",
