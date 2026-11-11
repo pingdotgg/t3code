@@ -463,6 +463,23 @@ const OrchestrationV2LastTitleRegeneration = Schema.Struct({
   completedAt: Schema.DateTimeUtc,
 });
 
+export const MAX_THREAD_MESSAGE_PINS = 50;
+export const THREAD_MESSAGE_PIN_EXCERPT_LENGTH = 160;
+
+/** A message the user pinned. `excerpt` lets clients list it before its page of history loads. */
+export const OrchestrationV2ThreadMessagePin = Schema.Struct({
+  messageId: MessageId,
+  runId: Schema.NullOr(RunId),
+  role: Schema.Literals(["user", "assistant"]),
+  excerpt: Schema.String,
+});
+export type OrchestrationV2ThreadMessagePin = typeof OrchestrationV2ThreadMessagePin.Type;
+
+// Pins only help navigation, so a shape this build cannot read becomes empty instead of failing the thread.
+const StoredThreadMessagePins = Schema.Array(OrchestrationV2ThreadMessagePin).pipe(
+  Schema.catchDecoding(() => Effect.succeedSome([])),
+);
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -514,6 +531,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
+  /** Oldest pin first. */
+  messagePins: Schema.optional(StoredThreadMessagePins),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1976,6 +1995,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.pin-reordered",
       "thread.active-reordered",
       "thread.tags-updated",
+      "thread.message-pins-updated",
       "thread.visited",
       "thread.marked-unread",
       "thread.metadata-updated",
@@ -2919,6 +2939,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.pin-reordered",
       "thread.active-reordered",
       "thread.tags-updated",
+      "thread.message-pins-updated",
       "thread.visited",
       "thread.marked-unread",
       "thread.pull-request-synced",
@@ -3172,6 +3193,13 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     tag: ThreadTag,
     tagged: Schema.Boolean,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.message-pin.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    pinned: Schema.Boolean,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin.reorder"),

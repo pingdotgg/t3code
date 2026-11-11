@@ -575,6 +575,12 @@ const seedRollbackHistory = Effect.gen(function* () {
       settledOverride: null,
       settledAt: null,
       lastVisitedAt: null,
+      messagePins: [1, 3].map((ordinal) => ({
+        messageId: MessageId.make(`rollback-history-message-${ordinal}`),
+        runId: runId(ordinal),
+        role: "assistant" as const,
+        excerpt: `Answer ${ordinal}`,
+      })),
       deletedAt: null,
     },
   });
@@ -870,6 +876,10 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
         assert.deepEqual(
           checkpoints.map((checkpoint) => checkpoint.status),
           ["ready", "ready", "ready", "stale", "stale", "stale", "stale", "stale", "ready"],
+        );
+        assert.deepEqual(
+          (yield* history.store.getThread(threadId)).messagePins?.map((pin) => pin.runId),
+          [runId(1)],
         );
       }),
     );

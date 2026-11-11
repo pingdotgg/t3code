@@ -2610,3 +2610,72 @@ it.effect("a running provider-turn update reads only the thread's queued and run
     );
   }),
 );
+it.effect("pins and unpins messages idempotently without counting as thread activity", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:message-pins");
+    const messageId = MessageId.make("message-pins-prompt");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-message-pins"),
+      threadId,
+      projectId: ProjectId.make("project:message-pins"),
+      title: "Pinned messages",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("dispatch-message-pins"),
+      threadId,
+      messageId,
+      text: `## **Remember**   [this](https://example.com)\n- \`detail\` ${"detail ".repeat(40)}`,
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const runId = (yield* projections.getThreadProjection(threadId)).runs[0]!.id;
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("interrupt-message-pins"),
+      threadId,
+      runId,
+    });
+    const before = yield* projections.getThread(threadId);
+    yield* TestClock.adjust("1 minute");
+
+    const setPin = (step: string, pinned: boolean, target = messageId) =>
+      orchestrator.dispatch({
+        type: "thread.message-pin.set",
+        commandId: CommandId.make(`message-pin-${step}`),
+        threadId,
+        messageId: target,
+        pinned,
+      });
+    yield* setPin("add", true);
+    yield* setPin("repeat", true);
+    const pinned = yield* projections.getThread(threadId);
+    assert.lengthOf(pinned.messagePins ?? [], 1);
+    const [pin] = pinned.messagePins ?? [];
+    assert.deepInclude(pin, { messageId, runId, role: "user" });
+    assert.isTrue(pin!.excerpt.startsWith("Remember this detail"));
+    assert.isAtMost(pin!.excerpt.length, 160);
+    assert.isTrue(pin!.excerpt.endsWith("…"));
+    // Pins are not activity, so the thread keeps its place in thread lists.
+    assert.deepEqual(pinned.updatedAt, before.updatedAt);
+
+    const unknown = yield* setPin("unknown", true, MessageId.make("missing")).pipe(Effect.flip);
+    assert.instanceOf(unknown, Orchestrator.OrchestratorDispatchError);
+
+    yield* setPin("remove", false);
+    yield* setPin("remove-again", false);
+    assert.deepEqual((yield* projections.getThread(threadId)).messagePins, []);
+  }).pipe(Effect.provide(layerTest)),
+);

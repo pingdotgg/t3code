@@ -45,6 +45,7 @@ import {
   dismissThreadUserInput,
   revertThreadCheckpoint,
   setThreadInteractionMode,
+  setThreadMessagePin,
   setThreadRuntimeMode,
   pinThread,
   reorderPinnedThread,
@@ -217,6 +218,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     unsnooze: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unsnooze",
       execute: unsnoozeThread,
+      scheduler,
+      concurrency,
+    }),
+    setMessagePin: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-message-pin",
+      execute: setThreadMessagePin,
       scheduler,
       concurrency,
     }),

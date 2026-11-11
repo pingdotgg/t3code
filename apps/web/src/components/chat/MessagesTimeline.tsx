@@ -77,6 +77,7 @@ import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
+import { useMessageRevealRequest } from "./messageReveal";
 import {
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -638,7 +639,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const toolCallVisibility =
     findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
-  const revealedMessageId = citationRequest?.citation.messageId ?? null;
+  const messageReveal = useMessageRevealRequest(routeThreadKey);
+  const revealedMessageId = citationRequest?.citation.messageId ?? messageReveal?.messageId ?? null;
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
@@ -704,6 +706,40 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (citedAttempt?.status === "superseded") {
       setExpandedAttemptIds((previous) =>
         previous.has(citedAttempt.id) ? previous : new Set(previous).add(citedAttempt.id),
+      );
+    }
+  }
+  // A revealed pinned message opens the fold it sits in once per request, as a citation does.
+  const [revealExpandedFor, setRevealExpandedFor] = useState<number | null>(null);
+  const revealedEntry =
+    messageReveal && revealExpandedFor !== messageReveal.key
+      ? timelineEntries.find(
+          (entry) => entry.kind === "message" && entry.message.id === messageReveal.messageId,
+        )
+      : undefined;
+  if (messageReveal && revealedEntry) {
+    setRevealExpandedFor(messageReveal.key);
+    const revealedRunId = (
+      findFoldRunIds ??
+      timelineTurnFoldRunIdsByEntryId({
+        timelineEntries,
+        latestRun,
+        runningRunId,
+        isWorking,
+        runlessWorkActive,
+        toolCallVisibility,
+        revealedMessageId,
+      })
+    ).get(revealedEntry.id);
+    if (revealedRunId) {
+      setExpandedRunIds((previous) =>
+        previous.has(revealedRunId) ? previous : new Set(previous).add(revealedRunId),
+      );
+    }
+    const revealedAttempt = revealedEntry.attempt;
+    if (revealedAttempt?.status === "superseded") {
+      setExpandedAttemptIds((previous) =>
+        previous.has(revealedAttempt.id) ? previous : new Set(previous).add(revealedAttempt.id),
       );
     }
   }
@@ -792,6 +828,25 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const listOpenedOn = nextOpening.mounted ? nextOpening.identity : null;
   const viewportRef = useRef<TimelineViewport | null>(null);
   const navigateTimeline = () => viewportRef.current?.navigate({ releasesFollow: true });
+  const revealRowIndex = messageReveal
+    ? rows.findIndex((row) => row.kind === "message" && row.message.id === messageReveal.messageId)
+    : -1;
+  const scrolledRevealKeyRef = useRef<number | null>(null);
+  const scrollToRevealedRow = useEffectEvent((key: number, index: number) => {
+    if (scrolledRevealKeyRef.current === key) return;
+    scrolledRevealKeyRef.current = key;
+    navigateTimeline();
+    void listRef.current?.scrollToIndex({
+      index,
+      animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      viewOffset: 24,
+    });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls LegendList imperatively once a revealed pinned message has a row
+  useEffect(() => {
+    if (messageReveal && revealRowIndex >= 0)
+      scrollToRevealedRow(messageReveal.key, revealRowIndex);
+  }, [messageReveal, revealRowIndex]);
   const restoreReady = restoringThreadPosition && rows.length > 0;
   // Z: syncs LegendList's scroll position with which thread it shows. The list
   // is not keyed per thread and reports no "new data" event, and the restore

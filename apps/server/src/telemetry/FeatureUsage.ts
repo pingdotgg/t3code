@@ -34,6 +34,8 @@ const COMMAND_FEATURES: {
   "thread.archive": () => ({ feature: "thread.archive" }),
   "thread.snooze": () => ({ feature: "thread.snooze" }),
   "thread.pin": () => ({ feature: "thread.pin" }),
+  "thread.message-pin.set": (command) =>
+    use("thread.message_pin.set", command.pinned ? "on" : "off"),
   "thread.settle": () => ({ feature: "thread.settle" }),
   "thread.pull-request.link": () => ({ feature: "thread.pull_request.link" }),
   "thread.pull-request.watch": (command) =>
