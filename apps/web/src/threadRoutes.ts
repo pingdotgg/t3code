@@ -45,9 +45,9 @@ export function resolveThreadRouteRenderState(input: {
   if (input.serverThreadExists || input.unlistedThreadDetail.status === "deleted") {
     return "missing";
   }
-  // The shell omits new and archived threads; the thread's detail decides.
+  // The shell omits new and archived threads; only the server's detail decides, not the cache.
   const projection = Option.getOrNull(input.unlistedThreadDetail.data);
-  if (projection === null) {
+  if (projection === null || input.unlistedThreadDetail.status !== "live") {
     return "loading";
   }
   return projection.thread.deletedAt !== null ? "missing" : "ready";

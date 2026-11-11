@@ -126,6 +126,17 @@ describe("threadRoutes", () => {
         },
       }),
     ).toBe("loading");
+    // A persisted cache can still hold a thread deleted since; only the server's answer opens it.
+    expect(
+      resolveThreadRouteRenderState({
+        ...route,
+        unlistedThreadDetail: {
+          ...EMPTY_ENVIRONMENT_THREAD_STATE,
+          status: "cached",
+          data: Option.some(makeThreadProjectionFixture()),
+        },
+      }),
+    ).toBe("loading");
     expect(
       resolveThreadRouteRenderState({
         ...route,
