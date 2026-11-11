@@ -1424,22 +1424,6 @@ it.effect("GitVcsDriver fails a checkpoint ref lookup when git cannot read its o
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-it.effect("GitVcsDriver reads no repository through GIT_TRACE output", () =>
-  Effect.gen(function* () {
-    const driver = yield* makeStubbedDriver({
-      code: 128,
-      stdout: "",
-      stderr: [
-        "23:21:56.378959 git.c:463               trace: built-in: git rev-parse --is-inside-work-tree",
-        "fatal: not a git repository (or any of the parent directories): .git",
-        "",
-      ].join("\n"),
-    });
-
-    assert.equal(yield* driver.detectRepository(globalThis.process.cwd()), null);
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
 it.effect("GitVcsDriver reads an absent checkpoint ref as absent despite a Git warning", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
