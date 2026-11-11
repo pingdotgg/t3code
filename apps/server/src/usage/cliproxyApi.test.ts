@@ -373,6 +373,59 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("reads Claude reset credits the way Claude Code requests them", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        // Anthropic returns cedar_ember only when asked, and grants only to current CLI user agents.
+        upstream: (request) => {
+          const url = new URL(request.url!);
+          const userAgent = request.header?.["User-Agent"] ?? "";
+          const current = /^claude-cli\/\S+ \(external, cli\)$/.test(userAgent);
+          return {
+            status: 200,
+            body: {
+              five_hour: { utilization: 10, resets_at: null },
+              seven_day: { utilization: 100, resets_at: "2099-01-01T00:00:00Z" },
+              ...(url.searchParams.get("cedar_ember") === "1"
+                ? {
+                    cedar_ember: current
+                      ? {
+                          eligible: true,
+                          next_grant_id: "grant_a",
+                          grants: [
+                            {
+                              id: "grant_a",
+                              resets_left: 1,
+                              usable_now: true,
+                              ends_at: "2099-01-01T00:00:00Z",
+                              clears: ["five_hour", "seven_day"],
+                            },
+                            {
+                              id: "grant_b",
+                              resets_left: 1,
+                              usable_now: true,
+                              ends_at: "2099-02-01T00:00:00Z",
+                              clears: ["five_hour", "seven_day"],
+                            },
+                          ],
+                        }
+                      : { eligible: false, grants: [] },
+                  }
+                : { cedar_ember: null }),
+            },
+          };
+        },
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result[0]?.usageLimits.resetCredits).toMatchObject({
+        availableCount: 2,
+        nextCreditId: "grant_a",
+      });
+    }),
+  );
+
   it.effect.each([
     {
       name: "spend budget",
