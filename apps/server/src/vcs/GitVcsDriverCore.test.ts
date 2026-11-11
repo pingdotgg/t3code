@@ -496,11 +496,15 @@ it.effect.each([
         assert.isTrue(spawnedArgs.some((args) => args.includes("--git-common-dir")));
         const siblingRefs = yield* driver.listRefs({ cwd: siblingPath });
         const createdRef = siblingRefs.refs.find((ref) => ref.name === "feature/cache-created");
-        assert.isDefined(createdRef?.worktreePath);
-        assert.equal(
-          NodeFS.realpathSync.native(createdRef!.worktreePath!),
-          NodeFS.realpathSync.native(worktreePath),
-        );
+        if (hookExitCode === 0) {
+          assert.isDefined(createdRef?.worktreePath);
+          assert.equal(
+            NodeFS.realpathSync.native(createdRef!.worktreePath!),
+            NodeFS.realpathSync.native(worktreePath),
+          );
+        } else {
+          assert.isUndefined(createdRef);
+        }
         assert.isTrue(siblingRefs.hasPrimaryRemote);
         assert.isTrue(siblingRefs.refs.find((ref) => ref.name === "cache-sibling")?.current);
         const statusAfter = yield* driver.statusDetailsLocal(siblingPath);
@@ -4645,6 +4649,44 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             `${expected}\n`,
           );
         }
+      }),
+    );
+
+    it.effect("reports a failed post-checkout hook's output and rolls back for a retry", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const hook = path.join(cwd, ".git/hooks/post-checkout");
+        yield* fs.writeFileString(
+          hook,
+          "#!/bin/sh\n" +
+            "echo \"This repository is configured for Git LFS but 'git-lfs' was not found on your path.\" >&2\n" +
+            "echo 'see https://user:hunter2@example.com/lfs' >&2\n" +
+            "exit 2\n",
+        );
+        yield* fs.chmod(hook, 0o755);
+        const input = {
+          cwd,
+          path: path.join(yield* makeTmpDir("git-worktrees-"), "retry"),
+          refName: initialBranch,
+          newRefName: "t3/retry",
+        };
+
+        const error = yield* driver.createWorktree(input).pipe(Effect.flip);
+
+        assert.include(error.message, "'git-lfs' was not found on your path.");
+        assert.include(error.message, "https://<redacted>@example.com/lfs");
+        assert.notInclude(error.message, "hunter2");
+        assert.notInclude(error.message, "Preparing worktree");
+        assert.isFalse(yield* fs.exists(input.path));
+        assert.notInclude(yield* git(cwd, ["branch", "--list", "t3/retry"]), "t3/retry");
+
+        yield* fs.writeFileString(hook, "#!/bin/sh\nexit 0\n");
+        const created = yield* driver.createWorktree(input);
+        assert.equal(yield* git(created.worktree.path, ["branch", "--show-current"]), "t3/retry");
       }),
     );
 
