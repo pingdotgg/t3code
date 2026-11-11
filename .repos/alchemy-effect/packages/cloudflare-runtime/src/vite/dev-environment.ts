@@ -1,10 +1,10 @@
-import type { ExportTypes } from "../rolldown/export-types.ts";
-import { isExportTypes } from "../rolldown/export-types.ts";
-import { MODULE_REFERENCE_REGEX } from "../rolldown/plugins/index.ts";
 import assert from "node:assert";
 import { URL as NodeURL } from "node:url";
 import * as vite from "vite";
 import type { FetchFunctionOptions } from "vite/module-runner";
+import type { ExportTypes } from "../rolldown/export-types.ts";
+import { isExportTypes } from "../rolldown/export-types.ts";
+import { MODULE_REFERENCE_REGEX } from "../rolldown/plugins/index.ts";
 import {
   ENVIRONMENT_NAME_HEADER,
   EXPORT_TYPES_EVENT,
@@ -34,10 +34,7 @@ export class DistilledDevEnvironment extends vite.DevEnvironment {
     // The Worker ambient declaration hides Bun's headers overload when both
     // runtime type libraries are loaded by the consolidated package config.
     const ws = new (WebSocket as unknown as {
-      new (
-        url: string,
-        options: { headers: Record<string, string> },
-      ): WebSocket;
+      new (url: string, options: { headers: Record<string, string> }): WebSocket;
     })(url.toString(), {
       headers: { [ENVIRONMENT_NAME_HEADER]: this.name },
     });
@@ -48,11 +45,7 @@ export class DistilledDevEnvironment extends vite.DevEnvironment {
       ws.addEventListener("error", (event) => {
         // Depending on which global WebSocket type wins (bun-types vs
         // @types/node's undici), the event may or may not carry `error`.
-        reject(
-          "error" in event
-            ? event.error
-            : new Error("WebSocket connection error"),
-        );
+        reject("error" in event ? event.error : new Error("WebSocket connection error"));
       });
     });
     this.transport.ws = ws;

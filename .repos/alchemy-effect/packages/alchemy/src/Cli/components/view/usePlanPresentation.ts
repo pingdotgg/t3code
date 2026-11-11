@@ -1,9 +1,4 @@
-import {
-  measureElement,
-  useProgress,
-  useTitle,
-  type DOMElement,
-} from "@alchemy.run/sigil";
+import { measureElement, useProgress, useTitle, type DOMElement } from "@alchemy.run/sigil";
 import { useLayoutEffect, useRef, useState } from "@alchemy.run/sigil/react";
 import { useTerminalSize } from "../ui/index.ts";
 import type { PlanTree, PlanTreeState } from "./PlanTree.ts";
@@ -25,21 +20,14 @@ export const usePlanPresentation = (options: {
   useProgress(
     mode === "apply"
       ? {
-          state:
-            outcome === "failure" || failures > 0
-              ? "error"
-              : busy
-                ? "normal"
-                : "inactive",
+          state: outcome === "failure" || failures > 0 ? "error" : busy ? "normal" : "inactive",
           value: total === 0 ? undefined : (completed / total) * 100,
         }
       : { state: "inactive" },
   );
   const titleProgress = settled || total === 0 ? "" : ` ${completed}/${total}`;
   const titleDetail = tree.titleDetail ? ` · ${tree.titleDetail}` : "";
-  useTitle(
-    mode === "apply" ? `${label}${titleProgress}${titleDetail}` : undefined,
-  );
+  useTitle(mode === "apply" ? `${label}${titleProgress}${titleDetail}` : undefined);
 
   const beforeRef = useRef<DOMElement>(null);
   const summaryRef = useRef<DOMElement>(null);
@@ -47,8 +35,7 @@ export const usePlanPresentation = (options: {
   const afterRef = useRef<DOMElement>(null);
   const [chromeRows, setChromeRows] = useState<number>();
   const { rows: terminalRows } = useTerminalSize();
-  const showControls =
-    mode === "apply" || (!collapsed && (collapsible || hasFooter));
+  const showControls = mode === "apply" || (!collapsed && (collapsible || hasFooter));
 
   useLayoutEffect(() => {
     if (collapsed || viewport !== "virtual") return;
@@ -66,10 +53,7 @@ export const usePlanPresentation = (options: {
 
   const lineBudget =
     viewport === "virtual"
-      ? Math.max(
-          1,
-          terminalRows - (mode === "apply" ? 3 : 0) - (chromeRows ?? 8),
-        )
+      ? Math.max(1, terminalRows - (mode === "apply" ? 3 : 0) - (chromeRows ?? 8))
       : Number.POSITIVE_INFINITY;
 
   return {

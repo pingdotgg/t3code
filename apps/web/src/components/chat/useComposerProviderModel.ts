@@ -70,6 +70,7 @@ export function useComposerProviderModel(
     providers: providerStatuses,
     selectedProvider,
     selectedInstanceId,
+    requestedInstanceId: selection.requestedInstanceId,
     threadModelSelection,
     projectModelSelection,
     settings,
@@ -81,7 +82,6 @@ export function useComposerProviderModel(
     models: selectedProviderModels,
     promptInjectionState,
     modelOptions: modelState.modelOptions?.[selectedInstanceId],
-    planModeEnabled: settings.planModeEnabled,
   });
   return {
     providerInstanceEntries,

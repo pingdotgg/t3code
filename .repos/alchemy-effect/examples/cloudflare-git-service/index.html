@@ -12,8 +12,7 @@
           const stored = localStorage.getItem("theme");
           const dark =
             stored === "dark" ||
-            (stored !== "light" &&
-              matchMedia("(prefers-color-scheme: dark)").matches);
+            (stored !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
           document.documentElement.classList.toggle("dark", dark);
         } catch {
           /* storage disabled — leave the default (light) */
