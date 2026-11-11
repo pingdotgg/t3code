@@ -342,27 +342,38 @@ it("pastes arithmetic stars verbatim and still styles pasted markdown", async ()
   expect(editor.state.doc.textContent).toBe("a bold and soft word");
 });
 
-it("keeps dropped arithmetic verbatim and focuses the editor", async () => {
+it("parses markdown dropped from outside, keeps dropped arithmetic verbatim, and focuses", async () => {
   await using screen = await mountEditor("", true, []);
   const { editor } = screen;
-  const code = "signal = (7 * 2**3 * 5)**4";
-  await act(async () => {
-    editor.view.dom.blur();
-    const dataTransfer = new DataTransfer();
-    dataTransfer.setData("text/plain", code);
-    const { left, top } = editor.view.coordsAtPos(1);
-    editor.view.dom.dispatchEvent(
-      new DragEvent("drop", {
-        dataTransfer,
-        clientX: left,
-        clientY: top + 1,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-  });
-  expect(serializeEditorDoc(editor.state.doc).value).toBe(code);
+  const drop = async (text: string) => {
+    await act(async () => {
+      editor.commands.clearContent();
+      editor.view.dom.blur();
+      const dataTransfer = new DataTransfer();
+      dataTransfer.setData("text/plain", text);
+      const { left, top } = editor.view.coordsAtPos(1);
+      editor.view.dom.dispatchEvent(
+        new DragEvent("drop", {
+          dataTransfer,
+          clientX: left,
+          clientY: top + 1,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+  };
+  await drop("a **bold** and *soft* word");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("a **bold** and *soft* word");
+  expect(editor.state.doc.textContent).toBe("a bold and soft word");
   expect(editor.view.hasFocus()).toBe(true);
+  const code = "signal = (7 * 2**3 * 5)**4";
+  await drop(code);
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(code);
+  // A drag that started inside the editor is ProseMirror's move, not an external text drop.
+  editor.view.dragging = { slice: editor.state.doc.slice(0, 0), move: false };
+  await drop("a **bold** word");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("");
 });
 
 it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
