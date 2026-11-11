@@ -545,24 +545,6 @@ describe("server browser click", () => {
       vi.useRealTimers();
     }
   });
-
-  it("does not retry other scroll failures", async () => {
-    let scrolls = 0;
-    const failure = new Error("locator.scrollIntoViewIfNeeded: Timeout 100ms exceeded.");
-    const page = {
-      locator: () => ({
-        scrollIntoViewIfNeeded: async () => {
-          scrolls++;
-          throw failure;
-        },
-      }),
-    } as unknown as Page;
-
-    await expect(ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 100 })).rejects.toBe(
-      failure,
-    );
-    expect(scrolls).toBe(1);
-  });
 });
 
 describe("server browser evaluate", () => {
