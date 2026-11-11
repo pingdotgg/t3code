@@ -16,28 +16,29 @@ export function isLineInFileDiff(
 
 export type DiffFoldOverride = "expanded" | "folded" | null;
 
-/** Keep fold choices relative to the toolbar so later pages inherit Fold all. */
+/** The reader's own fold choice per file. It is absolute, so a Viewed mark loading later keeps it. */
+export type FileDiffFoldChoices = ReadonlyMap<string, boolean>;
+
+/**
+ * A reader's own choice wins. Otherwise the toolbar decides, and a file still marked Viewed
+ * starts folded. Fold all and Expand all clear the choices, so later pages follow the toolbar.
+ */
 export function isFileDiffCollapsed(
   fileKey: string,
   foldOverride: DiffFoldOverride,
-  toggledFileKeys: ReadonlySet<string>,
+  choices: FileDiffFoldChoices,
+  viewed = false,
 ): boolean {
-  const foldedByDefault = foldOverride === "folded";
-  return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
+  return choices.get(fileKey) ?? (foldOverride === "folded" || viewed);
 }
 
-export function toggleFileDiffFoldForViewed(
+export function withFileDiffFold(
+  choices: FileDiffFoldChoices,
   fileKey: string,
-  viewed: boolean,
-  foldOverride: DiffFoldOverride,
-  toggledFileKeys: ReadonlySet<string>,
-): ReadonlySet<string> {
-  if (isFileDiffCollapsed(fileKey, foldOverride, toggledFileKeys) === viewed)
-    return toggledFileKeys;
-  const next = new Set(toggledFileKeys);
-  if (next.has(fileKey)) next.delete(fileKey);
-  else next.add(fileKey);
-  return next;
+  collapsed: boolean,
+): FileDiffFoldChoices {
+  if (choices.get(fileKey) === collapsed) return choices;
+  return new Map(choices).set(fileKey, collapsed);
 }
 
 export function getFileViewedRange<T extends { readonly fileKey: string }>(

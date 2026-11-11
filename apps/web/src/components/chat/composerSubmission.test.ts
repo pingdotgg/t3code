@@ -12,6 +12,7 @@ import {
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  isComposerSubmissionBlocked,
   getComposerPromptLengthValidationMessage,
   serializeComposerTray,
   submitComposerDraft,
@@ -239,4 +240,31 @@ it("retains tray-inclusive limit errors until the tray is shortened", () => {
     result.validationMessage,
   );
   expect(getComposerPromptLengthValidationMessage(prompt, [])).toBeNull();
+});
+
+describe("isComposerSubmissionBlocked", () => {
+  const sendBlocked = {
+    noProviderAvailable: true,
+    sendDisabledReason: "Messages loading",
+    attachmentBlockReason: null,
+    environmentUnavailable: false,
+  };
+
+  // regression: #9318
+  it("lets a pending answer through while provider-turn sends are blocked", () => {
+    expect(
+      isComposerSubmissionBlocked({ ...sendBlocked, submissionTarget: "pending-user-input" }),
+    ).toBe(false);
+    expect(isComposerSubmissionBlocked({ ...sendBlocked, submissionTarget: "provider-turn" })).toBe(
+      true,
+    );
+  });
+
+  it("still blocks a pending answer on its attachments or a lost connection", () => {
+    const answer = { ...sendBlocked, submissionTarget: "pending-user-input" as const };
+    expect(
+      isComposerSubmissionBlocked({ ...answer, attachmentBlockReason: "Attach the file again" }),
+    ).toBe(true);
+    expect(isComposerSubmissionBlocked({ ...answer, environmentUnavailable: true })).toBe(true);
+  });
 });
