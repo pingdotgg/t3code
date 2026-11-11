@@ -19,11 +19,13 @@ import {
   type NetworkRosterReport,
   NetworkMembers,
   followNetworkRoster,
-  followedNetwork,
+  followedNetworks,
   makeNetworkMemberRenewals,
   makeNetworkMembers,
   openNetworkMember,
+  openingHosts,
   releaseNetworkMember,
+  unboundMembers,
 } from "./networkMembers.ts";
 
 const studio = EnvironmentId.make("env-studio");
@@ -35,7 +37,7 @@ const app = "app-phone";
 const member = (environmentId: EnvironmentId, access: TailnetDeviceAccess): NetworkMember => ({
   environmentId,
   label: environmentId,
-  nodeId: null,
+  nodeId: `node-${environmentId}`,
   access,
   updatedAt: { wallMs: 1, counter: 0, node: environmentId },
 });
@@ -237,20 +239,19 @@ describe("followNetworkRoster", () => {
         ],
       });
 
-      expect(followedNetwork(catalog.records(), [other, off, pairing, appRevoked])).toEqual({
-        appId: app,
-        reports: [],
-      });
+      // The other network is followed on its own; none of these hosts speaks for this one.
+      expect(followedNetworks([other, off, pairing, appRevoked])).toEqual([
+        { appId: "app-other", reports: [other] },
+      ]);
       // A host revoking this app is a positive signal; see "old network revoke then new join".
       yield* catalog.follow([other, off, pairing]);
       expect(catalog.records()).toEqual([record(laptop, studio)]);
       expect(catalog.forgotten).toEqual([]);
 
-      // With no records yet, the client follows one network (the smallest app id), not both.
-      expect(followedNetwork([], [report(studio, []), other])).toEqual({
-        appId: "app-other",
-        reports: [other],
-      });
+      // Each network follows its own hosts: the other one's revocation of the laptop is not ours.
+      expect(followedNetworks([report(studio, []), other]).map((network) => network.appId)).toEqual(
+        ["app-other", app],
+      );
     }),
   );
 
@@ -331,9 +332,9 @@ describe("leaving a network", () => {
       expect(catalog.records()).toEqual([
         { environmentId: desk, label: desk, via: third, appId: appNew },
       ]);
-      expect(
-        followedNetwork(catalog.records(), [withApps(third, [], appNew, "full-access")]),
-      ).toMatchObject({ appId: appNew });
+      expect(followedNetworks([withApps(third, [], appNew, "full-access")])).toMatchObject([
+        { appId: appNew },
+      ]);
       // Neither the hand-paired box nor the opened laptop's saved connection is forgotten.
       expect(catalog.forgotten).toEqual([]);
       expect([...catalog.saved]).toEqual([studio, laptop, box]);
@@ -378,7 +379,7 @@ describe("leaving a network", () => {
         { ...record(laptop, studio), appId: appNew },
         { ...record(vps, studio), appId: appNew },
       ]);
-      expect(followedNetwork(catalog.records(), [repaired]).reports).toEqual([repaired]);
+      expect(followedNetworks([repaired])).toEqual([{ appId: appNew, reports: [repaired] }]);
       expect(catalog.forgotten).toEqual([]);
     }),
   );
@@ -401,6 +402,85 @@ describe("leaving a network", () => {
       expect(catalog.records()).toEqual([]);
       expect(catalog.forgotten).toEqual([]);
       expect([...catalog.saved]).toEqual([studio, box]);
+    }),
+  );
+});
+
+describe("round 4", () => {
+  const desk = EnvironmentId.make("env-desk");
+  const third = EnvironmentId.make("env-third");
+  const appOther = "app-other";
+  const inOther = (host: EnvironmentId, devices: ReadonlyArray<TailnetDevice>) =>
+    report(host, devices, { callerAppId: appOther });
+
+  it.effect("opens through a host this session may write on, without an app id", () =>
+    Effect.gen(function* () {
+      const catalog = yield* makeCatalog();
+      const desktop = report(studio, [device(laptop)], { callerAppId: null, apps: [] });
+      const minted: Array<EnvironmentId> = [];
+      const opened = yield* openNetworkMember({
+        environmentId: laptop,
+        hosts: openingHosts([desktop], (host) => host === studio),
+        mint: (via, environmentId) =>
+          Effect.sync(() => void minted.push(via)).pipe(Effect.as(credential(environmentId))),
+        register: (value) => Effect.succeed(value.environmentId),
+      }).pipe(Effect.provideService(NetworkMembers, catalog.members));
+
+      expect(opened).toBe(laptop);
+      expect(minted).toEqual([studio]);
+      // Without write access the same session is not asked.
+      expect(openingHosts([desktop], () => false)).toEqual([]);
+    }),
+  );
+
+  it.effect("a foreign host listing one record's machine repins only what it lists live", () =>
+    Effect.gen(function* () {
+      const catalog = yield* makeCatalog([record(laptop, studio), record(vps, studio)]);
+      catalog.saved.add(studio).add(laptop);
+
+      // The pinned network's hosts are offline; the foreign host holds a tombstone of the laptop.
+      yield* catalog.follow([inOther(third, [device(laptop, "revoked"), device(desk)])]);
+      expect(catalog.records().filter((entry) => entry.appId === app)).toEqual([
+        record(laptop, studio),
+        record(vps, studio),
+      ]);
+
+      // The laptop moved to the foreign network: only it follows there.
+      yield* catalog.follow([inOther(third, [device(laptop), device(desk)])]);
+      expect(catalog.records()).toEqual([
+        { ...record(laptop, third), appId: appOther },
+        record(vps, studio),
+        { ...record(desk, third), appId: appOther },
+      ]);
+      expect(catalog.forgotten).toEqual([]);
+    }),
+  );
+
+  it.effect("follows every network that still takes this app", () =>
+    Effect.gen(function* () {
+      const catalog = yield* makeCatalog();
+      catalog.saved.add(studio).add(third);
+
+      yield* catalog.follow([report(studio, [device(laptop)]), inOther(third, [device(desk)])]);
+      expect(catalog.records()).toEqual([
+        { ...record(desk, third), appId: appOther },
+        record(laptop, studio),
+      ]);
+    }),
+  );
+
+  it.effect("keeps a member no machine can open yet out of the records", () =>
+    Effect.gen(function* () {
+      const catalog = yield* makeCatalog();
+      catalog.saved.add(studio);
+      const unbound = {
+        ...device(laptop),
+        member: { ...member(laptop, "full-access"), nodeId: null },
+      };
+
+      yield* catalog.follow([report(studio, [unbound, device(vps)])]);
+      expect(catalog.records()).toEqual([record(vps, studio)]);
+      expect(unboundMembers([report(studio, [unbound, device(vps)])])).toEqual(new Set([laptop]));
     }),
   );
 });

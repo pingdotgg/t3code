@@ -16,9 +16,11 @@ import {
   type NetworkRosterReport,
   NetworkMembers,
   followNetworkRoster,
-  followedNetwork,
+  followedNetworks,
   makeNetworkMemberRenewals,
   openNetworkMember,
+  openingHosts,
+  unboundMembers,
 } from "../connection/networkMembers.ts";
 import * as ConnectionOnboarding from "../connection/onboarding.ts";
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
@@ -68,6 +70,10 @@ export function createNetworkMemberAtoms<R, E, EO>(
       readonly openDevice: AtomCommand<OpenDeviceTarget, TailnetDeviceClientCredential, EO> & {
         readonly permissionAtom: (environmentId: EnvironmentId | null) => Atom.Atom<boolean>;
       };
+      /** A session without an app id opens members only where it may write the network. */
+      readonly setAccess: {
+        readonly permissionAtom: (environmentId: EnvironmentId | null) => Atom.Atom<boolean>;
+      };
     };
   },
 ) {
@@ -81,12 +87,6 @@ export function createNetworkMemberAtoms<R, E, EO>(
     AsyncResult.getOrElse(get(recordsResultAtom), () => []),
   ).pipe(Atom.withLabel("network-members:records"));
 
-  /** Members of the network this client has not opened yet. */
-  const unopenedAtom = Atom.make((get) => {
-    const presentations = get(options.presentationsAtom);
-    return get(recordsAtom).filter((record) => !presentations.has(record.environmentId));
-  }).pipe(Atom.withLabel("network-members:unopened"));
-
   /** The live roster of every connected member that offers the network and may open devices. */
   const reportsAtom = Atom.make((get): ReadonlyArray<NetworkRosterReport> => {
     const reports: Array<NetworkRosterReport> = [];
@@ -95,7 +95,12 @@ export function createNetworkMemberAtoms<R, E, EO>(
         continue;
       }
       if (!offersLinkedEnvironments(presentation.serverConfig)) continue;
-      if (!get(options.tailnetDevices.openDevice.permissionAtom(host))) continue;
+      if (
+        !get(options.tailnetDevices.openDevice.permissionAtom(host)) &&
+        !get(options.tailnetDevices.setAccess.permissionAtom(host))
+      ) {
+        continue;
+      }
       const snapshot = get(options.tailnetDevices.snapshot({ environmentId: host, input: {} }));
       if (AsyncResult.isSuccess(snapshot)) reports.push({ host, roster: snapshot.value });
     }
@@ -106,18 +111,40 @@ export function createNetworkMemberAtoms<R, E, EO>(
     );
   }).pipe(Atom.withLabel("network-members:reports"));
 
-  /** Connected hosts of the network this client follows: the only ones asked to open a member. */
+  /** Members of the network this client has not opened yet and some machine can open. */
+  const unopenedAtom = Atom.make((get) => {
+    const presentations = get(options.presentationsAtom);
+    const unbound = unboundMembers(get(reportsAtom));
+    return get(recordsAtom).filter(
+      (record) => !presentations.has(record.environmentId) && !unbound.has(record.environmentId),
+    );
+  }).pipe(Atom.withLabel("network-members:unopened"));
+
+  /** Connected hosts of the networks this client follows. */
   const followedHostsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> =>
     reuseSame(
       get.self<ReadonlyArray<EnvironmentId>>(),
-      followedNetwork(get(recordsAtom), get(reportsAtom)).reports.map((report) => report.host),
+      followedNetworks(get(reportsAtom)).flatMap((network) =>
+        network.reports.map((report) => report.host),
+      ),
       (left, right) => left === right,
     ),
   ).pipe(Atom.withLabel("network-members:followed-hosts"));
 
+  /** The connected hosts asked to open a member, in the order they are asked. */
+  const openingHostsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> =>
+    reuseSame(
+      get.self<ReadonlyArray<EnvironmentId>>(),
+      openingHosts(get(reportsAtom), (host) =>
+        get(options.tailnetDevices.setAccess.permissionAtom(host)),
+      ),
+      (left, right) => left === right,
+    ),
+  ).pipe(Atom.withLabel("network-members:opening-hosts"));
+
   const renewalsAtom = Atom.make((get): ReadonlyArray<NetworkMemberRenewal> => {
     const presentations = get(options.presentationsAtom);
-    const hosts = get(followedHostsAtom);
+    const hosts = get(openingHostsAtom);
     const hostsKey = [...hosts].sort().join(",");
     const due =
       hosts.length === 0
@@ -166,7 +193,7 @@ export function createNetworkMemberAtoms<R, E, EO>(
     const onboarding = yield* ConnectionOnboarding.ConnectionOnboarding;
     return yield* openNetworkMember({
       environmentId,
-      hosts: atomRegistry.get(followedHostsAtom),
+      hosts: atomRegistry.get(openingHostsAtom),
       mint: (via, target) =>
         Effect.promise(() =>
           options.tailnetDevices.openDevice.run(atomRegistry, {
@@ -207,6 +234,7 @@ export function createNetworkMemberAtoms<R, E, EO>(
     unopenedAtom,
     reportsAtom,
     followedHostsAtom,
+    openingHostsAtom,
     renewalsAtom,
     follow,
     open,

@@ -44,6 +44,9 @@ export interface NetworkRosterReport {
   readonly roster: NetworkRoster;
 }
 
+const isLive = (member: NetworkMember | null): member is NetworkMember =>
+  member !== null && member.access !== "revoked";
+
 /** Each app id's winning entry across hosts that take part, in the servers' merge order. */
 function newestApps(reports: ReadonlyArray<NetworkRosterReport>): ReadonlyMap<string, NetworkApp> {
   const apps = new Map<string, NetworkApp>();
@@ -63,95 +66,80 @@ function callerAppIdOf(
   apps: ReadonlyMap<string, NetworkApp>,
 ): string | null {
   const appId = roster.callerAppId;
-  if (!roster.enabled || appId === null) return null;
-  if (roster.selfMember === null || roster.selfMember.access === "revoked") return null;
+  if (!roster.enabled || appId === null || !isLive(roster.selfMember)) return null;
   const app = apps.get(appId);
   return app !== undefined && app.access !== "revoked" ? appId : null;
 }
 
-/**
- * The network this client follows, and the reports of the hosts in it. Its identity is the app id
- * its records were brought under; with none yet, the smallest one a host reports. A host reporting
- * another app id, or none, is another network or a plain pairing and contributes nothing.
- */
-export function followedNetwork(
-  records: ReadonlyArray<NetworkMemberRecord>,
-  reports: ReadonlyArray<NetworkRosterReport>,
-): { readonly appId: string | null; readonly reports: ReadonlyArray<NetworkRosterReport> } {
-  const apps = newestApps(reports);
-  const candidates = reports.flatMap((report) => {
-    const appId = callerAppIdOf(report.roster, apps);
-    return appId === null ? [] : [{ appId, report }];
-  });
-  const appId =
-    records.find((record) => record.appId !== undefined)?.appId ??
-    candidates.map((candidate) => candidate.appId).sort()[0] ??
-    null;
-  return {
-    appId,
-    reports: candidates.flatMap((candidate) =>
-      candidate.appId === appId ? [candidate.report] : [],
-    ),
-  };
+/** One network this client follows: the app id its hosts take it by, and their reports. */
+export interface FollowedNetwork {
+  readonly appId: string;
+  readonly reports: ReadonlyArray<NetworkRosterReport>;
 }
 
 /**
- * Rebinds the records once the followed network no longer takes this client's app id: its newest
- * entry is revoked, or a host speaking for the network lists it no more (forgotten, re-paired, or
- * the host left). A host of the same network that takes a new id (it lists the records' machines)
- * keeps them under it; otherwise they are dropped. Offline or switched-off hosts never rebind.
+ * Every network that still takes this client, by app id, smallest first: an app paired through
+ * two invitations follows both. A host reporting no app id, or one revoked in its network,
+ * contributes nothing, and each network's records follow only its own hosts.
  */
-function rebindNetwork(
-  records: ReadonlyArray<NetworkMemberRecord>,
+export function followedNetworks(
   reports: ReadonlyArray<NetworkRosterReport>,
-): ReadonlyArray<NetworkMemberRecord> {
-  const pinned = records.find((record) => record.appId !== undefined)?.appId;
-  if (pinned === undefined) return records;
+): ReadonlyArray<FollowedNetwork> {
   const apps = newestApps(reports);
-  const entry = apps.get(pinned);
-  if (entry !== undefined && entry.access !== "revoked") return records;
-  const known = new Set(records.flatMap((record) => [record.environmentId, record.via]));
-  const successors = reports.flatMap((report) => {
+  const networks = new Map<string, Array<NetworkRosterReport>>();
+  for (const report of reports) {
     const appId = callerAppIdOf(report.roster, apps);
-    const sameNetwork =
-      known.has(report.host) ||
-      report.roster.devices.some(
-        (device) => device.member !== null && known.has(device.environmentId),
-      );
-    return appId === null || !sameNetwork ? [] : [appId];
-  });
-  const speaking = new Set(
-    reports.flatMap((report) =>
-      report.roster.enabled && report.roster.callerAppId === pinned ? [report.host] : [],
-    ),
-  );
-  if (entry === undefined && speaking.size === 0 && successors.length === 0) return records;
-  const successor = successors.sort()[0];
-  if (successor !== undefined) {
-    return records.map((record) =>
-      record.appId === pinned ? { ...record, appId: successor } : record,
-    );
+    if (appId === null) continue;
+    const hosts = networks.get(appId);
+    if (hosts === undefined) networks.set(appId, [report]);
+    else hosts.push(report);
   }
-  return records.filter((record) =>
-    record.appId === undefined ? !speaking.has(record.via) : record.appId !== pinned,
-  );
+  return [...networks]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([appId, hostReports]) => ({ appId, reports: hostReports }));
 }
 
 /**
- * Each member is decided by its newest entry across the followed hosts, as the server merges them:
- * a newest revocation drops it. Otherwise a record goes only when no followed host lists it (a
- * host vouching for itself counts) and its `via` host is followed and omits it. `userSaved`
- * environments never become records. Returns `records` itself when nothing changed.
+ * The hosts asked to open a member: those of the followed networks, then any other connected
+ * host in a network whose session carries no app id (the desktop app, a code-paired browser) and
+ * may write there, which is what the server requires of such a session.
  */
-function followRoster(
-  records: ReadonlyArray<NetworkMemberRecord>,
-  input: {
-    readonly reports: ReadonlyArray<NetworkRosterReport>;
-    readonly userSaved: ReadonlySet<EnvironmentId>;
-  },
-): ReadonlyArray<NetworkMemberRecord> {
-  const network = followedNetwork(records, input.reports);
-  const hosts = new Set(network.reports.map((report) => report.host));
+export function openingHosts(
+  reports: ReadonlyArray<NetworkRosterReport>,
+  mayWrite: (host: EnvironmentId) => boolean,
+): ReadonlyArray<EnvironmentId> {
+  const followed = followedNetworks(reports).flatMap((network) =>
+    network.reports.map((report) => report.host),
+  );
+  const writers = reports.flatMap(({ host, roster }) =>
+    roster.enabled && roster.callerAppId === null && isLive(roster.selfMember) && mayWrite(host)
+      ? [host]
+      : [],
+  );
+  return [...new Set([...followed, ...writers])];
+}
+
+/** Live members no machine can open yet: from before the update and not bound to a node. */
+export function unboundMembers(
+  reports: ReadonlyArray<NetworkRosterReport>,
+): ReadonlySet<EnvironmentId> {
+  const unbound = new Set<EnvironmentId>();
+  for (const network of followedNetworks(reports)) {
+    for (const [environmentId, entry] of networkView(network.reports).newest) {
+      if (isLive(entry) && entry.nodeId === null) unbound.add(environmentId);
+    }
+  }
+  return unbound;
+}
+
+interface NetworkView {
+  readonly hosts: ReadonlySet<EnvironmentId>;
+  /** Each member's winning entry across the hosts, as the servers merge them. */
+  readonly newest: ReadonlyMap<EnvironmentId, NetworkMember>;
+  readonly listed: ReadonlyMap<EnvironmentId, { label: string; hosts: Array<EnvironmentId> }>;
+}
+
+function networkView(reports: ReadonlyArray<NetworkRosterReport>): NetworkView {
   const newest = new Map<EnvironmentId, NetworkMember>();
   const offer = (entry: NetworkMember) => {
     const current = newest.get(entry.environmentId);
@@ -160,7 +148,7 @@ function followRoster(
     }
   };
   const listed = new Map<EnvironmentId, { label: string; hosts: Array<EnvironmentId> }>();
-  for (const { host, roster } of network.reports) {
+  for (const { host, roster } of reports) {
     if (roster.selfMember !== null) offer(roster.selfMember);
     for (const device of roster.devices) {
       if (device.member === null || device.environmentId === host) continue;
@@ -174,28 +162,122 @@ function followRoster(
       }
     }
   }
-  const revoked = (environmentId: EnvironmentId) => newest.get(environmentId)?.access === "revoked";
-  const appId = network.appId ?? undefined;
+  return { hosts: new Set(reports.map((report) => report.host)), newest, listed };
+}
+
+/**
+ * Records whose app id no followed network takes move to a followed network listing their machine
+ * live (tombstones are not membership). The rest go only on a positive signal for their own id: it
+ * is revoked, or a host still calling this client by it lists it no more. Silence changes nothing.
+ */
+function rebindNetwork(
+  records: ReadonlyArray<NetworkMemberRecord>,
+  reports: ReadonlyArray<NetworkRosterReport>,
+  networks: ReadonlyArray<FollowedNetwork>,
+): ReadonlyArray<NetworkMemberRecord> {
+  const followed = new Set(networks.map((network) => network.appId));
+  const stale = new Set(
+    records.flatMap((record) =>
+      record.appId !== undefined && !followed.has(record.appId) ? [record.appId] : [],
+    ),
+  );
+  if (stale.size === 0) return records;
+  const apps = newestApps(reports);
+  const live = networks.map((network) => ({
+    appId: network.appId,
+    members: new Set(
+      network.reports.flatMap(({ host, roster }) => [
+        ...(isLive(roster.selfMember) ? [host] : []),
+        ...roster.devices.flatMap((device) =>
+          isLive(device.member) ? [device.environmentId] : [],
+        ),
+      ]),
+    ),
+  }));
+  const successorOf = (environmentId: EnvironmentId) =>
+    live.find((network) => network.members.has(environmentId))?.appId;
+  const disowned = new Map<string, ReadonlySet<EnvironmentId>>();
+  for (const appId of stale) {
+    const entry = apps.get(appId);
+    if (entry !== undefined && entry.access !== "revoked") continue;
+    const speaking = new Set(
+      reports.flatMap((report) =>
+        report.roster.enabled && report.roster.callerAppId === appId ? [report.host] : [],
+      ),
+    );
+    if (entry !== undefined || speaking.size > 0) disowned.set(appId, speaking);
+  }
+  let changed = false;
+  const next = records.flatMap((record) => {
+    if (record.appId === undefined) {
+      const dropped = [...disowned.values()].some((speaking) => speaking.has(record.via));
+      changed ||= dropped;
+      return dropped ? [] : [record];
+    }
+    if (!stale.has(record.appId)) return [record];
+    const entry = apps.get(record.appId);
+    if (entry !== undefined && entry.access !== "revoked") return [record];
+    const successor = successorOf(record.environmentId);
+    if (successor !== undefined) {
+      changed = true;
+      return [{ ...record, appId: successor }];
+    }
+    if (disowned.has(record.appId)) {
+      changed = true;
+      return [];
+    }
+    return [record];
+  });
+  return changed ? next : records;
+}
+
+/**
+ * Each followed network decides its own records by the newest entry across its hosts. A record
+ * goes on a newest revocation, or when none of its hosts lists it (self counts) and its `via` host
+ * omits it. `userSaved` and unbound members never become records. Unchanged returns `records`.
+ */
+function followRoster(
+  records: ReadonlyArray<NetworkMemberRecord>,
+  input: {
+    readonly networks: ReadonlyArray<FollowedNetwork>;
+    readonly userSaved: ReadonlySet<EnvironmentId>;
+  },
+): ReadonlyArray<NetworkMemberRecord> {
+  const views = input.networks.map((network) => ({
+    appId: network.appId,
+    view: networkView(network.reports),
+  }));
+  const revoked = (view: NetworkView, environmentId: EnvironmentId) =>
+    view.newest.get(environmentId)?.access === "revoked";
+  // Records from before app ids join the network that lists them or holds their host.
+  const networkOf = (record: NetworkMemberRecord) =>
+    record.appId !== undefined
+      ? views.find((candidate) => candidate.appId === record.appId)
+      : views.find(
+          ({ view }) => view.listed.has(record.environmentId) || view.hosts.has(record.via),
+        );
   let changed = false;
   const next: Array<NetworkMemberRecord> = [];
   for (const record of records) {
-    const entry = listed.get(record.environmentId);
+    const network = networkOf(record);
+    if (network === undefined) {
+      next.push(record);
+      continue;
+    }
+    const { appId, view } = network;
+    const entry = view.listed.get(record.environmentId);
     if (
-      revoked(record.environmentId) ||
-      (entry === undefined && !hosts.has(record.environmentId) && hosts.has(record.via))
+      revoked(view, record.environmentId) ||
+      (entry === undefined && !view.hosts.has(record.environmentId) && view.hosts.has(record.via))
     ) {
       changed = true;
       continue;
     }
-    if (entry === undefined) {
-      next.push(record);
-      continue;
-    }
     const updated: NetworkMemberRecord = {
       environmentId: record.environmentId,
-      label: entry.label,
-      via: entry.hosts.includes(record.via) ? record.via : entry.hosts[0]!,
-      ...(appId === undefined ? {} : { appId }),
+      label: entry?.label ?? record.label,
+      via: entry === undefined || entry.hosts.includes(record.via) ? record.via : entry.hosts[0]!,
+      appId,
     };
     if (
       updated.label !== record.label ||
@@ -208,23 +290,22 @@ function followRoster(
       next.push(record);
     }
   }
-  const kept = new Set(records.map((record) => record.environmentId));
-  for (const [environmentId, entry] of listed) {
-    if (
-      kept.has(environmentId) ||
-      revoked(environmentId) ||
-      hosts.has(environmentId) ||
-      input.userSaved.has(environmentId)
-    ) {
-      continue;
+  const taken = new Set(records.map((record) => record.environmentId));
+  for (const { appId, view } of views) {
+    for (const [environmentId, entry] of view.listed) {
+      if (
+        taken.has(environmentId) ||
+        revoked(view, environmentId) ||
+        view.newest.get(environmentId)?.nodeId === null ||
+        view.hosts.has(environmentId) ||
+        input.userSaved.has(environmentId)
+      ) {
+        continue;
+      }
+      taken.add(environmentId);
+      changed = true;
+      next.push({ environmentId, label: entry.label, via: entry.hosts[0]!, appId });
     }
-    changed = true;
-    next.push({
-      environmentId,
-      label: entry.label,
-      via: entry.hosts[0]!,
-      ...(appId === undefined ? {} : { appId }),
-    });
   }
   return changed ? next : records;
 }
@@ -309,10 +390,11 @@ export const followNetworkRoster = Effect.fn("NetworkMembers.follow")(function* 
       const saved = yield* input.savedEnvironmentIds;
       // Saved members that are records stay managed; only the user's own entries are skipped.
       const managed = new Set(current.map((record) => record.environmentId));
+      const networks = followedNetworks(input.reports);
       // Records a rebind drops are only unmanaged; their saved connections stay with the user.
-      const released = rebindNetwork(current, input.reports);
+      const released = rebindNetwork(current, input.reports, networks);
       const next = followRoster(released, {
-        reports: input.reports,
+        networks,
         userSaved: new Set([...saved].filter((id) => !managed.has(id))),
       });
       if (next === current) return current;
@@ -334,13 +416,13 @@ export const followNetworkRoster = Effect.fn("NetworkMembers.follow")(function* 
 });
 
 /**
- * Opens a member: asks a followed host for a one-time credential and saves the member with it.
+ * Opens a member: asks a connected host for a one-time credential and saves the member with it.
  * The one it came `via` is asked first, then the other `hosts`, so renewal still works while that
  * one is offline. The one that answered becomes `via`.
  */
 export const openNetworkMember = Effect.fn("NetworkMembers.open")(function* <EM, ER>(input: {
   readonly environmentId: EnvironmentId;
-  /** Connected hosts of the followed network (`followedNetwork`). */
+  /** Connected hosts that may open it (`openingHosts`). */
   readonly hosts: ReadonlyArray<EnvironmentId>;
   readonly mint: (
     via: EnvironmentId,
