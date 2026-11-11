@@ -61,6 +61,9 @@ export function CollapsedComposerPromptPreview(props: {
     switch (segment.type) {
       case "text":
         return segment.text;
+      // The editor's model chip is a popover trigger, which cannot nest in the row's button.
+      case "model":
+        return segment.source;
       case "citation":
         return (
           <ContextChip key={key} kind="citation">
@@ -100,7 +103,7 @@ export function CollapsedComposerPromptPreview(props: {
           (candidate) => candidate.name === segment.name && isProviderSkillUserInvocable(candidate),
         );
         return skill ? (
-          <ContextChip key={key} kind="skill" data-markdown-copy={segment.source}>
+          <ContextChip key={key} kind="skill">
             <SkillChipIcon />
             <ContextChipLabel>{formatProviderSkillDisplayName(skill)}</ContextChipLabel>
           </ContextChip>
