@@ -179,14 +179,6 @@ export const PreviewOpenInput = Schema.Struct({
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 
-export const PreviewNavigateInput = Schema.Struct({
-  threadId: ThreadId,
-  tabId: PreviewTabId,
-  url: Url,
-  resolvedTitle: Schema.optional(Title),
-});
-export type PreviewNavigateInput = typeof PreviewNavigateInput.Type;
-
 export const PreviewReportStatusInput = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,
@@ -195,12 +187,6 @@ export const PreviewReportStatusInput = Schema.Struct({
   canGoForward: Schema.Boolean,
 });
 export type PreviewReportStatusInput = typeof PreviewReportStatusInput.Type;
-
-export const PreviewRefreshInput = Schema.Struct({
-  threadId: ThreadId,
-  tabId: PreviewTabId,
-});
-export type PreviewRefreshInput = typeof PreviewRefreshInput.Type;
 
 export const PreviewResizeInput = Schema.Struct({
   threadId: ThreadId,
@@ -390,7 +376,7 @@ export class PreviewInvalidUrlError extends Schema.TaggedError<PreviewInvalidUrl
 ) {
   override get message() {
     const protocol = this.protocol === undefined ? "" : `: ${this.protocol}`;
-    return `Invalid preview URL (${this.reason}${protocol}; input length ${this.inputLength}).`;
+    return `Invalid preview URL (${this.reason}${protocol}; input length ${this.inputLength}). Use an http(s) URL or a schemeless host such as localhost:5173. With preview_open, omit url when creating a new tab to open a blank tab.`;
   }
 }
 

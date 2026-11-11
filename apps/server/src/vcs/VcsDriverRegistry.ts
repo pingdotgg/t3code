@@ -51,12 +51,6 @@ function parseDetectionCacheKey(key: string): {
   readonly requestedKind: VcsDriverKind | "auto";
 } {
   const separatorIndex = key.indexOf("\0");
-  if (separatorIndex === -1) {
-    return {
-      cwd: key,
-      requestedKind: "auto",
-    };
-  }
   return {
     requestedKind: key.slice(0, separatorIndex) as VcsDriverKind | "auto",
     cwd: key.slice(separatorIndex + 1),

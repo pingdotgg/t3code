@@ -271,6 +271,14 @@ describe("mergeUsage", () => {
       );
       expect(merged.duplicateSources).toEqual(["new: /home/theo/.claude"]);
     }
+
+    const filtered = environment("new", {
+      ...partial.summary,
+      modelFilter: { exclude: [{ model: "claude-fable-5" }] },
+    });
+    const merged = mergeUsage([complete, filtered], USAGE_CONTRACT_VERSION);
+    expect(merged.costUsd).toBe(10);
+    expect(merged.sessions).toBe(1);
   });
 
   it("retains a complete cell when a larger partial cell may have skipped old records", () => {
