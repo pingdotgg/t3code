@@ -188,11 +188,10 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           }
           yield* writeTextFile(path.join(sharedHome, "author.json"), '{"author":true}\n');
           yield* writeTextFile(path.join(shadowHome, "auth.json"), '{"shadow":true}\n');
-          // Older shadow homes linked auth.lock; that stale link is removed, not rejected.
-          yield* fileSystem.symlink(
-            path.join(sharedHome, "auth.lock"),
-            path.join(shadowHome, "auth.lock"),
-          );
+          // Older versions linked these into shadow homes; those links are removed, not rejected.
+          for (const name of ["auth.lock", "auth.json.bak"]) {
+            yield* fileSystem.symlink(path.join(sharedHome, name), path.join(shadowHome, name));
+          }
 
           const layout = yield* resolveCodexHomeLayout(
             decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
@@ -219,7 +218,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
-      "rejects existing auth-like shadow symlinks even when the shared entry is absent",
+      "rejects auth-like shadow symlinks that point outside the shared home, even dangling ones",
       () =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -230,7 +229,10 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           const orphanLink = path.join(shadowHome, "auth-orphan.json");
 
           yield* writeTextFile(path.join(shadowHome, "auth.json"), '{"shadow":true}\n');
-          yield* fileSystem.symlink(path.join(sharedHome, "auth-orphan.json"), orphanLink);
+          yield* fileSystem.symlink(
+            path.join(shadowRoot, "elsewhere", "auth-orphan.json"),
+            orphanLink,
+          );
 
           const layout = yield* resolveCodexHomeLayout(
             decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),

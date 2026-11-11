@@ -353,14 +353,33 @@ const ensureShadowAuthIsPrivate = Effect.fn("CodexHomeLayout.ensureShadowAuthIsP
           entryName,
           linkPath: authPath,
         });
-        if (state._tag === "Symlink") {
-          return yield* new CodexShadowHomePrivateEntrySymlinkError({
-            sharedHomePath: input.sharedHomePath,
-            effectiveHomePath: input.effectiveHomePath,
-            entryName,
-            path: authPath,
-          });
+        if (state._tag !== "Symlink") return;
+        // Older versions linked auth-like backups to the shared copy; drop those, reject the rest.
+        const sharedEntryPath = path.join(input.sharedHomePath, entryName);
+        if (
+          entryName !== "auth.json" &&
+          path.resolve(path.dirname(authPath), state.target) === sharedEntryPath
+        ) {
+          return yield* input.fileSystem.remove(authPath).pipe(
+            Effect.catchTags({
+              PlatformError: (cause) =>
+                new CodexShadowHomeFileSystemError({
+                  sharedHomePath: input.sharedHomePath,
+                  effectiveHomePath: input.effectiveHomePath,
+                  operation: "remove",
+                  path: authPath,
+                  entryName,
+                  cause,
+                }),
+            }),
+          );
         }
+        return yield* new CodexShadowHomePrivateEntrySymlinkError({
+          sharedHomePath: input.sharedHomePath,
+          effectiveHomePath: input.effectiveHomePath,
+          entryName,
+          path: authPath,
+        });
       }),
       { discard: true },
     );
