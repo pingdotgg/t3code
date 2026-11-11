@@ -1,3 +1,4 @@
+import { CollapsibleUserMessageBody } from "./CollapsibleUserMessageBody";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -2126,16 +2127,24 @@ function renderFeedEntry(
                     <MarkdownImageAvailableWidthContext
                       value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
                     >
-                      <UserMessageContent
-                        text={renderedText}
-                        environmentId={props.environmentId}
-                        context={message.context}
-                        markdownStyles={styles}
-                        reviewCommentColors={props.reviewCommentColors}
-                        skills={props.skills}
-                        linkHandlers={props.markdownLinkHandlers}
-                        renderImage={props.renderMarkdownImage}
-                      />
+                      <CollapsibleUserMessageBody
+                        text={presentation.text}
+                        collapsible={foldRowId === null}
+                        expanded={props.expandedWorkRows[`message:${message.id}`] ?? false}
+                        onToggle={() => props.onToggleWorkRow(`message:${message.id}`, entry.id)}
+                        bubbleColor={userBubbleColor}
+                      >
+                        <UserMessageContent
+                          text={renderedText}
+                          environmentId={props.environmentId}
+                          context={message.context}
+                          markdownStyles={styles}
+                          reviewCommentColors={props.reviewCommentColors}
+                          skills={props.skills}
+                          linkHandlers={props.markdownLinkHandlers}
+                          renderImage={props.renderMarkdownImage}
+                        />
+                      </CollapsibleUserMessageBody>
                     </MarkdownImageAvailableWidthContext>
                   ) : null}
                 </View>

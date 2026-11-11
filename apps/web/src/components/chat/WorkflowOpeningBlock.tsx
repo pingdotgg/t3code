@@ -23,7 +23,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { AgentElapsed } from "./AgentElapsed";
 import { findRevealRef } from "./markdownFindContext";
-import { shouldCollapseUserMessage } from "./MessagesTimeline.logic";
+import { shouldCollapseUserMessage } from "@t3tools/client-runtime/user-message";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { EnvironmentSubagentAvatar } from "./V2LifecycleRow";
 

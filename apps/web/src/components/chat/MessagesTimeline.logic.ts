@@ -3,10 +3,6 @@ import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-mes
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
-import {
-  assistantCitationLabel,
-  collectAssistantCitations,
-} from "@t3tools/shared/assistantCitations";
 import { shallow } from "zustand/vanilla/shallow";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
 import {
@@ -2688,33 +2684,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     }
   }
-}
-
-const MAX_COLLAPSED_USER_MESSAGE_LINES = 8;
-const MAX_COLLAPSED_USER_MESSAGE_LENGTH = 600;
-const MARKDOWN_LINK = /!?\[([^\]\n]*)\]\((?:<[^>\n]*>|[^\s)]*)\)/g;
-
-function visibleUserMessageText(text: string): string {
-  const linkLabels = (segment: string) => segment.replace(MARKDOWN_LINK, "$1");
-  let visible = "";
-  let cursor = 0;
-  for (const match of collectAssistantCitations(text)) {
-    visible += linkLabels(text.slice(cursor, match.start)) + assistantCitationLabel(match.citation);
-    cursor = match.end;
-  }
-  return visible + linkLabels(text.slice(cursor));
-}
-
-export function shouldCollapseUserMessage(text: string): boolean {
-  const visible = visibleUserMessageText(text);
-  if (visible.trim().length === 0) {
-    return false;
-  }
-
-  return (
-    visible.length > MAX_COLLAPSED_USER_MESSAGE_LENGTH ||
-    visible.split("\n").length > MAX_COLLAPSED_USER_MESSAGE_LINES
-  );
 }
 
 export function handoffRunsSignature(runs: ReadonlyArray<HandoffTimelineRun>): string {

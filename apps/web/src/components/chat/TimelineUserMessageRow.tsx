@@ -57,7 +57,7 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { formatBytes } from "../../lib/formatBytes";
-import { shouldCollapseUserMessage } from "./MessagesTimeline.logic";
+import { shouldCollapseUserMessage } from "@t3tools/client-runtime/user-message";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   asKnownContextRecord,

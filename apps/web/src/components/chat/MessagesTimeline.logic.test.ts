@@ -21,15 +21,13 @@ import {
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import type { TurnDiffSummary } from "../../types";
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
-import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { MessageId, RunId } from "@t3tools/contracts";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
   timelineTurnFoldRunIdsByEntryId,
   liveAnswerPreview,
   deriveMessagesTimelineRowsWithState,
-  shouldCollapseUserMessage,
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
@@ -4701,26 +4699,5 @@ describe("subagent continued by a later turn", () => {
       `turn-fold:${run2}`,
       "closing-2",
     ]);
-  });
-});
-
-describe("shouldCollapseUserMessage", () => {
-  it("measures a quote chip by its label, not its encoded link", () => {
-    const quote = "A long assistant paragraph that the user quoted. ".repeat(40);
-    const citation = serializeAssistantCitation({
-      version: 1,
-      environmentId: EnvironmentId.make("environment"),
-      threadId: ThreadId.make("thread"),
-      messageId: MessageId.make("source"),
-      text: quote,
-      comment: "Why does this matter?",
-      start: 0,
-      end: quote.length,
-      prefix: "",
-      suffix: "",
-    });
-
-    expect(shouldCollapseUserMessage(`${citation} Can you expand on this?`)).toBe(false);
-    expect(shouldCollapseUserMessage(`${citation} ${"More text. ".repeat(60)}`)).toBe(true);
   });
 });
