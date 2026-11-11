@@ -824,7 +824,24 @@ const make = Effect.gen(function* () {
                     )
                       return null;
                     const sharing = yield* threads.getShellSnapshot({ worktreePath: removedPath });
-                    if (sharing.threads.some((thread) => thread.id !== threadId)) return null;
+                    if (
+                      [...sharing.threads, ...sharing.archivedThreads].some(
+                        (thread) => thread.id !== threadId,
+                      )
+                    )
+                      return null;
+                    const rootProject = yield* projects.getByWorkspaceRoot(removedPath);
+                    if (Option.isSome(rootProject)) {
+                      const rooted = yield* threads.getShellSnapshot({
+                        projectId: rootProject.value.id,
+                      });
+                      if (
+                        [...rooted.threads, ...rooted.archivedThreads].some(
+                          (thread) => thread.worktreePath === null,
+                        )
+                      )
+                        return null;
+                    }
                     const removed = yield* git
                       .removeWorktree({
                         cwd: project.workspaceRoot,

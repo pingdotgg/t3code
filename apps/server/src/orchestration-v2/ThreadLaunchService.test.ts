@@ -210,7 +210,14 @@ function makeHarness(options: HarnessOptions = {}) {
                 })
               : Option.none(),
         ),
-      getByWorkspaceRoot: () => Effect.succeedSome(project),
+      getByWorkspaceRoot: (root) =>
+        Effect.succeed(
+          root === project.workspaceRoot
+            ? Option.some(project)
+            : root === (options.otherWorkspaceRoot ?? otherProject.workspaceRoot)
+              ? Option.some({ ...otherProject, workspaceRoot: root })
+              : Option.none(),
+        ),
       workspaceScanDirectory: () => Effect.die("unused"),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
@@ -2694,152 +2701,163 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
 });
 
-it.effect.each(["unselected", "same-thread", "other-thread", "project-root"] as const)(
-  "cancels tracked setup, selection=%s",
-  (selection) =>
-    Effect.gen(function* () {
-      const entered = yield* Deferred.make<void>();
-      const renamed = yield* Deferred.make<void>();
-      const cleanupEntered = yield* Deferred.make<void>();
-      const cleanupResume = yield* Deferred.make<void>();
-      const harness = makeHarness({
-        closeTerminal: () =>
-          Deferred.succeed(cleanupEntered, undefined).pipe(
-            Effect.andThen(Deferred.await(cleanupResume)),
-          ),
-        otherWorkspaceRoot: selection === "project-root" ? "/repo-worktrees/feature" : undefined,
-        renameBranch: (input) =>
-          Deferred.succeed(renamed, undefined).pipe(Effect.as({ branch: input.newBranch })),
-        runSetup: () =>
-          Deferred.await(renamed).pipe(
-            Effect.as({
-              status: "started" as const,
-              async: false,
-              scriptId: "setup",
-              scriptName: "Setup",
-              scriptCommand: "setup",
-              terminalId: "setup",
-              cwd: "/repo-worktrees/feature",
-              completion: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
-            }),
-          ),
+it.effect.each([
+  "unselected",
+  "same-thread",
+  "other-thread",
+  "archived-thread",
+  "project-root",
+] as const)("cancels tracked setup, selection=%s", (selection) =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const renamed = yield* Deferred.make<void>();
+    const cleanupEntered = yield* Deferred.make<void>();
+    const cleanupResume = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      closeTerminal: () =>
+        Deferred.succeed(cleanupEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(cleanupResume)),
+        ),
+      otherWorkspaceRoot: selection === "project-root" ? "/repo-worktrees/feature" : undefined,
+      renameBranch: (input) =>
+        Deferred.succeed(renamed, undefined).pipe(Effect.as({ branch: input.newBranch })),
+      runSetup: () =>
+        Deferred.await(renamed).pipe(
+          Effect.as({
+            status: "started" as const,
+            async: false,
+            scriptId: "setup",
+            scriptName: "Setup",
+            scriptCommand: "setup",
+            terminalId: "setup",
+            cwd: "/repo-worktrees/feature",
+            completion: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+          }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const input = launchInput({
+        command: "launch:cancel-tracked",
+        thread: "thread:cancel-tracked",
+        message: "Start",
+        workspace: { type: "worktree", baseRef: "main" },
       });
-      yield* Effect.gen(function* () {
-        const launches = yield* ThreadLaunch.ThreadLaunchService;
-        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const outbox = yield* EffectOutbox.EffectOutboxV2;
-        const input = launchInput({
-          command: "launch:cancel-tracked",
-          thread: "thread:cancel-tracked",
-          message: "Start",
-          workspace: { type: "worktree", baseRef: "main" },
+      const launched = yield* launches.launch(input);
+      yield* Deferred.await(entered);
+      assert.equal((yield* tracker.get(launched.threadId))?.phase, "running");
+      const beforeCancel = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(beforeCancel.thread.worktreePath, "/repo-worktrees/feature");
+      const adopted = selection !== "unselected";
+      if (selection === "other-thread" || selection === "archived-thread") {
+        yield* threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("launch:cancel-tracked:sharing"),
+          threadId: ThreadId.make("thread:cancel-sharing"),
+          projectId,
+          title: "Sharing checkout",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          worktreePath: beforeCancel.thread.worktreePath,
+          branch: beforeCancel.thread.branch,
+          createdBy: "user",
+          creationSource: "web",
         });
-        const launched = yield* launches.launch(input);
-        yield* Deferred.await(entered);
-        assert.equal((yield* tracker.get(launched.threadId))?.phase, "running");
-        const beforeCancel = yield* threads.getThreadProjection(launched.threadId);
-        assert.equal(beforeCancel.thread.worktreePath, "/repo-worktrees/feature");
-        const adopted = selection !== "unselected";
-        if (selection === "other-thread") {
-          yield* threads.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make("launch:cancel-tracked:sharing"),
-            threadId: ThreadId.make("thread:cancel-sharing"),
-            projectId,
-            title: "Sharing checkout",
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            worktreePath: beforeCancel.thread.worktreePath,
-            branch: beforeCancel.thread.branch,
-            createdBy: "user",
-            creationSource: "web",
-          });
-        }
-        if (selection === "same-thread") {
-          yield* threads.dispatch({
-            type: "thread.metadata.update",
-            commandId: CommandId.make("launch:cancel-tracked:adopt"),
-            threadId: input.threadId,
-            worktreePath: beforeCancel.thread.worktreePath,
-            branch: beforeCancel.thread.branch,
-          });
-        }
-        const cancellation = yield* tracker
-          .cancel(launched.threadId)
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(cleanupEntered);
-        if (selection === "project-root") {
-          const store = yield* ProjectStore.make;
-          yield* store.apply({
-            sequence: 0,
-            eventId: EventId.make("project:cancel-adopt"),
-            aggregateKind: "project",
-            aggregateId: otherProjectId,
-            occurredAt: otherProject.createdAt,
-            commandId: null,
-            causationEventId: null,
-            correlationId: null,
-            metadata: {},
-            type: "project.created",
-            payload: {
-              ...otherProject,
-              projectId: otherProjectId,
-              workspaceRoot: "/repo-worktrees/feature",
-            },
-          });
-          yield* threads.dispatch({
-            type: "thread.stop",
-            commandId: CommandId.make("launch:cancel-tracked:stop"),
-            threadId: input.threadId,
-          });
-          yield* threads.dispatch({
-            type: "thread.project.adopt-folder",
-            commandId: CommandId.make("launch:cancel-tracked:project-adopt"),
-            threadId: input.threadId,
+      }
+      if (selection === "same-thread") {
+        yield* threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("launch:cancel-tracked:adopt"),
+          threadId: input.threadId,
+          worktreePath: beforeCancel.thread.worktreePath,
+          branch: beforeCancel.thread.branch,
+        });
+      }
+      if (selection === "archived-thread") {
+        yield* threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("launch:cancel-tracked:archive-sharing"),
+          threadId: ThreadId.make("thread:cancel-sharing"),
+        });
+      }
+      const cancellation = yield* tracker
+        .cancel(launched.threadId)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(cleanupEntered);
+      if (selection === "project-root") {
+        const store = yield* ProjectStore.make;
+        yield* store.apply({
+          sequence: 0,
+          eventId: EventId.make("project:cancel-adopt"),
+          aggregateKind: "project",
+          aggregateId: otherProjectId,
+          occurredAt: otherProject.createdAt,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "project.created",
+          payload: {
+            ...otherProject,
             projectId: otherProjectId,
-          });
-        }
-        const selectedBranch = (yield* threads.getThreadShell(input.threadId))?.branch;
-        yield* Deferred.succeed(cleanupResume, undefined);
-        assert.isTrue(yield* Fiber.join(cancellation));
-        assert.equal((yield* tracker.get(launched.threadId))?.phase, "cancelled");
-        const projection = yield* threads.getThreadProjection(launched.threadId);
+            workspaceRoot: "/repo-worktrees/feature",
+          },
+        });
+        yield* threads.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("launch:cancel-tracked:stop"),
+          threadId: input.threadId,
+        });
+        yield* threads.dispatch({
+          type: "thread.project.adopt-folder",
+          commandId: CommandId.make("launch:cancel-tracked:project-adopt"),
+          threadId: input.threadId,
+          projectId: otherProjectId,
+        });
+      }
+      const selectedBranch = (yield* threads.getThreadShell(input.threadId))?.branch;
+      yield* Deferred.succeed(cleanupResume, undefined);
+      assert.isTrue(yield* Fiber.join(cancellation));
+      assert.equal((yield* tracker.get(launched.threadId))?.phase, "cancelled");
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(
+        projection.runs[0]?.status,
+        selection === "project-root" ? "interrupted" : "failed",
+      );
+      if (selection === "project-root") {
+        assert.equal(projection.thread.projectId, otherProjectId);
         assert.equal(
-          projection.runs[0]?.status,
-          selection === "project-root" ? "interrupted" : "failed",
+          projection.thread.workspaceBindingId,
+          CommandId.make("launch:cancel-tracked:project-adopt"),
         );
-        if (selection === "project-root") {
-          assert.equal(projection.thread.projectId, otherProjectId);
-          assert.equal(
-            projection.thread.workspaceBindingId,
-            CommandId.make("launch:cancel-tracked:project-adopt"),
-          );
-        }
-        if (selection === "other-thread") {
-          assert.equal(
-            (yield* threads.getThreadShell(ThreadId.make("thread:cancel-sharing")))?.worktreePath,
-            beforeCancel.thread.worktreePath,
-          );
-        }
+      }
+      if (selection === "other-thread" || selection === "archived-thread") {
         assert.equal(
-          projection.thread.worktreePath,
-          selection === "project-root" ? null : adopted ? beforeCancel.thread.worktreePath : null,
+          (yield* threads.getThreadShell(ThreadId.make("thread:cancel-sharing")))?.worktreePath,
+          beforeCancel.thread.worktreePath,
         );
-        assert.equal(projection.thread.branch, adopted ? selectedBranch : null);
-        assert.equal(harness.removeWorktree.mock.calls.length, adopted ? 0 : 1);
-        assert.equal(harness.deleteLocalBranch.mock.calls.length, adopted ? 0 : 1);
-        if (!adopted) {
-          assert.deepEqual(harness.deleteLocalBranch.mock.calls[0]?.[0], {
-            cwd: "/repo",
-            refName: "generated-branch",
-            force: true,
-          });
-        }
-        assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${input.commandId}:release`)));
-      }).pipe(Effect.provide(harness.layer));
-    }),
+      }
+      assert.equal(
+        projection.thread.worktreePath,
+        selection === "project-root" ? null : adopted ? beforeCancel.thread.worktreePath : null,
+      );
+      assert.equal(projection.thread.branch, adopted ? selectedBranch : null);
+      assert.equal(harness.removeWorktree.mock.calls.length, adopted ? 0 : 1);
+      assert.equal(harness.deleteLocalBranch.mock.calls.length, adopted ? 0 : 1);
+      if (!adopted) {
+        assert.deepEqual(harness.deleteLocalBranch.mock.calls[0]?.[0], {
+          cwd: "/repo",
+          refName: "generated-branch",
+          force: true,
+        });
+      }
+      assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${input.commandId}:release`)));
+    }).pipe(Effect.provide(harness.layer));
+  }),
 );
 
 it.effect(
