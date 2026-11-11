@@ -6533,8 +6533,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.runtime.startTurn(turn(3, original));
       yield* settle;
       assert.deepEqual(harness.liveSelectionChanges[0], { model: original.model });
+      const explicitDefault = { ...original, options: [{ id: "fastMode", value: false }] };
+      yield* harness.runtime.startTurn(turn(4, explicitDefault));
+      yield* Queue.offer(
+        harness.sdkMessages,
+        refusalFallback("session", "00000000-0000-4000-8000-000000000404"),
+      );
+      yield* settle;
+      const defaultUpdate = harness.events
+        .filter((event) => event.type === "app_thread.model_selection.updated")
+        .at(-1);
+      assert.deepEqual(defaultUpdate?.previousModelSelection, explicitDefault);
+      assert.deepEqual(defaultUpdate?.modelSelection, {
+        ...fallback,
+        options: explicitDefault.options,
+      });
       const steered = { ...original, model: "claude-sonnet-4-6" };
-      const input = turn(4, original);
+      const input = turn(5, original);
       yield* harness.runtime.startTurn(input);
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       yield* harness.runtime.steerTurn({

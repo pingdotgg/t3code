@@ -11303,6 +11303,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }),
                 );
             }
+            existing.modelSelection = turnInput.modelSelection;
             return existing;
           }
 
