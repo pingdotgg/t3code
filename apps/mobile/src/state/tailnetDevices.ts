@@ -13,5 +13,4 @@ export const deviceNetworkHosts = createDeviceNetworkHostsAtom({
   snapshot: tailnetDevices.snapshot,
   links: peerLinkEnvironment.list,
   mayWrite: tailnetDevices.setAccess.permissionAtom,
-  mayOpen: tailnetDevices.openDevice.permissionAtom,
 });

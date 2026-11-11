@@ -17,6 +17,12 @@ import type {
 import { compareNetworkApps, compareNetworkMembers, hasLeftNetwork } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import {
+  type NetworkMemberRecord,
+  type NetworkMemberStatus,
+  openingHosts,
+} from "./connection/networkMembers.ts";
+
 /** A connected environment that offers the network, as this client sees it. */
 export interface DeviceNetworkHost {
   readonly environmentId: EnvironmentId;
@@ -28,9 +34,25 @@ export interface DeviceNetworkHost {
   readonly links: ReadonlyArray<PeerLinkSummary>;
   /** This client's session there may change access (`access:write`). */
   readonly mayWrite: boolean;
-  /** This client's session there holds `orchestration:read`, enough to open as an app. */
-  readonly mayOpen: boolean;
 }
+
+/** `networkMembers.statusAtom`: what this app holds of each member the network listed to it. */
+export type DeviceNetworkMemberStatuses = ReadonlyMap<
+  EnvironmentId,
+  {
+    readonly record: Pick<NetworkMemberRecord, "sessionExpiresAt">;
+    readonly status: NetworkMemberStatus;
+  }
+>;
+
+/**
+ * How this app holds a machine: open; saved but its session expired or was cut, so Open again;
+ * or left the network by its own act, kept until its session ends and never renewed.
+ */
+export type InApp =
+  | { readonly kind: "open" }
+  | { readonly kind: "reopen" }
+  | { readonly kind: "left"; readonly until: DateTime.Utc | null };
 
 /** One environment of a machine, merged from what every host in the group says about it. */
 export interface MachineEntry {
@@ -49,7 +71,8 @@ export interface MachineEntry {
   readonly views: ReadonlyArray<{ readonly host: EnvironmentId; readonly device: TailnetDevice }>;
   /** Links hosts in the group hold to it. */
   readonly links: ReadonlyArray<{ readonly host: EnvironmentId; readonly link: PeerLinkSummary }>;
-  readonly savedInApp: boolean;
+  /** Null while this app does not hold it. */
+  readonly inApp: InApp | null;
 }
 
 /** In the roster; linked to one host only (a pairing code or a local add); or only found. */
@@ -83,14 +106,32 @@ const isLiveMember = (member: NetworkMember | null | undefined): member is Netwo
 
 /** A member that revoked itself: it left, and comes back only by being added again. */
 
-/**
- * The server opens members for an app of the network on `orchestration:read`, and for any other
- * session only with `access:write`.
- */
-const opensThrough = (host: DeviceNetworkHost) =>
-  host.enabled &&
-  inNetwork(host) &&
-  (host.snapshot?.callerAppId == null ? host.mayWrite : host.mayOpen);
+/** The group's hosts `networkMembers.open` asks, by the roster's one rule (`openingHosts`). */
+const openers = (hosts: ReadonlyArray<DeviceNetworkHost>) => {
+  const ids = new Set(
+    openingHosts(
+      hosts.flatMap((host) =>
+        host.snapshot === null ? [] : [{ host: host.environmentId, roster: host.snapshot }],
+      ),
+      (id) => hosts.some((host) => host.environmentId === id && host.mayWrite),
+    ).map((opener) => opener.host),
+  );
+  return hosts.filter((host) => ids.has(host.environmentId));
+};
+
+const inAppOf = (
+  environmentId: EnvironmentId,
+  saved: ReadonlySet<EnvironmentId>,
+  statuses: DeviceNetworkMemberStatuses,
+): InApp | null => {
+  const held = statuses.get(environmentId);
+  if (held?.status === "left") {
+    const until = held.record.sessionExpiresAt;
+    return { kind: "left", until: until === undefined ? null : DateTime.makeUnsafe(until) };
+  }
+  if (held?.status === "reopen") return { kind: "reopen" };
+  return saved.has(environmentId) ? { kind: "open" } : null;
+};
 
 /** A member from before the update that this host has not bound to a Tailscale node. */
 // The roster entry decides: the scan fills `device.nodeId` even while the server still refuses it.
@@ -215,6 +256,7 @@ const KIND_ORDER: Record<MachineKind, number> = { member: 0, linked: 1, found: 2
 function groupMachines(
   hosts: ReadonlyArray<DeviceNetworkHost>,
   savedEnvironmentIds: ReadonlySet<EnvironmentId>,
+  memberStatuses: DeviceNetworkMemberStatuses,
 ): Array<DeviceNetworkMachine> {
   type Draft = {
     -readonly [K in keyof MachineEntry]: MachineEntry[K] extends ReadonlyArray<infer T>
@@ -237,7 +279,7 @@ function groupMachines(
       isHost: false,
       views: [],
       links: [],
-      savedInApp: savedEnvironmentIds.has(environmentId),
+      inApp: inAppOf(environmentId, savedEnvironmentIds, memberStatuses),
     };
     entries.set(environmentId, created);
     return created;
@@ -323,6 +365,7 @@ function mergeApps(hosts: ReadonlyArray<DeviceNetworkHost>): Array<NetworkApp> {
 export function deviceNetworkView(input: {
   readonly hosts: ReadonlyArray<DeviceNetworkHost>;
   readonly savedEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly memberStatuses: DeviceNetworkMemberStatuses;
   /** The host this client already works through, preferred as the authority. */
   readonly preferredHost: EnvironmentId | null;
 }): ReadonlyArray<DeviceNetworkGroup> {
@@ -341,7 +384,7 @@ export function deviceNetworkView(input: {
       hosts: ordered,
       authority: chooseAuthority(ordered, input.preferredHost),
       addsToNetwork: true,
-      machines: groupMachines(ordered, input.savedEnvironmentIds),
+      machines: groupMachines(ordered, input.savedEnvironmentIds, input.memberStatuses),
       apps: mergeApps(ordered),
     };
   });
@@ -449,7 +492,11 @@ export function machineControls(
       : []
     : hostsListing(group, entry, authority);
   return {
-    open: live && !entry.isHost && !entry.savedInApp && group.hosts.some(opensThrough),
+    open:
+      live &&
+      !entry.isHost &&
+      (entry.inApp === null || entry.inApp.kind === "reopen") &&
+      openers(group.hosts).length > 0,
     changeAccess: live && manages,
     revoke: live && manages,
     restore: member && !live && !needsReadd && !left && manages,
@@ -484,7 +531,7 @@ export function openAccessHint(
   machine: DeviceNetworkMachine,
   group: DeviceNetworkGroup,
 ): "full" | "read-only" | "unknown" | null {
-  const relays = group.hosts.filter(opensThrough);
+  const relays = openers(group.hosts);
   if (relays.length === 0) return null;
   const hints = relays.map((relay) => {
     const appId = relay.snapshot?.callerAppId ?? null;

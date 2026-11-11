@@ -65,7 +65,6 @@ export function createDeviceNetworkHostsAtom(options: {
   readonly snapshot: ListFamily<TailnetDevicesSnapshot>;
   readonly links: ListFamily<{ readonly links: ReadonlyArray<PeerLinkSummary> }>;
   readonly mayWrite: (environmentId: EnvironmentId) => Atom.Atom<boolean>;
-  readonly mayOpen: (environmentId: EnvironmentId) => Atom.Atom<boolean>;
 }) {
   return Atom.family((key: string) =>
     Atom.make((get): ReadonlyArray<DeviceNetworkHostState> =>
@@ -80,7 +79,6 @@ export function createDeviceNetworkHostsAtom(options: {
           snapshot: AsyncResult.getOrElse(snapshot, () => null),
           links: AsyncResult.getOrElse(get(options.links(target)), () => null)?.links ?? [],
           mayWrite: get(options.mayWrite(host.environmentId)),
-          mayOpen: get(options.mayOpen(host.environmentId)),
           list: AsyncResult.isSuccess(snapshot)
             ? "ready"
             : AsyncResult.isFailure(snapshot)

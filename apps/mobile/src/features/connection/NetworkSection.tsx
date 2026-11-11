@@ -73,6 +73,13 @@ const STATUS_LABEL: Record<TailnetDeviceStatus, string> = {
 const timeFormat = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
 const formatTime = (time: DateTime.Utc) => timeFormat.format(DateTime.toDate(time));
 
+const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+/** A machine that left keeps this app's session until it ends; it is never renewed. */
+const keptInApp = (until: DateTime.Utc | null, now: DateTime.Utc) =>
+  until !== null && !DateTime.isGreaterThan(until, now)
+    ? "Its session in this app has ended: pair with it by code to rejoin"
+    : `Kept in this app until ${until === null ? "its session ends" : dateFormat.format(DateTime.toDate(until))}: to rejoin, choose Allow joining on it, then Add again before then`;
+
 const hostLabel = (group: DeviceNetworkGroup, environmentId: EnvironmentId) =>
   group.hosts.find((host) => host.environmentId === environmentId)?.label ?? environmentId;
 
@@ -136,9 +143,11 @@ function DeviceNetworkContent(props: {
   const states = useAtomValue(deviceNetworkHosts(deviceNetworkHostsKey(props.hosts)));
   const registry = useContext(RegistryContext);
   const { environments } = useEnvironments();
+  const memberStatuses = useAtomValue(networkMembers.statusAtom);
   const groups = deviceNetworkView({
     hosts: states,
     savedEnvironmentIds: new Set(environments.map((environment) => environment.environmentId)),
+    memberStatuses,
     preferredHost: null,
   });
   const onChanged = () => refreshDeviceNetwork(registry, peerLinkEnvironment.list, states);
@@ -252,7 +261,7 @@ function TakingPartRow(props: {
       title: `Leave your network on ${host.label}?`,
       message: `Its links to the other machines end, other apps that reach it through the network are signed out, and the others see it as left.${
         controls.lastFullAccess ? " It is the last machine in your network." : ""
-      } This app stays connected to it. To bring it back, choose Allow joining on ${host.label}, then Add again from a full-access machine.`,
+      } This app keeps its connection only until that session ends, 30 days after it was issued; nothing renews it. To bring it back before then, choose Allow joining on ${host.label}, then Add again from a full-access machine. After that, pair with it by code.`,
       confirmText: "Leave",
       destructive: true,
       onConfirm: () => {
@@ -390,9 +399,18 @@ function machineDetail(
       const health = peerLinkHealth(link, now);
       return `Paired with ${hostLabel(group, host)}${health.kind === "expired" ? ", expired" : health.kind === "reachable" ? "" : ", not answering"}`;
     }),
-    entry.savedInApp ? (readOnlyHere ? "Read-only in this app" : "In this app") : null,
+    entry.inApp?.kind === "open"
+      ? readOnlyHere
+        ? "Read-only in this app"
+        : "In this app"
+      : entry.inApp?.kind === "reopen"
+        ? "Its session in this app ended: open it again"
+        : null,
     // Only a known limit is shown before opening; the result shows once it is open.
-    !entry.savedInApp && !entry.isHost && live && openAccessHint(machine, group) === "read-only"
+    entry.inApp?.kind !== "open" &&
+    !entry.isHost &&
+    live &&
+    openAccessHint(machine, group) === "read-only"
       ? "Opens read-only"
       : null,
     ...machine.others.map((other) => `Also seen as ${other.label} from an earlier install`),
@@ -511,8 +529,10 @@ function MachineRow(props: {
       label={entry.label}
       detail={
         readdState !== null
-          ? `${readdState}: allow joining on it, then add it again`
-          : machineDetail(group, machine, now, entry.savedInApp && !operatesHere)
+          ? controls.left && entry.inApp?.kind === "left"
+            ? `${readdState}. ${keptInApp(entry.inApp.until, now)}`
+            : `${readdState}: allow joining on it, then add it again`
+          : machineDetail(group, machine, now, entry.inApp?.kind === "open" && !operatesHere)
       }
       danger={entry.status === "revoked" || readdState !== null}
       value={

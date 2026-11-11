@@ -10,11 +10,14 @@ import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { NetworkMemberStatus } from "./connection/networkMembers.ts";
+
 import {
   appControls,
   canForgetOther,
   canManageNetwork,
   type DeviceNetworkHost,
+  type DeviceNetworkMemberStatuses,
   deviceNetworkView,
   hostControls,
   isTailnetDevicesForbidden,
@@ -93,7 +96,6 @@ const host = (
     readonly callerAppId?: string | null;
     readonly joinOpenUntil?: DateTime.Utc | null;
     readonly mayWrite?: boolean;
-    readonly mayOpen?: boolean;
     readonly apps?: ReadonlyArray<NetworkApp>;
     readonly enabled?: boolean;
     readonly loaded?: boolean;
@@ -103,7 +105,6 @@ const host = (
   label: environmentId,
   enabled: options.enabled ?? true,
   mayWrite: options.mayWrite ?? true,
-  mayOpen: options.mayOpen ?? true,
   links: options.links ?? [],
   snapshot:
     options.loaded === false
@@ -121,7 +122,30 @@ const host = (
 const view = (
   hosts: ReadonlyArray<DeviceNetworkHost>,
   preferredHost: EnvironmentId | null = null,
-) => deviceNetworkView({ hosts, savedEnvironmentIds: new Set(), preferredHost });
+  memberStatuses: DeviceNetworkMemberStatuses = new Map(),
+) =>
+  deviceNetworkView({
+    hosts,
+    savedEnvironmentIds: new Set(
+      [...memberStatuses]
+        .filter(([, { status }]) => status === "open" || status === "reopen")
+        .map(([environmentId]) => environmentId),
+    ),
+    memberStatuses,
+    preferredHost,
+  });
+const memberStatus = (
+  environmentId: EnvironmentId,
+  status: NetworkMemberStatus,
+  sessionExpiresAt?: number,
+) =>
+  [
+    environmentId,
+    {
+      record: sessionExpiresAt === undefined ? {} : { sessionExpiresAt },
+      status,
+    },
+  ] as const;
 const shape = (
   hosts: ReadonlyArray<DeviceNetworkHost>,
   preferredHost: EnvironmentId | null = null,
@@ -232,12 +256,12 @@ describe("deviceNetworkView", () => {
           label: snapshot.self.label,
           enabled: true,
           mayWrite: true,
-          mayOpen: true,
           snapshot,
           links: [link(vps), link(studio)],
         },
       ],
       savedEnvironmentIds: new Set([studio]),
+      memberStatuses: new Map(),
       preferredHost: null,
     });
     expect(
@@ -245,14 +269,14 @@ describe("deviceNetworkView", () => {
         machine.entry.environmentId,
         machine.kind,
         machine.entry.links.length,
-        machine.entry.savedInApp,
+        machine.entry.inApp?.kind ?? null,
       ]),
     ).toEqual([
-      ["env-here", "member", 0, false],
-      [box, "member", 0, false],
-      [studio, "member", 1, true],
-      [vps, "linked", 1, false],
-      [laptop, "found", 0, false],
+      ["env-here", "member", 0, null],
+      [box, "member", 0, null],
+      [studio, "member", 1, "open"],
+      [vps, "linked", 1, null],
+      [laptop, "found", 0, null],
     ]);
     expect(group?.apps.map((app) => app.appId)).toEqual(["app-phone"]);
   });
@@ -423,10 +447,16 @@ describe("machineControls", () => {
         devices: [device(box), device(laptop, { member: member(laptop, "revoked") })],
       }),
     ];
-    const [group] = view(left, studio);
+    const keptUntil = 1_800_000_000_000;
+    const [group] = view(left, studio, new Map([memberStatus(laptop, "left", keptUntil)]));
     const machine = group?.machines.find((row) => row.entry.environmentId === laptop);
     if (group === undefined || machine === undefined) throw new Error("missing row");
+    expect(machine.entry.inApp).toEqual({
+      kind: "left",
+      until: DateTime.makeUnsafe(keptUntil),
+    });
     expect(machineControls(machine, group)).toMatchObject({
+      open: false,
       left: true,
       readd: true,
       restore: false,
@@ -437,14 +467,25 @@ describe("machineControls", () => {
 
   it("opens members only through a host the server lets this session open from", () => {
     const target = device(laptop);
-    const opened = (options: Parameters<typeof host>[1]) => {
-      const [group] = view([host(studio, { devices: [target], ...options })], studio);
+    const opened = (
+      options: Parameters<typeof host>[1],
+      statuses: DeviceNetworkMemberStatuses = new Map(),
+    ) => {
+      const [group] = view([host(studio, { devices: [target], ...options })], studio, statuses);
       const machine = group?.machines.find((row) => row.entry.environmentId === laptop);
       if (group === undefined || machine === undefined) throw new Error("missing row");
       return [machineControls(machine, group).open, openAccessHint(machine, group)] as const;
     };
     // Not an app of the network: the server asks for access:write.
-    expect(opened({ mayWrite: false, mayOpen: true })).toEqual([false, null]);
+    expect(opened({ mayWrite: false })).toEqual([false, null]);
+    // An app the network revoked opens nothing, whatever its session's scopes.
+    expect(opened({ mayWrite: false, callerAppId: "app-phone", apps: [app("revoked")] })).toEqual([
+      false,
+      null,
+    ]);
+    // Saved with a session that still works: nothing to open. Expired or cut: open again.
+    expect(opened({}, new Map([memberStatus(laptop, "open")]))[0]).toBe(false);
+    expect(opened({}, new Map([memberStatus(laptop, "reopen")]))[0]).toBe(true);
     // An app of the network needs only orchestration:read, and is capped by its own level.
     expect(opened({ mayWrite: false, callerAppId: "app-phone", apps: [app("read-only")] })).toEqual(
       [true, "read-only"],

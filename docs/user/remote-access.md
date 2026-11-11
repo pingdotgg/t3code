@@ -337,18 +337,22 @@ machine in the network picks them up.
   first, so it cannot rejoin by itself. If it is still on your tailnet, it
   shows up again as a machine you can add.
 - **Leave network** takes a machine out of the network. Other apps that reach
-  it through the network are signed out, and the others see it as left; the app
-  you leave from stays connected to it. The only full-access machine cannot leave while other members
-  remain: give another machine full access first. The others then show it as
-  **Left the network**; to bring it back, choose **Allow joining** on it, then
-  **Add again** on its row from a full-access machine.
+  it through the network are signed out, and the others see it as left. The
+  app you leave from keeps its connection until that session ends, 30 days
+  after it was issued, and its row shows until when; nothing renews it. The
+  only full-access machine cannot leave while other members remain: give
+  another machine full access first. The others then show it as **Left the
+  network**; to bring it back before the session ends, choose **Allow
+  joining** on it, then **Add again** on its row from a full-access machine.
+  After that, pair with it by code.
 - After updating from a version before machines were tied to their Tailscale
   identity, existing members show **Needs re-adding after the update**, and the
   other machines refuse them until then. On that machine, choose **Allow
   joining**, then choose **Add again** on its row from another full-access
   machine.
 - **Open** adds a member to this app without a code. Below full access, it
-  opens read-only, and its row shows **Read-only in this app**.
+  opens read-only, and its row shows **Read-only in this app**. When its
+  session in this app expires or is cut, **Open** shows again.
 - When you create a pairing link on a full-access member, **Works on all your
   network's machines** pairs the phone or browser with the whole network at
   once. It is listed in Device network once it pairs. Apps are full access or

@@ -126,6 +126,13 @@ const APP_ACCESS_LABEL: Record<NetworkAppAccess, string> = {
 const timeFormat = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
 const formatTime = (time: DateTime.Utc) => timeFormat.format(DateTime.toDate(time));
 
+const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+/** A machine that left keeps this app's session until it ends; it is never renewed. */
+const keptInApp = (until: DateTime.Utc | null, now: DateTime.Utc) =>
+  until !== null && !DateTime.isGreaterThan(until, now)
+    ? "Its session in this app has ended: pair with it by code to rejoin"
+    : `Kept in this app until ${until === null ? "its session ends" : dateFormat.format(DateTime.toDate(until))}: to rejoin, choose Allow joining on it, then Add again before then`;
+
 const hostLabel = (group: DeviceNetworkGroup, environmentId: EnvironmentId) =>
   group.hosts.find((host) => host.environmentId === environmentId)?.label ?? environmentId;
 
@@ -237,7 +244,9 @@ function machineDetails(
   const { entry } = machine;
   if (readd !== null) {
     return [
-      `${readd === "left" ? LEFT : NEEDS_READD}: allow joining on it, then add it again`,
+      readd === "left" && entry.inApp?.kind === "left"
+        ? `${LEFT}. ${keptInApp(entry.inApp.until, now)}`
+        : `${readd === "left" ? LEFT : NEEDS_READD}: allow joining on it, then add it again`,
       entry.tailnetName,
     ];
   }
@@ -264,9 +273,15 @@ function machineDetails(
     ...limits,
     ...localOnly,
     ...links,
-    entry.savedInApp ? (readOnlyHere ? "Read-only in this app" : "In this app") : null,
+    entry.inApp?.kind === "open"
+      ? readOnlyHere
+        ? "Read-only in this app"
+        : "In this app"
+      : entry.inApp?.kind === "reopen"
+        ? "Its session in this app ended: open it again"
+        : null,
     // Only a known limit is shown before opening; the result shows once it is open.
-    !entry.savedInApp && !entry.isHost && live && openHint === "read-only"
+    entry.inApp?.kind !== "open" && !entry.isHost && live && openHint === "read-only"
       ? "Opens read-only"
       : null,
     entry.tailnetName,
@@ -373,7 +388,7 @@ export function DeviceMachineRow({
         now,
         readdReason,
         openAccessHint(machine, group),
-        entry.savedInApp && !operatesHere,
+        entry.inApp?.kind === "open" && !operatesHere,
       )}
       actions={
         <>
@@ -1005,7 +1020,7 @@ export function TakingPartRow({
     const consequence = controls.lastFullAccess ? " It is the last machine in your network." : "";
     if (
       !(await confirmDestructive(
-        `Leave your network on ${host.label}? Its links to the other machines end, other apps that reach it through the network are signed out, and the others see it as left.${consequence} This app stays connected to it. To bring it back, choose Allow joining on ${host.label}, then Add again from a full-access machine.`,
+        `Leave your network on ${host.label}? Its links to the other machines end, other apps that reach it through the network are signed out, and the others see it as left.${consequence} This app keeps its connection only until that session ends, 30 days after it was issued; nothing renews it. To bring it back before then, choose Allow joining on ${host.label}, then Add again from a full-access machine. After that, pair with it by code.`,
       ))
     )
       return;
@@ -1093,9 +1108,11 @@ export function useDeviceNetworkView(hosts: ReadonlyArray<EnvironmentPresentatio
   );
   const preferredHost = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
+  const memberStatuses = useAtomValue(networkMembers.statusAtom);
   const groups = deviceNetworkView({
     hosts: states,
     savedEnvironmentIds: new Set(environments.map((environment) => environment.environmentId)),
+    memberStatuses,
     preferredHost,
   });
   return { states, groups };
