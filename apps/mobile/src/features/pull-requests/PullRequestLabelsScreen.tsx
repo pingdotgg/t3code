@@ -109,7 +109,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
           renderScrollComponent={NativeScrollView}
           data={candidates}
           keyExtractor={(candidate) => candidate.name}
-          extraData={{ pending, allowed, count: candidates.length }}
+          extraData={{ draft, allowed, count: candidates.length }}
           estimatedItemSize={72}
           recycleItems
           className="flex-1"
