@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  type ManagedPolicySummary,
   type ModelSelection,
   type OrchestrationV2AppThread,
   ProjectId,
@@ -13,11 +14,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -65,8 +67,10 @@ function makeThread(input: {
 }
 
 const grokInstanceId = ProviderInstanceId.make("grok");
+const antigravityInstanceId = ProviderInstanceId.make("antigravity");
 const supportedRuntimeModesByInstance = new Map<ProviderInstanceId, ReadonlyArray<RuntimeMode>>([
   [grokInstanceId, ["approval-required", "auto", "full-access"]],
+  [antigravityInstanceId, ["approval-required", "auto-accept-edits", "full-access"]],
 ]);
 const providerInstanceFor = (instanceId: ProviderInstanceId) =>
   ({
@@ -77,9 +81,13 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
     },
   }) as ProviderInstance;
 
-const layerWithProjectRoot = (workspaceRoot: string) =>
+const layerWithProject = (options: {
+  readonly workspaceRoot?: string;
+  readonly policy?: ManagedPolicySummary;
+}) =>
   RuntimePolicy.layerFromProjectStore.pipe(
     Layer.provide(NodeServices.layer),
+    Layer.provide(ServerSettings.layerTest({}, options.policy)),
     Layer.provide(
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
         getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
@@ -92,29 +100,51 @@ const layerWithProjectRoot = (workspaceRoot: string) =>
     Layer.provide(
       Layer.mock(ProjectStore.ProjectStoreV2)({
         get: () =>
-          Effect.succeed(
-            Option.some({
-              projectId,
-              title: "Project",
-              workspaceRoot,
-              defaultModelSelection: null,
-              defaultThreadEnvMode: null,
-              autoPull: false,
-              faviconPath: null,
-              projectIcon: null,
-              scripts: [],
-              createdAt: "2026-06-21T00:00:00.000Z",
-              updatedAt: "2026-06-21T00:00:00.000Z",
-              deletedAt: null,
-            }),
-          ),
+          Effect.succeedSome({
+            projectId,
+            title: "Project",
+            workspaceRoot: options.workspaceRoot ?? "/project-root",
+            defaultModelSelection: null,
+            defaultThreadEnvMode: null,
+            autoPull: false,
+            faviconPath: null,
+            projectIcon: null,
+            scripts: [],
+            pinnedAt: null,
+            archivedAt: null,
+            createdAt: "2026-06-21T00:00:00.000Z",
+            updatedAt: "2026-06-21T00:00:00.000Z",
+            deletedAt: null,
+          }),
       }),
     ),
   );
 
-const layerTest = layerWithProjectRoot("/project-root");
+const layerTest = layerWithProject({});
 
 it.layer(layerTest)("RuntimePolicyV2", (it) => {
+  it.effect("asks for Antigravity command approval when a stored Auto thread falls back", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolve = (runtimeMode: RuntimeMode) =>
+        policy.resolve({
+          thread: makeThread({ now, worktreePath: null, runtimeMode }),
+          modelSelection: { instanceId: antigravityInstanceId, model: "test-model" },
+        });
+      const request = {
+        sessionId: "session-1",
+        toolCall: { toolCallId: "command-1", title: "Run command", kind: "execute" as const },
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" as const }],
+      };
+      const auto = yield* resolve("auto");
+      assert.equal(auto.runtimeMode, "approval-required");
+      assert.equal(acpPermissionDisposition(auto, request), "ask");
+      assert.equal(acpPermissionDisposition(yield* resolve("auto-accept-edits"), request), "ask");
+      assert.equal(acpPermissionDisposition(yield* resolve("full-access"), request), "allow");
+    }),
+  );
+
   it.effect("runs a mode the provider does not offer in Supervised", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;
@@ -168,7 +198,7 @@ const resolveWorktreeCwd = (options: { readonly worktreeIos: "directory" | "file
         thread: makeThread({ now, worktreePath: fixture.worktreePath }),
         modelSelection,
       });
-    }).pipe(Effect.provide(layerWithProjectRoot(fixture.projectRoot)));
+    }).pipe(Effect.provide(layerWithProject({ workspaceRoot: fixture.projectRoot })));
     return { cwd: resolved.cwd, ...fixture };
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
@@ -189,3 +219,35 @@ it.effect(
       }
     }),
 );
+
+it.layer(
+  layerWithProject({
+    policy: {
+      organization: "Example Corp",
+      lockedSettings: [],
+      limits: { maxRuntimeMode: "auto-accept-edits" },
+    },
+  }),
+)("RuntimePolicyV2 under a runtime mode ceiling", (it) => {
+  it.effect("refuses to start a turn above the ceiling, such as one resumed after a restart", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolve = (runtimeMode: RuntimeMode) =>
+        policy.resolve({
+          thread: makeThread({ now, worktreePath: "/work", runtimeMode }),
+          modelSelection,
+        });
+
+      const refused = yield* resolve("full-access").pipe(Effect.flip);
+      assert.equal(refused._tag, "RuntimePolicyAboveCeilingError");
+      assert.equal(
+        refused.message,
+        "Example Corp limits threads to Auto-accept edits. Switch this thread's mode to continue.",
+      );
+      const allowed = yield* resolve("auto-accept-edits");
+      assert.equal(allowed.runtimeMode, "auto-accept-edits");
+      assert.equal(allowed.maxRuntimeMode, "auto-accept-edits");
+    }),
+  );
+});

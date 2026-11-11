@@ -669,8 +669,7 @@ async function rasterizeFavicon(
     );
     if (signal.aborted) onAbort();
   });
-  // The logical timeout does not cancel Electron's renderer work. Keep the
-  // gate closed until that physical execution actually settles.
+  // Logical timeouts leave renderer work running; keep the gate closed until it settles.
   const launchAllowed = execution.then(
     () => undefined,
     () => undefined,

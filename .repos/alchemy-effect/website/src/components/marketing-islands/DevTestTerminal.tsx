@@ -163,12 +163,8 @@ export default function DevTestTerminal() {
           pushDev(
             <>
               <span style={{ color: "var(--alc-success)" }}>✓ </span>
-              <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
-                {step.label}
-              </span>
-              <span
-                style={{ color: "var(--alc-code-comment)" }}
-              >{` (${step.detail})`}</span>
+              <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{step.label}</span>
+              <span style={{ color: "var(--alc-code-comment)" }}>{` (${step.detail})`}</span>
               <span style={{ color: "var(--alc-success)" }}> created</span>
             </>,
           );
@@ -177,24 +173,16 @@ export default function DevTestTerminal() {
           pushDev(
             <>
               <span style={{ color: "var(--alc-code-comment)" }}> → </span>
-              <span style={{ color: "var(--alc-accent-bright)" }}>
-                http://localhost:1337
-              </span>
+              <span style={{ color: "var(--alc-accent-bright)" }}>http://localhost:1337</span>
             </>,
           );
-          pushDev(
-            <span style={{ color: "var(--alc-code-comment)" }}>
-              Watching for changes…
-            </span>,
-          );
+          pushDev(<span style={{ color: "var(--alc-code-comment)" }}>Watching for changes…</span>);
         } else if (step.kind === "edit") {
           await sleep(step.ms);
           pushDev(
             <>
               <span style={{ color: "var(--alc-warn)" }}>↻ </span>
-              <span style={{ color: "var(--alc-code-comment)" }}>
-                {step.label} changed
-              </span>
+              <span style={{ color: "var(--alc-code-comment)" }}>{step.label} changed</span>
             </>,
           );
         } else if (step.kind === "reload") {
@@ -204,15 +192,9 @@ export default function DevTestTerminal() {
           pushDev(
             <>
               <span style={{ color: "var(--alc-success)" }}>✓ </span>
-              <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
-                Api
-              </span>
-              <span
-                style={{ color: "var(--alc-code-comment)" }}
-              >{` reloaded in `}</span>
-              <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
-                {step.detail}
-              </span>
+              <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>Api</span>
+              <span style={{ color: "var(--alc-code-comment)" }}>{` reloaded in `}</span>
+              <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{step.detail}</span>
             </>,
           );
         } else if (step.kind === "diff") {
@@ -220,12 +202,8 @@ export default function DevTestTerminal() {
           pushDev(
             <>
               <span style={{ color: "var(--alc-success)" }}>+ </span>
-              <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
-                {step.label}
-              </span>
-              <span
-                style={{ color: "var(--alc-code-comment)" }}
-              >{` (${step.detail})`}</span>
+              <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{step.label}</span>
+              <span style={{ color: "var(--alc-code-comment)" }}>{` (${step.detail})`}</span>
               <span style={{ color: "var(--alc-success)" }}> created</span>
             </>,
           );
@@ -235,9 +213,7 @@ export default function DevTestTerminal() {
             <>
               <span style={{ color: "var(--alc-warn)" }}>~ </span>
               <span style={{ color: "var(--alc-code-comment)" }}>wired </span>
-              <span style={{ color: "var(--alc-code-type)" }}>
-                {step.label}
-              </span>
+              <span style={{ color: "var(--alc-code-type)" }}>{step.label}</span>
             </>,
           );
         } else if (step.kind === "request") {
@@ -247,12 +223,8 @@ export default function DevTestTerminal() {
               <span
                 style={{ color: "var(--alc-code-comment)" }}
               >{`[${new Date().toLocaleTimeString().slice(0, 8)}] `}</span>
-              <span style={{ color: "var(--alc-fg-invert)" }}>
-                {step.label}
-              </span>
-              <span
-                style={{ color: "var(--alc-success)" }}
-              >{`  ${step.detail}`}</span>
+              <span style={{ color: "var(--alc-fg-invert)" }}>{step.label}</span>
+              <span style={{ color: "var(--alc-success)" }}>{`  ${step.detail}`}</span>
             </>,
           );
         }
@@ -274,9 +246,7 @@ export default function DevTestTerminal() {
         setTestSteps((arr) => [...arr, { ...s, status: "running" }]);
         await sleep(s.runMs);
         if (aborted()) return;
-        setTestSteps((arr) =>
-          arr.map((r) => (r.id === s.id ? { ...r, status: "done" } : r)),
-        );
+        setTestSteps((arr) => arr.map((r) => (r.id === s.id ? { ...r, status: "done" } : r)));
         await sleep(140);
       }
       if (aborted()) return;
@@ -298,7 +268,7 @@ export default function DevTestTerminal() {
       }
     };
 
-    loop();
+    void loop();
     return () => {
       cancelRef.current = true;
     };
@@ -321,9 +291,7 @@ export default function DevTestTerminal() {
           ))}
           {devBusy && (
             <Line>
-              <span style={{ color: "var(--alc-code-comment)" }}>
-                {devSpinner}{" "}
-              </span>
+              <span style={{ color: "var(--alc-code-comment)" }}>{devSpinner} </span>
             </Line>
           )}
         </>
@@ -337,9 +305,7 @@ export default function DevTestTerminal() {
           {testSteps.length > 0 && (
             <>
               <Line> </Line>
-              {testSteps.map((s, i, arr) =>
-                renderTestStep(s, i, arr, accent, testSpinner),
-              )}
+              {testSteps.map((s, i, arr) => renderTestStep(s, i, arr, accent, testSpinner))}
             </>
           )}
           {summary && (
@@ -358,9 +324,7 @@ export default function DevTestTerminal() {
                   {" PASS "}
                 </span>
                 <span>{summary.tests} tests · </span>
-                <span
-                  style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}
-                >
+                <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
                   {summary.secs}s
                 </span>
               </Line>
@@ -396,17 +360,13 @@ function renderTestStep(
           >
             {icon}
           </span>
-          <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
-            {s.label}
-          </span>
+          <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{s.label}</span>
           {!isRunning ? (
             <span style={{ color: "var(--alc-code-comment)" }}>
               {` (${s.detail} · ${s.durSec}s)`}
             </span>
           ) : (
-            <span
-              style={{ color: "var(--alc-code-comment)" }}
-            >{` (${s.detail})`}</span>
+            <span style={{ color: "var(--alc-code-comment)" }}>{` (${s.detail})`}</span>
           )}
         </Line>
         {s.url && !isRunning && (
@@ -421,17 +381,9 @@ function renderTestStep(
   }
   return (
     <Line key={s.id}>
-      <span
-        style={{ color: iconColor, width: "1.2em", display: "inline-block" }}
-      >
-        {icon}
-      </span>
+      <span style={{ color: iconColor, width: "1.2em", display: "inline-block" }}>{icon}</span>
       <span style={{ color: "var(--alc-fg-invert)" }}>{s.label}</span>
-      {!isRunning && (
-        <span
-          style={{ color: "var(--alc-code-comment)" }}
-        >{` (${s.durMs}ms)`}</span>
-      )}
+      {!isRunning && <span style={{ color: "var(--alc-code-comment)" }}>{` (${s.durMs}ms)`}</span>}
     </Line>
   );
 }
