@@ -277,10 +277,7 @@ import { failEnvironmentAuthCredential, failEnvironmentInternal } from "./auth/h
 import { isNetworkPath } from "@t3tools/shared/path";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import {
-  SOCKET_FRAME_PARTS_QUERY_PARAM,
-  splitLargeSocketFrames,
-} from "@t3tools/shared/socketFrameParts";
+import { socketFrameSplitterFor } from "@t3tools/shared/socketFrameParts";
 import { isTelemetryIdHash } from "@t3tools/shared/telemetryId";
 import {
   sameUsageLimitCommandCoverage,
@@ -3882,16 +3879,15 @@ export const layer = Layer.unwrap(
             ),
           ),
         );
-        const framedRpcWebSocketHttpEffect = url.value.searchParams.has(
-          SOCKET_FRAME_PARTS_QUERY_PARAM,
-        )
+        const splitFrames = socketFrameSplitterFor(url.value);
+        const framedRpcWebSocketHttpEffect = splitFrames
           ? rpcWebSocketHttpEffect.pipe(
               Effect.provideService(
                 HttpServerRequest.HttpServerRequest,
                 // The RPC server upgrades the request itself, so its socket is
                 // wrapped through the request it reads.
                 Object.create(request, {
-                  upgrade: { value: Effect.map(request.upgrade, splitLargeSocketFrames) },
+                  upgrade: { value: Effect.map(request.upgrade, splitFrames) },
                 }),
               ),
             )
