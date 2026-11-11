@@ -1352,9 +1352,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   ) {
     const fetchCwd =
       path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-    // `--no-auto-gc` keeps this poll from starting `git gc --auto`. When that gc fails, for
-    // example on a repository with missing objects, Git retries it on every fetch and leaves a
-    // full-size `tmp_pack_*` behind each time, so a background poll could fill the disk.
+    // `--no-auto-gc` (a synonym of `--no-auto-maintenance` that older Git also knows) keeps
+    // this poll from starting `git gc --auto`. When that gc fails, for example on a repository
+    // with missing objects, Git retries it on every fetch and leaves a full-size `tmp_pack_*`
+    // behind each time, so a background poll could fill the disk.
     const args = [
       "--git-dir",
       gitCommonDir,
