@@ -30,6 +30,8 @@ export interface ProviderContinuationRequest {
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;
   readonly clearIfCurrent?: () => Effect.Effect<void>;
+  /** Runs once the run woken by this request reaches a terminal status, however it got there. */
+  readonly onRunSettled?: () => Effect.Effect<void>;
 }
 
 /** The default drops requests; share the live layer with the worker that drains them. */

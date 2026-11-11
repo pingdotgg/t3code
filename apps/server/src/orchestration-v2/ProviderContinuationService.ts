@@ -1,7 +1,12 @@
-import { CommandId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  CommandId,
+  type MessageId,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -56,6 +61,7 @@ export const layer = Layer.effectDiscard(
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const retryAttempts = yield* Ref.make(new Map<string, number>());
+    const onRunSettledByMessage = new Map<MessageId, () => Effect.Effect<void>>();
 
     const clearRetryAttempt = (key: string) =>
       Ref.update(retryAttempts, (current) => {
@@ -186,7 +192,8 @@ export const layer = Layer.effectDiscard(
             ordinal: projection.messages.length + 1,
           }));
         const commandId = CommandId.make(`provider-continuation:${messageId}`);
-        const dispatch = threads.dispatch({
+        const onRunSettled = request.onRunSettled;
+        const dispatchMessage = threads.dispatch({
           type: "message.dispatch",
           commandId,
           threadId: request.threadId,
@@ -203,6 +210,16 @@ export const layer = Layer.effectDiscard(
           // Only buffered wakes use creationSource "provider"; Claude would drain an empty buffer instead of prompting message_text.
           creationSource: request.delivery === "message_text" ? "server" : "provider",
         });
+        // Registered before the run exists so its terminal update cannot be missed.
+        const dispatch =
+          onRunSettled === undefined
+            ? dispatchMessage
+            : Effect.suspend(() => {
+                onRunSettledByMessage.set(messageId, onRunSettled);
+                return dispatchMessage;
+              }).pipe(
+                Effect.onError(() => Effect.sync(() => onRunSettledByMessage.delete(messageId))),
+              );
         // Catch after dispatchIfCurrent so adapters see raw failures first; clearIfCurrent is idempotent and covers others.
         const logInstanceDisabled = (
           error: ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
@@ -233,6 +250,35 @@ export const layer = Layer.effectDiscard(
       },
     );
 
+    yield* threads.streamDomainEvents.pipe(
+      Stream.runForEach((event) => {
+        if (
+          event.type !== "run.updated" ||
+          !ThreadManagementService.isTerminalRunStatus(event.payload.status)
+        ) {
+          return Effect.void;
+        }
+        const onRunSettled = onRunSettledByMessage.get(event.payload.userMessageId);
+        if (onRunSettled === undefined) return Effect.void;
+        onRunSettledByMessage.delete(event.payload.userMessageId);
+        // One failing callback must not end the subscription the others wait on.
+        return onRunSettled().pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-continuation.run-settled-failed", {
+              threadId: event.payload.threadId,
+              cause,
+            }),
+          ),
+        );
+      }),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("orchestration-v2.provider-continuation.run-settled-stream-failed", {
+          cause,
+        }),
+      ),
+      Effect.forkScoped,
+    );
+
     yield* requests.take.pipe(
       Effect.flatMap((request) =>
         dispatchContinuation(request).pipe(
@@ -243,7 +289,11 @@ export const layer = Layer.effectDiscard(
                 providerThreadId: request.providerThreadId,
                 cause,
               });
-              if (request.delegatedCompletion !== undefined) {
+              // Only delegated completions retry; any other source would keep
+              // holding whatever it offered for.
+              if (request.delegatedCompletion === undefined) {
+                if (request.clearIfCurrent !== undefined) yield* request.clearIfCurrent();
+              } else {
                 const completion = request.delegatedCompletion;
                 const retryKey = delegatedCompletionRetryKey(request, completion);
                 const retryDelay = yield* nextRetryDelay(retryKey);

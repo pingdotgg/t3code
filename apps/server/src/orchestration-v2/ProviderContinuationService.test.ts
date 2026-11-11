@@ -7,6 +7,7 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2Notification,
 } from "@t3tools/contracts";
@@ -18,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -107,6 +109,69 @@ function layerTest(input: {
 }
 
 describe("ProviderContinuationService", () => {
+  it.effect("tells each source once the run its wake dispatched settles", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      const settled = new Map<string, Deferred.Deferred<void>>();
+      const wake = Effect.fnUntraced(function* (
+        id: string,
+        onRunSettled: (done: Effect.Effect<void>) => Effect.Effect<void>,
+      ) {
+        const messageId = MessageId.make(id);
+        const done = yield* Deferred.make<void>();
+        settled.set(id, done);
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request(),
+          messageId,
+          onRunSettled: () => onRunSettled(Deferred.succeed(done, undefined).pipe(Effect.asVoid)),
+        });
+        yield* Queue.take(dispatched);
+        return messageId;
+      });
+      const runUpdated = (userMessageId: MessageId, status: string) =>
+        ({
+          type: "run.updated",
+          threadId,
+          payload: { userMessageId, status },
+        }) as unknown as OrchestrationV2DomainEvent;
+      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: (command) => Queue.offer(dispatched, command).pipe(Effect.as({} as never)),
+        streamDomainEvents: Stream.fromQueue(events),
+      });
+      yield* Effect.gen(function* () {
+        const failing = yield* wake("message-failing", (done) =>
+          done.pipe(Effect.andThen(Effect.die("callback failed"))),
+        );
+        const first = yield* wake("message-first", (done) => done);
+        const last = yield* wake("message-last", (done) => done);
+        // Events are handled in order, so `first` settling proves the earlier ones were seen.
+        yield* Queue.offer(events, runUpdated(MessageId.make("message-other"), "cancelled"));
+        yield* Queue.offer(events, runUpdated(failing, "running"));
+        yield* Queue.offer(events, runUpdated(first, "cancelled"));
+        yield* Deferred.await(settled.get(first)!);
+        assert.isFalse(yield* Deferred.isDone(settled.get(failing)!));
+        yield* Queue.offer(events, runUpdated(failing, "cancelled"));
+        yield* Queue.offer(events, runUpdated(last, "failed"));
+        yield* Deferred.await(settled.get(failing)!);
+        yield* Deferred.await(settled.get(last)!);
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            ProviderContinuationRequests.layer,
+            ProviderContinuationService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+              ),
+            ),
+          ),
+        ),
+      );
+    }),
+  );
+
   it.effect("recovers an unaccepted persisted steer using the same delivery identity", () =>
     Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();
