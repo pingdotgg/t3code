@@ -1441,7 +1441,7 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         ) : null}
-        {viewedFileCount > 0 ? (
+        {viewedFileCount > 0 || hideViewedFiles ? (
           <Tooltip>
             <TooltipTrigger
               render={
