@@ -367,7 +367,7 @@ function PullRequestRowImpl({
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <span className="min-w-12 truncate font-mono text-caption text-dim-foreground" />
+                    <span className="min-w-12 truncate font-mono text-caption text-dim-foreground max-sm:flex-1" />
                   }
                 >
                   {entry.headBranch}
