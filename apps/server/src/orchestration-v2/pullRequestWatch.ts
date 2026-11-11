@@ -199,6 +199,8 @@ export function evaluatePullRequestWatch(
   const removal = detail.mergeQueueRemoval;
   if (
     removal !== undefined &&
+    // Merging also records a removal, up to a second before the pull request reads as merged.
+    removal.reason !== "merged" &&
     removal.id !== watch.mergeQueueRemovalId &&
     (watch.mergeQueueRemovalId !== undefined ||
       Date.parse(removal.removedAt) >= Math.floor(Date.parse(watch.startedAt) / 1000) * 1000)

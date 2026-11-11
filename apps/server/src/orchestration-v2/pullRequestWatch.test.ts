@@ -592,6 +592,16 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it("stays quiet when the queue lets go of a pull request by merging it", () => {
+    const watching = evaluatePullRequestWatch(watch(), detail(), noRemarks).next;
+    const merging = detail({
+      mergeQueueRemoval: { id: "landed", removedAt: "2026-10-02T12:10:00Z", reason: "merged" },
+    });
+    const read = evaluatePullRequestWatch(watching, merging, noRemarks);
+    assert.deepEqual(read.changes, []);
+    assert.equal(read.next.mergeQueueRemovalId, "landed");
+  });
+
   it("does not spend the comment wake limit on check results", () => {
     const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
     const result = evaluatePullRequestWatch(
