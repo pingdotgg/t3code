@@ -116,7 +116,10 @@ export class WorkspaceSearchIndex extends Context.Service<
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceSearchIndexSearchFailed>;
     readonly searchContents: (
       input: Omit<ProjectSearchContentsInput, "cwd">,
-    ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceSearchIndexSearchFailed>;
+    ) => Effect.Effect<
+      ProjectSearchContentsResult,
+      WorkspaceSearchIndexScanTimedOut | WorkspaceSearchIndexSearchFailed
+    >;
     readonly refresh: () => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
@@ -358,13 +361,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         cause,
       }),
   ).pipe(
+    // The scan keeps running on this finder; failing here would destroy it and cache the failure.
     Effect.catchTags({
-      WorkspaceSearchIndexScanTimedOut: (error) =>
-        variant === "paths"
-          ? Effect.sync(() => {
-              initialScanTimedOut = true;
-            })
-          : Effect.fail(error),
+      WorkspaceSearchIndexScanTimedOut: () =>
+        Effect.sync(() => {
+          initialScanTimedOut = true;
+        }),
     }),
   );
 
@@ -373,7 +375,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
     pageSize: number,
-    operation: "directorySearch" | "fileSearch" | "grep" | "mixedSearch",
+    operation: "directorySearch" | "fileSearch" | "getScanProgress" | "grep" | "mixedSearch",
     execute: () => Result<A>,
   ): Effect.fn.Return<A, WorkspaceSearchIndexSearchFailed> {
     const result = yield* Effect.try({
@@ -478,6 +480,20 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
+    if (initialScanTimedOut) {
+      const progress = yield* runSearch(input.query, input.limit, "getScanProgress", () =>
+        finder.getScanProgress(),
+      );
+      // Files the first scan has not indexed yet would read as "No results found".
+      if (!progress.isWarmupComplete) {
+        return yield* new WorkspaceSearchIndexScanTimedOut({
+          cwd,
+          timeout: WORKSPACE_INDEX_SCAN_TIMEOUT,
+        });
+      }
+      initialScanTimedOut = false;
+    }
+
     let { searchQuery, regexMode } = buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
