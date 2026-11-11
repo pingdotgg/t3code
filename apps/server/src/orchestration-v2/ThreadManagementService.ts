@@ -855,18 +855,17 @@ const make = Effect.gen(function* () {
           Effect.map((plan) => plan.releaseProviderSessionIds.length > 0),
           Effect.orElseSucceed(() => false),
         );
-      if (activeRun === undefined || runMatches || !releasesSession) {
+      if (
+        activeRun === undefined ||
+        runMatches ||
+        !releasesSession ||
+        latestSteerableRun(target)?.id !== activeRun.id
+      ) {
         return yield* dispatch({
           type: modelSelectionCommandType(target.thread.providerInstanceId, input.modelSelection),
           commandId: input.commandId,
           threadId: input.threadId,
           modelSelection: input.modelSelection,
-        });
-      }
-      if (latestSteerableRun(target)?.id !== activeRun.id) {
-        return yield* new ThreadManagementNoSteerableRunError({
-          threadId: input.threadId,
-          mode: "restart",
         });
       }
       // Persist the replacement input with the selection before interrupting the

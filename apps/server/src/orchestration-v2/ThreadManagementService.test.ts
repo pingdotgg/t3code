@@ -111,6 +111,81 @@ const layerDispatchChokepointTest =
       Layer.provideMerge(layerReceiptsTest),
     );
 
+it.effect("configuring a thread whose active run cannot be steered switches it like main", () => {
+  const projectId = ProjectId.make("project:thread-management:configure-waiting");
+  const threadId = ThreadId.make("thread:thread-management:configure-waiting");
+  const current = { instanceId: ProviderInstanceId.make("codex_work"), model: "test" };
+  const target = { instanceId: ProviderInstanceId.make("codex_other"), model: "test" };
+  const dispatched: Array<string> = [];
+  const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({
+        plan: () =>
+          Effect.succeed({
+            instanceChanged: true,
+            releaseProviderSessionIds: [ProviderSessionId.make("session:configure-waiting")],
+            transition: { type: "restart_and_resume" },
+          }),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: {
+              id: threadId,
+              projectId,
+              providerInstanceId: current.instanceId,
+              modelSelection: current,
+              archivedAt: null,
+              deletedAt: null,
+            },
+            runs: [
+              {
+                id: RunId.make("run:configure-waiting"),
+                status: "waiting",
+                ordinal: 1,
+                modelSelection: current,
+                activeAttemptId: null,
+              },
+            ],
+            providerTurns: [],
+            providerSessions: [],
+            providerThreads: [],
+          } as unknown as OrchestrationV2ThreadProjection),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            dispatched.push(command.type);
+            return { sequence: 1, storedEvents: [] } as never;
+          }),
+      }),
+    ),
+    Layer.provide(
+      ServerSettings.layerTest({
+        providerInstances: {
+          [current.instanceId]: { driver: "codex", enabled: true },
+          [target.instanceId]: { driver: "codex", enabled: true },
+        },
+      }),
+    ),
+    Layer.provideMerge(layerReceiptsTest),
+  );
+
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* threads.configureModelSelection({
+      projectId,
+      threadId,
+      commandId: CommandId.make("command:thread-management:configure-waiting"),
+      modelSelection: target,
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    expect(dispatched).toEqual(["provider.switch"]);
+  }).pipe(Effect.provide(layerTest));
+});
+
 it.effect(
   "the dispatch chokepoint refuses a continuation message.dispatch on a project-disabled instance before reaching the orchestrator",
   () => {
