@@ -524,7 +524,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const preserveDisclosurePosition = (
     anchorKey: string,
-    reveal?: { readonly entryId?: string; readonly contentKey?: string },
+    reveal?: { readonly entryId?: string | undefined; readonly contentKey?: string | undefined },
   ) => {
     const list = listRef.current;
     disclosureRevealRef.current =
