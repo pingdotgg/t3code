@@ -320,22 +320,37 @@ const isGraphQlClientError = (error: unknown): error is GraphQLClientError.Graph
 
 const { isNotFoundOnly } = GitHubGraphQlClient;
 
-const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
+type GraphQlPath = ReadonlyArray<string | number>;
+
+const isRequestedReviewerPath = (path: GraphQlPath): boolean =>
+  path.length === 6 &&
+  path[0] === "repository" &&
+  path[1] === "pullRequest" &&
+  path[2] === "reviewRequests" &&
+  path[3] === "nodes" &&
+  typeof path[4] === "number" &&
+  Number.isInteger(path[4]) &&
+  path[4] >= 0 &&
+  path[5] === "requestedReviewer";
+
+const isRequiredRulesPath = (path: GraphQlPath): boolean =>
+  path.length >= 4 &&
+  path[0] === "repository" &&
+  path[1] === "pullRequest" &&
+  path[2] === "baseRef" &&
+  (path[3] === "refUpdateRule" || path[3] === "rules");
+
+/** Some credentials, such as a GitHub App user token, are refused optional selections alone. */
+const isRefusedOnlyAt = (
+  error: unknown,
+  ...optional: ReadonlyArray<(path: GraphQlPath) => boolean>
+): boolean =>
   isGraphQlClientError(error) &&
   error.reason._tag === "ResponseError" &&
   error.reason.status === 200 &&
   error.reason.errors.every(
     ({ path, type }) =>
-      type === "FORBIDDEN" &&
-      path?.length === 6 &&
-      path[0] === "repository" &&
-      path[1] === "pullRequest" &&
-      path[2] === "reviewRequests" &&
-      path[3] === "nodes" &&
-      typeof path[4] === "number" &&
-      Number.isInteger(path[4]) &&
-      path[4] >= 0 &&
-      path[5] === "requestedReviewer",
+      type === "FORBIDDEN" && path != null && optional.some((isOptional) => isOptional(path)),
   );
 
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
@@ -1444,8 +1459,9 @@ export const make = Effect.gen(function* () {
       const key = `${fingerprint}\0${host}\0${input.repository.toLowerCase()}\0${input.number}`;
       if (yield* Cache.has(refusedReviewers, key)) return yield* read(0);
       return yield* read(wanted).pipe(
-        Effect.catchIf(isRefusedRequestedReviewersOnly, () =>
-          Cache.set(refusedReviewers, key, undefined).pipe(Effect.andThen(read(0))),
+        Effect.catchIf(
+          (error) => isRefusedOnlyAt(error, isRequestedReviewerPath),
+          () => Cache.set(refusedReviewers, key, undefined).pipe(Effect.andThen(read(0))),
         ),
       );
     },
@@ -1454,15 +1470,29 @@ export const make = Effect.gen(function* () {
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
     const operation = "getPullRequestDetail";
-    const read = (requestedReviewers: number) =>
-      client.PullRequestCore({
-        owner,
-        name,
-        number: input.number,
-        headRef: `refs/pull/${input.number}/head`,
-        required: asksRequired(input.host),
-        requestedReviewers,
-      });
+    const required = asksRequired(input.host);
+    const read = (requestedReviewers: number) => {
+      const core = (requiredRules: boolean) =>
+        client.PullRequestCore({
+          owner,
+          name,
+          number: input.number,
+          headRef: `refs/pull/${input.number}/head`,
+          required,
+          requiredRules,
+          requestedReviewers,
+        });
+      // Base branch rules only add pending required checks, so a refusal of them reads without.
+      return core(required).pipe(
+        Effect.catchIf(
+          (error) =>
+            required &&
+            isRefusedOnlyAt(error, isRequestedReviewerPath, isRequiredRulesPath) &&
+            !isRefusedOnlyAt(error, isRequestedReviewerPath),
+          () => core(false),
+        ),
+      );
+    };
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
         readRequestedReviewers(input, 100, read).pipe(
@@ -1479,7 +1509,7 @@ export const make = Effect.gen(function* () {
                   ).pipe(
                     Effect.map((all) => ({
                       ...core,
-                      ...pullRequestChecksFromContexts(all.contexts),
+                      ...pullRequestChecksFromContexts(all.contexts, core.requiredCheckNames),
                       checksTruncated: all.truncated,
                     })),
                   ),

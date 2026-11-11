@@ -42,6 +42,10 @@ const refusedReviewer = {
   message: "Resource not accessible by integration",
   path: ["repository", "pullRequest", "reviewRequests", "nodes", 0, "requestedReviewer"],
 };
+const refusedRules = {
+  ...refusedReviewer,
+  path: ["repository", "pullRequest", "baseRef", "rules"],
+};
 const pullRequestInput = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
 type PullRequestRead = (
   input: typeof pullRequestInput,
@@ -3463,6 +3467,37 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    { name: "alone", responses: [[refusedRules]], requestedReviewers: 100 },
+    {
+      name: "with a reviewer refusal",
+      responses: [[refusedRules, refusedReviewer], [refusedReviewer], [refusedRules]],
+      requestedReviewers: 0,
+    },
+  ])(
+    "reads the detail without base branch rules refused $name",
+    ({ name, responses, requestedReviewers }) =>
+      Effect.gen(function* () {
+        for (const errors of responses)
+          mockedExecute.mockReturnValueOnce(
+            Effect.succeed(output(encodeJson({ ...coreResponse(), errors }))),
+          );
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const detail = yield* cli.getPullRequestDetail({
+          ...pullRequestInput,
+          repository: `acme/refused-rules-${name.replaceAll(" ", "-")}`,
+        });
+        expect(detail.number).toBe(7);
+        expect(variablesOf("PullRequestCore").at(-1)).toMatchObject({
+          required: true,
+          requiredRules: false,
+          requestedReviewers,
+        });
+        expect(mockedExecute).toHaveBeenCalledTimes(responses.length + 1);
+      }),
+  );
+
   it.effect("keeps thread cursors after a reviewer refusal", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
@@ -3579,6 +3614,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
             output(
               encodeJson(
                 coreResponse({
+                  baseRef: {
+                    compare: null,
+                    refUpdateRule: { requiredStatusCheckContexts: ["Done"] },
+                  },
                   commits: {
                     nodes: [
                       {
@@ -3616,10 +3655,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
           expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([
             100, 0,
           ]);
-        expect(detail.checks.map((check) => check.name).sort()).toEqual(["first", "last"]);
+        expect(detail.checks.map((check) => check.name).sort()).toEqual(["Done", "first", "last"]);
+        expect(detail.checks.find((check) => check.name === "Done")?.status).toBe("pending");
         expect(detail.checksState).toBe("failing");
         expect(detail.checksTruncated).toBe(false);
-        expect(variablesOf("CheckContexts")).toEqual([
+        expect(variablesOf("PullRequestCheckContexts")).toEqual([
           expect.objectContaining({ number: 7, after: "c1" }),
         ]);
         expect(mockedExecute).toHaveBeenCalledTimes(refused ? 3 : 2);
