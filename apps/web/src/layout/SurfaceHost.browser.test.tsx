@@ -74,7 +74,7 @@ async function clickHeld(element: HTMLElement) {
     .toHaveAttribute("data-layout-pane-focused", "true");
   expect(strip.scrollLeft).toBe(held);
   element.dispatchEvent(new PointerEvent("pointerup", pointer));
-  await page.elementLocator(element).click();
+  element.click();
   await vi.waitFor(() => expect(strip.scrollLeft).toBeGreaterThan(held));
 }
 
