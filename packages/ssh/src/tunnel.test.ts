@@ -912,12 +912,29 @@ const canConnectToSocket = (socketPath: string | null) =>
     socket.once("error", () => resume(Effect.succeed(false)));
   });
 
-const makeForwardedAgentHarness = Effect.fn("makeForwardedAgentHarness")(function* () {
+const makeForwardedAgentHarness = Effect.fn("makeForwardedAgentHarness")(function* (
+  remoteHome: "short home" | "long home with a profile agent",
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-agent-" });
-  const home = path.join(root, "home");
+  const home = path.join(root, remoteHome === "short home" ? "home" : "home-".padEnd(64, "x"));
   yield* fs.makeDirectory(home);
+  if (remoteHome !== "short home") {
+    // A persistent agent the login shell exports in place of the forwarded one.
+    const agentPath = path.join(root, "agent.sock");
+    yield* Effect.acquireRelease(
+      Effect.callback<NodeNet.Server>((resume) => {
+        const agent = NodeNet.createServer((socket) => socket.end());
+        agent.listen(agentPath, () => resume(Effect.succeed(agent)));
+      }),
+      (agent) => Effect.sync(() => agent.close()),
+    );
+    yield* fs.writeFileString(
+      path.join(home, ".profile"),
+      `SSH_AUTH_SOCK=${agentPath}\nexport SSH_AUTH_SOCK\n`,
+    );
+  }
   yield* fs.writeFileString(path.join(root, "config.json"), JSON.stringify({ home, root }));
   const fakeSsh = path.join(root, "ssh.cjs");
   yield* fs.writeFileString(fakeSsh, FAKE_SSH_SCRIPT);
@@ -1018,11 +1035,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     // Reproduces https://git.cafe/pingdotgg/t3code/issues/11872: the managed
     // server kept the launch connection's agent socket, which sshd deletes as
     // soon as the launch command exits, so git over SSH failed on the remote.
-    it.live(
-      "keeps the forwarded agent reachable from the managed server while connected and across reconnect",
-      () =>
+    it.live.each(["short home", "long home with a profile agent"] as const)(
+      "keeps the forwarded agent reachable from the managed server while connected and across reconnect: %s",
+      (remoteHome) =>
         Effect.gen(function* () {
-          const harness = yield* makeForwardedAgentHarness().pipe(
+          const harness = yield* makeForwardedAgentHarness(remoteHome).pipe(
             Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           );
           const staleBaseUrls = new Set<string>();

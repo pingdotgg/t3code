@@ -794,8 +794,9 @@ if [ -z "$REMOTE_PORT" ]; then
   fi
   if [ -n "\${SSH_AUTH_SOCK:-}" ]; then
     # sshd removes this session's forwarded agent socket when the launch exits.
-    # The tunnel session keeps this stable link pointed at a live one.
-    SSH_AUTH_SOCK="$STATE_DIR/agent.sock"
+    # The tunnel session keeps this stable link pointed at a live one. It stays
+    # under /tmp because socket paths are limited to about 100 bytes.
+    SSH_AUTH_SOCK="/tmp/t3-ssh-$(id -u)/$STATE_KEY"
     export SSH_AUTH_SOCK
   fi
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
@@ -869,9 +870,13 @@ const TUNNEL_SESSION_READY_LINE = "t3-ssh-tunnel-session-ready";
 // the session ends, so the tunnel holds one open for as long as it is connected.
 // Reading stdin until the connection drops keeps the session alive.
 const REMOTE_TUNNEL_SESSION_SCRIPT = `STATE_DIR="$HOME/.t3/ssh-launch/$1"
+AGENT_DIR="/tmp/t3-ssh-$(id -u)"
+AGENT_LINK="$AGENT_DIR/$1"
 if [ -n "\${SSH_AUTH_SOCK:-}" ] && [ -d "$STATE_DIR" ]; then
-  if ! { ln -sf "$SSH_AUTH_SOCK" "$STATE_DIR/agent.sock.$$" && mv -f "$STATE_DIR/agent.sock.$$" "$STATE_DIR/agent.sock"; }; then
-    rm -f "$STATE_DIR/agent.sock.$$"
+  mkdir -m 700 "$AGENT_DIR" 2>/dev/null
+  # Another user could have created the shared /tmp entry first.
+  if ! { [ -d "$AGENT_DIR" ] && [ ! -L "$AGENT_DIR" ] && [ -O "$AGENT_DIR" ] && chmod 700 "$AGENT_DIR" && ln -sf "$SSH_AUTH_SOCK" "$AGENT_LINK.$$" && mv -f "$AGENT_LINK.$$" "$AGENT_LINK"; }; then
+    rm -f "$AGENT_LINK.$$"
     printf '%s\\n' "Failed to publish the forwarded SSH agent for the T3 server." >&2
     exit 1
   fi
