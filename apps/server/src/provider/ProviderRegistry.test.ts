@@ -17,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -40,6 +41,7 @@ import {
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { LoginShellEnvironment } from "@t3tools/shared/shell";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -2177,6 +2179,126 @@ it.layer(
           expect(afterUpdate.providers).toEqual([expect.objectContaining(afterUpdate.provider)]);
         }
       }),
+    );
+
+    it.effect(
+      "rebuilds instances with a missing CLI when the login shell PATH gains a folder",
+      () =>
+        Effect.gen(function* () {
+          const makeInstance = (provider: ServerProvider, changes: Stream.Stream<ServerProvider>) =>
+            ({
+              instanceId: provider.instanceId,
+              driverKind: provider.driver,
+              continuationIdentity: {
+                driverKind: provider.driver,
+                continuationKey: `${provider.driver}:instance:${provider.instanceId}`,
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                resolveMaintenance: () =>
+                  Effect.succeed(
+                    makeManualOnlyProviderMaintenanceCapabilities({
+                      provider: provider.driver,
+                      packageName: null,
+                    }),
+                  ),
+                getSnapshot: Effect.succeed(provider),
+                refresh: Effect.succeed(provider),
+                streamChanges: changes,
+                applyUsageLimits: () => Effect.void,
+              },
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            }) satisfies ProviderInstance;
+          const installed = {
+            instanceId: ProviderInstanceId.make("codex"),
+            driver: ProviderDriverKind.make("codex"),
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const missing = {
+            ...installed,
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            driver: ProviderDriverKind.make("claudeAgent"),
+            status: "error",
+            installed: false,
+            auth: { status: "unknown" },
+            version: null,
+            message: "Claude Agent CLI (`claude`) was not found on PATH.",
+          } as const satisfies ServerProvider;
+          const probes = yield* PubSub.unbounded<ServerProvider>();
+          const instances = [
+            makeInstance(installed, Stream.empty),
+            makeInstance(missing, Stream.fromPubSub(probes)),
+          ];
+          const rebuilds = yield* Queue.unbounded<ReadonlyArray<ProviderInstanceId>>();
+          const environment: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+          let shellPath = "/usr/bin";
+          let shellReads = 0;
+
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          yield* Layer.build(
+            ProviderRegistry.layer.pipe(
+              Layer.provide(
+                Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({
+                  rebuild: (instanceIds) => Queue.offer(rebuilds, [...instanceIds]),
+                }),
+              ),
+              Layer.provide(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                  getInstance: (requestedId) =>
+                    Effect.succeed(
+                      instances.find((instance) => instance.instanceId === requestedId),
+                    ),
+                  listInstances: Effect.succeed(instances),
+                  listUnavailable: Effect.succeed([]),
+                  streamChanges: Stream.empty,
+                  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+                }),
+              ),
+              Layer.provide(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-missing-cli-",
+                }),
+              ),
+              Layer.provide(NodeServices.layer),
+            ),
+          ).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(HostProcess.Environment, environment),
+            Effect.provideService(LoginShellEnvironment, () =>
+              Effect.sync(() => {
+                shellReads += 1;
+                return { PATH: shellPath };
+              }),
+            ),
+            Scope.provide(scope),
+          );
+          const probeMissing = (checkedAt: string) =>
+            PubSub.publish(probes, { ...missing, checkedAt });
+
+          shellPath = "/home/me/.local/bin:/usr/bin";
+          yield* probeMissing("2026-06-10T00:05:00.000Z");
+          expect(yield* Queue.take(rebuilds)).toEqual([missing.instanceId]);
+          expect(environment.PATH).toBe("/home/me/.local/bin:/usr/bin");
+
+          // The replacement's own probe, and every other provider's, reuses that shell read.
+          yield* probeMissing("2026-06-10T00:05:01.000Z");
+          yield* TestClock.adjust("60 seconds");
+          shellPath = "/opt/tools/bin:/home/me/.local/bin:/usr/bin";
+          yield* probeMissing("2026-06-10T00:10:00.000Z");
+          expect(yield* Queue.take(rebuilds)).toEqual([missing.instanceId]);
+          expect(shellReads).toBe(2);
+        }),
     );
 
     it.effect("keeps an enriched snapshot that streams in before a manual refresh returns", () =>

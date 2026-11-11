@@ -10,6 +10,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
@@ -27,6 +28,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
+import { refreshPath } from "../os-jank.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import {
@@ -339,6 +341,10 @@ const correlateSnapshotWithSource = (
   }
   return Effect.succeed(snapshot);
 };
+
+const MISSING_CLI_PATH_REFRESH_INTERVAL = Duration.seconds(60);
+
+const isCliMissing = (provider: ServerProvider) => provider.enabled && !provider.installed;
 
 const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
   return provider.instanceId;
@@ -792,6 +798,20 @@ export const layer = Layer.effect(
       return yield* instance.snapshot.resolveMaintenance(options);
     });
 
+    // Drivers copy the host environment when created, so a missing CLI's instance must be
+    // rebuilt to see a PATH directory added since. One shell read serves every provider.
+    const recoverMissingClis = yield* Effect.cachedWithTTL(
+      Effect.gen(function* () {
+        if (!(yield* refreshPath())) return;
+        const live = yield* Ref.get(liveSubsRef);
+        const missing = (yield* Ref.get(providersRef))
+          .filter((provider) => isCliMissing(provider) && live.has(provider.instanceId))
+          .map((provider) => provider.instanceId);
+        yield* instanceRegistryMutator.rebuild(new Set(missing));
+      }).pipe(Effect.ignoreCause({ log: true })),
+      MISSING_CLI_PATH_REFRESH_INTERVAL,
+    );
+
     const syncLiveSources = syncSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const instances = yield* instanceRegistry.listInstances;
@@ -847,7 +867,15 @@ export const layer = Layer.effect(
         for (const [, instance] of newlyAdded) {
           const source = buildSnapshotSource(instance);
           yield* Stream.runForEach(source.streamChanges, (provider) =>
-            correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
+            correlateSnapshotWithSource(source, provider).pipe(
+              Effect.flatMap(syncProvider),
+              // Forked: the shell read must not hold up this instance's later snapshots.
+              Effect.andThen(
+                isCliMissing(provider)
+                  ? Effect.forkIn(recoverMissingClis, serviceScope)
+                  : Effect.void,
+              ),
+            ),
           ).pipe(Effect.forkScoped);
         }
         yield* Effect.yieldNow;

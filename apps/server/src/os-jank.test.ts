@@ -1,14 +1,18 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { CommandAvailability, WindowsShellEnvironment } from "@t3tools/shared/shell";
+import {
+  CommandAvailability,
+  LoginShellEnvironment,
+  WindowsShellEnvironment,
+} from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Observe the existing synchronous shell probe without launching the user's login shell.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import { assert, it, vi } from "vite-plus/test";
 
-import { fixPath, hydratePosixHome } from "./os-jank.ts";
+import { fixPath, hydratePosixHome, refreshPath } from "./os-jank.ts";
 
 vi.mock("node:child_process", { spy: true });
 
@@ -134,6 +138,56 @@ effectIt.effect("hydrates a missing JAVA_HOME from the login shell and keeps an 
       }),
     (probe) => Effect.sync(() => probe.mockRestore()),
   ),
+);
+
+effectIt.effect("refreshes PATH with directories the login shell gained after startup", () =>
+  Effect.gen(function* () {
+    const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin:/opt/kept/bin" };
+    const shells: Array<string> = [];
+    let shellEnvironment: Partial<Record<string, string>> = {};
+    const refresh = refreshPath().pipe(
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Environment, env),
+      Effect.provideService(LoginShellEnvironment, (shell) =>
+        Effect.sync(() => {
+          shells.push(shell);
+          return shell === "/bin/zsh" ? shellEnvironment : {};
+        }),
+      ),
+    );
+
+    shellEnvironment = { PATH: "/home/me/.local/bin:/usr/bin", __MISE_DIFF: "mise-diff" };
+    assert.isTrue(yield* refresh);
+    assert.equal(env.PATH, "/home/me/.local/bin:/usr/bin:/opt/kept/bin");
+    assert.equal(env.__MISE_DIFF, "mise-diff");
+    assert.deepEqual(shells, ["/bin/zsh"]);
+
+    // Reordered entries are not a new directory.
+    shellEnvironment = { PATH: "/usr/bin:/home/me/.local/bin" };
+    assert.isFalse(yield* refresh);
+    assert.equal(env.PATH, "/usr/bin:/home/me/.local/bin:/opt/kept/bin");
+
+    shellEnvironment = {};
+    assert.isFalse(yield* refresh);
+    assert.equal(env.PATH, "/usr/bin:/home/me/.local/bin:/opt/kept/bin");
+  }),
+);
+
+effectIt.effect("does not read a login shell to refresh PATH on Windows", () =>
+  Effect.gen(function* () {
+    const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows" };
+
+    const changed = yield* refreshPath().pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, env),
+      Effect.provideService(LoginShellEnvironment, () =>
+        Effect.die(new Error("login shell should not run")),
+      ),
+    );
+
+    assert.isFalse(changed);
+    assert.deepEqual(env, { PATH: "C:\\Windows" });
+  }),
 );
 
 effectIt.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>

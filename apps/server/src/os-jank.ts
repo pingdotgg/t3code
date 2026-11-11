@@ -1,6 +1,7 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   listLoginShellCandidates,
+  LoginShellEnvironment,
   mergePathEntries,
   readEnvironmentFromLoginShell,
   readPathFromLaunchctl,
@@ -18,27 +19,22 @@ function logPathHydrationWarning(message: string, error?: unknown): void {
   );
 }
 
-function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): void {
-  let shellEnvironment: Partial<Record<string, string>> = {};
-  for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
-    try {
-      // mise's record of the PATH entries it added. It must travel with the
-      // shell's PATH, or `mise x` can rebuild PATH behind a same-named wrapper
-      // (`exec mise x claude -- claude`) that then re-runs itself forever.
-      shellEnvironment = readEnvironmentFromLoginShell(shell, ["PATH", "__MISE_DIFF", "JAVA_HOME"]);
-    } catch (error) {
-      logPathHydrationWarning(`Failed to read PATH from login shell ${shell}.`, error);
-    }
+const LOGIN_SHELL_ENVIRONMENT_NAMES = ["PATH", "__MISE_DIFF", "JAVA_HOME"] as const;
 
-    if (shellEnvironment.PATH) break;
-  }
-
+function applyLoginShellEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  shellEnvironment: Partial<Record<string, string>>,
+  fallbackPath?: string,
+): void {
   const shellPath = shellEnvironment.PATH;
-  const launchctlPath = platform === "darwin" && !shellPath ? readPathFromLaunchctl() : undefined;
-  const mergedPath = mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform);
+  const mergedPath = mergePathEntries(shellPath ?? fallbackPath, env.PATH, platform);
   if (mergedPath) {
     env.PATH = mergedPath;
   }
+  // mise's record of the PATH entries it added. It must travel with the
+  // shell's PATH, or `mise x` can rebuild PATH behind a same-named wrapper
+  // (`exec mise x claude -- claude`) that then re-runs itself forever.
   if (shellPath && shellEnvironment.__MISE_DIFF) {
     env.__MISE_DIFF = shellEnvironment.__MISE_DIFF;
   }
@@ -47,6 +43,23 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
   if (!env.JAVA_HOME && shellEnvironment.JAVA_HOME) {
     env.JAVA_HOME = shellEnvironment.JAVA_HOME;
   }
+}
+
+function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): void {
+  let shellEnvironment: Partial<Record<string, string>> = {};
+  for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
+    try {
+      shellEnvironment = readEnvironmentFromLoginShell(shell, LOGIN_SHELL_ENVIRONMENT_NAMES);
+    } catch (error) {
+      logPathHydrationWarning(`Failed to read PATH from login shell ${shell}.`, error);
+    }
+
+    if (shellEnvironment.PATH) break;
+  }
+
+  const launchctlPath =
+    platform === "darwin" && !shellEnvironment.PATH ? readPathFromLaunchctl() : undefined;
+  applyLoginShellEnvironment(env, platform, shellEnvironment, launchctlPath);
 }
 
 export function hydratePosixHome(
@@ -106,6 +119,27 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
       }),
     ),
   );
+});
+
+/**
+ * Re-reads the login shell PATH after startup and reports whether PATH gained a directory.
+ * Runs even when the desktop app prepared the startup environment, which goes stale the same way.
+ */
+export const refreshPath = Effect.fn("refreshPath")(function* () {
+  const platform = yield* HostProcess.Platform;
+  // Windows resolves PATH through PowerShell probes that cost seconds.
+  if (platform !== "darwin" && platform !== "linux") return false;
+
+  const env = yield* HostProcess.Environment;
+  const readShellEnvironment = yield* LoginShellEnvironment;
+  const known = new Set(mergePathEntries(env.PATH, undefined, platform)?.split(":"));
+  for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
+    const shellEnvironment = yield* readShellEnvironment(shell, LOGIN_SHELL_ENVIRONMENT_NAMES);
+    if (!shellEnvironment.PATH) continue;
+    applyLoginShellEnvironment(env, platform, shellEnvironment);
+    return (env.PATH ?? "").split(":").some((entry) => !known.has(entry));
+  }
+  return false;
 });
 
 export const expandHomePath = Effect.fn(function* (input: string) {
