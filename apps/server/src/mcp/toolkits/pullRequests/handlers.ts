@@ -108,12 +108,13 @@ function conversationPage(
   start: { readonly threads: number; readonly comments: number },
   includeResolved: boolean,
 ) {
-  const threads = activity.reviewThreads.filter((thread) => includeResolved || !thread.isResolved);
+  // Offsets index the unfiltered lists, whose order resolving a thread does not change.
+  const { reviewThreads, comments } = activity;
   const pageThreads: Array<PullRequestReviewThread> = [];
   const pageComments: Array<PullRequestActivity["comments"][number]> = [];
   let size = 0;
-  let thread = start.threads;
-  let comment = start.comments;
+  let thread = Math.min(start.threads, reviewThreads.length);
+  let comment = Math.min(start.comments, comments.length);
   const fits = (item: unknown) => {
     const next = size + JSON.stringify(item).length;
     if (next > CONVERSATION_PAGE_CHARS && pageThreads.length + pageComments.length > 0) {
@@ -123,17 +124,26 @@ function conversationPage(
     return true;
   };
   // Review threads come first: they hold the feedback an agent acts on.
-  while (thread < threads.length && fits(threads[thread])) pageThreads.push(threads[thread++]!);
-  if (thread === threads.length) {
-    while (comment < activity.comments.length && fits(activity.comments[comment])) {
-      pageComments.push(activity.comments[comment++]!);
+  while (thread < reviewThreads.length) {
+    const next = reviewThreads[thread]!;
+    if (includeResolved || !next.isResolved) {
+      if (!fits(next)) break;
+      pageThreads.push(next);
+    }
+    thread += 1;
+  }
+  if (thread === reviewThreads.length) {
+    while (comment < comments.length && fits(comments[comment])) {
+      pageComments.push(comments[comment++]!);
     }
   }
-  const done = thread === threads.length && comment === activity.comments.length;
+  const done = thread === reviewThreads.length && comment === comments.length;
   return {
     threads: pageThreads,
     comments: pageComments,
-    hiddenResolvedThreads: includeResolved ? 0 : activity.reviewThreads.length - threads.length,
+    hiddenResolvedThreads: includeResolved
+      ? 0
+      : reviewThreads.filter((candidate) => candidate.isResolved).length,
     next: done ? null : { threads: thread, comments: comment, includeResolved },
   };
 }

@@ -18,6 +18,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -796,18 +797,23 @@ describe("source control tools", () => {
         comments: [comment("x".repeat(20_000))],
       });
       const listed: Array<PullRequestListInput> = [];
+      let firstResolved = false;
       const harness = yield* makeHarness({
         thread: branchThread,
         pullRequests: {
           activity: () =>
-            Effect.succeed({
+            Effect.sync(() => ({
               ...activity,
               reviewThreads: [
-                { ...long("first"), nextCommentsCursor: "later" },
+                {
+                  ...long("first"),
+                  isResolved: firstResolved,
+                  nextCommentsCursor: "later",
+                },
                 long("second"),
                 reviewThread("done-thread", true),
               ],
-            }),
+            })),
           threadComments: (input) =>
             Effect.succeed(
               input.cursor === "later"
@@ -833,10 +839,18 @@ describe("source control tools", () => {
       ]);
       const cursor = first.conversation?.nextCursor;
       expect(cursor).toEqual(expect.any(String));
+      // The agent resolves what it read; the next page still starts at the next thread.
+      firstResolved = true;
       const second = yield* harness.call("pull_request_read", { cursor: cursor! });
       expect(second.summary).toBeUndefined();
       expect(second.conversation?.reviewThreads.map((thread) => thread.id)).toEqual(["second"]);
       expect(second.conversation?.nextCursor).toBeNull();
+      // A cursor past the current end finishes instead of repeating an empty page.
+      const stale = Base64Url.encode(
+        JSON.stringify({ threads: 99, comments: 99, includeResolved: false }),
+      );
+      const past = yield* harness.call("pull_request_read", { cursor: stale });
+      expect(past.conversation).toMatchObject({ reviewThreads: [], nextCursor: null });
 
       const page = yield* harness.call("pull_request_list", {});
       yield* harness.call("pull_request_list", { cursor: page.nextCursor! });
