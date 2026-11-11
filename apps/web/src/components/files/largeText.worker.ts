@@ -96,7 +96,7 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
       let length = 0;
       let quoted = false;
       let ended = false;
-      while (!ended || parts.at(-1)?.at(-1) === 13) {
+      while (length <= 1024 * 1024 && (!ended || parts.at(-1)?.at(-1) === 13)) {
         const next = await reader.read();
         if (next.done) break;
         parts.push(next.value);
