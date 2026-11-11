@@ -1,3 +1,4 @@
+import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarAction, AppBarMenu } from "../../components/ui/AppBar.types";
@@ -6,6 +7,7 @@ import {
   useWorkspacePaneState,
 } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-navigation";
+import { shouldLeavePutAwayThread } from "./thread-put-away-navigation";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import {
   threadTerminalMenu,
@@ -27,12 +29,28 @@ export function ThreadHeader(props: {
   readonly onOpenFilesInspector: () => void;
 }) {
   const goBack = useWorkspaceBackNavigation("threads");
-  const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
+  const { layout, toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls);
+  const navigation = useNavigation();
   const { items: lifecycleItems, sheet: lifecycleSheet } = useThreadLifecycleMenu(
     props.draft ? null : (props.thread ?? null),
+    {
+      onPutAway: (thread) => {
+        const state = navigation.getState();
+        if (
+          shouldLeavePutAwayThread({
+            succeeded: true,
+            usesSplitView: layout.usesSplitView,
+            focused: navigation.isFocused(),
+            routeParams: state?.routes[state.index]?.params,
+            thread,
+          })
+        )
+          goBack();
+      },
+    },
   );
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd

@@ -34,7 +34,13 @@ import {
 import { canTurnThreadIntoProject, turnThreadIntoProject } from "./turnThreadIntoProject";
 import { useThreadListNow } from "./use-thread-list-now";
 
-export function useThreadLifecycleMenu(thread: EnvironmentThreadShell | null): {
+export function useThreadLifecycleMenu(
+  thread: EnvironmentThreadShell | null,
+  options: {
+    /** Called after a successful Settle or Snooze, which put the thread away. */
+    readonly onPutAway?: (thread: EnvironmentThreadShell) => void;
+  } = {},
+): {
   readonly items: ReadonlyArray<AppBarMenuItem>;
   readonly sheet: ReactNode;
 } {
@@ -148,7 +154,9 @@ export function useThreadLifecycleMenu(thread: EnvironmentThreadShell | null): {
 
   const handleSnooze = (snoozedUntil: string) => {
     if (thread === null) return;
-    void snoozeThread(thread, snoozedUntil);
+    void snoozeThread(thread, snoozedUntil).then((snoozed) => {
+      if (snoozed) options.onPutAway?.(thread);
+    });
   };
 
   const handleMenuAction = (event: string) => {
@@ -169,7 +177,9 @@ export function useThreadLifecycleMenu(thread: EnvironmentThreadShell | null): {
       return;
     }
     if (event === "settle") {
-      void settleThread(thread);
+      void settleThread(thread).then((settled) => {
+        if (settled) options.onPutAway?.(thread);
+      });
       return;
     }
     if (event === "unsettle") {
