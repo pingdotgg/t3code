@@ -1,6 +1,7 @@
 import type { FilesystemEntryMetadata } from "@t3tools/contracts";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import { joinPath, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { slashWindowsDrivePath } from "@t3tools/shared/path";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceVideoPreviewPath,
@@ -19,10 +20,6 @@ export function fileRoutePathSegments(path: string): string[] {
   return path.startsWith("/") ? ["", ...segments] : segments;
 }
 
-function isWindowsPathStyle(value: string): boolean {
-  return isWindowsAbsolutePath(value) || /^[A-Za-z]:\\/.test(value);
-}
-
 export function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts.at(-1) ?? path;
@@ -30,10 +27,10 @@ export function basename(path: string): string {
 
 export function resolveWorkspaceFilePath(cwd: string, relativePath: string): string {
   if (isAbsolutePath(relativePath)) {
-    return relativePath;
+    return slashWindowsDrivePath(relativePath);
   }
 
-  const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
+  const separator: "/" | "\\" = cwd.startsWith("\\\\") ? "\\" : "/";
   return joinPath(cwd, relativePath, separator);
 }
 

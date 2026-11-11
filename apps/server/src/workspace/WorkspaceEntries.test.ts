@@ -12,6 +12,7 @@ import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { slashWindowsDrivePath } from "@t3tools/shared/path";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -810,8 +811,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         expect(directoryResult.entries.map((entry) => entry.name)).toEqual([".config", "config"]);
         expect(hiddenPrefixResult).toEqual({
-          parentPath: cwd,
-          entries: [{ name: ".config", fullPath: path.join(cwd, ".config") }],
+          parentPath: slashWindowsDrivePath(cwd),
+          entries: [
+            { name: ".config", fullPath: slashWindowsDrivePath(path.join(cwd, ".config")) },
+          ],
         });
       }),
     );

@@ -170,10 +170,10 @@ describe("resolveMarkdownFileLinkTarget", () => {
 
   // regression: #33625 backslash-separated relative links open the workspace file
   it.each([
-    ["src/Example.cs", "C:\\repo\\src\\Example.cs"],
-    ["src\\Example.cs", "C:\\repo\\src\\Example.cs"],
-    ["src%5CExample.cs", "C:\\repo\\src\\Example.cs"],
-    ["src\\Example.cs:3", "C:\\repo\\src\\Example.cs:3"],
+    ["src/Example.cs", "C:/repo/src/Example.cs"],
+    ["src\\Example.cs", "C:/repo/src/Example.cs"],
+    ["src%5CExample.cs", "C:/repo/src/Example.cs"],
+    ["src\\Example.cs:3", "C:/repo/src/Example.cs:3"],
   ])("resolves the relative link %s against a windows cwd", (href, target) => {
     expect(resolveMarkdownFileLinkTarget(href, "C:\\repo")).toBe(target);
   });

@@ -145,6 +145,7 @@ describe("getRenderablePatch", () => {
     ["a/example.ts", "a/example.ts", "change"],
     ["b/example.ts", "b/example.ts", "change"],
     ["a/before.ts", "b/after.ts", "rename-changed"],
+    ["C:\\notes.txt", "C:\\notes.txt", "change"],
   ])("preserves repository paths from %s to %s", (previousPath, path, type) => {
     const parsed = getRenderablePatch(
       [

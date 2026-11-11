@@ -275,7 +275,7 @@ describe("resolvePathLinkTarget", () => {
   it("resolves a quoted terminal link against a Windows environment", () => {
     const [link] = extractTerminalLinks(String.raw`error at "src\my folder\index.ts":12:7`);
     expect(resolvePathLinkTarget(link?.text ?? "", String.raw`C:\Users\Jane Doe\project`)).toBe(
-      String.raw`C:\Users\Jane Doe\project\src\my folder\index.ts:12:7`,
+      "C:/Users/Jane Doe/project/src/my folder/index.ts:12:7",
     );
   });
 

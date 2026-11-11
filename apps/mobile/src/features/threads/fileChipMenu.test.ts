@@ -36,7 +36,7 @@ describe("resolveFileChipTarget", () => {
       relativePath: "src/main.ts",
     });
     expect(resolveFileChipTarget("~/.agents/AGENTS.md", "C:\\Users\\maria\\repo")).toEqual({
-      fullPath: "C:\\Users\\maria\\.agents\\AGENTS.md",
+      fullPath: "C:/Users/maria/.agents/AGENTS.md",
     });
   });
 

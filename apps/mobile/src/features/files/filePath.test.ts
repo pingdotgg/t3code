@@ -11,7 +11,7 @@ describe("resolveFileLinkPath", () => {
   it.each([
     ["/home/maria/project", "~/.agents/AGENTS.md", "/home/maria/.agents/AGENTS.md"],
     ["/Users/maria/project", "~/notes.md", "/Users/maria/notes.md"],
-    ["C:\\Users\\maria\\project", "~\\.agents\\AGENTS.md", "C:\\Users\\maria\\.agents\\AGENTS.md"],
+    ["C:\\Users\\maria\\project", "~\\.agents\\AGENTS.md", "C:/Users/maria/.agents/AGENTS.md"],
   ])("expands a home link from %s", (cwd, path, expected) => {
     expect(resolveFileLinkPath(cwd, path)).toBe(expected);
     expect(fileRoutePathSegments(expected).join("/")).toBe(expected);
