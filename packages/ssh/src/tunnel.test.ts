@@ -867,7 +867,11 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       const launchedPids: Array<number> = [];
       yield* Effect.addFinalizer(() =>
         Effect.forEach(launchedPids, (pid) =>
-          Effect.try(() => process.kill(pid, "SIGKILL")).pipe(Effect.ignore),
+          Effect.sync(() => {
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {}
+          }),
         ),
       );
 
