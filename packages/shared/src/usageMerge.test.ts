@@ -207,6 +207,44 @@ describe("mergeUsage", () => {
     ]);
   });
 
+  it("gives same-titled projects in one environment a distinguishing id prefix", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/claude" };
+    const projectRow = (projectId: string, costUsd: number) => ({
+      projectId: projectId as ProjectId,
+      provider: "claude" as const,
+      sourcePath: "/claude",
+      totals: bucket().totals,
+      costUsd,
+      records: 1,
+      unpricedRecords: 0,
+      sessions: 1,
+    });
+    const merged = mergeUsage(
+      [
+        environment("env-a", {
+          ...summary([bucket({ sourcePath: "/claude", costUsd: 6 })], [source]),
+          projectTotals: [
+            projectRow("project-aaaa-1", 3),
+            projectRow("project-aaaa-2", 2),
+            projectRow("project-bbbb-1", 1),
+          ],
+          projects: [
+            { projectId: "project-aaaa-1" as ProjectId, title: "App" },
+            { projectId: "project-aaaa-2" as ProjectId, title: "App" },
+            { projectId: "project-bbbb-1" as ProjectId, title: "Site" },
+          ],
+        }),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.projects.map((project) => project.duplicateTitleId)).toEqual([
+      "project-aaaa-1",
+      "project-aaaa-2",
+      null,
+    ]);
+  });
+
   it("drops only the duplicated provider, keeping the environment's other one", () => {
     const sharedClaude = {
       provider: "claude" as const,

@@ -850,19 +850,11 @@ function ProjectRows(props: {
       ? b.costUsd - a.costUsd || b.totalTokens - a.totalTokens
       : b.totalTokens - a.totalTokens || b.costUsd - a.costUsd,
   );
-  const groups = new Map<string, string[]>();
-  for (const row of ordered) {
-    if (row.kind !== "project") continue;
-    const key = `${row.environmentId}\0${row.title}`;
-    const peers = groups.get(key) ?? [];
-    peers.push(row.projectId);
-    groups.set(key, peers);
-  }
   return (
     <View>
       <View className="flex-row flex-wrap">
         {ordered.map((row, index) => {
-          const unknown = row.records > 0 && row.unpricedRecords >= row.records;
+          const unknown = isModelCostUnknown(row);
           const label =
             row.kind === "project"
               ? row.title
@@ -875,7 +867,7 @@ function ProjectRows(props: {
               : unknown
                 ? "Unpriced"
                 : formatUsd(row.costUsd);
-          const detail = projectDetail(row, metric, unknown, groups, props.showEnvironment);
+          const detail = projectDetail(row, metric, unknown, props.showEnvironment);
           return (
             <View
               key={row.key}
@@ -922,22 +914,12 @@ function projectDetail(
   row: ProjectTotals,
   metric: UsageChartMetric,
   unknown: boolean,
-  groups: ReadonlyMap<string, readonly string[]>,
   showEnvironment: boolean,
 ) {
   const qualifiers: string[] = [];
   if (row.kind === "project") {
     if (showEnvironment) qualifiers.push(row.environmentLabel);
-    const peers = groups.get(`${row.environmentId}\0${row.title}`) ?? [];
-    if (peers.length > 1) {
-      let length = 8;
-      while (length < row.projectId.length) {
-        const prefix = row.projectId.slice(0, length);
-        if (!peers.some((id) => id !== row.projectId && id.startsWith(prefix))) break;
-        length += 1;
-      }
-      qualifiers.push(`ID ${row.projectId.slice(0, length)}`);
-    }
+    if (row.duplicateTitleId !== null) qualifiers.push(`ID ${row.duplicateTitleId}`);
   } else {
     qualifiers.push(
       row.kind === "unlinked" ? "No single T3 project" : "Project details unavailable",

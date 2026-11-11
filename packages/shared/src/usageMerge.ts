@@ -40,8 +40,10 @@ export interface ModelTotals {
 }
 
 /** When every record lacks rates, costUsd is unknown and must not be displayed as a dollar figure. */
-export function isModelCostUnknown(model: ModelTotals): boolean {
-  return model.records > 0 && model.unpricedRecords >= model.records;
+export function isModelCostUnknown(
+  totals: Pick<ModelTotals, "records" | "unpricedRecords">,
+): boolean {
+  return totals.records > 0 && totals.unpricedRecords >= totals.records;
 }
 
 export interface DailyTotals {
@@ -75,6 +77,8 @@ export type ProjectIdentity =
 
 export type ProjectTotals = ProjectIdentity & {
   readonly key: string;
+  /** Shortest id prefix that tells this project from same-titled ones in its environment. */
+  readonly duplicateTitleId: string | null;
   readonly costUsd: number;
   readonly totalTokens: number;
   readonly records: number;
@@ -619,10 +623,35 @@ export function mergeUsage(
     }))
     .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);
 
+  const projectIdsByTitle = new Map<string, ProjectId[]>();
+  const titleKey = (identity: ProjectIdentity & { readonly kind: "project" }) =>
+    JSON.stringify([identity.environmentId, identity.title]);
+  for (const { identity } of projectAccumulator.values()) {
+    if (identity.kind !== "project") continue;
+    const peers = projectIdsByTitle.get(titleKey(identity)) ?? [];
+    peers.push(identity.projectId);
+    projectIdsByTitle.set(titleKey(identity), peers);
+  }
+  const duplicateTitleId = (identity: ProjectIdentity): string | null => {
+    if (identity.kind !== "project") return null;
+    const peers = projectIdsByTitle.get(titleKey(identity)) ?? [];
+    if (peers.length < 2) return null;
+    const id = identity.projectId;
+    let length = Math.min(8, id.length);
+    while (
+      length < id.length &&
+      peers.some((peer) => peer !== id && peer.startsWith(id.slice(0, length)))
+    ) {
+      length += 1;
+    }
+    return id.slice(0, length);
+  };
+
   const projects: ProjectTotals[] = [...projectAccumulator.entries()]
     .map(([key, { identity, ...totals }]) => ({
       ...identity,
       key,
+      duplicateTitleId: duplicateTitleId(identity),
       ...totals,
       costShare: costUsd === 0 ? 0 : totals.costUsd / costUsd,
       tokenShare: totalTokens === 0 ? 0 : totals.totalTokens / totalTokens,

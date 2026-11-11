@@ -652,14 +652,6 @@ function UsageOverview({
           (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
         )
       : merged.projects;
-  const projectGroups = new Map<string, string[]>();
-  for (const project of breakdownProjects) {
-    if (project.kind !== "project") continue;
-    const key = `${project.environmentId}\0${project.title}`;
-    const peers = projectGroups.get(key) ?? [];
-    peers.push(project.projectId);
-    projectGroups.set(key, peers);
-  }
   const projectPeak = breakdownProjects.reduce(
     (peak, project) => Math.max(peak, metric === "tokens" ? project.totalTokens : project.costUsd),
     0,
@@ -984,25 +976,7 @@ function UsageOverview({
                 ) : (
                   breakdownProjects.map((project, index) => {
                     const value = metric === "tokens" ? project.totalTokens : project.costUsd;
-                    const costUnknown =
-                      project.records > 0 && project.unpricedRecords >= project.records;
-                    let projectIdLabel: string | null = null;
-                    if (project.kind === "project") {
-                      const peers =
-                        projectGroups.get(`${project.environmentId}\0${project.title}`) ?? [];
-                      if (peers.length > 1) {
-                        let length = 8;
-                        while (length < project.projectId.length) {
-                          const prefix = project.projectId.slice(0, length);
-                          if (
-                            !peers.some((id) => id !== project.projectId && id.startsWith(prefix))
-                          )
-                            break;
-                          length += 1;
-                        }
-                        projectIdLabel = `ID ${project.projectId.slice(0, length)}`;
-                      }
-                    }
+                    const costUnknown = isModelCostUnknown(project);
                     return (
                       <tr
                         key={project.key}
@@ -1020,8 +994,8 @@ function UsageOverview({
                           {project.kind === "project" && selectedEnvironments.length > 1 ? (
                             <span className="ml-1.5 text-xs">{project.environmentLabel}</span>
                           ) : null}
-                          {projectIdLabel !== null ? (
-                            <span className="block text-xs">{projectIdLabel}</span>
+                          {project.duplicateTitleId !== null ? (
+                            <span className="block text-xs">ID {project.duplicateTitleId}</span>
                           ) : null}
                           {value > 0 && projectPeak > 0 ? (
                             <div aria-hidden className="mt-1.5 h-0.5 max-w-48">
