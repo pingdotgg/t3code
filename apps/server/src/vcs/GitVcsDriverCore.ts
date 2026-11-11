@@ -4303,7 +4303,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     function* (cwd: string, worktreePath: string, branch: string) {
       const head = yield* executeGit(
         "GitVcsDriver.createWorktree.rollbackHead",
-        worktreePath,
+        path.resolve(cwd, worktreePath),
         ["rev-parse", "--symbolic-full-name", "HEAD"],
         { allowNonZeroExit: true },
       ).pipe(

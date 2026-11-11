@@ -4664,13 +4664,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           hook,
           "#!/bin/sh\n" +
             "echo \"This repository is configured for Git LFS but 'git-lfs' was not found on your path.\" >&2\n" +
-            "echo 'see https://user:hunter2@example.com/lfs' >&2\n" +
+            "echo 'see https://user:hun@ter2@example.com/lfs?token=sig' >&2\n" +
             "exit 2\n",
         );
         yield* fs.chmod(hook, 0o755);
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "retry");
+        // Relative to the repository, as Git resolves it.
         const input = {
           cwd,
-          path: path.join(yield* makeTmpDir("git-worktrees-"), "retry"),
+          path: path.relative(cwd, worktreePath),
           refName: initialBranch,
           newRefName: "t3/retry",
         };
@@ -4678,15 +4680,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const error = yield* driver.createWorktree(input).pipe(Effect.flip);
 
         assert.include(error.message, "'git-lfs' was not found on your path.");
-        assert.include(error.message, "https://<redacted>@example.com/lfs");
-        assert.notInclude(error.message, "hunter2");
+        assert.include(error.message, "https://<redacted>@example.com/lfs?<redacted>");
+        assert.notInclude(error.message, "ter2");
+        assert.notInclude(error.message, "token=");
         assert.notInclude(error.message, "Preparing worktree");
-        assert.isFalse(yield* fs.exists(input.path));
+        assert.isFalse(yield* fs.exists(worktreePath));
         assert.notInclude(yield* git(cwd, ["branch", "--list", "t3/retry"]), "t3/retry");
 
         yield* fs.writeFileString(hook, "#!/bin/sh\nexit 0\n");
-        const created = yield* driver.createWorktree(input);
-        assert.equal(yield* git(created.worktree.path, ["branch", "--show-current"]), "t3/retry");
+        yield* driver.createWorktree(input);
+        assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "t3/retry");
       }),
     );
 
