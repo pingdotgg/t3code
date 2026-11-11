@@ -1354,7 +1354,17 @@ export const t3Default = (
         ...(sections.includes("conversation")
           ? {
               conversation: {
-                comments: [],
+                comments: (Array.isArray(world?.comments) ? world.comments : [])
+                  .filter(isRecord)
+                  .map((comment, index) => ({
+                    id: `comment-${index + 1}`,
+                    kind: "issue-comment",
+                    author: valueText(comment.author),
+                    body: valueText(comment.body),
+                    createdAt: "2026-10-27T10:00:00Z",
+                    path: null,
+                    reviewState: null,
+                  })),
                 reviewThreads: [],
                 hiddenResolvedThreads: 0,
                 truncated: false,

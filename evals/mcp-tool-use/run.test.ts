@@ -754,7 +754,14 @@ it("replays earlier capability results with the model under test as the caller",
 it("lists and reads world PRs in their own state, with the diff when asked", () => {
   const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
   const prs = [
-    { number: 5, state: "MERGED", headRefName: "old", title: "Old", diff: "+old" },
+    {
+      number: 5,
+      state: "MERGED",
+      headRefName: "old",
+      title: "Old",
+      diff: "+old",
+      comments: [{ author: "mark", body: "Please confirm." }],
+    },
     { number: 6, headRefName: "new", title: "New" },
   ];
   const sample = makeSample(
@@ -774,10 +781,11 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
   ]);
   const read: Readonly<Record<string, unknown>> = t3Default(sample, "pull_request_read", {
     number: 5,
-    sections: ["summary", "diff"],
+    sections: ["summary", "diff", "conversation"],
   });
   assert.deepEqual(read.diff, { patch: "+old", truncated: false, nextCursor: null });
   assert.propertyVal(read.summary, "state", "merged");
+  assert.nestedPropertyVal(read.conversation, "comments[0].author", "mark");
 });
 
 it("gives each launched thread its own id, and reading it back shows that thread's brief", () => {
