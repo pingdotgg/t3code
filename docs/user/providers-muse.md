@@ -55,9 +55,8 @@ without them. Switching providers can pass conversation context as a handoff.
 Muse skills appear in the composer's `$` menu. Manage them with `muse skills`
 on the host. Skill changes may take up to five minutes to appear as you type in
 the composer. See [Commands and skills](./composer.md#commands-and-skills) for
-restarting an active agent after changes. When a message mentions several skills,
-T3 Code invokes the first one available in the Muse session with the full message.
-Follow-up steering messages stay as text.
+restarting an active agent after changes. A picked skill is sent to Muse as
+text, so Muse loads it only if the model may invoke that skill.
 
 Forking a Muse conversation starts a new session with a copy of the conversation
 context. Conversation rewind is unavailable.
