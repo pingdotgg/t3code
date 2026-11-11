@@ -531,9 +531,13 @@ export function visibleBody(body: string): string | null {
 
 /** Quotes `selection` when the reader picked part of the comment, else the whole body. */
 export function pullRequestQuoteReply(comment: PullRequestComment, selection?: string): string {
-  const quote = (selection?.trim() || comment.body)
-    // Drops hidden HTML comments, but keeps ones written inside code as examples.
-    .replace(/(```[\s\S]*?```|`[^`\n]*`)|<!--[\s\S]*?-->/gu, (_, code?: string) => code ?? "")
+  const body =
+    selection?.trim() ||
+    comment.body.replace(
+      /(```[\s\S]*?```|`[^`\n]*`)|<!--[\s\S]*?-->/gu,
+      (_, code?: string) => code ?? "",
+    );
+  const quote = body
     .trim()
     .split(/\r?\n/u)
     .map((line) => (line.trim().length === 0 ? ">" : `> ${line}`))
