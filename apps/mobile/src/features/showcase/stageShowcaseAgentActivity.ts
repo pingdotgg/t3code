@@ -28,7 +28,6 @@ export async function stageShowcaseAgentActivity(
   if (Platform.OS !== "ios") return `unsupported platform ${Platform.OS}`;
 
   await Promise.all(getAgentLiveActivities().map((existing) => existing.end("immediate")));
-  // ActivityKit only starts activities while the app is foreground, which
-  // holds here: the runner locks the device after the scene reports ready.
+  // ActivityKit needs foreground startup; the runner locks only after this scene is ready.
   return startAgentLiveActivity(activity) !== null || "Live Activity did not start";
 }
