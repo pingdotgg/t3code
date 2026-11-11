@@ -212,7 +212,7 @@ describe("formatRunningFor", () => {
     [1_900, "for 1s"],
     [59_999, "for 59s"],
     [65_400, "for 1m 5s"],
-    [3_720_000, "for 1h 2m"],
+    [3_720_000, "for 1h 2m 0s"],
   ])("counts whole seconds while a command runs: %i ms", (elapsedMs, text) => {
     expect(formatRunningFor(elapsedMs)).toBe(text);
   });
