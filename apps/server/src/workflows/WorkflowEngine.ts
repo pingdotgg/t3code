@@ -2,6 +2,8 @@
 // engine's modules are not worth their load time on a server that registers none.
 import * as Cause from "effect/Cause";
 import { ClusterWorkflowEngine, SingleRunner } from "effect/cluster";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -16,6 +18,8 @@ import * as Stream from "effect/Stream";
 import { DurableDeferred, type WorkflowEngine } from "effect/workflow";
 
 import { checkOutput } from "../orchestration-v2/runOutput.ts";
+import { isMissedFixedTimeRun, nextScheduledRunAt } from "../scheduledTasks/Schedule.ts";
+import { constantTimeEquals } from "../scheduledTasks/webhookVerification.ts";
 import {
   type EngineWorkflow,
   engineTag,
@@ -28,6 +32,7 @@ import {
 } from "./workflow.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
 import {
+  HOOK_PREFIX,
   WorkflowInputError,
   WorkflowNotRegisteredError,
   WorkflowRunNotFoundError,
@@ -40,12 +45,16 @@ const DEFAULT_SIGNAL_TTL = Duration.days(7);
 const RESUME_LOOK_EVERY = Duration.millis(25);
 const RESUME_LOOKS = 80;
 const WATCH_SETTLE = Duration.millis(100);
+// Times of day are the server's own, as they are for scheduled tasks.
+const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
 const make = Effect.fn("WorkflowEngine.make")(function* (
   registered: ReadonlyArray<readonly [WorkflowDefinition, EngineWorkflow]>,
 ) {
   const store = yield* WorkflowStore.WorkflowStore;
   const agents = yield* WorkflowAgents;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const context = yield* Effect.context<WorkflowEngine.WorkflowEngine>();
   // The engine keeps 64-bit ids, which this SQLite client only reads when asked for BigInts.
   const withEngine = <A, E>(effect: Effect.Effect<A, E, WorkflowEngine.WorkflowEngine>) =>
@@ -88,6 +97,110 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         value,
       }),
     );
+
+  const start: Workflows["Service"]["start"] = Effect.fn("Workflows.start")(
+    function* (name, input, options) {
+      const found = latest(name);
+      if (found === undefined) return yield* new WorkflowNotRegisteredError({ workflow: name });
+      const [definition, engine] = found;
+      const payloadCodec = Schema.toCodecJson(definition.payload);
+      const encode = Schema.encodeUnknownEffect(payloadCodec);
+      const encoded = yield* encode(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new WorkflowInputError({
+              problem: `The payload does not fit workflow ${name}: ${text(error)}`,
+            }),
+        ),
+      );
+      const payload = { idempotencyKey: options.idempotencyKey, input: encoded as Schema.Json };
+      const runId = yield* withEngine(engine.execute(payload, { discard: true }));
+      // Listed at once: the run's own first step writes the same row when it gets to run.
+      yield* store.runStarted({
+        runId,
+        workflow: definition.name,
+        version: definition.version,
+        engineTag: engineTag(definition),
+        idempotencyKey: options.idempotencyKey,
+      });
+      return { runId };
+    },
+  );
+
+  const latestDefinitions = [...new Set(registered.map(([definition]) => definition.name))].map(
+    (name) => latest(name)![0],
+  );
+  /** Start what each schedule is due for, once, however long ago that was. */
+  const fireSchedules = Effect.gen(function* () {
+    const now = yield* localNow;
+    for (const definition of latestDefinitions) {
+      for (const trigger of definition.triggers) {
+        if (trigger.kind !== "schedule") continue;
+        const id = `${definition.name}/${trigger.id}`;
+        const due = yield* store.triggerNext(id);
+        if (due !== undefined) {
+          const dueAt = DateTime.makeUnsafe(due);
+          if (DateTime.isLessThan(now, dueAt)) continue;
+          if (!isMissedFixedTimeRun(trigger.schedule, dueAt, now)) {
+            // The key is the time it was due, so a crash before the next line starts no second run.
+            yield* start(
+              definition.name,
+              { scheduledAt: due },
+              { idempotencyKey: `trigger:${id}:${due}` },
+            ).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("A scheduled workflow run did not start", { trigger: id, error }),
+              ),
+            );
+          }
+        }
+        const next = nextScheduledRunAt(trigger.schedule, now);
+        if (next !== null) {
+          yield* store.triggerSet(id, DateTime.formatIso(DateTime.toUtc(next)));
+        }
+      }
+    }
+  });
+
+  const hooks = yield* Effect.forEach(
+    latestDefinitions.flatMap((definition) =>
+      definition.triggers.flatMap((trigger) =>
+        trigger.kind === "webhook" ? [{ definition, trigger }] : [],
+      ),
+    ),
+    Effect.fnUntraced(function* ({ definition, trigger }) {
+      const hookId = `${HOOK_PREFIX}${definition.name}.${trigger.name}`;
+      const token = yield* store.hookToken(hookId, yield* random.uuidV4());
+      return {
+        hookId,
+        token,
+        trigger,
+        workflow: definition.name,
+        name: trigger.name,
+        path: `/api/hooks/${encodeURIComponent(hookId)}/${token}`,
+      };
+    }),
+  );
+  const deliver: Workflows["Service"]["deliver"] = Effect.fn("Workflows.deliver")(
+    function* (delivery) {
+      const hook = hooks.find((candidate) => candidate.hookId === delivery.hookId);
+      // A wrong token reads the same as an unknown hook, so the URL does not say which exist.
+      const known =
+        hook !== undefined &&
+        (yield* constantTimeEquals(delivery.token, hook.token).pipe(
+          Effect.provideService(Digest.Digest, digest),
+          Effect.orElseSucceed(() => false),
+        ));
+      if (!known) return Option.none();
+      const key =
+        hook.trigger.key?.(delivery.request) ?? delivery.deliveryId ?? (yield* random.uuidV4());
+      return Option.some(
+        yield* start(hook.workflow, delivery.request, {
+          idempotencyKey: `hook:${hook.hookId}:${key}`,
+        }),
+      );
+    },
+  );
 
   const resume: Workflows["Service"]["resume"] = Effect.fn("Workflows.resume")(function* (runId) {
     const row = yield* requireRun(runId);
@@ -132,6 +245,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       }
     }
     yield* store.mailExpire;
+    yield* fireSchedules;
     for (const row of yield* store.runs("running")) yield* reconcile(row);
     const at = yield* DateTime.now;
     for (const row of yield* store.runs("paused")) {
@@ -186,32 +300,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   );
 
   return Workflows.of({
-    start: Effect.fn("Workflows.start")(function* (name, input, options) {
-      const found = latest(name);
-      if (found === undefined) return yield* new WorkflowNotRegisteredError({ workflow: name });
-      const [definition, engine] = found;
-      const payloadCodec = Schema.toCodecJson(definition.payload);
-      const encode = Schema.encodeUnknownEffect(payloadCodec);
-      const encoded = yield* encode(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new WorkflowInputError({
-              problem: `The payload does not fit workflow ${name}: ${text(error)}`,
-            }),
-        ),
-      );
-      const payload = { idempotencyKey: options.idempotencyKey, input: encoded as Schema.Json };
-      const runId = yield* withEngine(engine.execute(payload, { discard: true }));
-      // Listed at once: the run's own first step writes the same row when it gets to run.
-      yield* store.runStarted({
-        runId,
-        workflow: definition.name,
-        version: definition.version,
-        engineTag: engineTag(definition),
-        idempotencyKey: options.idempotencyKey,
-      });
-      return { runId };
-    }),
+    start,
+    hooks: Effect.succeed(hooks.map(({ workflow, name, path }) => ({ workflow, name, path }))),
+    deliver,
     signal: Effect.fn("Workflows.signal")(function* (address, value, options) {
       // A sender's retry of a signal that already woke a wait is not a second signal.
       if (yield* store.signalSeen(options.id)) return "delivered" as const;

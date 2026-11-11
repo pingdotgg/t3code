@@ -52,6 +52,14 @@ export const WorkflowQuestion = Schema.Struct({
 });
 export type WorkflowQuestion = typeof WorkflowQuestion.Type;
 
+/** Where a workflow takes requests. `path` holds the hook's secret. */
+export const WorkflowHook = Schema.Struct({
+  workflow: Schema.String,
+  name: Schema.String,
+  path: Schema.String,
+});
+export type WorkflowHook = typeof WorkflowHook.Type;
+
 /** What a client shows of workflows: recent runs, newest first, and the questions still open. */
 export const WorkflowRunsSnapshot = Schema.Struct({
   runs: Schema.Array(WorkflowRun),

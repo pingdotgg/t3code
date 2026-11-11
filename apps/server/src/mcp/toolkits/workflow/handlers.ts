@@ -23,6 +23,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
         if (input.action === "questions") return { questions: yield* workflows.questions };
+        if (input.action === "hooks") return { hooks: yield* workflows.hooks };
         if (input.action === "list") {
           return {
             runs: yield* workflows.list(input.status === undefined ? {} : { status: input.status }),
