@@ -11,6 +11,7 @@ export interface WidgetPalette {
   secondary: string;
   accent: string;
   track: string;
+  subtle: string;
   danger: string;
 }
 
@@ -32,6 +33,10 @@ export function createWidgetTheme(
     // Surface tokens can coincide; a foreground blend keeps the unfilled track visible.
     track: flattenThemeColor(
       themeColorWithAlpha(variables["--color-foreground"], 0.16),
+      variables["--color-card"],
+    ),
+    subtle: flattenThemeColor(
+      themeColorWithAlpha(variables["--color-foreground"], 0.07),
       variables["--color-card"],
     ),
     danger: variables["--color-danger-foreground"],

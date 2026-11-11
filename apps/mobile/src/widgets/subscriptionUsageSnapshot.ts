@@ -1,12 +1,26 @@
+import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   collectLimitAccounts,
   collectLimitPools,
+  remainingPercent,
   type LimitAccount,
   type LimitPoolWindow,
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
 
+import { providerColors } from "../features/usage/providerColors";
 import type { WidgetTheme } from "./widgetTheme";
+
+export interface WidgetLimitAccount {
+  name: string;
+  color?: string | undefined;
+  /** Absent when this account does not report the window. */
+  remaining?: number;
+  refill?: number;
+  resetsAt?: number;
+  reset?: string;
+  durationMs?: number;
+}
 
 export interface SubscriptionUsageSnapshot {
   theme?: WidgetTheme;
@@ -14,8 +28,15 @@ export interface SubscriptionUsageSnapshot {
   checkedAt: number;
   providers: Array<{
     name: string;
+    colors?: { light: string; dark: string };
     detail: string;
-    windows: Array<{ kind?: string; label: string; remaining: number; reset: string }>;
+    windows: Array<{
+      kind?: string;
+      label: string;
+      remaining: number;
+      reset: string;
+      accounts?: WidgetLimitAccount[];
+    }>;
     expiresAt: number;
     totalWindows: number;
   }>;
@@ -45,6 +66,48 @@ export function createWidgetRefresher<Id>(refresh: (id: Id) => Promise<unknown>)
   };
 }
 
+// Widget snapshots must not persist account emails.
+function accountName(account: LimitAccount) {
+  if (account.displayName && !account.displayName.includes("@")) return account.displayName;
+  const email = account.email ?? account.displayName;
+  if (!email?.includes("@")) return "Account";
+  const [local = "", domain = ""] = email.split("@");
+  return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase();
+}
+
+function clockLabel(at: number, from: number) {
+  const time = { hour: "numeric", minute: "2-digit" } as const;
+  if (new Date(at).toDateString() === new Date(from).toDateString())
+    return new Date(at).toLocaleTimeString(undefined, time);
+  return new Date(at).toLocaleString(
+    undefined,
+    at - from < 6 * 86_400_000 ? { weekday: "short", ...time } : { month: "short", day: "numeric" },
+  );
+}
+
+function widgetAccounts(window: LimitPoolWindow): WidgetLimitAccount[] {
+  return window.columns.map((column) => {
+    const name = accountName(column.account);
+    const color = normalizeProviderAccentColor(column.account.accentColor);
+    if (column.window === null) return { name, color };
+    const resetsAt = column.window.resetsAt ? Date.parse(column.window.resetsAt) : NaN;
+    const reset = Number.isFinite(resetsAt);
+    return {
+      name,
+      color,
+      remaining: remainingPercent(column.window),
+      refill: reset ? column.refillPercent : 0,
+      ...(reset && {
+        resetsAt,
+        reset: clockLabel(resetsAt, Date.parse(column.account.limits.checkedAt)),
+      }),
+      ...(column.window.windowDurationMins && {
+        durationMs: column.window.windowDurationMins * 60_000,
+      }),
+    };
+  });
+}
+
 // A reset at or before its account's observation already happened, so it cannot expire the snapshot.
 const isUpcoming = (reset: LimitPoolWindow["resets"][number]) =>
   reset.at > Date.parse(reset.member.account.limits.checkedAt);
@@ -69,9 +132,12 @@ function subscriptionUsageProps(
       .map((driver) => {
         const pool = pools.find((candidate) => candidate.driver === driver);
         const name = driver === "codex" ? "Codex" : "Claude";
+        const kind = driver === "codex" ? "codex" : "claude";
+        const colors = { light: providerColors("light")[kind], dark: providerColors("dark")[kind] };
         if (!pool)
           return {
             name,
+            colors,
             detail: "No limits available",
             windows: [],
             expiresAt: 0,
@@ -100,6 +166,7 @@ function subscriptionUsageProps(
           .sort((a, b) => a.remainingPercent - b.remainingPercent);
         return {
           name,
+          colors,
           detail: !fresh
             ? "Open T3 to refresh"
             : pool.accounts.length > 1
@@ -122,6 +189,7 @@ function subscriptionUsageProps(
                       minute: "2-digit",
                     })}`
                   : "Reset time unavailable",
+                accounts: widgetAccounts(window),
               }))
             : [],
         };
