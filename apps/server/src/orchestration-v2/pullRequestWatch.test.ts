@@ -700,13 +700,15 @@ describe("evaluatePullRequestWatch", () => {
 Review triggered.
 
 </details>`;
-    for (const acknowledgement of [
-      codeRabbitReply("Review triggered."),
-      codeRabbitReply("Full review triggered."),
-      current,
-    ]) {
+    // GitHub's GraphQL API names bots without the "[bot]" suffix that its REST API adds.
+    for (const [login, acknowledgement] of [
+      ["coderabbitai[bot]", codeRabbitReply("Review triggered.")],
+      ["coderabbitai[bot]", codeRabbitReply("Full review triggered.")],
+      ["coderabbitai[bot]", current],
+      ["coderabbitai", current],
+    ] as const) {
       const queued = {
-        ...remark("coderabbitai[bot]", "2026-10-02T12:06:00Z", acknowledgement),
+        ...remark(login, "2026-10-02T12:06:00Z", acknowledgement),
         kind: "issue-comment" as const,
         path: null,
       };
