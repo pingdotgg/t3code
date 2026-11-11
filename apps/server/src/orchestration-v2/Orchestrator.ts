@@ -1930,8 +1930,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       // Failed worktree creation would run queued work in the project checkout; wait for the user.
-      // A successful empty-repo fallback rewrites preparation to root before release, so it
-      // must not match here: only failed or interrupted worktree prep keeps the queue held.
       const failedRun = latestExecutedRun(projection.runs);
       const failureClass =
         failedRun?.id === options?.failedRunId
@@ -1939,7 +1937,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : undefined;
       const worktreeMissing =
         failedRun?.id === options?.endedRunId &&
-        (failedRun?.status === "failed" || failedRun?.status === "interrupted") &&
         failedRun?.workspacePreparation?.type === "worktree" &&
         projection.thread.worktreePath === null;
       const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
@@ -10625,14 +10622,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedAt: now,
         },
       });
-      // Empty-repo worktree launches fall back to the project folder and leave
-      // worktreePath null; rewrite preparation so queue promotion does not treat
-      // the successful run as a failed worktree setup.
-      const resolvedPreparation =
+      // An empty repository has no commit for a worktree, so launch ran in the project
+      // folder. Record that, or queue promotion reads it as failed worktree setup.
+      const ranInProjectFolder =
         state.run.workspacePreparation?.type === "worktree" &&
-        projection.thread.worktreePath === null
-          ? ({ type: "root" } as const)
-          : state.run.workspacePreparation;
+        projection.thread.worktreePath === null;
       yield* emitEvent({
         type: "run.updated",
         threadId: command.threadId,
@@ -10643,9 +10637,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: {
           ...state.run,
           status: "starting",
-          ...(resolvedPreparation === undefined
-            ? {}
-            : { workspacePreparation: resolvedPreparation }),
+          ...(ranInProjectFolder ? { workspacePreparation: { type: "root" as const } } : {}),
         },
       });
       yield* Ref.update(effects, (existing) => [
