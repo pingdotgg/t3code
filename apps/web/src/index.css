@@ -1053,6 +1053,24 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--surface-fill) border-box;
   box-shadow: var(--surface-shadow);
 }
+
+:root:is(:not([data-surface-style]), [data-surface-style="gradient-rim"])
+  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well:not(
+    [data-surface-preview] *
+  ),
+[data-surface-preview="gradient-rim"]
+  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well {
+  --well-fill: var(--raised-fill);
+  --well-rim: var(--raised-rim);
+  --well-shadow: var(--raised-shadow);
+
+  &:is(:hover, [data-pressed]):not([data-popup-open]) {
+    --well-fill: var(--raised-hover-fill);
+    --well-rim: var(--raised-hover-rim);
+    --well-shadow: var(--raised-hover-shadow);
+  }
+}
+
 :where([data-slot="checkbox"], [data-slot="radio"])[data-unchecked]:not([aria-invalid="true"]) {
   --surface-rim: linear-gradient(var(--muted-foreground), var(--muted-foreground));
 }
