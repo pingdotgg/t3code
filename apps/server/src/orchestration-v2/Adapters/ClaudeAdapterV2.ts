@@ -8039,7 +8039,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const held = context.assistant.heldText;
           context.assistant.heldText = [];
           if (
-            resolveT3McpToolId(block.name) === null &&
+            (resolveT3McpToolId(block.name) === null ||
+              (context.assistant.cardSeen && !isLessonCardTool(block.name))) &&
             held.reduce((total, item) => total + item.text.length, 0) <= 300
           ) {
             for (const item of held) yield* emitHeldAssistantTextItemAsReasoning(context, item);

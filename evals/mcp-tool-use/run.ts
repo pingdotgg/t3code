@@ -2346,7 +2346,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
           normalizeToolName(block.name) === "question_card";
         const isT3Mcp = block.name.startsWith("mcp__t3-code__");
         // The adapter keeps short narration before a non-T3 tool as a Thought (APP-108).
-        if (isT3Mcp || held.join("").length > 300) {
+        if ((isT3Mcp && !(sample.lessonCardSeen && !isCard)) || held.join("").length > 300) {
           if (isCard) {
             texts.push(
               ...held.flatMap((text) => {

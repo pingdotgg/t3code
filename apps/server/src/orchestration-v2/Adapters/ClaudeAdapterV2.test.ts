@@ -3693,6 +3693,131 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("promotes short post-card text before html_preview to lesson reasoning", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("post-card-html-preview-attempt"),
+          text: "Teach me",
+          attachments: [],
+          lesson: true,
+        }),
+      );
+      const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
+        claudeSdkFrame({
+          type: "assistant",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: { id: uuid, model: "claude-sonnet-5-5", content },
+        });
+      for (const frame of [
+        snapshot("post-card-root", [{ type: "text", text: "Let's test the idea." }]),
+        snapshot("post-card-card", [
+          {
+            type: "tool_use",
+            id: "post-card-quiz",
+            name: "mcp__t3-code__quiz_card",
+            input: { reply: "What angle do you see?" },
+          },
+        ]),
+        snapshot("post-card-check", [
+          {
+            type: "text",
+            text: "The picture isn't right yet. I'm fixing the geometry before continuing.",
+          },
+        ]),
+        snapshot("post-card-preview", [
+          { type: "tool_use", id: "post-card-html", name: "mcp__t3-code__html_preview", input: {} },
+        ]),
+        makeResultFrame({ uuid: "post-card-result", result: "" }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(1);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        (event.turnItem.type === "reasoning" || event.turnItem.type === "assistant_message")
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        items.map((item) => [item.type, item.text]),
+        [
+          ["assistant_message", "Let's test the idea."],
+          ["reasoning", "The picture isn't right yet. I'm fixing the geometry before continuing."],
+        ],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps short pre-card text before html_preview visible", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("pre-card-html-preview-attempt"),
+          text: "Teach me",
+          attachments: [],
+          lesson: true,
+        }),
+      );
+      const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
+        claudeSdkFrame({
+          type: "assistant",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: { id: uuid, model: "claude-sonnet-5-5", content },
+        });
+      for (const frame of [
+        snapshot("pre-card-text", [{ type: "text", text: "I am checking the setup first." }]),
+        snapshot("pre-card-preview", [
+          { type: "tool_use", id: "pre-card-html", name: "mcp__t3-code__html_preview", input: {} },
+        ]),
+        makeResultFrame({ uuid: "pre-card-result", result: "" }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(1);
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem.text]
+            : [],
+        ),
+        ["I am checking the setup first."],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     {
       lead: "Right, and your reasoning separates all four cases correctly. You've now covered X.",
