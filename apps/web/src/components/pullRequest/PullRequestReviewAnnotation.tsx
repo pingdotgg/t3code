@@ -8,8 +8,14 @@ import type {
   PullRequestThreadCommentsResult,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
-import { HammerIcon, MessageSquareIcon, MessageSquarePlusIcon, Trash2Icon } from "lucide-react";
-import { Circle, CircleCheck } from "lucide";
+import {
+  HammerIcon,
+  MessageSquareIcon,
+  MessageSquarePlusIcon,
+  Trash2Icon,
+  CircleCheckIcon,
+  CircleIcon,
+} from "lucide-react";
 import { useRef, useState } from "react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
@@ -18,7 +24,6 @@ import { cn } from "~/lib/utils";
 import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { Button } from "../ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
@@ -238,15 +243,16 @@ export function ReviewThreadCard({
 
   return (
     <div
-      className={CARD_CLASS}
+      className={cn(CARD_CLASS, !expanded && "py-1")}
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <MorphIcon
-          className={cn("size-3.5", thread.isResolved && "text-success-foreground")}
-          icon={thread.isResolved ? CircleCheck : Circle}
-        />
+        {thread.isResolved ? (
+          <CircleCheckIcon className="size-3.5 text-success-foreground" />
+        ) : (
+          <CircleIcon className="size-3.5" />
+        )}
         <button
           type="button"
           className="min-w-0 flex-1 truncate text-left hover:text-foreground"
@@ -261,7 +267,7 @@ export function ReviewThreadCard({
           <div className="flex shrink-0 items-center gap-0.5">
             {onFix ? (
               <Button
-                size="xs"
+                size="compact"
                 variant="ghost"
                 className="shrink-0"
                 disabled={pending || fixPending}
@@ -273,7 +279,7 @@ export function ReviewThreadCard({
             ) : null}
             {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
               <Button
-                size="xs"
+                size="compact"
                 variant="ghost"
                 className="shrink-0"
                 onClick={() => onAddToChat({ ...thread, comments })}
@@ -286,7 +292,7 @@ export function ReviewThreadCard({
         ) : null}
         {canResolve ? (
           <Button
-            size="xs"
+            size="compact"
             variant="ghost"
             className="shrink-0"
             disabled={pending}

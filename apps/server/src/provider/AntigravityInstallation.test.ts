@@ -237,7 +237,7 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
     path.join(installation.managedDirectory, "versions", previousReleaseId),
   );
   expect(yield* fs.readFileString(resolved.executablePath)).toBe(serverContents);
-  expect(yield* fs.readFileString(resolved.harnessPath)).toBe(harnessContents);
+  expect(yield* fs.readFileString(resolved.harnessPath!)).toBe(harnessContents);
   expect((yield* installation.state).installedVersion).toBe(previousVersion);
 });
 
@@ -281,7 +281,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(validation?.version).toBe("fixture-new");
       if (!validation) return yield* Effect.die("Expected runtime validation.");
       expect(yield* fs.readFileString(validation.executable.executablePath)).toBe(serverContents);
-      expect(yield* fs.readFileString(validation.executable.harnessPath)).toBe(harnessContents);
+      expect(yield* fs.readFileString(validation.executable.harnessPath!)).toBe(harnessContents);
 
       yield* Deferred.succeed(finishValidation, undefined);
       expect(yield* terminalState(installation)).toMatchObject({
@@ -293,9 +293,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       yield* Deferred.await(stagingReleased);
       const selected = yield* installation.resolve();
       expect(selected).toMatchObject({ source: "managed", version: "fixture-new" });
-      expect(path.dirname(selected.harnessPath)).toBe(path.dirname(selected.executablePath));
+      expect(path.dirname(selected.harnessPath!)).toBe(path.dirname(selected.executablePath));
       expect(yield* fs.readFileString(selected.executablePath)).toBe(serverContents);
-      expect(yield* fs.readFileString(selected.harnessPath)).toBe(harnessContents);
+      expect(yield* fs.readFileString(selected.harnessPath!)).toBe(harnessContents);
       expect(yield* fs.readDirectory(path.join(installation.managedDirectory, "versions"))).toEqual(
         expect.arrayContaining([previousReleaseId, (yield* releaseAsset()).sha256]),
       );
@@ -636,6 +636,68 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
 
   // The mocked Linux PATH walk needs POSIX paths; Windows temp paths contain colons.
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "accepts the agy CLI without a harness sibling but still requires one for other binaries",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-agy-cli-test-" })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+        const cliDirectory = path.join(baseDir, "cli");
+        yield* fs.makeDirectory(cliDirectory);
+        const cli = path.join(cliDirectory, "antigravity");
+        const alias = path.join(cliDirectory, "agy");
+        const other = path.join(cliDirectory, "custom-acp");
+        yield* fs.writeFileString(cli, "cli", { mode: 0o755 });
+        yield* fs.symlink(cli, alias);
+        yield* fs.writeFileString(other, "other", { mode: 0o755 });
+        const { installation } = yield* makeHarness({ baseDir });
+
+        expect(yield* installation.resolve(cli)).toMatchObject({
+          executablePath: cli,
+          harnessPath: null,
+          source: "override",
+          version: null,
+        });
+        expect(yield* installation.resolve(alias)).toMatchObject({
+          executablePath: alias,
+          harnessPath: null,
+        });
+        expect(yield* installation.resolve("agy", { PATH: cliDirectory })).toMatchObject({
+          executablePath: alias,
+          harnessPath: null,
+        });
+        expect(yield* installation.resolve(other).pipe(Effect.flip)).toMatchObject({
+          operation: "resolve",
+        });
+
+        // Version-manager shims dispatch by their invoked name, so the shim path is what runs.
+        const shims = path.join(baseDir, "shims");
+        const mise = path.join(baseDir, "mise");
+        yield* fs.makeDirectory(shims);
+        yield* fs.writeFileString(mise, "mise", { mode: 0o755 });
+        yield* fs.symlink(mise, path.join(shims, "agy"));
+        expect(yield* installation.resolve("agy", { PATH: shims })).toMatchObject({
+          executablePath: path.join(shims, "agy"),
+          harnessPath: null,
+        });
+
+        const { installation: windows } = yield* makeHarness({ baseDir, platform: "win32" });
+        for (const name of ["agy.EXE", "agy.cmd"]) {
+          const windowsDirectory = path.join(baseDir, `windows-${name}`);
+          yield* fs.makeDirectory(windowsDirectory);
+          yield* fs.writeFileString(path.join(windowsDirectory, name), "cli");
+          expect(yield* windows.resolve("agy", { PATH: windowsDirectory })).toMatchObject({
+            executablePath: path.join(windowsDirectory, name),
+            harnessPath: null,
+          });
+        }
+      }),
+  );
+
+  // The mocked Linux PATH walk needs POSIX paths; Windows temp paths contain colons.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "honors explicit paths and reports invalid overrides without falling back",
     () =>
       Effect.gen(function* () {
@@ -697,6 +759,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect(
           yield* isolated.installation.resolve(executableName, { PATH: externalDirectory }),
         ).toMatchObject({ source: "override", executablePath: externalExecutable });
+
+        const incompleteDirectory = path.join(baseDir, "incomplete");
+        yield* fs.makeDirectory(incompleteDirectory);
+        yield* fs.writeFileString(path.join(incompleteDirectory, executableName), "no harness", {
+          mode: 0o755,
+        });
+        const shadowedPath = { PATH: `${incompleteDirectory}:${externalDirectory}` };
+        expect(yield* isolated.installation.resolve(undefined, shadowedPath)).toMatchObject({
+          source: "path",
+          executablePath: externalExecutable,
+        });
+        expect(yield* isolated.installation.resolve(executableName, shadowedPath)).toMatchObject({
+          source: "override",
+          executablePath: externalExecutable,
+        });
       }),
   );
 
@@ -725,7 +802,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       Effect.gen(function* () {
         const { installation, baseDir, fs, path } = yield* makeHarness({ previous: true });
         const previous = yield* installation.resolve();
-        yield* fs.remove(previous.harnessPath);
+        yield* fs.remove(previous.harnessPath!);
         const externalDirectory = path.join(baseDir, "external");
         yield* fs.makeDirectory(externalDirectory);
         yield* fs.writeFileString(path.join(externalDirectory, executableName), "external server", {

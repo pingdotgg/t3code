@@ -40,8 +40,6 @@ import type { deriveThreadActivityRun } from "@t3tools/client-runtime/state/thre
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import type { TimelineEntry } from "../../session-logic";
 
-const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
-
 interface TimelineAnchor {
   readonly threadKey: string | null;
   readonly messageId: MessageId | null;
@@ -247,25 +245,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       cancelAnimationFrame(scroll.anchorScrollRestoreFrame);
       scroll.anchorScrollRestoreFrame = null;
     }
-    if (before.mode === "following") {
-      // LegendList may run queued scrolls after user navigation. A new imperative
-      // scroll cancels that queue; a missing item cancels without moving the view.
-      void legendListRef.current?.scrollToItem({
-        item: TIMELINE_SCROLL_CANCEL_SENTINEL,
-        animated: false,
-      });
-      // An already-started animated scroll (behavior: smooth) keeps running in
-      // the browser regardless of the queue; a same-position instant write is
-      // the only way to halt it where it is.
-      const scrollNode = legendListRef.current?.getScrollableNode() as
-        | { scrollTop?: number }
-        | null
-        | undefined;
-      const currentScrollTop = scrollNode?.scrollTop;
-      if (scrollNode && typeof currentScrollTop === "number") {
-        scrollNode.scrollTop = currentScrollTop;
-      }
-    }
+    if (before.mode === "following") legendListRef.current?.cancelScroll();
   };
 
   // A run that starts while the live end is followed anchors its user message
