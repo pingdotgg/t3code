@@ -1,16 +1,16 @@
 ---
 title: React Router
-description: Deploy React Router v7 framework apps to Prisma Compute with Prisma.Website.ReactRouter — SSR on Bun and native Vite dev locally.
+description: Deploy React Router v8 framework apps to Prisma Compute with Prisma.Website.ReactRouter — SSR on Bun and native Vite dev locally.
 sidebar:
   order: 7
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const devDeps = "@alchemy.run/frontend-frameworks @vercel/nft";
 
 `Prisma.Website.ReactRouter` builds [React Router](https://reactrouter.com)
-v7 in framework mode through your project's Vite pipeline. The shared
+v8 in framework mode through your project's Vite pipeline. The shared
 Node target wraps the server manifest with `createRequestHandler` and
 serves client assets first. The output runs on **Bun in Prisma Compute**
 from a `tar.gz` upload, without a Docker image or registry.
@@ -20,12 +20,7 @@ from a `tar.gz` upload, without a Docker image or registry.
 Install the build-time integration; the resource loads `/react-router`
 and `/react-router/node` from your project:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun"><Code code={`bun add -d ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="npm" icon="npm"><Code code={`npm install -D ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="pnpm" icon="pnpm"><Code code={`pnpm add -D ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="yarn" icon="seti:yarn"><Code code={`yarn add -D ${devDeps}`} lang="sh" /></TabItem>
-</Tabs>
+<PackageManagers dev={devDeps} />
 
 Keep the framework scaffold's `react-router`, `@react-router/dev`,
 `@react-router/node`, `isbot`, and `vite`. Put `@react-router/node` and
@@ -70,7 +65,7 @@ export default defineConfig({
 
 ```typescript
 // alchemy.run.ts
-import * as Prisma from "alchemy/Prisma";
+import * as Prisma from "@alchemy.run/prisma";
 
 export const Website = Prisma.Website.ReactRouter("Website", {
   rootDir: "./web",
