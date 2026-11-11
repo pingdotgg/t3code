@@ -1961,6 +1961,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       Layer.mock(DirectEndpoints.DirectEndpoints)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ThreadMoveService.ThreadMoveService)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
       Layer.mock(ProjectService.ProjectService)({
