@@ -107,6 +107,7 @@ function makeRun(input: {
   readonly ordinal: number;
   readonly status: "running" | "waiting" | "cancelled" | "queued" | "completed";
   readonly instanceId?: ProviderInstanceId;
+  readonly workStartedAt?: DateTime.Utc;
 }) {
   return {
     id: input.id,
@@ -120,10 +121,12 @@ function makeRun(input: {
     requestedAt: now,
     startedAt: input.status === "cancelled" || input.status === "queued" ? null : now,
     completedAt: input.status === "cancelled" || input.status === "completed" ? now : null,
+    ...(input.workStartedAt === undefined ? {} : { workStartedAt: input.workStartedAt }),
   };
 }
 
-it("readThread preserves caller access errors and prefers activity-run status over a newer cancelled queued run", async () => {
+it("readThread preserves caller access errors, prefers activity-run status over a newer cancelled queued run, and reports a continuation's work start", async () => {
+  const workStartedAt = DateTime.makeUnsafe("2026-08-04T11:00:00.000Z");
   let callerUnavailable = false;
   const pullRequestLink = (number: number, state: "open" | "merged", watched: boolean) => ({
     host: "github.com",
@@ -165,7 +168,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
       ],
     },
     runs: [
-      makeRun({ id: activeRunId, ordinal: 1, status: "running" }),
+      makeRun({ id: activeRunId, ordinal: 1, status: "running", workStartedAt }),
       makeRun({ id: cancelledRunId, ordinal: 2, status: "cancelled" }),
     ],
     visibleTurnItems: [],
@@ -262,6 +265,9 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     });
     expect(laterPage.thread.pullRequests).toBeUndefined();
     expect(laterPage.thread.pullRequestCount).toBe(8);
+    const [cancelledRun, activeRun] = result.recentRuns;
+    expect(activeRun?.workStartedAt).toBe("2026-08-04T11:00:00.000Z");
+    expect(cancelledRun).not.toHaveProperty("workStartedAt");
 
     callerUnavailable = true;
     const denied = yield* service
