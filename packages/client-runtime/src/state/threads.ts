@@ -977,6 +977,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
 
   yield* markSynchronizing;
+  // A 404 can arrive before the thread exists, so a miss asks HTTP again while mounted.
+  let httpMisses = 0;
   let defectRetries = 0;
   const backOffAfterDefect = Effect.suspend(() => {
     const retryDelay = subscriptionRetryDelay(THREAD_SUBSCRIPTION_RETRY_DELAY, defectRetries);
@@ -994,10 +996,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
         let current = yield* SubscriptionRef.get(state);
-        // A prior definitive miss (or delete event) already cleared this thread.
-        // Park the subscription attempt without opening the socket so we do not
-        // retry forever against a known-missing id.
-        if (current.status === "deleted") {
+        // A delete event already cleared this thread. Park without opening the socket.
+        if (current.status === "deleted" && httpMisses === 0) {
           return yield* Effect.never;
         }
 
@@ -1034,6 +1034,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             yield* snapshotLoader.load(prepared, threadId);
           switch (httpResult._tag) {
             case "present": {
+              httpMisses = 0;
               if (canLoadHistory && httpResult.history !== undefined) {
                 yield* Ref.set(acceptsBoundedSocketSnapshots, true);
               }
@@ -1062,9 +1063,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               break;
             }
             case "missing": {
-              yield* setDeleted();
+              if (current.status !== "deleted") yield* setDeleted();
               // A 404 also means "not created yet". Only a delete event may outlive this mount.
               if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
+              yield* Effect.sleep(
+                subscriptionRetryDelay(THREAD_SUBSCRIPTION_RETRY_DELAY, httpMisses++),
+              );
+              yield* Queue.offer(resubscribes, undefined);
               return yield* Effect.never;
             }
             case "unavailable": {

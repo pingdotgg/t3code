@@ -118,6 +118,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     readonly latestLocalTurnOrdinal?: number | null;
   };
   readonly httpSnapshot?: ThreadSnapshotLoadResult;
+  /** Answers per load call; the last one repeats. Overrides `httpSnapshot`. */
+  readonly httpSnapshots?: readonly ThreadSnapshotLoadResult[];
   /** The test sends the completion marker itself instead of the fake server sending it first. */
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
@@ -193,11 +195,12 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   );
   const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
-      Ref.update(loaderCalls, (count) => count + 1).pipe(
-        Effect.as(
+      Ref.updateAndGet(loaderCalls, (count) => count + 1).pipe(
+        Effect.map((count) =>
           threadId === THREAD_ID
-            ? (options?.httpSnapshot ??
-                ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
+            ? (options?.httpSnapshots?.[Math.min(count, options.httpSnapshots.length) - 1] ??
+              options?.httpSnapshot ??
+              ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
             : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
         ),
       ),
@@ -795,6 +798,27 @@ describe("EnvironmentThreads", () => {
       const state = yield* awaitThreadState(resumed.observed, (value) => value.status === "live");
       expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
       expect(yield* Ref.get(resumed.loaderCalls)).toBe(1);
+    }),
+  );
+
+  it.effect("keeps asking a mounted thread over HTTP after a miss until it exists", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshots: [
+          { _tag: "missing" },
+          { _tag: "missing" },
+          {
+            _tag: "present",
+            snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection: BASE_PROJECTION },
+          },
+        ],
+      });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      yield* TestClock.adjust("250 millis");
+      yield* TestClock.adjust("500 millis");
+      const state = yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(3);
     }),
   );
 
