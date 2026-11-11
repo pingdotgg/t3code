@@ -460,6 +460,7 @@ describe("GitCafePullRequestProvider", () => {
         ...target,
         host: "staging.git.cafe",
       };
+      assert.isTrue(provider.readsPublicHostWithoutCheckout);
       const preview = yield* provider.getChangeRequestPreview!(input);
       assert.deepInclude(preview, {
         number: 7,

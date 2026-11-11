@@ -11,9 +11,6 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as GitCafeDriver from "@t3tools/source-control-gitcafe/server/driver";
-import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
@@ -1982,50 +1979,6 @@ it.effect("routes a hosted reference to another repository through a project on 
     assert.strictEqual(projectReads, readsPerReference + 2);
     yield* read(11);
     assert.strictEqual(projectReads, readsPerReference * 2 + 2);
-  }),
-);
-
-it.effect("reads a GitCafe link from a GitHub project without a GitCafe checkout", () =>
-  Effect.gen(function* () {
-    const instance = yield* GitCafeDriver.driver.make.pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          TestSourceControlHost.layer(),
-          SourceControlRateLimit.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-          FetchHttpClient.layer,
-        ),
-      ),
-    );
-    if (instance.pullRequests === null) return yield* Effect.die("Missing GitCafe PR driver");
-    const seen: string[] = [];
-    const service = yield* makeService({
-      projects: [
-        project({ id: "web", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
-      ],
-      providers: [
-        {
-          ...instance.pullRequests,
-          getChangeRequestSummary: (input) =>
-            Effect.sync(() => {
-              seen.push(`${input.host}/${input.repository}#${input.number}`);
-              return changeRequest(input.number, "2026-07-02T00:00:00Z");
-            }),
-        },
-      ],
-    });
-    const summary = yield* service.summary(
-      {
-        projectId: "web" as ProjectId,
-        host: "git.cafe",
-        repository: "pingdotgg/t3code",
-        number: 33106,
-      },
-      { recoverTransientFailure: false },
-    );
-    assert.strictEqual(summary.number, 33106);
-    assert.deepStrictEqual(seen, ["git.cafe/pingdotgg/t3code#33106"]);
   }),
 );
 
