@@ -642,7 +642,7 @@ export default function DiffPanel({
   const renderableFileEntries = renderableFiles.map((fileDiff) => {
     const entry = getCachedFileEntry(fileDiff);
     if (!isGitSelection) return entry;
-    // Metadata has no change type; keep each path's identity when its patch arrives.
+    // Metadata's change type can be missing or differ from the patch's; key each path's identity by path.
     const pathKey = JSON.stringify([fileDiff.prevName ?? fileDiff.name, fileDiff.name]);
     const occurrence = pathOccurrences.get(pathKey) ?? 0;
     pathOccurrences.set(pathKey, occurrence + 1);

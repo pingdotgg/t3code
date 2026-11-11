@@ -103,9 +103,17 @@ it("retains automatic and explicitly opened files through metadata insertion, re
     ),
   );
   await expect.element(screen.getByText("e.txt:loaded")).toBeVisible();
+  const complete = source(["a-new.txt", ...tracked.files!.map((f) => f.path)], "complete");
   await screen.rerender(
-    view(source(["a-new.txt", ...tracked.files!.map((f) => f.path)], "complete")),
+    view({
+      ...complete,
+      files: complete.files!.map((file) =>
+        file.path === "a-new.txt" ? { ...file, changeType: "new" } : file,
+      ),
+    }),
   );
+  await expect.element(screen.getByText("a-new.txt:pending")).toBeVisible();
+  await expect.element(screen.getByText("new", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("e.txt:loaded")).toBeVisible();
   await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
   await act(() =>

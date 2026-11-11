@@ -55,7 +55,7 @@ function getCachedReviewFile(
     ...(loaded ?? {
       path: stat.path,
       previousPath: stat.previousPath,
-      changeType: "change" as const,
+      changeType: stat.changeType ?? ("change" as const),
       languageHint: null,
       additionLines: [],
       deletionLines: [],
