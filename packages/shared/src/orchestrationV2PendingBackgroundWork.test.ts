@@ -3,6 +3,7 @@ import { ProviderInstanceId, ProviderThreadId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
+  monitorHoldsWakeCompletion,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
 describe("backgroundWorkHoldsCompletion", () => {
@@ -449,6 +450,19 @@ describe("derivePendingBackgroundWork kinds", () => {
         },
       ]);
       expect(backgroundWorkHoldsCompletion(tasks)).toBe(false);
+      // Unlike a monitor that wakes per line, it lets a comment wake's run complete too.
+      expect(
+        monitorHoldsWakeCompletion({
+          latestRunBackgroundWake: true,
+          pendingBackgroundTasks: tasks,
+        }),
+      ).toBe(false);
+      expect(
+        monitorHoldsWakeCompletion({
+          latestRunBackgroundWake: true,
+          pendingBackgroundTasks: [...tasks, { taskId: "tail", kind: "monitor" }],
+        }),
+      ).toBe(true);
 
       const running = derivePendingBackgroundWork({
         latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },

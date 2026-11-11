@@ -12,6 +12,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2Command as OrchestrationCommand,
+  type OrchestrationV2InternalCommand,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationProjectShell,
@@ -51,6 +52,10 @@ type SyncCommand = Extract<
   { readonly type: "thread.pull-request-link.sync" }
 >;
 type LinkCommand = Extract<OrchestrationCommand, { readonly type: "thread.pull-request.link" }>;
+type WatchSyncCommand = Extract<
+  OrchestrationV2InternalCommand,
+  { readonly type: "thread.pull-request-watch.sync" }
+>;
 
 const testCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 
@@ -180,6 +185,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const shellSnapshotReads = yield* Ref.make(0);
   const syncCommands = yield* Ref.make<ReadonlyArray<SyncCommand>>([]);
   const linkCommands = yield* Ref.make<ReadonlyArray<LinkCommand>>([]);
+  const watchCommands = yield* Queue.unbounded<WatchSyncCommand>();
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
@@ -213,6 +219,9 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       return Ref.update(linkCommands, (recorded) => [...recorded, command]).pipe(
         Effect.as({ sequence: 1, storedEvents: [] }),
       );
+    }
+    if (command.type === "thread.pull-request-watch.sync") {
+      return Queue.offer(watchCommands, command).pipe(Effect.as({ sequence: 1, storedEvents: [] }));
     }
     return Effect.die(new Error(`Unexpected command: ${command.type}`));
   };
@@ -274,6 +283,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     shellSnapshotReads,
     syncCommands,
     linkCommands,
+    watchCommands,
     summaryCalls,
     stackCalls,
     domainEvents,
@@ -1571,6 +1581,57 @@ describe("PullRequestSyncReactor", () => {
             ]),
             [[7, "merged"]],
           );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("clears a watch's finished checks when its thread's agent pushes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const watch = {
+          startedAt: NOW,
+          headSha: "aaaaaaaaaa",
+          failedChecks: [],
+          passed: true,
+          passedChecks: ["test"],
+          remarksThrough: NOW,
+          remarkIds: [],
+          conflicting: false,
+          wakes: 0,
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("agent", {
+              pullRequests: [
+                makeLink(7, { state: "open" }, { watch: { ...watch, checksPending: false } }),
+                makeLink(8, { state: "open" }, { watch: { ...watch, checksPending: true } }),
+              ],
+            }),
+          ]),
+        });
+
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          const agent = ThreadId.make("agent");
+          yield* Queue.offerAll(fixture.domainEvents, [
+            commandRan(agent, "git status && echo 'then git push'", undefined, "status"),
+            commandRan(agent, "cd app && git -C . push --force-with-lease", undefined, "push"),
+            commandRan(agent, '/bin/zsh -lc "gh stack submit --auto"', undefined, "stack"),
+          ]);
+          // #8 still waits on its checks, so only #7 forgets its answer, once per push.
+          for (const item of ["push", "stack"]) {
+            const command = yield* Queue.take(fixture.watchCommands);
+            assert.deepStrictEqual(
+              [command.commandId, command.number, command.watch],
+              [
+                `server:pr-push-checks:agent:item:agent:${item}:github.com/owner/repository#7`,
+                7,
+                watch,
+              ],
+            );
+          }
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

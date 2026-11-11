@@ -3616,6 +3616,25 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* reactor.sweep;
       assert.deepEqual(yield* summaries, ["#17: checks failed"]);
       assert.isFalse(yield* checksPending);
+
+      // A push clears the answer, and the next sweep reads again though nothing else changed.
+      const watched = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      assert.isDefined(watched);
+      const { checksPending: _answer, ...cleared } = watched!;
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make("pr-watch-quiet-push"),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 17,
+        startedAt: cleared.startedAt,
+        watch: cleared,
+      });
+      assert.isUndefined(yield* checksPending);
+      yield* TestClock.adjust("2 minutes");
+      yield* reactor.sweep;
+      assert.isFalse(yield* checksPending);
     }),
   );
 
@@ -3718,9 +3737,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* worker.drain();
       assert.deepEqual(yield* summaries, [firstSummary]);
 
-      // A new watch on the same pull request knows what the last one told.
+      // A new watch on the same pull request knows what the last one told, and whether its
+      // checks were still running: a run awaiting approval waits on a person, not CI.
       yield* watch(false, "stop");
       yield* watch(true, "again");
+      assert.strictEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.checksPending,
+        !approval,
+      );
       yield* restarted.sweep;
       yield* worker.drain();
       assert.deepEqual(yield* summaries, [firstSummary]);

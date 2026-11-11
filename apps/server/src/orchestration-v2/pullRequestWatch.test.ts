@@ -624,11 +624,14 @@ describe("evaluatePullRequestWatch", () => {
     }
     assert.isFalse(current.checksPending);
 
-    // Watched again after that notice, the watch keeps no answer and no clock, so it waits for none.
-    const rewatched = watch({ headSha: "bbbbbbbbbb", checksAwaitedSince: null });
-    assert.isFalse(
-      evaluatePullRequestWatch(rewatched, detail({ headSha: "bbbbbbbbbb", checks: [] }), noRemarks)
-        .next.checksPending,
-    );
+    // A watch with no answer waits on an empty list only while the no-checks clock runs.
+    const unanswered = (checksAwaitedSince: string | null) =>
+      evaluatePullRequestWatch(
+        watch({ headSha: "bbbbbbbbbb", checksAwaitedSince }),
+        detail({ headSha: "bbbbbbbbbb", checks: [] }),
+        noRemarks,
+      ).next.checksPending;
+    assert.isFalse(unanswered(null));
+    assert.isTrue(unanswered(STARTED));
   });
 });
