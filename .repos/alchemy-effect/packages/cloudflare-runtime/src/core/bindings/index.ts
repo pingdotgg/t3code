@@ -9,7 +9,7 @@ export * as D1 from "./d1/index.ts";
 export * as Data from "./Data.ts";
 export * as DispatchNamespace from "./dispatch-namespace/index.ts";
 export * as DurableObjectNamespace from "./DurableObjectNamespace.ts";
-export * as Flagship from "./Flagship.ts";
+export * as Flagship from "./flagship/index.ts";
 export * as Hyperdrive from "./hyperdrive/index.ts";
 export * as Images from "./images/index.ts";
 export * as Json from "./Json.ts";
