@@ -9,6 +9,7 @@ import {
 } from "@expo/ui/jetpack-compose";
 import { defaultMinSize, padding, size, width } from "@expo/ui/jetpack-compose/modifiers";
 import type { MenuAction } from "@react-native-menu/menu";
+import type { ReactNode } from "react";
 import { Pressable } from "react-native";
 import { resolveScaledTextRole } from "../../lib/appearancePreferences";
 
@@ -18,12 +19,10 @@ import type { MenuPopupProps } from "./MenuPopup";
 import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol.android";
 
 // The Compose glyph host consumes touches; run the action here and keep accessibility on the row.
-function MenuIcon(props: {
-  readonly name: AppSymbolName;
-  readonly color?: MenuAction["imageColor"];
+function MenuIconHost(props: {
   readonly onPress: () => void;
-  readonly destructive?: boolean;
   readonly disabled?: boolean;
+  readonly children: ReactNode;
 }) {
   const { iconSize } = useAndroidControlSizing();
   return (
@@ -36,27 +35,45 @@ function MenuIcon(props: {
         style={{ width: iconSize, height: iconSize }}
         importantForAccessibility="no-hide-descendants"
       >
-        <SymbolView
-          name={props.name}
-          size={iconSize}
-          type="monochrome"
-          {...(typeof props.color === "string" && !props.disabled
-            ? { tintColor: props.color }
-            : {
-                tintColorClassName: props.disabled
-                  ? "accent-icon-subtle"
-                  : props.destructive
-                    ? "accent-danger-foreground"
-                    : "accent-foreground",
-              })}
-        />
+        {props.children}
       </Pressable>
     </RNHostView>
   );
 }
 
+function MenuIcon(props: {
+  readonly name: AppSymbolName;
+  readonly color?: MenuAction["imageColor"];
+  readonly onPress: () => void;
+  readonly destructive?: boolean;
+  readonly disabled?: boolean;
+}) {
+  const { iconSize } = useAndroidControlSizing();
+  return (
+    <MenuIconHost onPress={props.onPress} disabled={props.disabled}>
+      <SymbolView
+        name={props.name}
+        size={iconSize}
+        type="monochrome"
+        {...(typeof props.color === "string" && !props.disabled
+          ? { tintColor: props.color }
+          : {
+              tintColorClassName: props.disabled
+                ? "accent-icon-subtle"
+                : props.destructive
+                  ? "accent-danger-foreground"
+                  : "accent-foreground",
+            })}
+      />
+    </MenuIconHost>
+  );
+}
+
 export function MenuPopupItems(
-  props: Pick<MenuPopupProps, "menuWidth" | "actions" | "title" | "parent" | "onPress" | "onBack">,
+  props: Pick<
+    MenuPopupProps,
+    "menuWidth" | "actions" | "title" | "parent" | "onPress" | "onBack" | "renderLeadingIcon"
+  >,
 ) {
   const { appearance, themeVariables: colors } = useAppearancePreferences();
   const { scale, menuItemHeight } = useAndroidControlSizing();
@@ -66,6 +83,7 @@ export function MenuPopupItems(
   const muted = colors["--color-foreground-muted"];
   // A fixed native item height clips wrapped labels; a minimum lets each row grow.
   const itemModifiers = [width(props.menuWidth), defaultMinSize({ minHeight: menuItemHeight })];
+  const customIcons = props.actions.map((action) => props.renderLeadingIcon?.(action));
   return (
     <>
       {props.parent ? (
@@ -95,7 +113,16 @@ export function MenuPopupItems(
           modifiers={itemModifiers}
           onClick={() => props.onPress(action)}
         >
-          {action.image && isAppSymbolName(action.image) ? (
+          {customIcons[index] ? (
+            <DropdownMenuItem.LeadingIcon>
+              <MenuIconHost
+                onPress={() => props.onPress(action)}
+                disabled={action.attributes?.disabled}
+              >
+                {customIcons[index]}
+              </MenuIconHost>
+            </DropdownMenuItem.LeadingIcon>
+          ) : action.image && isAppSymbolName(action.image) ? (
             <DropdownMenuItem.LeadingIcon>
               <MenuIcon
                 name={action.image}

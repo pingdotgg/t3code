@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
 
@@ -10,6 +11,8 @@ export interface HomeListFilterMenuEnvironment {
 export interface HomeListFilterMenuProject {
   readonly key: string;
   readonly label: string;
+  readonly isScratch?: boolean;
+  readonly leading?: ReactNode;
 }
 
 export function buildHomeListFilterMenuItems(props: {
@@ -24,10 +27,12 @@ export function buildHomeListFilterMenuItems(props: {
     {
       id: "environment",
       title: "Environment",
+      icon: "desktopcomputer",
       items: [
         {
           id: "environment:all",
           title: "All environments",
+          icon: "square.grid.2x2",
           subtitle: "Show threads from every environment",
           selected: props.selectedEnvironmentId === null,
           onPress: () => props.onEnvironmentChange(null),
@@ -35,6 +40,7 @@ export function buildHomeListFilterMenuItems(props: {
         ...props.environments.map((environment) => ({
           id: `environment:${environment.environmentId}`,
           title: environment.label,
+          icon: "desktopcomputer",
           selected: props.selectedEnvironmentId === environment.environmentId,
           onPress: () => props.onEnvironmentChange(environment.environmentId),
         })),
@@ -46,10 +52,12 @@ export function buildHomeListFilterMenuItems(props: {
     items.push({
       id: "project",
       title: "Project",
+      icon: "folder.fill",
       items: [
         {
           id: "project:all",
           title: "All projects",
+          icon: "square.grid.2x2",
           subtitle: "Show threads from every project",
           selected: props.selectedProjectKey === null,
           onPress: () => props.onProjectChange(null),
@@ -57,6 +65,8 @@ export function buildHomeListFilterMenuItems(props: {
         ...props.projects.map((project) => ({
           id: `project:${project.key}`,
           title: project.label,
+          icon: project.isScratch ? "bubble.left" : undefined,
+          leading: project.leading,
           selected: props.selectedProjectKey === project.key,
           onPress: () => props.onProjectChange(project.key),
         })),
