@@ -60,24 +60,22 @@ export function moveStripCamera(scroller: HTMLElement, stage: HTMLElement, targe
   // The browser clamps a scroll past the strip's end.
   const landed = scroller.scrollLeft;
   const motion = MotionAnimation.start("horizontal-view-movement", from, landed, velocity);
-  if (motion.durationMs <= 0) return;
-  const move = {
-    scroller,
-    run: playMotion(
-      stage,
-      motion,
-      (camera) => ({ transform: `translateX(${toDevicePixel(landed - camera)}px)` }),
-      () => {
-        if (current === move) current = null;
-      },
-      // Starts on the frame that first shows the new layout, with the panes'
-      // own slides: a keypress whose commit takes a few frames would
-      // otherwise land mid-move, skipping the start and out of step with them.
-      undefined,
-      true,
-    ),
-  };
-  current = move;
+  let finished = false;
+  const run = playMotion(
+    stage,
+    motion,
+    (camera) => ({ transform: `translateX(${toDevicePixel(landed - camera)}px)` }),
+    () => {
+      finished = true;
+      current = null;
+    },
+    // Starts on the frame that first shows the new layout, with the panes'
+    // own slides: a keypress whose commit takes a few frames would
+    // otherwise land mid-move, skipping the start and out of step with them.
+    undefined,
+    true,
+  );
+  if (!finished) current = { scroller, run };
 }
 
 /** Where the camera shows now, in scroll px: mid-move, not where the scroll already landed. */
