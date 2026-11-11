@@ -541,9 +541,15 @@ export function markdownWithTopLevelCodeBlocks(markdown: string): string {
         // A list numbered past 1 cannot interrupt a paragraph.
         output[itemLine] = /(?:^|\n)[ \t]*\n$/.test(output[itemLine - 1]!) ? text : `\n${text}`;
       }
-      const code = item.children.find(
-        (child): child is Code => child.type === "code" && isClosedFence(markdown, child),
+      const codeIndex = item.children.findIndex(
+        (child) => child.type === "code" && isClosedFence(markdown, child),
       );
+      const code = item.children[codeIndex] as Code | undefined;
+      // Moving the rest of the item out would promote a child list to this list's level.
+      if (item.children.slice(codeIndex + 1).some((child) => child.type === "list")) {
+        split = false;
+        return;
+      }
       split = code !== undefined;
       if (!code) return;
       const content = Math.min(
@@ -554,10 +560,10 @@ export function markdownWithTopLevelCodeBlocks(markdown: string): string {
       const codeEnd = lineOf(code.position!.end.offset!);
       const itemEnd = Math.max(codeEnd, lineOf(item.position!.end.offset!));
       // A fence on its item's marker line (`- ```sh`) leaves the marker behind as an empty item.
-      const marker = markdown.slice(lineStarts[codeLine], codeStart).trimEnd();
-      const fence =
-        " ".repeat(columnAt(markdown, codeStart)) +
-        markdown.slice(codeStart, lineStarts[codeLine]! + lines[codeLine]!.length);
+      const rest = markdown.slice(codeStart, lineStarts[codeLine]! + lines[codeLine]!.length);
+      // Read from the output, which keeps the renumbering and break the previous split added.
+      const marker = output[codeLine]!.slice(0, -rest.length).trimEnd();
+      const fence = " ".repeat(columnAt(markdown, codeStart)) + rest;
       output[codeLine] = `${marker ? `${marker}\n` : ""}\n${dedentLine(fence, content)}`;
       for (let line = codeLine + 1; line <= itemEnd; line += 1)
         output[line] = dedentLine(output[line]!, content);
