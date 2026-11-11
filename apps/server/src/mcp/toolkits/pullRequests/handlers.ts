@@ -274,15 +274,16 @@ const make = Effect.gen(function* () {
       return yield* new PullRequestProjectNotFoundError({ repository: input.repository ?? "" });
     }
     // Status sync sets branchPullRequest later, so a PR this thread just opened counts too,
-    // unless its snapshot shows it is another branch's.
-    const branchPullRequest =
-      thread.branchPullRequest ??
-      threadPullRequestsOf(thread).findLast(
-        (link) =>
-          link.source === "created" &&
-          (link.snapshot === null || link.snapshot.headBranch === thread.branch),
-      ) ??
-      null;
+    // unless it is another branch's.
+    const opened =
+      thread.branchPullRequest === null || thread.branchPullRequest === undefined
+        ? threadPullRequestsOf(thread).findLast(
+            (link) =>
+              link.source === "created" &&
+              (link.snapshot === null || link.snapshot.headBranch === thread.branch),
+          )
+        : undefined;
+    const branchPullRequest = thread.branchPullRequest ?? opened ?? null;
     const branchRepository =
       project.repositoryIdentity == null
         ? undefined
@@ -301,6 +302,11 @@ const make = Effect.gen(function* () {
       repository: target.repository,
       number: target.number,
     };
+    if (input.number === undefined && opened !== undefined && opened.snapshot === null) {
+      // Not synced yet, so only the host knows which branch it was opened from.
+      const summary = yield* pullRequests.summary(ref).pipe(Effect.mapError(forgeFailure));
+      if (summary.headBranch !== thread.branch) return yield* new PullRequestBranchHasNoneError();
+    }
     return { thread, project, target, ref };
   });
 

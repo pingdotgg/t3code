@@ -797,14 +797,22 @@ describe("source control tools", () => {
   it.effect("reads the PR this thread opened before status sync reports it", () =>
     Effect.gen(function* () {
       const asked: Array<PullRequestRef> = [];
-      const harness = yield* makeHarness({
-        thread: makeThread([makeLink(43, { source: "created" })]),
-        pullRequests: {
-          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
-        },
-      });
+      const opened = (headBranch: string) =>
+        makeHarness({
+          thread: { ...makeThread([makeLink(43, { source: "created" })]), branch: "tools" },
+          pullRequests: {
+            summary: () => Effect.succeed({ state: "open", headBranch } as never),
+            detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          },
+        });
+      const harness = yield* opened("tools");
       yield* harness.call("pull_request_read", { sections: ["summary"] });
       expect(asked).toMatchObject([{ number: 43 }]);
+
+      // Before sync, the host says which branch it came from; another branch's is not this one.
+      const moved = yield* opened("old");
+      const unsynced = yield* moved.call("pull_request_read", {}).pipe(Effect.flip);
+      expect(unsynced._tag).toBe("PullRequestBranchHasNoneError");
 
       // After a switch to another branch, the PR opened from the old one is not the branch's.
       const switched = yield* makeHarness({
