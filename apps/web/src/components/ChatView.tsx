@@ -2722,10 +2722,11 @@ export default function ChatView(props: ChatViewProps) {
         if (!canChangeEnvironment) return false;
         if (event.repeat) return;
         const currentId = readPendingEnvironmentChange()?.environmentId ?? environmentId;
-        const index = logicalProjectEnvironments.findIndex(
-          (env) => env.environmentId === currentId,
+        const selectable = logicalProjectEnvironments.filter(
+          (env) => env.unavailableReason === undefined,
         );
-        const next = logicalProjectEnvironments[(index + 1) % logicalProjectEnvironments.length];
+        const index = selectable.findIndex((env) => env.environmentId === currentId);
+        const next = selectable[(index + 1) % selectable.length];
         if (next) onEnvironmentChangeStable(next.environmentId);
       },
       "thread.steerQueuedMessage": ({ event }) =>
