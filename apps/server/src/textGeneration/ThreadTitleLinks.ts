@@ -13,7 +13,7 @@ export const resolveThreadTitleLinks = Effect.fn("resolveThreadTitleLinks")(func
   const providers = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const links = new Map<string, NonNullable<ReturnType<typeof providers.resolveLink>>>();
   for (const match of input.message.matchAll(/https:\/\/[^\s<>"')\]`]+/g)) {
-    const candidate = match[0].replace(/[.,;!?]+$/, "");
+    const candidate = match[0].replace(/[.,:;!?*]+$/, "");
     if (!URL.canParse(candidate)) continue;
     const url = new URL(candidate);
     url.hash = "";

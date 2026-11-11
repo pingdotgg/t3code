@@ -12,12 +12,7 @@ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
 import { readPreparedConnection } from "~/state/session";
 
-export {
-  normalizeHostname,
-  isLocalLoopbackHost,
-  isPrivateNetworkHost,
-  isPublicFaviconHost,
-} from "@t3tools/shared/hostClassification";
+export { normalizeHostname, isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 
 const readEnvironmentUrl = (environmentId: EnvironmentId): URL => {
   const connection = readPreparedConnection(environmentId);
@@ -62,21 +57,6 @@ const resolveEnvironmentPortTarget = (
     environmentId,
   };
 };
-
-export function resolveBrowserNavigationTarget(
-  environmentId: EnvironmentId,
-  target: BrowserNavigationTarget,
-): PreviewUrlResolution {
-  if (target.kind === "url") {
-    return {
-      requestedUrl: target.url,
-      resolvedUrl: target.url,
-      resolutionKind: "direct",
-      environmentId,
-    };
-  }
-  return resolveEnvironmentPortTarget(environmentId, target, readEnvironmentUrl(environmentId));
-}
 
 // Desktop renders primary and WSL tabs locally; loopback servers require localhost even for LAN backends.
 const reachesEnvironmentLoopback = (target: ConnectionTarget): boolean =>
