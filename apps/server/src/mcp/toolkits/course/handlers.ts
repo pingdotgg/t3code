@@ -72,11 +72,6 @@ const courseReferenceFetchHandler = McpToolAccess.readsAsCaller(
         scope,
         "course_reference_fetch",
       );
-      if (!input.courseId)
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: "courseId is required for course reference fetches",
-        });
       const service = yield* CourseService.CourseService;
       const course = yield* service.get({ id: input.courseId }).pipe(Effect.mapError(fail));
       if (!course.prepThreadIds.includes(thread.threadId))
@@ -88,11 +83,10 @@ const courseReferenceFetchHandler = McpToolAccess.readsAsCaller(
       return yield* fetchCourseReference({
         url: input.url,
         ...(input.pages === undefined ? {} : { pages: input.pages }),
-        ...(input.courseId === undefined ? {} : { courseId: input.courseId }),
         audit: {
           stateDir: config.stateDir,
           threadId: thread.threadId,
-          courseId: input.courseId ?? null,
+          courseId: input.courseId,
         },
       }).pipe(Effect.mapError(fail));
     }),
@@ -212,6 +206,13 @@ const handlers = {
           code: "invalid_request",
           message: "solutionLeads must contain at most 10 http(s) URLs",
         });
+      if (input.solutionLeads !== undefined)
+        yield* service
+          .update({
+            courseId: course.id,
+            solutionSearchedAt: DateTime.formatIso(yield* DateTime.now),
+          })
+          .pipe(Effect.mapError(fail));
       if (input.solutionLeads !== undefined && solutionLeads.length === 0 && course.problemSets) {
         for (const [index, pset] of course.problemSets.entries()) {
           if (!pset.hasSolution && pset.references === undefined)
@@ -229,9 +230,15 @@ const handlers = {
       const first = units[0];
       const last = units[units.length - 1];
       const title = `Prep: ${course.title} L${first}–${last}`;
+      const pendingSolutionPsets =
+        input.solutionLeads !== undefined
+          ? (course.problemSets ?? [])
+              .map((pset, index) => ({ pset, number: index + 1 }))
+              .filter(({ pset }) => !pset.hasSolution && pset.references === undefined)
+          : [];
       const solutionBrief =
         solutionLeads.length > 0
-          ? ` Open each solution lead with course_reference_fetch (follow index-page links to the matching pset file), read PDF page images, transcribe each problem's final answers and key steps, and save them with course_update {pset, references}. For psets with no official solution where nothing was found, save references []. Leads: ${solutionLeads.join(", ")}.`
+          ? ` Problem sets to find solutions for: ${pendingSolutionPsets.map(({ number, pset }) => `${number} (${pset.title})`).join(", ") || "none"}. Open each solution lead with course_reference_fetch (follow index-page links to the matching named pset's solution file), read PDF page images, transcribe each problem's final answers and key steps, and save them with course_update {pset, references} for each named pset you find. Save references [] for each named pset you do not find. Leads: ${solutionLeads.join(", ")}.`
           : "";
       const prompt = PREP_BRIEF.replace("{{courseId}}", course.id)
         .replace("{{units}}", units.join(", "))

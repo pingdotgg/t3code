@@ -1295,6 +1295,34 @@ it.effect("course_prepare starts a standalone prep thread and sends nothing to t
     // The prep turn may call course_read at once, so its id is recorded before it starts.
     expect(recordedAtCreate).toEqual([(yield* service.get({ id: course.id })).prepThreadIds]);
     expect(recordedAtCreate[0]).toHaveLength(1);
+    yield* service.add({
+      lessonThreadId: threadId,
+      ingested: {
+        kind: "ours",
+        title: "Signals",
+        source: "",
+        units: [{ title: "One", section: "Video Introduction" }],
+        problemSets: [
+          { title: "Pset 1", section: "Different section", text: "Problem" },
+          { title: "Pset 2", section: "Different section", text: "Problem 2", solution: "Answer" },
+        ],
+      },
+    });
+    const beforeSearch = yield* callAs("course_problems", { courseId: course.id });
+    expect(JSON.stringify(beforeSearch.content)).toContain("one web search");
+    const leadResult = yield* callAs("course_prepare", {
+      units: [1],
+      solutionLeads: ["https://example.com/solutions"],
+    });
+    expect(leadResult.isError).not.toBe(true);
+    expect(requests.at(-1)).toMatchObject({
+      threads: [
+        { prompt: expect.stringContaining("Problem sets to find solutions for: 1 (Pset 1)") },
+      ],
+    });
+    expect((yield* service.get({ id: course.id })).solutionSearchedAt).toBeDefined();
+    const afterSearch = yield* callAs("course_problems", { courseId: course.id });
+    expect(JSON.stringify(afterSearch.content)).not.toContain("one web search");
     const foreign = yield* service.add({
       lessonThreadId: ThreadId.make("other-course-lesson"),
       title: "Other Signals",
