@@ -1,12 +1,9 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   ServerSettings,
   SourceControlProviderKind,
-  VcsProcessExitError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -15,14 +12,12 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
-import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
-import * as GitHubQuota from "./GitHubQuota.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
@@ -192,7 +187,27 @@ it.effect.each([
   }),
 );
 
-const probeWithGhFailure = (error: VcsProcessExitError | VcsProcessTimeoutError) =>
+it.effect.each([
+  {
+    name: "no failed span when gh is not signed in",
+    error: (host: string) => new GitHubCredentials.GitHubNotSignedInError({ host }),
+    failedSpans: [],
+  },
+  {
+    name: "a failed probe span when the lookup fails for real",
+    error: (host: string) =>
+      new GitHubCredentials.GitHubCliFailedError({
+        host,
+        cause: new VcsProcessTimeoutError({
+          operation: "GitHubCredentials.get",
+          command: "gh",
+          cwd: "/repo",
+          timeoutMs: 10_000,
+        }),
+      }),
+    failedSpans: ["GitHubSourceControlProvider.refineUnknownRemote"],
+  },
+])("records $name for an unknown host", (scenario) =>
   Effect.gen(function* () {
     const spans: Array<Tracer.NativeSpan> = [];
     const tracer = Tracer.make({
@@ -202,63 +217,18 @@ const probeWithGhFailure = (error: VcsProcessExitError | VcsProcessTimeoutError)
         return span;
       },
     });
-    const host = TestSourceControlHost.layer({ process: { run: () => Effect.fail(error) } });
-    const discovery = yield* GitHubSourceControlProvider.makeDiscovery.pipe(
-      Effect.provide(
-        GitHubRest.layer.pipe(
-          Layer.provideMerge(GitHubCredentials.layer),
-          Layer.provideMerge(
-            Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
-              enabled: false,
-              token: () => Effect.succeedNone,
-            }),
-          ),
-          Layer.provideMerge(GitHubQuota.layer),
-          Layer.provideMerge(SourceControlRateLimit.layer),
-          Layer.provideMerge(host),
-          Layer.provide(NodeCrypto.layer),
-          Layer.provide(
-            Layer.succeed(
-              HttpClient.HttpClient,
-              HttpClient.make((request) => Effect.die(`Unexpected request to ${request.url}`)),
-            ),
-          ),
-        ),
-      ),
-      Effect.provideService(HostProcess.Environment, {}),
+    const discovery = yield* makeDiscovery((host) =>
+      Effect.fail(scenario.error(host)).pipe(Effect.withSpan("GitHubRest.credential")),
     );
-    if (discovery.type !== "managed-cli") return yield* Effect.die("expected a managed CLI");
-    const exit = yield* discovery
+    if (discovery.type !== "managed-cli") return assert.fail("expected a managed CLI");
+    yield* discovery
       .refineUnknownRemote({ cwd: "/repo", context: unknownContext("https://code.example.test") })
       .pipe(Effect.withTracer(tracer), Effect.exit);
-    const failedSpans = spans.flatMap((span) =>
-      span.status._tag === "Ended" && Exit.isFailure(span.status.exit) ? [span.name] : [],
+    assert.deepStrictEqual(
+      spans.flatMap((span) =>
+        span.status._tag === "Ended" && Exit.isFailure(span.status.exit) ? [span.name] : [],
+      ),
+      scenario.failedSpans,
     );
-    return { exit, failedSpans };
-  });
-
-const ghCommand = { operation: "GitHubCredentials.get", command: "gh", cwd: "/repo" };
-
-it.effect("records no failed span when gh is not signed in to an unknown host", () =>
-  Effect.gen(function* () {
-    const { exit, failedSpans } = yield* probeWithGhFailure(
-      new VcsProcessExitError({
-        ...ghCommand,
-        exitCode: 1,
-        detail: "no oauth token found for code.example.test",
-      }),
-    );
-    assert.deepStrictEqual(exit, Exit.succeed(null));
-    assert.deepStrictEqual(failedSpans, []);
-  }),
-);
-
-it.effect("records a failed probe span when gh times out for an unknown host", () =>
-  Effect.gen(function* () {
-    const { exit, failedSpans } = yield* probeWithGhFailure(
-      new VcsProcessTimeoutError({ ...ghCommand, timeoutMs: 10_000 }),
-    );
-    assert.isTrue(Exit.isFailure(exit));
-    assert.deepStrictEqual(failedSpans, ["GitHubSourceControlProvider.refineUnknownRemote"]);
   }),
 );
