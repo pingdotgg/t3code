@@ -277,6 +277,8 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               ),
               Stream.concat(Stream.never),
             ),
+            getPullRequestSyncThreads: () =>
+              Effect.succeed({ snapshotSequence: 1, threads: [thread, otherThread] }),
             getPullRequestSnapshot: ({ threadId }) =>
               Effect.succeed({
                 schemaVersion: 2,
