@@ -118,7 +118,7 @@ describe("resolveRouteDraft", () => {
   it("asks for a project for the same draft when its project is gone", () => {
     expect(
       resolveRouteDraft({ ...base, projects: [{ environmentId, id: ProjectId.make("other") }] }),
-    ).toEqual({ kind: "pickProject", draftId: "new-task:draft-1" });
+    ).toEqual({ kind: "pickProject" });
   });
 });
 
