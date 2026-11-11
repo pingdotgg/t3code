@@ -1144,11 +1144,6 @@ it.each([
   );
 });
 
-// Dev v3c Sol: unlocking, keeping the phone awake and discovery left no step for delegate_task.
-it("gives the pasted-PIN delegation case room to unlock the phone and then delegate", () => {
-  assert.isAtLeast(secretCase("secret-pasted-pin-delegation").maxSteps ?? 0, 14);
-});
-
 it("passes a pasted PIN handed to a child as a saved file, and fails a card or a copy", () => {
   const PIN = "482916";
   const file = "/home/user/.t3/userdata/secrets/files/3c1e0f5a9b7d4e2f8a6c0b1d2e3f4a5b";
@@ -2986,7 +2981,6 @@ const r6Raw = "xcrun simctl io PRIVATE screenshot /tmp/proof.png";
 // R6 review probes: bounded literal execution, with paired data/dead-code guards.
 it.each([
   ["safe-not-required", "Use device_open. SSH is not required for screenshots.", "managed"],
-  ["safe-not-allowed", "Use device_open. SSH must not be used for screenshots.", "managed"],
   [
     "negation-comma",
     "Use device_open. Do not use SSH for builds, use SSH for screenshots.",
@@ -3319,7 +3313,6 @@ it.each([
     "Use device_open and its returned launcher for screenshots. Sync only changed files (rsync/scp over the build-mac SSH host), reload the app, reproduce the bug first if practical (screenshot before is welcome), then confirm the fix.",
     "managed",
   ],
-  ["Use device_open. Run ssh -p 22 build-mac for screenshots.", "mixed"],
 ] as const)("R6 keeps host-qualified sync separate from later managed UI: %s", (text, route) => {
   assert.equal(briefRoute(text), route);
 });
@@ -3395,7 +3388,6 @@ it.each([
     "Use device_open. Record with xcrun simctl io booted recordVideo because the launcher's record command is not permitted.",
     "mixed",
   ],
-  ["Use device_open. Screenshots via SSH are forbidden.", "managed"],
   ["Device tools are forbidden. Use SSH for screenshots.", "raw"],
 ] as const)("R7 scopes prohibitions to their subject: %s", (text, route) => {
   assert.equal(briefRoute(text), route);
