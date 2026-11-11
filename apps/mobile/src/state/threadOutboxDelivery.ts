@@ -87,6 +87,7 @@ import {
 import {
   dispatchingQueuedMessageIdAtom,
   editingQueuedMessageIdsAtom,
+  retryingQueuedMessageIdsAtom,
   threadOutboxShellStatusesAtom,
 } from "./use-thread-outbox";
 import { clearThreadComposerError, setThreadComposerError } from "./thread-composer-error";
@@ -701,6 +702,12 @@ export function createThreadOutboxDelivery(): {
       notBefore: Date.now() + delayMs,
       timer: setTimeout(drain, delayMs),
     });
+    if (previous === undefined) {
+      appAtomRegistry.set(retryingQueuedMessageIdsAtom, {
+        ...appAtomRegistry.get(retryingQueuedMessageIdsAtom),
+        [messageId]: true,
+      });
+    }
   };
 
   const clearRetry = (messageId: MessageId): void => {
@@ -708,6 +715,10 @@ export function createThreadOutboxDelivery(): {
     if (retry === undefined) return;
     clearTimeout(retry.timer);
     retries.delete(messageId);
+    const { [messageId]: _cleared, ...retrying } = appAtomRegistry.get(
+      retryingQueuedMessageIdsAtom,
+    );
+    appAtomRegistry.set(retryingQueuedMessageIdsAtom, retrying);
   };
 
   // A delivery that throws backs off like any failure. Releasing the slot
@@ -1412,6 +1423,7 @@ export function createThreadOutboxDelivery(): {
       stopCollectingOutcomes();
       for (const retry of retries.values()) clearTimeout(retry.timer);
       retries.clear();
+      appAtomRegistry.set(retryingQueuedMessageIdsAtom, {});
       for (const blocked of blockedRecoveries.values()) blocked.unsubscribe();
       blockedRecoveries.clear();
       for (const release of familyMounts.values()) release();

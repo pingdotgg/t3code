@@ -14,7 +14,11 @@ import { pendingThreadCreationOutcomesAtom, withLaunchingThreads } from "./pendi
 import { flattenQueuedThreadMessages } from "./thread-outbox-model";
 import { environmentThreadShells } from "./threads";
 import { newTaskComposerDraftsAtom } from "./use-composer-drafts";
-import { threadOutboxShellStatusesAtom, useThreadOutboxMessages } from "./use-thread-outbox";
+import {
+  retryingQueuedMessageIdsAtom,
+  threadOutboxShellStatusesAtom,
+  useThreadOutboxMessages,
+} from "./use-thread-outbox";
 import { environmentSession, sessionHasScope } from "./session";
 import { workspaceConnections } from "./workspace";
 
@@ -39,6 +43,7 @@ const threadOutboxSendGateAtom = Atom.make((get): ThreadOutboxSendGate => {
       ),
     ),
     shellStatuses: get(threadOutboxShellStatusesAtom),
+    retryingMessageIds: get(retryingQueuedMessageIdsAtom),
   };
 }).pipe(Atom.withLabel("mobile:pending-new-tasks:send-gate"));
 

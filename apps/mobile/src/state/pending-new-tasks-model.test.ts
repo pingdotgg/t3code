@@ -108,22 +108,27 @@ describe("buildPendingNewTasks", () => {
     const sending = EnvironmentId.make("sending");
     const syncing = EnvironmentId.make("syncing");
     const readOnly = EnvironmentId.make("read-only");
+    const retrying = EnvironmentId.make("retrying");
     const tasks = buildPendingNewTasks({
-      queuedMessages: ["sending", "syncing", "read-only", "offline"].map(queuedCreation),
+      queuedMessages: ["sending", "syncing", "read-only", "retrying", "offline"].map(
+        queuedCreation,
+      ),
       drafts: {},
       sendGate: {
-        connectedEnvironmentIds: new Set([sending, syncing, readOnly]),
-        operableEnvironmentIds: new Set([sending, syncing]),
+        connectedEnvironmentIds: new Set([sending, syncing, readOnly, retrying]),
+        operableEnvironmentIds: new Set([sending, syncing, retrying]),
         shellStatuses: new Map([
           [sending, "live"],
           [syncing, "synchronizing"],
           [readOnly, "live"],
+          [retrying, "live"],
         ]),
+        retryingMessageIds: { [MessageId.make("message-retrying")]: true },
       },
     });
 
     expect(new Set(tasks.map((task) => task.environmentId))).toEqual(
-      new Set(["syncing", "read-only", "offline"]),
+      new Set(["syncing", "read-only", "retrying", "offline"]),
     );
   });
 });
