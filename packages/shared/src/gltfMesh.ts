@@ -277,7 +277,7 @@ export async function parseGltf(
       : (index: number) => index;
     const count = positions.count;
     const add = (a: number, b: number, c: number) => {
-      if (a >= count || b >= count || c >= count) return;
+      if (a < 0 || b < 0 || c < 0 || a >= count || b >= count || c >= count) return;
       indices[written] = pointBase + a;
       indices[written + 1] = pointBase + b;
       indices[written + 2] = pointBase + c;
