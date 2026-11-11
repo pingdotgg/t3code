@@ -101,6 +101,8 @@ export function SidebarThreadHeader({
               searchExpanded &&
               searchQuery.trim() === ""
             ) {
+              event.preventDefault();
+              event.stopPropagation();
               event.currentTarget.blur();
             }
             onSearchKeyDown(event);
