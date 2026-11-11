@@ -250,7 +250,7 @@ export function buildMenuItems(
 
   const pushItem: GitActionMenuItem = {
     id: "push",
-    label: "Commit & push",
+    label: hasChanges ? "Commit & push" : "Push",
     action: "commit_push",
     ...(needsFeatureBranch ? { featureBranch: true } : {}),
     disabled: !canPush,
@@ -269,7 +269,11 @@ export function buildMenuItems(
     pushItem,
     {
       id: "pr",
-      label: `Commit, push & create ${terminology.shortLabel}`,
+      label: hasChanges
+        ? `Commit, push & create ${terminology.shortLabel}`
+        : needsFeatureBranch || !gitStatus.hasUpstream || gitStatus.aheadCount > 0
+          ? `Push & create ${terminology.shortLabel}`
+          : `Create ${terminology.shortLabel}`,
       action: "commit_push_pr",
       ...(needsFeatureBranch ? { featureBranch: true } : {}),
       disabled: !canCreatePr,

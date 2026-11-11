@@ -71,9 +71,9 @@ describe("git action copy", () => {
     ).toBe("Commit, push & MR");
     expect(resolveQuickAction(status({ ...gitLab, pr: openPr }), false).label).toBe("View MR");
     const [, , prItem] = buildMenuItems(status(gitLab), false);
-    expect(prItem?.label).toBe("Commit, push & create MR");
+    expect(prItem?.label).toBe("Create MR");
     expect(buildMenuItems(status(gitLab), false).find((item) => item.id === "push")?.label).toBe(
-      "Commit & push",
+      "Push",
     );
     expect(
       getGitActionDisabledReason({
@@ -83,6 +83,10 @@ describe("git action copy", () => {
         hasOriginRemote: true,
       }),
     ).toBe("No local commits to include in an MR.");
+    expect(
+      buildMenuItems(status({ ...gitLab, aheadCount: 1 }), false).find((item) => item.id === "pr")
+        ?.label,
+    ).toBe("Push & create MR");
     const dirtyItems = buildMenuItems(status({ ...gitLab, hasWorkingTreeChanges: true }), false);
     expect(dirtyItems.find((item) => item.id === "pr")).toMatchObject({
       disabled: false,

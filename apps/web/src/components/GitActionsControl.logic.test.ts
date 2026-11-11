@@ -95,9 +95,9 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
     const items = buildMenuItems(syncedFeature, false);
     assert.deepInclude(
       items.find((item) => item.id === "pr"),
-      { disabled: false, label: "Commit, push & create PR" },
+      { disabled: false, label: "Create PR" },
     );
-    assert.equal(items.find((item) => item.id === "push")?.label, "Commit & push");
+    assert.equal(items.find((item) => item.id === "push")?.label, "Push");
 
     const dirtyFeature = { ...syncedFeature, aheadOfDefaultCount: 0, hasWorkingTreeChanges: true };
     assert.deepInclude(
@@ -234,7 +234,7 @@ describe("when: the ref is on GitLab", () => {
     );
     assert.equal(
       buildMenuItems(ahead, false).find((item) => item.id === "pr")?.label,
-      "Commit, push & create MR",
+      "Push & create MR",
     );
 
     const copy = resolveDefaultBranchActionDialogCopy({
@@ -488,7 +488,7 @@ describe("commit menu actions", () => {
   it("offers direct commit and the dialog on feature refs, including local-only repositories", () => {
     for (const hasPrimaryRemote of [true, false]) {
       const items = buildMenuItems(
-        status({ hasWorkingTreeChanges: false, hasPrimaryRemote }),
+        status({ hasWorkingTreeChanges: true, hasPrimaryRemote }),
         false,
         hasPrimaryRemote,
       );
