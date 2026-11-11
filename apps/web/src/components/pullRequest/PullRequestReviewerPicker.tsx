@@ -17,6 +17,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
+import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
@@ -32,6 +33,9 @@ const TRUNCATED_LABELS: Record<ReviewerTruncation, (error: string | null) => str
   "search-truncated": () =>
     "More people match than the host returned. Keep typing to narrow it down.",
 };
+
+const reviewerKey = (candidate: PullRequestReviewerCandidate) =>
+  `${candidate.kind}:${candidate.id}`;
 
 export function PullRequestReviewerPicker({
   environmentId,
@@ -74,7 +78,7 @@ export function PullRequestReviewerPicker({
 
   const toggle = async (candidate: PullRequestReviewerCandidate) => {
     if (pending !== null) return;
-    setPending(candidate.id);
+    setPending(reviewerKey(candidate));
     const result = await requestReviewers({
       environmentId,
       input: {
@@ -133,17 +137,19 @@ export function PullRequestReviewerPicker({
       errorLabel="The people with access could not be read."
       truncated={truncation !== null}
       truncatedLabel={truncation === null ? "" : TRUNCATED_LABELS[truncation](searchError)}
-      candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
-      disabled={pending !== null}
+      candidateKey={reviewerKey}
+      pendingKey={pending}
       onSelect={(candidate) => void toggle(candidate)}
     >
-      {(candidate) => (
+      {(candidate, busy) => (
         <>
           <PullRequestActorLabel actor={candidate} className="flex-1" />
           {candidate.kind === "team" ? (
             <span className="shrink-0 text-muted-foreground">team</span>
           ) : null}
-          {candidate.isRequested ? (
+          {busy ? (
+            <Spinner size="sm" className="shrink-0" />
+          ) : candidate.isRequested ? (
             <CheckIcon aria-label="Already asked" className="size-3.5 shrink-0" />
           ) : null}
         </>
