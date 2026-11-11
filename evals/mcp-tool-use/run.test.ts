@@ -761,6 +761,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
       title: "Old",
       diff: "+old",
       comments: [{ author: "mark", body: "Please confirm." }],
+      headRefOid: "pr-head",
     },
     { number: 6, headRefName: "new", title: "New" },
   ];
@@ -785,6 +786,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
   });
   assert.deepEqual(read.diff, { patch: "+old", truncated: false, nextCursor: null });
   assert.propertyVal(read.summary, "state", "merged");
+  assert.propertyVal(read.summary, "headSha", "pr-head");
   assert.nestedPropertyVal(read.conversation, "comments[0].author", "mark");
 });
 

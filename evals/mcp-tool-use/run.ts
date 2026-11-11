@@ -1331,7 +1331,10 @@ export const t3Default = (
                 author: "user",
                 headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
                 baseBranch: "main",
-                headSha: sample.testCase.setup.world?.commits?.[0]?.sha ?? null,
+                headSha:
+                  typeof world?.headRefOid === "string"
+                    ? world.headRefOid
+                    : (sample.testCase.setup.world?.commits?.[0]?.sha ?? null),
                 mergeability: "mergeable",
                 behindBy: 0,
                 autoMergeEnabled: false,
