@@ -1249,7 +1249,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const changes = yield* makeChangeSignal;
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
-      const handledNotifications: Array<string> = [];
       const driver = yield* CodexReplay.makeReplayDriver(
         transcript,
         beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
@@ -1277,16 +1276,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       request: (method, params) =>
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
-                        ),
-                      handleServerNotification: (method, handler) =>
-                        client.handleServerNotification(method, (payload) =>
-                          handler(payload).pipe(
-                            Effect.ensuring(
-                              Effect.sync(() => {
-                                handledNotifications.push(method);
-                              }).pipe(Effect.andThen(changes.notify)),
-                            ),
-                          ),
                         ),
                       raw: {
                         ...client.raw,
@@ -1377,7 +1366,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         serverConfig,
         events,
         continuationRequests,
-        handledNotifications,
         terminalEvents,
         subagentUpdates,
         hasPendingBackgroundWork,
@@ -9673,30 +9661,35 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const requests: Array<[string, unknown]> = [];
+        const interrupted = yield* Deferred.make<void>();
         const harness = yield* makeCodexReplayHarness(
           transcript,
           () => Effect.void,
           (method, params) =>
             Effect.sync(() => {
               requests.push([method, params]);
-            }),
+            }).pipe(
+              Effect.andThen(
+                method === "turn/interrupt"
+                  ? Deferred.succeed(interrupted, undefined)
+                  : Effect.void,
+              ),
+            ),
         );
         yield* harness.runtime.resumeThread({
           providerThread: harness.providerThread,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
         });
-        // The replay emits turn/completed only after the pause and interrupt it expects.
-        yield* harness.until(() => harness.handledNotifications.includes("turn/completed"));
-        assert.deepEqual(
+        yield* Deferred.await(interrupted);
+        const goalStatuses = () =>
           harness.events.flatMap((event) =>
             event.type === "provider_thread.updated"
               ? [event.providerThread.goal?.status ?? null]
               : [],
-          ),
-          ["active"],
-          "the resumed thread's active goal is unknown to the adapter, so its goal turn runs unowned",
-        );
+          );
+        yield* harness.until(() => goalStatuses().length > 0);
+        assert.deepEqual(goalStatuses(), ["active"]);
         assert.deepEqual(requests.slice(-2), [
           ["thread/goal/set", { threadId: nativeThreadId, status: "paused" }],
           ["turn/interrupt", { threadId: nativeThreadId, turnId: "orphan-goal-turn" }],
@@ -9704,7 +9697,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     );
