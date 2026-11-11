@@ -34,7 +34,8 @@ import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { filterSettingsSections } from "./settings-search";
 import { usePaneRole } from "../../components/ui/Pane";
 import { I18nProvider, useGT, useLanguagePreference } from "../../i18n/I18nProvider";
-import { SUPPORTED_LOCALES, nativeLanguageName } from "../../i18n/locales";
+import { nativeLanguageName } from "@t3tools/client-runtime/locales";
+import { SUPPORTED_LOCALES } from "../../i18n/locales";
 
 export function SettingsRouteScreen() {
   const list = useSettingsListPlacement();
