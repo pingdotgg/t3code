@@ -52,6 +52,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
@@ -10253,7 +10254,13 @@ describe("CodexAdapterV2 app-server process", () => {
           } catch {}
         };
         yield* Effect.addFinalizer(() => Effect.sync(killGroup));
-        yield* child.stdout.pipe(Stream.take(1), Stream.runDrain);
+        // Stop it only once its SIGTERM trap is set; an early exit would pass without testing it.
+        const firstLine = yield* child.stdout.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runHead,
+        );
+        assert.deepStrictEqual(firstLine, Option.some("ready"));
         // Scope.close cannot be interrupted, so a regression is ended by this rescue instead of
         // hanging the test; the deadline under test must make it unnecessary.
         let rescued = false;
