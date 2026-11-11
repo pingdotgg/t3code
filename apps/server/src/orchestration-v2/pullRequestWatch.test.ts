@@ -375,6 +375,20 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(first.next, both, noRemarks).changes, []);
   });
 
+  // regression: #34110 a GitLab manual job that ran and passed between sweeps never woke the agent
+  it("reports a check that finishes from neutral between reads", () => {
+    const first = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [check("test", "success"), check("bootstrap", "neutral")] }),
+      noRemarks,
+    );
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    const ran = detail({ checks: [check("test", "success"), check("bootstrap", "success")] });
+    assert.deepEqual(evaluatePullRequestWatch(first.next, ran, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required: false },
+    ]);
+  });
+
   it("does not wake a watch saved before passed checks were recorded", () => {
     const green = detail({ checks: [{ ...check("test", "success"), required: true }] });
     const told = watch({ headSha: "aaaaaaaaaa", passed: true });
