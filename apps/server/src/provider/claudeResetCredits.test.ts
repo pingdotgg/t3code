@@ -135,7 +135,7 @@ describe("claudeResetCreditsToContract", () => {
 });
 
 effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
-  it.effect.each(["organization-only", "account", "email"] as const)(
+  it.effect.each(["organization-only", "account", "email", "email-with-nonstring-uuid"] as const)(
     "isolates credentials unless a user identity is known (%s)",
     (identity) =>
       Effect.gen(function* () {
@@ -146,7 +146,8 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         const oauthAccount = {
           organizationUuid: "org-1",
           ...(identity === "account" ? { accountUuid: "same-account" } : {}),
-          ...(identity === "email" ? { emailAddress: "same@example.test" } : {}),
+          ...(identity.startsWith("email") ? { emailAddress: "same@example.test" } : {}),
+          ...(identity === "email-with-nonstring-uuid" ? { accountUuid: 123 } : {}),
         };
         for (const login of [first, second])
           yield* fs.writeFileString(login.accountConfigPath, JSON.stringify({ oauthAccount }));
