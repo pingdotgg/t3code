@@ -1,3 +1,5 @@
+import { keepOrderedListNumbers, keepsOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
+
 interface MarkdownPosition {
   readonly start?: {
     readonly line?: number;
@@ -91,6 +93,9 @@ function parseRecoveredMarkdown(value: string, parser: MarkdownParser): Recovere
 function blocksFromIndentedCode(node: MarkdownAstNode, parser: MarkdownParser): RecoveredMarkdown {
   const value = typeof node.value === "string" ? node.value.trim() : "";
   const recovered = parseRecoveredMarkdown(value, parser);
+  if (keepsOrderedListNumbers(parser)) {
+    for (const block of recovered.blocks) keepOrderedListNumbers(block, recovered.source);
+  }
   const first = recovered.blocks[0];
   return {
     ...recovered,
@@ -111,6 +116,10 @@ function attachListItemIndentationNormalizer(this: MarkdownParser) {
 
     const visit = (node: MarkdownAstNode, source: string) => {
       if (!node.children) {
+        return;
+      }
+      if (!node.children.some((child) => isSameLineOverIndentedCode(child, node, source))) {
+        for (const child of node.children) visit(child, source);
         return;
       }
       node.children = node.children.flatMap((child) => {
