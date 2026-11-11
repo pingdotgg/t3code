@@ -1,6 +1,7 @@
 import type {
   DesktopBridge,
   DesktopPreviewAnnotationVoiceEvent,
+  DesktopPreviewFindResultEvent,
   DesktopPreviewOpenLinkEvent,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
@@ -57,6 +58,18 @@ if (clientPlatform === "darwin") {
   window.addEventListener("resize", syncWindowControlInset);
 }
 
+const syncHtmlFullscreen = () => {
+  const element = document.fullscreenElement;
+  // A preview guest's fullscreen surfaces here as its <webview>, which stays inside the window.
+  void ipcRenderer.invoke(
+    IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
+    element !== null && element.tagName !== "WEBVIEW",
+  );
+};
+// A reload or renderer crash never reports the old document's exit, so each document reports its start.
+syncHtmlFullscreen();
+document.addEventListener("fullscreenchange", syncHtmlFullscreen);
+
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
     typeof result === "object" &&
@@ -107,6 +120,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;
   },
+  getPreferredSystemLanguages: () => {
+    const result: unknown = ipcRenderer.sendSync(
+      IpcChannels.GET_PREFERRED_SYSTEM_LANGUAGES_CHANNEL,
+    );
+    return Array.isArray(result) ? result.filter((tag) => typeof tag === "string") : [];
+  },
   getLocalEnvironmentBootstraps: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL);
     if (!Array.isArray(result)) {
@@ -120,6 +139,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL) !== false,
   setLocalEnvironmentEnabled: (enabled) =>
     ipcRenderer.invoke(IpcChannels.SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL, enabled),
+  getHostEnvironmentId: () => ipcRenderer.invoke(IpcChannels.GET_HOST_ENVIRONMENT_ID_CHANNEL),
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
@@ -173,6 +193,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.SSH_PASSWORD_PROMPT_CHANNEL, wrappedListener);
     return () => {
       ipcRenderer.removeListener(IpcChannels.SSH_PASSWORD_PROMPT_CHANNEL, wrappedListener);
+    };
+  },
+  onSshPasswordPromptSettled: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, requestId: unknown) => {
+      if (typeof requestId !== "string") return;
+      listener(requestId);
+    };
+
+    ipcRenderer.on(IpcChannels.SSH_PASSWORD_PROMPT_SETTLED_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.SSH_PASSWORD_PROMPT_SETTLED_CHANNEL, wrappedListener);
     };
   },
   resolveSshPasswordPrompt: (requestId, password) =>
@@ -278,6 +309,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     getState: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_GET_STATE_CHANNEL),
     install: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_INSTALL_CHANNEL),
     uninstall: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_UNINSTALL_CHANNEL),
+    addToPath: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_ADD_TO_PATH_CHANNEL),
   },
   onUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
@@ -349,6 +381,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, { tabId, colorScheme }),
     setAudioMuted: (tabId, audioMuted) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL, { tabId, audioMuted }),
+    findInPage: (tabId, text, { forward, newSession }) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_FIND_IN_PAGE_CHANNEL, {
+        tabId,
+        text,
+        forward,
+        newSession,
+      }),
+    stopFindInPage: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_STOP_FIND_IN_PAGE_CHANNEL, { tabId }),
     setShown: (tabId, shown) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_SHOWN_CHANNEL, { tabId, shown }),
     openDevTools: (tabId) =>
@@ -448,6 +489,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.on(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
+    },
+    onFindResult: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, findEvent: unknown) => {
+        if (typeof findEvent !== "object" || findEvent === null) return;
+        listener(findEvent as DesktopPreviewFindResultEvent);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
     },
   },
 } satisfies DesktopBridge);
