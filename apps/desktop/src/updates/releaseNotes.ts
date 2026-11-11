@@ -171,6 +171,22 @@ interface NormalizedDesktopUpdateReleaseNotes {
   readonly omittedReleaseCount: number;
 }
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Untagged notes come from the feed entry named by releaseName, which is the newest entry when the
+ * offered release is not on the feed's first page. Keep them only when that entry is the offered one.
+ */
+export function releaseNotesOfOfferedVersion(info: {
+  readonly version: string;
+  readonly releaseNotes?: unknown;
+  readonly releaseName?: string | null | undefined;
+}): unknown {
+  if (typeof info.releaseNotes !== "string" || !info.releaseName) return info.releaseNotes;
+  const namesVersion = new RegExp(`(?:^|[^\\w.-])v?${escapeRegExp(info.version)}(?![\\w.-])`);
+  return namesVersion.test(info.releaseName) ? info.releaseNotes : undefined;
+}
+
 /** fullChangelog includes all greater semvers, so preview cuts sort above nightlies of the same base version. */
 export function normalizeDesktopUpdateReleaseNotes(
   releaseNotes: unknown,
