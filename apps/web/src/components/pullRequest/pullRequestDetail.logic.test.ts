@@ -1,5 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
+  COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   GitCommandError,
   ProjectId,
   type PullRequestCheck,
@@ -1125,6 +1126,39 @@ describe("adding a remark to the chat", () => {
     });
 
     expect(context?.text).toMatch(/^octocat: One concern remains\.\n\n<details>/u);
+  });
+
+  it("closes a details section whose closing tag has text after it", () => {
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark("c1", `<details>\n${"script ".repeat(400)}</details> Tail.\nVisible.`),
+    });
+
+    expect(context?.text).toMatch(/^octocat: Visible\./u);
+  });
+
+  it("gives way to the newest replies when a thread outgrows what the composer sends", () => {
+    const comments = Array.from({ length: 20 }, (_, index) =>
+      remark(`c${index}`, `${index} ${"x".repeat(990)}`),
+    );
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "thread",
+      thread: {
+        id: "t1",
+        path: null,
+        line: null,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments,
+        nextCommentsCursor: "more",
+      },
+    });
+
+    expect(context?.text.length).toBeLessThanOrEqual(COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS);
+    expect(context?.text).toMatch(/^octocat: 0 /u);
+    expect(context?.text).toMatch(/\n\(5 earlier replies omitted\.\)\noctocat: 6 /u);
+    expect(context?.text).toMatch(/octocat: 19 x+\.\.\.\n\(More replies are on the host/u);
   });
 
   it("keeps a details section that starts open in place", () => {

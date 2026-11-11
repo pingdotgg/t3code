@@ -14,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 import {
+  COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   GitCommandError,
   PullRequestDetail,
   PullRequestOperationError,
@@ -726,7 +727,7 @@ function visibleTextFirst(body: string): string {
     const opener = inCode ? null : /^\s*<details(?=[\s>])([^>]*)/iu.exec(line);
     if (opener) sections.push(!/\bopen\b/iu.test(opener[1] ?? ""));
     (sections.includes(true) ? folded : shown).push(line);
-    if (!inCode && sections.length > 0 && /<\/details>\s*$/iu.test(line)) sections.pop();
+    if (!inCode && sections.length > 0 && /<\/details>/iu.test(line)) sections.pop();
   }
   return folded.length === 0 ? body : [...shown, "", ...folded].join("\n").trim();
 }
@@ -1256,6 +1257,30 @@ export function buildPullRequestContext(input: PullRequestContextMetadata): Revi
   return pullRequestContextComment(input, []);
 }
 
+/**
+ * A conversation's lines within what the composer sends. Earlier replies give way first, since a
+ * reader reaches for the latest one, and the agent is told what it is not seeing.
+ */
+function threadText(lines: ReadonlyArray<string>, moreOnHost: boolean): string {
+  const tail = moreOnHost ? ["(More replies are on the host and not included here.)"] : [];
+  let kept = lines;
+  let omitted = 0;
+  const join = () =>
+    [
+      ...kept.slice(0, 1),
+      ...(omitted > 0
+        ? [`(${omitted} earlier ${omitted === 1 ? "reply" : "replies"} omitted.)`]
+        : []),
+      ...kept.slice(1),
+      ...tail,
+    ].join("\n");
+  while (kept.length > 2 && join().length > COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS) {
+    kept = [kept[0]!, ...kept.slice(2)];
+    omitted += 1;
+  }
+  return join();
+}
+
 /** A remark the reader can bring into the chat: a whole conversation, or one comment. */
 export type PullRequestChatSubject =
   | { readonly kind: "thread"; readonly thread: PullRequestConversationThread }
@@ -1280,7 +1305,12 @@ export function buildPullRequestCommentContext(
   });
   const first = comments[0];
   if (lines.length === 0 || first === undefined) return null;
-  const text = lines.join("\n");
+  const text = threadText(
+    lines,
+    subject.kind === "thread" &&
+      ((subject.thread.commentCount ?? 0) > comments.length ||
+        subject.thread.nextCommentsCursor !== undefined),
+  );
   if (subject.kind === "thread" && subject.thread.path !== null) {
     return {
       ...reviewThreadContext(subject.thread, pullRequestNumber),
