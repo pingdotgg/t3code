@@ -31,7 +31,6 @@ const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
 const POWERSHELL_PROMPT_PATH_PATTERN = /^PS ((?:[A-Za-z]:[\\/]|\\\\|\/)[^>\r\n]*)>/u;
 // Bare paths start only at a segment boundary: hover detection runs this on
 // every frame, so separator-free output must not be rescanned at every suffix.
-// For the same reason `]` needs its `[`: trimming a long run of `]` is quadratic.
 // Parentheses count only before a slash, so `src/foo.ts(3,10)` stays a compiler location.
 const FILE_PATH_PATTERN =
   /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|(?<![\p{L}\p{M}\p{N}._-])[\p{L}\p{M}\p{N}._-]+(?:[\\/](?:[\p{L}\p{M}\p{N}._$+@-]|\[{1,2}[\p{L}\p{M}\p{N}._-]+\]{1,2}|\([\p{L}\p{M}\p{N}._-]+\)(?=[\\/]))+)+(?::\d+){0,2}/gu;
@@ -48,25 +47,26 @@ const REQUEST_ROUTE_PATTERN =
 const SCHEME_URL_PATTERN = /(?<![A-Za-z\d+.-])[+-]?[A-Za-z][A-Za-z\d+.-]+:\/\/[^\s"'`<>]+/gu;
 
 function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
-  let output = value.replace(
+  const output = value.replace(
     kind === "path" ? TRAILING_PATH_PUNCTUATION_PATTERN : TRAILING_PUNCTUATION_PATTERN,
     "",
   );
   if (output.length === 0) return output;
+  let end = output.length;
 
   const trimUnbalanced = (open: string, close: string) => {
-    while (output.endsWith(close)) {
-      const opens = output.split(open).length - 1;
-      const closes = output.split(close).length - 1;
-      if (opens >= closes) return;
-      output = output.slice(0, -1);
+    if (output[end - 1] !== close) return;
+    let excess = output.split(close).length - output.split(open).length;
+    while (excess > 0 && output[end - 1] === close) {
+      end -= 1;
+      excess -= 1;
     }
   };
 
   trimUnbalanced("(", ")");
   trimUnbalanced("[", "]");
   trimUnbalanced("{", "}");
-  return output;
+  return output.slice(0, end);
 }
 
 function overlaps(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
