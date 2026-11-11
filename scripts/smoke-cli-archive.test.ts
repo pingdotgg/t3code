@@ -47,20 +47,25 @@ const runArchive = (stdout: string, expectVersion: string, versionExitCode = 0) 
         assert.ok(ChildProcess.isStandardCommand(command));
         const output =
           command.command === "ldd"
-            ? `\tlibatomic.so.1 => ${command.args[0]?.replace(/t3$/, "lib/libatomic.so.1")} (0x7f0000000000)\n`
+            ? "\tlibatomic.so.1 => /cli-smoke/t3-test/lib/libatomic.so.1 (0x7f0000000000)\n"
             : stdout;
+        const isLauncher = command.args[0] === "__service-launcher";
         return Effect.succeed(
           ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1),
             exitCode: Effect.succeed(
-              ChildProcessSpawner.ExitCode(command.args[0] === "--version" ? versionExitCode : 0),
+              ChildProcessSpawner.ExitCode(
+                command.args[0] === "--version" ? versionExitCode : isLauncher ? 1 : 0,
+              ),
             ),
             isRunning: Effect.succeed(false),
             kill: () => Effect.void,
             unref: Effect.succeed(Effect.void),
             stdin: Sink.drain,
             stdout: Stream.make(new TextEncoder().encode(output)),
-            stderr: Stream.empty,
+            stderr: isLauncher
+              ? Stream.make(new TextEncoder().encode("T3CODE_HOME is required\n"))
+              : Stream.empty,
             all: Stream.empty,
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
