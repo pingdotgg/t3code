@@ -3,14 +3,14 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as TestClock from "effect/testing/TestClock";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as NodeFS from "effect/FileSystem";
-import * as NodePath from "effect/Path";
 
 import {
   makeAcpClientTerminals,
@@ -430,6 +430,7 @@ describe("AcpClientTerminals", () => {
       }),
     ),
   );
+
   // A daemonized grandchild holds the pipe write-ends past the direct child's
   // exit, so the output pumps never see EOF and release would wedge behind
   // them. Real agent terminals hit this with dev servers and ssh -f.
@@ -460,8 +461,8 @@ describe("AcpClientTerminals", () => {
           }),
         );
         yield* Effect.addFinalizer(() => terminals.disposeAll);
-        const fs = yield* NodeFS.FileSystem;
-        const path = yield* NodePath.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-acp-daemon-" });
         const pidFile = path.join(directory, "daemon.pid");
         const daemonScript = path.join(directory, "daemon.js");
@@ -485,7 +486,13 @@ describe("AcpClientTerminals", () => {
           const text = yield* fs.readFileString(pidFile).pipe(Effect.orElseSucceed(() => ""));
           const pid = Number.parseInt(text, 10);
           if (Number.isInteger(pid)) {
-            yield* Effect.try(() => process.kill(pid)).pipe(Effect.ignore);
+            yield* Effect.sync(() => {
+              try {
+                process.kill(pid);
+              } catch {
+                // Already gone.
+              }
+            });
           }
         });
         const created = yield* terminals.create({
@@ -494,7 +501,7 @@ describe("AcpClientTerminals", () => {
           args: [daemonScript],
           env: [{ name: "DAEMON_PID_FILE", value: pidFile }],
         });
-        const outcome = yield* Effect.gen(function* () {
+        yield* Effect.gen(function* () {
           if (waitBeforeRelease) {
             const exit = yield* terminals.waitForExit({
               sessionId: "session",
@@ -518,9 +525,7 @@ describe("AcpClientTerminals", () => {
           );
           const pid = Number.parseInt(yield* fs.readFileString(pidFile), 10);
           expect(() => process.kill(pid, 0)).not.toThrow();
-          return true;
-        }).pipe(Effect.result, Effect.ensuring(cleanup));
-        expect(Result.isSuccess(outcome) && outcome.success === true).toBe(true);
+        }).pipe(Effect.ensuring(cleanup));
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
