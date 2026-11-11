@@ -132,6 +132,17 @@ describe("preview stream control", () => {
     restarted.stop();
     expect(onFileChooser).toHaveBeenLastCalledWith(null);
   });
+
+  it("reports panel size while watching an agent without granting page input", () => {
+    const { client, socket } = connect();
+    socket.control(agent);
+    const resize = { type: "resize", width: 720, height: 1000 } as const;
+    expect(client.send(resize)).toBe(true);
+    expect(client.send({ type: "text", text: "blocked" })).toBe(false);
+    expect(client.send({ type: "viewport", setting: { _tag: "fill" } })).toBe(false);
+    expect(socket.sent).toEqual([JSON.stringify(resize)]);
+    client.stop();
+  });
 });
 
 describe("preview stream downloads", () => {
