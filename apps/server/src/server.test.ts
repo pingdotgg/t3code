@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NetService from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -40,7 +41,7 @@ const httpServerWithConfig = (
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-bind-test-" })),
       ),
     ),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NetService.layer)),
   );
 
 it.live("managed service falls back to loopback when its wildcard port is taken", () =>
