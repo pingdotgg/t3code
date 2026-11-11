@@ -25,9 +25,9 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { withImplicitFastModeDefault } from "@t3tools/shared/model";
 
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
+import { withImplicitFastModeSelection } from "../lib/providerOptions";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -126,16 +126,13 @@ export function resolveQueuedThreadSettings(
     }
   > = [],
 ): ThreadSettingsSnapshot {
-  const selection = message.modelSelection ?? thread.modelSelection;
-  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
-  const capabilities = provider?.models.find(
-    (model) => model.slug === selection.model,
-  )?.capabilities;
-  // Send the Fast off the picker shows, or a provider such as Cursor applies its own default.
-  const options = capabilities
-    ? withImplicitFastModeDefault(capabilities, selection.options)
-    : selection.options;
-  const modelSelection = options === selection.options ? selection : { ...selection, options };
+  const modelSelection = withImplicitFastModeSelection(
+    message.modelSelection ?? thread.modelSelection,
+    providers,
+  );
+  const provider = providers.find(
+    (candidate) => candidate.instanceId === modelSelection.instanceId,
+  );
   return {
     modelSelection,
     runtimeMode: message.runtimeMode ?? thread.runtimeMode,
