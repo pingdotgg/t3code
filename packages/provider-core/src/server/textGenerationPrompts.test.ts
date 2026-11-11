@@ -1,4 +1,5 @@
 import { buildCommitPlanPrompt } from "./textGenerationPrompts.ts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { normalizeCliError } from "./textGenerationUtils.ts";
@@ -31,5 +32,12 @@ describe("buildCommitPlanPrompt", () => {
     );
     expect(result.prompt).toContain("H002\tsrc/a.test.ts");
     expect(result.prompt).toContain("Branch: feature/split");
+    const decode = Schema.decodeUnknownSync(result.outputSchema);
+    expect(() =>
+      decode({
+        commits: [{ subject: "Update behavior", body: "", hunkIds: ["H001"] }],
+        assignments: { H001: 0 },
+      }),
+    ).toThrow();
   });
 });

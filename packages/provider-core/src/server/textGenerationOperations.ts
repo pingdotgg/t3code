@@ -16,7 +16,7 @@ import {
 } from "./textGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
-  sanitizeCommitPlan,
+  normalizeCommitPlan,
   sanitizePrTitle,
   sanitizeThreadTitle,
 } from "./textGenerationUtils.ts";
@@ -113,7 +113,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         policy: input.policy,
       }),
     });
-    return { commits: sanitizeCommitPlan(generated.commits) };
+    return yield* normalizeCommitPlan(generated);
   });
 
   const generatePrContent: ProviderTextGeneration["generatePrContent"] = Effect.fn(

@@ -77,13 +77,18 @@ export interface CommitPlanPromptInput {
 }
 
 export function buildCommitPlanPrompt(input: CommitPlanPromptInput) {
+  const unitIds = input.changeUnitSummary
+    .split(/\r?\n/)
+    .map((line) => line.split("\t")[0]!.trim())
+    .filter(Boolean);
   const prompt = [
     "You split a staged working tree into logical git commits.",
-    "Return a JSON object with a commits array. Each commit has subject, body, and hunkIds.",
+    "Return a JSON object with a commits array and an assignments object. Each commit has subject and body. Each assignments key is an available change-unit ID and its value is the zero-based index of its commit in commits.",
     "Only propose commit groups and messages. Do not run commands, edit files, or create commits; T3 performs all Git operations.",
     "Rules:",
     "- use every ID from Available change units exactly once",
     "- copy hunk IDs exactly; do not invent, omit, or duplicate IDs",
+    "- assign every supplied fixture, resource, and whole-file unit too; file type does not exclude a change",
     "- hunks from the same file may be assigned to different commits when they represent separate concerns",
     "- keep implementation, tests, schemas, and supporting changes together when they form one concern",
     "- separate independently reviewable and reversible concerns",
@@ -115,12 +120,16 @@ export function buildCommitPlanPrompt(input: CommitPlanPromptInput) {
   return {
     prompt,
     outputSchema: Schema.Struct({
-      commits: Schema.Array(
-        Schema.Struct({
-          subject: Schema.String,
-          body: Schema.String,
-          hunkIds: Schema.Array(Schema.String),
-        }),
+      commits: Schema.Array(Schema.Struct({ subject: Schema.String, body: Schema.String })).check(
+        Schema.isMinLength(1),
+      ),
+      assignments: Schema.Struct(
+        Object.fromEntries(
+          unitIds.map((id) => [
+            id,
+            Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThan(unitIds.length)),
+          ]),
+        ),
       ),
     }),
   };

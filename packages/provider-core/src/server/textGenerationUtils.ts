@@ -1,5 +1,7 @@
 import { TextGenerationError } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import * as Effect from "effect/Effect";
+import type { CommitPlanGenerationResult } from "./textGeneration.ts";
 import * as Schema from "effect/Schema";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
@@ -31,19 +33,28 @@ export function sanitizeCommitSubject(raw: string): string {
   return withoutTrailingPeriod || "Update project files";
 }
 
-export function sanitizeCommitPlan(
-  commits: ReadonlyArray<{
-    subject: string;
-    body: string;
-    hunkIds: ReadonlyArray<string>;
-  }>,
-): Array<{ subject: string; body: string; hunkIds: string[] }> {
-  return commits.map((commit) => ({
-    subject: sanitizeCommitSubject(commit.subject),
-    body: commit.body.trim(),
-    hunkIds: commit.hunkIds.map((hunkId) => hunkId.trim()),
-  }));
-}
+export const normalizeCommitPlan = Effect.fn("TextGeneration.normalizeCommitPlan")(
+  function* (plan: {
+    readonly commits: ReadonlyArray<{ readonly subject: string; readonly body: string }>;
+    readonly assignments: Readonly<Record<string, number>>;
+  }) {
+    const commits: CommitPlanGenerationResult["commits"] = plan.commits.map((commit) => ({
+      subject: sanitizeCommitSubject(commit.subject),
+      body: commit.body.trim(),
+      hunkIds: [],
+    }));
+    for (const [id, index] of Object.entries(plan.assignments)) {
+      const commit = commits[index];
+      if (!commit)
+        return yield* new TextGenerationError({
+          operation: "generateCommitPlan",
+          detail: `The commit assignment for ${id} refers to missing commit index ${index}.`,
+        });
+      commit.hunkIds.push(id);
+    }
+    return { commits };
+  },
+);
 
 /** Normalise a raw PR title to a single line with a sensible fallback. */
 export function sanitizePrTitle(raw: string): string {
