@@ -26,6 +26,7 @@ const contextChipVariants = cva(
         "pr-merged": "[--context-chip-accent:var(--context-chip-pr-merged)]",
         "pr-closed": "[--context-chip-accent:var(--context-chip-pr-closed)]",
         skill: "[--context-chip-accent:var(--context-chip-skill)]",
+        model: "[--context-chip-accent:var(--context-chip-model)]",
         thread: "[--context-chip-accent:var(--context-chip-thread)]",
         environment: "[--context-chip-accent:var(--context-chip-environment)]",
         citation: "[--context-chip-accent:var(--context-chip-citation)]",
@@ -34,6 +35,10 @@ const contextChipVariants = cva(
         "doc-spreadsheet": "[--context-chip-accent:var(--context-chip-doc-spreadsheet)]",
         "doc-slides": "[--context-chip-accent:var(--context-chip-doc-slides)]",
         "doc-epub": "[--context-chip-accent:var(--context-chip-doc-epub)]",
+      },
+      shape: {
+        inline: "",
+        bubble: "w-64 gap-2 rounded-2xl bg-message px-3 py-2 text-sm text-message-foreground",
       },
       state: {
         unresolved: "data-[state=unresolved]:[--context-chip-accent:currentColor]",
@@ -49,11 +54,12 @@ type ContextChipKind = NonNullable<VariantProps<typeof contextChipVariants>["kin
 interface ContextChipProps extends useRender.ComponentProps<"span"> {
   kind?: ContextChipKind;
   state?: "unresolved" | "invalid";
+  shape?: "inline" | "bubble";
 }
 
-function ContextChip({ className, kind, state, render, ...props }: ContextChipProps) {
+function ContextChip({ className, kind, state, shape, render, ...props }: ContextChipProps) {
   const defaultProps = {
-    className: cn(contextChipVariants({ kind, state }), className),
+    className: cn(contextChipVariants({ kind, state, shape }), className),
     "data-slot": "context-chip",
     "data-state": state,
   };

@@ -1,20 +1,14 @@
-import { noopSession } from "@/Report";
-import * as Test from "@/Test/Alchemy";
-import { Server, ServerProviderLive } from "@/Website/Server";
-import { expect } from "alchemy-test";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { noopSession } from "@/Report";
+import { Server, ServerProviderLive } from "@/Website/Server";
 
 const { test } = Test.make({ providers: ServerProviderLive() });
 
-for (const location of [
-  "root",
-  "ancestor",
-  "sibling",
-  "symlink",
-  "dist",
-] as const) {
+for (const location of ["root", "ancestor", "sibling", "symlink", "dist"] as const) {
   test.provider(
     `cleanup preserves source when output is ${location}`,
     () =>
@@ -30,10 +24,7 @@ for (const location of [
         const source = path.join(root, "page.tsx");
         yield* fs.writeFileString(source, "export default () => 'keep me';");
         yield* fs.writeFileString(path.join(dist, "index.html"), "generated");
-        yield* fs.writeFileString(
-          path.join(sibling, "source.ts"),
-          "keep sibling",
-        );
+        yield* fs.writeFileString(path.join(sibling, "source.ts"), "keep sibling");
         const alias = path.join(root, "output-link");
         yield* fs.symlink(root, alias);
         const distDir = {
@@ -61,12 +52,8 @@ for (const location of [
         });
         yield* remove;
         yield* remove;
-        expect(yield* fs.readFileString(source)).toBe(
-          "export default () => 'keep me';",
-        );
-        expect(yield* fs.readFileString(path.join(sibling, "source.ts"))).toBe(
-          "keep sibling",
-        );
+        expect(yield* fs.readFileString(source)).toBe("export default () => 'keep me';");
+        expect(yield* fs.readFileString(path.join(sibling, "source.ts"))).toBe("keep sibling");
         expect(yield* fs.exists(dist)).toBe(location !== "dist");
       }),
     { tags: ["unit", "local"], timeout: 10_000 },
