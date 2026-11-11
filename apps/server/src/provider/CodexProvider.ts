@@ -145,6 +145,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
   readonly serviceTier?: string | undefined;
+  /** Undefined when `config/read` failed, so T3 cannot know Codex's default program. */
   readonly daybreakEnabled?: boolean | undefined;
   readonly cyberAccessProgramsUnavailable?: boolean | undefined;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
@@ -423,11 +424,22 @@ function applyConfiguredCodexCyberAccess(
     "daybreakEnabled" | "cyberAccessProgramsUnavailable"
   >,
 ): ReadonlyArray<ServerProviderModel> {
-  // Without a descriptor no turn sends a program, leaving Codex's own config in charge.
+  // Without a descriptor no turn sends a program; without a default only an explicit choice goes.
   const offered = mapCodexOptionDescriptors(models, (descriptors, model) =>
-    model.isCustom || snapshot.cyberAccessProgramsUnavailable === true
-      ? descriptors.filter((descriptor) => descriptor.id !== "cyberAccessProgram")
-      : descriptors,
+    descriptors.flatMap((descriptor): ReadonlyArray<ProviderOptionDescriptor> => {
+      if (descriptor.id !== "cyberAccessProgram" || descriptor.type !== "select") {
+        return [descriptor];
+      }
+      if (model.isCustom || snapshot.cyberAccessProgramsUnavailable === true) return [];
+      if (snapshot.daybreakEnabled !== undefined) return [descriptor];
+      const { currentValue: _currentValue, ...withoutDefault } = descriptor;
+      return [
+        {
+          ...withoutDefault,
+          options: descriptor.options.map(({ isDefault: _isDefault, ...option }) => option),
+        },
+      ];
+    }),
   );
   if (snapshot.daybreakEnabled !== true) return offered;
   return withConfiguredSelectDefault(offered, "cyberAccessProgram", (options) =>
@@ -753,12 +765,11 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     version,
     models,
     serviceTier: config?.service_tier ?? undefined,
-    daybreakEnabled: cyberAccess?.daybreak === true,
-    // An unread config hides `daybreak` and the API-key switch, so T3 must not pick a program.
+    daybreakEnabled: config === undefined ? undefined : cyberAccess?.daybreak === true,
+    // An unread config cannot rule out an API key with the programs turned off.
     cyberAccessProgramsUnavailable:
-      config === undefined ||
-      (accountResponse.account?.type === "apiKey" &&
-        cyberAccess?.features?.api_key_cyber_access_programs === false),
+      accountResponse.account?.type === "apiKey" &&
+      (config === undefined || cyberAccess?.features?.api_key_cyber_access_programs === false),
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
   } satisfies CodexAppServerProviderSnapshot;
 });

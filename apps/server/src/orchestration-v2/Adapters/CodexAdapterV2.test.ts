@@ -230,7 +230,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 
   it.effect("sends the chosen cyber access program, else the model's default", () =>
     Effect.gen(function* () {
-      const build = (value?: string, defaultCyberAccessProgram?: string) =>
+      const build = (value?: string, cyberAccess?: { defaultProgram: string | undefined }) =>
         CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId: "native-cyber",
           codexInput: [{ type: "text", text: "test" }],
@@ -240,14 +240,19 @@ describe("CodexAdapterV2 runtime policy", () => {
             model: "gpt-5.4",
             ...(value === undefined ? {} : { options: [{ id: "cyberAccessProgram", value }] }),
           },
-          defaultCyberAccessProgram,
+          cyberAccess,
         });
 
       // Custom models offer no Cyber Access, so even an explicit choice is dropped.
       assert.notProperty(yield* build(), "cyberAccessProgram");
       assert.notProperty(yield* build("daybreakBlue"), "cyberAccessProgram");
-      assert.equal((yield* build(undefined, "daybreakBlue")).cyberAccessProgram, "daybreakBlue");
-      assert.equal((yield* build("standard", "daybreakBlue")).cyberAccessProgram, "standard");
+      const daybreak = { defaultProgram: "daybreakBlue" };
+      assert.equal((yield* build(undefined, daybreak)).cyberAccessProgram, "daybreakBlue");
+      assert.equal((yield* build("standard", daybreak)).cyberAccessProgram, "standard");
+      // An unread config leaves no default, but an explicit Standard still goes.
+      const unknown = { defaultProgram: undefined };
+      assert.notProperty(yield* build(undefined, unknown), "cyberAccessProgram");
+      assert.equal((yield* build("standard", unknown)).cyberAccessProgram, "standard");
     }),
   );
 
@@ -2519,7 +2524,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           modelSelection,
           hasT3Mcp: true,
-          defaultCyberAccessProgram: "daybreakBlue",
+          cyberAccess: { defaultProgram: "daybreakBlue" },
         });
         assert.equal(params.cyberAccessProgram, "standard");
         assert.include(

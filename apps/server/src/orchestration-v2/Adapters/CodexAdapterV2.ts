@@ -755,14 +755,14 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
 
 const isCodexCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
 
-function codexCatalogCyberAccessProgram(
+function codexCyberAccess(
   models: ReadonlyArray<ServerProviderModel>,
   model: string,
-): string | undefined {
+): { readonly defaultProgram: string | undefined } | undefined {
   const descriptor = models
     .find((candidate) => candidate.slug === model)
     ?.capabilities?.optionDescriptors?.find((candidate) => candidate.id === "cyberAccessProgram");
-  return descriptor?.type === "select" ? descriptor.currentValue : undefined;
+  return descriptor?.type === "select" ? { defaultProgram: descriptor.currentValue } : undefined;
 }
 
 export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTurnStartParams")(
@@ -778,7 +778,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
     /** Set only for a model that offers Cyber Access; custom models never do. */
-    readonly defaultCyberAccessProgram?: string | undefined;
+    readonly cyberAccess?: { readonly defaultProgram: string | undefined } | undefined;
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
@@ -800,11 +800,11 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
         : getCodexServiceTierOptionValue(input.modelSelection);
     // A chosen program goes as is, even one the model lacks, so Codex rejects it visibly.
     const cyberAccessProgram =
-      input.defaultCyberAccessProgram === undefined
+      input.cyberAccess === undefined
         ? undefined
         : [
             getModelSelectionStringOptionValue(input.modelSelection, "cyberAccessProgram"),
-            input.defaultCyberAccessProgram,
+            input.cyberAccess.defaultProgram,
           ].find(isCodexCyberAccessProgram);
     // MCP-written app context must be quoted user input, not developer instructions.
     const appContext = Object.fromEntries(
@@ -7110,10 +7110,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const models = adapterOptions.models === undefined ? [] : yield* adapterOptions.models;
             const turnStartParams = yield* buildCodexTurnStartParams({
-              defaultCyberAccessProgram: codexCatalogCyberAccessProgram(
-                models,
-                turnInput.modelSelection.model,
-              ),
+              cyberAccess: codexCyberAccess(models, turnInput.modelSelection.model),
               nativeThreadId: threadId,
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,

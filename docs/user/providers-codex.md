@@ -103,8 +103,8 @@ for command and file approvals.
 ## Use Daybreak
 
 Models with cyber access programs show a Cyber Access option in the model
-options. It starts on Standard, or on Daybreak when Codex's `config.toml` sets
-`daybreak = true` or the model only runs under Daybreak. Your choice carries
+options. It starts on Standard, or on Daybreak when `config.toml` in your Codex
+home sets `daybreak = true` or the model only runs under Daybreak. Your choice carries
 over to new threads. Custom models do not offer it. If Codex rejects a turn
 because your login lacks the program, switch Cyber Access back to Standard or
 sign in to Codex with an account that has it.

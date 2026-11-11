@@ -525,14 +525,16 @@ it.layer(
                   );
                   return [
                     model.slug,
-                    descriptor?.type === "select" ? descriptor.currentValue : null,
+                    descriptor?.type === "select"
+                      ? (descriptor.currentValue ?? "no default")
+                      : null,
                   ];
                 }),
               ),
             ),
           );
 
-        assert.deepStrictEqual(yield* defaultPrograms({}), {
+        assert.deepStrictEqual(yield* defaultPrograms({ daybreakEnabled: false }), {
           both: "standard",
           "daybreak-only": "daybreakBlue",
           plain: null,
@@ -541,6 +543,13 @@ it.layer(
         assert.deepStrictEqual(yield* defaultPrograms({ daybreakEnabled: true }), {
           both: "daybreakBlue",
           "daybreak-only": "daybreakBlue",
+          plain: null,
+          "my-model": null,
+        });
+        // An unread config keeps the choice but cannot know Codex's default.
+        assert.deepStrictEqual(yield* defaultPrograms({}), {
+          both: "no default",
+          "daybreak-only": "no default",
           plain: null,
           "my-model": null,
         });
