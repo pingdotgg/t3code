@@ -1,8 +1,4 @@
-import type {
-  ModelSelection,
-  ProviderDriverKind,
-  ProviderOptionDescriptor,
-} from "@t3tools/contracts";
+import type { ModelSelection, ProviderOptionDescriptor } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
@@ -110,7 +106,6 @@ export function getTraitSelectChange(
 }
 
 export function buildTraitsTriggerDisplay(input: {
-  provider: ProviderDriverKind;
   descriptors: ReadonlyArray<ProviderOptionDescriptor>;
   primarySelectDescriptorId: string | null;
   ultrathinkPromptControlled: boolean;
@@ -140,11 +135,7 @@ export function buildTraitsTriggerDisplay(input: {
       }
       continue;
     }
-    if (
-      input.provider === "codex" &&
-      descriptor.id === "serviceTier" &&
-      descriptor.type === "select"
-    ) {
+    if (descriptor.id === "serviceTier" && descriptor.type === "select") {
       const currentValue = getProviderOptionCurrentValue(descriptor);
       const fastTier = descriptor.options.find(({ label }) => label === "Fast");
       const ultrafastTier = descriptor.options.find(({ label }) => label === "Ultrafast");

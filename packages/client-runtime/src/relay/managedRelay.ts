@@ -47,6 +47,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpMethod from "effect/http/HttpMethod";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import { relayRequestFailureDetail } from "./errorPresentation.ts";
 
 export interface ManagedRelayDpopProofInput {
   readonly method: HttpMethod.HttpMethod;
@@ -159,8 +160,9 @@ export class ManagedRelayRequestFailedError extends Schema.TaggedError<ManagedRe
   },
 ) {
   override get message(): string {
-    const message = `Could not ${this.action}.`;
-    return this.transportFailed ? `${message} ${NETWORK_BLOCKING_HINT}` : message;
+    if (this.transportFailed) return `Could not ${this.action}. ${NETWORK_BLOCKING_HINT}`;
+    const detail = relayRequestFailureDetail(this);
+    return detail ? `Could not ${this.action}: ${detail}` : `Could not ${this.action}.`;
   }
 }
 
