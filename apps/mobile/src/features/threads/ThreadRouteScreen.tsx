@@ -109,7 +109,7 @@ import {
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
 import { ThreadHeader } from "./ThreadHeader";
-import { withThreadOpenPullRequest } from "../../state/thread-pr-presentation";
+import { resolveThreadOpenLinkedPullRequest } from "../../state/thread-pr-presentation";
 import { resumeThread } from "./resume-thread";
 import {
   useAndroidWorkspaceBack,
@@ -784,8 +784,8 @@ function ThreadRouteContent(
         ? () => void handleMergeBack()
         : undefined,
     currentBranch: selectedThread?.branch ?? null,
-    gitStatus: withThreadOpenPullRequest(
-      gitStatus.data ?? null,
+    gitStatus: gitStatus.data,
+    linkedPullRequest: resolveThreadOpenLinkedPullRequest(
       selectedThread?.pullRequests ?? [],
       routeEnvironmentRuntime?.serverConfig?.environment.capabilities.threadPullRequests === true,
     ),

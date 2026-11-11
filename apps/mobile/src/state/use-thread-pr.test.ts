@@ -3,9 +3,7 @@ import {
   type PullRequestSummary,
   SourceControlProviderKind,
   type ThreadPullRequestLink,
-  type VcsStatusResult,
 } from "@t3tools/contracts";
-import { buildMenuItems } from "@t3tools/client-runtime/state/vcs";
 import { threadPullRequestsOf } from "@t3tools/client-runtime/thread-pull-requests";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -14,7 +12,7 @@ import {
   presentThreadLinkedPullRequests,
   rememberBounded,
   resolveThreadPrSource,
-  withThreadOpenPullRequest,
+  resolveThreadOpenLinkedPullRequest,
 } from "./thread-pr-presentation";
 
 function linkedPr(
@@ -180,35 +178,22 @@ describe("rememberBounded", () => {
   });
 });
 
-describe("withThreadOpenPullRequest", () => {
-  const status: VcsStatusResult = {
-    isRepo: true,
-    hasPrimaryRemote: true,
-    isDefaultRef: false,
-    refName: "local-work",
-    hasWorkingTreeChanges: false,
-    workingTree: { files: [], insertions: 0, deletions: 0 },
-    hasUpstream: true,
-    aheadCount: 1,
-    behindCount: 0,
-    pr: null,
-  };
-  const prLabel = (next: VcsStatusResult | null) =>
-    buildMenuItems(next, false).find((item) => item.id === "pr")?.label;
-
-  it("offers the linked open pull request when the checkout's ref has none", () => {
-    const next = withThreadOpenPullRequest(status, [linkedPr(42)], true);
-    expect(next?.pr).toMatchObject({ number: 42, url: linkedPr(42).url, state: "open" });
-    expect(prLabel(next)).toBe("View PR");
+describe("resolveThreadOpenLinkedPullRequest", () => {
+  it("returns the linked open pull request", () => {
+    expect(resolveThreadOpenLinkedPullRequest([linkedPr(42)], true)).toMatchObject({
+      number: 42,
+      url: linkedPr(42).url,
+      state: "open",
+    });
   });
 
   it("treats a link waiting for its first sync as open", () => {
     expect(
-      withThreadOpenPullRequest(status, [linkedPr(42, { snapshot: null })], true)?.pr,
+      resolveThreadOpenLinkedPullRequest([linkedPr(42, { snapshot: null })], true),
     ).toMatchObject({ number: 42, state: "open" });
   });
 
-  it("keeps checkout status for a legacy link whose state the server cannot report", () => {
+  it("ignores a legacy link whose state the server cannot report", () => {
     const legacy = threadPullRequestsOf({
       linkedPullRequest: {
         projectId: ProjectId.make("project"),
@@ -217,28 +202,13 @@ describe("withThreadOpenPullRequest", () => {
         url: linkedPr(42).url,
       },
     });
-    expect(withThreadOpenPullRequest(status, legacy, false)).toBe(status);
-  });
-
-  it("keeps the checkout ref's own open pull request", () => {
-    const own: VcsStatusResult = {
-      ...status,
-      pr: {
-        number: 3,
-        title: "Own change",
-        url: "https://github.com/t3tools/t3code/pull/3",
-        baseRef: "main",
-        headRef: "local-work",
-        state: "open",
-      },
-    };
-    expect(withThreadOpenPullRequest(own, [linkedPr(42)], true)).toBe(own);
+    expect(resolveThreadOpenLinkedPullRequest(legacy, false)).toBeNull();
   });
 
   it("ignores links that are no longer open", () => {
     const merged = linkedPr(42, { snapshot: { ...linkedPr(42).snapshot!, state: "merged" } });
     const closed = linkedPr(43, { snapshot: { ...linkedPr(43).snapshot!, state: "closed" } });
-    expect(withThreadOpenPullRequest(status, [merged, closed], true)).toBe(status);
+    expect(resolveThreadOpenLinkedPullRequest([merged, closed], true)).toBeNull();
   });
 
   it("prefers an open link over a merged one", () => {
@@ -246,6 +216,6 @@ describe("withThreadOpenPullRequest", () => {
       linkedAt: "2026-09-10T00:00:00.000Z",
       snapshot: { ...linkedPr(41).snapshot!, state: "merged" },
     });
-    expect(withThreadOpenPullRequest(status, [merged, linkedPr(42)], true)?.pr?.number).toBe(42);
+    expect(resolveThreadOpenLinkedPullRequest([merged, linkedPr(42)], true)?.number).toBe(42);
   });
 });

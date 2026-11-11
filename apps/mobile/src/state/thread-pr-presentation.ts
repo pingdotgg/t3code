@@ -133,30 +133,25 @@ export function resolveThreadPrBadgeAction(pr: ThreadPrPresentation) {
     : { kind: "open" as const, accessibilityLabel: `Open ${pr.accessibilityLabel}` };
 }
 
-/** Checkout open PR wins; else an open linked PR. Unsynced links need snapshot support. */
-export function withThreadOpenPullRequest(
-  status: VcsStatusResult | null,
+/** The thread's open linked PR; unsynced links count only where the server syncs snapshots. */
+export function resolveThreadOpenLinkedPullRequest(
   links: ReadonlyArray<ThreadPullRequestLink>,
   supportsSnapshots: boolean,
-): VcsStatusResult | null {
-  if (status === null || status.pr?.state === "open") return status;
+): ThreadPr | null {
   const link = resolveThreadCurrentPullRequestLink(links);
   const snapshot = link?.snapshot ?? null;
   if (link === null || (snapshot === null ? !supportsSnapshots : snapshot.state !== "open")) {
-    return status;
+    return null;
   }
   return {
-    ...status,
-    pr: {
-      number: link.number,
-      title: snapshot?.title ?? `#${link.number}`,
-      url: link.url,
-      baseRef: snapshot?.baseBranch ?? "unknown",
-      headRef: snapshot?.headBranch ?? "unknown",
-      state: "open",
-      isDraft: snapshot?.isDraft === true,
-      updatedAt: snapshot?.updatedAt ?? null,
-    },
+    number: link.number,
+    title: snapshot?.title ?? `#${link.number}`,
+    url: link.url,
+    baseRef: snapshot?.baseBranch ?? "unknown",
+    headRef: snapshot?.headBranch ?? "unknown",
+    state: "open",
+    isDraft: snapshot?.isDraft === true,
+    updatedAt: snapshot?.updatedAt ?? null,
   };
 }
 

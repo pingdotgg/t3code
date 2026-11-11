@@ -2,7 +2,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { withThreadOpenPullRequest } from "../../state/thread-pr-presentation";
+import { resolveThreadOpenLinkedPullRequest } from "../../state/thread-pr-presentation";
 import { vcsEnvironment } from "../../state/vcs";
 import { useThreadGitMenuDefinition } from "../threads/ThreadGitControls";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -46,8 +46,8 @@ export function useReviewHeaderPresentation(props: {
     environmentId: props.environmentId,
     threadId: props.threadId,
     currentBranch: selectedThread?.branch ?? null,
-    gitStatus: withThreadOpenPullRequest(
-      gitStatusQuery.data ?? null,
+    gitStatus: gitStatusQuery.data,
+    linkedPullRequest: resolveThreadOpenLinkedPullRequest(
       selectedThread?.pullRequests ?? [],
       selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.threadPullRequests ===
         true,
