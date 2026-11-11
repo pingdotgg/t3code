@@ -824,7 +824,7 @@ describe("instance-scoped model selection", () => {
     const codex = ProviderInstanceId.make("codex");
     const claude = ProviderInstanceId.make("claudeAgent");
     const providers = [
-      provider({ instanceId: "codex", models: ["gpt-5.5"] }),
+      provider({ instanceId: "codex", models: ["gpt-5.5", "gpt-5.4"] }),
       provider({
         provider: ProviderDriverKind.make("claudeAgent"),
         instanceId: "claudeAgent",
@@ -838,14 +838,17 @@ describe("instance-scoped model selection", () => {
     const claudePick = createModelSelection(claude, "claude-opus-5-5", [
       { id: "effort", value: "max" },
     ]);
-    const optionsFor = (draftSelections: Record<string, ReturnType<typeof createModelSelection>>) =>
+    const optionsFor = (
+      draftSelections: Record<string, ReturnType<typeof createModelSelection>>,
+      threadModelSelection = stored,
+    ) =>
       deriveEffectiveComposerModelState({
         draft: { activeProvider: codex, modelSelectionByProvider: draftSelections },
         providers,
         selectedProvider: ProviderDriverKind.make("codex"),
         selectedInstanceId: codex,
         requestedInstanceId: claude,
-        threadModelSelection: stored,
+        threadModelSelection,
         projectModelSelection: null,
         settings: DEFAULT_UNIFIED_SETTINGS,
       }).modelOptions;
@@ -862,6 +865,13 @@ describe("instance-scoped model selection", () => {
     expect(optionsFor({ [claude]: claudePick, [codex]: fastOff })?.[codex]).toEqual(
       fastOff.options,
     );
+    const storedOtherModel = createModelSelection(codex, "gpt-5.4", stored.options);
+    expect(
+      optionsFor(
+        { [claude]: claudePick, [codex]: createModelSelection(codex, "gpt-5.5") },
+        storedOtherModel,
+      )?.[codex],
+    ).toBeUndefined();
   });
 
   it("keeps the default instance's draft model off a custom instance of the same driver", () => {

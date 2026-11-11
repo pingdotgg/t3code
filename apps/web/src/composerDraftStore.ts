@@ -1165,8 +1165,9 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
       ))
     : baseModel;
-  // An existing thread's options, even none, outrank the project's. Each source keeps its own
-  // selections so a fallback instance can check which model its options belong to.
+  // An existing thread's options, even none, outrank the project's. Next to draft options, they
+  // fill in only for the model they were stored with. Each source keeps its selections so a
+  // fallback instance can check which model its options belong to.
   const optionsFrom = (optionSelections: Partial<Record<string, ModelSelection>> | null) =>
     withFallbackInstanceOptions({
       ...input,
@@ -1175,8 +1176,11 @@ export function deriveEffectiveComposerModelState(input: {
       selectedModel,
     });
   const draftOptions = optionsFrom(input.draft?.modelSelectionByProvider ?? null);
+  const storedSelection = input.threadModelSelection ?? input.projectModelSelection;
   const storedOptions = optionsFrom(
-    selectionsByInstance(input.threadModelSelection ?? input.projectModelSelection),
+    draftOptions === null || storedSelection?.model === selectedModel
+      ? selectionsByInstance(storedSelection)
+      : null,
   );
 
   return {
