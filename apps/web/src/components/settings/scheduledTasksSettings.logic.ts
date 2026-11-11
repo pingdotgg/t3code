@@ -23,6 +23,7 @@ import {
   webhookFilterDraftsChanged,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 
 import {
   resolveProjectSettings,
@@ -32,26 +33,7 @@ import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
-const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
-
-export function scheduleTimeZoneLabel(
-  timeZone: string | undefined,
-  runAt?: string | null,
-): string | undefined {
-  if (timeZone === undefined) return undefined;
-  if (timeZone === "Etc/UTC" || timeZone === "UTC" || timeZone === "GMT") return "UTC";
-  try {
-    return new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      timeZoneName: runAt ? "short" : "shortGeneric",
-    })
-      .format(runAt ? new Date(runAt) : new Date())
-      .split(", ")
-      .at(-1);
-  } catch {
-    return undefined;
-  }
-}
+export const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",

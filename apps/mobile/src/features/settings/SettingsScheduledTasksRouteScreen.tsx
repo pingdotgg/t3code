@@ -38,6 +38,7 @@ import {
   WEBHOOK_FILTER_OPS,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -116,25 +117,6 @@ const THREAD_MODE_LABELS: Record<ScheduledTaskThreadMode, string> = {
   continue: "One thread, same conversation",
   fresh_session: "One thread, fresh session",
 };
-
-function scheduleTimeZoneLabel(
-  timeZone: string | undefined,
-  runAt?: string | null,
-): string | undefined {
-  if (timeZone === undefined) return undefined;
-  if (timeZone === "Etc/UTC" || timeZone === "UTC" || timeZone === "GMT") return "UTC";
-  try {
-    return new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      timeZoneName: runAt ? "short" : "shortGeneric",
-    })
-      .format(runAt ? new Date(runAt) : new Date())
-      .split(", ")
-      .at(-1);
-  } catch {
-    return undefined;
-  }
-}
 
 function describeSchedule(task: ScheduledTask, timeZone?: string): string {
   if (task.schedule.type === "webhook") return "On webhook";

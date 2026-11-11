@@ -23,7 +23,6 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduleLabel,
-  scheduleTimeZoneLabel,
   taskToDraft,
   unbindDraftFromThread,
 } from "./scheduledTasksSettings.logic";
@@ -410,30 +409,11 @@ it("rejects dedupe templates without a request placeholder", () => {
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
 });
 
-describe("schedule timezone labels", () => {
-  it("uses short names instead of full IANA zones", () => {
-    expect(scheduleTimeZoneLabel(undefined)).toBeUndefined();
-    expect(scheduleTimeZoneLabel("Unsupported/Zone")).toBeUndefined();
-    expect(scheduleTimeZoneLabel("Etc/UTC")).toBe("UTC");
-    expect(scheduleTimeZoneLabel("UTC")).toBe("UTC");
-    const losAngeles = scheduleTimeZoneLabel("America/Los_Angeles");
-    expect(losAngeles).toMatch(/^(PT|Los Angeles Time)$/);
-    expect(losAngeles).not.toContain("America/");
-    expect(scheduleTimeZoneLabel("America/Los_Angeles", "2027-01-15T17:00:00Z")).toBe("PST");
-    expect(scheduleTimeZoneLabel("America/Los_Angeles", "2027-07-15T16:00:00Z")).toBe("PDT");
-    const kolkata = scheduleTimeZoneLabel("Asia/Kolkata");
-    expect(
-      kolkata === "IST" || kolkata === "India Time" || kolkata?.startsWith("GMT+") === true,
-    ).toBe(true);
-    expect(kolkata).not.toContain("Asia/");
-  });
-
-  it("appends the zone only for fixed-time schedules", () => {
-    expect(scheduleLabel({ type: "fixed_time", timeOfDay: "16:31" }, "Etc/UTC")).toBe(
-      "Daily at 16:31 UTC",
-    );
-    expect(scheduleLabel({ type: "fixed_time", timeOfDay: "09:00" })).toBe("Daily at 09:00");
-    expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "Etc/UTC")).toBe("Every 1 min");
-    expect(scheduleLabel({ type: "webhook", signature: null }, "Etc/UTC")).toBe("On webhook");
-  });
+it("appends the server zone only to fixed-time schedule labels", () => {
+  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "16:31" }, "Etc/UTC")).toBe(
+    "Daily at 16:31 UTC",
+  );
+  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "09:00" })).toBe("Daily at 09:00");
+  expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "Etc/UTC")).toBe("Every 1 min");
+  expect(scheduleLabel({ type: "webhook", signature: null }, "Etc/UTC")).toBe("On webhook");
 });

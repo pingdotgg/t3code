@@ -34,6 +34,7 @@ import {
   WEBHOOK_FILTER_OPS,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
@@ -104,16 +105,14 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduleLabel,
-  scheduleTimeZoneLabel,
   scheduledTaskDefaultModel,
+  WEEKDAY_LABELS,
   taskToDraft,
   unbindDraftFromThread,
   type DraftState,
   type ScheduleMode,
   type WorkspaceMode,
 } from "./scheduledTasksSettings.logic";
-
-export { scheduleLabel };
 import { Label } from "../ui/label";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/menu";
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
@@ -154,7 +153,6 @@ import {
 } from "./settingsLayout";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
-const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
 // Thread ids are trimmed, so the leading space keeps this from matching one.
