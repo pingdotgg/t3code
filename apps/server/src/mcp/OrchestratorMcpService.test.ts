@@ -3420,6 +3420,18 @@ describe("OrchestratorMcpService provider resolution", () => {
             },
             { discard: true },
           );
+        const stop = Effect.gen(function* () {
+          const item = {
+            id: "interrupt:parent",
+            type: "run_interrupt_request",
+            runId: parentRunId,
+          };
+          stopRequests.push(item);
+          yield* Queue.offer(cardEvents, {
+            sequence: commands.length + 1,
+            event: { type: "turn-item.updated", threadId: parentThreadId, payload: item },
+          } as unknown as OrchestrationV2StoredEvent);
+        });
         return {
           service,
           commands,
@@ -3429,6 +3441,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           remoteDelegations,
           subscribed,
           answer,
+          stop,
         };
       });
 
@@ -3584,6 +3597,25 @@ describe("OrchestratorMcpService provider resolution", () => {
             approvals().map((command) => command.approvalStatus),
             setup.decide() === "declined" ? ["pending"] : ["pending", "cancelled"],
           );
+        }
+        for (const target of [
+          { model: "other-model" },
+          { model: "other-model", environmentId: remoteEnvironmentId },
+        ]) {
+          const waiting = yield* harness({ decide: () => "pending" });
+          const call = yield* delegate(waiting.service, target, "stop-while-waiting").pipe(
+            Effect.forkChild,
+          );
+          yield* Queue.take(waiting.subscribed);
+          yield* waiting.stop;
+          const failure = yield* Fiber.join(call).pipe(Effect.flip);
+          assert.propertyVal(failure, "code", "delegation_not_approved");
+          assert.deepEqual(
+            [...waiting.cards.values()].map((card) => card.approvalStatus),
+            ["cancelled"],
+          );
+          assert.deepEqual(waiting.delegations(), []);
+          assert.deepEqual(waiting.remoteDelegations, []);
         }
       }),
     );

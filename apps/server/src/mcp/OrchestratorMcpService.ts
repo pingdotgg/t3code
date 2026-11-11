@@ -1616,7 +1616,10 @@ const make = Effect.gen(function* () {
             .pipe(
               Stream.filter(
                 ({ event }) =>
-                  event.type === "turn-item.updated" && event.payload.id === turnItemId,
+                  event.type === "turn-item.updated" &&
+                  (event.payload.id === turnItemId ||
+                    (event.payload.type === "run_interrupt_request" &&
+                      event.payload.runId === parentRun.id)),
               ),
             ),
           threadManagement
