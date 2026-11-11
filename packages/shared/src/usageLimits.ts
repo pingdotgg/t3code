@@ -362,10 +362,16 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       const sourceLabel = labelEnvironment
         ? `${presentation.entry.target.label} · ${source.label}`
         : source.label;
+      // One source lists each credential once, so two of its accounts that resolve to the same
+      // login (one e-mail, two organisations) are separate quotas and must not merge.
+      const claimed = new Set<string>();
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
         const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolveKey(account) ?? key, {
+        const resolved = resolveKey(account);
+        const mergeKey = resolved && !claimed.has(resolved) ? resolved : key;
+        if (resolved) claimed.add(resolved);
+        merge(mergeKey, {
           key,
           driver: account.driver,
           displayName: account.email ? null : hubAccountName(account),

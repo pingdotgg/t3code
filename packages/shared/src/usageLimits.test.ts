@@ -791,7 +791,8 @@ describe("pools", () => {
                 ...source,
                 id: UsageLimitSourceId.make("work"),
                 label: "Work hub",
-                accounts: [hubAccount("c", 20)],
+                // Two organisations of one login: separate credentials with separate quotas.
+                accounts: [hubAccount("c", 20), { ...hubAccount("d", 94), email: "c@example.com" }],
               },
             ],
           },
@@ -803,15 +804,15 @@ describe("pools", () => {
     // A driver with one source keeps its unlabelled pool; one driver's pools stay adjacent.
     expect(pools.map((pool) => [pool.driver, pool.label, pool.accounts.length])).toEqual([
       ["claudeAgent", "Main hub", 2],
-      ["claudeAgent", "Work hub", 1],
+      ["claudeAgent", "Work hub", 2],
       ["codex", null, 1],
     ]);
     expect(new Set(pools.map((pool) => pool.key)).size).toBe(3);
-    expect(pools.map((pool) => pool.windows[0]?.remainingPercent)).toEqual([0, 80, 50]);
+    expect(pools.map((pool) => pool.windows[0]?.remainingPercent)).toEqual([0, 43, 50]);
 
     const combined = collectLimitPools(accounts, now, { splitSources: false });
     expect(combined.map((pool) => [pool.driver, pool.label, pool.accounts.length])).toEqual([
-      ["claudeAgent", null, 3],
+      ["claudeAgent", null, 4],
       ["codex", null, 1],
     ]);
 
@@ -844,11 +845,11 @@ describe("pools", () => {
       const sameLabelPools = collectLimitPools(collectLimitAccounts(presentations), now);
       expect(sameLabelPools.map((pool) => [pool.driver, pool.accounts.length])).toEqual([
         ["claudeAgent", 2],
-        ["claudeAgent", 1],
+        ["claudeAgent", 2],
         ["codex", 1],
       ]);
       expect(new Set(sameLabelPools.map((pool) => pool.key)).size).toBe(3);
-      expect(sameLabelPools.map((pool) => pool.windows[0]?.remainingPercent)).toEqual([0, 80, 50]);
+      expect(sameLabelPools.map((pool) => pool.windows[0]?.remainingPercent)).toEqual([0, 43, 50]);
     }
   });
 
