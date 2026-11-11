@@ -2320,7 +2320,7 @@ export const layerWithOptions = (
                           ),
                         );
                     }).pipe(entry.requestEventPermit.withPermits(1));
-                    yield* releaseLiveOutput;
+                    yield* releaseLiveOutput(event);
                     return;
                   }
                   yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
