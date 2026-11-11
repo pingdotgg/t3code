@@ -13,7 +13,7 @@ import { HighlightedTokens } from "./HighlightedTokens";
 export const SNAP_SHOT_ATTACHMENT_FRAME_CLASS =
   "relative h-28 w-52 max-w-full overflow-hidden rounded-lg border border-border/80";
 
-export interface SnapShotAccessibilityDetails {
+interface SnapShotAccessibilityDetails {
   content: string;
   format: "json" | "text";
 }

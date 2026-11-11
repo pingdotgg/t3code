@@ -53,26 +53,6 @@ export function filterTerminalContextsWithText<T extends { text: string }>(
   return contexts.filter((context) => hasTerminalContextText(context));
 }
 
-function normalizeTerminalContextSelection(
-  selection: TerminalContextSelection,
-): TerminalContextSelection | null {
-  const text = normalizeTerminalContextText(selection.text);
-  const terminalId = selection.terminalId.trim();
-  const terminalLabel = selection.terminalLabel.trim();
-  if (text.length === 0 || terminalId.length === 0 || terminalLabel.length === 0) {
-    return null;
-  }
-  const lineStart = Math.max(1, Math.floor(selection.lineStart));
-  const lineEnd = Math.max(lineStart, Math.floor(selection.lineEnd));
-  return {
-    terminalId,
-    terminalLabel,
-    lineStart,
-    lineEnd,
-    text,
-  };
-}
-
 function formatTerminalContextRange(selection: { lineStart: number; lineEnd: number }): string {
   return selection.lineStart === selection.lineEnd
     ? `line ${selection.lineStart}`
