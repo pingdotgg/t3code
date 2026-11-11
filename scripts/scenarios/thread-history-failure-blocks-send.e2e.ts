@@ -62,8 +62,6 @@ test(
     await expect(screen.getByText("Thread history unavailable")).toBeVisible();
     await screen.getByRole("textbox").fill("Wait for the existing conversation");
     await app.screenshot("history-unavailable");
-    await expect(
-      screen.getByRole("button", /^(Submit message|Message history unavailable)$/),
-    ).toBeDisabled();
+    await expect(screen.getByRole("button", /^(Submit message|Messages loading)$/)).toBeDisabled();
   },
 );

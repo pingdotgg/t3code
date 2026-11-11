@@ -30,7 +30,7 @@ interface ComposerResumeInput {
   readonly hasHeldQueuedRuns: boolean;
   readonly isSendBusy: boolean;
   readonly isRevertingCheckpoint: boolean;
-  readonly threadDetailUnavailable: boolean;
+  readonly threadDetailLoading: boolean;
   readonly activeEnvironmentUnavailable: boolean;
   readonly runtimeMode: RuntimeMode;
   readonly localCheckoutBranchMismatch: { readonly currentBranch: string } | null;
@@ -61,7 +61,7 @@ export function useComposerResume(input: ComposerResumeInput) {
     hasHeldQueuedRuns,
     isSendBusy,
     isRevertingCheckpoint,
-    threadDetailUnavailable,
+    threadDetailLoading,
     activeEnvironmentUnavailable,
     runtimeMode,
     localCheckoutBranchMismatch,
@@ -90,7 +90,7 @@ export function useComposerResume(input: ComposerResumeInput) {
       isSendBusy ||
       isResuming ||
       isRevertingCheckpoint ||
-      threadDetailUnavailable ||
+      threadDetailLoading ||
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
     ) {

@@ -54,7 +54,7 @@ function ResumeButton(props: {
     hasHeldQueuedRuns: false,
     isSendBusy: false,
     isRevertingCheckpoint: false,
-    threadDetailUnavailable: false,
+    threadDetailLoading: false,
     activeEnvironmentUnavailable: false,
     runtimeMode: "full-access",
     localCheckoutBranchMismatch: null,

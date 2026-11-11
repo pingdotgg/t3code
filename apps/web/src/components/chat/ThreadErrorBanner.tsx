@@ -85,12 +85,12 @@ export function resolveThreadErrorBanner(input: {
   readonly runtimeError: string | null;
 }) {
   const candidates = [
-    { source: "detail", message: input.detailFailure?.value ?? null, key: input.detailFailure },
     {
       source: "local",
       message: input.localError,
       key: getThreadErrorBannerKey(input.threadKey, input.localError),
     },
+    { source: "detail", message: input.detailFailure?.value ?? null, key: input.detailFailure },
     {
       source: "runtime",
       message: input.runtimeError,

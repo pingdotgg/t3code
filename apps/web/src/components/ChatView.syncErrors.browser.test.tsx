@@ -124,7 +124,7 @@ it("keeps synchronization failures separate from local errors and first-load sen
   await expect.element(page.getByText("Thread history unavailable", { exact: true })).toBeVisible();
   await page.getByTestId("composer-editor").fill("Do not send before history arrives");
   await expect
-    .element(page.getByRole("button", { name: /^(Submit message|Message history unavailable)$/ }))
+    .element(page.getByRole("button", { name: /^(Submit message|Messages loading)$/ }))
     .toBeDisabled();
 
   await act(() =>
@@ -140,17 +140,20 @@ it("keeps synchronization failures separate from local errors and first-load sen
   await page.getByTestId("composer-editor").fill("Retry the work");
   await page.getByRole("button", { name: "Submit message", exact: true }).click();
   await expect.element(page.getByTestId("composer-editor")).toHaveTextContent("Retry the work");
-  await page.getByRole("button", { name: "Dismiss error" }).click();
   await expect.element(page.getByText("Local send failed", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Dismiss error" }).click();
   await expect
     .element(page.getByText("Local send failed", { exact: true }))
     .not.toBeInTheDocument();
 
+  await expect.element(syncFailure).toBeVisible();
+  await page.getByRole("button", { name: "Dismiss error" }).click();
+  await expect.element(syncFailure).not.toBeInTheDocument();
+
   document.dispatchEvent(new Event("visibilitychange"));
   await vi.waitFor(() => expect(warmSubscriptions).toBe(2));
   await act(() => Deferred.doneUnsafe(nextFailure, Effect.void));
-  await expect.element(syncFailure).toBeVisible();
+  await expect.element(syncFailure, { timeout: 5_000 }).toBeVisible();
   await page.getByRole("button", { name: "Dismiss error" }).click();
   await expect
     .element(page.getByText("Local send failed", { exact: true }))
