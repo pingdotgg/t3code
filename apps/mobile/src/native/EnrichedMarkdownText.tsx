@@ -241,15 +241,11 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     : parsedLinkUrls;
   const authoredHrefs = useMemo(() => extractMarkdownLinkHrefs(props.markdown), [props.markdown]);
   const fileBindingUrlsKey = [...new Set([...linkUrls, ...authoredHrefs])].join("\n");
-  const fileBindings = useThreadFileBindings(
-    useMemo(() => (fileBindingUrlsKey ? fileBindingUrlsKey.split("\n") : []), [fileBindingUrlsKey]),
+  const { href: fileHref, unverifiedRootless } = useThreadFileBindings(
+    fileBindingUrlsKey ? fileBindingUrlsKey.split("\n") : [],
   );
-  const { href: fileHref, unverifiedRootless } = fileBindings;
-  const linkCustomization = useMemo(
-    () => (url: string) =>
-      unverifiedRootless(url) ? { plain: true } : props.linkCustomization?.(url),
-    [unverifiedRootless, props.linkCustomization],
-  );
+  const linkCustomization = (url: string) =>
+    unverifiedRootless(url) ? { plain: true } : props.linkCustomization?.(url);
   const { linkVariants, linkPillContent } = useEnrichedLinkVariants(
     linkUrls,
     { ...props, linkCustomization },
@@ -374,13 +370,9 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       codeBlockElement(block, props.textStyle, baseMarkdownStyle, mathRenderingEnabled),
   };
   const resolveNativeImageSource = useRetryingImageSource(
-    useMemo(
-      () =>
-        resolveImageSource &&
-        ((image: Parameters<typeof resolveImageSource>[0]) =>
-          resolveImageSource({ ...image, href: fileHref(image.href) })),
-      [resolveImageSource, fileHref],
-    ),
+    resolveImageSource &&
+      ((image: Parameters<typeof resolveImageSource>[0]) =>
+        resolveImageSource({ ...image, href: fileHref(image.href) })),
   );
   const renderMarkdown = (openAndroidMenu?: () => void) => {
     const onLinkLongPress =

@@ -154,9 +154,7 @@ const serverConfig = {
 
 type MetadataResult = AsyncResult.AsyncResult<FilesystemEntryMetadata | null, Error>;
 const metadataResults = Atom.family((_key: string) =>
-  Atom.make<MetadataResult>(
-    AsyncResult.initial(true),
-  ).pipe(Atom.keepAlive),
+  Atom.make<MetadataResult>(AsyncResult.initial(true)).pipe(Atom.keepAlive),
 );
 let registry: AtomRegistry.AtomRegistry;
 const metadataAtom = (path: string) => metadataResults(path);
