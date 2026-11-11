@@ -310,6 +310,37 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("falls back to glab's own host when the signed-in host lacks the project", () =>
+    Effect.gen(function* () {
+      mockGlab(["gitlab.selfhosted.test"]);
+      const answer = mockedRun.getMockImplementation()!;
+      mockedRun.mockImplementation((input) =>
+        input.args[0] === "api" && input.env !== undefined
+          ? Effect.fail(
+              new VcsProcessExitError({
+                operation: "GitLabCli.execute",
+                command: "glab",
+                cwd: "/server",
+                exitCode: 1,
+                detail: "GET 404 project not found",
+                failureKind: "not-found",
+              }),
+            )
+          : answer(input),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const urls = yield* glab.getRepositoryCloneUrls({ cwd: "/server", repository: "team/app" });
+
+      assert.strictEqual(urls.nameWithOwner, "team/app");
+      expect(
+        mockedRun.mock.calls
+          .filter(([input]) => input.args[0] === "api")
+          .map(([input]) => input.env),
+      ).toEqual([{ GITLAB_HOST: "gitlab.selfhosted.test" }, undefined]);
+    }),
+  );
+
   it.effect("leaves an explicit GITLAB_HOST to glab without probing sign-ins", () =>
     Effect.gen(function* () {
       mockGlab(["gitlab.selfhosted.test"]);

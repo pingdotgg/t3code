@@ -12,6 +12,7 @@ import {
   TrimmedNonEmptyString,
   type SourceControlRepositoryVisibility,
   type VcsError,
+  VcsProcessExitError,
   type VcsProcessExitFailureKind,
 } from "@t3tools/contracts";
 
@@ -27,6 +28,7 @@ import type * as SourceControlProvider from "@t3tools/source-control-core/server
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const AUTH_STATUS_TIMEOUT_MS = 5_000;
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 
 // glab reads its fallback host from these, so a set one means the user chose the host.
 const glabHostIsExplicit = Config.all(
@@ -590,13 +592,24 @@ export const make = Effect.gen(function* () {
       );
     }),
     getRepositoryCloneUrls: Effect.fn("GitLabCli.getRepositoryCloneUrls")(function (input) {
+      const lookup = (env?: NodeJS.ProcessEnv) =>
+        execute({
+          cwd: input.cwd,
+          args: ["api", `projects/${encodeURIComponent(input.repository)}`],
+          env,
+        });
       return signedInHostEnv(input.cwd).pipe(
         Effect.flatMap((env) =>
-          execute({
-            cwd: input.cwd,
-            args: ["api", `projects/${encodeURIComponent(input.repository)}`],
-            env,
-          }),
+          env === undefined
+            ? lookup()
+            : // A public gitlab.com project still resolves through glab's own fallback host.
+              lookup(env).pipe(
+                Effect.catchIf(
+                  (error) =>
+                    isVcsProcessExitError(error.cause) && error.cause.failureKind === "not-found",
+                  () => lookup(),
+                ),
+              ),
         ),
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
