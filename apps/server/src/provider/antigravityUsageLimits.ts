@@ -156,7 +156,7 @@ function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
           : bucket.bucketId.startsWith("gemini-")
             ? "Gemini"
             : bucket.bucketId.startsWith("3p-")
-              ? "Claude & GPT (shared)"
+              ? "Claude & GPT"
               : group.displayName?.trim() || bucket.bucketId;
       const weekly = bucket.window === "weekly";
       const session = bucket.window === "5h";

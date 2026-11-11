@@ -703,7 +703,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
               {
                 id: "3p-weekly",
                 kind: "weekly",
-                label: "Claude & GPT (shared) · Weekly",
+                label: "Claude & GPT · Weekly",
                 usedPercent: 75,
               },
             ],
