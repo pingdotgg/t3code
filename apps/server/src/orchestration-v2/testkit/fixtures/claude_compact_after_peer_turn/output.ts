@@ -51,4 +51,25 @@ export function assertClaudeCompactAfterPeerTurnOutput(
   assert.equal(runs[2]?.status, "completed");
   assert.deepEqual(runs[2]?.replies, ["PEER_ACK"]);
   assert.deepEqual(runs[2]?.compactions, []);
+
+  const usage = projection.runs.map(
+    (run) =>
+      projection.providerTurns.find((turn) => turn.runAttemptId === run.activeAttemptId)
+        ?.turnTokenUsage,
+  );
+  assert.deepInclude(usage[0], {
+    outputTokens: 7,
+    otherUsage: { inputTokens: 1015, outputTokens: 12 },
+  });
+  // /compact reports zero tokens as a local command.
+  assert.deepInclude(usage[1], {
+    usageStatus: "complete",
+    inputTokens: 0,
+    outputTokens: 0,
+    localCommand: true,
+  });
+  // The peer result's ledger is empty, so neither it nor the next result has a baseline.
+  assert.deepInclude(usage[2], { usageStatus: "complete", outputTokens: 4 });
+  assert.notProperty(usage[1], "otherUsage");
+  assert.notProperty(usage[2], "otherUsage");
 }

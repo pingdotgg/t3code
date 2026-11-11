@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alchemy · live presenter</title>
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        height: 100%;
+        background: #0b0a08;
+        color: #e8e2d4;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+      /* Fixed rows: the video area never changes size. */
+      .stage {
+        height: 100%;
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) 48px;
+      }
+      .player {
+        min-height: 0;
+        display: grid;
+        place-items: center;
+      }
+      .player > div {
+        max-height: 100%;
+        aspect-ratio: 16 / 9;
+      }
+      .bar {
+        display: flex;
+        gap: 18px;
+        align-items: center;
+        overflow: hidden;
+        white-space: nowrap;
+        padding: 10px 18px;
+        border-top: 1px solid #25221d;
+        font-size: 15px;
+      }
+      .count {
+        font-family: ui-monospace, monospace;
+        color: #8a826f;
+      }
+      .title {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-weight: 600;
+      }
+      .state {
+        color: #8a826f;
+      }
+      /* Presentation mode: the video fills the screen, nothing else. */
+      .stage.presenting {
+        grid-template-rows: minmax(0, 1fr);
+        background: #000;
+        cursor: none;
+      }
+      .stage.presenting .bar {
+        display: none;
+      }
+      .hint {
+        color: #5c5647;
+        font-size: 13px;
+      }
+      .loading {
+        display: grid;
+        place-items: center;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

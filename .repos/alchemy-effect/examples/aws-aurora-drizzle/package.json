@@ -10,13 +10,16 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/drizzle": "workspace:*",
     "@distilled.cloud/aws": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
-    "@types/pg": "catalog:",
     "alchemy": "workspace:*",
     "drizzle-orm": "catalog:",
-    "effect": "catalog:",
-    "pg": "catalog:"
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "workspace:*"
   }
 }
