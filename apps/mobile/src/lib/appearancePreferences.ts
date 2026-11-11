@@ -12,7 +12,7 @@ export const MIN_BASE_FONT_SIZE = 11;
 export const MAX_BASE_FONT_SIZE = 22;
 export const BASE_FONT_SIZE_STEP = 1;
 
-export const DEFAULT_CODE_FONT_SIZE = MOBILE_CODE_SURFACE.fontSize;
+const DEFAULT_CODE_FONT_SIZE = MOBILE_CODE_SURFACE.fontSize;
 export const MIN_CODE_FONT_SIZE = 8;
 export const MAX_CODE_FONT_SIZE = 18;
 export const CODE_FONT_SIZE_STEP = 1;
@@ -163,10 +163,7 @@ export function resolveMarkdownFontSizes(baseFontSize: number): ResolvedMarkdown
   };
 }
 
-/**
- * Maps the Uniwind `--text-*` theme variables (see global.css) to the
- * MOBILE_TYPOGRAPHY roles they were authored from. Keep in sync with both.
- */
+/** Keep text-variable roles in sync with global.css and MOBILE_TYPOGRAPHY. */
 const TEXT_SCALE_VARIABLE_ROLES = {
   "--text-3xs": MOBILE_TYPOGRAPHY.micro,
   "--text-2xs": MOBILE_TYPOGRAPHY.caption,
@@ -230,10 +227,4 @@ export function stepTerminalFontSize(current: number, direction: -1 | 1): number
   return normalizeTerminalFontSize(next);
 }
 
-export {
-  DEFAULT_TERMINAL_FONT_SIZE,
-  MAX_TERMINAL_FONT_SIZE,
-  MIN_TERMINAL_FONT_SIZE,
-  TERMINAL_FONT_SIZE_STEP,
-  normalizeTerminalFontSize,
-};
+export { MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, TERMINAL_FONT_SIZE_STEP };
