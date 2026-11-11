@@ -153,6 +153,8 @@ export function isAutoSettlementCandidate(
   if (thread.pendingRuntimeRequest !== null) return false;
   // A guest is waiting on the owner; settling would hide the Request.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
+  // Open owned work stays visible after the chat moves on; settling would bury the queue.
+  if ((thread.openOwnedWorkCount ?? 0) > 0) return false;
   if (thread.activityRunStatus != null) return false;
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;

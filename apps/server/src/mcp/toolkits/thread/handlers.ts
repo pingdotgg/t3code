@@ -4,10 +4,13 @@ import {
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type RunId,
+  OwnedWorkItemId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  OPEN_OWNED_WORK_STATUSES,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -328,6 +331,105 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               type: "queued-run.cancel",
               runId,
             }));
+        }
+      }),
+    ),
+  ),
+  t3_owned_work: McpToolAccess.either(
+    (input) => input.action === "list" || input.action === "read",
+    McpToolAccess.reads((input) =>
+      Effect.gen(function* () {
+        const { projection } = yield* readThread(input.threadId);
+        const items = projection.thread.ownedWorkItems ?? [];
+        if (input.action === "list") {
+          return {
+            items:
+              input.openOnly === true
+                ? items.filter((item) => OPEN_OWNED_WORK_STATUSES.has(item.status))
+                : items,
+          };
+        }
+        const itemId = yield* required(input.itemId, "itemId");
+        const item = items.find((candidate) => candidate.id === itemId);
+        return (
+          item ??
+          (yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "The owned work item was not found.",
+          }))
+        );
+      }),
+    ),
+    writesThread((input) =>
+      Effect.gen(function* () {
+        const { projection, caller } = yield* readThread(input.threadId);
+        const actorThreadId = caller?.id ?? projection.thread.id;
+        switch (input.action) {
+          case "assign": {
+            const title = yield* required(input.title, "title");
+            const random = yield* SecureRandom.SecureRandom;
+            const itemId =
+              input.itemId ?? OwnedWorkItemId.make(`owned-work:${yield* random.uuidV4()}`);
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "owned-work.assign",
+              itemId,
+              title,
+              description: input.description ?? "",
+              assigneeThreadId: input.assigneeThreadId,
+              createdByThreadId: actorThreadId,
+            }));
+          }
+          case "claim": {
+            const itemId = yield* required(input.itemId, "itemId");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "owned-work.claim",
+              itemId,
+              claimedByThreadId: actorThreadId,
+            }));
+          }
+          case "progress": {
+            const itemId = yield* required(input.itemId, "itemId");
+            const progress = yield* required(input.progress, "progress");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "owned-work.progress",
+              itemId,
+              progress,
+              actorThreadId,
+            }));
+          }
+          case "handoff": {
+            const itemId = yield* required(input.itemId, "itemId");
+            const toThreadId = yield* required(input.toThreadId, "toThreadId");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "owned-work.handoff",
+              itemId,
+              toThreadId,
+              note: input.note,
+              actorThreadId,
+            }));
+          }
+          case "complete": {
+            const itemId = yield* required(input.itemId, "itemId");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "owned-work.complete",
+              itemId,
+              actorThreadId,
+            }));
+          }
+          default: {
+            const itemId = yield* required(input.itemId, "itemId");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "owned-work.cancel",
+              itemId,
+              actorThreadId,
+            }));
+          }
         }
       }),
     ),
