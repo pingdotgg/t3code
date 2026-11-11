@@ -42,7 +42,13 @@ import {
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import {
+  type CliAuthLocationFlags,
+  prepareServerDirectories,
+  projectLocationFlags,
+  requireServerDatabase,
+  resolveCliAuthConfig,
+} from "./config.ts";
 
 type ProjectMutationTarget = {
   readonly id: ProjectId;
@@ -356,24 +362,10 @@ const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
 });
 
 const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(
-  function* (
-    environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
-    config: ServerConfig.ServerConfig["Service"],
-  ) {
-    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) {
-      return Option.none<{ readonly origin: string }>();
-    }
-
+  function* (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"], origin: string) {
     const attempt = withProjectCliSessionToken(environmentAuth, (token) =>
-      fetchLiveOrchestrationSnapshot(
-        runtimeState.value.origin,
-        token,
-        PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT,
-      ).pipe(
-        Effect.as({
-          origin: runtimeState.value.origin,
-        }),
+      fetchLiveOrchestrationSnapshot(origin, token, PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT).pipe(
+        Effect.as({ origin }),
       ),
     );
 
@@ -383,7 +375,7 @@ const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecu
     }
 
     yield* Effect.logDebug("Failed to connect to the persisted project CLI server.", {
-      origin: runtimeState.value.origin,
+      origin,
       cause: attempted.failure,
     });
     return Option.none<{ readonly origin: string }>();
@@ -409,12 +401,19 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
   >,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const config = yield* resolveCliAuthConfig(flags, logLevel, { deferSetup: true });
   const minimumLogLevel = config.logLevel;
+  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+  if (Option.isSome(runtimeState)) {
+    yield* requireServerDatabase(config.dbPath);
+  }
+  yield* prepareServerDirectories(config);
 
   return yield* Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const liveMode = yield* tryResolveLiveProjectExecutionMode(environmentAuth, config);
+    const liveMode = Option.isSome(runtimeState)
+      ? yield* tryResolveLiveProjectExecutionMode(environmentAuth, runtimeState.value.origin)
+      : Option.none<{ readonly origin: string }>();
 
     if (Option.isSome(liveMode)) {
       return yield* withProjectCliSessionToken(environmentAuth, (token) =>

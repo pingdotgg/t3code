@@ -8,6 +8,7 @@ import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
 import * as Config from "effect/Config";
+import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -16,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -267,6 +269,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     readonly startupPresentation?: ServerConfig.StartupPresentation;
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
     readonly rejectRunningServer?: boolean;
+    /** Leave directory setup to the caller's `prepareServerDirectories`, after its preflight. */
+    readonly deferSetup?: boolean;
     readonly selectAutomaticPort?: (
       preferred: number,
     ) => Effect.Effect<number, NetService.NetError | CliError.UserError>;
@@ -275,7 +279,6 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const { findAvailablePort } = yield* NetService.NetService;
   const selectAutomaticPort = options?.selectAutomaticPort ?? findAvailablePort;
   const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
   const env = yield* EnvServerConfig;
   const normalizedFlags = {
     mode: flags.mode ?? Option.none(),
@@ -360,13 +363,10 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
       });
     }
   }
-  yield* fs.makeDirectory(cwd, { recursive: true });
-  yield* ServerConfig.ensureServerDirectories(derivedPaths);
   const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
     derivedPaths.settingsPath,
   );
   const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
-  yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
   const startupPresentation = options?.startupPresentation ?? "browser";
   const isHeadlessStartup = startupPresentation === "headless";
   const noBrowser = Option.getOrElse(
@@ -525,13 +525,27 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     tailscaleServePort,
   };
 
+  if (!options?.deferSetup) {
+    yield* prepareServerDirectories(config);
+  }
   return config;
+});
+
+/** Creates the directories a resolved config writes to and sweeps expired uploads. */
+export const prepareServerDirectories = Effect.fn("config.prepareServerDirectories")(function* (
+  config: ServerConfig.ServerConfig["Service"],
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(config.cwd, { recursive: true });
+  yield* ServerConfig.ensureServerDirectories(config);
+  yield* fs.makeDirectory(path.dirname(config.serverTracePath), { recursive: true });
 });
 
 export const resolveCliAuthConfig = (
   flags: CliAuthLocationFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
-  options?: { readonly quietLogs?: boolean },
+  options?: { readonly quietLogs?: boolean; readonly deferSetup?: boolean },
 ) => {
   const resolved = resolveServerConfig(
     {
@@ -550,6 +564,7 @@ export const resolveCliAuthConfig = (
       lan: Option.none(),
     },
     cliLogLevel,
+    { deferSetup: options?.deferSetup ?? false },
   );
   // Logs go to stdout, where --json and --token-only print, and resolving can
   // log, for example when it sweeps abandoned attachment uploads.
@@ -557,6 +572,31 @@ export const resolveCliAuthConfig = (
     ? resolved.pipe(Effect.provideService(References.MinimumLogLevel, "Error"))
     : resolved;
 };
+
+export class ServerDatabaseMissingError extends Schema.TaggedError<ServerDatabaseMissingError>()(
+  "ServerDatabaseMissingError",
+  { dbPath: Schema.String },
+) {
+  override readonly [Runtime.errorReported] = false;
+  override get message(): string {
+    return `T3 Code's database is not at ${this.dbPath}. The server may be restarting.`;
+  }
+}
+
+/**
+ * A CLI that talks to a registered server must not open the database itself
+ * when it is missing: opening creates and migrates an empty one behind it.
+ */
+export const requireServerDatabase = Effect.fn("cli.requireServerDatabase")(function* (
+  dbPath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(dbPath))) {
+    const error = new ServerDatabaseMissingError({ dbPath });
+    yield* Console.error(error.message);
+    return yield* error;
+  }
+});
 
 const DurationShorthandPattern = /^(?<value>\d+)(?<unit>ms|s|m|h|d|w)$/i;
 

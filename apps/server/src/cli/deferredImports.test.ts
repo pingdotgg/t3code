@@ -85,6 +85,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
           port: 3_773,
         }),
       });
+      yield* fs.writeFileString(NodePath.join(baseDir, "userdata", "statev2.sqlite"), "");
       const unreachable: typeof globalThis.fetch = () =>
         Promise.reject(new Error("connection refused"));
 
@@ -112,6 +113,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
           port: 3_773,
         }),
       });
+      yield* fs.writeFileString(NodePath.join(baseDir, "userdata", "statev2.sqlite"), "");
 
       hooks.importsAttempted.length = 0;
       let mutations = 0;
