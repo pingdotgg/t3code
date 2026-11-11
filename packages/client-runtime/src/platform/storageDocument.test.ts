@@ -217,16 +217,32 @@ describe("ConnectionCatalogDocument", () => {
     expect(decoded.networkMembers).toBeUndefined();
   });
 
-  it("keeps followed network members across a save", () => {
+  it("keeps followed network members across a save, and reads ones saved before openers", () => {
+    const host = EnvironmentId.make("host");
     const networkMembers = [
-      { environmentId: ENVIRONMENT_ID, label: "Laptop", via: EnvironmentId.make("host") },
-    ];
+      { environmentId: ENVIRONMENT_ID, label: "Laptop", via: host, opener: { kind: "host" } },
+      {
+        environmentId: EnvironmentId.make("box"),
+        label: "Box",
+        via: host,
+        opener: { kind: "app", appId: "app-phone" },
+      },
+    ] as const;
     const encoded = encodeCatalogDocument({
       ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
       networkMembers,
     });
-
     expect(decodeCatalogDocument(encoded).networkMembers).toEqual(networkMembers);
+
+    // Earlier builds saved the app id alone; without one the member was opened app-less.
+    const legacy = decodeCatalogDocument({
+      ...encoded,
+      networkMembers: [
+        { environmentId: ENVIRONMENT_ID, label: "Laptop", via: host },
+        { environmentId: "box", label: "Box", via: host, appId: "app-phone", openedAs: "app-old" },
+      ],
+    });
+    expect(legacy.networkMembers).toEqual(networkMembers);
   });
 
   it("switches a saved environment off and back on without touching its records", () => {

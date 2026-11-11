@@ -125,28 +125,6 @@ export function createNetworkMemberAtoms<R, E, EO>(
     );
   }).pipe(Atom.withLabel("network-members:unopened"));
 
-  /** Each record's state: open, to open (again), or left with a session that runs out. */
-  const statusAtom = Atom.make((get) => {
-    const presentations = get(options.presentationsAtom);
-    return new Map(
-      get(recordsAtom).map((record) => {
-        const saved = presentations.get(record.environmentId);
-        return [
-          record.environmentId,
-          {
-            record,
-            status: networkMemberStatus(
-              record,
-              saved === undefined
-                ? undefined
-                : { needsPairing: saved.connection.needsPairing === true },
-            ),
-          },
-        ] as const;
-      }),
-    );
-  }).pipe(Atom.withLabel("network-members:status"));
-
   /** Connected hosts of the networks this client follows. */
   const followedHostsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> =>
     reuseSame(
@@ -168,6 +146,31 @@ export function createNetworkMemberAtoms<R, E, EO>(
       (left, right) => left.host === right.host && left.appId === right.appId,
     ),
   ).pipe(Atom.withLabel("network-members:opening-hosts"));
+
+  /** Each record and the one status the UI shows for it (`networkMemberStatus`). */
+  const statusAtom = Atom.make((get) => {
+    const presentations = get(options.presentationsAtom);
+    const openers = get(openingHostsAtom);
+    return new Map(
+      get(recordsAtom).map((record) => {
+        const saved = presentations.get(record.environmentId);
+        const canOpen = openers.some((opener) => opener.host !== record.environmentId);
+        return [
+          record.environmentId,
+          {
+            record,
+            status: networkMemberStatus(
+              record,
+              saved === undefined
+                ? undefined
+                : { needsPairing: saved.connection.needsPairing === true },
+              canOpen,
+            ),
+          },
+        ] as const;
+      }),
+    );
+  }).pipe(Atom.withLabel("network-members:status"));
 
   const renewalsAtom = Atom.make((get): ReadonlyArray<NetworkMemberRenewal> => {
     const presentations = get(options.presentationsAtom);

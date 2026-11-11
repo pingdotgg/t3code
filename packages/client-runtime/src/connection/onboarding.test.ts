@@ -31,6 +31,7 @@ import {
   ConnectionBlockedError,
   PrimaryConnectionTarget,
 } from "./model.ts";
+import { NetworkMembers, makeNetworkMembers } from "./networkMembers.ts";
 import * as Onboarding from "./onboarding.ts";
 import {
   prepareBearerConnectionUpdate,
@@ -394,7 +395,30 @@ describe("connection onboarding", () => {
       expect(entry === undefined ? [] : connectionRoutes(entry).map(routeHttpBaseUrl)).toEqual(
         expect.arrayContaining(["https://remote.example.test/", "https://lan.example.test/"]),
       );
-    }).pipe(Effect.provide(layerPairingOnboarding())),
+      // Paired by hand, so the network no longer manages it or may forget its credential.
+      expect(yield* (yield* NetworkMembers).read).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        layerPairingOnboarding().pipe(
+          Layer.provideMerge(
+            Layer.effect(
+              NetworkMembers,
+              makeNetworkMembers({
+                read: Effect.succeed([
+                  {
+                    environmentId: PAIRED_ENVIRONMENT_ID,
+                    label: "Paired environment",
+                    via: EnvironmentId.make("environment-host"),
+                    opener: { kind: "app", appId: "app-phone" },
+                  },
+                ]),
+                write: () => Effect.void,
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
   );
 
   it.effect(

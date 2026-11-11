@@ -12,35 +12,68 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
 
-/**
- * A machine of the user's network that this client keeps because a member it is connected to
- * listed it, not because the user saved it. It is opened (minted a credential and saved) only on
- * demand, and it goes away when the network revokes it or no member lists it any more.
- */
-export const NetworkMemberRecord = Schema.Struct({
+/** Who this client opened a member as: an app of a network, or a session without an app id. */
+const NetworkMemberOpener = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("app"), appId: Schema.String }),
+  /** The desktop app or a code-paired session: it follows only the roster of its `via` host. */
+  Schema.Struct({ kind: Schema.Literal("host") }),
+]);
+
+const networkMemberFields = {
   environmentId: EnvironmentId,
   label: Schema.String,
-  /** A member that lists it, and the first one asked to open it. */
+  /** The host that opened it or lists it, and the first one asked to open it again. */
   via: EnvironmentId,
-  /** This client's app id in the network that listed it. Absent on records saved before it. */
-  appId: Schema.optionalKey(Schema.String),
-  /** The app id its saved credential was minted under; absent when opened without one. */
-  openedAs: Schema.optionalKey(Schema.String),
   /** When the session it was opened with ends (epoch ms). Nothing extends a session. */
   sessionExpiresAt: Schema.optionalKey(Schema.Number),
   /**
    * It left the network by its own act. Its kept session lasts until `sessionExpiresAt`; it is
-   * never renewed or forgotten, and is managed again once a followed network lists it live.
+   * never renewed or forgotten, and is managed again once its roster lists it live.
    */
   left: Schema.optionalKey(Schema.Literal(true)),
+};
+
+const NetworkMemberRecordType = Schema.Struct({
+  ...networkMemberFields,
+  opener: NetworkMemberOpener,
 });
-export type NetworkMemberRecord = typeof NetworkMemberRecord.Type;
+
+// Records saved before `opener` carry the app id alone; without one they were app-less opens.
+const StoredNetworkMemberRecord = Schema.Struct({
+  ...networkMemberFields,
+  opener: Schema.optionalKey(NetworkMemberOpener),
+  appId: Schema.optionalKey(Schema.String),
+});
+
+/**
+ * A machine of the user's network this client keeps because a host listed or opened it, not
+ * because the user saved it by hand. It is opened only on demand and follows its opener's roster.
+ */
+export const NetworkMemberRecord = StoredNetworkMemberRecord.pipe(
+  Schema.decodeTo(
+    Schema.toType(NetworkMemberRecordType),
+    SchemaTransformation.transform<
+      typeof NetworkMemberRecordType.Type,
+      typeof StoredNetworkMemberRecord.Type
+    >({
+      decode: ({ appId, opener, ...record }) => ({
+        ...record,
+        opener: opener ?? (appId === undefined ? { kind: "host" } : { kind: "app", appId }),
+      }),
+      // Older builds read the app id alone.
+      encode: (record) =>
+        record.opener.kind === "app" ? { ...record, appId: record.opener.appId } : record,
+    }),
+  ),
+);
+export type NetworkMemberRecord = typeof NetworkMemberRecordType.Type;
 
 /** What one member reports about the network. */
 export type NetworkRoster = Pick<
@@ -184,9 +217,9 @@ function networkView(reports: ReadonlyArray<NetworkRosterReport>): NetworkView {
 }
 
 /**
- * Records whose app id no followed network takes move to a followed network listing their machine
- * live (tombstones are not membership). The rest go only on a positive signal for their own id: it
- * is revoked, or a host still calling this client by it lists it no more. Silence changes nothing.
+ * App records whose app id no network takes. Proven lost (revoked, unlisted by a host still using
+ * it, or re-paired on their `via` host), each moves to a network listing it live, or goes. Not
+ * proven, only a machine listed live elsewhere (it moved) goes. Dropped ones keep their sessions.
  */
 function rebindNetwork(
   records: ReadonlyArray<NetworkMemberRecord>,
@@ -194,10 +227,13 @@ function rebindNetwork(
   networks: ReadonlyArray<FollowedNetwork>,
 ): ReadonlyArray<NetworkMemberRecord> {
   const followed = new Set(networks.map((network) => network.appId));
+  const appIdOf = (record: NetworkMemberRecord) =>
+    record.opener.kind === "app" ? record.opener.appId : null;
   const stale = new Set(
-    records.flatMap((record) =>
-      record.appId !== undefined && !followed.has(record.appId) ? [record.appId] : [],
-    ),
+    records.flatMap((record) => {
+      const appId = appIdOf(record);
+      return appId !== null && !followed.has(appId) ? [appId] : [];
+    }),
   );
   if (stale.size === 0) return records;
   const apps = newestApps(reports);
@@ -212,35 +248,36 @@ function rebindNetwork(
       ]),
     ),
   }));
-  const successorOf = (environmentId: EnvironmentId) =>
-    live.find((network) => network.members.has(environmentId))?.appId;
-  const disowned = new Map<string, ReadonlySet<EnvironmentId>>();
-  for (const appId of stale) {
-    const entry = apps.get(appId);
-    if (entry !== undefined && entry.access !== "revoked") continue;
-    const speaking = new Set(
-      reports.flatMap((report) =>
-        report.roster.enabled && report.roster.callerAppId === appId ? [report.host] : [],
-      ),
-    );
-    if (entry !== undefined || speaking.size > 0) disowned.set(appId, speaking);
-  }
+  const disowned = new Set(
+    [...stale].filter((appId) => {
+      const entry = apps.get(appId);
+      if (entry !== undefined && entry.access !== "revoked") return false;
+      const vias = new Set(
+        records.flatMap((record) => (appIdOf(record) === appId ? [record.via] : [])),
+      );
+      return (
+        entry !== undefined ||
+        reports.some(
+          ({ host, roster }) =>
+            roster.enabled &&
+            (roster.callerAppId === appId ||
+              (vias.has(host) && callerAppIdOf(roster, apps) !== null)),
+        )
+      );
+    }),
+  );
   let changed = false;
   const next = records.flatMap((record) => {
-    if (record.appId === undefined) {
-      const dropped = [...disowned.values()].some((speaking) => speaking.has(record.via));
-      changed ||= dropped;
-      return dropped ? [] : [record];
-    }
-    if (!stale.has(record.appId)) return [record];
-    const entry = apps.get(record.appId);
+    const appId = appIdOf(record);
+    if (appId === null || !stale.has(appId)) return [record];
+    const entry = apps.get(appId);
     if (entry !== undefined && entry.access !== "revoked") return [record];
-    const successor = successorOf(record.environmentId);
-    if (successor !== undefined) {
+    const successor = live.find((network) => network.members.has(record.environmentId))?.appId;
+    if (successor !== undefined && disowned.has(appId)) {
       changed = true;
-      return [{ ...record, appId: successor, openedAs: record.openedAs ?? record.appId }];
+      return [{ ...record, opener: { kind: "app" as const, appId: successor } }];
     }
-    if (disowned.has(record.appId)) {
+    if (successor !== undefined || disowned.has(appId)) {
       changed = true;
       return [];
     }
@@ -250,87 +287,73 @@ function rebindNetwork(
 }
 
 /**
- * Each followed network decides its own records by the newest entry across its hosts. A record
- * goes on a newest revocation, or when none of its hosts lists it (self counts) and its `via` host
- * omits it. `userSaved` and unbound members never become records. Unchanged returns `records`.
+ * One roster's verdict on one record, whoever opened it. A member that left keeps the session the
+ * server kept (while saved here); a newest revocation drops it; so does its `via` host omitting it
+ * while no host lists it (self counts). Listed live, it is managed again. "drop" means drop.
+ */
+function followRecord(
+  record: NetworkMemberRecord,
+  view: NetworkView,
+  saved: ReadonlySet<EnvironmentId>,
+): NetworkMemberRecord | "drop" {
+  const newest = view.newest.get(record.environmentId);
+  if (newest !== undefined && hasLeftNetwork(newest)) {
+    if (!saved.has(record.environmentId)) return "drop";
+    return record.left === true ? record : { ...record, left: true };
+  }
+  if (newest?.access === "revoked") return "drop";
+  const entry = view.listed.get(record.environmentId);
+  if (entry === undefined) {
+    const omitted =
+      record.left !== true && !view.hosts.has(record.environmentId) && view.hosts.has(record.via);
+    return omitted ? "drop" : record;
+  }
+  const via = entry.hosts.includes(record.via) ? record.via : entry.hosts[0]!;
+  if (record.left !== true && entry.label === record.label && via === record.via) return record;
+  const { left: _left, ...managed } = record;
+  return { ...managed, label: entry.label, via };
+}
+
+/**
+ * Follows every record: an app record by its followed network's hosts, an app-less one by the
+ * roster of the host that opened it, under the same rule (`followRecord`). Followed networks
+ * also add the members they list; `userSaved` and unbound ones never become records. Returns
+ * `records` itself when nothing changed.
  */
 function followRoster(
   records: ReadonlyArray<NetworkMemberRecord>,
   input: {
+    readonly reports: ReadonlyArray<NetworkRosterReport>;
     readonly networks: ReadonlyArray<FollowedNetwork>;
     readonly saved: ReadonlySet<EnvironmentId>;
     readonly userSaved: ReadonlySet<EnvironmentId>;
   },
 ): ReadonlyArray<NetworkMemberRecord> {
-  const views = input.networks.map((network) => ({
-    appId: network.appId,
-    view: networkView(network.reports),
-  }));
-  const revoked = (view: NetworkView, environmentId: EnvironmentId) =>
-    view.newest.get(environmentId)?.access === "revoked";
-  // Records from before app ids join the network that lists them or holds their host.
-  const networkOf = (record: NetworkMemberRecord) =>
-    record.appId !== undefined
-      ? views.find((candidate) => candidate.appId === record.appId)
-      : views.find(
-          ({ view }) => view.listed.has(record.environmentId) || view.hosts.has(record.via),
-        );
+  const appViews = new Map(
+    input.networks.map((network) => [network.appId, networkView(network.reports)] as const),
+  );
+  const hostViews = new Map(
+    input.reports.flatMap((report) =>
+      report.roster.enabled && isLive(report.roster.selfMember)
+        ? [[report.host, networkView([report])] as const]
+        : [],
+    ),
+  );
   let changed = false;
   const next: Array<NetworkMemberRecord> = [];
   for (const record of records) {
-    const network = networkOf(record);
-    if (network === undefined) {
-      next.push(record);
-      continue;
-    }
-    const { appId, view } = network;
-    const entry = view.listed.get(record.environmentId);
-    const newest = view.newest.get(record.environmentId);
-    // A member that left keeps the session the server kept for the app that asked it to leave.
-    if (newest !== undefined && hasLeftNetwork(newest) && input.saved.has(record.environmentId)) {
-      changed ||= record.left !== true;
-      next.push(record.left === true ? record : { ...record, left: true });
-      continue;
-    }
-    if (
-      revoked(view, record.environmentId) ||
-      (entry === undefined &&
-        record.left !== true &&
-        !view.hosts.has(record.environmentId) &&
-        view.hosts.has(record.via))
-    ) {
-      changed = true;
-      continue;
-    }
-    // Listed live again after leaving: it rejoined, so the network manages it once more.
-    const { left: _left, ...rest } = record;
-    const updated: NetworkMemberRecord =
-      entry === undefined
-        ? { ...record, appId }
-        : {
-            ...rest,
-            label: entry.label,
-            via: entry.hosts.includes(record.via) ? record.via : entry.hosts[0]!,
-            appId,
-          };
-    if (
-      updated.left !== record.left ||
-      updated.label !== record.label ||
-      updated.via !== record.via ||
-      updated.appId !== record.appId
-    ) {
-      changed = true;
-      next.push(updated);
-    } else {
-      next.push(record);
-    }
+    const view =
+      record.opener.kind === "app" ? appViews.get(record.opener.appId) : hostViews.get(record.via);
+    const followed = view === undefined ? record : followRecord(record, view, input.saved);
+    if (followed !== record) changed = true;
+    if (followed !== "drop") next.push(followed);
   }
   const taken = new Set(records.map((record) => record.environmentId));
-  for (const { appId, view } of views) {
+  for (const [appId, view] of appViews) {
     for (const [environmentId, entry] of view.listed) {
       if (
         taken.has(environmentId) ||
-        revoked(view, environmentId) ||
+        view.newest.get(environmentId)?.access === "revoked" ||
         view.newest.get(environmentId)?.nodeId === null ||
         view.hosts.has(environmentId) ||
         input.userSaved.has(environmentId)
@@ -339,7 +362,12 @@ function followRoster(
       }
       taken.add(environmentId);
       changed = true;
-      next.push({ environmentId, label: entry.label, via: entry.hosts[0]!, appId });
+      next.push({
+        environmentId,
+        label: entry.label,
+        via: entry.hosts[0]!,
+        opener: { kind: "app", appId },
+      });
     }
   }
   return changed ? next : records;
@@ -423,12 +451,13 @@ export const followNetworkRoster = Effect.fn("NetworkMembers.follow")(function* 
   yield* members.update((current) =>
     Effect.gen(function* () {
       const saved = yield* input.savedEnvironmentIds;
-      // Saved members that are records stay managed; only the user's own entries are skipped.
-      const managed = new Set(current.map((record) => record.environmentId));
       const networks = followedNetworks(input.reports);
-      // Records a rebind drops are only unmanaged; their saved connections stay with the user.
+      // Records a rebind drops are released: their saved connections become the user's own.
       const released = rebindNetwork(current, input.reports, networks);
+      // Saved members that are records stay managed; only the user's own entries are skipped.
+      const managed = new Set(released.map((record) => record.environmentId));
       const next = followRoster(released, {
+        reports: input.reports,
         networks,
         saved,
         userSaved: new Set([...saved].filter((id) => !managed.has(id))),
@@ -437,8 +466,6 @@ export const followNetworkRoster = Effect.fn("NetworkMembers.follow")(function* 
       const remaining = new Set(next.map((record) => record.environmentId));
       for (const record of released) {
         if (remaining.has(record.environmentId) || !saved.has(record.environmentId)) continue;
-        // A credential minted under another app id is not this network's to delete.
-        if ((record.openedAs ?? record.appId) !== record.appId) continue;
         yield* input.forget(record.environmentId).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Could not forget a member that left the network.", {
@@ -500,14 +527,12 @@ export const openNetworkMember = Effect.fn("NetworkMembers.open")(function* <EM,
       continue;
     }
     const opened = yield* input.register(minted.success);
-    const { left: _left, openedAs: _openedAs, appId: _appId, ...kept } = record ?? {};
     const next: NetworkMemberRecord = {
-      ...kept,
       environmentId: opened.environmentId,
       label,
       via: host,
+      opener: appId === null ? { kind: "host" } : { kind: "app", appId },
       sessionExpiresAt: opened.sessionExpiresAt,
-      ...(appId === null ? {} : { appId, openedAs: appId }),
     };
     yield* members
       .update((current) =>
@@ -531,18 +556,22 @@ export type NetworkMemberStatus =
   | "unopened"
   /** Saved with a session the host accepts. */
   | "open"
-  /** Saved, but its session expired or was cut (its relay revoked): Open again. */
+  /** Its session was refused (expired, or cut with its relay); a connected host can open it again. */
   | "reopen"
-  /** It left the network; the kept session lasts until `sessionExpiresAt`, then pair by code. */
+  /** Its session was refused and nothing here can open it again (it left, or no host is connected). */
+  | "refused"
+  /** It left the network; the session the server kept lasts until `sessionExpiresAt`. */
   | "left";
 
+/** The one precedence: a refused session outranks everything the roster says. */
 export function networkMemberStatus(
   record: NetworkMemberRecord,
   saved: { readonly needsPairing: boolean } | undefined,
+  canOpen: boolean,
 ): NetworkMemberStatus {
-  if (record.left === true) return "left";
   if (saved === undefined) return "unopened";
-  return saved.needsPairing ? "reopen" : "open";
+  if (saved.needsPairing) return record.left !== true && canOpen ? "reopen" : "refused";
+  return record.left === true ? "left" : "open";
 }
 
 /**

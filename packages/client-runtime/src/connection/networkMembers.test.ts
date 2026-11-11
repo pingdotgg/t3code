@@ -87,7 +87,11 @@ const record = (environmentId: EnvironmentId, via: EnvironmentId): NetworkMember
   environmentId,
   label: environmentId,
   via,
-  appId: app,
+  opener: { kind: "app", appId: app },
+});
+const inApp = (entry: NetworkMemberRecord, appId: string): NetworkMemberRecord => ({
+  ...entry,
+  opener: { kind: "app", appId },
 });
 const opened = (environmentId: EnvironmentId) => ({ environmentId, sessionExpiresAt: 30 });
 const credential = (environmentId: EnvironmentId): TailnetDeviceClientCredential => ({
@@ -333,9 +337,7 @@ describe("leaving a network", () => {
         withApps(third, [device(box), device(desk)], appNew, "full-access"),
       ]);
 
-      expect(catalog.records()).toEqual([
-        { environmentId: desk, label: desk, via: third, appId: appNew },
-      ]);
+      expect(catalog.records()).toEqual([inApp(record(desk, third), appNew)]);
       expect(followedNetworks([withApps(third, [], appNew, "full-access")])).toMatchObject([
         { appId: appNew },
       ]);
@@ -380,8 +382,8 @@ describe("leaving a network", () => {
 
       yield* catalog.follow([repaired]);
       expect(catalog.records()).toEqual([
-        { ...record(laptop, studio), appId: appNew, openedAs: app },
-        { ...record(vps, studio), appId: appNew, openedAs: app },
+        inApp(record(laptop, studio), appNew),
+        inApp(record(vps, studio), appNew),
       ]);
       expect(followedNetworks([repaired])).toEqual([{ appId: appNew, reports: [repaired] }]);
       expect(catalog.forgotten).toEqual([]);
@@ -435,31 +437,37 @@ describe("round 4", () => {
       expect(minted).toEqual([studio]);
       // The open is a record keyed by the relaying host, so it is renewed and its state shown.
       expect(catalog.records()).toEqual([
-        { environmentId: laptop, label: "Laptop", via: studio, sessionExpiresAt: 30 },
+        {
+          environmentId: laptop,
+          label: "Laptop",
+          via: studio,
+          opener: { kind: "host" },
+          sessionExpiresAt: 30,
+        },
       ]);
       // Without write access the same session is not asked.
       expect(openingHosts([desktop], () => false)).toEqual([]);
     }),
   );
 
-  it.effect("a foreign host listing one record's machine repins only what it lists live", () =>
+  it.effect("a foreign host never repins records; a machine that moved there is released", () =>
     Effect.gen(function* () {
       const catalog = yield* makeCatalog([record(laptop, studio), record(vps, studio)]);
       catalog.saved.add(studio).add(laptop);
 
       // The pinned network's hosts are offline; the foreign host holds a tombstone of the laptop.
       yield* catalog.follow([inOther(third, [device(laptop, "revoked"), device(desk)])]);
-      expect(catalog.records().filter((entry) => entry.appId === app)).toEqual([
-        record(laptop, studio),
-        record(vps, studio),
-      ]);
+      expect(
+        catalog
+          .records()
+          .filter((entry) => entry.opener.kind === "app" && entry.opener.appId === app),
+      ).toEqual([record(laptop, studio), record(vps, studio)]);
 
-      // The laptop moved to the foreign network: only it follows there.
+      // The laptop moved while its network is silent: released, its saved session kept, the rest stay.
       yield* catalog.follow([inOther(third, [device(laptop), device(desk)])]);
       expect(catalog.records()).toEqual([
-        { ...record(laptop, third), appId: appOther, openedAs: app },
         record(vps, studio),
-        { ...record(desk, third), appId: appOther },
+        inApp(record(desk, third), appOther),
       ]);
       expect(catalog.forgotten).toEqual([]);
     }),
@@ -472,7 +480,7 @@ describe("round 4", () => {
 
       yield* catalog.follow([report(studio, [device(laptop)]), inOther(third, [device(desk)])]);
       expect(catalog.records()).toEqual([
-        { ...record(desk, third), appId: appOther },
+        inApp(record(desk, third), appOther),
         record(laptop, studio),
       ]);
     }),
@@ -495,7 +503,6 @@ describe("round 4", () => {
 });
 
 describe("round 5", () => {
-  const third = EnvironmentId.make("env-third");
   const leftLaptop = {
     ...device(laptop, "revoked"),
     member: { ...member(laptop, "revoked"), updatedAt: { wallMs: 2, counter: 0, node: laptop } },
@@ -519,38 +526,43 @@ describe("round 5", () => {
     }),
   );
 
-  it("shows a saved member whose session was refused as one to open again", () => {
+  it("a refused session outranks what the roster says", () => {
     const opened = record(laptop, studio);
-    expect(networkMemberStatus(opened, undefined)).toBe("unopened");
-    expect(networkMemberStatus(opened, { needsPairing: false })).toBe("open");
-    expect(networkMemberStatus(opened, { needsPairing: true })).toBe("reopen");
-    expect(networkMemberStatus({ ...opened, left: true }, { needsPairing: true })).toBe("left");
+    const left = { ...opened, left: true as const };
+    expect(networkMemberStatus(opened, undefined, true)).toBe("unopened");
+    expect(networkMemberStatus(opened, { needsPairing: false }, true)).toBe("open");
+    expect(networkMemberStatus(left, { needsPairing: false }, true)).toBe("left");
+    expect(networkMemberStatus(opened, { needsPairing: true }, true)).toBe("reopen");
+    // Cut by another client's Leave, or with no host here to open it: nothing is kept for it.
+    expect(networkMemberStatus(left, { needsPairing: true }, true)).toBe("refused");
+    expect(networkMemberStatus(opened, { needsPairing: true }, false)).toBe("refused");
   });
 
-  it.effect(
-    "a record repinned to another network is not forgotten when that network drops it",
-    () =>
-      Effect.gen(function* () {
-        const catalog = yield* makeCatalog([record(laptop, studio)]);
-        catalog.saved.add(laptop);
-        const other = (devices: ReadonlyArray<TailnetDevice>) =>
-          report(third, devices, { callerAppId: "app-other" });
-        const revoked = {
-          ...device(laptop, "revoked"),
-          member: {
-            ...member(laptop, "revoked"),
-            updatedAt: { wallMs: 2, counter: 0, node: third },
-          },
-        };
+  it.effect("an app-less open follows the roster of the host that opened it", () =>
+    Effect.gen(function* () {
+      const box2 = EnvironmentId.make("env-box2");
+      const appless = (environmentId: EnvironmentId): NetworkMemberRecord => ({
+        environmentId,
+        label: environmentId,
+        via: studio,
+        opener: { kind: "host" },
+      });
+      const catalog = yield* makeCatalog([appless(laptop), appless(vps), appless(box2)]);
+      catalog.saved.add(studio).add(laptop).add(vps).add(box2);
+      const desktop = (devices: ReadonlyArray<TailnetDevice>) =>
+        report(studio, devices, { callerAppId: null, apps: [] });
 
-        yield* catalog.follow([other([device(laptop)])]);
-        expect(catalog.records()).toEqual([
-          { ...record(laptop, third), appId: "app-other", openedAs: app },
-        ]);
-        yield* catalog.follow([other([revoked])]);
-        expect(catalog.records()).toEqual([]);
-        expect(catalog.forgotten).toEqual([]);
-      }),
+      // A host this session is not on says nothing; its own host's switch off says nothing.
+      yield* catalog.follow([report(box, [device(laptop, "revoked")])]);
+      yield* catalog.follow([
+        { ...desktop([]), roster: { ...desktop([]).roster, enabled: false } },
+      ]);
+      expect(catalog.records()).toHaveLength(3);
+
+      yield* catalog.follow([desktop([leftLaptop, device(vps, "revoked"), device(box2)])]);
+      expect(catalog.records()).toEqual([{ ...appless(laptop), left: true }, appless(box2)]);
+      expect(catalog.forgotten).toEqual([vps]);
+    }),
   );
 });
 
@@ -588,7 +600,7 @@ describe("openNetworkMember", () => {
       // Only the member asked for is minted, and the one that answered is asked first next time.
       expect(registered).toEqual([laptop]);
       expect(catalog.records()).toEqual([
-        { ...record(laptop, third), openedAs: app, sessionExpiresAt: 30 },
+        { ...record(laptop, third), sessionExpiresAt: 30 },
         record(vps, studio),
       ]);
 

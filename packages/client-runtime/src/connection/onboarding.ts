@@ -191,12 +191,12 @@ const preparePairing = Effect.fn("clientRuntime.connection.onboarding.preparePai
 const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
-  return (yield* registerPairingSession(input)).environmentId;
+  return (yield* registerPairingSession(input, { byHand: true })).environmentId;
 });
 
 const registerPairingSession = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingSession",
-)(function* (input: PairingConnectionInput) {
+)(function* (input: PairingConnectionInput, options: { readonly byHand: boolean }) {
   const { registration, sessionExpiresAt } = yield* preparePairing(input);
   const opened: OpenedDevice = {
     environmentId: registration.target.environmentId,
@@ -205,8 +205,8 @@ const registerPairingSession = Effect.fn(
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const knownAddressOnly = input.expectedEnvironmentId === undefined;
   const register = registry.register(registration, { knownAddressOnly });
-  // Paired by the user with a code, so the network no longer owns it.
-  const registered = knownAddressOnly
+  // Paired by the user with a code, so the network no longer owns it or may forget it.
+  const registered = options.byHand
     ? yield* releaseNetworkMember(registration.target.environmentId, register)
     : yield* register;
   if (!registered) return opened;
@@ -227,11 +227,15 @@ const registerDeviceConnection = Effect.fn(
       Effect.orElseSucceed(() => false),
     ),
   );
-  return yield* registerPairingSession({
-    host: Option.getOrElse(answering, () => device.urls[0] ?? ""),
-    pairingCode: device.credential,
-    expectedEnvironmentId: device.environmentId,
-  });
+  // Opened through the network, which keeps managing it.
+  return yield* registerPairingSession(
+    {
+      host: Option.getOrElse(answering, () => device.urls[0] ?? ""),
+      pairingCode: device.credential,
+      expectedEnvironmentId: device.environmentId,
+    },
+    { byHand: false },
+  );
 });
 
 const isBearerCredential = Schema.is(BearerConnectionCredential);
