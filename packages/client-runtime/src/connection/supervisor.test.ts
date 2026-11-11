@@ -244,6 +244,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
     entry: ConnectionCatalogEntry,
     reportProgress: (progress: ConnectionDriver.ConnectionDriverProgress) => Effect.Effect<void>,
   ) {
+    yield* reportProgress({ stage: "preparing" });
     return yield* ConnectionDriver.connectOverRoutes(entry, checkRoute, (route) =>
       connectRoute(route.target, reportProgress),
     );

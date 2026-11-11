@@ -62,7 +62,13 @@ describe("ConnectionDriver", () => {
         .connect(ENTRY, (progress) => Ref.update(stages, (all) => [...all, progress.stage]))
         .pipe(Effect.scoped, Effect.flip);
 
-      expect(yield* Ref.get(stages)).toEqual(["preparing", "opening", "preparing", "opening"]);
+      expect(yield* Ref.get(stages)).toEqual([
+        "preparing",
+        "preparing",
+        "opening",
+        "preparing",
+        "opening",
+      ]);
     }),
   );
 });
