@@ -13,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   isListedThread,
+  isListedThreadLineage,
   isLiveSubagentShell,
   isNestedSubagentThread,
   isOlderSettledThreadShell,
@@ -131,7 +132,8 @@ function hiddenChildAncestorIds(
 ) {
   const ancestorIds = new Set<string>();
   for (const thread of threads) {
-    if (isListedThread(thread)) continue;
+    // By lineage, so a promoted child still keeps its older settled ancestors.
+    if (isListedThreadLineage(thread.lineage)) continue;
     if (thread.lineage.parentThreadId !== null) ancestorIds.add(thread.lineage.parentThreadId);
     ancestorIds.add(thread.lineage.rootThreadId);
   }
@@ -265,7 +267,7 @@ function shellSubscriberThreadIds(
   );
   const ancestorIds = hiddenChildAncestorIds([
     ...subagents,
-    ...index.filter((entry) => entry.lineage.sideChat === true),
+    ...index.filter((entry) => entry.lineage.sideChat === true || entry.promotedAt != null),
   ]);
   const keptSubagentIds = new Set(subagents.map((entry) => entry.id));
   const beforeMs = facts.olderSettledBeforeMs;

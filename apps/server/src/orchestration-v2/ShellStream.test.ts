@@ -322,6 +322,15 @@ describe("omitOlderSettledShells", () => {
         settledOverride: null,
         settledAt: null,
       }),
+      row("promoted-parent", 30),
+      row("promoted-child", null, {
+        promotedAt: DateTime.makeUnsafe(0),
+        lineage: {
+          parentThreadId: ThreadId.make("promoted-parent"),
+          relationshipToParent: "subagent",
+          rootThreadId: ThreadId.make("promoted-parent"),
+        },
+      }),
       row("side-chat-parent", 30),
       row("side-chat", null, {
         lineage: {
@@ -338,10 +347,12 @@ describe("omitOlderSettledShells", () => {
       "running",
       "parent",
       "child",
+      "promoted-parent",
+      "promoted-child",
       "side-chat-parent",
       "side-chat",
     ]);
-    expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 5 }]);
+    expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 6 }]);
   });
 });
 
