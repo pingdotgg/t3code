@@ -1311,6 +1311,46 @@ describe("OpenCodeAdapterV2", () => {
         ),
     );
 
+    it.effect.each(["failure", "timeout"] as const)(
+      "ignores rejection %s after the question settles in flight",
+      (outcome) =>
+        Effect.gen(function* () {
+          const rejectionStarted = promiseGate<void>();
+          const releaseRejection = promiseGate<void>();
+          const harness = yield* makeHarness({
+            question: {
+              reject: async () => {
+                rejectionStarted.resolve();
+                await releaseRejection.promise;
+                return { error: { message: "Rejected delivery" } };
+              },
+            },
+          });
+          yield* harness.ask("question");
+          yield* TestClock.adjust("5 seconds");
+          yield* Effect.promise(() => rejectionStarted.promise);
+          assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+          yield* Effect.promise(() =>
+            harness.nativeEvents.push({
+              type: "question.replied",
+              properties: { sessionID: "child", requestID: "request", answers: [] },
+            }),
+          );
+          if (outcome === "failure") releaseRejection.resolve();
+          else yield* TestClock.adjust("10 seconds");
+          yield* TestClock.adjust("0 millis");
+          assert.isEmpty(harness.errors());
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          const snapshot = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.isEmpty(snapshot.runtimeRequests);
+        }).pipe(
+          Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+          Effect.scoped,
+        ),
+    );
+
     it.effect("pins idle release through the initial lookup, backoff and question rejection", () =>
       Effect.gen(function* () {
         const lookupStarted = promiseGate<void>();

@@ -1107,11 +1107,17 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             status: OrchestrationV2ProviderSession["status"],
             lastError: string | null = sessionEntity.lastError,
             expectedSession?: OrchestrationV2ProviderSession,
+            unsettledNativeRequestId?: string,
           ) {
             const updatedAt = yield* DateTime.now;
             // Check after the clock yield so late routing work cannot overwrite
             // a newer session update, including a turn that already finished.
             if (expectedSession !== undefined && sessionEntity !== expectedSession) return;
+            if (
+              unsettledNativeRequestId !== undefined &&
+              settledNativeRequestIds.has(unsettledNativeRequestId)
+            )
+              return;
             sessionEntity = { ...sessionEntity, status, lastError, updatedAt };
             yield* emitProviderEvent({
               type: "provider_session.updated",
@@ -2082,6 +2088,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                         "error",
                         `${detail} Native rejection failed.`,
                         routingSession,
+                        nativeRequestId,
                       );
                       return;
                     }
