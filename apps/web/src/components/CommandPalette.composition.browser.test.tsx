@@ -33,12 +33,13 @@ vi.mock("../hooks/useScratchProject", () => ({
   useScratchProject: () => ({ scratchEnvironmentId: () => null }),
 }));
 vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => async () => undefined }));
+const mocks = vi.hoisted(() => ({ handleNewThread: vi.fn(async () => undefined) }));
 vi.mock("../hooks/useHandleNewThread", () => ({
   useHandleNewThread: () => ({
     activeDraftThread: null,
     activeThread: null,
     defaultProjectRef: null,
-    handleNewThread: async () => undefined,
+    handleNewThread: mocks.handleNewThread,
   }),
   useNewThreadHandler: () => async () => undefined,
 }));
@@ -207,4 +208,19 @@ it.each([
   await expect.element(submit).toBeEnabled();
   await userEvent.keyboard("{Tab}");
   await expect.element(submit).toHaveFocus();
+});
+
+it("opens a project added from the Agents board in the threads view", async () => {
+  mocks.handleNewThread.mockClear();
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>, {
+    router: "/agents",
+  });
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText("Local folder", { exact: true }).click();
+  await page.getByRole("combobox").fill("/workspace/project");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+  expect(mocks.handleNewThread).toHaveBeenCalledWith(
+    expect.objectContaining({ environmentId: "local" }),
+  );
 });
