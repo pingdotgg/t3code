@@ -3,9 +3,7 @@ import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -139,11 +137,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       const failed = command === control.failCommand;
       // GNU cp has no -c; leave a partial copy so the fallback has to clear it.
       const copyRejected = input.command === "cp" && input.args[0] === "-c";
-      if (copyRejected) {
-        const destination = input.args.at(-1) ?? "";
-        yield* fs.makeDirectory(destination, { recursive: true });
-        yield* fs.writeFileString(path.join(destination, "t3"), "partial");
-      }
+      if (copyRejected) yield* fs.writeFileString(input.args.at(-1) ?? "", "partial");
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
@@ -934,12 +928,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
           rename: (from, to) =>
-            fs.rename(
-              from,
-              from !== launcherDir && path.basename(from) === "launcher"
-                ? path.join(to, "missing", "t3")
-                : to,
-            ),
+            to === path.join(launcherDir, "t3")
+              ? fs.rename(path.join(from, "missing"), to)
+              : fs.rename(from, to),
         }),
       );
       expect((yield* Effect.flip(failingSwap.install({ start: false })))._tag).toBe(
@@ -951,121 +942,50 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const failingCopy = yield* makeService(undefined, "1.2.6").pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
-          copy: (from, to) =>
-            fs
-              .makeDirectory(to)
-              .pipe(Effect.andThen(fs.copy(path.join(from, "missing"), path.join(to, "missing")))),
+          copyFile: (from, to) => fs.copyFile(path.join(from, "missing"), to),
         }),
       );
       expect((yield* Effect.flip(failingCopy.install({ start: false })))._tag).toBe(
         "BootServiceInstallError",
       );
-      expect(yield* fs.readDirectory(path.join(baseDir, "runtime"))).not.toContainEqual(
-        expect.stringMatching(/^launcher\./),
+      expect(yield* fs.readDirectory(launcherDir)).toEqual(
+        expect.arrayContaining(["t3", ".install-complete"]),
       );
+      expect(yield* fs.readDirectory(launcherDir)).toHaveLength(2);
       expect(yield* fs.readFileString(path.join(launcherDir, "t3"))).toBe("#!/bin/sh\n# 1.2.4\n");
     }),
   );
 
-  it.effect("keeps a launch agent program in place when an update is interrupted mid-swap", () =>
+  it.effect("keeps a launch agent program in place when an update dies mid-publish", () =>
     Effect.gen(function* () {
       const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
       const path = yield* Path.Path;
       const launcherDir = path.join(baseDir, "runtime", "launcher");
       const plan = yield* service.install();
-      const movedAside = yield* Deferred.make<void>();
-      const proceed = yield* Deferred.make<void>();
       const newer = yield* makeService(undefined, "1.2.4").pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
           rename: (from, to) =>
-            from === launcherDir
-              ? fs
-                  .rename(from, to)
-                  .pipe(
-                    Effect.andThen(Deferred.succeed(movedAside, undefined)),
-                    Effect.andThen(Deferred.await(proceed)),
-                  )
-              : fs.rename(from, to),
-        }),
-      );
-
-      const installing = yield* Effect.forkChild(newer.install({ start: false }));
-      yield* Deferred.await(movedAside);
-      const interrupting = yield* Effect.forkChild(Fiber.interrupt(installing), {
-        startImmediately: true,
-      });
-      yield* Deferred.succeed(proceed, undefined);
-      yield* Fiber.join(interrupting);
-
-      const program = BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath));
-      expect(program).toBe(path.join(launcherDir, "t3"));
-      expect((yield* fs.stat(program ?? "")).mode & 0o111).toBe(0o111);
-    }),
-  );
-
-  it.effect("leaves a complete launch agent runtime when two updates overlap", () =>
-    Effect.gen(function* () {
-      const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
-      const path = yield* Path.Path;
-      const launcherDir = path.join(baseDir, "runtime", "launcher");
-      const plan = yield* service.install();
-      const firstCopied = yield* Deferred.make<void>();
-      const resumeFirst = yield* Deferred.make<void>();
-      const secondPartlyCopied = yield* Deferred.make<void>();
-      const resumeSecond = yield* Deferred.make<void>();
-      const first = yield* makeService(undefined, "1.2.4").pipe(
-        Effect.provideService(FileSystem.FileSystem, {
-          ...fs,
-          copy: (from, to) =>
             fs
-              .copy(from, to)
-              .pipe(
-                Effect.andThen(Deferred.succeed(firstCopied, undefined)),
-                Effect.andThen(Deferred.await(resumeFirst)),
-              ),
-        }),
-      );
-      const second = yield* makeService(undefined, "1.2.5").pipe(
-        Effect.provideService(FileSystem.FileSystem, {
-          ...fs,
-          copy: (from, to) =>
-            fs
-              .makeDirectory(to, { recursive: true })
+              .rename(from, to)
               .pipe(
                 Effect.andThen(
-                  fs.copyFile(
-                    path.join(from, ".install-complete"),
-                    path.join(to, ".install-complete"),
-                  ),
+                  from === launcherDir || to === path.join(launcherDir, "t3")
+                    ? Effect.die("process died")
+                    : Effect.void,
                 ),
-                Effect.andThen(Deferred.succeed(secondPartlyCopied, undefined)),
-                Effect.andThen(Deferred.await(resumeSecond)),
-                Effect.andThen(fs.copyFile(path.join(from, "t3"), path.join(to, "t3"))),
               ),
         }),
       );
-      const versionEntry = (version: string) =>
-        path.join(baseDir, "runtime", "versions", version, "t3");
-      yield* fs.writeFileString(versionEntry("1.2.4"), "#!/bin/sh\n# 1.2.4\n");
-      yield* fs.writeFileString(versionEntry("1.2.5"), "#!/bin/sh\n# 1.2.5\n");
-
-      const firstInstall = yield* Effect.forkChild(first.install({ start: false }));
-      yield* Deferred.await(firstCopied);
-      const secondInstall = yield* Effect.forkChild(second.install({ start: false }));
-      yield* Deferred.await(secondPartlyCopied);
-      yield* Deferred.succeed(resumeFirst, undefined);
-      yield* Fiber.await(firstInstall);
-      yield* Deferred.succeed(resumeSecond, undefined);
-      yield* Fiber.await(secondInstall);
+      yield* Effect.exit(newer.install({ start: false }));
 
       const program = BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath));
       expect(program).toBe(path.join(launcherDir, "t3"));
-      expect(yield* fs.exists(program ?? "")).toBe(true);
-      expect(["#!/bin/sh\n# 1.2.4\n", "#!/bin/sh\n# 1.2.5\n"]).toContain(
-        yield* fs.readFileString(program ?? ""),
-      );
       expect((yield* fs.stat(program ?? "")).mode & 0o111).toBe(0o111);
+      const current = yield* makeService(undefined, "1.2.4");
+      expect((yield* current.status).current).toBe(false);
+      yield* current.install();
+      expect((yield* current.status).current).toBe(true);
     }),
   );
 

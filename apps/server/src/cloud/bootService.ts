@@ -706,64 +706,32 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     unitPath,
   };
 
-  // cp -c clones on APFS and copies all bytes where cloning is unsupported; fs.copy never clones.
+  // cp -c clones on APFS and copies all bytes where cloning is unsupported; copyFile never clones.
   const copyLauncher = (source: string, destination: string) =>
     runner
-      .run({
-        command: "cp",
-        args: ["-c", "-pR", source, destination],
-        timeout: Duration.minutes(10),
-      })
+      .run({ command: "cp", args: ["-c", "-p", source, destination], timeout: Duration.minutes(1) })
       .pipe(
         Effect.filterOrFail((result) => result.code === 0),
-        Effect.catch(() =>
-          fs
-            .remove(destination, { recursive: true, force: true })
-            .pipe(Effect.andThen(fs.copy(source, destination))),
-        ),
+        Effect.catch(() => fs.copyFile(source, destination)),
       );
-  // A running launcher keeps executing its copy, and writing into a running signed
-  // Mach-O can kill it, so a new copy is staged beside it and swapped in by rename.
-  const publishLauncher = Effect.fn("cloud.boot_service.publish_launcher")(function* (
-    directory: string,
-  ) {
-    // Staging is per publish and rename onto a non-empty launcher fails, so overlaps publish only complete copies.
+  // `__service-launcher` loads only Node built-ins, so the executable alone is the launcher.
+  // Each file is renamed over its predecessor: the program path never goes missing, even if the
+  // process dies mid-publish, and a running launcher keeps its old inode instead of being written into.
+  const publishLauncher = Effect.fn("cloud.boot_service.publish_launcher")(function* () {
+    yield* fs.makeDirectory(launcherPaths.versionDir, { recursive: true });
     const staging = yield* fs.makeTempDirectory({
-      directory: path.dirname(directory),
-      prefix: `${path.basename(directory)}.next-`,
+      directory: launcherPaths.versionDir,
+      prefix: ".staging-",
     });
-    const next = path.join(staging, "launcher");
-    const previous = path.join(staging, "previous");
     yield* Effect.gen(function* () {
-      yield* copyLauncher(runtimePaths.versionDir, next);
-      // Interrupted between the renames, the unit would point at a missing program.
-      yield* Effect.uninterruptible(
-        Effect.gen(function* () {
-          const replacing = yield* fs.exists(directory);
-          if (replacing) yield* fs.rename(directory, previous);
-          yield* fs
-            .rename(next, directory)
-            .pipe(
-              Effect.tapError(() =>
-                replacing ? fs.rename(previous, directory).pipe(Effect.ignore) : Effect.void,
-              ),
-            );
-        }),
-      );
+      const entry = path.join(staging, path.basename(launcherPaths.entryPath));
+      const sentinel = path.join(staging, path.basename(launcherPaths.sentinelPath));
+      yield* copyLauncher(runtimePaths.entryPath, entry);
+      yield* fs.writeFileString(sentinel, `${input.cliVersion}\n`);
+      yield* fs.rename(entry, launcherPaths.entryPath);
+      yield* fs.rename(sentinel, launcherPaths.sentinelPath);
     }).pipe(
       Effect.ensuring(fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore)),
-    );
-  });
-  const removeLauncher = Effect.fn("cloud.boot_service.remove_launcher")(function* (
-    directory: string,
-  ) {
-    const name = path.basename(directory);
-    const parent = path.dirname(directory);
-    const entries = yield* fs.readDirectory(parent).pipe(Effect.orElseSucceed(() => []));
-    yield* Effect.forEach(
-      entries.filter((entry) => entry === name || entry.startsWith(`${name}.next-`)),
-      (entry) => fs.remove(path.join(parent, entry), { recursive: true, force: true }),
-      { discard: true },
     );
   });
 
@@ -1029,7 +997,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           return yield* new BootServiceUpdatePendingError();
         }
       }
-      if (manager.launcherDir !== undefined) yield* publishLauncher(manager.launcherDir);
+      if (manager.launcherDir !== undefined) yield* publishLauncher();
       yield* writeDurably(unitPath, manager.render(plan));
 
       if (start) {
@@ -1137,7 +1105,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     yield* runSteps(manager.deactivate);
     yield* fs.remove(unitPath).pipe(
       Effect.andThen(
-        manager.launcherDir === undefined ? Effect.void : removeLauncher(manager.launcherDir),
+        manager.launcherDir === undefined
+          ? Effect.void
+          : fs.remove(manager.launcherDir, { recursive: true, force: true }),
       ),
       Effect.mapError((cause) => new BootServiceInstallError({ cause })),
     );
