@@ -196,15 +196,19 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
 export function remarkThoughtPreview(fallback: string) {
   return (tree: Root) => {
     const children: RootContent[] = [];
+    let run: string[] = [];
     const append = (value: string) => {
-      const last = children.at(-1);
-      const text = value.replace(/\s+/g, " ");
-      if (last?.type === "text") last.value = (last.value + text).replace(/\s+/g, " ");
-      else children.push({ type: "text", value: text });
+      run.push(value);
+    };
+    const flush = () => {
+      if (run.length === 0) return;
+      children.push({ type: "text", value: run.join("").replace(/\s+/g, " ") });
+      run = [];
     };
     const visit = (node: Root | RootContent) => {
       if (node.type === "html" || node.type === "definition") return;
       if (node.type === "math" || node.type === "inlineMath") {
+        flush();
         children.push({
           type: "inlineMath",
           value: node.value,
@@ -229,6 +233,7 @@ export function remarkThoughtPreview(fallback: string) {
       } else if (node.type === "break") append(" ");
     };
     visit(tree);
+    flush();
     const first = children[0];
     const last = children.at(-1);
     if (first?.type === "text") first.value = first.value.trimStart();

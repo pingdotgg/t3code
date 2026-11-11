@@ -19,7 +19,7 @@ import {
   normalizePreviewUrl,
 } from "@t3tools/shared/preview";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -44,6 +44,10 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<void, PreviewError>;
     /** Records that a server tab runs headless. It stays headless until it closes. */
     readonly markHeadless: (
+      input: PreviewCloseInput & { readonly tabId: string },
+    ) => Effect.Effect<void, PreviewError>;
+    /** Publishes the tab's unchanged snapshot again, for clients that dropped the tab. */
+    readonly announce: (
       input: PreviewCloseInput & { readonly tabId: string },
     ) => Effect.Effect<void, PreviewError>;
     readonly requestReveal: (
@@ -119,8 +123,8 @@ const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
 /** @public */
 export const make = Effect.gen(function* PreviewManagerMake() {
-  const crypto = yield* Crypto.Crypto;
-  const serverEpoch = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+  const random = yield* SecureRandom.SecureRandom;
+  const serverEpoch = yield* random.uuidV4();
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
   const eventsPubSub = yield* PubSub.unbounded<PreviewEvent>();
   const events: Stream.Stream<PreviewEvent> = Stream.fromPubSub(eventsPubSub);
@@ -298,6 +302,28 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     );
   });
 
+  const announce: PreviewManager["Service"]["announce"] = Effect.fn("PreviewManager.announce")(
+    function* (input) {
+      return yield* mutateExistingSession(
+        input.threadId,
+        input.tabId,
+        Effect.fn("PreviewManager.announceSession")(function* (session) {
+          return {
+            next: session,
+            emit: {
+              type: "resized",
+              threadId: session.threadId,
+              tabId: session.tabId,
+              createdAt: yield* currentIsoTimestamp,
+              snapshot: session.snapshot,
+            },
+            result: undefined,
+          };
+        }),
+      );
+    },
+  );
+
   const resize: PreviewManager["Service"]["resize"] = Effect.fn("PreviewManager.resize")(
     function* (input) {
       return yield* mutateExistingSession(
@@ -427,7 +453,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           ...session.snapshot,
           reveal: true,
           revealRequest: {
-            id: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
+            id: yield* random.uuidV4(),
             force: input.force,
           },
           updatedAt: yield* currentIsoTimestamp,
@@ -452,6 +478,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     requestReveal,
     reportStatus,
     markHeadless,
+    announce,
     resize,
     adjust,
     close,
