@@ -10404,11 +10404,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           retryDelayMs: 1_500,
         });
 
+        // The stream starting again settles the retry before any assistant message completes.
         yield* Queue.offer(
           harness.sdkMessages,
-          makeAssistantTextFrame({
-            uuid: "00000000-0000-4000-8000-000000000202",
-            text: "Opening GitHub.",
+          claudeSdkFrame({
+            type: "stream_event",
+            event: { type: "message_start", message: { id: "api-retry-recovered-message" } },
+            parent_tool_use_id: null,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "00000000-0000-4000-8000-000000000204",
           }),
         );
         yield* harness.until(() => retryItems().length === 2);
@@ -10417,6 +10421,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(recoveredRetry?.id, runningRetry?.id);
         assert.equal(recoveredRetry?.status, "completed");
         assert.equal(recoveredRetry?.title, "Provider recovered");
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000202",
+            text: "Opening GitHub.",
+          }),
+        );
 
         yield* Queue.offer(
           harness.sdkMessages,
