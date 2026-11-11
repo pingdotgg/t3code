@@ -183,7 +183,11 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       const path = yield* Path.Path;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-commands-" });
       const entryPath = path.join(dir, "cli.mjs");
-      yield* fs.writeFileString(entryPath, "console.log(JSON.stringify(process.argv.slice(2)));");
+      // Answers the launcher's session list with no sessions; otherwise prints what it was given.
+      yield* fs.writeFileString(
+        entryPath,
+        'const args = process.argv.slice(2); console.log(JSON.stringify(args[0] === "session" ? { data: { sessions: [] } } : args));',
+      );
       const command = yield* bindAgentDeviceLauncher({
         entryPath,
         stateDir: dir,
@@ -237,6 +241,15 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       ]) {
         expect(yield* Effect.promise(() => launch(args))).toEqual([...args, ...selected]);
       }
+      // --save-script takes the next argument only when it is a path, so open still selects.
+      for (const flags of [["--save-script", "./capture.ad"], ["--save-script"]]) {
+        expect(yield* Effect.promise(() => launch([...flags, "open", "com.example"]))).toEqual([
+          ...flags,
+          "open",
+          "com.example",
+          ...selected,
+        ]);
+      }
       // agent-device 0.21.31 rejects these flags with "unknown option" or "not supported for command".
       const cdp = ["cdp", "target", "list", "--url", "http://127.0.0.1:8081"];
       expect(yield* Effect.promise(() => launch(cdp))).toEqual(cdp);
@@ -276,6 +289,88 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
             `T3 Code manages this command's connection to the device, so \`${managed.find((arg) => ["connect", "disconnect", "auth", "daemon"].includes(arg))}\` is not available through it.`,
           ),
         );
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.IsExecutable, false),
+      Effect.provideService(HostProcess.ExecutablePath, process.execPath),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  );
+
+  it.effect("keeps another session's device out of reach of flows and environment selectors", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-claim-" });
+      const entryPath = path.join(dir, "cli.mjs");
+      // Lists the sessions in T3_TEST_SESSIONS; otherwise prints its arguments and any selector
+      // agent-device would read from the environment.
+      yield* fs.writeFileString(
+        entryPath,
+        [
+          "const args = process.argv.slice(2);",
+          'if (args[0] === "session") console.log(JSON.stringify({ data: { sessions: JSON.parse(process.env.T3_TEST_SESSIONS ?? "[]") } }));',
+          "else console.log(JSON.stringify([...args, ...Object.keys(process.env).filter((key) => /^AGENT_DEVICE_(PLATFORM|SERIAL)$/.test(key))]));",
+        ].join("\n"),
+      );
+      const command = yield* bindAgentDeviceLauncher({
+        entryPath,
+        stateDir: dir,
+        session: "t3-b",
+        targetArgs: [
+          "--platform",
+          "android",
+          "--serial",
+          "emulator-5554",
+          "--config",
+          "/h.json",
+          "--session",
+          "t3-b",
+        ],
+      });
+      const launch = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =>
+        exec(
+          process.execPath,
+          [path.join(path.dirname(command), "agent-device-launcher.mjs"), ...args],
+          { env: { ...process.env, ...env } },
+        ).then((result) => JSON.parse(result.stdout));
+      const owned = ["--config", "/h.json", "--session", "t3-b"];
+      const selected = ["--platform", "android", "--serial", "emulator-5554", ...owned];
+      const selectorEnv = {
+        AGENT_DEVICE_PLATFORM: "android",
+        AGENT_DEVICE_SERIAL: "emulator-5554",
+      };
+      // Selectors in the environment would reach the device as flags would.
+      expect(yield* Effect.promise(() => launch(["snapshot", "-i"], selectorEnv))).toEqual([
+        "snapshot",
+        "-i",
+        ...owned,
+      ]);
+      // A command that selects its device gets the bound flags, which win over the environment.
+      expect(yield* Effect.promise(() => launch(["open", "com.example"], selectorEnv))).toEqual([
+        "open",
+        "com.example",
+        ...selected,
+        "AGENT_DEVICE_PLATFORM",
+        "AGENT_DEVICE_SERIAL",
+      ]);
+      // A flow's steps inherit its selectors, so it does not run while another session holds the device.
+      const held = (name: string) =>
+        JSON.stringify([{ name, address: name, platform: "android", id: "emulator-5554" }]);
+      for (const flow of [
+        ["batch", "--steps-file", "/s.json"],
+        ["replay", "flow.ad"],
+        ["test", "flows"],
+      ]) {
+        yield* Effect.promise(() =>
+          expect(launch(flow, { T3_TEST_SESSIONS: held("t3-a") })).rejects.toThrow(
+            `Error (DEVICE_IN_USE): this device is in use by another session. \`${flow[0]}\``,
+          ),
+        );
+        expect(
+          yield* Effect.promise(() => launch(flow, { T3_TEST_SESSIONS: held("t3-b") })),
+        ).toEqual([...flow, ...selected]);
       }
     }).pipe(
       Effect.scoped,
