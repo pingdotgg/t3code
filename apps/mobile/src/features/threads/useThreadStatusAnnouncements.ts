@@ -16,6 +16,7 @@ import {
 /** Tells VoiceOver and TalkBack when the open thread starts working, needs the user, or finishes. */
 export function useThreadStatusAnnouncements({
   threadKey,
+  subject,
   detailBehind,
   approvalRequestId,
   userInputRequestId,
@@ -26,6 +27,8 @@ export function useThreadStatusAnnouncements({
 }: ThreadActivityInput & {
   /** Null when nothing should be announced, such as a provider subagent's thread. */
   readonly threadKey: string | null;
+  /** The thread's title, said after each status when another thread is on screen beside it. */
+  readonly subject: string | null;
   /** See isDetailBehindShell. */
   readonly detailBehind: boolean;
 }) {
@@ -62,10 +65,14 @@ export function useThreadStatusAnnouncements({
     memoryRef.current = { threadKey: activeKey, activity, announcement: next.memory };
     // Queued, like the web's polite region, so VoiceOver doesn't cut off what it is reading.
     if (next.announcement !== null) {
-      AccessibilityInfo.announceForAccessibilityWithOptions(next.announcement, { queue: true });
+      AccessibilityInfo.announceForAccessibilityWithOptions(
+        subject === null ? next.announcement : `${next.announcement}: ${subject}`,
+        { queue: true },
+      );
     }
   }, [
     activeKey,
+    subject,
     detailBehind,
     approvalRequestId,
     userInputRequestId,

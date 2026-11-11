@@ -380,13 +380,15 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   useThreadStatusAnnouncements({
-    // A preview beside its host stays quiet; the host speaks for the thread it shows.
     threadKey:
-      selectedThread === null ||
-      isProviderNativeSubagentThread(selectedThread.source) ||
-      (props.inspectorPresentation !== undefined && "onMaximize" in props.inspectorPresentation)
+      selectedThread === null || isProviderNativeSubagentThread(selectedThread.source)
         ? null
         : scopedThreadKey(selectedThread.environmentId, selectedThread.id),
+    // A preview beside its host names its thread, so the two threads' statuses can't be confused.
+    subject:
+      props.inspectorPresentation !== undefined && "onMaximize" in props.inspectorPresentation
+        ? (selectedThread?.title ?? null)
+        : null,
     approvalRequestId: requests.activePendingApproval?.requestId ?? null,
     userInputRequestId: requests.activePendingUserInput?.requestId ?? null,
     shellRequestId: selectedThread?.source.pendingRuntimeRequest?.id ?? null,
