@@ -74,14 +74,11 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
 export const isAutomaticTextGenerationFallbackDriver = (driver: ProviderDriverKind): boolean =>
   TEXT_GENERATION_FALLBACK_DRIVERS.includes(driver);
 
-/** Only project-scoped callers may include configured instances when falling back; machine-level callers leave it unset. */
+/** Configured instances come after every default instance, so they only win when no default qualifies. */
 export function fallbackTextGenerationModelSelection(
   providerInstances: ServerSettings["providerInstances"],
   isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => boolean,
-  options?: {
-    readonly includeConfiguredInstances?: boolean;
-    readonly defaultModelSelection?: ModelSelection | null;
-  },
+  options?: { readonly defaultModelSelection?: ModelSelection | null },
 ): ModelSelection | null {
   const candidates = [
     ...TEXT_GENERATION_FALLBACK_DRIVERS.flatMap((defaultDriver) => {
@@ -89,13 +86,11 @@ export function fallbackTextGenerationModelSelection(
       const driver = providerInstances[instanceId]?.driver ?? defaultDriver;
       return isAutomaticTextGenerationFallbackDriver(driver) ? [[instanceId, driver] as const] : [];
     }),
-    ...(options?.includeConfiguredInstances === true
-      ? Object.entries(providerInstances).flatMap(([instanceId, instance]) =>
-          TEXT_GENERATION_FALLBACK_DRIVERS.includes(instance.driver)
-            ? [[ProviderInstanceId.make(instanceId), instance.driver] as const]
-            : [],
-        )
-      : []),
+    ...Object.entries(providerInstances).flatMap(([instanceId, instance]) =>
+      TEXT_GENERATION_FALLBACK_DRIVERS.includes(instance.driver)
+        ? [[ProviderInstanceId.make(instanceId), instance.driver] as const]
+        : [],
+    ),
   ];
   const match = candidates.find(([instanceId, driver]) => isEnabled(instanceId, driver));
   if (match === undefined) return null;
