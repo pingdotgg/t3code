@@ -29,7 +29,7 @@ export const clerkAppearance = {
     colorRing: "var(--ring)",
   },
   elements: {
-    modalBackdrop: "dialog-backdrop",
+    modalBackdrop: "dialog-backdrop z-50",
     cardBox: "dialog-glass rounded-2xl border",
     card: "border-0 bg-transparent shadow-none",
     footer: "bg-transparent bg-none",

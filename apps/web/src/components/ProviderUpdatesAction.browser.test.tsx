@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
@@ -21,6 +22,8 @@ const state = vi.hoisted(() => ({
   }[],
   providers: new Map<EnvironmentId, ReadonlyArray<ServerProvider>>(),
   requests: [] as EnvironmentId[],
+  checks: [] as { environmentId: EnvironmentId; input: unknown }[],
+  checkResult: null as AsyncResult.AsyncResult<unknown, unknown> | null,
   sessions: new Map<EnvironmentId, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState>>>(),
 }));
 
@@ -41,18 +44,23 @@ vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
   };
 });
 vi.mock(import("~/state/server"), () => ({
-  serverEnvironment: { updateProvider: {} } as never,
+  serverEnvironment: { updateProvider: "update", refreshProviders: "refresh" } as never,
 }));
 vi.mock(import("~/state/use-atom-command"), () => ({
-  useAtomCommand: (() =>
-    async ({ environmentId }: { environmentId: EnvironmentId }) => {
-      state.requests.push(environmentId);
-      return AsyncResult.success(undefined);
+  useAtomCommand: ((command: string) =>
+    async ({ environmentId, input }: { environmentId: EnvironmentId; input: unknown }) => {
+      if (command !== "refresh") {
+        state.requests.push(environmentId);
+        return AsyncResult.success(undefined);
+      }
+      state.checks.push({ environmentId, input });
+      return state.checkResult ?? AsyncResult.success(undefined);
     }) as never,
 }));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { useProviderUpdates } from "./ProviderUpdatesAction";
+import { toastManager } from "./ui/toast";
+import { useCheckProviderUpdates, useProviderUpdates } from "./ProviderUpdatesAction";
 
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -102,6 +110,8 @@ function setup() {
     state.environments.map(({ environmentId }) => [environmentId, [provider]]),
   );
   state.requests = [];
+  state.checks = [];
+  state.checkResult = null;
   const sessions = new Map<EnvironmentId, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState>>>(
     [
       [state.environments[0]!.environmentId, Atom.make(session(["orchestration:read"]))],
@@ -118,14 +128,17 @@ function setup() {
   return { sessions };
 }
 
-it("bulk provider updates exclude connections without a confirmed management grant", async () => {
+it("provider updates and checks exclude connections without a confirmed management grant", async () => {
   const fixture = setup();
   let updates!: ReturnType<typeof useProviderUpdates>;
+  let check!: ReturnType<typeof useCheckProviderUpdates>;
   function Probe() {
     const nextUpdates = useProviderUpdates();
+    const nextCheck = useCheckProviderUpdates();
     useEffect(() => {
       updates = nextUpdates;
-    }, [nextUpdates]);
+      check = nextCheck;
+    }, [nextUpdates, nextCheck]);
     return null;
   }
   await using _screen = await render(
@@ -140,6 +153,29 @@ it("bulk provider updates exclude connections without a confirmed management gra
     await updates.updateAll({ quiet: true });
   });
   expect(state.requests).toEqual([writableId]);
+  await act(async () => {
+    await check();
+  });
+  // A model refresh always drops the server's cached latest provider versions.
+  expect(state.checks).toEqual([{ environmentId: writableId, input: { refreshModels: true } }]);
+
+  using toast = vi.spyOn(toastManager, "add");
+  state.checkResult = AsyncResult.failure(Cause.interrupt());
+  await act(async () => {
+    await check();
+  });
+  expect(toast).not.toHaveBeenCalled();
+  state.checkResult = AsyncResult.failure(Cause.fail(new Error("offline")));
+  await act(async () => {
+    await check({ quiet: true });
+  });
+  expect(toast).not.toHaveBeenCalled();
+  await act(async () => {
+    await check();
+  });
+  expect(toast).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Could not check provider updates" }),
+  );
 
   await act(() => {
     appAtomRegistry.set(fixture.sessions.get(writableId)!, session(["orchestration:read"]));
