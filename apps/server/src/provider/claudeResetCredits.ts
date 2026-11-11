@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a synchronous hash for the cache key and file name.
+import * as NodeCrypto from "node:crypto";
+
 import type {
   ProviderConsumeResetCreditOutcome,
   ServerProviderResetCreditOption,
@@ -51,6 +54,13 @@ const UsageResponse = Schema.Struct({
   cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
 });
 const decodeCedarEmber = Schema.decodeUnknownOption(CedarEmber);
+const GRANTS_CACHE_TTL_MS = 2 * 60_000;
+const CachedGrants = Schema.fromJsonString(
+  Schema.Struct({ at: Schema.Number, key: Schema.String, block: Schema.Unknown }),
+);
+const decodeCachedGrants = Schema.decodeEffect(CachedGrants);
+const encodeCachedGrants = Schema.encodeEffect(CachedGrants);
+const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
 const ClaimResponse = Schema.Struct({
   result: Schema.Literals([
     "reset",
@@ -220,10 +230,39 @@ const withClaudeHeaders = (token: string, version: string) =>
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 
+export const claudeResetCreditsCacheFile = Effect.fnUntraced(function* (
+  stateDir: string,
+  configDir: string,
+) {
+  const path = yield* Path.Path;
+  return path.join(stateDir, `claude-reset-credits-${sha256(configDir).slice(0, 16)}.json`);
+});
+
+export const forgetClaudeResetCredits = Effect.fnUntraced(function* (cacheFile: string) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.remove(cacheFile, { force: true }).pipe(Effect.ignore);
+});
+
+// The cache is on disk because a restart refetches, and a dev server restarting on each edit gets
+// the account rate limited.
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string, overageIncluded?: string) {
+  function* (configDir: string, version: string, overageIncluded?: string, cacheFile?: string) {
     const token = yield* readAccessToken(configDir);
     if (!token) return undefined;
+    const fs = yield* FileSystem.FileSystem;
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
+    const key = sha256(`${token}\n${version}`);
+    const cached = cacheFile
+      ? yield* fs.readFileString(cacheFile).pipe(Effect.flatMap(decodeCachedGrants), Effect.option)
+      : Option.none();
+    if (
+      Option.isSome(cached) &&
+      cached.value.key === key &&
+      now >= cached.value.at &&
+      now - cached.value.at < GRANTS_CACHE_TTL_MS
+    ) {
+      return claudeResetCreditsToContract(cached.value.block, now, overageIncluded);
+    }
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
       HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
@@ -233,11 +272,13 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
     const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return claudeResetCreditsToContract(
-      body.cedar_ember,
-      DateTime.toEpochMillis(yield* DateTime.now),
-      overageIncluded,
-    );
+    if (cacheFile) {
+      yield* encodeCachedGrants({ at: now, key, block: body.cedar_ember }).pipe(
+        Effect.flatMap((json) => fs.writeFileString(cacheFile, json)),
+        Effect.ignore,
+      );
+    }
+    return claudeResetCreditsToContract(body.cedar_ember, now, overageIncluded);
   },
   Effect.timeout("10 seconds"),
   Effect.orElseSucceed(() => undefined),

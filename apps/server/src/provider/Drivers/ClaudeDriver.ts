@@ -158,6 +158,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         ? configDir
         : undefined,
     );
+    const resetCreditsCacheFile = yield* ClaudeResetCredits.claudeResetCreditsCacheFile(
+      stateDir,
+      configDir,
+    ).pipe(Effect.provideService(Path.Path, path));
     const stampIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
@@ -314,6 +318,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                           configDir,
                           version,
                           overageIncluded,
+                          resetCreditsCacheFile,
                         )
                       : Effect.undefined,
                   ),
@@ -390,7 +395,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       // Reset credits need Claude's sign-in token, which T3 reads only with usage access.
       const resetCredits =
         usesSavedOAuth && !usageLimits.unavailable && version && (yield* usageAccess)
-          ? yield* ClaudeResetCredits.readClaudeResetCredits(configDir, version)
+          ? yield* ClaudeResetCredits.readClaudeResetCredits(
+              configDir,
+              version,
+              (yield* Ref.get(scopedLimitNames)).overageIncluded,
+              resetCreditsCacheFile,
+            )
           : undefined;
       return {
         usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
@@ -402,6 +412,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.provideService(Path.Path, path),
     );
 
+    const invalidateUsageCache = Cache.invalidateAll(capabilitiesProbeCache).pipe(
+      Effect.andThen(ClaudeResetCredits.forgetClaudeResetCredits(resetCreditsCacheFile)),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
       resolveMaintenance,
@@ -415,7 +429,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         ),
       checkProvider,
       checkUsageLimits,
-      invalidateUsageCache: Cache.invalidateAll(capabilitiesProbeCache),
+      invalidateUsageCache,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
@@ -496,9 +510,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         ResetCreditCoordinator.refreshAfterRedemption({
           outcome,
           getSnapshot: snapshot.getSnapshot,
-          refresh: Cache.invalidateAll(capabilitiesProbeCache).pipe(
-            Effect.andThen(snapshot.refresh),
-          ),
+          refresh: invalidateUsageCache.pipe(Effect.andThen(snapshot.refresh)),
         }).pipe(
           Effect.filterOrFail(
             (confirmed) => confirmed,
