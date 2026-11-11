@@ -240,7 +240,11 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: "Warn" })),
         );
         const selectedAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
-        const selectedVariant = OpenCodeRuntime.openCodeVariant(input.modelSelection);
+        const selectedVariant = yield* OpenCodeRuntime.resolveOpenCodeVariant(
+          client,
+          parsedModel,
+          OpenCodeRuntime.openCodeVariant(input.modelSelection),
+        );
         const promptContext = {
           operation: input.operation,
           cwd: input.cwd,
