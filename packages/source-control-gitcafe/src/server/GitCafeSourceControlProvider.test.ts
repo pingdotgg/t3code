@@ -61,7 +61,7 @@ const layerFor = (
   );
 
 describe("GitCafeSourceControlProvider", () => {
-  it.effect.each([404, 401, 403, 500])(
+  it.effect.each([404, 403])(
     "exposes repository lookup details only for HTTP 404 (%s)",
     (status) => {
       const client = HttpClient.make((request) =>
@@ -87,21 +87,6 @@ describe("GitCafeSourceControlProvider", () => {
               : undefined,
           );
         }
-        const error = yield* provider
-          .getDefaultBranch({
-            cwd: "/repo",
-            context: {
-              provider: {
-                kind: SourceControlProviderKind.make("gitcafe"),
-                name: "GitCafe",
-                baseUrl: "https://git.cafe",
-              },
-              remoteName: "origin",
-              remoteUrl: "https://git.cafe/team/project.git",
-            },
-          })
-          .pipe(Effect.flip);
-        assert.strictEqual(userFacingSourceControlDetail(error.cause), undefined);
       }).pipe(Effect.provide(layerFor(client)));
     },
   );

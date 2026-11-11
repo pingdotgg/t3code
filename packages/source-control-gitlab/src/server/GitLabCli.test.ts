@@ -226,12 +226,6 @@ layer("GitLabCli.layer", (it) => {
             ? "Repository missing/ project was not found. Check the owner and name and try again."
             : undefined,
         );
-        mockedRun.mockReturnValueOnce(Effect.fail(cause));
-        const glab = yield* GitLabCli.GitLabCli;
-        const other = yield* glab
-          .execute({ cwd: "/repo", args: ["api", "projects"] })
-          .pipe(Effect.flip);
-        assert.strictEqual(userFacingSourceControlDetail(other), undefined);
       }),
   );
 

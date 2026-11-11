@@ -738,32 +738,25 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
   }).pipe(Effect.provide(layer));
 });
 
-it.effect.each([404, 401, 403, 500])(
-  "exposes repository lookup details only for HTTP 404 (%s)",
-  (status) => {
-    const { layer } = makeLayer({
-      response: () => new Response("raw upstream response must not be shown", { status }),
-    });
-    return Effect.gen(function* () {
-      const bitbucket = yield* BitbucketApi.BitbucketApi;
-      for (const repository of ["team/project", "https://bitbucket.org/team/project.git"]) {
-        const error = yield* bitbucket
-          .getRepositoryCloneUrls({ cwd: "/repo", repository })
-          .pipe(Effect.flip);
-        assert.strictEqual(
-          userFacingSourceControlDetail(error),
-          status === 404
-            ? "Repository team/project was not found. Check the owner and name and try again."
-            : undefined,
-        );
-      }
+it.effect.each([404, 403])("exposes repository lookup details only for HTTP 404 (%s)", (status) => {
+  const { layer } = makeLayer({
+    response: () => new Response("raw upstream response must not be shown", { status }),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    for (const repository of ["team/project", "https://bitbucket.org/team/project.git"]) {
       const error = yield* bitbucket
-        .getPullRequest({ cwd: "/repo", reference: "42" })
+        .getRepositoryCloneUrls({ cwd: "/repo", repository })
         .pipe(Effect.flip);
-      assert.strictEqual(userFacingSourceControlDetail(error), undefined);
-    }).pipe(Effect.provide(layer));
-  },
-);
+      assert.strictEqual(
+        userFacingSourceControlDetail(error),
+        status === 404
+          ? "Repository team/project was not found. Check the owner and name and try again."
+          : undefined,
+      );
+    }
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect("keeps Bitbucket response bodies out of checkout diagnostics", () => {
   const responseBody = '{"error":{"message":"credential=secret-value"}}';

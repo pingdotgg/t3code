@@ -335,10 +335,13 @@ class GitHubFailure extends Schema.TaggedError<GitHubFailure>()("GitHubFailure",
   cause: Schema.Defect(),
 }) {}
 
-class GitHubRepositoryLookupError extends Data.TaggedError("GitHubRepositoryLookupError")<{
-  readonly userFacingDetail: string;
-  readonly cause?: unknown;
-}> {}
+class GitHubRepositoryLookupError extends Schema.TaggedError<GitHubRepositoryLookupError>()(
+  "GitHubRepositoryLookupError",
+  {
+    userFacingDetail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 const failure = (detail: string, cause?: unknown) => new GitHubFailure({ detail, cause });
 

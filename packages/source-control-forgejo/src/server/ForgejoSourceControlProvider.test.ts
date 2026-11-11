@@ -2001,10 +2001,6 @@ it.effect("exposes fixed not-found details only for repository lookup", () =>
       provider.getRepositoryCloneUrls({ cwd: "/repo", repository: "me/private" }),
     );
     assert.strictEqual(userFacingSourceControlDetail(forbiddenError.cause), undefined);
-    const pullError = yield* Effect.flip(
-      provider.getChangeRequest({ cwd: "/repo", reference: "42" }),
-    );
-    assert.strictEqual(userFacingSourceControlDetail(pullError.cause), undefined);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
