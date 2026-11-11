@@ -621,6 +621,36 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
   }),
 );
 
+it.effect("creating a project through MCP refuses a model default instead of dropping it", () =>
+  Effect.gen(function* () {
+    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        create: () => Effect.die("the project was created without its model default"),
+      }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const refused = yield* toolkit
+      .handle("t3_project_create", {
+        title: "client-target",
+        workspaceRoot: "/projects/client-target",
+        defaultModelSelection: harness.modelSelection,
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(refused.at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("t3_project_update"),
+    });
+  }),
+);
+
 it.effect("deleting a project through MCP also discards its clone record", () =>
   Effect.gen(function* () {
     const discarded: Array<ProjectId> = [];
