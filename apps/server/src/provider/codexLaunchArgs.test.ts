@@ -8,7 +8,14 @@ describe("codexAppServerArgs", () => {
   it("preserves escaped TOML quotes in config values", () => {
     NodeAssert.deepStrictEqual(
       codexAppServerArgs(String.raw`--config model=\"gpt-6.1-sol\" --strict-config`),
-      ["app-server", "--config", 'model="gpt-6.1-sol"', "--strict-config"],
+      [
+        "app-server",
+        "--config",
+        "thread_unload_delay_secs=0",
+        "--config",
+        'model="gpt-6.1-sol"',
+        "--strict-config",
+      ],
     );
   });
 });

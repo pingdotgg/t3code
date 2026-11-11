@@ -1394,12 +1394,7 @@ export const CODEX_THREAD_CONFIG = {
   // Tool calls stop waiting on the detailed reasoning summary. Codex applies it only to its
   // built-in OpenAI provider and sends each summary section whole, not as token deltas.
   "features.concurrent_reasoning_summaries": true,
-  // Otherwise Codex keeps an unsubscribed thread, and its writer lock, loaded for this delay.
-  thread_unload_delay_secs: 0,
 } as const;
-
-/** Codex 0.164+ closes an unsubscribed thread within milliseconds. */
-const CODEX_THREAD_CLOSE_WAIT = "2 seconds";
 
 // T3 waits can block for an hour; keep Codex's MCP timeout above that.
 const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
@@ -7518,16 +7513,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
               sessionApprovals.delete(nativeThreadId);
               // Codex replies before it closes the thread; the writer lock and a same-process
-              // resume ("is closing") both wait for thread/closed. Codex 0.163 never sends it.
+              // resume ("is closing") both wait for thread/closed. Callers bound the wait.
               const closed = yield* Deferred.make<void>();
               const waiters = threadCloses.get(nativeThreadId) ?? new Set();
               waiters.add(closed);
               threadCloses.set(nativeThreadId, waiters);
               yield* client.request("thread/unsubscribe", { threadId: nativeThreadId }).pipe(
                 Effect.flatMap(({ status }) =>
-                  status === "unsubscribed"
-                    ? Deferred.await(closed).pipe(Effect.timeoutOption(CODEX_THREAD_CLOSE_WAIT))
-                    : Effect.void,
+                  status === "unsubscribed" ? Deferred.await(closed) : Effect.void,
                 ),
                 Effect.ensuring(
                   Effect.sync(() => {

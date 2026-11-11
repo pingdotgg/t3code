@@ -11,6 +11,10 @@ const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenize
 
 export const codexAppServerArgs = (launchArgs?: string) => [
   "app-server",
+  // Otherwise Codex keeps an unsubscribed thread, and its writer lock, loaded for a delay.
+  // Codex 0.163 ignores this key in per-thread config, so it is set for the app-server.
+  "--config",
+  "thread_unload_delay_secs=0",
   ...codexLaunchArgv(launchArgs),
 ];
 
