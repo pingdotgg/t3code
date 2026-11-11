@@ -320,7 +320,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         threadId: input.threadId,
         messageId,
         text: recompact ? IDLE_COMPACTION_TEXT : text,
-        idleCompaction: sourceMessage?.idleCompaction,
+        idleCompaction: recompact ? sourceMessage.idleCompaction : undefined,
         notification: recompact
           ? undefined
           : {
