@@ -1941,6 +1941,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           string,
           { readonly runtimeMode: RuntimeMode; readonly kinds: Set<ProviderRequestKind> }
         >();
+        const threadCloses = new Map<string, Set<Deferred.Deferred<void>>>();
         /** Bind answers to the request's approval set so mode changes invalidate late answers. */
         const endSessionApprovalsOnModeChange = (context: ActiveCodexTurnContext) => {
           const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
@@ -4980,7 +4981,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
               yield* releaseSettledTurnIfIdle(context.nativeTurnId);
             }
-          }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
+          }).pipe(
+            Effect.orDie,
+            turnTerminalizationPermit.withPermits(1),
+            Effect.andThen(() =>
+              Effect.forEach(
+                threadCloses.get(payload.threadId) ?? [],
+                (closed) => Deferred.succeed(closed, undefined),
+                { discard: true },
+              ),
+            ),
+          ),
         );
 
         yield* client.handleServerNotification("item/started", (payload) =>
@@ -7523,7 +7534,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (unloadInput) {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
               sessionApprovals.delete(nativeThreadId);
-              yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
+              // Codex replies before it closes the thread; the writer lock and a same-process
+              // resume ("is closing") both wait for thread/closed. Callers bound the wait.
+              const closed = yield* Deferred.make<void>();
+              const waiters = threadCloses.get(nativeThreadId) ?? new Set();
+              waiters.add(closed);
+              threadCloses.set(nativeThreadId, waiters);
+              yield* client.request("thread/unsubscribe", { threadId: nativeThreadId }).pipe(
+                Effect.flatMap(({ status }) =>
+                  status === "unsubscribed" ? Deferred.await(closed) : Effect.void,
+                ),
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    waiters.delete(closed);
+                    if (waiters.size === 0 && threadCloses.get(nativeThreadId) === waiters) {
+                      threadCloses.delete(nativeThreadId);
+                    }
+                  }),
+                ),
+              );
             },
             (effect, unloadInput) =>
               effect.pipe(

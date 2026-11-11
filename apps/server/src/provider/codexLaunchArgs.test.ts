@@ -11,6 +11,16 @@ describe("codexAppServerArgs", () => {
       ["app-server", "--config", 'model="gpt-6.1-sol"', "--strict-config"],
     );
   });
+
+  it("unloads unsubscribed threads immediately unless strict config could reject the key", () => {
+    NodeAssert.deepStrictEqual(codexAppServerArgs("--enable foo"), [
+      "app-server",
+      "--config",
+      "thread_unload_delay_secs=0",
+      "--enable",
+      "foo",
+    ]);
+  });
 });
 
 describe("codexExecLaunchArgs", () => {

@@ -9,10 +9,17 @@ export const resolveCodexLaunchArgs = (
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 
-export const codexAppServerArgs = (launchArgs?: string) => [
-  "app-server",
-  ...codexLaunchArgv(launchArgs),
-];
+export const codexAppServerArgs = (launchArgs?: string) => {
+  const args = codexLaunchArgv(launchArgs);
+  return [
+    "app-server",
+    // Otherwise Codex keeps an unsubscribed thread, and its writer lock, loaded for a delay.
+    // Codex 0.163 ignores this key in per-thread config, so it is set for the app-server.
+    // Codex before 0.154 lacks the key, which --strict-config rejects at startup.
+    ...(args.includes("--strict-config") ? [] : ["--config", "thread_unload_delay_secs=0"]),
+    ...args,
+  ];
+};
 
 export const codexExecLaunchArgs = (launchArgs?: string) => {
   const args = codexLaunchArgv(launchArgs);
