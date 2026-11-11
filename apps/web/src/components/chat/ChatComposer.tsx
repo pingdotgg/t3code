@@ -116,6 +116,7 @@ import {
 } from "./composerContextUndo";
 import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
+import { CollapsedComposerPromptPreview } from "./CollapsedComposerPromptPreview";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
@@ -3327,8 +3328,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onClick={expandMobileComposerStable}
                   aria-label="Expand composer"
                 >
-                  {prompt.trim() ||
-                    (showProviderUnavailable ? "Enable a provider in Settings" : "Ask anything...")}
+                  {prompt.trim() ? (
+                    <CollapsedComposerPromptPreview
+                      prompt={prompt}
+                      skills={selectedProviderSkills}
+                      contextRecords={composerContextRecords}
+                      theme={resolvedTheme}
+                    />
+                  ) : showProviderUnavailable ? (
+                    "Enable a provider in Settings"
+                  ) : (
+                    "Ask anything..."
+                  )}
                 </button>
                 {collapsedComposerImagePreviews}
                 <button
@@ -3578,11 +3589,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     {composerControls}
                   </div>
                   <ComposerFooterPrimaryActions
+                    // Stop state belongs to one thread; the composer stays mounted across threads.
+                    key={`${environmentId}:${activeThreadId ?? "new"}`}
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     canInterrupt={canInterrupt}
+                    runId={activeThread?.runtime?.activeRunId ?? null}
                     followUpBehavior={followUpBehavior}
                     canSteer={canSteer}
                     alternateShortcutLabel={shortcutLabelForCommand(
