@@ -88,6 +88,16 @@ export function applyAppearanceFontVariables(
     }
   }
 
+  const markerWidth = probeWidth(
+    appearanceFontStack(preferences.sans, DEFAULT_SANS_FONT_STACK),
+    LIST_MARKER_PROBE_TEXT,
+  );
+  if (markerWidth === null) {
+    root.style.removeProperty("--list-marker-sans");
+  } else {
+    root.style.setProperty("--list-marker-sans", `${(markerWidth / PROBE_FONT_SIZE).toFixed(3)}em`);
+  }
+
   root.style.fontSize = `${clampInterfaceFontSize(preferences.sizeInterface)}px`;
   root.style.setProperty(
     "--font-size-prompt",
@@ -127,15 +137,18 @@ function clampCodeFontSize(value: number): number {
 }
 
 const FONT_PROBE_TEXT = "mmmmmmmmMMWli1O0@# fjord";
+// The widest single-digit `ol` marker; CSS can't measure it to size the list gutter.
+const LIST_MARKER_PROBE_TEXT = "0. ";
+const PROBE_FONT_SIZE = 16;
 let fontProbeContext: CanvasRenderingContext2D | null | undefined;
 
-function probeWidth(fontList: string): number | null {
+function probeWidth(fontList: string, text = FONT_PROBE_TEXT): number | null {
   if (fontProbeContext === undefined) {
     fontProbeContext = document.createElement("canvas").getContext("2d");
   }
   if (fontProbeContext === null) return null;
-  fontProbeContext.font = `16px ${fontList}`;
-  return fontProbeContext.measureText(FONT_PROBE_TEXT).width;
+  fontProbeContext.font = `${PROBE_FONT_SIZE}px ${fontList}`;
+  return fontProbeContext.measureText(text).width;
 }
 
 /** Probes canvas metrics because document.fonts.check() accepts uninstalled families. */
