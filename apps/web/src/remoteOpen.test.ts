@@ -134,6 +134,7 @@ describe("resolveRemoteOpenState", () => {
       sshTarget: { alias: "sol", username: "theo", port: 2222 },
       isDesktopRenderer: true,
       remoteOpenTargets: [],
+      hostEnvironmentId: null,
     });
     expect(state).toEqual({
       mode: "remote-links",
@@ -147,6 +148,7 @@ describe("resolveRemoteOpenState", () => {
       sshTarget: { alias: "sol", username: null, port: null },
       isDesktopRenderer: true,
       remoteOpenTargets: [],
+      hostEnvironmentId: null,
     });
     expect(state).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
   });
