@@ -161,6 +161,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
@@ -2023,6 +2024,7 @@ export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__orchestrator_capabilities",
   "mcp__t3-code__list_scheduled_tasks",
+  "mcp__t3-code__t3_background_wait",
   "mcp__t3-code__t3_thread_list",
   "mcp__t3-code__t3_thread_wait",
   "mcp__t3-code__t3_worktree_status",
@@ -4270,6 +4272,7 @@ function buildAssistantArtifacts(input: {
   readonly nativeItemId: string;
   readonly text: string;
   readonly ordinal: number;
+  readonly status?: "completed" | "interrupted";
   readonly startedAt: DateTime.Utc;
   readonly completedAt: DateTime.Utc;
 }): {
@@ -4303,7 +4306,7 @@ function buildAssistantArtifacts(input: {
       parentNodeId: input.turnInput.rootNodeId,
       rootNodeId: input.turnInput.rootNodeId,
       kind: "assistant_message",
-      status: "completed",
+      status: input.status ?? "completed",
       countsForRun: false,
       providerThreadId: input.turnInput.providerThread.id,
       providerTurnId: input.providerTurnId,
@@ -4337,7 +4340,7 @@ function buildAssistantArtifacts(input: {
       nativeItemRef,
       parentItemId: null,
       ordinal: input.ordinal,
-      status: "completed",
+      status: input.status ?? "completed",
       title: null,
       startedAt: input.startedAt,
       completedAt: input.completedAt,
@@ -4407,6 +4410,12 @@ interface ActiveClaudeTurnContext {
     fallbackText: string;
     fallbackNativeItemId: string;
     emittedNativeItemIds: Set<string>;
+    // The root reply the latest assistant frame carried; a steer's aborted_streaming cuts it off.
+    lastReply: {
+      readonly nativeItemId: string;
+      readonly text: string;
+      readonly startedAt: DateTime.Utc;
+    } | null;
     // The CLI repeats a notice that ends a prompt as the turn's result text.
     noticeTexts: Set<string>;
   };
@@ -4453,6 +4462,9 @@ interface ActiveClaudeTurnContext {
   compactionFailure: { readonly message: string | undefined } | null;
   // Steers end segments whose usage is excluded from the final result; bill them too, oldest first.
   readonly steeredSegmentUsage: Array<SDKResultMessage["usage"]>;
+  // Set as finalization starts: a steer admitted later would stay pending
+  // forever, so it fails and the orchestrator follows up instead.
+  steersClosed: boolean;
   // Ledger growth of the steered segments; undefined once any segment's growth is unknown.
   steeredLedgerUsage: ClaudeLedgerUsage | undefined;
   readonly rootModels: Set<string>;
@@ -4465,8 +4477,16 @@ interface ActiveClaudeTurnContext {
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
   // Steers Claude has not started or echoed yet, by prompt uuid. Claude holds
-  // a steer behind a running foreground tool call without saying so.
-  readonly pendingSteers: Map<string, MessageId>;
+  // a steer behind a running foreground tool call without saying so, and Stop
+  // drops it unread.
+  readonly pendingSteers: Map<
+    string,
+    {
+      readonly messageId: MessageId;
+      readonly text: string;
+      readonly liveQuery: ClaudeLiveQueryContext;
+    }
+  >;
   // Claude may settle a turn with a result that echoes only a steer's uuid.
   readonly steerUuids: Set<string>;
   // Claude can run another model than requested, such as when an organization disallows it.
@@ -4934,6 +4954,7 @@ export interface ClaudeAdapterV2Options {
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
+  readonly installationGate?: ProviderInstallationGate.ProviderInstallationGate["Service"];
 }
 
 export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
@@ -7728,8 +7749,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ordinal: toolCall.ordinal,
               output: input.output,
               status:
-                toolNonExecutionKind === "cancelled"
-                  ? "cancelled"
+                toolNonExecutionKind === "cancelled" || toolNonExecutionKind === "interrupted"
+                  ? toolNonExecutionKind
                   : isClaudeToolResultError(input.toolResult)
                     ? "failed"
                     : "completed",
@@ -8124,10 +8145,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? [lifecycle.uuid]
                 : [];
           for (const uuid of accepted) {
-            const messageId = context.pendingSteers.get(uuid);
-            if (messageId === undefined) continue;
+            const steer = context.pendingSteers.get(uuid);
+            if (steer === undefined) continue;
             context.pendingSteers.delete(uuid);
-            yield* emitSteerStatus(context, messageId, "completed");
+            yield* emitSteerStatus(context, steer.messageId, "completed");
           }
         });
 
@@ -8142,16 +8163,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          input.context.steersClosed = true;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           // A turn that completes has taken in every steer; one that stops drops them unread.
-          for (const messageId of input.context.pendingSteers.values()) {
+          const droppedSteers = [...input.context.pendingSteers];
+          input.context.pendingSteers.clear();
+          for (const [, { messageId }] of droppedSteers) {
             yield* emitSteerStatus(
               input.context,
               messageId,
               input.status === "completed" ? "completed" : "cancelled",
             );
           }
-          input.context.pendingSteers.clear();
           if (input.context.compaction?.status === "running") {
             const reason = input.result?.subtype === "success" ? input.result.result.trim() : "";
             yield* emitProviderEvent({
@@ -8287,6 +8310,49 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updatedAt: input.completedAt,
               }),
             });
+          }
+
+          if (input.status === "interrupted") {
+            for (const [uuid, { text, liveQuery }] of droppedSteers) {
+              // Only a CLI proven to echo prompt uuids can leave a steer unconfirmed.
+              if (
+                liveQuery.promptEchoMode !== "early" &&
+                liveQuery.promptEchoMode !== "result_only"
+              ) {
+                continue;
+              }
+              const nativeItemId = `unread-steer:${uuid}`;
+              const notice = `Claude did not confirm reading your steer before Stop. It may not have been delivered. Resend it if needed: "${text}"`;
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CLAUDE_PROVIDER,
+                    nativeItemId,
+                  }),
+                  threadId: input.context.input.threadId,
+                  runId: input.context.input.runId,
+                  nodeId: input.context.input.rootNodeId,
+                  providerThreadId: input.context.input.providerThread.id,
+                  providerTurnId: input.context.providerTurnId,
+                  nativeItemRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: nativeItemId,
+                    strength: "weak",
+                  },
+                  parentItemId: null,
+                  ordinal: yield* resolveItemOrdinal(input.context, nativeItemId),
+                  type: "system_notice",
+                  status: "completed",
+                  title: "Steer delivery not confirmed",
+                  message: notice,
+                  startedAt: input.completedAt,
+                  completedAt: input.completedAt,
+                  updatedAt: input.completedAt,
+                },
+              });
+            }
           }
 
           const threadDisposition = input.threadDisposition ?? "reusable";
@@ -8461,16 +8527,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
+        const publishAssistantArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
           readonly text: string;
+          readonly status: "completed" | "interrupted";
+          readonly startedAt: DateTime.Utc;
+          readonly completedAt: DateTime.Utc;
         }) {
-          if (input.context.assistant.emittedNativeItemIds.has(input.nativeItemId)) {
-            return;
-          }
-          input.context.assistant.emittedNativeItemIds.add(input.nativeItemId);
-          const now = yield* DateTime.now;
           const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
           const artifacts = buildAssistantArtifacts({
             idAllocator,
@@ -8479,8 +8543,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeItemId: input.nativeItemId,
             text: input.text,
             ordinal,
-            startedAt: now,
-            completedAt: now,
+            status: input.status,
+            startedAt: input.startedAt,
+            completedAt: input.completedAt,
           });
           yield* Effect.all(
             [
@@ -8502,6 +8567,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ],
             { concurrency: 1 },
           );
+        });
+
+        const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly nativeItemId: string;
+          readonly text: string;
+        }) {
+          if (input.context.assistant.emittedNativeItemIds.has(input.nativeItemId)) {
+            return undefined;
+          }
+          input.context.assistant.emittedNativeItemIds.add(input.nativeItemId);
+          const now = yield* DateTime.now;
+          yield* publishAssistantArtifacts({
+            ...input,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+          });
+          return now;
         });
 
         const endSubagentsOfClosedQuery = Effect.fnUntraced(function* (input: {
@@ -10144,6 +10228,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
           const assistantText = assistantTextFromSdkMessage(message);
+          if (message.type === "assistant" && assistantParentToolUseId === null) {
+            context.assistant.lastReply = null;
+          }
           if (
             assistantText !== null &&
             assistantText.text.length > 0 &&
@@ -10192,11 +10279,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (assistantText !== null && assistantText.text.length > 0) {
-            yield* emitAssistantTextArtifacts({
+            const startedAt = yield* emitAssistantTextArtifacts({
               context,
               nativeItemId: assistantText.nativeItemId,
               text: assistantText.text,
             });
+            if (startedAt !== undefined) {
+              context.assistant.lastReply = { ...assistantText, startedAt };
+            }
             return;
           }
 
@@ -10269,6 +10359,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
+              const cutOffReply = context.assistant.lastReply;
+              context.assistant.lastReply = null;
+              if (message.terminal_reason === "aborted_streaming" && cutOffReply !== null) {
+                yield* publishAssistantArtifacts({
+                  context,
+                  ...cutOffReply,
+                  status: "interrupted",
+                  completedAt,
+                });
+              }
               context.steeredSegmentUsage.push(message.usage);
               context.steeredLedgerUsage = addClaudeLedgerUsage(
                 context.steeredLedgerUsage,
@@ -10442,6 +10542,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const message = input.message;
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
+          // The API answering again is recovery; a long text or tool input block emits nothing
+          // else. Judged here, in arrival order: held and buffered frames are handled later.
+          if (
+            context !== null &&
+            liveQuery?.query === input.query &&
+            message.type === "stream_event" &&
+            message.event.type === "message_start"
+          ) {
+            yield* completeProviderRetry(context, yield* DateTime.now);
+          }
           if (
             context !== null &&
             context.pendingSteers.size > 0 &&
@@ -11094,6 +11204,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return false;
         });
 
+        const applySelectionLive = Effect.fnUntraced(function* (
+          live: ClaudeLiveQueryContext,
+          selection: CompiledClaudeModelSelection,
+        ) {
+          // Preserve launcher-selected models unless the model changed or a failed update left it unknown.
+          yield* (
+            live.selection.queryIdentity === "" ||
+            live.selection.apiModelId !== selection.apiModelId
+              ? live.query.setModel(selection.apiModelId)
+              : Effect.void
+          ).pipe(
+            Effect.andThen(
+              live.query.applyFlagSettings(claudeLiveSelectionFlagSettings(selection)),
+            ),
+            Effect.tapError(() =>
+              Effect.sync(() => {
+                live.selection = { ...live.selection, queryIdentity: "" };
+              }),
+            ),
+          );
+          live.selection = selection;
+        });
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
@@ -11134,24 +11267,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (existing.selection.apiModelId === compiledSelection.apiModelId ||
               existing.openedPermissionMode === queryPolicy.permissionMode)
           ) {
-            const live = existing;
-            // Preserve launcher-selected models unless the model changed or a failed update left it unknown.
-            yield* (
-              live.selection.queryIdentity === "" ||
-              live.selection.apiModelId !== compiledSelection.apiModelId
-                ? live.query.setModel(compiledSelection.apiModelId)
-                : Effect.void
-            ).pipe(
-              Effect.andThen(
-                live.query.applyFlagSettings(claudeLiveSelectionFlagSettings(compiledSelection)),
-              ),
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  live.selection = { ...live.selection, queryIdentity: "" };
-                }),
-              ),
-            );
-            live.selection = compiledSelection;
+            yield* applySelectionLive(existing, compiledSelection);
           }
           if (
             existing !== null &&
@@ -11272,24 +11388,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
             .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));
-          const querySession = yield* queryRunner
-            .open({
-              threadId: turnInput.threadId,
-              providerSessionId: input.providerSessionId,
-              options: queryOptions,
-            })
-            .pipe(
-              Effect.onError(() =>
-                closedExistingNativeThreadId === nativeThreadId
-                  ? Effect.gen(function* () {
-                      yield* clearWakeStateForNativeThread(nativeThreadId);
-                      yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
-                        status: "idle",
-                      });
-                    })
-                  : Effect.void,
-              ),
-            );
+          const openQueryRuntime = queryRunner.open({
+            threadId: turnInput.threadId,
+            providerSessionId: input.providerSessionId,
+            options: queryOptions,
+          });
+          // The SDK spawns the CLI per turn, so only the open waits for a provider update.
+          const querySession = yield* (
+            adapterOptions.installationGate === undefined
+              ? openQueryRuntime
+              : adapterOptions.installationGate.execute(adapterOptions.instanceId, openQueryRuntime)
+          ).pipe(
+            Effect.onError(() =>
+              closedExistingNativeThreadId === nativeThreadId
+                ? Effect.gen(function* () {
+                    yield* clearWakeStateForNativeThread(nativeThreadId);
+                    yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
+                      status: "idle",
+                    });
+                  })
+                : Effect.void,
+            ),
+          );
           // Mark only successful opens; retries must not resume sessions that failed to create.
           yield* Ref.update(openedNativeThreads, (current) => {
             if (current.has(nativeThreadId)) {
@@ -11517,6 +11637,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
                 emittedNativeItemIds: new Set(),
+                lastReply: null,
                 noticeTexts: new Set(),
               },
               reasoning: {
@@ -11540,6 +11661,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               latestAssistantRateLimit: null,
               compactionFailure: null,
               steeredSegmentUsage: [],
+              steersClosed: false,
               steeredLedgerUsage: { inputTokens: 0, outputTokens: 0 },
               rootModels: new Set(),
               subagentsByTaskId: new Map(),
@@ -11957,11 +12079,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               persistAttachmentBudget(existing.nativeThreadId),
             );
+            // A selection sent with the steer applies to the running turn when the live process can switch to it.
+            const steerSelection =
+              turnInput.modelSelection === undefined
+                ? undefined
+                : compileClaudeModelSelection(turnInput.modelSelection, modelCatalog);
+            const liveSteerSelection =
+              steerSelection !== undefined &&
+              existing.selection.queryIdentity !== steerSelection.queryIdentity &&
+              canApplyClaudeSelectionLive(existing.selection, steerSelection) &&
+              (existing.selection.apiModelId === steerSelection.apiModelId ||
+                existing.openedPermissionMode === currentTurn.queryPolicy.permissionMode)
+                ? steerSelection
+                : undefined;
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
                 turnInput.message.text,
-                compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
-                  .promptEffort,
+                (
+                  liveSteerSelection ??
+                  compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
+                ).promptEffort,
               ),
               attachments: turnInput.message.attachments,
               priority: "now",
@@ -11975,27 +12112,36 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(Path.Path, path),
             );
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
-            // The turn can end while the moves are answered. A steer offered
-            // then would start a new turn the orchestrator never asked for, so
-            // the steer fails and the orchestrator starts the follow-up turn.
+            if (liveSteerSelection !== undefined) {
+              yield* applySelectionLive(existing, liveSteerSelection);
+            }
+            // The turn can end while the moves or the selection change are answered.
+            // A steer offered then would start a new turn the orchestrator never
+            // asked for, so the steer fails and the orchestrator starts the follow-up turn.
             if (
               (yield* Ref.get(activeTurn))?.providerTurnId !== turnInput.providerTurnId ||
-              (yield* Ref.get(queryContext)) !== existing
+              (yield* Ref.get(queryContext)) !== existing ||
+              // No yield between this check and the set below.
+              currentTurn.steersClosed
             ) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
               });
             }
+            // Register before offering: Claude can start the steer and end the turn before offer returns.
+            const messageId = turnInput.message.messageId;
+            currentTurn.steerUuids.add(steerUuid);
+            currentTurn.pendingSteers.set(steerUuid, {
+              messageId,
+              text: turnInput.message.text,
+              liveQuery: existing,
+            });
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);
               return next;
             });
-            // Register before offering: Claude can start the steer and end the turn before offer returns.
-            const messageId = turnInput.message.messageId;
-            currentTurn.steerUuids.add(steerUuid);
-            currentTurn.pendingSteers.set(steerUuid, messageId);
             yield* emitSteerStatus(currentTurn, messageId, "pending");
             yield* Effect.uninterruptibleMask((restore) =>
               restore(
@@ -12342,6 +12488,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 );
             }),
           },
+          applyModelSelection: Effect.fn("ClaudeAdapterV2.applyModelSelection")(function* ({
+            providerThread,
+            modelSelection,
+          }) {
+            const live = yield* Ref.get(queryContext);
+            const selection = compileClaudeModelSelection(modelSelection, modelCatalog);
+            // A model change still waits for the next turn, which checks it against the turn's permission mode.
+            if (
+              live === null ||
+              live.stopping ||
+              live.nativeThreadId !== providerThread.nativeThreadRef?.nativeId ||
+              live.selection.queryIdentity === selection.queryIdentity ||
+              live.selection.apiModelId !== selection.apiModelId ||
+              !canApplyClaudeSelectionLive(live.selection, selection)
+            ) {
+              return;
+            }
+            // A failed update clears the live identity, so the next turn applies the selection again.
+            yield* applySelectionLive(live, selection).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("orchestration-v2.claude-live-selection-failed", { cause }),
+              ),
+            );
+          }),
           stopTask: Effect.fn("ClaudeAdapterV2.stopTask")(function* ({ providerThread, taskId }) {
             const liveQuery = yield* Ref.get(queryContext);
             const task = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
@@ -12700,6 +12870,7 @@ export type ClaudeAdapterV2DriverEnv =
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | Path.Path
+  | ProviderInstallationGate.ProviderInstallationGate
   | ServerConfig.ServerConfig;
 
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
@@ -12714,6 +12885,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
     const baseEnvironment = yield* mergeClaudeProcessEnvironment(
       config,
       environment,
@@ -12737,6 +12909,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       idAllocator,
       queryRunner,
       continuationRequests,
+      installationGate,
       ...hooks,
     });
   },
