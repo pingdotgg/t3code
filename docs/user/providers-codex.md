@@ -100,6 +100,12 @@ in the thread on web, desktop, or mobile. Some tools offer access for one reques
 the current session, or permanently. See [Permission modes](./permission-modes.md)
 for command and file approvals.
 
+## Sign in to MCP servers
+
+When an MCP server needs you to log in, ask Codex to sign in to it. Codex replies
+with a link; open it and log in. The login finishes on the machine running the
+environment, so open the link in a browser on that machine.
+
 ## Codex says I hit a usage limit
 
 When Codex stops on a usage limit, the thread names the window that ran out and

@@ -198,6 +198,9 @@ export function summarizeT3ToolCalls(
     case "background-wait":
       label = phrase("Updated", "update", `background waits ${times}`);
       break;
+    case "mcp-server":
+      label = phrase("Managed", "manage", `MCP server sign-in ${times}`);
+      break;
     case "task-cancel":
       label = phrase(
         "Requested cancellation of",

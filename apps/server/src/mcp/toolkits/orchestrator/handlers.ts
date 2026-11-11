@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
+import type * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
@@ -79,6 +80,54 @@ const handlers = {
               }),
           ),
         );
+    }),
+  ),
+  t3_mcp_server: McpToolAccess.actsAsCaller(({ action, server, callbackUrl }) =>
+    Effect.gen(function* () {
+      const { scope, threads } = yield* readCaller();
+      const caller = yield* McpInvocationContext.requireThreadScope(scope, "t3_mcp_server");
+      const invalid = (message: string) =>
+        new OrchestratorMcpFailure({ code: "invalid_request", message });
+      if (action !== "list" && server === undefined) {
+        return yield* invalid(`\`${action}\` needs \`server\`.`);
+      }
+      if (action === "callback" && !URL.canParse(callbackUrl ?? "")) {
+        return yield* invalid(
+          "`callback` needs `callbackUrl`, the full address the browser ended on.",
+        );
+      }
+      const request: ThreadManagementService.ThreadManagementMcpServerRequest =
+        action === "list"
+          ? { action }
+          : action === "callback"
+            ? { action, server: server!, callbackUrl: callbackUrl! }
+            : { action, server: server! };
+      const result = yield* threads
+        .manageMcpServer({ threadId: caller.thread.threadId, ...request })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorMcpFailure({
+                code:
+                  cause.reason === "unsupported" || cause.reason === "callback-unsupported"
+                    ? "invalid_request"
+                    : "orchestration_error",
+                message: cause.message,
+              }),
+          ),
+        );
+      // The link comes from the server's own OAuth metadata; only a browser link is safe to show.
+      if (
+        "authorizationUrl" in result &&
+        result.authorizationUrl !== undefined &&
+        !/^https?:\/\//i.test(result.authorizationUrl)
+      ) {
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "The sign-in link was not an http(s) address, so it was not shown.",
+        });
+      }
+      return result;
     }),
   ),
   schedule_task: McpToolAccess.either(
