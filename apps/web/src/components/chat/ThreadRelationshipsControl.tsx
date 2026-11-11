@@ -29,6 +29,7 @@ import {
   resolveLatestMergeBackRun,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import {
+  AuthOrchestrationOperateScope,
   isOrchestrationV2WorkActive,
   isListedThreadLineage,
   isProviderNativeSubagentThread,
@@ -72,6 +73,7 @@ import {
   useAnyEnvironmentHiding,
 } from "../../state/entities";
 import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
+import { useEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import {
   applyProviderInstanceSettings,
@@ -438,6 +440,7 @@ export function ThreadRelationshipsPanel(props: {
   const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn);
   const promoteThread = useAtomCommand(threadEnvironment.promote);
   const demoteThread = useAtomCommand(threadEnvironment.demote);
+  const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const stopWorkflowCommand = useAtomCommand(orchestrationEnvironment.stopWorkflow);
   const canOperateWorkflow = useAtomValue(
     orchestrationEnvironment.stopWorkflow.permissionAtom(props.environmentId),
@@ -668,7 +671,7 @@ export function ThreadRelationshipsPanel(props: {
   };
 
   const togglePromoted = async () => {
-    if (busyAction !== null) return;
+    if (!canOperate || busyAction !== null) return;
     setBusyAction("promote");
     const result = await (promoted ? demoteThread : promoteThread)({
       environmentId: props.environmentId,
@@ -998,7 +1001,7 @@ export function ThreadRelationshipsPanel(props: {
                           variant="ghost"
                           part="icon"
                           aria-label={promoted ? "Move back under parent" : "Promote to thread"}
-                          disabled={busyAction !== null}
+                          disabled={!canOperate || busyAction !== null}
                           onClick={() => void togglePromoted()}
                         />
                       }
