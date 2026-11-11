@@ -1,15 +1,56 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
+  resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "./providerInstanceDisplay.ts";
 
 const codex = ProviderDriverKind.make("codex");
 const acpRegistry = ProviderDriverKind.make("acpRegistry");
+const claudeAgent = ProviderDriverKind.make("claudeAgent");
+
+describe("resolveProviderInstanceDisplayName", () => {
+  // regression: #34507 the picker must show the same name as provider settings
+  it("keeps a name that matches the driver label on a non-default instance", () => {
+    expect(
+      resolveProviderInstanceDisplayName({
+        instanceId: ProviderInstanceId.make("codex_pool"),
+        driver: codex,
+        displayName: "Codex",
+      }),
+    ).toBe("Codex");
+    expect(
+      resolveProviderInstanceDisplayName({
+        instanceId: ProviderInstanceId.make("claudeAgent_pool"),
+        driver: claudeAgent,
+        displayName: "Claude",
+      }),
+    ).toBe("Claude");
+  });
+
+  it("falls back to the driver label, like provider settings", () => {
+    expect(
+      resolveProviderInstanceDisplayName({
+        instanceId: ProviderInstanceId.make("codex_pool"),
+        driver: codex,
+      }),
+    ).toBe("Codex");
+  });
+
+  it("keeps a distinct name", () => {
+    expect(
+      resolveProviderInstanceDisplayName({
+        instanceId: ProviderInstanceId.make("codex_pool"),
+        driver: codex,
+        displayName: " Personal Codex ",
+      }),
+    ).toBe("Personal Codex");
+  });
+});
 
 describe("providerInstanceInitials", () => {
   it("treats punctuation as a word break but keeps apostrophes between letters", () => {
