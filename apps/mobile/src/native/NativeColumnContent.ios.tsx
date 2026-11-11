@@ -1,6 +1,6 @@
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useState, type ReactNode } from "react";
-import { View } from "react-native";
+import { View, type ColorValue } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { NativeColumnLayoutMetricsContext } from "./native-layout-metrics";
 import type { NativeLayoutMetrics } from "../lib/reserved-regions";
@@ -10,10 +10,16 @@ export function NativeColumnContent(props: {
   readonly children: ReactNode;
   readonly primary?: boolean;
   readonly insetHorizontally?: boolean;
+  readonly backgroundColor?: ColorValue;
 }) {
   const [metrics, setMetrics] = useState<NativeLayoutMetrics | null>(null);
   return (
-    <View className={props.primary ? "flex-1 bg-drawer" : "flex-1 bg-screen"}>
+    <View
+      className={props.primary ? "flex-1 bg-drawer" : "flex-1 bg-screen"}
+      style={
+        props.backgroundColor === undefined ? undefined : { backgroundColor: props.backgroundColor }
+      }
+    >
       <SafeAreaProvider style={{ flex: 1 }}>
         <SafeAreaView
           edges={props.insetHorizontally === false ? [] : ["left", "right"]}
