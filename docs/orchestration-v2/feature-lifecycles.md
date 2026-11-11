@@ -410,7 +410,7 @@ rollback.toRun(threadId, targetRunOrdinal)
   -> delete or mark stale later checkpoint refs
 ```
 
-Codex `thread/rollback` returns an authoritative provider thread snapshot. Other providers may require a synthetic provider thread restart from context.
+Codex `thread/revert` returns updated loaded thread metadata with an empty `turns` array; retained history must be hydrated through `thread/turns/list`. Other providers may require a synthetic provider thread restart from context.
 
 Nested rollback:
 

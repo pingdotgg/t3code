@@ -210,7 +210,9 @@ it.effect(
         ProjectionStore.ProjectionStoreV2.of({
           apply: () => Effect.void,
           getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
+          getLimitRecoveryWakeAt: () => Effect.die("unused getLimitRecoveryWakeAt"),
           getOpenRemoteDelegatedTasks: Effect.die("unused getOpenRemoteDelegatedTasks"),
+          getAgentAwarenessSnapshot: () => Effect.die("unused awareness snapshot"),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
           listActiveSubagentThreadIds: () => Effect.die("unused listActiveSubagentThreadIds"),
           countThreads: () => Effect.die("unused countThreads"),
@@ -218,6 +220,8 @@ it.effect(
           listOlderSettledThreads: () => Effect.die("unused listOlderSettledThreads"),
           readShellSnapshot: () => Effect.die("unused readShellSnapshot"),
           getThreadShell: () => Effect.die("unused getThreadShell"),
+          getThreadTitles: () => Effect.die("unused getThreadTitles"),
+          getThreadLinkMetadata: () => Effect.die("unused getThreadLinkMetadata"),
           findGuestShareThreadId: () => Effect.die("unused findGuestShareThreadId"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
@@ -235,8 +239,11 @@ it.effect(
           getThreadHistoryPage: () => Effect.die("unused"),
           getTimelinePage: () => Effect.die("Unused timeline read"),
           getMessageCount: () => Effect.die("unused message count"),
+          getSubagentCount: () => Effect.die("unused subagent count"),
+          listAppOwnedChildThreadIds: () => Effect.die("unused listAppOwnedChildThreadIds"),
           getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
           getTurnItem: () => Effect.die("unused turn item read"),
+          getMessagesById: () => Effect.die("unused getMessagesById"),
           getThreadRecords: () => Effect.die("unused record read"),
           getRuntimeRequest: () => Effect.die("unused getRuntimeRequest"),
           getRunningTurnContext: () => Effect.die("unused getRunningTurnContext"),
@@ -268,6 +275,7 @@ it.effect(
           getUnreadableThreadIds: () => Effect.die("unused getUnreadableThreadIds"),
           getThreadSnapshot: () => Effect.die("unused getThreadSnapshot"),
           getThreadSnapshotWindow: () => Effect.die("unused getThreadSnapshotWindow"),
+          getPullRequestSnapshot: () => Effect.die("unused getPullRequestSnapshot"),
         }),
       );
       const layerSessionManager = Layer.succeed(
@@ -284,6 +292,9 @@ it.effect(
           closeInstance: () => Effect.void,
           release: () => Effect.void,
           detach: () => Effect.void,
+          otherWorkingThreads: () => Effect.succeed([]),
+          releaseUnlessBusy: () => Effect.succeed(true),
+          subscribePromptSuggestion: () => Stream.empty,
         }),
       );
       const layerControl = ProviderTurnControlService.layer.pipe(

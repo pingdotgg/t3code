@@ -1,8 +1,11 @@
+import { isWindowsDrivePath } from "./path.ts";
+
 export type CloneProtocol = "ssh" | "https";
 
-const SCP_LIKE_URL = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/;
-const SSH_URL = /^ssh:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
-const HTTPS_URL = /^https?:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
+const SCP_LIKE_URL = /^(?:[^@/\s]+@)?(\[[^\]@/\s]+\]|[^:/\s[\]]+):(?!\/)(.+)$/;
+// Userinfo may contain `@`; the last one before the first slash separates the host.
+const SSH_URL = /^ssh:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
+const HTTPS_URL = /^https?:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
 
 function parseCloneUrl(
   url: string,
@@ -31,7 +34,40 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
   if (!parsed) return null;
   if (parsed.protocol === protocol) return url.trim();
   if (parsed.customPort) return null;
+  // Azure's transports use different hosts and put the repository marker in
+  // different positions; changing only the scheme produces an invalid clone URL.
+  if (parsed.protocol === "ssh" && parsed.host.toLowerCase() === "ssh.dev.azure.com") {
+    const azure = /^v3\/([^/?#]+)\/([^/?#]+)\/([^/?#]+)$/.exec(parsed.path);
+    return azure ? `https://dev.azure.com/${azure[1]}/${azure[2]}/_git/${azure[3]}` : null;
+  }
+  if (parsed.protocol === "https" && parsed.host.toLowerCase() === "dev.azure.com") {
+    const azure = /^([^/?#]+)\/([^/?#]+)\/_git\/([^/?#]+)$/.exec(parsed.path);
+    return azure ? `git@ssh.dev.azure.com:v3/${azure[1]}/${azure[2]}/${azure[3]}` : null;
+  }
   return protocol === "ssh"
     ? `git@${parsed.host}:${parsed.path}`
     : `https://${parsed.host}/${parsed.path}`;
+}
+
+const UNSAFE_SEGMENT = /^\.{1,2}$|[\\:*?"<>|\p{Cc}]|[ .]$/u;
+const WINDOWS_DEVICE_NAME =
+  /^(?:con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(?: *\.| *$)/i;
+
+/**
+ * The `<host>/<owner>/<repo>` folders ghq clones a URL into, or null for local paths and
+ * anything with a folder that could leave the root.
+ */
+export function cloneUrlRepositoryPath(url: string): string | null {
+  if (isWindowsDrivePath(url.trim())) return null;
+  const parsed = parseCloneUrl(url);
+  if (!parsed) return null;
+  const segments = [parsed.host, ...parsed.path.split(/[?#]/)[0]!.split("/").filter(Boolean)];
+  const last = segments.at(-1)!;
+  if (last.endsWith(".git")) segments[segments.length - 1] = last.slice(0, -".git".length);
+  if (
+    segments.length < 2 ||
+    segments.some((s) => s === "" || UNSAFE_SEGMENT.test(s) || WINDOWS_DEVICE_NAME.test(s))
+  )
+    return null;
+  return segments.join("/");
 }
