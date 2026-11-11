@@ -904,6 +904,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         output: string;
         cursor: number;
         startedAt?: DateTime.Utc;
+        projectionState?: ThreadState;
+        settlement?: { status: "completed" | "failed" | "interrupted"; exit: number | undefined };
       }
     >();
 
@@ -1589,40 +1591,33 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const shell = shells.get(id);
       if (shell === undefined) return;
       if (shell.turn === undefined || shell.toolId === undefined || shell.tool === undefined) {
-        const updatedAt = yield* DateTime.now;
-        yield* emit({
-          type: "turn_item.updated",
-          driver,
-          turnItem: {
-            id: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId: id }),
-            threadId: shell.state.providerThread.appThreadId ?? input.threadId,
-            runId: null,
-            nodeId: null,
-            providerThreadId: shell.state.providerThread.id,
-            providerTurnId: null,
-            nativeItemRef: ref(id),
-            parentItemId: null,
-            ordinal: 0,
-            status,
-            title: null,
-            startedAt: shell.startedAt ?? updatedAt,
-            completedAt: status === "running" ? null : updatedAt,
-            updatedAt,
-            type: "command_execution",
-            input: shell.command,
-            output: shell.output,
-            ...(exit === undefined ? {} : { exitCode: exit }),
-          },
-        });
+        if (status !== "running") shell.settlement = { status, exit };
         return;
       }
       shell.turn.tools.set(shell.toolId, shell.tool);
-      yield* emitTool(shell.state, shell.turn, shell.toolId, status, {
+      yield* emitTool(shell.projectionState ?? shell.state, shell.turn, shell.toolId, status, {
         output: shell.output,
         nativeTaskId: id,
         metadata: { shellID: id, exit },
       });
       shell.turn.tools.delete(shell.toolId);
+    });
+
+    const bindRecoveredShells = Effect.fn("OpenCode2Adapter.bindRecoveredShells")(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+    ) {
+      for (const [id, shell] of shells) {
+        if (shell.turn !== undefined || !sessionsOf(state).includes(shell.state)) continue;
+        // Root command events need a real run owner to pass server routing.
+        shell.turn = turn;
+        shell.projectionState = state;
+        shell.toolId = id;
+        shell.tool = { name: "shell", input: { command: shell.command } };
+        turn.startedAt.set(id, shell.startedAt ?? (yield* DateTime.now));
+        yield* emitShell(id, shell.settlement?.status ?? "running", shell.settlement?.exit);
+        if (shell.settlement !== undefined) shells.delete(id);
+      }
     });
 
     const stopShell = Effect.fn("OpenCode2Adapter.stopShell")(function* (id: string) {
@@ -1647,7 +1642,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       shell.running = false;
       shell.state.stoppedChildren.add(id);
       yield* emitShell(id, "interrupted");
-      shells.delete(id);
+      if (shell.turn !== undefined) shells.delete(id);
       shellInfo.delete(id);
       yield* syncRosterAncestors(shell.state);
     });
@@ -1730,7 +1725,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         lock.withPermit(
           effect.pipe(
             Effect.timeout(INVENTORY_TIMEOUT),
-            Effect.ensuring(syncRosterAncestors(state)),
+            Effect.ensuring(
+              Effect.gen(function* () {
+                if (state.active !== undefined) yield* bindRecoveredShells(state, state.active);
+                yield* syncRosterAncestors(state);
+              }),
+            ),
           ),
         ),
     );
@@ -2830,7 +2830,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   : "completed",
             );
           }
-          shells.delete(id);
+          if (shell?.turn !== undefined) shells.delete(id);
           shellInfo.delete(id);
         }
         return;
@@ -2928,7 +2928,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               : "failed",
           "exit" in event.data ? event.data.exit : undefined,
         );
-        shells.delete(event.data.id);
+        if (shell.turn !== undefined) shells.delete(event.data.id);
         shellInfo.delete(event.data.id);
         yield* syncRosterAncestors(shell.state);
         return;
@@ -3961,6 +3961,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       };
       yield* emitProviderThread(state);
       yield* setSessionStatus("running", null);
+      yield* lock.withPermit(bindRecoveredShells(state, turn));
       return turn;
     });
 

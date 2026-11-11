@@ -49,6 +49,7 @@ import {
   t3McpServerName,
 } from "@t3tools/provider-opencode/testing";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { makeProviderEventRoutingState, routeProviderEvent } from "../RunExecutionService.ts";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 import {
   makeProviderReplayGate,
@@ -1030,7 +1031,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect.each(["shell", "job", "fallback", "descendant"] as const)(
+  it.effect.each(["shell", "job", "fallback", "descendant", "settled"] as const)(
     "recovers only owned native shells using %s inventory",
     (discovery) =>
       Effect.gen(function* () {
@@ -1038,7 +1039,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         const info = {
           id,
           command: "sleep 600",
-          status: "running",
+          status: discovery === "settled" ? "exited" : "running",
+          ...(discovery === "settled" ? { exit: 0 } : {}),
           cwd: WORK,
           shell: "/bin/sh",
           file: "/remote/output",
@@ -1062,7 +1064,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                             shellID: id,
                             sessionID: discovery === "descendant" ? "ses_descendant" : SESSION,
                             command: info.command,
-                            status: "running",
+                            status: discovery === "settled" ? "completed" : "running",
                           },
                         ],
                       },
@@ -1087,10 +1089,21 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         );
         const { runtime, thread } = yield* resumed(
           [
-            out("shell.output", { id, cursor: "8" }),
-            reply("shell.output", response({ output: "", cursor: 8, size: 8, truncated: false })),
-            out("shell.remove", { id }),
-            reply("shell.remove", null),
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.execution.started", { sessionID: SESSION }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            ...(discovery === "settled"
+              ? []
+              : [
+                  out("shell.output", { id, cursor: "8" }),
+                  reply(
+                    "shell.output",
+                    response({ output: "", cursor: 8, size: 8, truncated: false }),
+                  ),
+                  out("shell.remove", { id }),
+                  reply("shell.remove", null),
+                ]),
           ],
           {
             version: discovery === "shell" ? "2.2.1" : "2.2.6",
@@ -1098,41 +1111,75 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             external: true,
           },
         );
-        const recovered = yield* runtime.events.pipe(
-          Stream.filter(
-            (e) => e.type === "turn_item.updated" && e.turnItem.type === "command_execution",
+        const items: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const rootEnded = yield* Deferred.make<void>();
+        const shellEnded = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.gen(function* () {
+              if (event.type === "turn.terminal") yield* Deferred.succeed(rootEnded, undefined);
+              if (event.type !== "turn_item.updated" || event.turnItem.type !== "command_execution")
+                return;
+              items.push(event);
+              if (event.turnItem.status !== "running")
+                yield* Deferred.succeed(shellEnded, undefined);
+            }),
           ),
-          Stream.takeUntil(
-            (e) => e.type === "turn_item.updated" && e.turnItem.status === "interrupted",
-          ),
-          Stream.runCollect,
           Effect.forkScoped,
         );
-        assert.deepEqual(thread.pendingBackgroundTasks, [
-          { taskId: id, kind: "command", description: info.command },
-        ]);
-        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        assert.deepEqual(
+          thread.pendingBackgroundTasks ?? [],
+          discovery === "settled"
+            ? []
+            : [{ taskId: id, kind: "command", description: info.command }],
+        );
+        assert.equal(
+          yield* runtime.hasPendingBackgroundWorkForThread!(thread),
+          discovery !== "settled",
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(rootEnded);
         yield* runtime.stopTask!({ providerThread: thread, taskId: "sh_other" });
-        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        assert.equal(
+          yield* runtime.hasPendingBackgroundWorkForThread!(thread),
+          discovery !== "settled",
+        );
         yield* runtime.stopTask!({ providerThread: thread, taskId: id });
         assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-        const item = yield* Fiber.join(recovered);
+        yield* Deferred.await(shellEnded);
+        const item = items;
         const projected = item.at(0);
         const stopped = item.at(-1);
         if (stopped?.type === "turn_item.updated") {
-          assert.equal(stopped.turnItem.status, "interrupted");
+          assert.equal(
+            stopped.turnItem.status,
+            discovery === "settled" ? "completed" : "interrupted",
+          );
           assert.equal(
             stopped.turnItem.id,
             projected?.type === "turn_item.updated" ? projected.turnItem.id : undefined,
           );
         }
         assert.equal(projected?.type, "turn_item.updated");
-        if (projected?.type === "turn_item.updated")
+        if (projected?.type === "turn_item.updated") {
+          const input = turnInput(thread);
+          const identity = {
+            threadId: input.threadId,
+            runId: input.runId,
+            attemptId: input.attemptId,
+            providerThreadId: thread.id,
+          };
+          const routing = makeProviderEventRoutingState({ identity, providerTurnId: null });
+          assert.isTrue(
+            item.every((event) => routeProviderEvent(event, identity, routing)[0]),
+            "recovered output and terminal state must pass server event routing",
+          );
           assert.deepInclude(projected.turnItem, {
             type: "command_execution",
             input: info.command,
             output: "retained",
           });
+        }
       }).pipe(Effect.scoped),
   );
 
