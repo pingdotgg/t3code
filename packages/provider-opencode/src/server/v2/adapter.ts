@@ -3985,7 +3985,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // A loaded session keeps its native move unless T3 changed the thread's cwd since.
           const target = cwd != null && cwd !== previous?.cwd ? cwd : undefined;
           const state = register(providerThread, native, target ?? native.location.directory);
-          if (target !== undefined) state.cwd = target;
+          // Until the move lands the session is still at its native location; a failed move retries.
+          if (!loaded) state.cwd = native.location.directory;
           if (!loaded) yield* stopLeftoverRequests(state);
           if (!loaded && supportsNativeGoals()) {
             yield* readGoal(state).pipe(
@@ -4000,6 +4001,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               directory: AbsolutePath.make(target),
             });
           }
+          if (target !== undefined) state.cwd = target;
           return state.providerThread;
         },
         (effect, threadInput) =>

@@ -2022,14 +2022,26 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         replyData("session.get", sessionInfo()),
         ...noOpenRequests,
         out("session.move", { sessionID: SESSION, directory: "/work/opencode2-feature" }),
+        reply("session.move", {
+          status: 400,
+          body: { _tag: "UnknownError", message: "move failed" },
+        }),
+        out("session.get", { sessionID: SESSION }),
+        replyData("session.get", sessionInfo()),
+        out("session.move", { sessionID: SESSION, directory: "/work/opencode2-feature" }),
         reply("session.move", null),
       ]);
-      yield* runtime.resumeThread({
-        providerThread: providerThread(yield* DateTime.now),
-        threadId,
-        modelSelection: bigPickle,
-        runtimePolicy: { ...policy(), cwd: "/work/opencode2-feature" },
+      const resume = Effect.fn(function* () {
+        return yield* runtime.resumeThread({
+          providerThread: providerThread(yield* DateTime.now),
+          threadId,
+          modelSelection: bigPickle,
+          runtimePolicy: { ...policy(), cwd: "/work/opencode2-feature" },
+        });
       });
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(resume())));
+      // The session never left WORK, so the retry moves it again.
+      yield* resume();
     }).pipe(Effect.scoped),
   );
 
