@@ -1,5 +1,12 @@
+import {
+  claudeCodeConnectPrompt,
+  claudeCodeMcpCommands,
+  codexConnectPrompt,
+  codexMcpCommands,
+} from "./agentConnectPrompt";
 import chatgptLogo from "./logos/chatgpt.png";
 import claudeLogo from "./logos/claude.png";
+import codexLogo from "./logos/codex.png";
 import geminiLogo from "./logos/gemini.png";
 import grokBotLogo from "./logos/grokbot.png";
 import hermesLogo from "./logos/hermes.png";
@@ -25,6 +32,15 @@ export type McpAppHandoff =
       readonly appLink?: (message: string) => string;
       readonly message: (mcpUrl: string) => string;
     }
+  /**
+   * Copies a prompt the person pastes into the coding agent; optional CLI commands under
+   * Set up another way.
+   */
+  | {
+      readonly kind: "copy-prompt";
+      readonly prompt: (mcpUrl: string) => string;
+      readonly commands: (mcpUrl: string) => readonly string[];
+    }
   /** Commands to run where the app runs. */
   | { readonly kind: "commands"; readonly commands: (mcpUrl: string) => readonly string[] };
 
@@ -45,6 +61,38 @@ export interface McpApp {
 const encoded = encodeURIComponent;
 
 export const MCP_APPS: readonly McpApp[] = [
+  {
+    id: "claude-code",
+    name: "Claude Code",
+    logo: claudeLogo,
+    handoff: {
+      kind: "copy-prompt",
+      prompt: claudeCodeConnectPrompt,
+      commands: claudeCodeMcpCommands,
+    },
+    steps: [
+      "Paste the prompt into Claude Code and let it add and sign in to the MCP server.",
+      "Or run the commands yourself in the terminal where Claude Code is installed.",
+    ],
+    note: "Paste into Claude Code. It runs the MCP add and login for you.",
+    docs: "https://code.claude.com/docs/en/mcp",
+  },
+  {
+    id: "codex",
+    name: "Codex",
+    logo: codexLogo,
+    handoff: {
+      kind: "copy-prompt",
+      prompt: codexConnectPrompt,
+      commands: codexMcpCommands,
+    },
+    steps: [
+      "Paste the prompt into Codex and let it add and sign in to the MCP server.",
+      "Or run the commands yourself in the terminal where Codex is installed.",
+    ],
+    note: "Paste into Codex. It runs the MCP add and login for you.",
+    docs: "https://developers.openai.com/codex/mcp",
+  },
   {
     id: "poke",
     name: "Poke",
@@ -183,7 +231,7 @@ export const OTHER_MCP_APP_STEPS = ["Add a remote MCP server with OAuth."] as co
 
 /**
  * The primary button for `app`: its label, the https page it opens, and what it copies first.
- * Null for apps set up with commands. It never copies the approval code.
+ * Null for apps set up with commands only. It never copies the approval code.
  */
 export function mcpHandoffAction(app: McpApp, mcpUrl: string) {
   const { handoff } = app;
@@ -211,6 +259,13 @@ export function mcpHandoffAction(app: McpApp, mcpUrl: string) {
         copy: { text: message, title: "Message copied" },
       };
     }
+    case "copy-prompt":
+      return {
+        label: `Copy prompt for ${app.name}`,
+        link: null,
+        appLink: null,
+        copy: { text: handoff.prompt(mcpUrl), title: "Prompt copied" },
+      };
     case "commands":
       return null;
   }

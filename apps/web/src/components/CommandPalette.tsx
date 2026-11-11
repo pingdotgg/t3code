@@ -1643,6 +1643,8 @@ function OpenCommandPaletteDialog(props: {
       "mcp",
       "connector",
       "another app",
+      "claude code",
+      "codex",
       "poke",
       "claude",
       "chatgpt",

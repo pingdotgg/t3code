@@ -578,10 +578,26 @@ function ConnectStep({
     );
   if (anotherWay || app === null) {
     const message = app?.handoff.kind === "copy-message" ? app.handoff.message(mcpUrl) : null;
+    const prompt = app?.handoff.kind === "copy-prompt" ? app.handoff.prompt(mcpUrl) : null;
+    const commands =
+      app?.handoff.kind === "copy-prompt" || app?.handoff.kind === "commands"
+        ? app.handoff.commands(mcpUrl)
+        : null;
     return (
       <section className="space-y-4">
         <CopyRow label="URL" value={mcpUrl} />
         {message ? <CopyRow label="Message" value={message} /> : null}
+        {prompt ? <CopyRow label="Prompt" value={prompt} /> : null}
+        {commands !== null && commands.length > 0 ? (
+          <div className="space-y-2">
+            {commands.map((command) => (
+              <CommandBlock key={command} command={command} />
+            ))}
+            <p className="text-xs text-muted-foreground">
+              Run these where {app?.name ?? "the app"} runs.
+            </p>
+          </div>
+        ) : null}
         <ol className="list-decimal space-y-1 ps-5 text-sm">
           {(app?.steps ?? OTHER_MCP_APP_STEPS).map((step) => (
             <li key={step}>{step}</li>
@@ -597,7 +613,11 @@ function ConnectStep({
         {code}
         {app === null ? null : (
           <TextButton onClick={() => setAnotherWay(false)}>
-            {app.handoff.kind === "commands" ? "Back to commands" : "Back to one click"}
+            {app.handoff.kind === "commands"
+              ? "Back to commands"
+              : app.handoff.kind === "copy-prompt"
+                ? "Back to prompt"
+                : "Back to one click"}
           </TextButton>
         )}
         <LinkedLine environment={environment} access={access} />
@@ -665,6 +685,7 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
   // The desktop app reports a link nothing opens and falls back; a browser cannot tell, and
   // opens an app link in place (a new tab for it would stay blank), so its toast keeps the web.
   const openApp = () => {
+    if (link === null) return;
     if (appLink === null) return openLink(link);
     if (!isElectron) return window.location.assign(appLink);
     void readLocalApi()
@@ -688,7 +709,7 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
         title: copy.title,
         // A browser can block an open that follows the copy, and no platform reliably reports an
         // app link nothing handles (Linux says it opened), so these keep a way through.
-        ...(isElectron && appLink === null
+        ...(link === null || (isElectron && appLink === null)
           ? {}
           : {
               actionProps: {

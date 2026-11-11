@@ -6,6 +6,30 @@ check which providers and models are available. This covers Claude Code or
 Codex in your own terminal, ChatGPT, and bots that support MCP. Each agent signs
 in once, and you choose what it may do.
 
+## Let your coding agent connect
+
+For Claude Code or Codex, the fastest path is to have the agent set up the
+connection itself.
+
+1. In T3 Code, open the command palette (`Cmd/Ctrl+K`) and choose **Use T3 Code
+   in another app (MCP)**. Pick **Claude Code** or **Codex**.
+2. Copy the prompt and paste it into that agent. It adds the MCP server, runs
+   login, and waits while you approve the sign-in page.
+3. When it confirms the connection, tell it what you want done in T3 Code.
+
+You can also install a skill that walks any Claude Code or Codex session through
+the same steps (it will ask for the MCP URL if you have not pasted one yet):
+
+```sh
+# Claude Code
+npx skills add https://github.com/pingdotgg/t3code/tree/main/skills/t3-connect --skill t3-connect --agent claude-code
+# Codex
+npx skills add https://github.com/pingdotgg/t3code/tree/main/skills/t3-connect --skill t3-connect --agent codex
+```
+
+Then type `/t3-connect` in Claude Code, or `$t3-connect` in Codex. Hosted apps
+and a manual CLI path are below.
+
 ## Add T3 Code to an assistant app
 
 Open the command palette (`Cmd/Ctrl+K`) and choose **Use T3 Code in another
@@ -98,6 +122,9 @@ T3 Code.
 
 ## Claude Code
 
+Prefer the [prompt or skill](#let-your-coding-agent-connect) above. To run the
+commands yourself:
+
 ```sh
 claude mcp add --transport http t3 https://<environment-address>/mcp
 claude mcp login t3
@@ -109,6 +136,9 @@ paste the final URL back when asked. `claude mcp list` shows `t3` as connected
 once you approve.
 
 ## Codex
+
+Prefer the [prompt or skill](#let-your-coding-agent-connect) above. To run the
+commands yourself:
 
 ```sh
 codex mcp add t3 --url https://<environment-address>/mcp
