@@ -29,6 +29,10 @@ describe("buildRuntimeInstructions", () => {
       buildRuntimeInstructions({ ...runtime, fileLinkInstructions: "" }),
       `${identity}</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`,
     );
+    assert.strictEqual(
+      buildRuntimeInstructions({ ...runtime, fileLinkInstructions: "Link files \ud83d." }),
+      `${identity} Link files \ufffd.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`,
+    );
   });
 
   it("leaves PR linking to a session that already carries it, and keeps runtime identity", () => {

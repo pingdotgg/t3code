@@ -23,7 +23,8 @@ export function buildRuntimeInstructions(runtime: {
     modelName && modelName !== model ? `${modelName} (model slug: ${model})` : model;
   const modelInfo = model && model !== "auto" && model !== "default" ? `, as ${modelLabel}` : "";
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
-  const fileLinks = runtime.fileLinkInstructions ?? DEFAULT_FILE_LINK_INSTRUCTIONS;
+  // A lone surrogate serializes to an escape provider JSON parsers reject; Codex never answers.
+  const fileLinks = (runtime.fileLinkInstructions ?? DEFAULT_FILE_LINK_INSTRUCTIONS).toWellFormed();
   const fileLinkInfo = fileLinks ? ` ${fileLinks}` : "";
   const runtimeInfo = `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise.${fileLinkInfo}</runtime_info>`;
   return runtime.pullRequestLinking === false
