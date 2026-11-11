@@ -938,6 +938,14 @@ const decodeNpmViewVersion = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Union([Schema.String, Schema.Tuple([Schema.String])])),
 );
 
+function environmentCacheKey(env: NodeJS.ProcessEnv): string {
+  return NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify(Object.entries(env).toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+    )
+    .digest("hex");
+}
+
 const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup")(function* (
   capabilities: ProviderMaintenanceCapabilities,
 ) {
@@ -981,6 +989,14 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
     ...capabilities,
     // npm owns registry, scoped auth and proxy configuration; failure must not retry public npm.
     latestVersion: null,
+    latestVersionCacheKey: [
+      "configured-npm",
+      npmPath,
+      packageName,
+      prefix ?? "",
+      environmentCacheKey(env),
+      installerLatestVersionKey(capabilities) ?? "",
+    ].join("\0"),
     lookupLatestVersion: capabilities.lookupLatestVersion
       ? capabilities.lookupLatestVersion.pipe(
           Effect.filterOrElse(
