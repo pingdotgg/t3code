@@ -109,17 +109,32 @@ export const makeDiscovery = Effect.gen(function* () {
                   status: "unknown",
                   detail: "Could not read fj authentication storage. Authenticate again with fj.",
                 })
-              : login && result.exitCode === 0
+              : login &&
+                  login.url.startsWith("https://") &&
+                  result.exitCode !== 0 &&
+                  result.stderr.includes(
+                    `error sending request for url (${login.url}/api/v1/user?)`,
+                  ) &&
+                  /(?:^|\n)\s*(?:\d+: )?received corrupt message of type InvalidContentType\s*(?:\n|$)/.test(
+                    result.stderr,
+                  )
                 ? providerAuth({
-                    status: "authenticated",
-                    account: login.user,
+                    status: "unknown",
                     host: ForgejoCli.parseForgejoRemote(login.url)?.host,
-                  })
-                : providerAuth({
-                    status: "unauthenticated",
                     detail:
-                      "Authenticate this server with `fj --host <server-url> auth add-token`.",
-                  }),
+                      "fj has credentials for this host, but it did not answer over HTTPS. fj stores no scheme; HTTP-only servers are used through a project with an explicit http:// remote.",
+                  })
+                : login && result.exitCode === 0
+                  ? providerAuth({
+                      status: "authenticated",
+                      account: login.user,
+                      host: ForgejoCli.parseForgejoRemote(login.url)?.host,
+                    })
+                  : providerAuth({
+                      status: "unauthenticated",
+                      detail:
+                        "Authenticate this server with `fj --host <server-url> auth add-token`.",
+                    }),
         },
       });
       if (fj.status === "available" && (login || Result.isFailure(credentials))) {
