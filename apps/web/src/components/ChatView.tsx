@@ -3834,7 +3834,7 @@ export default function ChatView(props: ChatViewProps) {
                                 isLocalDraftThread && activeProject === null
                               }
                               phase={phase}
-                              isCompacting={isCompacting}
+                              canSteer={!compactionBlocksSteer}
                               canInterrupt={canInterruptRunningThread}
                               isSendBusy={
                                 (isSendBusy && !sendQueuesBehindSetup) ||
