@@ -1,14 +1,8 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import {
-  documentFor,
-  Files,
-  isValidName,
-  objectFor,
-  Uploads,
-} from "./resources.ts";
+import { documentFor, Files, isValidName, objectFor, Uploads } from "./resources.ts";
 
 /**
  * The front door of an upload pipeline.
@@ -53,24 +47,15 @@ export default class Api extends GCP.Function<Api>()(
           return HttpServerResponse.text("ok");
         }
 
-        if (
-          request.method === "GET" &&
-          segments.length === 1 &&
-          segments[0] === "files"
-        ) {
-          const { documents } = yield* files
-            .list("files", { pageSize: 100 })
-            .pipe(Effect.orDie);
+        if (request.method === "GET" && segments.length === 1 && segments[0] === "files") {
+          const { documents } = yield* files.list("files", { pageSize: 100 }).pipe(Effect.orDie);
           return yield* HttpServerResponse.json({
             files: documents.map((document) => document.fields),
           });
         }
 
         if (segments.length !== 2 || segments[0] !== "files") {
-          return yield* HttpServerResponse.json(
-            { error: "not found" },
-            { status: 404 },
-          );
+          return yield* HttpServerResponse.json({ error: "not found" }, { status: 404 });
         }
 
         const name = decodeURIComponent(segments[1]!);
@@ -85,8 +70,7 @@ export default class Api extends GCP.Function<Api>()(
           const body = new Uint8Array(yield* request.arrayBuffer);
           const object = yield* writer
             .put(objectFor(name), body, {
-              contentType:
-                request.headers["content-type"] ?? "application/octet-stream",
+              contentType: request.headers["content-type"] ?? "application/octet-stream",
             })
             .pipe(Effect.orDie);
           // 202: the bytes are stored, the metadata follows asynchronously.
@@ -104,10 +88,7 @@ export default class Api extends GCP.Function<Api>()(
         if (request.method === "GET") {
           const object = yield* reader.get(objectFor(name)).pipe(Effect.orDie);
           if (object === undefined) {
-            return yield* HttpServerResponse.json(
-              { error: "no such file" },
-              { status: 404 },
-            );
+            return yield* HttpServerResponse.json({ error: "no such file" }, { status: 404 });
           }
           return HttpServerResponse.uint8Array(object.body, {
             contentType: object.contentType ?? "application/octet-stream",
@@ -120,10 +101,7 @@ export default class Api extends GCP.Function<Api>()(
           return HttpServerResponse.empty({ status: 204 });
         }
 
-        return yield* HttpServerResponse.json(
-          { error: "method not allowed" },
-          { status: 405 },
-        );
+        return yield* HttpServerResponse.json({ error: "method not allowed" }, { status: 405 });
       }),
     };
   }).pipe(

@@ -1,0 +1,377 @@
+---
+title: "Part 5: CI/CD"
+description: Deploy from GitHub Actions with Workload Identity Federation — production on main, a preview stage per pull request, no service-account keys in GitHub.
+sidebar:
+  order: 5
+---
+
+In [Part 4](/gcp/tutorial/part-4) you deployed stages by hand. Now
+GitHub Actions does it: pushes to `main` deploy `prod`, pull requests
+get a preview stage, and merged pull requests clean up after
+themselves.
+
+GitHub signs in to Google Cloud with **Workload Identity Federation**.
+The workflow trades its GitHub token for a short-lived Google token,
+so no service-account key ever lives in GitHub.
+
+## Bootstrap the state bucket
+
+CI shares state with your laptop through the `GCP.state()` bucket
+from [Part 1](/gcp/tutorial/part-1#where-state-lives). Your first
+deploy created it. In CI, a missing bucket fails the run instead of
+being created, so make sure it exists:
+
+```sh
+bun alchemy state bootstrap --backend gcp
+```
+
+## Create the identity pool
+
+Create a pool and a provider that trusts GitHub's tokens for your
+repository. You run these once per project:
+
+```sh
+gcloud iam workload-identity-pools create github \
+  --location=global
+
+gcloud iam workload-identity-pools providers create-oidc github \
+  --location=global \
+  --workload-identity-pool=github \
+  --issuer-uri=https://token.actions.githubusercontent.com \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository=='your-org/your-repo'"
+```
+
+Replace `your-org/your-repo` with your repository. Note your project
+**number** (not the id). You need it next:
+
+```sh
+gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)'
+```
+
+## Set up an `admin` profile
+
+The next stack creates a service account and grants it project roles.
+That needs more permission than your app does. Create a separate
+profile for it:
+
+```sh
+bun alchemy profile create admin
+bun alchemy profile edit --profile admin --add GCP
+```
+
+Pick a key that can administer IAM in the project. Add a GitHub
+credential when prompted: `gh-cli` if you have the GitHub CLI,
+otherwise a token with the `repo` scope.
+
+:::danger[Heads up]
+The `admin` profile can grant any role in the project. Use it only for
+`stacks/github.ts`, never for everyday deploys.
+:::
+
+## Scaffold the GitHub stack
+
+Create `stacks/github.ts`:
+
+```typescript
+// stacks/github.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as GitHub from "@alchemy.run/github";
+import * as Output from "alchemy/Output";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "github",
+  {
+    providers: Layer.mergeAll(GCP.providers(), GitHub.providers()),
+    state: GCP.state(),
+  },
+  Effect.gen(function* () {
+    // deployer account, roles, and repo variables go here
+  }),
+);
+```
+
+## Create the deployer account
+
+```diff lang="typescript"
+Effect.gen(function* () {
++  const deployer = yield* GCP.IAM.ServiceAccount("Deployer", {
++    displayName: "GitHub Actions deployer",
++  });
+}),
+```
+
+CI deploys as this account.
+
+## Grant it project roles
+
+Give the account the roles a deploy needs:
+
+```diff lang="typescript"
+Effect.gen(function* () {
+  const deployer = yield* GCP.IAM.ServiceAccount("Deployer", {
+    displayName: "GitHub Actions deployer",
+  });
++
++  const roles = [
++    "roles/run.admin",
++    "roles/artifactregistry.admin",
++    "roles/storage.admin",
++    "roles/iam.serviceAccountAdmin",
++    "roles/iam.serviceAccountUser",
++    "roles/resourcemanager.projectIamAdmin",
++  ];
++
++  for (const role of roles) {
++    yield* GCP.IAM.Member(`Deployer-${role.split("/")[1]}`, {
++      kind: "project",
++      name: deployer.project,
++      role,
++      member: Output.interpolate`serviceAccount:${deployer.email}`,
++    });
++  }
+}),
+```
+
+Alchemy creates a service
+account for each Cloud Run service and grants it roles, which is why
+the deployer needs the two IAM admin roles. Add the admin role for
+anything else your app declares, such as `roles/datastore.owner` for
+Firestore.
+
+## Let GitHub act as the account
+
+Allow tokens from your repository to impersonate the deployer:
+
+```diff lang="typescript"
+  for (const role of roles) {
+    // ...
+  }
++
++  yield* GCP.IAM.Member("DeployerFromGitHub", {
++    kind: "iam.serviceAccount",
++    name: deployer.name,
++    role: "roles/iam.workloadIdentityUser",
++    member:
++      "principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github/attribute.repository/your-org/your-repo",
++  });
+}),
+```
+
+Replace `PROJECT_NUMBER` and `your-org/your-repo`.
+
+## Publish the workflow variables
+
+The workflow needs the provider, the account, and the project. None
+of them are secret, so store them as repository variables:
+
+```diff lang="typescript"
++  const repo = { owner: "your-org", repository: "your-repo" };
++
++  yield* GitHub.Variable("GcpProvider", {
++    ...repo,
++    name: "GCP_WORKLOAD_IDENTITY_PROVIDER",
++    value:
++      "projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github/providers/github",
++  });
++
++  yield* GitHub.Variable("GcpServiceAccount", {
++    ...repo,
++    name: "GCP_SERVICE_ACCOUNT",
++    value: deployer.email,
++  });
++
++  yield* GitHub.Variable("GcpProject", {
++    ...repo,
++    name: "GCP_PROJECT_ID",
++    value: deployer.project,
++  });
+}),
+```
+
+## Deploy the GitHub stack
+
+Run it once from your laptop:
+
+```sh
+bun alchemy deploy --config stacks/github.ts --profile admin
+```
+
+The three variables appear under **Settings → Secrets and variables →
+Actions → Variables**.
+
+## Create the workflow
+
+Create `.github/workflows/deploy.yml`:
+
+```yaml
+name: Deploy
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  STAGE: >-
+    ${{ github.event_name == 'pull_request'
+      && format('pr-{0}', github.event.number)
+      || (github.ref == 'refs/heads/main' && 'prod' || github.ref_name) }}
+
+jobs:
+  deploy:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+      - name: Deploy
+        run: bun alchemy deploy --stage ${{ env.STAGE }} --yes
+        env:
+          GOOGLE_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          GOOGLE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          PULL_REQUEST: ${{ github.event.number }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  cleanup:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - name: Safety check
+        run: |
+          if [ "${{ env.STAGE }}" = "prod" ]; then
+            echo "ERROR: refusing to destroy prod"
+            exit 1
+          fi
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+      - name: Destroy preview
+        run: bun alchemy destroy --stage ${{ env.STAGE }} --yes
+        env:
+          GOOGLE_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          GOOGLE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          PULL_REQUEST: ${{ github.event.number }}
+```
+
+`google-github-actions/auth` exchanges the workflow's token for a
+one-hour Google access token. With `CI=true`, Alchemy reads
+`GOOGLE_ACCESS_TOKEN` and `GOOGLE_PROJECT_ID` from the environment.
+
+GitHub's runners have Docker, so the Cloud Run image builds there
+the same way it does on your machine.
+
+:::note[How STAGE is computed]
+Pull requests deploy to `pr-<number>`, pushes to `main` deploy to
+`prod`, and other branches deploy to the branch name. The cleanup job
+refuses to destroy `prod`.
+:::
+
+## Comment the preview URL
+
+Post the preview URL on each pull request:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
++import * as GitHub from "@alchemy.run/github";
++import * as Output from "alchemy/Output";
+import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
+import Api from "./src/api.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+-    providers: GCP.providers(),
++    providers: Layer.mergeAll(GCP.providers(), GitHub.providers()),
+    state: GCP.state(),
+  },
+  Effect.gen(function* () {
+    const api = yield* Api;
+
++    if (process.env.PULL_REQUEST) {
++      yield* GitHub.Comment("preview-comment", {
++        owner: "your-org",
++        repository: "your-repo",
++        issueNumber: Number(process.env.PULL_REQUEST),
++        body: Output.interpolate`
++          ## Preview deployed
++
++          **URL:** ${api.uri}
++
++          Built from ${process.env.GITHUB_SHA?.slice(0, 7)}
++        `,
++      });
++    }
+
+    return {
+      url: api.uri,
+    };
+  }),
+);
+```
+
+The logical id `preview-comment` stays the same across pushes, so
+Alchemy edits the comment instead of adding a new one.
+
+## The full picture
+
+1. You deployed `stacks/github.ts` once with `--profile admin`. It
+   created the deployer account, its roles, and the repo variables.
+2. A pull request opens. Actions trades its token for a Google token
+   and runs `alchemy deploy --stage pr-42`.
+3. Alchemy deploys a separate Bucket and Cloud Run service for `pr-42`
+   and comments the URL.
+4. The pull request merges. The cleanup job destroys `pr-42`.
+5. The push to `main` deploys `prod`.
+
+## Recap
+
+You've finished the tutorial. You can now:
+
+- **Part 1** — create a Stack and deploy a resource
+- **Part 2** — run an Effect on Cloud Run with bindings
+- **Part 3** — test a deployed Stack
+- **Part 4** — deploy separate stages with `--stage`
+- **Part 5** — deploy from GitHub Actions with no keys in GitHub
+
+## What's next
+
+- Store data in [Firestore](/gcp/data/firestore) or
+  [Cloud SQL](/gcp/data/cloud-sql)
+- Queue work with [Pub/Sub](/gcp/messaging/pubsub) and run it on a
+  [schedule](/gcp/messaging/scheduler)
+- Deploy a frontend with [Websites](/gcp/frontend/websites)
+- See how [bindings grant IAM](/gcp/security/iam)
+- Read [CI](/environments/ci) for more workflow patterns

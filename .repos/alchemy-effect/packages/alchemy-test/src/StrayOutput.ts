@@ -72,10 +72,7 @@ export const captureStrayOutput = (logFile: string): (() => void) => {
         .split("\n")
         .map((line) => (line === "" ? line : `[${prefix}] ${line}`))
         .join("\n");
-      fs.appendFileSync(
-        logFile,
-        prefixed.endsWith("\n") ? prefixed : `${prefixed}\n`,
-      );
+      fs.appendFileSync(logFile, prefixed.endsWith("\n") ? prefixed : `${prefixed}\n`);
     } catch {
       // Never let log diversion break the writer.
     }
@@ -128,15 +125,11 @@ export const captureStrayOutput = (logFile: string): (() => void) => {
     const original = new Map<string, unknown>();
     for (const method of methods) {
       original.set(method, console[method]);
-      (console as unknown as Record<string, unknown>)[method] = (
-        ...args: Array<unknown>
-      ) => {
+      (console as unknown as Record<string, unknown>)[method] = (...args: Array<unknown>) => {
         sink(
           "stray console",
           args
-            .map((arg) =>
-              typeof arg === "string" ? arg : Bun.inspect(arg, { depth: 4 }),
-            )
+            .map((arg) => (typeof arg === "string" ? arg : Bun.inspect(arg, { depth: 4 })))
             .join(" "),
         );
       };
@@ -157,22 +150,14 @@ export const captureStrayOutput = (logFile: string): (() => void) => {
     const realWriteSync = fs.writeSync;
     const realWrite = fs.write;
     const fsModule = fs as unknown as Record<string, unknown>;
-    fsModule.writeSync = ((
-      fd: unknown,
-      data: unknown,
-      ...rest: Array<unknown>
-    ) => {
+    fsModule.writeSync = ((fd: unknown, data: unknown, ...rest: Array<unknown>) => {
       if (fd === 1 || fd === 2) {
         sink(`stray fd${fd}`, data);
         return typeof data === "string"
           ? Buffer.byteLength(data)
           : ((data as Uint8Array).byteLength ?? 0);
       }
-      return (realWriteSync as (...a: Array<unknown>) => number)(
-        fd,
-        data,
-        ...rest,
-      );
+      return (realWriteSync as (...a: Array<unknown>) => number)(fd, data, ...rest);
     }) as typeof fs.writeSync;
     fsModule.write = ((fd: unknown, data: unknown, ...rest: Array<unknown>) => {
       if (fd === 1 || fd === 2) {
@@ -183,11 +168,7 @@ export const captureStrayOutput = (logFile: string): (() => void) => {
         callback?.(null, 0, data);
         return;
       }
-      return (realWrite as (...a: Array<unknown>) => unknown)(
-        fd,
-        data,
-        ...rest,
-      );
+      return (realWrite as (...a: Array<unknown>) => unknown)(fd, data, ...rest);
     }) as typeof fs.write;
     restores.push(() => {
       fsModule.writeSync = realWriteSync;
@@ -227,9 +208,7 @@ export const captureStrayOutput = (logFile: string): (() => void) => {
           }
         }
       }
-      const child = (
-        realSpawn as (...a: Array<unknown>) => childProcess.ChildProcess
-      )(...args);
+      const child = (realSpawn as (...a: Array<unknown>) => childProcess.ChildProcess)(...args);
       if (pumpStdout) {
         child.stdout?.on("data", (chunk) => sink("stray child", chunk));
       }
@@ -265,9 +244,9 @@ export const captureStrayOutput = (logFile: string): (() => void) => {
           pumpStderr = true;
         }
       }
-      const proc = (
-        realBunSpawn as (...a: Array<unknown>) => ReturnType<typeof Bun.spawn>
-      )(...args);
+      const proc = (realBunSpawn as (...a: Array<unknown>) => ReturnType<typeof Bun.spawn>)(
+        ...args,
+      );
       const pump = (stream: unknown): void => {
         if (stream instanceof ReadableStream) {
           void (async () => {
