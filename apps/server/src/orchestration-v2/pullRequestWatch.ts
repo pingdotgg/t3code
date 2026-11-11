@@ -53,6 +53,7 @@ export function evaluatePullRequestWatch(
   let failedChecks = headMoved ? [] : watch.failedChecks;
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
+  let passedCheckRuns = headMoved ? [] : (watch.passedCheckRuns ?? []);
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   let awaitingApproval = headMoved ? [] : (watch.awaitingApproval ?? []);
   let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
@@ -111,6 +112,11 @@ export function evaluatePullRequestWatch(
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
     // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
     const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
+    const runChanged = gate.some(
+      (check) =>
+        check.url &&
+        passedCheckRuns.some((run) => run.name === check.name && run.url !== check.url),
+    );
     // Other checks still pending when required ones passed are owed one wake when all settle.
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
     const owed =
@@ -124,7 +130,7 @@ export function evaluatePullRequestWatch(
       awaitingApproval.length === 0 &&
       checks.every((check) => check.status !== "pending");
     owedChecks = owed;
-    if (passedNow && (!passed || gateGrew)) {
+    if (passedNow && (!passed || gateGrew || runChanged)) {
       changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
       owedChecks =
         required.length > 0
@@ -138,6 +144,11 @@ export function evaluatePullRequestWatch(
     }
     passed = passedNow;
     passedChecks = passedNow ? gateNames : [];
+    if (passedNow) {
+      passedCheckRuns = gate.flatMap((check) =>
+        check.url ? [{ name: check.name, url: check.url }] : [],
+      );
+    }
   }
 
   // Only a head never read with checks waits for them: an empty read after checks were seen is
@@ -197,6 +208,7 @@ export function evaluatePullRequestWatch(
       failedChecks,
       passed,
       passedChecks,
+      passedCheckRuns,
       owedChecks,
       awaitingApproval,
       approvalAnnounced,
