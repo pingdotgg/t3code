@@ -490,13 +490,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
-    id: "linked-environments-beta",
-    title: "Linked environments",
-    to: "/settings/labs",
-    scope: "environment",
-    searchTerms: ["beta link another machine vps peer agents work there delegate"],
-  },
-  {
     id: "prompt-suggestions-beta",
     title: "Suggest next prompt",
     to: "/settings/labs",
@@ -1276,12 +1269,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
-    id: "linked-environments",
+    id: "device-network",
     peerLinksOnly: true,
-    title: "Linked environments",
+    title: "Device network",
     to: "/settings/connections",
-    targetId: "linked-environments",
-    searchTerms: ["link peer another machine vps agents work there handoff pairing code"],
+    targetId: "device-network",
+    searchTerms: [
+      "tailscale tailnet machines members add to network access revoke restore apps",
+      "linked environments beta link peer another machine vps agents work there handoff pairing code",
+    ],
   },
   {
     id: "remote-environments",

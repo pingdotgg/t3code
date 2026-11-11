@@ -48,12 +48,13 @@ export function useLinkedEnvironments(
   });
 }
 
-export function usePeerLinkHosts() {
+/** Connected environments that can join a network, whether or not they have it turned on. */
+export function useNetworkHosts() {
   const { environments } = useEnvironments();
   const supported = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" &&
-      offersLinkedEnvironments(environment.serverConfig),
+      environment.serverConfig?.environment.capabilities.peerLinks === true,
   );
   const readable = useEnvironmentsWithScope(supported, AuthAccessReadScope);
   return supported.filter((environment) => readable.has(environment.environmentId));

@@ -13,7 +13,7 @@ app (MCP)**, or use the button in **Settings → Sharing & access**. Pick the
 app, choose what it may do, and follow the step for that app. The dialog shows
 the environment's Tailscale `/mcp` address, which only devices on your tailnet can
 reach. Assistants that run in the cloud, such as ChatGPT, claude.ai, or Poke,
-cannot reach it. To reach your other machines through the same connection, turn on **Linked environments** in Labs and
+cannot reach it. To reach your other machines through the same connection, turn on **Take part in your network** in Settings → Environments → Device network and
 [link them](./remote-access.md#link-another-environment).
 
 When the app opens the sign-in page, choose **Get code** in the wizard and paste

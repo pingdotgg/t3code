@@ -40,8 +40,8 @@ import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentActionsMenu } from "./EnvironmentActionsMenu";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
-import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
-import { usePeerLinkHosts } from "~/state/peerLinks";
+import { NetworkSettings } from "./NetworkSettings";
+import { useNetworkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { McpGatewaySettings } from "./McpGatewaySettings";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
@@ -227,7 +227,7 @@ function ConnectionsSettingsContent({
   const desktopBridge = window.desktopBridge;
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
-  const peerLinkHosts = usePeerLinkHosts();
+  const networkHosts = useNetworkHosts();
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
     reportFailure: false,
@@ -1573,11 +1573,11 @@ function ConnectionsSettingsContent({
         ))}
         <RemoteEnvironmentsEmptyRow savedEnvironments={savedEnvironments} />
       </SettingsSection>
-      {peerLinkHosts.map((environment, index) => (
-        <LinkedEnvironmentsSettings
+      {networkHosts.map((environment, index) => (
+        <NetworkSettings
           key={environment.environmentId}
-          environmentId={environment.environmentId}
-          environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
+          environment={environment}
+          showLabel={networkHosts.length > 1}
           isSearchTarget={index === 0}
         />
       ))}

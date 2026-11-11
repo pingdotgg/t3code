@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 import { PlugIcon, PlusIcon, QrCodeIcon } from "lucide-react";
 import { type ReactNode, memo, useId, useState } from "react";
@@ -64,7 +65,10 @@ import {
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
 import { authEnvironment } from "~/state/auth";
+import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
+import { useEnvironmentQuery } from "~/state/query";
 import { readEnvironmentScope } from "~/state/session";
+import { tailnetDevices } from "~/state/tailnetDevices";
 import { useManagedPolicy, usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { ManagedControl } from "../ManagedPolicy";
@@ -609,6 +613,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
     ...AuthStandardClientScopes,
   ]);
   const selectedScopes = pairingScopes.filter((scope) => delegatableScopes.includes(scope));
+  const [pairWithNetwork, setPairWithNetwork] = useState(false);
   const [isCreatingPairingLink, setIsCreatingPairingLink] = useState(false);
   const [confirmRevokeOthers, setConfirmRevokeOthers] = useState(false);
   const otherClientCount = clientSessions?.filter((session) => !session.current).length ?? null;
@@ -624,11 +629,16 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
     const trimmedLabel = pairingLabel.trim();
     const result = await createPairingCredential({
       environmentId,
-      input: { ...(trimmedLabel ? { label: trimmedLabel } : {}), scopes: selectedScopes },
+      input: {
+        ...(trimmedLabel ? { label: trimmedLabel } : {}),
+        scopes: selectedScopes,
+        ...(pairWithNetwork ? { network: true } : {}),
+      },
     });
     if (result._tag === "Success") {
       onPairingLinkCreated(result.value);
       setPairingLabel("");
+      setPairWithNetwork(false);
       setPairingScopes(
         AuthStandardClientScopes.filter((scope) => delegatableScopes.includes(scope)),
       );
@@ -706,6 +716,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
           setDialogOpen(open);
           if (!open) {
             setPairingLabel("");
+            setPairWithNetwork(false);
             setPairingScopes(
               AuthStandardClientScopes.filter((scope) => delegatableScopes.includes(scope)),
             );
@@ -816,6 +827,12 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                 </p>
               ) : null}
             </section>
+            <NetworkPairingChoice
+              environmentId={environmentId}
+              checked={pairWithNetwork}
+              disabled={isCreatingPairingLink}
+              onCheckedChange={setPairWithNetwork}
+            />
           </DialogPanel>
           <DialogFooter variant="bare">
             <Button
@@ -837,6 +854,45 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
     </div>
   );
 });
+
+/** Offered only on a full-access member of a device network, the one machine that may add an app. */
+function NetworkPairingChoice({
+  environmentId,
+  checked,
+  disabled,
+  onCheckedChange,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly checked: boolean;
+  readonly disabled: boolean;
+  readonly onCheckedChange: (checked: boolean) => void;
+}) {
+  const offered = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
+  const devices = useEnvironmentQuery(
+    offered ? tailnetDevices.list({ environmentId, input: {} }) : null,
+  );
+  if (devices.data?.selfMember?.access !== "full-access") return null;
+  return (
+    <label className="flex cursor-pointer items-start gap-3">
+      <Checkbox
+        className="mt-0.5"
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={(next) => onCheckedChange(next === true)}
+      />
+      <span className="min-w-0">
+        <span className="block text-xs font-medium text-foreground">
+          Works on all your network's machines
+        </span>
+        <span className="block text-xs leading-snug text-muted-foreground">
+          Pairs once with every machine in your device network. Standard permissions give it full
+          access there; anything less, read only. Narrowing or revoking it later signs it out
+          everywhere.
+        </span>
+      </span>
+    </label>
+  );
+}
 
 type PairingClientsListProps = {
   servedByEnvironment: boolean;

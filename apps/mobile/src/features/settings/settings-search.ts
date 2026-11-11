@@ -11,6 +11,10 @@ const SETTINGS_SEARCH_TERMS = {
     "add environment",
     "remote",
     "tailscale",
+    "device network",
+    "add to network",
+    "linked environments",
+    "link machine",
   ],
   SettingsNotifications: ["push", "alerts", "live activity", "agent activity"],
   SettingsAppearance: [
@@ -103,13 +107,7 @@ const SETTINGS_SEARCH_TERMS = {
     "submodules",
     "start from remote",
   ],
-  SettingsLabs: [
-    "beta",
-    "linked environments",
-    "link machine",
-    "fast worktree checkout",
-    "clone cache",
-  ],
+  SettingsLabs: ["beta", "fast worktree checkout", "clone cache"],
   SettingsEnvironmentMaintenance: ["updates", "provider updates", "restart", "manage environments"],
   SettingsAbout: [
     "version",

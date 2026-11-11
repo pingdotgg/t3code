@@ -136,12 +136,12 @@ describe("searchSettings", () => {
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
-      "linked-environments",
+      "device-network",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
 
-  it("finds linked environments on a remote host without local maintenance access", () => {
+  it("finds the device network on a remote host without local maintenance access", () => {
     const availability = {
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
@@ -150,19 +150,23 @@ describe("searchSettings", () => {
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
     };
-    const results = (hasPeerLinkHost: boolean) =>
+    const results = (query: string, hasPeerLinkHost: boolean) =>
       searchSettings(
-        "linked environments",
+        query,
         filterAvailableSettingsSearchItems({ ...availability, hasPeerLinkHost }),
       );
-    expect(results(false).map((item) => item.id)).not.toContain("linked-environments");
-    expect(results(true)).toContainEqual(
-      expect.objectContaining({
-        id: "linked-environments",
-        to: "/settings/connections",
-        targetId: "linked-environments",
-      }),
+    expect(results("linked environments", false).map((item) => item.id)).not.toContain(
+      "device-network",
     );
+    for (const query of ["linked environments", "tailscale network"]) {
+      expect(results(query, true)).toContainEqual(
+        expect.objectContaining({
+          id: "device-network",
+          to: "/settings/connections",
+          targetId: "device-network",
+        }),
+      );
+    }
   });
 
   it("finds the Welcome page only where a primary computer can open it", () => {

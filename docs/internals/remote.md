@@ -80,7 +80,7 @@ token in its own secret store. The other environment needs nothing new: it
 sees one more OAuth client, lists it in Environments, and revokes it there.
 Unlinking on the linking side only forgets the token.
 
-- **The Linked environments beta (`linkedEnvironmentsEnabled`) gates both
+- **The device network switch (`linkedEnvironmentsEnabled`) gates both
   sides.** Off on the linking side, `PeerLinks.link`, link requests and
   `PeerForwarding.call`/`links` refuse; `readThread`, `waitForThread` and
   `interruptThread` do not, so a remote task already running still completes

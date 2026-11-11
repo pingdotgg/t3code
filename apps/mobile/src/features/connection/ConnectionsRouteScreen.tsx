@@ -10,7 +10,7 @@ import { AppBar } from "../../components/ui/AppBar";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
-import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
+import { NetworkSection } from "./NetworkSection";
 
 export function ConnectionsRouteScreen() {
   const {
@@ -63,7 +63,7 @@ export function ConnectionsRouteScreen() {
         {connectedEnvironments
           .filter((environment) => environment.connectionState === "connected")
           .map((environment) => (
-            <LinkedEnvironmentsSection
+            <NetworkSection
               key={environment.environmentId}
               environmentId={environment.environmentId}
               environmentLabel={environment.environmentLabel}

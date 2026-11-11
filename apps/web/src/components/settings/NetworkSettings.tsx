@@ -2,16 +2,17 @@ import { useAtomValue } from "@effect/atom-react";
 import { linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
   AuthAccessWriteScope,
-  AuthMcpClientAccess,
+  AuthSettingsWriteScope,
+  type AuthMcpClientAccess,
   type EnvironmentId,
+  isManagedSettingPath,
   type PeerLinkSummary,
-  TAILNET_DEVICE_CAPABILITY,
-  type TailnetDevicesSettings,
-  type TailnetDevicesUpdateSettingsInput,
+  type TailnetDevicesSnapshot,
 } from "@t3tools/contracts";
 import {
+  canManageNetwork,
   isTailnetDevicesForbidden,
-  linkedDeviceRows,
+  networkRows,
 } from "@t3tools/client-runtime/tailnet-devices";
 import {
   isAtomCommandInterrupted,
@@ -27,8 +28,9 @@ import { useId, useRef, useState } from "react";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
-import { useEnvironments } from "~/state/environments";
+import { type EnvironmentPresentation, useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
+import { serverEnvironment } from "~/state/server";
 import { tailnetDevices } from "~/state/tailnetDevices";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -47,13 +49,12 @@ import {
   DialogTrigger,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import { LinkAccessPicker } from "./LinkAccessPicker";
-import { LinkedDeviceRow } from "./LinkedDeviceRow";
 import { ANOTHER_ADDRESS, LinkMachineSelect } from "./LinkMachineSelect";
+import { FoundMachineRow, NetworkAppRow, NetworkMemberRow } from "./NetworkRows";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { searchableSetting } from "./settingsSearch";
@@ -61,143 +62,167 @@ import { searchableSetting } from "./settingsSearch";
 const failureToast = (title: string, description: string) =>
   toastManager.add(stackedThreadToast({ type: "error", title, description }));
 
-export function LinkedEnvironmentsSettings({
-  environmentId,
-  environmentLabel,
+/**
+ * One machine's place in your network of machines, and its links made with a pairing code.
+ * The switch here is the one gate for this machine taking part; off, nothing else shows.
+ */
+export function NetworkSettings({
+  environment,
+  showLabel,
   isSearchTarget,
 }: {
-  readonly environmentId: EnvironmentId;
-  readonly environmentLabel: string | null;
+  readonly environment: EnvironmentPresentation;
+  readonly showLabel: boolean;
   readonly isSearchTarget: boolean;
 }) {
-  const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
-  const devices = useEnvironmentQuery(tailnetDevices.list({ environmentId, input: {} }));
+  const { environmentId } = environment;
+  const enabled = environment.serverConfig?.settings.linkedEnvironmentsEnabled === true;
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
-  const { environments } = useEnvironments();
-  const search = searchableSetting("linked-environments");
-  // Older servers, and this one until it can link devices, fail the list; that is not an error.
-  const devicesUnavailable = devices.error !== null && !isTailnetDevicesForbidden(devices.failure);
-  const rows = linkedDeviceRows({
-    devices: devices.data?.devices ?? [],
-    links: links.data?.links ?? [],
-    savedEnvironmentIds: new Set(environments.map((environment) => environment.environmentId)),
-  });
+  const search = searchableSetting("device-network");
   return (
     <SettingsSection
       {...(isSearchTarget ? { id: search.id } : {})}
-      title={environmentLabel === null ? search.title : `${search.title} · ${environmentLabel}`}
-      headerAction={canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null}
+      title={showLabel ? `${search.title} · ${environment.label}` : search.title}
+      headerAction={
+        enabled && canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null
+      }
     >
-      {devices.data ? (
-        <YourDevicesSettings environmentId={environmentId} settings={devices.data.settings} />
-      ) : null}
-      {links.error ? (
-        <SettingsRow title="Could not load linked environments" description={links.error} />
-      ) : !links.data ? (
-        <SettingsRow title="Loading linked environments…" role="status" />
-      ) : rows.length === 0 ? (
-        <SettingsRow
-          title="No linked environments"
-          description="Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there."
+      <NetworkSwitchRow environment={environment} enabled={enabled} />
+      {enabled ? <NetworkContent environmentId={environmentId} /> : null}
+    </SettingsSection>
+  );
+}
+
+function NetworkSwitchRow({
+  environment,
+  enabled,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly enabled: boolean;
+}) {
+  const { environmentId } = environment;
+  const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const update = useAtomCommand(serverEnvironment.updateSettings, "network setting update");
+  const policy = environment.serverConfig?.managedPolicy;
+  return (
+    <SettingsRow
+      title="Take part in your network"
+      description="Agents here can work on your other machines, and theirs here. While off, nothing new starts over a link; running tasks finish."
+      managed={
+        policy !== undefined && isManagedSettingPath(policy, "linkedEnvironmentsEnabled")
+          ? `Managed by ${policy.organization}.`
+          : undefined
+      }
+      control={
+        <Switch
+          checked={enabled}
+          disabled={!canWrite}
+          onCheckedChange={(checked) =>
+            void update({
+              environmentId,
+              input: { patch: { linkedEnvironmentsEnabled: Boolean(checked) } },
+            })
+          }
+          aria-label="Take part in your network"
         />
+      }
+    />
+  );
+}
+
+function selfDescription(snapshot: TailnetDevicesSnapshot, foundCount: number): string {
+  const access = snapshot.selfMember?.access;
+  if (access === undefined) {
+    return foundCount > 0
+      ? "Not in a network yet. Machines join only when you add them; adding one starts your network with this machine at full access."
+      : "Not in a network yet. Your other machines on Tailscale show up here once they run T3 Code. Being on the same Tailscale account is not permission: you add each one.";
+  }
+  if (access === "revoked") {
+    return "Revoked. This machine is out of your network until a full-access machine restores it.";
+  }
+  return access === "full-access"
+    ? "In your network with full access. You can add machines and change what each may do."
+    : `In your network as ${accessConfig[access].label}. Only a full-access machine can change the network.`;
+}
+
+function NetworkContent({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
+  const devices = useEnvironmentQuery(tailnetDevices.list({ environmentId, input: {} }));
+  const mayChange = useAtomValue(tailnetDevices.setAccess.permissionAtom(environmentId));
+  const { environments } = useEnvironments();
+  // Older servers, and this one until it can list devices, fail the list; that is not an error.
+  const devicesUnavailable = devices.error !== null && !isTailnetDevicesForbidden(devices.failure);
+  const snapshot = devices.data;
+  const rows = networkRows({
+    devices: snapshot?.devices ?? [],
+    links: links.data?.links ?? [],
+    savedEnvironmentIds: new Set(environments.map((environment) => environment.environmentId)),
+  });
+  const canManage = mayChange && snapshot !== null && canManageNetwork(snapshot);
+  return (
+    <>
+      {snapshot ? (
+        <SettingsRow
+          title="This machine"
+          description={selfDescription(snapshot, rows.found.length)}
+        />
+      ) : null}
+      {rows.members.map((row) => (
+        <NetworkMemberRow
+          key={row.environmentId}
+          hostEnvironmentId={environmentId}
+          row={row}
+          canManage={canManage}
+          forget={
+            row.link === null ? null : (
+              <ForgetLinkButton environmentId={environmentId} link={row.link} />
+            )
+          }
+        />
+      ))}
+      {rows.found.map((device) => (
+        <FoundMachineRow
+          key={device.environmentId}
+          hostEnvironmentId={environmentId}
+          device={device}
+          canManage={canManage}
+        />
+      ))}
+      {(snapshot?.apps ?? []).map((app) => (
+        <NetworkAppRow
+          key={app.appId}
+          hostEnvironmentId={environmentId}
+          app={app}
+          canManage={canManage}
+        />
+      ))}
+      {links.error ? (
+        <SettingsRow title="Could not load linked machines" description={links.error} />
+      ) : !links.data ? (
+        <SettingsRow title="Loading your network…" role="status" />
       ) : (
-        rows.map((row) =>
-          row.device !== null ? (
-            <LinkedDeviceRow
-              key={row.environmentId}
-              hostEnvironmentId={environmentId}
-              row={row}
-              device={row.device}
-              restoreAccess={devices.data?.settings.defaultAccess ?? "approval-required"}
-              forget={
-                row.link === null ? null : (
-                  <ForgetLinkButton environmentId={environmentId} link={row.link} />
-                )
-              }
-            />
-          ) : row.link !== null ? (
+        rows.paired.map((row) =>
+          row.link === null ? null : (
             <LinkedEnvironmentRow
               key={row.environmentId}
               environmentId={environmentId}
               link={row.link}
             />
-          ) : null,
+          ),
         )
       )}
+      {links.data && rows.members.length + rows.found.length + rows.paired.length === 0 ? (
+        <SettingsRow
+          title="No other machines yet"
+          description="Machines on your Tailscale account that run T3 Code appear here to add. Link any other machine, such as a VPS, with a pairing code."
+        />
+      ) : null}
       {devicesUnavailable ? (
         <SettingsRow
-          title="Your devices"
+          title="Your network"
           description="Not available on this server yet. Update it to see and manage your other machines here."
         />
       ) : null}
-    </SettingsSection>
-  );
-}
-
-/** Settings every one of your devices shares, changed from any of them. */
-function YourDevicesSettings({
-  environmentId,
-  settings,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly settings: TailnetDevicesSettings;
-}) {
-  const canUpdate = useAtomValue(tailnetDevices.updateSettings.permissionAtom(environmentId));
-  const updateSettings = useAtomCommand(tailnetDevices.updateSettings, {
-    label: "update your devices settings",
-  });
-  const update = (input: TailnetDevicesUpdateSettingsInput) =>
-    void updateSettings({ environmentId, input });
-  return (
-    <>
-      <SettingsRow
-        title="Link my tailnet devices automatically"
-        description="Your other machines on this tailnet, signed in as you, link both ways without a pairing code."
-        control={
-          <Switch
-            checked={settings.autoLink}
-            disabled={!canUpdate}
-            onCheckedChange={(checked) => update({ autoLink: Boolean(checked) })}
-            aria-label="Link my tailnet devices automatically"
-          />
-        }
-      />
-      <SettingsRow
-        title="Only devices with the T3 capability"
-        description={`Count a machine as yours only when your Tailscale policy grants it ${TAILNET_DEVICE_CAPABILITY}.`}
-        control={
-          <Switch
-            checked={settings.requireCapability}
-            disabled={!canUpdate}
-            onCheckedChange={(checked) => update({ requireCapability: Boolean(checked) })}
-            aria-label="Only devices with the T3 capability"
-          />
-        }
-      />
-      <SettingsRow
-        title="Access for new devices"
-        description="What a newly found device may do here until you change it."
-        control={
-          <Select
-            value={settings.defaultAccess}
-            disabled={!canUpdate}
-            onValueChange={(next) => {
-              if (next !== null) update({ defaultAccess: next as AuthMcpClientAccess });
-            }}
-          >
-            <SelectTrigger size="sm" aria-label="Access for new devices">
-              <SelectValue>{accessConfig[settings.defaultAccess].label}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {AuthMcpClientAccess.literals.map((option) => (
-                <SelectItem key={option} value={option} hideIndicator>
-                  {accessConfig[option].label}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        }
-      />
     </>
   );
 }

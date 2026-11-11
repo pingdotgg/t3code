@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SettingsScreen } from "./components/SettingsScreen";
 import { LocalEnvironmentList } from "../connection/LocalEnvironmentList";
+import { NetworkSection } from "../connection/NetworkSection";
 import { PullRequestRoutingSettings } from "../connection/PullRequestRoutingSettings";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -89,7 +90,15 @@ export function SettingsEnvironmentsRouteScreen() {
           onSetEnabled={onSetEnvironmentEnabled}
           onUpdate={handleUpdateEnvironment}
         />
-
+        {connectedEnvironments
+          .filter((environment) => environment.connectionState === "connected")
+          .map((environment) => (
+            <NetworkSection
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              environmentLabel={environment.environmentLabel}
+            />
+          ))}
         <PullRequestRoutingSettings />
       </ScrollView>
     </SettingsScreen>

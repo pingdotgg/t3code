@@ -298,44 +298,36 @@ Link two machines, such as your laptop and a VPS, and agents on one can work on
 the other: launch, message, wait on and stop its threads, answer their
 questions, and manage its queues, projects and scheduled tasks.
 
-Linked environments is on by default; turn it off for a machine in **Settings →
-Labs**, or on mobile in **Settings → Labs**. While it is off on either machine,
-agents start nothing over a link between them. A task already running on the
-other machine still finishes, and if that machine has it off, its result
-arrives once it is back on.
+Each machine takes part through **Take part in your network** in **Settings →
+Environments → Device network**, on web, desktop and mobile. It is on by
+default. While it is off on either machine, agents start nothing over a link
+between them. A task already running on the other machine still finishes, and
+if that machine has it off, its result arrives once it is back on.
 
-### Your tailnet devices
+### Your device network
 
-Machines running T3 Code that are signed in to the same Tailscale account link
-to each other on their own, both ways, with no pairing code. Install T3 Code on
-a new machine, sign in to Tailscale, and within ten minutes it appears in
-**Settings → Environments → Linked environments** on your other machines.
-Tagged nodes and machines shared from someone else's tailnet never link this
-way.
+Machines running T3 Code on your Tailscale account show up in **Device
+network** on your other machines. Being on the same account is not permission:
+a machine joins only when you choose **Add to network** and pick what it may do.
+Adding the first one starts your network, with the machine you added from at
+full access. Tagged nodes and machines shared from someone else's tailnet never
+show up.
 
-- Each device's access there is the most it may do on your machines. Change it
-  from any of them and the change reaches all of them. **Revoke** cuts the
-  device off everywhere; **Restore** gives it back the default access.
-- New devices get the default access set in the same section, and you can turn
-  automatic linking off there.
-- **Open** adds a device to this app without a code. Below full access, it
+- A member's access is the most it may do on every machine in the network. A
+  full-access member can narrow it, **Revoke** it everywhere, or restore it at
+  a level you pick.
+- **Open** adds a member to this app without a code. Below full access, it
   opens read-only.
+- When you create a pairing link on a full-access member, **Works on all your
+  network's machines** pairs the phone or browser with the whole network at
+  once. It is listed in Device network; narrowing or revoking it signs it out
+  everywhere, and it must pair again.
 - Other people's machines, and anything off your tailnet, still link with a
   pairing code as described below.
 
-To count only machines you choose, turn on **Only devices with the T3
-capability** and grant `t3.codes/device` in your Tailscale policy file, from
-the machines that should count to your T3 machines:
-
-```json
-"grants": [
-  { "src": ["group:me"], "dst": ["group:me"], "app": { "t3.codes/device": [{}] } }
-]
-```
-
 ### Link with a pairing code
 
-On the machine you will work from, open **Settings → Environments → Linked environments**,
+On the machine you will work from, open **Settings → Environments → Device network**,
 choose **Link**, and pick the other machine or enter its address. The list
 holds the machines this app knows. If this
 app is connected to that machine with a session that manages access there, it
