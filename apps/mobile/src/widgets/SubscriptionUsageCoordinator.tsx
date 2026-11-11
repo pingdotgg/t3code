@@ -29,6 +29,7 @@ export function SubscriptionUsageCoordinator() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const snapshot = useAtomValue(snapshotAtom);
   const androidAppearance = Platform.OS === "android" ? themeAppearance : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes subscription usage and theme to the native home screen widget
   useEffect(() => {
     if (!catalog.isReady || !appearanceReady) return;
     void Promise.resolve()
