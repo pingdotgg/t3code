@@ -264,7 +264,7 @@ describe("scan cache round trip", () => {
       ["/skipped-codex.jsonl", codex(1)],
       ["/clean-codex.jsonl", codex(0)],
     ]);
-    const v11 = { ...JSON.parse(makeScanCacheWriter()(original, {})), version: 11 };
+    const v11 = { ...parse(makeScanCacheWriter()(original, {})), version: 11 };
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(v11)), TEST_FORMAT_MAP);
     expect(restored.get("/skipped-codex.jsonl")).toEqual({
