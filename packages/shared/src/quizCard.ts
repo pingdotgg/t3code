@@ -15,7 +15,7 @@ export function cardReplyProblem(input: {
   ) {
     return undefined;
   }
-  return "The learner sees only real message text and this reply; thinking, plans, and anything you wrote while thinking are summarized away and never shown. When a picture is owed, give the verdict in visible text first; keep this card's reply for its new teaching. Otherwise, write out the teaching this card tests in full in reply. Then call the card again; if this card is the opening check or an explain-back request, set purpose instead.";
+  return "The learner sees only real message text and this reply; thinking, plans, and anything you wrote while thinking are summarized away and never shown. Give any verdict as visible text before the card, write out the teaching this card tests in full in reply, then call the card again. If this card is the opening check or an explain-back request, set purpose instead.";
 }
 
 export interface QuestionCard {

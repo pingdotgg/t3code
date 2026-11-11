@@ -8036,7 +8036,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             isLessonTurn(context.input) &&
             context.assistant.heldText.length > 0 &&
-            /ToolSearch$/u.test(block.name)
+            block.name === "ToolSearch"
           )
             return;
           if (!isLessonTurn(context.input) || context.assistant.heldText.length === 0) {

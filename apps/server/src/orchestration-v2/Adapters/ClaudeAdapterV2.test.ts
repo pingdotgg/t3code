@@ -3945,7 +3945,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { lesson: false, combined: false, expected: ["assistant_message", "assistant_message"] },
     { lesson: true, combined: false, toolSearch: true, expected: ["assistant_message"] },
   ] as const)(
-    "lesson filters short pre-Read text but keeps final answers (combined $combined)",
+    "lesson filters short pre-Read text but keeps final answers (lesson $lesson, combined $combined, toolSearch $toolSearch)",
     ({ lesson, combined, toolSearch, expected }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
