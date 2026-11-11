@@ -278,6 +278,9 @@ export function getProviderOptionCurrentValue(
     return undefined;
   }
   const hasExplicitOption = selection?.options?.some((option) => option.id === descriptor.id);
+  // Reported values are display-only; callers that build dispatch options omit this context.
+  const reportedValue = getReportedOptionValue(descriptor.id, selection, reportedSelection);
+  if (reportedValue !== undefined) return reportedValue;
   // Without an explicit variant none is sent, which is exactly the catalog's Default choice.
   if (
     descriptor.type === "select" &&
@@ -288,9 +291,6 @@ export function getProviderOptionCurrentValue(
   ) {
     return DEFAULT_VARIANT_CHOICE_ID;
   }
-  // Reported values are display-only; callers that build dispatch options omit this context.
-  const reportedValue = getReportedOptionValue(descriptor.id, selection, reportedSelection);
-  if (reportedValue !== undefined) return reportedValue;
   if (descriptor.id === "variant" && selection && !hasExplicitOption) return undefined;
   if (descriptor.type === "boolean") {
     return descriptor.currentValue;

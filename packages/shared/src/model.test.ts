@@ -228,7 +228,13 @@ describe("provider-reported option display", () => {
       currentValue: DEFAULT_VARIANT_CHOICE_ID,
     };
     expect(getProviderOptionCurrentValue(withDefault, selection)).toBe(DEFAULT_VARIANT_CHOICE_ID);
-    expect(getProviderOptionCurrentLabel(withDefault, selection, reported)).toBe("Default");
+    expect(getProviderOptionCurrentLabel(withDefault, selection)).toBe("Default");
+    expect(
+      getProviderOptionCurrentLabel(withDefault, selection, {
+        ...reported,
+        options: [{ id: "variant", value: "thinking" }],
+      }),
+    ).toBe("Thinking");
   });
 
   it.each([
