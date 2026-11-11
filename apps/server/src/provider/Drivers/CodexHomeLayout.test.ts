@@ -180,6 +180,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             "auth_fixture_b.json",
             "auth.json.bak",
             "AUTH.Backup",
+            "auth.lock",
           ];
 
           for (const name of authLikeNames) {
@@ -187,6 +188,11 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           }
           yield* writeTextFile(path.join(sharedHome, "author.json"), '{"author":true}\n');
           yield* writeTextFile(path.join(shadowHome, "auth.json"), '{"shadow":true}\n');
+          // Older shadow homes linked auth.lock; that stale link is removed, not rejected.
+          yield* fileSystem.symlink(
+            path.join(sharedHome, "auth.lock"),
+            path.join(shadowHome, "auth.lock"),
+          );
 
           const layout = yield* resolveCodexHomeLayout(
             decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
