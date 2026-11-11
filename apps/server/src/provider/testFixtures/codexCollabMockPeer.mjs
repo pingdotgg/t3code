@@ -23,9 +23,7 @@ rl.on("line", (line) => {
   }
   const { id, method } = message;
   if (openServerRequests.has(id)) {
-    // Real codex identifies the resolved request by its item id — the key the
-    // runtime correlates on — so the receipt exercises the same path that
-    // closes the approval card in the UI.
+    // Match real Codex's resolved item ID so the runtime closes the corresponding approval card.
     const request = openServerRequests.get(id);
     openServerRequests.delete(id);
     NodeFS.appendFileSync(
