@@ -162,15 +162,15 @@ export function buildPendingUserInputAnswers(
   questions: ReadonlyArray<PendingUserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
 ): Record<string, PendingUserInputAnswer> | null {
-  const answers: Record<string, PendingUserInputAnswer> = {};
+  const entries: Array<[string, PendingUserInputAnswer]> = [];
 
   for (const question of questions) {
     const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
     if (answer === null) {
       return null;
     }
-    answers[question.id] = answer;
+    entries.push([question.id, answer]);
   }
 
-  return answers;
+  return Object.fromEntries(entries);
 }
