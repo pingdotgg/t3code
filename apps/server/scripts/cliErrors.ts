@@ -58,3 +58,15 @@ export class ServerCliExecutableImportError extends Schema.TaggedError<ServerCli
     return `${this.bundlePath} imports file-backed packages that a single-executable cannot resolve: ${this.specifiers.join(", ")}. Load them through createRequire instead.`;
   }
 }
+
+export class ServerCliBootstrapTooLargeError extends Schema.TaggedError<ServerCliBootstrapTooLargeError>()(
+  "ServerCliBootstrapTooLargeError",
+  {
+    bootstrapPath: Schema.String,
+    bytes: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `${this.bootstrapPath} is ${this.bytes} bytes. The CLI was bundled into the executable bootstrap; keep ./binMain.ts external.`;
+  }
+}
