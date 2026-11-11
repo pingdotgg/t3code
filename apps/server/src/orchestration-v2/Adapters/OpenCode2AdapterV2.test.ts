@@ -3619,6 +3619,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           projectID: "global",
         }),
         event("session.execution.succeeded", { sessionID: SESSION }),
+        // A model or policy change resumes the loaded thread without moving it back to WORK.
+        out("session.get", { sessionID: SESSION }),
+        replyData("session.get", sessionInfo({ location: { directory: moved } })),
         // The session now runs in `moved`; a server left in WORK is invisible to it.
         out("mcp.remove", { server, "location[directory]": WORK }),
         reply("mcp.remove", null),
@@ -3633,6 +3636,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const first = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(turnInput(thread));
       assert.equal((yield* Fiber.join(first))?.status, "completed");
+      yield* runtime.resumeThread({ providerThread: thread, threadId, runtimePolicy: policy() });
       const second = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(secondTurn(thread));
       assert.equal((yield* Fiber.join(second))?.status, "completed");

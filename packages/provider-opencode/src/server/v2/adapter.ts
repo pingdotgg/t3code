@@ -330,6 +330,8 @@ interface ThreadState {
   /** A late first start belongs to the failed prompt; only a subsequent start proves a lost end. */
   unsettledStarted: boolean;
   directory: string;
+  /** Where T3 last placed the session; `directory` differs after a native session.moved. */
+  cwd: string;
   agent: string;
   title: string | undefined;
   rules: ReadonlyArray<Rule> | undefined;
@@ -823,6 +825,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       unsettled: false,
       unsettledStarted: false,
       directory,
+      cwd: directory,
       agent: "build",
       title: undefined,
       rules: undefined,
@@ -3977,8 +3980,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             updatedAt: yield* DateTime.now,
           };
           const cwd = threadInput.runtimePolicy?.cwd;
-          const loaded = threads.has(sessionId);
-          const state = register(providerThread, native, cwd ?? native.location.directory);
+          const previous = threads.get(sessionId);
+          const loaded = previous !== undefined;
+          // A loaded session keeps its native move unless T3 changed the thread's cwd since.
+          const target = cwd != null && cwd !== previous?.cwd ? cwd : undefined;
+          const state = register(providerThread, native, target ?? native.location.directory);
+          if (target !== undefined) state.cwd = target;
           if (!loaded) yield* stopLeftoverRequests(state);
           if (!loaded && supportsNativeGoals()) {
             yield* readGoal(state).pipe(
@@ -3987,10 +3994,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             );
           }
           yield* writeRules(state, threadInput.runtimePolicy ?? state.policy);
-          if (cwd != null && native.location.directory !== cwd) {
+          if (target !== undefined && native.location.directory !== target) {
             yield* client.session.move({
               sessionID: Session.ID.make(sessionId),
-              directory: AbsolutePath.make(cwd),
+              directory: AbsolutePath.make(target),
             });
           }
           return state.providerThread;
