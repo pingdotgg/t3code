@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
+import { useRef } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -171,7 +172,18 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   };
   const onConfirmRevertStable = useStableCallback(onConfirmRevert);
 
+  const forkPendingRef = useRef(false);
   const onForkFromRun = async (input: {
+    readonly sourceThreadId: ThreadId;
+    readonly runId: RunId;
+  }) => {
+    if (forkPendingRef.current) return;
+    forkPendingRef.current = true;
+    await forkFromRun(input).finally(() => {
+      forkPendingRef.current = false;
+    });
+  };
+  const forkFromRun = async (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
   }) => {

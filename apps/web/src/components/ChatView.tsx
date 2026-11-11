@@ -255,6 +255,7 @@ import {
   useThreadUpdatedAt,
   useThreadLastVisitedAt,
   useQuietThreadVisibleTurnItems,
+  readThreadVisibleTurnItems,
   useThreadStatus,
   useThreadHistory,
   useQuietThreadShell,
@@ -2316,7 +2317,6 @@ export default function ChatView(props: ChatViewProps) {
           linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
           hostedAppUrl: configuredHostedAppUrl(),
         });
-  const forkShortcutPendingRef = useRef(false);
   const copyActiveThreadReference = () => {
     if (activeThreadReferenceCopyTarget === null) return;
     void copyThreadReference(activeThreadReferenceCopyTarget);
@@ -2709,8 +2709,9 @@ export default function ChatView(props: ChatViewProps) {
         if (!event.repeat) copyActiveThreadReference();
       },
       "thread.fork": ({ event }) => {
-        if (event.repeat || forkShortcutPendingRef.current) return;
-        const latest = serverVisibleTurnItems.findLast(
+        if (event.repeat) return;
+        if (routeThreadDetailRef === null) return false;
+        const latest = readThreadVisibleTurnItems(routeThreadDetailRef).findLast(
           (projectedItem) =>
             projectedItem.item.type === "assistant_message" &&
             canForkProjectedAssistantItem({
@@ -2724,10 +2725,7 @@ export default function ChatView(props: ChatViewProps) {
         );
         const runId = latest?.item.runId;
         if (latest === undefined || runId == null) return false;
-        forkShortcutPendingRef.current = true;
-        void onForkFromRunStable({ sourceThreadId: latest.sourceThreadId, runId }).finally(() => {
-          forkShortcutPendingRef.current = false;
-        });
+        void onForkFromRunStable({ sourceThreadId: latest.sourceThreadId, runId });
       },
       "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)

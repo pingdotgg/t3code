@@ -1,7 +1,7 @@
 import {
   type ChatAttachment,
   isCompactionCommandMessage,
-  type OrchestrationV2TurnItem,
+  type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
@@ -187,9 +187,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
 }
 
 export function canForkProjectedAssistantItem(input: {
-  readonly projectedItem: {
-    readonly item: Pick<OrchestrationV2TurnItem, "type" | "runId" | "status">;
-  };
+  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly capabilities?: OrchestrationV2ProviderCapabilities | undefined;
 }): boolean {
   const item = input.projectedItem.item;
