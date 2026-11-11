@@ -1,6 +1,11 @@
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
 
+import { randomUUID } from "../lib/utils";
+
+/** `service.instance.id` for this page load, shared by every resource the UI exports. */
+export const serviceInstanceId = randomUUID();
+
 let delegate: Tracer.Tracer | null = null;
 
 export function setDelegate(next: Tracer.Tracer | null): void {

@@ -5,7 +5,6 @@ const MAX_SOURCE_FILES = 4;
 // Bound retained UTF-16 text across files without discarding an already-fetched
 // authoritative source just because it is large. Provider response limits still apply.
 const MAX_CACHED_SOURCE_CHARACTERS = 8_000_000;
-const MAX_SOURCE_ATTEMPTS = 2;
 
 function isWeakKey(value: unknown): value is object {
   return (typeof value === "object" && value !== null) || typeof value === "function";
@@ -114,6 +113,8 @@ export function createNativeReviewDiffSourceLoader<FileId>(
       const promise = tail
         .then(async () => {
           if ([...subscribers].every((subscriber) => subscriber?.aborted)) {
+            // A cancelled request must stop being shareable before its promise settles.
+            pending.delete(fileId);
             traceDiffHighlight("source-dropped", { loader, file });
             return null;
           }
@@ -156,12 +157,12 @@ export function createNativeReviewDiffSourceLoader<FileId>(
               permanent,
               reason: reason ?? "transient",
             });
-            if (permanent || attempt >= MAX_SOURCE_ATTEMPTS) {
+            if (permanent) {
               failure.unavailable = true;
               traceDiffHighlight("source-unavailable", {
                 loader,
                 file,
-                reason: permanent ? "permanent-error" : "attempts",
+                reason: "permanent-error",
               });
               return null;
             }
@@ -169,7 +170,9 @@ export function createNativeReviewDiffSourceLoader<FileId>(
             throw error;
           }
         })
-        .finally(() => pending.delete(fileId));
+        .finally(() => {
+          if (pending.get(fileId) === request) pending.delete(fileId);
+        });
       tail = promise.then(
         () => {},
         () => {},

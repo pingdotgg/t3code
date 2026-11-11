@@ -2,6 +2,7 @@ import {
   canSnooze,
   effectiveSnoozed,
   hasQueuedTurnStart,
+  pickSnoozePreset,
   QUEUED_TURN_START_GRACE_MS,
   resolveSnoozePresets,
   snoozeWakeLabel,
@@ -24,10 +25,13 @@ import {
 import {
   sortActiveThreadsByOrderKey,
   resolveSettledThreadTimestamp,
+  resolveThreadActivityTimestamp,
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { isListedThreadLineage, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
+import type { MenuAction } from "@react-native-menu/menu";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
 import type { ThreadMoveAvailability } from "./threadOrder";
@@ -40,8 +44,6 @@ import {
   reconcilePendingThreadOrder,
   type PendingThreadOrder,
 } from "./threadOrder";
-
-export { snoozeWakeLabel };
 
 export const threadListInboxReturns = createInboxReturnTracker();
 
@@ -72,28 +74,42 @@ export type ThreadListV2Status =
   | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
+/**
+ * Presets for a row's snooze menu, read at the list's minute instead of the
+ * clock: the compiler keys a row's memo on its inputs, so a clock read inside
+ * it would keep the times from the row's first render.
+ */
+export function resolveThreadListV2SnoozePresets(input: {
+  readonly secondary: "snooze" | null;
+  readonly now: string;
+  readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
+}): ReadonlyArray<SnoozePreset> {
+  return input.secondary === "snooze"
+    ? resolveSnoozePresets(new Date(input.now), presetOptions(input.presets))
+    : [];
+}
+
+function presetOptions(presets: ReadonlyArray<SnoozePresetSetting> | undefined) {
+  return presets ? { presets } : {};
+}
+
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
   readonly displayedPresets: ReadonlyArray<SnoozePreset>;
   readonly now: Date;
+  readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
 }):
   | { readonly _tag: "selected"; readonly preset: SnoozePreset }
   | { readonly _tag: "expired" }
   | { readonly _tag: "not-snooze" } {
   if (!input.event.startsWith("snooze:")) return { _tag: "not-snooze" };
-
-  const currentPreset = resolveSnoozePresets(input.now).find(
-    (candidate) => input.event === `snooze:${candidate.id}`,
-  );
-  if (currentPreset) return { _tag: "selected", preset: currentPreset };
-
-  const displayedPreset = input.displayedPresets.find(
-    (candidate) => input.event === `snooze:${candidate.id}`,
-  );
-  if (displayedPreset && Date.parse(displayedPreset.snoozedUntil) > input.now.getTime()) {
-    return { _tag: "selected", preset: displayedPreset };
-  }
-  return { _tag: "expired" };
+  const preset = pickSnoozePreset({
+    shown: input.displayedPresets,
+    id: input.event.slice("snooze:".length),
+    now: input.now,
+    ...presetOptions(input.presets),
+  });
+  return preset ? { _tag: "selected", preset } : { _tag: "expired" };
 }
 
 export function resolveThreadListV2SwipeActions(input: {
@@ -120,6 +136,42 @@ export function resolveThreadListV2SwipeActions(input: {
   };
 }
 
+// Nested keeps iOS menus short: UIKit scrolls a taller menu, and that scroll
+// cancels press-drag-release selection.
+export function layoutThreadListV2RowMenuActions(input: {
+  readonly nested: boolean;
+  readonly direct: readonly MenuAction[];
+  readonly reorder: readonly MenuAction[];
+  readonly pin: readonly MenuAction[];
+  readonly secondary: readonly MenuAction[];
+}): MenuAction[] {
+  if (!input.nested) {
+    return [...input.direct, ...input.reorder, ...input.pin, ...input.secondary];
+  }
+  return [
+    ...input.direct,
+    ...input.pin,
+    {
+      id: "more",
+      title: "More",
+      image: "ellipsis.circle",
+      subactions: [
+        ...(input.reorder.length > 1
+          ? [
+              {
+                id: "arrange-menu",
+                title: "Arrange",
+                image: "arrow.up.arrow.down",
+                subactions: [...input.reorder],
+              },
+            ]
+          : input.reorder),
+        ...input.secondary,
+      ],
+    },
+  ];
+}
+
 export function resolveThreadListV2SnoozeGateExpiryMs(
   thread: Pick<
     EnvironmentThreadShell,
@@ -132,12 +184,47 @@ export function resolveThreadListV2SnoozeGateExpiryMs(
   >,
   options: { readonly now: string },
 ): number | null {
-  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return null;
+  if (thread.hasPendingApprovals) return null;
   if (thread.pendingSubagentRequest != null) return null;
   if (!hasQueuedTurnStart(thread, options)) return null;
   const messageAtMs = Date.parse(thread.latestUserMessageAt ?? "");
   if (Number.isNaN(messageAtMs)) return null;
   return messageAtMs + QUEUED_TURN_START_GRACE_MS;
+}
+
+/** The earliest `snoozedUntil` strictly after `nowMs`, in epoch ms. */
+export function nextSnoozeWakeAfter(
+  threads: ReadonlyArray<{ readonly snoozedUntil?: string | null }>,
+  nowMs: number,
+): number | null {
+  let next: number | null = null;
+  for (const thread of threads) {
+    if (thread.snoozedUntil == null) continue;
+    const wakeAtMs = Date.parse(thread.snoozedUntil);
+    if (wakeAtMs > nowMs && (next === null || wakeAtMs < next)) next = wakeAtMs;
+  }
+  return next;
+}
+
+// Outside search, the clock only changes list membership/order at snooze deadlines.
+export function threadListV2LayoutTime(input: {
+  readonly threads: ReadonlyArray<{ readonly snoozedUntil?: string | null }>;
+  readonly now: string;
+  readonly searchQuery: string;
+}) {
+  if (input.searchQuery !== "") return input.now;
+  const nowMs = Date.parse(input.now);
+  if (!Number.isFinite(nowMs)) return input.now;
+  let previousWakeAt: number | undefined;
+  let nextWakeAt: number | undefined;
+  for (const thread of input.threads) {
+    if (thread.snoozedUntil == null) continue;
+    const wakeAt = Date.parse(thread.snoozedUntil);
+    if (!Number.isFinite(wakeAt)) continue;
+    if (wakeAt <= nowMs) previousWakeAt = Math.max(previousWakeAt ?? wakeAt, wakeAt);
+    else nextWakeAt = Math.min(nextWakeAt ?? wakeAt, wakeAt);
+  }
+  return new Date(previousWakeAt ?? (nextWakeAt === undefined ? 0 : nextWakeAt - 1)).toISOString();
 }
 
 export const THREAD_LIST_V2_SETTLED_INITIAL_COUNT = 10;
@@ -237,8 +324,7 @@ export function getThreadListV2OrderedSection(input: {
 }): EnvironmentThreadShell[] {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threads = input.threads.filter((thread) => {
-    if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
-      return false;
+    if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) return false;
     if (
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
       thread.settledOverride === "settled" &&
@@ -277,6 +363,8 @@ export interface ThreadListV2Item {
 export interface ThreadListV2Layout {
   readonly items: ThreadListV2Item[];
   readonly hiddenSettledCount: number;
+  /** The settled rows the shelf may list, before its visible limit. */
+  readonly listedSettledThreads: ReadonlyArray<EnvironmentThreadShell>;
   readonly workingCount: number;
   readonly workingShelfHeaderIndex: number | null;
   readonly snoozedCount: number;
@@ -426,7 +514,7 @@ function resolveThreadListV2ItemTimeLabel(
   const settledTimestamp =
     variant === "slim" && !snoozed ? resolveSettledThreadTimestamp(thread) : null;
   return relativeTime(
-    settledTimestamp ?? thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+    settledTimestamp ?? resolveThreadActivityTimestamp(thread) ?? thread.createdAt,
   );
 }
 
@@ -577,11 +665,16 @@ export function buildThreadListV2Items(input: {
   readonly now: string;
   readonly workingShelfEnabled?: boolean;
   readonly workingShelfExpanded?: boolean;
+  readonly isWorking?: (thread: EnvironmentThreadShell) => boolean;
   readonly inboxReturnAt?: (thread: EnvironmentThreadShell) => number | undefined;
   readonly snoozedShelfExpanded?: boolean;
   readonly settledShelfExpanded?: boolean;
   readonly selectedThreadKey?: string | null;
   readonly queuedThreadKeys?: ReadonlySet<string>;
+  /** Whether the shelf may list a settled row yet; older settled rows load in pages. */
+  readonly isListedSettled?: (thread: EnvironmentThreadShell) => boolean;
+  /** Settled threads in scope that are not local (older settled threads not loaded). */
+  readonly unloadedSettledCount?: number;
 }): ThreadListV2Layout {
   const now = input.now;
   const pending =
@@ -612,7 +705,7 @@ export function buildThreadListV2Items(input: {
   const listedThreads = input.threads.filter(
     (thread) =>
       thread.archivedAt === null &&
-      thread.lineage.relationshipToParent !== "subagent" &&
+      isListedThreadLineage(thread.lineage) &&
       (input.environmentId === null || thread.environmentId === input.environmentId) &&
       (projectKeys === null || projectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );
@@ -659,7 +752,7 @@ export function buildThreadListV2Items(input: {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
-    } else if (workingShelfEnabled && isThreadWorking(thread)) {
+    } else if (workingShelfEnabled && (input.isWorking ?? isThreadWorking)(thread)) {
       working.push(thread);
     } else {
       active.push(thread);
@@ -694,6 +787,7 @@ export function buildThreadListV2Items(input: {
         isLast: index === results.length - 1,
       })),
       hiddenSettledCount: 0,
+      listedSettledThreads: [],
       workingCount: 0,
       workingShelfHeaderIndex: null,
       snoozedCount: 0,
@@ -727,15 +821,21 @@ export function buildThreadListV2Items(input: {
           (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
         );
   const orderedSettled = sortSettledThreadsReusingLast(settled);
+  const listedSettled =
+    input.isListedSettled === undefined
+      ? orderedSettled
+      : orderedSettled.filter(input.isListedSettled);
+  const settledTotal = orderedSettled.length + (input.unloadedSettledCount ?? 0);
   const settledLimit = input.settledLimit ?? Number.POSITIVE_INFINITY;
   const limitedSettled =
-    orderedSettled.length > settledLimit ? orderedSettled.slice(0, settledLimit) : orderedSettled;
+    listedSettled.length > settledLimit ? listedSettled.slice(0, settledLimit) : listedSettled;
   const selectedSettled =
-    selectedThreadKey === null
+    selectedThreadKey === null ||
+    limitedSettled.some((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey)
       ? undefined
-      : orderedSettled
-          .slice(limitedSettled.length)
-          .find((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey);
+      : orderedSettled.find(
+          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+        );
   const pagedSettled =
     selectedSettled === undefined ? limitedSettled : [...limitedSettled, selectedSettled];
   const visibleSettled =
@@ -792,7 +892,7 @@ export function buildThreadListV2Items(input: {
       isLast: false,
     });
   }
-  const settledShelfHeaderIndex = orderedSettled.length > 0 ? items.length : null;
+  const settledShelfHeaderIndex = settledTotal > 0 ? items.length : null;
   for (const thread of visibleSettled) {
     items.push({
       thread,
@@ -809,12 +909,13 @@ export function buildThreadListV2Items(input: {
   }
   return {
     items,
-    hiddenSettledCount: orderedSettled.length - pagedSettled.length,
+    hiddenSettledCount: Math.max(0, settledTotal - pagedSettled.length),
+    listedSettledThreads: listedSettled,
     workingCount: orderedWorking.length,
     workingShelfHeaderIndex,
     snoozedCount: orderedSnoozed.length,
     snoozedShelfHeaderIndex,
-    settledCount: orderedSettled.length,
+    settledCount: settledTotal,
     settledShelfHeaderIndex,
     nextSnoozeWakeAt,
     contentOnlyThreadKeys,
