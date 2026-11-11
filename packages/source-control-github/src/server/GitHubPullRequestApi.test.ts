@@ -338,17 +338,20 @@ function threadComments(
   ids: ReadonlyArray<string>,
   endCursor: string | null,
   totalCount = ids.length,
+  author: Readonly<Record<string, unknown>> | null = null,
 ) {
   return {
     totalCount,
     pageInfo: { hasNextPage: endCursor !== null, endCursor },
     nodes: ids.map((id) => ({
       id,
-      author: null,
+      author,
       body: id,
       createdAt: "2026-07-01T00:00:00Z",
       lastEditedAt: null,
       url: `https://github.com/acme/web/pull/7#discussion_${id}`,
+      isMinimized: false,
+      pullRequestReview: null,
       reactionGroups: [],
     })),
   };
@@ -472,7 +475,7 @@ function searchItem(number: number, repository: string, updatedAt: string) {
     updatedAt,
     repository: { nameWithOwner: repository },
     reviewRequests: { nodes: [{ requestedReviewer: { __typename: "User", login: "hubot" } }] },
-    labels: { nodes: [{ name: "bug", color: "ff0000" }] },
+    labels: { nodes: [{ name: "bug", color: "ff0000", description: "Something is broken" }] },
   };
 }
 
@@ -1044,7 +1047,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
         mergeable: "MERGEABLE",
         reviewDecision: null,
         latestReviews: {
-          nodes: [{ state: "APPROVED", author: { __typename: "User", login: "reviewer" } }],
+          nodes: [
+            {
+              state: "APPROVED",
+              isMinimized: false,
+              author: { __typename: "User", login: "reviewer" },
+            },
+          ],
         },
         additions: 12,
         deletions: 3,
@@ -1603,6 +1612,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
           [0, 0],
         ],
       );
+      assert.deepStrictEqual(batch.items[0]?.labels, [
+        { name: "bug", color: "ff0000", description: "Something is broken" },
+      ]);
       assert.isFalse(batch.truncated);
     }),
   );
@@ -3455,67 +3467,31 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect.each([false, true])(
-    "keeps thread cursors and reviewers after a refusal (later page: %s)",
-    (later) =>
-      Effect.gen(function* () {
-        if (later)
-          mockedExecute.mockReturnValueOnce(
-            Effect.succeed(
-              output(
-                reviewThreadsPage([thread("T1", "c1")], "next", [
-                  {
-                    __typename: "User",
-                    login: "prior",
-                    name: null,
-                    avatarUrl: "https://avatars/prior",
-                  },
-                ]),
-              ),
-            ),
-          );
-        mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
-        mockedExecute.mockReturnValueOnce(
-          Effect.succeed(output(reviewThreadsPage([thread("T2", "c2")], "last"))),
-        );
-        mockedExecute.mockReturnValueOnce(
-          Effect.succeed(output(reviewThreadsPage([thread("T3", "c3")], null))),
-        );
-        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-        const read = cli.listReviewThreadComments({
-          ...pullRequestInput,
-          repository: `acme/refused-threads-${later}`,
-        });
-        const conversation = yield* read;
-        expect(
-          variablesOf("ReviewThreads").map((v) => [v["after"], v["requestedReviewers"]]),
-        ).toEqual(
-          later
-            ? [
-                [null, 50],
-                ["next", 50],
-                ["next", 0],
-                ["last", 0],
-              ]
-            : [
-                [null, 50],
-                [null, 0],
-                ["last", 0],
-              ],
-        );
-        expect(conversation.comments.map((c) => c.id)).toEqual(
-          later ? ["c1", "c2", "c3"] : ["c2", "c3"],
-        );
-        expect(conversation.reviewers.map((r) => r.login)).toEqual(later ? ["prior"] : []);
-        expect(conversation.truncated).toBe(false);
+  it.effect("keeps thread cursors after a reviewer refusal", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(reviewThreadsPage([thread("T2", "c2")], "last"))),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(reviewThreadsPage([thread("T3", "c3")], null))),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const read = cli.listReviewThreadComments({
+        ...pullRequestInput,
+        repository: "acme/refused-threads",
+      });
+      const conversation = yield* read;
+      expect(variablesOf("ReviewThreads").map((v) => v["requestedReviewers"])).toEqual([50, 0]);
+      expect(variablesOf("ReviewThreadPages").map((v) => v["after"])).toEqual(["last"]);
+      expect(conversation.comments.map((c) => c.id)).toEqual(["c2", "c3"]);
+      expect(conversation.reviewers).toEqual([]);
+      expect(conversation.truncated).toBe(false);
 
-        mockedExecute.mockReturnValueOnce(Effect.succeed(output(reviewThreadsPage([], null))));
-        yield* read;
-        expect(variablesOf("ReviewThreads").at(-1)).toMatchObject({
-          after: null,
-          requestedReviewers: 0,
-        });
-      }),
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(reviewThreadsPage([], null))));
+      yield* read;
+      expect(variablesOf("ReviewThreads").at(-1)).toMatchObject({ requestedReviewers: 0 });
+    }),
   );
 
   it.effect("decodes reviewers, labels and workflow checks without another detail read", () =>
@@ -3540,7 +3516,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     },
                   ],
                 },
-                labels: { nodes: [{ name: "bug", color: "ff0000" }] },
+                labels: {
+                  nodes: [{ name: "bug", color: "ff0000", description: "Something is broken" }],
+                },
                 commits: {
                   nodes: [
                     {
@@ -3591,7 +3569,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
           avatarUrl: "https://avatars.githubusercontent.com/t/1",
         },
       ]);
-      expect(detail.labels).toEqual([{ name: "bug", color: "ff0000" }]);
+      expect(detail.labels).toEqual([
+        { name: "bug", color: "ff0000", description: "Something is broken" },
+      ]);
       expect(detail.checks).toHaveLength(2);
       expect(detail.checksState).toBe("failing");
     }),
@@ -3767,10 +3747,32 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("follows the cursor to the review threads the first page left behind", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(reviewThreadsPage([thread("PRRT_1", "c1")], "Y3Vyc29yOjE"))),
+        Effect.succeed(
+          output(
+            reviewThreadsPage([thread("PRRT_1", "c1")], "Y3Vyc29yOjE", [
+              { __typename: "User", login: "prior", name: null, avatarUrl: "https://avatars/p" },
+            ]),
+          ),
+        ),
       );
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(reviewThreadsPage([thread("PRRT_2", "c2")], null))),
+        Effect.succeed(
+          output(
+            reviewThreadsPage(
+              [
+                {
+                  ...thread("PRRT_2", "c2"),
+                  comments: threadComments(["c2"], null, 1, {
+                    __typename: "Bot",
+                    login: "later-bot",
+                    avatarUrl: "https://avatars/later-bot",
+                  }),
+                },
+              ],
+              null,
+            ),
+          ),
+        ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -3781,9 +3783,20 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      expect(varsAt(0)["after"]).toBeNull();
-      expect(varsAt(1)["after"]).toBe("Y3Vyc29yOjE");
+      expect(callAt(0)).toMatchObject({ operationName: "ReviewThreads" });
+      // Later pages ask for the threads alone and keep the first page's PR-wide fields.
+      const later = callAt(1);
+      assert(later.kind === "graphql");
+      expect(later).toMatchObject({
+        operationName: "ReviewThreadPages",
+        variables: { after: "Y3Vyc29yOjE" },
+      });
+      for (const field of ["reviewRequests", "commits(", "reviewDismissals", "latestReviews"])
+        expect(later.query).not.toContain(field);
       expect(conversation.comments.map((comment) => comment.id)).toEqual(["c1", "c2"]);
+      expect(conversation.reviewers.map((reviewer) => reviewer.login)).toEqual(["prior"]);
+      expect(conversation.avatarsByLogin.get("later-bot")).toBe("https://avatars/later-bot");
+      expect(conversation.botLogins.has("later-bot")).toBe(true);
       assert.isFalse(conversation.truncated);
     }),
   );
