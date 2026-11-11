@@ -307,6 +307,37 @@ describe("resolveChangesTotals", () => {
     );
   });
 
+  it("uses the panel's branch comparison when it has file stats", () => {
+    const dirty = status({
+      branchChanges: { baseRef: "main", insertions: 20, deletions: 3 },
+    });
+    const source = {
+      id: "branch-range",
+      kind: "branch-range",
+      title: "Changes vs release",
+      baseRef: "release",
+      headRef: "feature/test",
+      diff: "",
+      diffHash: "hash",
+      truncated: false,
+    } as const;
+    assert.deepEqual(
+      resolveChangesTotals(dirty, {
+        ...source,
+        files: [
+          { path: "a.ts", previousPath: null, additions: 4, deletions: 1 },
+          { path: "b.ts", previousPath: null, additions: 2, deletions: 0 },
+        ],
+      }),
+      { insertions: 6, deletions: 1, baseRef: "release" },
+    );
+    assert.deepEqual(resolveChangesTotals(dirty, source), {
+      insertions: 20,
+      deletions: 3,
+      baseRef: "main",
+    });
+  });
+
   it("falls back to the working tree when branchChanges is omitted", () => {
     assert.deepInclude(
       resolveChangesTotals(
