@@ -1,9 +1,16 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 
-// Protocol 4 requires coordinated selection writes and unit reconciliation. An
-// installed protocol-3 launcher needs one local update or service install with a restart:
-// remote updates replace its child, so cannot add these launcher guarantees.
+// Protocol 4 launchers coordinate selection writes and reconcile the unit. A remote update
+// replaces only the child, so an installed protocol-3 launcher stays until a local update or
+// service install restarts the service.
 export const SERVICE_LAUNCHER_PROTOCOL = 4 as const;
+/** Launchers this runtime runs under. Protocol 3 has the same IPC and durable format, and
+    refusing it stops every remote update until someone opens a shell on the host. */
+export type SupportedLauncherProtocol = 3 | typeof SERVICE_LAUNCHER_PROTOCOL;
+export const isSupportedLauncherProtocol = (
+  protocol: unknown,
+): protocol is SupportedLauncherProtocol =>
+  protocol === 3 || protocol === SERVICE_LAUNCHER_PROTOCOL;
 export const SERVICE_LAUNCHER_CONTEXT_ENV = "T3_SERVICE_LAUNCHER_CONTEXT";
 export const SERVICE_ENV_FILE = "service.env";
 export const SERVICE_STATE_FILE = "service-state.json";
@@ -58,7 +65,7 @@ export interface ServiceState {
 }
 
 export interface ServiceLauncherContext {
-  readonly protocol: typeof SERVICE_LAUNCHER_PROTOCOL;
+  readonly protocol: SupportedLauncherProtocol;
   readonly childVersion: string;
   readonly update?: ServiceUpdateRecord;
 }
@@ -174,8 +181,8 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
   if (!isRecord(value)) return undefined;
   const update = value.update === undefined ? undefined : decodeServiceUpdate(value.update);
   if (
-    // Protocol 3 has the same durable format; its installer can select a protocol-4 runtime.
-    (value.protocol !== 3 && value.protocol !== SERVICE_LAUNCHER_PROTOCOL) ||
+    // A protocol-3 installer can select a protocol-4 runtime.
+    !isSupportedLauncherProtocol(value.protocol) ||
     typeof value.activeVersion !== "string" ||
     !isExactServiceVersion(value.activeVersion) ||
     (value.update !== undefined && update === undefined) ||
@@ -198,6 +205,24 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
 export function parseServiceState(value: string): ServiceState | undefined {
   try {
     return decodeServiceState(JSON.parse(value) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseLegacyServiceState(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      !isRecord(parsed) ||
+      Object.keys(parsed).length !== 2 ||
+      parsed.protocol !== 2 ||
+      typeof parsed.activeVersion !== "string" ||
+      !isExactServiceVersion(parsed.activeVersion)
+    ) {
+      return undefined;
+    }
+    return { protocol: 2, activeVersion: parsed.activeVersion } as const;
   } catch {
     return undefined;
   }
@@ -234,7 +259,7 @@ export function decodeServiceLauncherContext(value: string): ServiceLauncherCont
   }
   if (
     !isRecord(parsed) ||
-    parsed.protocol !== SERVICE_LAUNCHER_PROTOCOL ||
+    !isSupportedLauncherProtocol(parsed.protocol) ||
     typeof parsed.childVersion !== "string" ||
     !isExactServiceVersion(parsed.childVersion)
   ) {
@@ -252,7 +277,7 @@ export function decodeServiceLauncherContext(value: string): ServiceLauncherCont
     return undefined;
   }
   return {
-    protocol: SERVICE_LAUNCHER_PROTOCOL,
+    protocol: parsed.protocol,
     childVersion: parsed.childVersion,
     ...(update === undefined ? {} : { update }),
   };
