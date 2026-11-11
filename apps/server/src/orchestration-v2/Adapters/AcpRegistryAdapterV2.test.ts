@@ -475,6 +475,8 @@ describe("AcpRegistryAdapterV2", () => {
       readonly storedModel?: string;
       readonly storedModePick?: string;
       readonly turnModels?: ReadonlyArray<string>;
+      readonly turnOptions?: ModelSelection["options"];
+      readonly failedTurnIndexes?: ReadonlyArray<number>;
       readonly rejectedModel?: string;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -582,24 +584,35 @@ describe("AcpRegistryAdapterV2", () => {
         const now = yield* DateTime.now;
         let current = stored;
         for (const [index, model] of input.turnModels.entries()) {
-          const target: ModelSelection = { instanceId, model };
+          const target: ModelSelection = {
+            instanceId,
+            model,
+            ...(input.turnOptions === undefined ? {} : { options: input.turnOptions }),
+          };
           const plan = yield* adapter.planSelectionTransition({
             current,
             target,
             sessionCapabilities: runtime.providerSession.capabilities,
           });
           assert.equal(plan.type, "apply_on_next_turn");
-          yield* runtime.startTurn(
-            makeTurnInput({
-              threadId,
-              providerThread,
-              instanceId,
-              runtimePolicy,
-              now,
-              ordinal: index + 1,
-              modelSelection: target,
-            }),
-          );
+          const started = yield* runtime
+            .startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                now,
+                ordinal: index + 1,
+                modelSelection: target,
+              }),
+            )
+            .pipe(Effect.result);
+          if (input.failedTurnIndexes?.includes(index)) {
+            assert.equal(started._tag, "Failure");
+            continue;
+          }
+          if (started._tag === "Failure") return yield* started.failure;
           yield* runtime.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runForEach((event) =>
@@ -790,6 +803,57 @@ describe("AcpRegistryAdapterV2", () => {
             ],
           );
         }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect(
+      "retries a failed option after model activation and skips unavailable stored options",
+      () => {
+        const option = (currentValue: string) => ({
+          id: "thinking",
+          name: "Thinking",
+          type: "select",
+          currentValue,
+          options: ["low", "high"].map((value) => ({ value, name: value })),
+        });
+        const model = (currentValue: string) => ({
+          ...modelOption("model", currentValue),
+          options: ["default", "named"].map((value) => ({ value, name: value })),
+        });
+        const set = (id: string, value: string) =>
+          outbound("session/set_config_option", {
+            sessionId: "agent-session",
+            configId: id,
+            value,
+          });
+        return openWithStoredPicks({
+          setup: { configOptions: [model("default")] },
+          storedModel: "default",
+          turnModels: ["named", "named"],
+          turnOptions: [
+            { id: "thinking", value: "high" },
+            { id: "unavailable", value: "x" },
+          ],
+          failedTurnIndexes: [0],
+          pickFrames: [
+            set("model", "named"),
+            answer("session/set_config_option", { configOptions: [model("named"), option("low")] }),
+            set("thinking", "high"),
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/set_config_option",
+                error: { code: -32603, message: "temporary failure" },
+              },
+            },
+            set("thinking", "high"),
+            answer("session/set_config_option", {
+              configOptions: [model("named"), option("high")],
+            }),
+            ...prompt(),
+          ],
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
     );
 
     it.effect.each([
