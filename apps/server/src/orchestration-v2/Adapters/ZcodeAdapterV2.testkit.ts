@@ -166,7 +166,14 @@ export const makeFakeZcodeConnection = Effect.fnUntraced(function* (): Effect.fn
           return zcodeSessionCreateResult(createdSessionId, params);
         }
         case "session/subscribe":
-          return { sessionId: createdSessionId, eventSeq: 1, events: [] };
+          return {
+            sessionId: createdSessionId,
+            eventSeq: 1,
+            events: [],
+            snapshot: {
+              settings: zcodeSessionCreateResult(createdSessionId ?? "sess_1", params).settings,
+            },
+          };
         case "session/send": {
           yield* Queue.offer(events, {
             method: "state.updated",

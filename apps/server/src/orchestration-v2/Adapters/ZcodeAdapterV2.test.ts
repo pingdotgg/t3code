@@ -302,7 +302,7 @@ describe("ZcodeAdapterV2 (frame-driven)", () => {
       // thread.runtime-mode.set detaches the session; the next turn reopens and resumes it.
       const resumedScenario = yield* makeFakeZcodeConnection();
       const resumed = yield* openRuntime(resumedScenario, runtimePolicy);
-      yield* resumed.ensureThread({
+      const resumedThread = yield* resumed.ensureThread({
         threadId: THREAD_ID,
         modelSelection: MODEL_SELECTION,
         runtimePolicy,
@@ -313,6 +313,21 @@ describe("ZcodeAdapterV2 (frame-driven)", () => {
       assert.deepEqual(requestFor(resumedScenario, "session/setMode")?.params, {
         sessionId: "sess_1",
         mode: "guarded",
+      });
+
+      // A resumed session advertises its models only through session/subscribe; the next turn
+      // still needs the advertised reasoning level.
+      yield* resumed.startTurn(
+        yield* makeTurnInput(
+          resumedThread,
+          TURN_TEXT,
+          "account:zai-individual-coding-plan/GLM-5.3-Flash",
+        ),
+      );
+      assert.deepEqual(requestFor(resumedScenario, "session/send")?.params["modelSelection"], {
+        providerId: "account:zai-individual-coding-plan",
+        modelId: "GLM-5.3-Flash",
+        options: { reasoningLevel: "max" },
       });
       assert.deepEqual(resumedScenario.unexpectedMethods(), []);
     }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),

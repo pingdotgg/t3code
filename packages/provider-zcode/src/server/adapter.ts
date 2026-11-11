@@ -1610,7 +1610,7 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
         const snapshot = zcodeRecordField(Predicate.isObject(result) ? result : {}, "snapshot");
         const settings = zcodeRecordField(Predicate.isObject(snapshot) ? snapshot : {}, "settings");
         const model = zcodeRecordField(Predicate.isObject(settings) ? settings : {}, "model");
-        const models = parseZcodeAvailableModels(model);
+        const models = parseZcodeAvailableModels(zcodeRecordField(model, "available"));
         if (models.length > 0) availableModels = models;
         return result;
       });
