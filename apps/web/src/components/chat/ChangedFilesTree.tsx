@@ -29,6 +29,8 @@ interface ChangedFileRow {
 }
 
 type ChangedFileContextMenuHandler = (filePath: string, event: MouseEvent) => void;
+/** Returns true when it handled the click, which skips opening the diff. */
+type ChangedFileModifierClickHandler = (filePath: string, event: MouseEvent) => boolean;
 
 export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   runId: RunId;
@@ -40,6 +42,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   onToggleAllDirectories: () => void;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
+  onFileModifierClick?: ChangedFileModifierClickHandler | undefined;
 }) {
   const {
     runId,
@@ -50,6 +53,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     onToggleAllDirectories,
     onOpenTurnDiff,
     onFileContextMenu,
+    onFileModifierClick,
   } = props;
   const syncTimelineLayout = useSyncLayout();
   const hiddenFileCount = totals.count - files.length;
@@ -135,6 +139,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
         resolvedTheme={resolvedTheme}
         onOpenTurnDiff={onOpenTurnDiff}
         onFileContextMenu={onFileContextMenu}
+        onFileModifierClick={onFileModifierClick}
       />
       {hiddenFileCount > 0 && (
         <div className="px-3 pb-2">
@@ -160,9 +165,17 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
+  onFileModifierClick?: ChangedFileModifierClickHandler | undefined;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, runId, onFileContextMenu } =
-    props;
+  const {
+    files,
+    allDirectoriesExpanded,
+    onOpenTurnDiff,
+    resolvedTheme,
+    runId,
+    onFileContextMenu,
+    onFileModifierClick,
+  } = props;
   // Place state before tree derivation to preserve its compiler cache.
   const [directoryExpansionState, setDirectoryExpansionState] = useState<{
     key: string | null;
@@ -240,7 +253,10 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         type="button"
         className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
-        onClick={() => onOpenTurnDiff(runId, node.path)}
+        onClick={(event) => {
+          if (onFileModifierClick?.(node.path, event)) return;
+          onOpenTurnDiff(runId, node.path);
+        }}
         onContextMenu={
           onFileContextMenu
             ? (event) => {

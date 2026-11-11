@@ -1,5 +1,7 @@
 import {
+  buildRemoteOpenUrl,
   EDITORS,
+  remoteSchemeForEditor,
   type ContextMenuItem,
   type EditorId,
   type EnvironmentId,
@@ -10,10 +12,13 @@ import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
 } from "~/components/preview/fileExplorerLabel";
+import { usePreferredEditor } from "./editorPreferences";
 import { readLocalApi } from "./localApi";
+import { openRemoteEditorUrl, useRemoteCapableEditors, useRemoteOpenState } from "./remoteOpen";
 import { serverEnvironment } from "./state/server";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
+import { isTerminalLinkActivation } from "./terminal-links";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { toastManager } from "./components/ui/toast";
 import { useAtomValue } from "@effect/atom-react";
@@ -31,6 +36,7 @@ export interface FileContextMenuTarget {
   readonly filePath: string;
   readonly workspaceRoot: string | undefined;
   readonly repositoryRoot?: string | undefined;
+  readonly isDirectory?: boolean;
 }
 
 export function resolveFileContextMenuAbsolutePath(target: FileContextMenuTarget): string | null {
@@ -46,6 +52,23 @@ export function resolveFileContextMenuAbsolutePath(target: FileContextMenuTarget
       : null;
   }
   return resolvePathLinkTarget(workspaceFilePath, target.workspaceRoot);
+}
+
+export type FileModifierClickAction = "open-in-editor" | "reveal";
+
+/**
+ * Mod-click opens the preferred editor, matching chat and terminal links, and
+ * Mod+Alt-click reveals in the file manager. Trees that use Mod-click for
+ * multi-select take Mod+Shift-click for the editor instead.
+ */
+export function resolveFileModifierClickAction(
+  event: Pick<MouseEvent, "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
+  options: { readonly modClickSelects: boolean },
+  platform?: string,
+): FileModifierClickAction | null {
+  if (!isTerminalLinkActivation(event, platform)) return null;
+  if (event.altKey) return event.shiftKey ? null : "reveal";
+  return event.shiftKey === options.modClickSelects ? "open-in-editor" : null;
 }
 
 const EDITOR_LABEL_BY_ID = new Map(EDITORS.map((editor) => [editor.id, editor.label]));
@@ -90,10 +113,22 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
 
-  const availableEditors = serverConfig?.availableEditors ?? [];
+  const remote = useRemoteOpenState(environmentId);
+  const remoteCapableEditors = useRemoteCapableEditors();
+  const isLocal = remote.mode === "local-exec";
+  // Away from the server's machine, editors open over SSH on this machine, which
+  // only works for editors with a remote URL scheme and can't reveal files.
+  // JetBrains SSH URLs open projects rather than individual files.
+  const availableEditors = isLocal
+    ? (serverConfig?.availableEditors ?? [])
+    : remote.mode === "remote-links"
+      ? remoteCapableEditors.filter((id) => remoteSchemeForEditor(id) !== "jetbrains")
+      : [];
+  const [preferredEditor] = usePreferredEditor(availableEditors);
   const capabilities: FileContextMenuCapabilities = {
     // WSL can reveal in Windows Explorer despite reporting Linux; use server wording.
     revealLabel:
+      isLocal &&
       environmentId !== null &&
       serverConfig?.shellRevealInFileManager === true &&
       serverConfig.availableEditors.includes("file-manager")
@@ -101,7 +136,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
           ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
           : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
         : undefined,
-    canOpenDefault: availableEditors.includes("file-manager"),
+    canOpenDefault: isLocal && availableEditors.includes("file-manager"),
     editorIds: availableEditors,
   };
 
@@ -118,6 +153,22 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
         ? ("file-manager" as const)
         : (action.slice("editor:".length) as EditorId);
     if (action !== "open" && !reveal && !capabilities.editorIds.includes(editor)) return;
+
+    if (remote.mode === "remote-links") {
+      const url = buildRemoteOpenUrl({
+        editor,
+        ...remote.host,
+        absolutePath,
+        isFile: target.isDirectory !== true,
+      });
+      if (url !== undefined && (await openRemoteEditorUrl(url))) return;
+      toastManager.add({
+        type: "error",
+        title: `Could not open in ${EDITOR_LABEL_BY_ID.get(editor) ?? editor}`,
+        description: absolutePath,
+      });
+      return;
+    }
 
     const result = await openInEditor({
       environmentId,
@@ -151,6 +202,24 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
     await activate(clicked as FileContextMenuAction, target);
   };
 
+  /** Returns false when the action is unavailable, so the caller can fall back to a plain click. */
+  const activateModifierClick = (
+    action: FileModifierClickAction,
+    target: FileContextMenuTarget,
+  ): boolean => {
+    const menuAction: FileContextMenuAction | null =
+      action === "reveal"
+        ? capabilities.revealLabel === undefined
+          ? null
+          : "reveal-in-folder"
+        : preferredEditor === null
+          ? null
+          : `editor:${preferredEditor}`;
+    if (menuAction === null || resolveFileContextMenuAbsolutePath(target) === null) return false;
+    void activate(menuAction, target);
+    return true;
+  };
+
   return {
     buildItems: (target: FileContextMenuTarget) =>
       buildFileContextMenuItems({
@@ -159,13 +228,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       }),
     capabilities,
     activate,
+    activateModifierClick,
     show,
-  };
-}
-
-export function useFileContextMenuHandler(environmentId: EnvironmentId | null) {
-  const contextMenu = useFileContextMenu(environmentId);
-  return (target: FileContextMenuTarget, event?: { clientX: number; clientY: number }) => {
-    void contextMenu.show(target, event ? { x: event.clientX, y: event.clientY } : undefined);
   };
 }
