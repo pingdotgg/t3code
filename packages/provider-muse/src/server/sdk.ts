@@ -1,6 +1,6 @@
 // @effect-diagnostics globalTimers:off
 // The SDK owns process shutdown; native deadlines cover initialize before an Effect resource exists.
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.realPath is Node's JS realpath; museWorkspaceRoot needs the native one.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.realPath is Node's JS realpath; museCanonicalPath needs the native one.
 import * as NodeFSP from "node:fs/promises";
 
 import {
@@ -13,6 +13,16 @@ import type { RuntimeMode } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+export class MuseSdkError extends Schema.TaggedError<MuseSdkError>()("MuseSdkError", {
+  operation: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `Muse SDK ${this.operation} failed.`;
+  }
+}
 
 export interface MuseSdkHost {
   readonly connection: Pick<
@@ -45,7 +55,7 @@ export interface MuseSdkHostOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly runtimeMode?: RuntimeMode;
   readonly readOnly?: boolean;
-  /** Read-only generation needs durable logging for turn/item notifications (verified through 1.1.1). */
+  /** Read-only generation needs session logging for turn/item notifications. */
   readonly sessionLogging?: boolean;
   readonly signal?: AbortSignal;
   readonly startupTimeoutMs?: number;
@@ -70,16 +80,21 @@ export function museVerbatimPath(path: string): string {
   return path.startsWith("\\\\") ? `\\\\?\\UNC\\${path.slice(2)}` : `\\\\?\\${path}`;
 }
 
-/**
- * On Windows Muse rejects anything but the verbatim canonical path, true case
- * and long names included, so resolve with the native realpath, which unlike
- * FileSystem.realPath fixes case and expands 8.3 names. Muse itself still
- * starts in the plain path: the `muse.cmd` launcher runs under cmd.exe, which
- * cannot use a verbatim directory.
- */
+// Native realpath corrects filesystem case as well as resolving symlinks.
+export const museCanonicalPath = Effect.fn("museCanonicalPath")(function* (path: string) {
+  return yield* Effect.tryPromise({
+    try: () => NodeFSP.realpath(path),
+    catch: (cause) => new MuseSdkError({ operation: "realpath", cause }),
+  }).pipe(Effect.orElseSucceed(() => path));
+});
+
+// Windows turn roots need verbatim form; launch cmd.exe with the plain canonical path.
 export const museWorkspaceRoot = Effect.fn("museWorkspaceRoot")(function* (path: string) {
-  if ((yield* HostProcess.Platform) !== "win32") return path;
-  const canonical = yield* Effect.tryPromise(() => NodeFSP.realpath(path)).pipe(
+  if ((yield* HostProcess.Platform) !== "win32") return yield* museCanonicalPath(path);
+  const canonical = yield* Effect.tryPromise({
+    try: () => NodeFSP.realpath(path),
+    catch: (cause) => new MuseSdkError({ operation: "realpath", cause }),
+  }).pipe(
     // A verbatim path takes `/` literally, so an unresolved root needs Windows separators.
     Effect.orElseSucceed(() => path.replaceAll("/", "\\")),
   );
@@ -93,13 +108,7 @@ function windowsEnvironmentValue(environment: NodeJS.ProcessEnv, name: string) {
   return key === undefined ? undefined : environment[key];
 }
 
-/**
- * The SDK spawns without a shell, which finds the `muse` launcher on PATH
- * everywhere but Windows. There Node neither looks a bare `muse` up with
- * PATHEXT (ENOENT) nor runs a `.cmd` file such as Muse's own launcher (EINVAL)
- * without a shell, so resolve the binary like any other command and run a
- * `.cmd` or `.bat` under cmd.exe.
- */
+/** Resolve Windows launchers with PATHEXT and run .cmd/.bat under cmd.exe; SDK spawn has no shell. */
 export const museLaunch = Effect.fn("museLaunch")(function* (
   binaryPath: string,
   environment?: NodeJS.ProcessEnv,
@@ -114,9 +123,7 @@ export const museLaunch = Effect.fn("museLaunch")(function* (
     command:
       windowsEnvironmentValue(env, "ComSpec") ??
       (systemRoot ? `${systemRoot}\\System32\\cmd.exe` : "cmd.exe"),
-    // /d skips cmd's AutoRun commands, which could write into Muse's stdout. cmd /c drops
-    // the quotes from a command that starts with one and holds `&`, `@`, `^` or a
-    // parenthesis, so a quoted path follows a bare `@` (echo off), which keeps them.
+    // /d prevents AutoRun stdout; bare @ preserves quoted paths that cmd /c would unquote.
     args: [
       "/d",
       "/c",
@@ -129,11 +136,7 @@ export function museApprovalMode(runtimeMode: RuntimeMode) {
   return runtimeMode === "full-access" ? "allowAll" : "promptUnmatched";
 }
 
-/**
- * The permission profile `session/start` and `session/resume` select. Without
- * one Muse applies its own default, which can be `:auto-review`, where an AI
- * reviewer decides eligible approvals instead of the user.
- */
+// Select explicitly; Muse defaults may let an AI reviewer decide approvals.
 export function musePermissionProfile(runtimeMode: RuntimeMode) {
   return runtimeMode === "full-access" ? ":unrestricted" : ":ask-me";
 }
@@ -159,9 +162,7 @@ export function museInitializeParams(readOnly = false) {
   };
 }
 
-/**
- * The pre-handshake handle owns cleanup even when initialize never replies.
- */
+/** Owns cleanup before the handshake, even if initialize never replies. */
 export async function createMuseSdkHost(
   options: MuseSdkHostOptions,
   spawn: typeof spawnMspConnection = spawnMspConnection,
@@ -204,8 +205,7 @@ export async function createMuseSdkHost(
     if (host.initializeResult.schema?.version !== 1) {
       throw new Error("Muse SDK returned an unsupported protocol envelope version.");
     }
-    // The SDK's fingerprint warning permits additive optional schema changes.
-    // Successful initialization, not fingerprint identity, determines readiness.
+    // Fingerprint warnings permit additive schema changes; successful initialization proves readiness.
     return {
       connection: host.connection,
       initializeResult: host.initializeResult,
@@ -228,9 +228,12 @@ export const createMuseSdkHostEffect = Effect.fn("createMuseSdkHostEffect")(func
 ) {
   const launch = options.launch ?? (yield* museLaunch(options.binaryPath, options.environment));
   let startup: Promise<MuseSdkHost> | undefined;
-  return yield* Effect.tryPromise((signal) => {
-    startup = createHost({ ...options, launch, signal });
-    return startup;
+  return yield* Effect.tryPromise({
+    try: (signal) => {
+      startup = createHost({ ...options, launch, signal });
+      return startup;
+    },
+    catch: (cause) => new MuseSdkError({ operation: "start", cause }),
   }).pipe(
     Effect.onInterrupt(() =>
       Effect.promise(async () => {

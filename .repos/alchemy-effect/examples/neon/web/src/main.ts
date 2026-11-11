@@ -1,8 +1,7 @@
 import { MAX_BYTES, type UploadRow } from "../../src/policy.ts";
 import "./style.css";
 
-const element = <T extends HTMLElement>(selector: string) =>
-  document.querySelector<T>(selector)!;
+const element = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 const account = element<HTMLFormElement>("#account");
 const upload = element<HTMLFormElement>("#upload");
 const message = element("#message");
@@ -19,12 +18,7 @@ const show = (text: string, error = false) => {
   message.dataset.error = String(error);
 };
 const explain = (error: unknown) =>
-  show(
-    error instanceof Error
-      ? error.message
-      : "Request failed. Please try again.",
-    true,
-  );
+  show(error instanceof Error ? error.message : "Request failed. Please try again.", true);
 
 async function start() {
   if (!apiUrl || !authUrl) {
@@ -32,9 +26,7 @@ async function start() {
       "Backend not configured. Deploy the stack, or set VITE_API_URL and VITE_NEON_AUTH_URL before starting Vite. No demo backend is substituted.",
       true,
     );
-    account
-      .querySelectorAll("button")
-      .forEach((button) => (button.disabled = true));
+    account.querySelectorAll("button").forEach((button) => (button.disabled = true));
     return;
   }
   const { createAuthClient } = await import("@neondatabase/neon-js/auth");
@@ -75,9 +67,7 @@ async function start() {
     if (response.status === 401) clearSession();
     if (!response.ok) {
       const body = await response.json().catch(() => undefined);
-      throw new Error(
-        body?.error ?? `Request failed (HTTP ${response.status}).`,
-      );
+      throw new Error(body?.error ?? `Request failed (HTTP ${response.status}).`);
     }
     return response.json();
   }
@@ -91,9 +81,7 @@ async function start() {
     const rows = await api<UploadRow[]>("/api/uploads");
     if (current !== generation) return [];
     files.replaceChildren();
-    empty.textContent = rows.length
-      ? ""
-      : "No uploads yet. Add your first file above.";
+    empty.textContent = rows.length ? "" : "No uploads yet. Add your first file above.";
     for (const row of rows) {
       const item = document.createElement("li");
       const text = document.createElement("div");
@@ -137,8 +125,7 @@ async function start() {
 
   async function session() {
     const result = await auth.getSession();
-    if (result.error)
-      throw new Error(result.error.message ?? "Could not read your session.");
+    if (result.error) throw new Error(result.error.message ?? "Could not read your session.");
     if (!result.data?.user) {
       clearSession();
       return;
@@ -161,30 +148,21 @@ async function start() {
       email: String(fields.get("email")),
       password: String(fields.get("password")),
     };
-    account
-      .querySelectorAll("button")
-      .forEach((button) => (button.disabled = true));
+    account.querySelectorAll("button").forEach((button) => (button.disabled = true));
     show(mode === "signup" ? "Creating your account…" : "Signing in…");
-    const request =
-      mode === "signup" ? auth.signUp.email(input) : auth.signIn.email(input);
+    const request = mode === "signup" ? auth.signUp.email(input) : auth.signIn.email(input);
     request
       .then(async (result) => {
-        if (result.error)
-          throw new Error(result.error.message ?? "Authentication failed.");
-        account.querySelector<HTMLInputElement>('[name="password"]')!.value =
-          "";
+        if (result.error) throw new Error(result.error.message ?? "Authentication failed.");
+        account.querySelector<HTMLInputElement>('[name="password"]')!.value = "";
         await session();
         show(
-          signedIn
-            ? "Signed in. Your files are private."
-            : "Check your email to complete sign-in.",
+          signedIn ? "Signed in. Your files are private." : "Check your email to complete sign-in.",
         );
       })
       .catch(explain)
       .finally(() =>
-        account
-          .querySelectorAll("button")
-          .forEach((button) => (button.disabled = false)),
+        account.querySelectorAll("button").forEach((button) => (button.disabled = false)),
       );
   });
 
@@ -193,8 +171,7 @@ async function start() {
     auth
       .signOut()
       .then((result) => {
-        if (result.error)
-          throw new Error(result.error.message ?? "Signout failed.");
+        if (result.error) throw new Error(result.error.message ?? "Signout failed.");
         clearSession();
         show("Signed out. Your session has ended.");
       })
@@ -246,11 +223,8 @@ async function start() {
           return;
         }
         if (row?.status === "rejected")
-          throw new Error(
-            "The uploaded file did not match its declared metadata.",
-          );
-        if (attempt < 8)
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+          throw new Error("The uploaded file did not match its declared metadata.");
+        if (attempt < 8) await new Promise((resolve) => setTimeout(resolve, 3000));
       }
       if (current === generation)
         show(
