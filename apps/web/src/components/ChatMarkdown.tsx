@@ -699,8 +699,8 @@ function useChatMarkdownState({
   // Keyed by the file links found, not the text, so streamed text that adds none keeps the
   // renderer context, and every block reading it, unchanged.
   // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
-  const fileLinksKey = `${fileLinkSourcesKey(text, { cwd, imageBaseDir, workspaceFileLinksOnly })}`;
   const fileLinkScope = { cwd, imageBaseDir, workspaceFileLinksOnly };
+  const fileLinksKey = `${fileLinkSourcesKey(text, fileLinkScope)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
     resolveFileLinkSources(fileLinksKey, fileLinkScope);
   const resolveThreadPullRequest = (
