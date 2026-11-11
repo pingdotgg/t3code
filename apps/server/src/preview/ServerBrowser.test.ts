@@ -2657,20 +2657,25 @@ it.effect("viewer cleanup detaches after a stalled stop command", () =>
     Effect.gen(function* () {
       const { browser, tabId } = yield* ready;
       const viewerScope = yield* Scope.make();
-      yield* browser.attachViewer(viewerInput(tabId, true)).pipe(Effect.provideService(Scope.Scope, viewerScope));
+      yield* browser
+        .attachViewer(viewerInput(tabId, true))
+        .pipe(Effect.provideService(Scope.Scope, viewerScope));
       const session = contexts[0]!.sessions.at(-1)!;
       const stopped = yield* Queue.unbounded<void>();
+      const stalledStop = Promise.withResolvers<Record<string, unknown>>();
       const answer = session.send.getMockImplementation()!;
       session.send.mockImplementation(async (method: string, input?: unknown) => {
         if (method !== "Page.stopScreencast") return answer(method, input);
         Queue.offerUnsafe(stopped, undefined);
-        return new Promise<never>(() => {});
+        return stalledStop.promise;
       });
       const closing = yield* Scope.close(viewerScope, Exit.void).pipe(Effect.forkScoped);
       yield* Queue.take(stopped);
       yield* TestClock.adjust("5 seconds");
+      const detached = session.detach.mock.calls.length;
+      stalledStop.resolve({});
       yield* Fiber.join(closing);
-      expect(session.detach).toHaveBeenCalled();
+      expect(detached).toBe(1);
     }),
   ).pipe(Effect.provide(layer)),
 );

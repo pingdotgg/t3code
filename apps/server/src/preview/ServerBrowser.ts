@@ -2578,9 +2578,7 @@ const make = Effect.gen(function* () {
       }),
       (session) =>
         Effect.promise(() =>
-          session
-            .send("Page.stopScreencast")
-            .catch(constVoid)
+          withinViewerDeadline(session.send("Page.stopScreencast"))
             .then(() => session.detach())
             .catch(constVoid),
         ),
