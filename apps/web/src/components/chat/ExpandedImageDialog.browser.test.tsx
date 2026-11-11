@@ -135,6 +135,12 @@ describe("ExpandedImageDialog", () => {
     const viewport = viewportLocator.element() as HTMLElement;
     const image = screen.getByRole("img", { name: "large.png" }).element() as HTMLElement;
     await vi.waitFor(() => expect(image.style.width).not.toBe(""));
+    await vi.waitFor(() => {
+      const dialog = image.closest('[role="dialog"]')!;
+      expect(dialog.getAnimations().some((animation) => animation.playState === "running")).toBe(
+        false,
+      );
+    });
     const fitWidth = image.getBoundingClientRect().width;
     const wheels: { ctrlKey: boolean; canceled: boolean }[] = [];
     const recordWheel = (event: WheelEvent) =>

@@ -1061,7 +1061,8 @@ function UserMessageIntentMarker({
         }
       >
         <Redo2Icon aria-hidden="true" className="size-3" />
-        {unread ? "Steer · waiting to be read" : "Steer"}
+        <span>Steer</span>
+        {unread ? <span>waiting to be read</span> : null}
       </TooltipTrigger>
       <TooltipPopup side="top">
         {unread

@@ -369,7 +369,9 @@ function DelegatedFromRow(props: {
             </span>
           </span>
           {label ? (
-            <span className="max-w-1/2 shrink-0 truncate text-caption text-dim-foreground">on {label}</span>
+            <span className="max-w-1/2 shrink-0 truncate text-caption text-dim-foreground">
+              on {label}
+            </span>
           ) : null}
         </TooltipTrigger>
         <TooltipPopup side="left">

@@ -2198,7 +2198,7 @@ export function AboutSettingsPanel() {
             {...searchableSetting("welcome-page")}
             description="See your agents, import projects, and set up your phone."
             control={
-              <Button size="sm" variant="outline" render={<Link to="/welcome" />}>
+              <Button size="sm" variant="secondary" render={<Link to="/welcome" />}>
                 Open
               </Button>
             }

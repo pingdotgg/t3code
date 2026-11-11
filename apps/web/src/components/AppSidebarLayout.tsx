@@ -563,32 +563,32 @@ export function AppSidebarLayout({
       >
         {showSidebar ? (
           <>
-        <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
-        {chromeArtVariant ? <ChromeChannelArt variant={chromeArtVariant} /> : null}
-        <Sidebar
-          side="left"
-          collapsible="offcanvas"
-          variant="inset"
-          data-app-sidebar=""
-          {...sidebarArea}
-          role="navigation"
-          aria-label="Threads"
-          // Light, black chrome paints the sidebar with the dark tokens (index.css).
-          data-chrome-scope=""
-          resizable={{
-            maxWidth: sidebarMaximumWidth,
-            minWidth: sidebarMinimumWidth,
-            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-              nextWidth <= currentWidth ||
-              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-            onResize: setSidebarWidth,
-          }}
-          style={windowControlsInsetStyle}
-        >
-          <ThreadSidebar routeReveal={sidebarRouteReveal} />
-          <SidebarRail onDoubleClick={resetSidebarWidth} />
-        </Sidebar>
+            <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+            {chromeArtVariant ? <ChromeChannelArt variant={chromeArtVariant} /> : null}
+            <Sidebar
+              side="left"
+              collapsible="offcanvas"
+              variant="inset"
+              data-app-sidebar=""
+              {...sidebarArea}
+              role="navigation"
+              aria-label="Threads"
+              // Light, black chrome paints the sidebar with the dark tokens (index.css).
+              data-chrome-scope=""
+              resizable={{
+                maxWidth: sidebarMaximumWidth,
+                minWidth: sidebarMinimumWidth,
+                shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+                  nextWidth <= currentWidth ||
+                  wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+                storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+                onResize: setSidebarWidth,
+              }}
+              style={windowControlsInsetStyle}
+            >
+              <ThreadSidebar routeReveal={sidebarRouteReveal} />
+              <SidebarRail onDoubleClick={resetSidebarWidth} />
+            </Sidebar>
           </>
         ) : null}
         {children}
