@@ -144,6 +144,17 @@ describe("environment grouping", () => {
       expect(
         resolveSidebarProjectScopeKey({ groups, key, settings, canClearMissingScope: true }),
       ).toBe(groups[0]?.projectKey);
+      const remote = { ...project, environmentId: remoteEnvironmentId, isScratch: true };
+      const settingsGroups = buildSettingsProjectSnapshots({
+        projects: [makeProject({ isScratch: true }), remote],
+        settings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: () => null,
+      });
+      expect(resolveSettingsProjectSearch({ project: key }, settingsGroups, settings, true)).toEqual({
+        project: settingsGroups[0]?.projectKey,
+        machine: remoteEnvironmentId,
+      });
     },
   );
 

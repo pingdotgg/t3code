@@ -1,5 +1,8 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { ProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  type ProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
 
 import { resolveSidebarProjectScopeKey } from "../../sidebarProjectGrouping";
 import type {
@@ -72,7 +75,11 @@ export function resolveSettingsProjectSearch(
   const member = singleEnvironment
     ? groups
         .flatMap((group) => group.memberProjects)
-        .find((member) => member.physicalProjectKey === search.project)
+        .find(
+          (member) =>
+            member.physicalProjectKey === search.project ||
+            deriveLogicalProjectKeyFromSettings(member, settings) === search.project,
+        )
     : undefined;
   return {
     ...search,
