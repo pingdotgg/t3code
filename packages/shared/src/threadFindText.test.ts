@@ -5,7 +5,7 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   parseExternalComposerContextHref,
 } from "./composerContextReferences.ts";
-import { searchableMessageSegments } from "./threadFindText.ts";
+import { searchableMessageSegments, searchablePlanSegments } from "./threadFindText.ts";
 
 it("excludes review attachments rendered as context chips", () => {
   const text = [
@@ -139,4 +139,14 @@ it("indexes the citation chip label instead of its link text", () => {
   expect(searchableMessageSegments({ role: "user", text: commented, streaming: false })).toEqual([
     "my note",
   ]);
+});
+
+it("indexes insight bodies without hidden fences and keeps user and plan text literal", () => {
+  const text = "★ Insight ─────\nVisible body.\n─────";
+  expect(assistantSegments(text)).toEqual(["Visible body."]);
+  expect(searchableMessageSegments({ role: "user", text, streaming: false })?.join("\n")).toContain(
+    "★ Insight",
+  );
+  expect(searchablePlanSegments(text).join("\n")).toContain("★ Insight");
+  expect(assistantSegments(`\`\`\`text\n${text}\n\`\`\``)?.join("\n")).toContain("★ Insight");
 });
