@@ -182,7 +182,7 @@ export function ReviewThreadCard({
   const headerFeedback = pullRequestAiReviewerFeedback(comments[0] ?? { body: "" }) ?? rootFeedback;
   const headerLabel =
     headerFeedback !== null
-      ? aiReviewerOneLine(headerFeedback)
+      ? `${aiReviewerOneLine(headerFeedback)}${commentCount > 1 ? ` · ${commentCount} comments` : ""}`
       : `${thread.isResolved ? "Resolved" : "Open"} · ${commentCount} ${commentCount === 1 ? "comment" : "comments"}`;
 
   const saveEdit = async (commentId: string, body: string) => {

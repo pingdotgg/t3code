@@ -981,6 +981,11 @@ In apps/web/src/page.tsx around line 12, Guard against null before calling helpe
       },
     });
     expect(human.reviewComments[1]?.text).toContain("Null deref on empty input");
+    const chat = buildPullRequestCommentContext(
+      { number: 42, url: "https://github.com/pingdotgg/t3code/pull/42" },
+      { kind: "thread", thread },
+    );
+    expect(chat?.text).toContain("Null deref on empty input");
     expect(pullRequestFixFindingLabel({ kind: "thread", thread }, false)).toBe("Fix in a thread");
     expect(pullRequestFixFindingLabel({ kind: "thread", thread }, true)).toBe("Fix");
   });

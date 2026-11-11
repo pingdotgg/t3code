@@ -915,6 +915,7 @@ function terminologyForUrl(url: string): ChangeRequestTerminology {
 function reviewThreadContext(
   thread: PullRequestReviewThread,
   pullRequestNumber: number,
+  forFix = true,
 ): ReviewCommentContext {
   const lineIndex = Math.max(0, (thread.line ?? 1) - 1);
   return {
@@ -926,11 +927,11 @@ function reviewThreadContext(
     endIndex: lineIndex,
     rangeLabel:
       thread.line === null ? "file" : `L${thread.line}${thread.side === "left" ? " (before)" : ""}`,
-    // Prefer AI agent prompts; otherwise strip bot bookkeeping before the bound.
+    // A Fix prefers AI agent prompts; otherwise strip bot bookkeeping before the bound.
     text: bounded(
       thread.comments
         .flatMap((comment) => {
-          const body = findingBody(comment);
+          const body = forFix ? findingBody(comment) : readableBody(comment.body);
           return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
         })
         .join("\n"),
@@ -1249,7 +1250,7 @@ export function buildPullRequestCommentContext(
 ): ReviewCommentContext | null {
   const pullRequestNumber = pullRequest.number;
   if (subject.kind === "thread") {
-    const context = reviewThreadContext(subject.thread, pullRequestNumber);
+    const context = reviewThreadContext(subject.thread, pullRequestNumber, false);
     return context.text === ""
       ? null
       : { ...context, id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}` };
