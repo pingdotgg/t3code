@@ -33,7 +33,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import { makeManagedWorktreePaths } from "../vcs/managedWorktreePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
@@ -181,7 +181,7 @@ export const make = Effect.gen(function* () {
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const fileSystem = yield* FileSystem.FileSystem;
-  const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+  const managedWorktreePaths = yield* makeManagedWorktreePaths;
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
 
@@ -343,7 +343,6 @@ export const make = Effect.gen(function* () {
   const workspaceScanDirectory = Effect.fn("ProjectService.workspaceScanDirectory")(
     function* (cwd: string) {
       if (yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true))) return cwd;
-      if (!(yield* isManagedWorktreePath(cwd))) return cwd;
       const snapshot = yield* Effect.flatten(
         threadProjections.readShellSnapshot({ worktreePath: cwd }),
       );
@@ -351,7 +350,13 @@ export const make = Effect.gen(function* () {
         (candidate) => candidate.branch !== null,
       );
       if (thread === undefined) return cwd;
-      return Option.getOrUndefined(yield* readRow(thread.projectId))?.workspaceRoot ?? cwd;
+      const projectRoot = Option.getOrUndefined(yield* readRow(thread.projectId))?.workspaceRoot;
+      if (projectRoot === undefined) return cwd;
+      const managed = yield* managedWorktreePaths.isManagedWorktreePath({
+        worktreePath: cwd,
+        projectRoot,
+      });
+      return managed ? projectRoot : cwd;
     },
     (effect, cwd) => Effect.orElseSucceed(effect, () => cwd),
   );
