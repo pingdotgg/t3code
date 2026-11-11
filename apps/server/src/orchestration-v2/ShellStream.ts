@@ -12,6 +12,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  isListedThread,
   isLiveSubagentShell,
   isNestedSubagentThread,
   isOlderSettledThreadShell,
@@ -99,7 +100,7 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
     if (isNestedSubagentThread(row)) {
       subagentThreadIds.add(row.id);
       if (row.lineage.parentThreadId) subagentParentIds.add(row.lineage.parentThreadId);
-    } else if (row.settledOverride === "settled" && row.settledAt !== null) {
+    } else if (isListedThread(row) && row.settledOverride === "settled" && row.settledAt !== null) {
       settledTimes.push(DateTime.toEpochMillis(row.settledAt));
     }
   }
@@ -122,12 +123,12 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   };
 }
 
-function subagentAncestorIds(
+function hiddenChildAncestorIds(
   threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "lineage" | "promotedAt">>,
 ) {
   const ancestorIds = new Set<string>();
   for (const thread of threads) {
-    if (!isNestedSubagentThread(thread)) continue;
+    if (isListedThread(thread)) continue;
     if (thread.lineage.parentThreadId !== null) ancestorIds.add(thread.lineage.parentThreadId);
     ancestorIds.add(thread.lineage.rootThreadId);
   }
@@ -159,7 +160,7 @@ function omitOlderSettledShellsWith(
 } {
   const nowMs = DateTime.toEpochMillis(input.now);
   const beforeMs = facts.olderSettledBeforeMs ?? nowMs;
-  const ancestorIds = subagentAncestorIds(input.threads);
+  const ancestorIds = hiddenChildAncestorIds(input.threads);
   const threads = input.threads.filter(
     (thread) =>
       !isOlderSettledThreadShell(thread, beforeMs) ||
@@ -210,7 +211,8 @@ export function activeShellRowsForSubscriber(
 /**
  * Opted-in snapshots keep the 25 newest settled top-level threads (and ties) and count the rest per
  * project in `olderSettled`; clients page them with `getOlderSettledThreads`. Older rows stay while
- * pinned, snoozed, live, or above a kept subagent, so walks over shell rows still find them.
+ * pinned, snoozed, live, or above a kept subagent or side chat, so walks over shell rows still find
+ * them.
  */
 export function omitOlderSettledShells(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
@@ -258,7 +260,10 @@ function shellSubscriberThreadIds(
       isNestedSubagentThread(entry) &&
       (!options.omitIdleSubagents || entry.mayBeLive || facts.subagentParentIds.has(entry.id)),
   );
-  const ancestorIds = subagentAncestorIds(subagents);
+  const ancestorIds = hiddenChildAncestorIds([
+    ...subagents,
+    ...index.filter((entry) => entry.lineage.sideChat === true),
+  ]);
   const keptSubagentIds = new Set(subagents.map((entry) => entry.id));
   const beforeMs = facts.olderSettledBeforeMs;
   return index.flatMap((entry) =>

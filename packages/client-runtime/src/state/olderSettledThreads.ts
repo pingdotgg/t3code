@@ -1,5 +1,5 @@
 import {
-  isNestedSubagentThread,
+  isListedThread,
   isOlderSettledThreadShell,
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
@@ -64,6 +64,21 @@ export interface OlderSettledShelfEnvironment {
 }
 
 /**
+ * Scopes in one order, so a shelf keyed on them keeps its pages when the caller's project order
+ * changes. Loading a page can reorder the sidebar's projects, which would otherwise drop the page.
+ */
+export function sortOlderSettledScopes(
+  scopes: ReadonlyArray<OlderSettledScope>,
+): ReadonlyArray<OlderSettledScope> {
+  return scopes
+    .map((scope) => ({
+      environmentId: scope.environmentId,
+      projectIds: scope.projectIds === null ? null : [...scope.projectIds].sort(),
+    }))
+    .sort((left, right) => left.environmentId.localeCompare(right.environmentId));
+}
+
+/**
  * Changes whenever the older count can: any removal (by largest sequence, so a repeat counts), an
  * older row that arrives or changes, or an old row arriving outside the set (unsettled). Threads
  * created after the cut never enter it, as threads settle after creation. Archived-thread events
@@ -78,7 +93,7 @@ export function olderSettledCountKey(
   for (const sequence of removedAt.values()) lastRemoval = Math.max(lastRemoval, sequence);
   const rows: string[] = [];
   for (const thread of threads) {
-    if (isNestedSubagentThread(thread)) continue;
+    if (!isListedThread(thread)) continue;
     const older = isOlderSettledThreadShell(thread, beforeMs);
     if (older || DateTime.toEpochMillis(thread.createdAt) < beforeMs) {
       rows.push(`${thread.id}:${older ? 1 : 0}`);
