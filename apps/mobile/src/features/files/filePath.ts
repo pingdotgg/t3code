@@ -1,3 +1,5 @@
+import type { FilesystemEntryMetadata } from "@t3tools/contracts";
+import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import { joinPath, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
   isWorkspaceAudioPreviewPath,
@@ -107,6 +109,23 @@ export function isSvgImagePreviewFile(path: string): boolean {
 
 export function isMarkdownPreviewFile(path: string): boolean {
   return /\.(?:md|mdx)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+}
+
+export function needsWorkspaceFileContents(input: {
+  readonly relativePath: string | null;
+  readonly metadataKind: FilesystemEntryMetadata["kind"] | undefined;
+  readonly activeMode: "preview" | "source";
+}): boolean {
+  const path = input.relativePath;
+  return (
+    input.metadataKind !== "directory" &&
+    path !== null &&
+    !isVideoPreviewFile(path) &&
+    !isAudioPreviewFile(path) &&
+    (input.activeMode === "source" ||
+      isMarkdownPreviewFile(path) ||
+      filePreviewDelimiter({ name: path }) !== null)
+  );
 }
 
 export function fileHeaderSubtitle(projectName: string, relativePath: string): string {

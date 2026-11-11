@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { CliError } from "effect/cli";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -90,10 +91,19 @@ const macInstallerPath =
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
   installerPath = macInstallerPath,
+  xdgConfigHome?: string,
+  managerXdgConfigHome = xdgConfigHome,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-boot-service-test-" });
+  const managerUnitDir = path.join(
+    managerXdgConfigHome !== undefined && path.isAbsolute(managerXdgConfigHome)
+      ? managerXdgConfigHome
+      : path.join(home, ".config"),
+    "systemd",
+    "user",
+  );
   const baseDir = path.join(home, ".t3");
   const statePath = path.join(baseDir, "runtime", "service-state.json");
   const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3", platform);
@@ -140,15 +150,26 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       }
       return {
         stdout:
-          input.args[0] === "--version"
-            ? `t3 v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
-            : input.command === "loginctl" && input.args[0] === "show-user"
-              ? `${control.linger}\n`
-              : input.args[1] === "is-enabled"
-                ? control.enabled
-                  ? "enabled\n"
-                  : "disabled\n"
-                : "",
+          input.command === "busctl"
+            ? JSON.stringify({
+                type: "as",
+                data: [
+                  "/usr/lib/systemd/user",
+                  `${managerUnitDir}.control`,
+                  "/run/user/501/systemd/transient",
+                  managerUnitDir,
+                  "/etc/systemd/user",
+                ],
+              })
+            : input.args[0] === "--version"
+              ? `t3 v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
+              : input.command === "loginctl" && input.args[0] === "show-user"
+                ? `${control.linger}\n`
+                : input.args[1] === "is-enabled"
+                  ? control.enabled
+                    ? "enabled\n"
+                    : "disabled\n"
+                  : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           failed ||
@@ -170,6 +191,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     cliVersion = "1.2.3",
     serviceBaseDir = baseDir,
     insideService = false,
+    hostExecPath = "/usr/bin/t3",
   ) =>
     Effect.gen(function* () {
       const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
@@ -180,7 +202,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         baseDir: serviceBaseDir,
         logsDir: path.join(serviceBaseDir, "userdata", "logs"),
         cliVersion,
-        host: { execPath: "/usr/bin/t3" },
+        host: { execPath: hostExecPath },
       });
     }).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -188,7 +210,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, platform),
           Layer.succeed(HostProcess.UserId, 501),
-          Layer.succeed(HostProcess.ExecutablePath, "/usr/bin/t3"),
+          Layer.succeed(HostProcess.ExecutablePath, hostExecPath),
           Layer.succeed(
             HttpClient.HttpClient,
             HttpClient.make(() => Effect.die("no release download expected")),
@@ -197,6 +219,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
             ConfigProvider.fromEnv({
               env: {
                 HOME: home,
+                ...(xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: xdgConfigHome }),
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
@@ -212,6 +235,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     service,
     makeService,
     fs,
+    home,
     baseDir,
     statePath,
     commands,
@@ -314,10 +338,52 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("installs, reports current state, and uninstalls", () =>
+  it.effect.each([
+    "unset",
+    "empty",
+    "relative",
+    "relocated",
+    "shell-only",
+    "manager-only",
+    "manager-unavailable",
+  ] as const)("installs, discovers, restarts, and uninstalls with $XDG_CONFIG_HOME %s", (setting) =>
     Effect.gen(function* () {
-      const { service, fs, statePath, timeouts, runtime } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const configRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-xdg-config-" });
+      const xdgConfigHome = {
+        unset: undefined,
+        empty: "",
+        relative: "relative-config",
+        relocated: path.join(configRoot, "config root"),
+        "shell-only": path.join(configRoot, "config root"),
+        "manager-only": undefined,
+        "manager-unavailable": path.join(configRoot, "config root"),
+      }[setting];
+      const managerXdgConfigHome =
+        setting === "shell-only"
+          ? ""
+          : setting === "manager-only"
+            ? path.join(configRoot, "config root")
+            : undefined;
+      const { service, makeService, home, statePath, timeouts, runtime, control } =
+        yield* makeHarness("linux", undefined, xdgConfigHome, managerXdgConfigHome);
+      const unitPath = path.join(
+        setting === "relocated" || setting === "manager-only" || setting === "manager-unavailable"
+          ? path.join(configRoot, "config root")
+          : path.join(home, ".config"),
+        "systemd",
+        "user",
+        "t3code.service",
+      );
+      expect(yield* service.status).toMatchObject({ installed: false, unitPath });
       const plan = yield* service.install();
+      expect(plan.unitPath).toBe(unitPath);
+      if (setting === "manager-unavailable") {
+        control.failCommand =
+          "busctl --user --json=short get-property org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager UnitPath";
+      }
+      const discoveredService = yield* makeService();
 
       expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -331,6 +397,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         current: true,
         installedVersion: "1.2.3",
       });
+      expect(yield* discoveredService.status).toMatchObject({
+        installed: true,
+        current: true,
+        unitPath,
+      });
+      expect(yield* discoveredService.restart).toBe("restarted");
       const pendingState = JSON.stringify({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.3",
@@ -344,8 +416,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       });
       yield* fs.writeFileString(statePath, pendingState);
       expect((yield* service.status).current).toBe(false);
-      expect(yield* service.uninstall).toBe(true);
-      expect((yield* service.status).installed).toBe(false);
+      expect(yield* discoveredService.uninstall).toBe(true);
+      expect(yield* fs.exists(unitPath)).toBe(false);
+      expect((yield* discoveredService.status).installed).toBe(false);
       // systemd can take 90s to stop, exceeding the runner's 60s default.
       expect(timeouts.get("systemctl --user disable --now t3code.service")).toEqual(
         Duration.seconds(120),
@@ -552,9 +625,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const { service, commands, control, makeService } = yield* makeHarness();
       yield* service.install();
       const failure = yield* service
-        .withStopped(
-          Effect.suspend(() => Effect.fail(control.active ? "running" : "repair failed")),
-        )
+        .withStopped(Effect.failSync(() => (control.active ? "running" : "repair failed")))
         .pipe(Effect.flip);
       expect(failure).toBe("repair failed");
       expect(control.active).toBe(true);
@@ -609,17 +680,24 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("restart leaves a service that serves another T3 home alone", () =>
+  it.effect("restart and install leave a service that serves another T3 home alone", () =>
     Effect.gen(function* () {
-      const { service, fs, commands, makeService } = yield* makeHarness();
-      yield* service.install();
-      commands.length = 0;
+      const { service, fs, baseDir, commands, makeService } = yield* makeHarness();
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
       const path = yield* Path.Path;
       const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
 
       const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
+      commands.length = 0;
       expect(yield* other.restart).toBe("skipped");
-      expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([]);
+      const refused = yield* other.install().pipe(Effect.flip);
+      expect(refused._tag).toBe("BootServiceOtherBaseDirError");
+      // The CLI prints a user message without a stack trace.
+      expect(CliError.getUserMessage(refused)).toBe(refused.message);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+      expect(commands).toEqual([]);
+      expect((yield* other.status).otherBaseDir).toBe(baseDir);
     }),
   );
 
@@ -826,6 +904,29 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
       const restartedService = yield* makeService("/usr/local/bin:/usr/bin:/bin");
       expect((yield* restartedService.status).current).toBe(true);
+    }),
+  );
+
+  // regression: #17532
+  it.effect("puts the runtime an update installs on the launch agent PATH", () =>
+    Effect.gen(function* () {
+      const { makeService, fs, baseDir, runtime } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const previous = runtime.versionDir;
+      const installed = pinnedRuntimePaths(path, baseDir, "1.2.4", "darwin").versionDir;
+      // The 1.2.3 CLI, or the 1.2.3 service's own PATH, installs 1.2.4.
+      const updated = yield* makeService(
+        `/usr/bin:${previous}:/bin`,
+        "1.2.4",
+        undefined,
+        false,
+        runtime.entryPath,
+      );
+      const plan = yield* updated.install();
+
+      expect(yield* fs.readFileString(plan.unitPath)).toContain(
+        `    <key>PATH</key>\n    <string>/usr/bin:${installed}:/bin:/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/sbin</string>`,
+      );
     }),
   );
 
