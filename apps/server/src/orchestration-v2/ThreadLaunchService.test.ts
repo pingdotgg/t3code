@@ -2467,10 +2467,13 @@ it.effect.each([
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const workspace = { type: "worktree" as const, baseRef: "main", branch: testCase.requested };
+      const commandId = CommandId.make("launch:branch-conflict");
       const check = (branch: string) =>
         launches.checkWorktreeBase({
+          commandId,
           projectId,
-          workspaceStrategy: { type: "worktree", baseRef: "main", branch },
+          workspaceStrategy: { ...workspace, branch },
         });
       yield* check("werkstatt-baseline");
       const error = yield* check(testCase.requested).pipe(Effect.flip);
@@ -2479,6 +2482,10 @@ it.effect.each([
         branch: testCase.requested,
         conflictingBranch: testCase.blocking,
       });
+      yield* launches.launch(
+        launchInput({ command: commandId, thread: "thread:branch-conflict", workspace }),
+      );
+      yield* check(testCase.requested);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

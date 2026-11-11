@@ -191,7 +191,10 @@ export class ThreadLaunchService extends Context.Service<
     >;
     /** Check a new worktree's base ref and branch name before creation for early errors; launch otherwise accepts and reports these failures inside the thread. */
     readonly checkWorktreeBase: (
-      input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
+      input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy"> & {
+        /** Skips the check when this launch was already accepted, so its retry replays. */
+        readonly commandId?: CommandId;
+      },
     ) => Effect.Effect<void, ThreadLaunchBaseRefError | ThreadLaunchBranchConflictError>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
@@ -278,6 +281,12 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const strategy = input.workspaceStrategy;
     if (strategy.type !== "worktree") return;
+    if (input.commandId !== undefined) {
+      const receipt = yield* receipts
+        .getByCommandId(input.commandId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isSome(receipt) && receipt.value.status === "accepted") return;
+    }
     const project = yield* projects.getById(input.projectId).pipe(
       Effect.map(Option.getOrUndefined),
       Effect.orElseSucceed(() => undefined),
