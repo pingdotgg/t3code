@@ -27,6 +27,31 @@ export function showcaseSceneOnScreen(
     : routeScene;
 }
 
+export interface ShowcaseNavigationTarget {
+  readonly requestedScene: ShowcaseScene;
+  readonly scene: ShowcaseScene | null;
+  /** The showcase thread shell; a new shell (or environment) is a new target to navigate to. */
+  readonly thread: object;
+}
+
+/**
+ * Whether to dispatch the navigation for `next`, given the target last dispatched. A target is
+ * dispatched once, and again whenever any part of it changes, so a dispatch that did not move
+ * the route is retried when the thread shell or route updates.
+ */
+export function shouldNavigateToShowcaseScene(
+  last: ShowcaseNavigationTarget | null,
+  next: ShowcaseNavigationTarget,
+): boolean {
+  return (
+    next.scene !== next.requestedScene &&
+    (last === null ||
+      last.requestedScene !== next.requestedScene ||
+      last.scene !== next.scene ||
+      last.thread !== next.thread)
+  );
+}
+
 export function isShowcaseThemeApplied(input: {
   readonly launchRequestRead: boolean;
   readonly requestedTheme: MobileThemeId | null;

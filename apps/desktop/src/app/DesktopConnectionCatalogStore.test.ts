@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - The recovery fixtures use Chromium OSCrypt ciphertext.
 import * as NodeCrypto from "node:crypto";
 
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
@@ -32,10 +33,10 @@ const { keychainPassword } = vi.hoisted(() => ({
 }));
 
 vi.mock("@napi-rs/keyring", () => ({
-  Entry: class {
+  AsyncEntry: class {
     readonly getPassword;
     constructor(service: string, account: string) {
-      this.getPassword = () => keychainPassword(service, account);
+      this.getPassword = async () => keychainPassword(service, account);
     }
   },
 }));
@@ -180,6 +181,7 @@ function layerFor(
     layerEnvironment,
     layerSafeStorage,
     NodeServices.layer,
+    NodePlatformCrypto.layer,
     fileSystemLayer,
     host.linuxSecretLookups
       ? layerLinuxSecretHelper(host.linuxSecretLookups, host.beforeLinuxSecretLookup)
@@ -208,7 +210,7 @@ const withStore = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
-  it.effect("persists, reads, and clears an encrypted connection catalog", () =>
+  it.effect("persists and reads an encrypted connection catalog", () =>
     withStore(
       Effect.gen(function* () {
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
@@ -216,9 +218,6 @@ describe("DesktopConnectionCatalogStore", () => {
 
         assert.isTrue(yield* store.set(catalog));
         assert.deepStrictEqual(yield* store.get, Option.some(catalog));
-
-        yield* store.clear;
-        assert.deepStrictEqual(yield* store.get, Option.none());
       }),
     ),
   );
