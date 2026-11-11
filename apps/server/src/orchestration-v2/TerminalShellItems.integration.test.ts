@@ -24,6 +24,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 
@@ -48,6 +49,7 @@ it.effect.each([
   "approval",
   "dynamic approval",
   "accepted approval",
+  "withdrawn approval",
   "pending",
   "unlinked running",
   "approval on provider failure",
@@ -317,6 +319,7 @@ it.effect.each([
         );
         assert.ok(before);
         if (check === "accepted approval") {
+          const stale = yield* orchestrator.getThreadProjection(threadId);
           yield* orchestrator.dispatch({
             type: "runtime-request.respond",
             commandId: CommandId.make("approve"),
@@ -325,6 +328,74 @@ it.effect.each([
             decision: "accept",
           });
           yield* worker.drain();
+          // Finalization that read the approval before it was answered must not erase it.
+          const request = stale.runtimeRequests.find((candidate) => candidate.id === requestId)!;
+          const cancelledAt = { status: "cancelled" as const, completedAt: now };
+          const staleEvent = (id: string) => ({
+            id: EventId.make(`stale-${id}`),
+            threadId,
+            runId: first.runId,
+            occurredAt: now,
+          });
+          yield* (yield* EventSink.EventSinkV2).writeWithEffects({
+            guardPendingApprovalCancellations: true,
+            effects: [],
+            events: [
+              {
+                ...staleEvent("tool"),
+                type: "turn-item.updated",
+                payload: { ...before, ...cancelledAt, toolNonExecutionKind: "cancelled" },
+              },
+              {
+                ...staleEvent("tool-node"),
+                type: "node.updated",
+                payload: {
+                  ...stale.nodes.find((node) => node.id === commandNode.id)!,
+                  ...cancelledAt,
+                },
+              },
+              {
+                ...staleEvent("request"),
+                type: "runtime-request.updated",
+                payload: { ...request, status: "cancelled", resolvedAt: now },
+              },
+              {
+                ...staleEvent("approval-node"),
+                type: "node.updated",
+                payload: {
+                  ...stale.nodes.find((node) => node.id === request.nodeId)!,
+                  ...cancelledAt,
+                },
+              },
+              {
+                ...staleEvent("approval-item"),
+                type: "turn-item.updated",
+                payload: {
+                  ...stale.turnItems.find((item) => item.id === TurnItemId.make("item:approval"))!,
+                  ...cancelledAt,
+                },
+              },
+            ],
+          });
+        }
+        if (check === "withdrawn approval") {
+          // Claude withdraws the prompt when a PermissionRequest hook allows the tool, which then runs.
+          const withdrawn = yield* watch(
+            (event) =>
+              event.type === "runtime-request.updated" &&
+              event.payload.id === requestId &&
+              event.payload.status === "cancelled",
+          );
+          const request = (yield* orchestrator.getThreadProjection(threadId)).runtimeRequests.find(
+            (candidate) => candidate.id === requestId,
+          )!;
+          yield* Queue.offer(events, {
+            type: "runtime_request.updated",
+            driver,
+            threadId,
+            runtimeRequest: { ...request, status: "cancelled", resolvedAt: now },
+          });
+          yield* Fiber.join(withdrawn);
         }
         const failed = yield* watch(
           (event) =>
@@ -377,13 +448,22 @@ it.effect.each([
         yield* worker.drain();
         const after = yield* orchestrator.getThreadProjection(threadId);
         const item = after.turnItems.find((candidate) => candidate.id === commandItem.id)!;
-        if (check === "accepted approval" || check === "unlinked running") {
+        if (
+          check === "accepted approval" ||
+          check === "withdrawn approval" ||
+          check === "unlinked running"
+        ) {
           assert.deepEqual(item, before);
           assert.isTrue(pending.some((task) => task.taskId === "shell-native"));
           if (check === "accepted approval") {
             assert.equal(
               after.runtimeRequests.find((request) => request.id === requestId)?.status,
               "resolved",
+            );
+            assert.equal(
+              after.turnItems.find((candidate) => candidate.id === TurnItemId.make("item:approval"))
+                ?.status,
+              "completed",
             );
           }
           return;

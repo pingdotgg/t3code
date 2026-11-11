@@ -732,10 +732,17 @@ export const layer: Layer.Layer<
         const cancelledToolEvents: OrchestrationV2DomainEvent[] = [];
         if (input.loadRunOwnedTools !== undefined && !childTurnsContinue(input.terminal)) {
           const { turnItems, nodes, runtimeRequests } = yield* input.loadRunOwnedTools();
-          // A session release may already have expired the approval before the run ends.
+          // A session release may already have closed the approval. Claude also cancels
+          // requests a hook allowed, and those tools run, so their capability stays live.
           const unresolvedApprovalNodes = new Set(
             runtimeRequests
-              .filter((request) => request.status !== "resolved")
+              .filter(
+                (request) =>
+                  request.status === "pending" ||
+                  request.status === "expired" ||
+                  (request.status === "cancelled" &&
+                    request.responseCapability.type === "not_resumable"),
+              )
               .map((request) => request.nodeId),
           );
           const blockedToolNodes = new Set(
@@ -1009,6 +1016,7 @@ export const layer: Layer.Layer<
         } satisfies Parameters<typeof eventSink.writeWithEffects>[0];
         if (input.writeIfRunCurrent !== undefined) {
           const result = yield* eventSink.writeIfRunCurrent({
+            guardPendingApprovalCancellations: true,
             threadId: input.run.threadId,
             runId: input.run.id,
             activeAttemptId: input.writeIfRunCurrent.activeAttemptId,
@@ -1020,7 +1028,10 @@ export const layer: Layer.Layer<
             return;
           }
         } else {
-          yield* eventSink.writeWithEffects(finalization);
+          yield* eventSink.writeWithEffects({
+            ...finalization,
+            guardPendingApprovalCancellations: true,
+          });
         }
         yield* turnAnalytics.runSettled({
           runId: input.run.id,
