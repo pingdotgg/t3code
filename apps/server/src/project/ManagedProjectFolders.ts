@@ -38,7 +38,7 @@ export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailab
     if (this.repositoryRoot === undefined) {
       return "Threads without a project are not available on this environment.";
     }
-    return `Threads without a project are off because the ${T3_LEARN_PRODUCT_NAME} home ${this.baseDir} is inside the Git repository ${this.repositoryRoot}. If that repository was created by mistake, move ${this.repositoryRoot}/.git out of the way; otherwise point ${T3_LEARN_HOME_ENV} (or --base-dir) at a folder outside it. Then restart ${T3_LEARN_PRODUCT_NAME}.`;
+    return `Threads without a project are off because the ${T3_LEARN_PRODUCT_NAME} home ${this.baseDir} is inside the Git repository ${this.repositoryRoot}. If that repository was created by mistake, move ${this.repositoryRoot}/.git out of the way; otherwise point ${T3_LEARN_HOME_ENV} (desktop app) or T3CODE_HOME (or --base-dir, server) at a folder outside it. Then restart ${T3_LEARN_PRODUCT_NAME}.`;
   }
 }
 
