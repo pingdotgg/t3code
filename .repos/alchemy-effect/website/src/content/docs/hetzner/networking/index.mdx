@@ -17,7 +17,7 @@ subnets per network zone (`eu-central`, `us-east`, `us-west`,
 `ap-southeast`). Attach Servers via their `networks` prop:
 
 ```typescript
-import * as Hetzner from "alchemy/Hetzner";
+import * as Hetzner from "@alchemy.run/hetzner";
 
 export const Net = Hetzner.Network("net", {
   ipRange: "10.0.0.0/16",
