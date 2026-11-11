@@ -6,7 +6,7 @@ import {
   type ProjectIconColor,
   type ProjectIconOverride,
 } from "@t3tools/contracts";
-import { createElement, useEffect, useRef, useState } from "react";
+import { createElement, useState } from "react";
 import {
   filterProjectIconNames,
   firstEmoji,
@@ -60,6 +60,44 @@ export function ProjectIconPickerDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly onSelect: (icon: ProjectIconOverride) => Promise<void>;
 }) {
+  const [saving, setSaving] = useState(false);
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!saving) onOpenChange(nextOpen);
+      }}
+    >
+      <DialogPopup className="w-full sm:w-[32rem]">
+        {/* The popup mounts per open, so the draft below starts from `current` each time. */}
+        <ProjectIconPickerBody
+          current={current}
+          projectName={projectName}
+          saving={saving}
+          onSavingChange={setSaving}
+          onClose={() => onOpenChange(false)}
+          onSelect={onSelect}
+        />
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+function ProjectIconPickerBody({
+  current,
+  projectName,
+  saving,
+  onSavingChange,
+  onClose,
+  onSelect,
+}: {
+  readonly current: ProjectIconOverride | null;
+  readonly projectName: string;
+  readonly saving: boolean;
+  readonly onSavingChange: (saving: boolean) => void;
+  readonly onClose: () => void;
+  readonly onSelect: (icon: ProjectIconOverride) => Promise<void>;
+}) {
   const automatic = deriveProjectIdentity(projectName);
   const [mode, setMode] = useState<ProjectIconOverride["kind"]>(current?.kind ?? "lucide");
   const [iconName, setIconName] = useState<string>(
@@ -74,25 +112,7 @@ export function ProjectIconPickerDialog({
   const [emoji, setEmoji] = useState(current?.kind === "emoji" ? current.emoji : "💻");
   const [query, setQuery] = useState("");
   const [customEmoji, setCustomEmoji] = useState("");
-  const previousOpenRef = useRef(false);
-  const composingRef = useRef(false);
-  const savingRef = useRef(false);
-  const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open && !previousOpenRef.current) {
-      setMode(current?.kind ?? "lucide");
-      setIconName(current?.kind === "lucide" ? current.name : DEFAULT_ICON);
-      setColor(current && current.kind !== "emoji" ? current.color : automatic.color);
-      setLetters(current?.kind === "monogram" ? current.text : automatic.monogram);
-      setEmoji(current?.kind === "emoji" ? current.emoji : "💻");
-      setQuery("");
-      setCustomEmoji("");
-      setSaveError(null);
-    }
-    previousOpenRef.current = open;
-  }, [current, open, automatic.color, automatic.monogram]);
 
   const icons = filterProjectIconNames(query);
   const selectedColorClassName = projectIconColorClassName(color);
@@ -100,10 +120,8 @@ export function ProjectIconPickerDialog({
   const validMonogram =
     isMonogramText(monogram) && normalizeProjectMonogramInput(monogram) === monogram;
   const save = async () => {
-    if (savingRef.current || composingRef.current || (mode === "monogram" && !validMonogram))
-      return;
-    savingRef.current = true;
-    setSaving(true);
+    if (saving || (mode === "monogram" && !validMonogram)) return;
+    onSavingChange(true);
     setSaveError(null);
     try {
       await onSelect(
@@ -113,30 +131,23 @@ export function ProjectIconPickerDialog({
             ? { kind: "lucide", name: iconName, color }
             : { kind: "emoji", emoji },
       );
-      onOpenChange(false);
+      onSavingChange(false);
+      onClose();
     } catch (error) {
+      onSavingChange(false);
       setSaveError(projectIconSaveErrorMessage(error));
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
     }
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (!savingRef.current) onOpenChange(nextOpen);
-      }}
-    >
-      <DialogPopup className="w-full sm:w-[32rem]">
-        <DialogHeader>
-          <DialogTitle>Choose project icon</DialogTitle>
-          <DialogDescription>Choose an icon, emoji, or monogram.</DialogDescription>
-        </DialogHeader>
-        <DialogPanel className="flex min-h-0 flex-col">
+    <>
+      <DialogHeader>
+        <DialogTitle>Choose project icon</DialogTitle>
+        <DialogDescription>Choose an icon, emoji, or monogram.</DialogDescription>
+      </DialogHeader>
+      <DialogPanel className="flex min-h-0 flex-col">
+        <fieldset disabled={saving} className="contents">
           <ToggleGroup
-            disabled={saving}
             aria-label="Icon type"
             variant="segmented"
             value={[mode]}
@@ -158,7 +169,6 @@ export function ProjectIconPickerDialog({
                   <button
                     key={option.value}
                     type="button"
-                    disabled={saving}
                     aria-label={option.label}
                     aria-pressed={color === option.value}
                     className={cn(
@@ -177,7 +187,6 @@ export function ProjectIconPickerDialog({
           {mode === "lucide" ? (
             <>
               <Input
-                disabled={saving}
                 type="search"
                 value={query}
                 aria-label="Search Lucide icons"
@@ -190,7 +199,6 @@ export function ProjectIconPickerDialog({
                     <button
                       key={name}
                       type="button"
-                      disabled={saving}
                       aria-label={iconLabel(name)}
                       aria-pressed={iconName === name}
                       className={cn(
@@ -221,24 +229,18 @@ export function ProjectIconPickerDialog({
                   Letters
                 </label>
                 <Input
-                  disabled={saving}
                   id="project-monogram"
                   value={letters}
                   onChange={(event) => {
-                    setLetters(
-                      composingRef.current
-                        ? event.currentTarget.value
-                        : normalizeProjectMonogramInput(event.currentTarget.value),
-                    );
+                    const value = event.currentTarget.value;
+                    const composing =
+                      event.nativeEvent instanceof InputEvent && event.nativeEvent.isComposing;
+                    setLetters(composing ? value : normalizeProjectMonogramInput(value));
                     setSaveError(null);
                   }}
-                  onCompositionStart={() => {
-                    composingRef.current = true;
-                  }}
-                  onCompositionEnd={(event) => {
-                    composingRef.current = false;
-                    setLetters(normalizeProjectMonogramInput(event.currentTarget.value));
-                  }}
+                  onCompositionEnd={(event) =>
+                    setLetters(normalizeProjectMonogramInput(event.currentTarget.value))
+                  }
                   aria-describedby="project-monogram-hint"
                   aria-invalid={!validMonogram}
                   autoComplete="off"
@@ -258,7 +260,6 @@ export function ProjectIconPickerDialog({
                     <button
                       key={option.emoji}
                       type="button"
-                      disabled={saving}
                       aria-label={option.label}
                       aria-pressed={emoji === option.emoji}
                       className={cn(
@@ -277,7 +278,6 @@ export function ProjectIconPickerDialog({
                   Or paste any emoji
                 </div>
                 <Input
-                  disabled={saving}
                   value={customEmoji}
                   aria-label="Custom emoji"
                   placeholder="Paste an emoji"
@@ -291,21 +291,21 @@ export function ProjectIconPickerDialog({
               </div>
             </>
           )}
-        </DialogPanel>
-        {saveError ? (
-          <p role="alert" className="px-6 text-sm text-destructive">
-            {saveError}
-          </p>
-        ) : null}
-        <DialogFooter>
-          <Button variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={save} disabled={saving || (mode === "monogram" && !validMonogram)}>
-            Save icon
-          </Button>
-        </DialogFooter>
-      </DialogPopup>
-    </Dialog>
+        </fieldset>
+      </DialogPanel>
+      {saveError ? (
+        <p role="alert" className="px-6 text-sm text-destructive">
+          {saveError}
+        </p>
+      ) : null}
+      <DialogFooter>
+        <Button variant="outline" disabled={saving} onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={save} disabled={saving || (mode === "monogram" && !validMonogram)}>
+          Save icon
+        </Button>
+      </DialogFooter>
+    </>
   );
 }
