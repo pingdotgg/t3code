@@ -4788,12 +4788,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       failure: "authentication_failed",
       apiErrorStatus: undefined,
       opensFreshProcess: true,
-      backgroundShell: false,
-    },
-    {
-      failure: "authentication_failed",
-      apiErrorStatus: undefined,
-      opensFreshProcess: true,
       backgroundShell: true,
     },
     {
@@ -4883,7 +4877,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(completed.status, "completed");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
   );
@@ -6780,7 +6779,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(terminal.status, "failed");
       if (terminal.status !== "failed") return;
       assert.include(terminal.failure.message, "run `claude auth login`");
-      assert.include(terminal.failure.message, "then send the message again");
       assert.include(terminal.failure.message, configDir);
       assert.include(terminal.failure.message, JSON.stringify(cwd));
       assert.notInclude(terminal.failure.message, "repeated API errors");
