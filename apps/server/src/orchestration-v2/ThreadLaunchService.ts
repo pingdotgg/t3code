@@ -159,6 +159,7 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
     projectTitle: Schema.String,
     workspaceRoot: Schema.String,
     baseRef: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -461,13 +462,14 @@ const make = Effect.gen(function* () {
           .pipe(
             Effect.catchIf(
               (error) => error.reason === "ref_not_found",
-              () =>
+              (cause) =>
                 Effect.fail(
                   new ThreadLaunchBaseRefError({
                     projectId: project.id,
                     projectTitle: project.title,
                     workspaceRoot: project.workspaceRoot,
                     baseRef: requestedBaseRef,
+                    cause,
                   }),
                 ),
             ),
