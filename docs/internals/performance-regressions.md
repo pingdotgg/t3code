@@ -106,9 +106,9 @@ background items, including idle items. Latest user-message reads use an index o
 time.
 
 A projection read that orders messages by their first user or assistant turn item groups those
-items by `$.messageId` through a partial index on that expression (migration 82), so it does not
+items by `$.messageId` through a partial index on that expression (migration 83), so it does not
 parse every message item's payload; the index's expression and `WHERE` must stay identical to the
-query's. Migration 82 scans the turn-item table once on first start; a message item whose payload
+query's. Migration 83 scans the turn-item table once on first start; a message item whose payload
 is not valid JSON is left out of the index. Each message-item write re-parses the old and new
 payload for the index, so its cost grows with the payload.
 
