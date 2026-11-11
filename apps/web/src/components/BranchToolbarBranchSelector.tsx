@@ -59,7 +59,11 @@ import {
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
-import { prStatusIndicator, resolveDisplayedThreadPr, useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
+import {
+  prStatusIndicator,
+  resolveDisplayedThreadPr,
+  useLinkedThreadPullRequest,
+} from "./ThreadStatusIndicators";
 
 import { ComboboxItem, ComboboxTrigger } from "./ui/combobox";
 import { ComposerControl } from "./chat/ComposerControl";
