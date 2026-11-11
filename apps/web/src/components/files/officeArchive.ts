@@ -495,10 +495,15 @@ function engineStyles(xml: string) {
   const id = /(numFmtId\s*=\s*)(["'])(\d+)\2/g;
   const moved = new Map<string, number>();
   const formats = xml.match(block("numFmts"))?.[0] ?? "";
-  let next = Math.max(163, ...[...formats.matchAll(id)].map((match) => Number(match[3]))) + 1;
+  const used = new Set([...formats.matchAll(id)].map((match) => Number(match[3])));
+  let next = 164;
   const renumber = (part: string, assign: boolean) =>
     part.replace(id, (attribute: string, key: string, quote: string, value: string) => {
-      if (assign && Number(value) < 164 && !moved.has(value)) moved.set(value, next++);
+      if (assign && Number(value) < 164 && !moved.has(value)) {
+        while (used.has(next)) next++;
+        if (next > 65535) throw new Error("This workbook has too many custom number formats.");
+        moved.set(value, next++);
+      }
       const to = moved.get(value);
       return to === undefined ? attribute : `${key}${quote}${to}${quote}`;
     });

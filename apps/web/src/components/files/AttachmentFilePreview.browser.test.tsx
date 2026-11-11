@@ -1789,7 +1789,7 @@ it("shows the number formats and underlines a workbook's own styles define", asy
   );
   archive.file(
     "xl/styles.xml",
-    `<styleSheet><numFmts count="2"><numFmt numFmtId="7" formatCode="&quot;￥&quot;#,##0.00"/><numFmt numFmtId="82" formatCode="[$-010409]dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/></font><font><u val="double"/><sz val="11"/></font></fonts><cellXfs count="4"><xf numFmtId="0" fontId="0"/><xf numFmtId="7" fontId="0"/><xf numFmtId="82" fontId="0"/><xf numFmtId="0" fontId="1"/></cellXfs></styleSheet>`,
+    `<styleSheet><numFmts count="4"><numFmt numFmtId="164" formatCode="0.000"/><numFmt numFmtId="65535" formatCode="0.0000"/><numFmt numFmtId="7" formatCode="&quot;￥&quot;#,##0.00"/><numFmt numFmtId="82" formatCode="[$-010409]dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/></font><font><u val="double"/><sz val="11"/></font></fonts><cellXfs count="4"><xf numFmtId="0" fontId="0"/><xf numFmtId="7" fontId="0"/><xf numFmtId="82" fontId="0"/><xf numFmtId="0" fontId="1"/></cellXfs></styleSheet>`,
   );
   archive.file(
     "xl/worksheets/sheet1.xml",
