@@ -15,6 +15,11 @@ import {
   isCopilotLostSessionError,
   makeCopilotSubagentRouting,
 } from "./copilotAcp.ts";
+import {
+  extractDeepseekSubagentSessionEvent,
+  extractDeepseekSubagentUpdate,
+  isDeepseekAcpAgent,
+} from "./deepseekAcp.ts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { readCustomModelEntries } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
@@ -198,6 +203,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       /^claude-agent-acp(\.exe|\.cmd)?$/i.test(
         options.settings.commandPath.split(/[\\/]/).pop() ?? "",
       ));
+  const isDeepseek = isDeepseekAcpAgent(registryAgentId, options.settings.commandPath);
   const runtimeOptions = isClaude
     ? {
         ...options,
@@ -245,6 +251,13 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
+        }
+      : {}),
+    ...(isDeepseek
+      ? {
+          followAgentWorkState: true,
+          extractSubagentUpdate: extractDeepseekSubagentUpdate,
+          extractSubagentSessionEvent: extractDeepseekSubagentSessionEvent,
         }
       : {}),
     ...(copilotRouting === undefined
