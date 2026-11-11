@@ -1,3 +1,4 @@
+import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { AppBar, type AppBarSearch } from "../../components/ui/AppBar";
 import { AsyncResult } from "effect/reactivity";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -13,7 +14,7 @@ import {
 } from "@t3tools/client-runtime/pull-request-reviewers";
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { FlatList, Pressable, ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useContentTopInset, useSearchToolbarInset } from "../../components/ui/useBarInset";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -40,7 +41,7 @@ const TRUNCATED_LABELS: Record<ReviewerTruncation, (error: string | null) => str
 export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequestParams>) {
   const navigation = useNavigation();
   const contentTopInset = useContentTopInset();
-  const listRef = useRef<FlatList<PullRequestReviewerCandidate>>(null);
+  const listRef = useRef<LegendListRef>(null);
   const target = pullRequestTarget(route.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const pr = detail.data;
@@ -150,10 +151,13 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
         search={reviewerSearch}
       />
       {listCandidates ? (
-        <FlatList
+        <LegendList
           ref={listRef}
           data={candidates}
           keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
+          extraData={{ allowed, pending }}
+          estimatedItemSize={64}
+          recycleItems
           renderScrollComponent={NativeScrollView}
           contentInsetAdjustmentBehavior="automatic"
           automaticallyAdjustKeyboardInsets
