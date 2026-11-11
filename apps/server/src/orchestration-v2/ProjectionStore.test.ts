@@ -779,6 +779,7 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
       });
     // Run 1 is the helper's rolled-back run. Run 2 is live and run 3 starts a fresh session.
     // Runs 6 and 9 are `/compact` runs that hold a compaction; run 8 is one that does not.
+    // Run 11 was rolled back after it compacted, so that compaction no longer counts.
     for (const [ordinal, status] of [
       [2, "running"],
       [3, "completed"],
@@ -788,6 +789,8 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
       [7, "completed"],
       [8, "completed"],
       [9, "completed"],
+      [10, "completed"],
+      [11, "rolled_back"],
     ] as const) {
       yield* store.apply({
         id: EventId.make(`event:compacted:run-${ordinal}`),
@@ -871,7 +874,7 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
         },
       });
     // Nothing is compacted yet, so the whole history is current.
-    assert.lengthOf((yield* read([])).runs, 9);
+    assert.lengthOf((yield* read([])).runs, 11);
 
     yield* compact(6);
     // Legacy rows can hold unreadable JSON; the fresh-context index must not reject them.
@@ -884,13 +887,17 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
     const runIdsOf = (ordinals: ReadonlyArray<number>) => ordinals.map(runId);
     // The window starts at run 5, the prompt before the compaction.
     const recent = yield* read([rolledBackId]);
-    assert.deepEqual(ids(recent.runs), [rolledBackId, ...runIdsOf([2, 3, 5, 6, 7, 8, 9])]);
-    assert.deepEqual(ids(recent.messages), [2, 3, 5, 6, 7, 8, 9].map(messageId));
-    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9]));
+    assert.deepEqual(ids(recent.runs), [rolledBackId, ...runIdsOf([2, 3, 5, 6, 7, 8, 9, 10, 11])]);
+    assert.deepEqual(ids(recent.messages), [2, 3, 5, 6, 7, 8, 9, 10, 11].map(messageId).toSorted());
+    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9, 10, 11]));
 
     // Runs 8 and 7 are not shown (`/compact`, async answer), so the baseline is run 5.
     yield* compact(9);
-    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9]));
+    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9, 10, 11]));
+
+    // The rolled-back run's later compaction is ignored.
+    yield* compact(11);
+    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9, 10, 11]));
 
     // The search for a prompt before the compaction may walk past an unreadable run.
     const legacyThreadId = yield* addRolledBackRecoveryCandidate("compacted-legacy");

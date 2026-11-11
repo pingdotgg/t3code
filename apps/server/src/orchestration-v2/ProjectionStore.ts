@@ -3351,6 +3351,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             INNER JOIN orchestration_v2_projection_runs AS run ON run.run_id = item.run_id
             WHERE (item.thread_id || '') = ${threadId}
               AND (item.type || '') = 'compaction' AND item.status = 'completed'
+              AND run.status <> 'rolled_back'
             ORDER BY item.ordinal DESC
             LIMIT 1
           ) AS latest
@@ -6501,7 +6502,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     // Mirrors isNativeMaintenanceCommand over the thread's user messages.
     const hasOnlyMaintenanceUserMessages: ProjectionStoreV2Shape["hasOnlyMaintenanceUserMessages"] =
-      (threadId) =>
+      Effect.fn("ProjectionStore.hasOnlyMaintenanceUserMessages")((threadId: ThreadId) =>
         sql<{ readonly any_user: number; readonly other_user: number }>`
           SELECT
             EXISTS (
@@ -6519,7 +6520,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         `.pipe(
           Effect.map(([row]) => row?.any_user === 1 && row.other_user === 0),
           Effect.mapError(controlReadError(threadId)),
-        );
+        ),
+      );
 
     // Mirror idleCompactionOf, including JavaScript trim whitespace.
     const isIdleCompactionMessage = (alias: string) => {
