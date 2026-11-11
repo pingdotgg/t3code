@@ -22,6 +22,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -67,16 +68,25 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseThreadStop?: boolean;
-  readonly neverAnswers?: boolean;
+  readonly stalled?: { readonly release: Deferred.Deferred<void>; interrupted: boolean };
 }) {
+  const answer = <A>(result: A) =>
+    input.stalled === undefined
+      ? Effect.succeed(result)
+      : Deferred.await(input.stalled.release).pipe(
+          Effect.as(result),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              input.stalled!.interrupted = true;
+            }),
+          ),
+        );
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
       Effect.sync(() => {
         input.commands.push(command);
         return { sequence: input.commands.length };
-      }).pipe(
-        Effect.andThen((result) => (input.neverAnswers ? Effect.never : Effect.succeed(result))),
-      ),
+      }).pipe(Effect.andThen(answer)),
     [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (requestInput: {
       readonly threadId: ThreadId;
     }) =>
@@ -92,9 +102,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           projection: input.projection ?? v2Projection,
           resumed: false,
         };
-      }).pipe(
-        Effect.andThen((result) => (input.neverAnswers ? Effect.never : Effect.succeed(result))),
-      ),
+      }).pipe(Effect.andThen(answer)),
     [WS_METHODS.projectsMutate]: (mutation: ProjectMutation) =>
       Effect.sync(() => {
         input.projects.push(mutation);
@@ -307,12 +315,8 @@ describe("V2 environment commands", () => {
     function* (bootstrap: StartThreadTurnInput["bootstrap"]) {
       const commands: OrchestrationV2Command[] = [];
       const launches: OrchestrationV2ThreadLaunchInput[] = [];
-      const supervisor = yield* makeSupervisor({
-        commands,
-        launches,
-        projects: [],
-        neverAnswers: true,
-      });
+      const stalled = { release: yield* Deferred.make<void>(), interrupted: false };
+      const supervisor = yield* makeSupervisor({ commands, launches, projects: [], stalled });
 
       const send = yield* startThreadTurn({
         commandId: CommandId.make("command-unanswered"),
@@ -342,6 +346,9 @@ describe("V2 environment commands", () => {
             "The server did not confirm this message. It may still arrive; check the thread before sending it again.",
         }),
       );
+      // A launch commits in several steps, so the late request must finish rather than be cut.
+      expect(stalled.interrupted).toBe(false);
+      yield* Deferred.succeed(stalled.release, undefined);
     },
   );
 

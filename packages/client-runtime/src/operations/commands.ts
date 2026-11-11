@@ -32,6 +32,7 @@ import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2Pend
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 
 import { getInitialServerConfig, request } from "../rpc/client.ts";
@@ -287,12 +288,17 @@ export class MessageDispatchUnansweredError extends Schema.TaggedError<MessageDi
 
 // The server answers a message dispatch or thread launch once it commits the command; worktree
 // preparation runs after that answer. A healthy socket that stays silent this long means a
-// stalled pipeline. The server may still commit later, so the error says so instead of
-// retrying, which could duplicate the message.
+// stalled pipeline. The deadline bounds only the wait: interrupting the request would cancel
+// the server handler mid-launch, so it keeps running and the error says the message may arrive.
 const MESSAGE_DISPATCH_ANSWER_TIMEOUT = "2 minutes";
 
-const requireMessageAnswer = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(
+const requireMessageAnswer = Effect.fn("EnvironmentCommands.requireMessageAnswer")(function* <
+  A,
+  E,
+  R,
+>(effect: Effect.Effect<A, E, R>) {
+  const answer = yield* Effect.forkDetach(effect, { startImmediately: true });
+  return yield* Fiber.join(answer).pipe(
     Effect.timeoutOrElse({
       duration: MESSAGE_DISPATCH_ANSWER_TIMEOUT,
       orElse: () =>
@@ -304,6 +310,7 @@ const requireMessageAnswer = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         ),
     }),
   );
+});
 
 const dispatchMessage = (command: OrchestrationV2Command) =>
   requireMessageAnswer(dispatch(command));
