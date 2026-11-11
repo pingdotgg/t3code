@@ -1,12 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
-import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ProviderInstallState,
+  type ServerProviderCompatibilityAdvisory,
+} from "@t3tools/contracts";
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -54,46 +59,46 @@ export interface CodexReleaseAsset {
 }
 const RELEASES: Readonly<Record<string, CodexReleaseAsset>> = {
   "darwin-arm64": {
-    version: "0.156.1",
+    version: "0.166.0",
     target: "aarch64-apple-darwin",
-    url: "https://github.com/openai/codex/releases/download/rust-v0.156.1/codex-package-aarch64-apple-darwin.tar.gz",
-    sha256: "fea42f9625091f011e38f059da974d52e57ba31831648bb1c7f0b1a385fde547",
-    archiveBytes: 127394863,
+    url: "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-aarch64-apple-darwin.tar.gz",
+    sha256: "55a440cb579f970abe7c79ab181e54b0ea4c419be99f333bbd868eebac9c21f0",
+    archiveBytes: 165951869,
   },
   "darwin-x64": {
-    version: "0.156.1",
+    version: "0.166.0",
     target: "x86_64-apple-darwin",
-    url: "https://github.com/openai/codex/releases/download/rust-v0.156.1/codex-package-x86_64-apple-darwin.tar.gz",
-    sha256: "618dbcd55419fa041871f777a14b107ceb3fe2d339ef81e21e6ab5374420dc71",
-    archiveBytes: 138670455,
+    url: "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-x86_64-apple-darwin.tar.gz",
+    sha256: "1cb65690230be5982c654ba2655e3a3b594dce9c55b780e78bfdfeff829d7ad9",
+    archiveBytes: 180076524,
   },
   "linux-arm64": {
-    version: "0.156.1",
+    version: "0.166.0",
     target: "aarch64-unknown-linux-musl",
-    url: "https://github.com/openai/codex/releases/download/rust-v0.156.1/codex-package-aarch64-unknown-linux-musl.tar.gz",
-    sha256: "fdd47ed6aade0360796fd3f6f95a45096f327c15e19e8c7339f9dc5633041786",
-    archiveBytes: 136933361,
+    url: "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-aarch64-unknown-linux-musl.tar.gz",
+    sha256: "7821b77dda2e6283fb1f63f3165177a271da8833e857cf673c6ca1c9db3bfcc6",
+    archiveBytes: 187370368,
   },
   "linux-x64": {
-    version: "0.156.1",
+    version: "0.166.0",
     target: "x86_64-unknown-linux-musl",
-    url: "https://github.com/openai/codex/releases/download/rust-v0.156.1/codex-package-x86_64-unknown-linux-musl.tar.gz",
-    sha256: "8b711520beddf385467b8da4d2c93736637c6ba1e46811cf0d8606b7c490b6f6",
-    archiveBytes: 145976992,
+    url: "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-x86_64-unknown-linux-musl.tar.gz",
+    sha256: "1d44b28bc4ac9937d7d3532264baa68a507ce364956a0d4ebb856f331cdee254",
+    archiveBytes: 199694962,
   },
   "win32-arm64": {
-    version: "0.156.1",
+    version: "0.166.0",
     target: "aarch64-pc-windows-msvc",
-    url: "https://github.com/openai/codex/releases/download/rust-v0.156.1/codex-package-aarch64-pc-windows-msvc.tar.gz",
-    sha256: "85994caecdc7609c49fd585c1cdb5677fa9d0acbf789650cff23a13afc9505db",
-    archiveBytes: 142037952,
+    url: "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-aarch64-pc-windows-msvc.tar.gz",
+    sha256: "9383152a72f97bb5dd148493c8214e4fed38d805aa2c3297cb3739f7f130becf",
+    archiveBytes: 187024318,
   },
   "win32-x64": {
-    version: "0.156.1",
+    version: "0.166.0",
     target: "x86_64-pc-windows-msvc",
-    url: "https://github.com/openai/codex/releases/download/rust-v0.156.1/codex-package-x86_64-pc-windows-msvc.tar.gz",
-    sha256: "a2e017db9807e6a2269a26fea0e1d9546469cef4d472a33016bc9f3ad7d3b733",
-    archiveBytes: 153839991,
+    url: "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-x86_64-pc-windows-msvc.tar.gz",
+    sha256: "d559bb88e74d471265857b93b7f19bc250dae527673b9191b33534478093f6bc",
+    archiveBytes: 202589789,
   },
 };
 const resolveCodexReleaseAsset = (platform: NodeJS.Platform, arch: string) =>
@@ -125,6 +130,9 @@ interface CodexInstallationService {
   readonly managedDirectory: string;
   readonly resolve: () => Effect.Effect<CodexExecutable, CodexInstallationError>;
   readonly acquire: () => Effect.Effect<CodexExecutable, CodexInstallationError, Scope.Scope>;
+  readonly compatibility: (
+    version: string,
+  ) => Effect.Effect<ServerProviderCompatibilityAdvisory | undefined>;
   readonly start: Effect.Effect<ProviderInstallState, CodexInstallationError>;
   readonly cancel: (
     operationId: string,
@@ -163,7 +171,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   const manifestService = yield* ModelManifest.ModelManifest;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serviceScope = yield* Effect.scope;
@@ -202,7 +210,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         "resolve",
         "The managed Codex installation record is invalid. Reinstall Codex.",
       );
-    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(
+    return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(
       yield* fs.readFileString(file),
     );
   });
@@ -539,6 +547,14 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         ),
         Stream.run(fs.sink(archivePath, { flag: "wx", mode: 0o600 })),
         Effect.timeout("45 minutes"),
+        Effect.catchTags({
+          TimeoutError: (cause) =>
+            installationError(
+              "download",
+              "The Codex download timed out. Retry installation.",
+              cause,
+            ),
+        }),
       );
       if (downloadedBytes !== release.archiveBytes || hash.digest("hex") !== release.sha256)
         return yield* installationError(
@@ -597,8 +613,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         }),
         { flag: "wx", mode: 0o600 },
       );
-      // On Windows, Defender and kernel process rundown can briefly hold the
-      // verified codex.exe handle open right after `--version` exits.
+      // Windows Defender or process rundown may retain codex.exe handles briefly after --version exits.
       const renameRuntime = fs.rename(runtime, destination);
       yield* platform === "win32"
         ? renameRuntime.pipe(Effect.retry({ times: 10, schedule: Schedule.spaced("100 millis") }))
@@ -606,6 +621,20 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       yield* activate();
     },
     Effect.scoped,
+    Effect.catchTags({
+      HttpClientError: (cause) => {
+        const httpStatus =
+          cause.reason._tag === "StatusCodeError" ? cause.reason.response.status : undefined;
+        return new CodexInstallationError({
+          operation: "download",
+          detail:
+            httpStatus === undefined
+              ? "The Codex download was interrupted. Check your internet connection, then retry installation."
+              : `The Codex download server returned HTTP ${httpStatus}. Try again later.`,
+          cause,
+        });
+      },
+    }),
     Effect.mapError(
       wrapFailure(
         "install",
@@ -625,16 +654,14 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
             `OpenAI does not publish a Codex runtime for ${platform}-${arch}. Use a supported remote environment or a custom executable.`,
           );
         }
-        const operationId = yield* crypto.randomUUIDv4();
+        const operationId = yield* random.uuidV4();
         const next: ProviderInstallState = {
-          driver: DRIVER,
+          ...current,
           operationId,
           phase: "downloading",
           downloadedBytes: 0,
           totalBytes: asset.archiveBytes,
           version: asset.version,
-          installedVersion: current.installedVersion,
-          canRemove: current.canRemove,
           message: "Downloading Codex.",
         };
         yield* SubscriptionRef.set(state, next);
@@ -741,9 +768,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   );
 
   yield* Effect.gen(function* () {
-    // Two servers can share a home, and writes below a staging directory do not
-    // refresh its mtime, so only directories far older than any real install
-    // (download is capped at 45 minutes) are treated as abandoned.
+    // Shared-home installs do not refresh parent mtimes; remove only staging directories far older than the 45-minute download cap.
     let canRemove = false;
     if (yield* fs.exists(managedDirectory)) {
       const entries = yield* fs
@@ -762,8 +787,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         if (now - modifiedAt < STAGING_STALE_AFTER_MS) continue;
         yield* fs.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
       }
-      // The empty root itself stays: deleting it could race another server
-      // creating a staging directory inside. An unreadable root stays removable.
+      // Keep the empty root to avoid racing new staging directories; unreadable roots remain removable.
       const remaining = yield* fs.readDirectory(managedDirectory).pipe(Effect.option);
       canRemove = Option.isNone(remaining) || remaining.value.length > 0;
     }
@@ -782,6 +806,9 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           source: "managed",
         }) satisfies ProviderInstallState,
     );
+    // A supported older runtime still resolves, so a raised pin needs its own update.
+    if (asset && compareSemverVersions(installed.version, asset.version) < 0)
+      yield* start.pipe(Effect.ignore);
   }).pipe(
     Effect.catch(() =>
       SubscriptionRef.update(
@@ -800,6 +827,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     managedDirectory,
     resolve,
     acquire,
+    compatibility,
     start,
     cancel,
     state: SubscriptionRef.get(state),

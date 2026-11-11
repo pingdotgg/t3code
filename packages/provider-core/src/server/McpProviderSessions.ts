@@ -17,6 +17,7 @@ const BOUNDED_TEXT_MARKER = "[Earlier output truncated]\n\n";
 const KEPT_HTML_END_LENGTH = 8_000;
 
 interface KeptHtmlRender {
+  readonly path: string | undefined;
   readonly title: string;
   readonly height: number;
   readonly htmlLength: number;
@@ -35,37 +36,58 @@ export class McpProviderSessions extends Context.Service<
     readonly clear: (threadId: ThreadId) => Effect.Effect<void>;
     readonly recordHtmlRender: (
       threadId: ThreadId,
-      input: { readonly html: string; readonly title: string; readonly height: number },
+      input: {
+        readonly html: string;
+        readonly path?: string | undefined;
+        readonly title: string;
+        readonly height: number;
+      },
       reference: HtmlRenderReference,
     ) => Effect.Effect<void>;
-    // A reported attachment consumes that exact page; otherwise only unique input matches count.
+    // A reported attachment consumes that exact page; otherwise the oldest page for a path, or a
+    // unique inline match.
     readonly takeHtmlRender: (
       threadId: ThreadId,
-      input: { readonly html?: unknown; readonly title?: unknown; readonly height?: unknown },
+      input: PageInput,
       reported?: HtmlRenderReference,
     ) => Effect.Effect<HtmlRenderReference | undefined>;
   }
 >()("@t3tools/provider-core/server/McpProviderSessions") {}
 
-const matchingPageIndex = (
-  kept: ReadonlyArray<KeptHtmlRender>,
-  input: { readonly html?: unknown; readonly title?: unknown; readonly height?: unknown },
-): number => {
-  const html = input.html;
-  if (typeof html !== "string" || html.length === 0) {
-    return -1;
-  }
+interface PageInput {
+  readonly html?: unknown;
+  readonly path?: unknown;
+  readonly title?: unknown;
+  readonly height?: unknown;
+}
+
+const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput): number => {
   const height =
     typeof input.height === "string" && input.height.trim() !== ""
       ? Number(input.height)
       : input.height;
+  const sameFrame = (page: KeptHtmlRender) => page.title === input.title && page.height === height;
+  const path = input.path;
+  // The handler refuses a call with both sources, so it published nothing to recover. Its decoder
+  // reads null as an omitted source.
+  if (path !== undefined && path !== null && input.html !== undefined && input.html !== null) {
+    return -1;
+  }
+  if (typeof path === "string" && path.length > 0) {
+    // An edited file is published again under the same path; completions arrive in publish order.
+    return kept.findIndex((page) => page.path === path && sameFrame(page));
+  }
+  const html = input.html;
+  if (typeof html !== "string" || html.length === 0) {
+    return -1;
+  }
   const htmlHash = hashHtml(html);
   const tail = html.startsWith(BOUNDED_TEXT_MARKER)
     ? html.slice(BOUNDED_TEXT_MARKER.length)
     : undefined;
   const matches = kept.flatMap((page, index) =>
-    page.title === input.title &&
-    page.height === height &&
+    page.path === undefined &&
+    sameFrame(page) &&
     (page.htmlHash === htmlHash ||
       (tail !== undefined &&
         tail.length > 0 &&
@@ -92,9 +114,11 @@ const make = Effect.gen(function* () {
       }
       yield* Ref.update(sessions, (current) => new Map(current).set(config.threadId, config));
     }),
-    read: (threadId) => Ref.get(sessions).pipe(Effect.map((current) => current.get(threadId))),
-    clear: (threadId) =>
-      Ref.update(sessions, (current) => {
+    read: Effect.fn("McpProviderSessions.read")(function (threadId) {
+      return Ref.get(sessions).pipe(Effect.map((current) => current.get(threadId)));
+    }),
+    clear: Effect.fn("McpProviderSessions.clear")(function (threadId) {
+      return Ref.update(sessions, (current) => {
         const next = new Map(current);
         next.delete(threadId);
         return next;
@@ -106,46 +130,54 @@ const make = Effect.gen(function* () {
             return next;
           }),
         ),
-      ),
-    recordHtmlRender: (threadId, input, reference) =>
-      Ref.update(htmlRenders, (current) =>
-        new Map(current).set(
-          threadId,
-          [
-            ...(current.get(threadId) ?? []),
-            {
-              title: input.title,
-              height: input.height,
-              htmlLength: input.html.length,
-              htmlHash: hashHtml(input.html),
-              // Copy the tail so its backing storage cannot retain the entire HTML string.
-              htmlEnd: Buffer.from(input.html.slice(-KEPT_HTML_END_LENGTH), "utf16le").toString(
-                "utf16le",
-              ),
-              reference,
-            },
-          ].slice(-MAX_KEPT_HTML_RENDERS),
-        ),
-      ),
-    takeHtmlRender: (threadId, input, reported) =>
-      Ref.modify(htmlRenders, (current) => {
-        const kept = current.get(threadId) ?? [];
-        const index =
-          reported === undefined
-            ? matchingPageIndex(kept, input)
-            : kept.findIndex((page) => page.reference.attachmentId === reported.attachmentId);
-        if (index === -1) {
-          return [undefined, current];
-        }
-        const rest = kept.filter((_, keptIndex) => keptIndex !== index);
-        const next = new Map(current);
-        if (rest.length === 0) {
-          next.delete(threadId);
-        } else {
-          next.set(threadId, rest);
-        }
-        return [kept[index]!.reference, next];
-      }),
+      );
+    }),
+    recordHtmlRender: Effect.fn("McpProviderSessions.recordHtmlRender")(
+      function (threadId, input, reference) {
+        return Ref.update(htmlRenders, (current) =>
+          new Map(current).set(
+            threadId,
+            [
+              ...(current.get(threadId) ?? []),
+              {
+                path: input.path,
+                title: input.title,
+                height: input.height,
+                htmlLength: input.html.length,
+                htmlHash: hashHtml(input.html),
+                // Copy the tail so its backing storage cannot retain the entire HTML string.
+                htmlEnd: Buffer.from(input.html.slice(-KEPT_HTML_END_LENGTH), "utf16le").toString(
+                  "utf16le",
+                ),
+                reference,
+              },
+            ].slice(-MAX_KEPT_HTML_RENDERS),
+          ),
+        );
+      },
+    ),
+    takeHtmlRender: Effect.fn("McpProviderSessions.takeHtmlRender")(
+      function (threadId, input, reported) {
+        return Ref.modify(htmlRenders, (current) => {
+          const kept = current.get(threadId) ?? [];
+          const index =
+            reported === undefined
+              ? matchingPageIndex(kept, input)
+              : kept.findIndex((page) => page.reference.attachmentId === reported.attachmentId);
+          if (index === -1) {
+            return [undefined, current];
+          }
+          const rest = kept.filter((_, keptIndex) => keptIndex !== index);
+          const next = new Map(current);
+          if (rest.length === 0) {
+            next.delete(threadId);
+          } else {
+            next.set(threadId, rest);
+          }
+          return [kept[index]!.reference, next];
+        });
+      },
+    ),
   });
 });
 
