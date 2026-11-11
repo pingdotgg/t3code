@@ -89,6 +89,7 @@ export type PullRequestActor = typeof PullRequestActor.Type;
 export const PullRequestLabel = Schema.Struct({
   name: TrimmedNonEmptyString,
   color: Schema.NullOr(Schema.String),
+  description: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type PullRequestLabel = typeof PullRequestLabel.Type;
 

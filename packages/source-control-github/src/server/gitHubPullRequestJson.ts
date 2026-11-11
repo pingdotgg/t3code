@@ -113,6 +113,7 @@ interface ListItemFields {
 interface LabelFields {
   readonly name: string;
   readonly color?: string | null | undefined;
+  readonly description?: string | null | undefined;
 }
 
 interface ReviewRequestFields {
@@ -546,7 +547,9 @@ function toReviewDecision(value: string | null | undefined): PullRequestReviewDe
 function toLabels(raw: ReadonlyArray<LabelFields> | undefined): ReadonlyArray<PullRequestLabel> {
   return (raw ?? []).flatMap((label) => {
     const name = trimmed(label.name);
-    return name === null ? [] : [{ name, color: trimmed(label.color) }];
+    return name === null
+      ? []
+      : [{ name, color: trimmed(label.color), description: trimmed(label.description) }];
   });
 }
 
