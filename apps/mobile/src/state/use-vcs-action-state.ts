@@ -52,7 +52,7 @@ export function dismissGitActionResult(): void {
   broadcast(null);
 }
 
-export function useGitActionResultNotification(): {
+function useGitActionResultNotification(): {
   readonly result: GitActionResultNotification | null;
   readonly dismiss: () => void;
 } {
