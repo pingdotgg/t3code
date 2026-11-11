@@ -10,7 +10,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
-import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
@@ -285,11 +284,8 @@ export const make = Effect.gen(function* () {
       /kde|plasma|lxqt/iu.test([env.XDG_CURRENT_DESKTOP, env.DESKTOP_SESSION, env.DE].join(":"))
     )
       return false;
-    const config = yield* DesktopConfig.DesktopConfig;
-    const home = yield* HostProcess.HomeDirectory;
-    const configHome = Option.getOrElse(config.xdgConfigHome, () =>
-      environment.path.join(home, ".config"),
-    );
+    // On Linux this is $XDG_CONFIG_HOME or ~/.config, where mimeapps.list lives.
+    const configHome = environment.appDataDirectory;
     const key = `x-scheme-handler/${scheme}`;
     // Desktop-specific lists take precedence over mimeapps.list in the mime-apps spec.
     for (const desktop of (env.XDG_CURRENT_DESKTOP ?? "").split(":").filter(Boolean)) {

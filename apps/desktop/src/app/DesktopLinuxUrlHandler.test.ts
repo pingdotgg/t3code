@@ -19,7 +19,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
-import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 
 interface RecordedRegistration {
@@ -256,7 +255,10 @@ describe("DesktopLinuxUrlHandler", () => {
                 Layer.mergeAll(
                   Layer.succeed(
                     DesktopEnvironment.DesktopEnvironment,
-                    makeEnvironment(path, { linuxApplicationsDir: applications }),
+                    makeEnvironment(path, {
+                      linuxApplicationsDir: applications,
+                      appDataDirectory: root,
+                    }),
                   ),
                   Layer.succeed(DesktopAssets.DesktopAssets, {
                     iconPaths: Effect.succeed({
@@ -295,10 +297,7 @@ describe("DesktopLinuxUrlHandler", () => {
             ),
           ),
         );
-        const launch = register.pipe(
-          Effect.provide(DesktopConfig.layerTest({ XDG_CONFIG_HOME: root })),
-          Effect.provideService(HostProcess.Environment, {}),
-        );
+        const launch = register.pipe(Effect.provideService(HostProcess.Environment, {}));
         yield* launch;
         assert.deepEqual(commands, ["update-desktop-database", "xdg-mime"]);
         const past = 1_600_000_000;
@@ -328,7 +327,6 @@ describe("DesktopLinuxUrlHandler", () => {
         );
         commands.length = 0;
         yield* register.pipe(
-          Effect.provide(DesktopConfig.layerTest({ XDG_CONFIG_HOME: root })),
           Effect.provideService(HostProcess.Environment, { XDG_CURRENT_DESKTOP: "ubuntu:GNOME" }),
         );
         assert.deepEqual(commands, ["xdg-mime"]);
@@ -336,7 +334,6 @@ describe("DesktopLinuxUrlHandler", () => {
         for (const desktop of ["KDE", "LXQt"]) {
           commands.length = 0;
           yield* register.pipe(
-            Effect.provide(DesktopConfig.layerTest({ XDG_CONFIG_HOME: root })),
             Effect.provideService(HostProcess.Environment, { XDG_CURRENT_DESKTOP: desktop }),
           );
           assert.deepEqual(commands, ["xdg-mime"]);
