@@ -1,4 +1,3 @@
-import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
 import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { Animated, Platform, Pressable, View } from "react-native";
 
@@ -6,11 +5,6 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import {
-  brandTitleOffset,
-  CompactBrandTitle,
-  getCompactBrandHeaderOptions,
-} from "../../components/CompactBrandTitle";
 import { useDeadlinePassed } from "../../lib/clock";
 import { useWorkspaceState } from "../../state/workspace";
 import {
@@ -68,6 +62,7 @@ function StatusFadeIn(props: {
 }) {
   const { animate } = props;
   const [opacity] = useState(() => new Animated.Value(0));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the Animated opacity fade-in and stops it on cleanup
   useEffect(() => {
     if (!animate) return;
     const animation = Animated.timing(opacity, {
@@ -157,25 +152,4 @@ export function WorkspaceConnectionTitle(props: {
       </Pressable>
     </StatusFadeIn>
   );
-}
-
-export function getConnectionAwareBrandHeaderOptions(opts: {
-  readonly headerWidth: number;
-  readonly trailingItemCount?: number;
-  readonly onOpenEnvironments: () => void;
-  readonly fallbackTitleStyle?: NativeStackNavigationOptions["headerTitleStyle"];
-}): NativeStackNavigationOptions {
-  const maxWidth = Math.max(0, opts.headerWidth - 64 - 44 * (opts.trailingItemCount ?? 1));
-
-  return {
-    ...getCompactBrandHeaderOptions(opts.fallbackTitleStyle),
-    headerTitle: () => (
-      <WorkspaceConnectionTitle
-        brand={<CompactBrandTitle />}
-        maxWidth={maxWidth}
-        onPress={opts.onOpenEnvironments}
-        statusOffset={brandTitleOffset()}
-      />
-    ),
-  };
 }

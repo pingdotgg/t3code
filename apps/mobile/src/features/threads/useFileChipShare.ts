@@ -22,6 +22,7 @@ export function useFileChipShare(
     reportFailure: false,
   });
   const requestRef = useRef<AbortController | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight file share download when the component unmounts
   useEffect(() => () => requestRef.current?.abort(), []);
 
   return (target: FileChipTarget) => {
