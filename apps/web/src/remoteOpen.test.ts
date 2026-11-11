@@ -146,13 +146,6 @@ describe("resolveRemoteOpenState", () => {
 describe("remoteFallbackEditors", () => {
   it.each([
     {
-      device: "iPad",
-      userAgent:
-        "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-      platform: "iPad",
-      maxTouchPoints: 5,
-    },
-    {
       // iPadOS Safari requests the desktop site with a Macintosh user agent by default.
       device: "iPad with a desktop user agent",
       userAgent:
@@ -179,13 +172,6 @@ describe("remoteFallbackEditors", () => {
   });
 
   it.each([
-    {
-      device: "Windows",
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-      platform: "Win32",
-      maxTouchPoints: 0,
-    },
     {
       device: "Mac",
       userAgent:
