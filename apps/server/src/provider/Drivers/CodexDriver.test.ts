@@ -17,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -726,3 +727,53 @@ it.layer(layerTest)("CodexDriver", (it) => {
     { skip: windowsHost },
   );
 });
+
+// Live: the auth watcher debounces on the real clock.
+it.live("probes again when auth.json in the Codex home changes", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const codexHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-auth-watch-" });
+    const watchedPath = yield* Deferred.make<string>();
+    const homeEvents = yield* Queue.unbounded<FileSystem.WatchEvent>();
+    const probes = yield* Queue.unbounded<void>();
+    yield* CodexDriver.create({
+      instanceId: ProviderInstanceId.make("codex-auth-watch"),
+      displayName: "Codex auth watch",
+      enabled: true,
+      environment: [],
+      config: { ...CodexDriver.defaultConfig(), homePath: codexHome },
+    }).pipe(
+      // OS watchers can miss events written right after they start, so the test supplies them.
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fs,
+        watch: (path) =>
+          Stream.unwrap(
+            Deferred.succeed(watchedPath, path).pipe(Effect.as(Stream.fromQueue(homeEvents))),
+          ),
+      }),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) =>
+          (ChildProcess.isStandardCommand(command) && command.args.includes("app-server")
+            ? Queue.offer(probes, undefined)
+            : Effect.void
+          ).pipe(
+            Effect.andThen(
+              PlatformError.badArgument({
+                module: "ChildProcessSpawner",
+                method: "spawn",
+                description: "The fixture has no Codex executable",
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(yield* Deferred.await(watchedPath)).toBe(codexHome);
+    yield* Queue.take(probes);
+
+    yield* Queue.offer(homeEvents, { _tag: "Update", path: "auth.json" });
+
+    yield* Queue.take(probes);
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
