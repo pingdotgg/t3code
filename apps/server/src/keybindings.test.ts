@@ -237,8 +237,10 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         );
 
         for (const defaultRule of SharedKeybindings.DEFAULT_KEYBINDINGS) {
+          if (defaultRule.command === "threadPanel.toggle") continue;
           assert.isTrue(byCommand.has(defaultRule.command), `expected ${defaultRule.command}`);
         }
+        assert.isFalse(byCommand.has("threadPanel.toggle"));
         assert.isTrue(byCommand.has("script.run-tests.run"));
 
         const configState = yield* keybindings.loadConfigState;
@@ -352,6 +354,33 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       ),
     );
   });
+
+  it.effect.each([undefined, "(!terminalFocus)", "composerFocus"])(
+    "preserves a user voice shortcut with condition %s",
+    (when) =>
+      Effect.gen(function* () {
+        const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+        yield* writeKeybindingsConfig(keybindingsConfigPath, [
+          {
+            key: "f8",
+            command: "script.custom-action.run",
+            ...(when === undefined ? {} : { when }),
+          },
+        ]);
+
+        yield* Effect.gen(function* () {
+          const keybindings = yield* Keybindings.Keybindings;
+          yield* keybindings.syncDefaultKeybindingsOnStartup;
+        });
+
+        const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+        assert.equal(
+          persisted.some((entry) => entry.command === "voice.toggle"),
+          when === "composerFocus",
+        );
+        assert.isTrue(persisted.some((entry) => entry.command === "navigation.back"));
+      }).pipe(Effect.provide(layerKeybindings())),
+  );
 
   it.effect("appends additional custom keybindings for the same command", () =>
     Effect.gen(function* () {

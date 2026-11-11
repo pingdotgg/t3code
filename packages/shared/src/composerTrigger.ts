@@ -4,7 +4,7 @@ export type ComposerTriggerKind =
   | "slash-command"
   | "slash-model"
   | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "voice";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;

@@ -18,7 +18,7 @@ import {
 import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
-export type ComposerSlashCommand = "model" | "side" | "btw" | "clear";
+export type ComposerSlashCommand = "model" | "side" | "btw" | "clear" | "voice";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
 export interface ComposerTrigger {
@@ -316,6 +316,10 @@ export function composerStateAtPromptEnd(
       ? null
       : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
   };
+}
+
+export function parseStandaloneComposerSlashCommand(text: string): "voice" | null {
+  return /^\/voice\s*$/i.test(text.trim()) ? "voice" : null;
 }
 
 /**

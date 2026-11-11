@@ -55,7 +55,10 @@ import {
 import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
+  parseStandaloneComposerSlashCommand,
 } from "../../composer-logic";
+import { resolveVoiceAvailability } from "../../voice/voiceAvailability";
+import { toggleThreadVoice, voiceMode } from "../../voice/voiceMode";
 import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -699,6 +702,29 @@ export function useComposerSend(input: ComposerSendInput) {
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
       return;
+    }
+    const parsedSlashCommand =
+      composerHoldsOnlyText && multipleModelSelections === null
+        ? parseStandaloneComposerSlashCommand(trimmed)
+        : null;
+    if (parsedSlashCommand === "voice") {
+      const voiceTarget = scopeThreadRef(environmentId, activeThread.id);
+      // Providers without voice receive "/voice" as a normal message.
+      const voiceAvailability = resolveVoiceAvailability({
+        provider: providerInstanceEntries.find(
+          (entry) => entry.instanceId === activeThread.providerInstanceId,
+        )?.snapshot,
+        hasMessages: activeThread.latestUserMessageAt !== null,
+        hasSession: activeThread.activeProviderThreadId !== null,
+      });
+      // An active conversation always stops, even if the provider stopped offering voice.
+      if (voiceAvailability.kind !== "unsupported" || voiceMode.isActiveFor(voiceTarget)) {
+        toggleThreadVoice(voiceTarget, voiceAvailability);
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+        return;
+      }
     }
     // Read once: an arm made while this send is in flight belongs to the next message.
     const freshArm = freshSessionAvailable ? readFreshSessionArm(routeThreadKey) : undefined;
