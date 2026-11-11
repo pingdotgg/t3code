@@ -14,7 +14,7 @@ import {
 
 let database: Database | null = null;
 let tables: string[] = [];
-let files = new Map<string, Uint8Array<ArrayBuffer>>();
+let files = new Map<string, Uint8Array<ArrayBuffer> | null>();
 const reply = (result: BinaryWorkerResult) => self.postMessage(result, { transfer: [] });
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
@@ -130,7 +130,7 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
         directory: type === "5",
         modified: Number.isNaN(date.getTime()) ? null : date.toISOString(),
       });
-      if (type !== "5") files.set(path, content.slice());
+      if (type !== "5") files.set(path, size > ARCHIVE_ENTRY_MAX_BYTES ? null : content.slice());
     }
     offset += 512 + Math.ceil(size / 512) * 512;
   }
@@ -141,8 +141,8 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
 async function handle(input: BinaryWorkerRequest) {
   if (input.type === "entry") {
     const bytes = files.get(input.path);
-    if (!bytes) throw new Error("This archive entry is unavailable.");
-    if (bytes.length > ARCHIVE_ENTRY_MAX_BYTES)
+    if (bytes === undefined) throw new Error("This archive entry is unavailable.");
+    if (bytes === null || bytes.length > ARCHIVE_ENTRY_MAX_BYTES)
       throw new Error("Entry previews are limited to 10 MB.");
     reply({ type: "entry", path: input.path, bytes });
     return;
