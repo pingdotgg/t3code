@@ -47,6 +47,7 @@ import * as DateTime from "effect/DateTime";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
+  AtSignIcon,
   BotIcon,
   ChevronDownIcon,
   CornerLeftUpIcon,
@@ -221,6 +222,11 @@ function relationshipHint(
   sideChat: boolean,
   resolve: MessageResolver,
 ) {
+  if (edge.kind === "mention") {
+    return edge.sourceThreadId === currentThreadId
+      ? resolve(msg("Mentioned in this thread · Open in this chat"))
+      : resolve(msg("Mentions this thread · Open in this chat"));
+  }
   if (sideChat) return resolve(msg("Open side chat"));
   if (edge.kind === "transfer") return resolve(msg("Open context transfer in this chat"));
   if (edge.kind === "subagent") {
@@ -475,6 +481,12 @@ export function ThreadRelationshipsPanel(props: {
   const providersByEnvironment = useEnvironmentProviders();
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const relationshipShells = useThreadRelationshipShells(ref);
+  const mentionLinks = useEnvironmentQuery(
+    orchestrationEnvironment.threadMentionLinks({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId },
+    }),
+  );
   const hiddenKeys = useHiddenThreadKeys();
   const hidingAnywhere = useAnyEnvironmentHiding();
   const allProjects = useProjects();
@@ -555,10 +567,14 @@ export function ThreadRelationshipsPanel(props: {
     ...relationshipShells,
     ...(archivedShells ?? []),
   ];
-  const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
+  const graph = deriveThreadRelationshipGraph({
+    threads: shells,
+    projection,
+    mentions: { threadId: props.threadId, links: mentionLinks.data?.links ?? [] },
+  });
   const isHiddenRelation = (threadId: ThreadId) =>
     hiddenKeys.has(threadKey({ environmentId: props.environmentId, threadId }));
-  // While hiding, an unloaded parent, fork or transfer may be hidden; unloaded subagent
+  // While hiding, an unloaded parent, fork, transfer or mention may be hidden; unloaded subagent
   // children (idle, left out of the shell) follow this visible thread, so they stay.
   const isHiddenUnloadedRelation = (row: { threadId: ThreadId; edge: ThreadRelationshipEdge }) =>
     hidingAnywhere &&
@@ -620,7 +636,11 @@ export function ThreadRelationshipsPanel(props: {
     sideChats = [],
   } = groupBy(visibleRelationships, ({ threadId, edge }) => {
     const isParent = isParentThreadRelationship(edge, props.threadId);
-    if (!isParent && graph.nodes.get(threadId)?.thread?.lineage.sideChat === true)
+    if (
+      !isParent &&
+      edge.kind !== "mention" &&
+      graph.nodes.get(threadId)?.thread?.lineage.sideChat === true
+    )
       return "sideChats";
     if (edge.kind !== "subagent" || isParent) return "related";
     return isFinishedAgentStatus(edge.status) ? "previous" : "active";
@@ -794,10 +814,11 @@ export function ThreadRelationshipsPanel(props: {
       ? CornerLeftUpIcon
       : isSubagent
         ? BotIcon
-        : node?.thread?.lineage.sideChat === true
-          ? MessagesSquareIcon
-          : GitForkIcon;
-
+        : edge.kind === "mention"
+          ? AtSignIcon
+          : node?.thread?.lineage.sideChat === true
+            ? MessagesSquareIcon
+            : GitForkIcon;
     const projectedAgent = isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
     const workflowGroup =
       projectedAgent === undefined ? undefined : workflowGroupsById.get(projectedAgent.id);

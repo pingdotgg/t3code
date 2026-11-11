@@ -127,6 +127,7 @@ import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
+import { listThreadMentionLinks } from "./orchestration-v2/threadMentionLinks.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
@@ -1906,6 +1907,7 @@ export const layerWsRpc = (
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           threadLinkMetadata: true,
+          threadMentionLinks: true,
           shellOlderSettled: true,
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
@@ -2125,6 +2127,20 @@ export const layerWsRpc = (
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
                   message: "Failed to load thread link metadata",
+                  cause,
+                }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadMentionLinks]: (input) =>
+          serverEnvironment.getEnvironmentId.pipe(
+            Effect.flatMap((environmentId) =>
+              listThreadMentionLinks({ threadId: input.threadId, environmentId }),
+            ),
+            Effect.provideService(SqlClient.SqlClient, sql),
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed to load thread mention links",
                   cause,
                 }),
             ),
