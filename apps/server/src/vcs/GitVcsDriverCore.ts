@@ -5002,18 +5002,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* refuseOptionLikeRefName("GitVcsDriver.switchRef", input.cwd, checkoutArgs.at(-1));
 
       // Created before the checkout so the shared-config lock is not held while files are written.
-      if (newTrackingBranch) {
-        yield* executeGit(
-          "GitVcsDriver.switchRef.createTrackingBranch",
-          input.cwd,
-          ["branch", "--track", "--", newTrackingBranch, input.refName],
-          {
-            timeoutMs: 10_000,
-            fallbackErrorDetail: "git branch create failed",
-            writesSharedConfig: true,
-          },
-        );
-      }
+      const createdTrackingBranch = newTrackingBranch
+        ? yield* executeGit(
+            "GitVcsDriver.switchRef.createTrackingBranch",
+            input.cwd,
+            ["branch", "--track", "--", newTrackingBranch, input.refName],
+            {
+              timeoutMs: 10_000,
+              fallbackErrorDetail: "git branch create failed",
+              writesSharedConfig: true,
+            },
+          ).pipe(
+            Effect.andThen(
+              runGitStdout("GitVcsDriver.switchRef.createdTrackingBranchCommit", input.cwd, [
+                "rev-parse",
+                "--verify",
+                `refs/heads/${newTrackingBranch}`,
+              ]),
+            ),
+            Effect.map((stdout) => ({ name: newTrackingBranch, commit: stdout.trim() })),
+          )
+        : null;
 
       // A stale ref must not turn into a path checkout that discards local edits.
       yield* executeGitWithStableDiagnostics(
@@ -5029,13 +5038,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         },
       ).pipe(
         Effect.tapError(() =>
-          newTrackingBranch
-            ? executeGit(
+          createdTrackingBranch
+            ? // Deletes only if nobody moved the branch since; its upstream goes only with it.
+              executeGit(
                 "GitVcsDriver.switchRef.removeTrackingBranch",
                 input.cwd,
-                ["branch", "-D", "--", newTrackingBranch],
-                { timeoutMs: 10_000, writesSharedConfig: true },
-              ).pipe(Effect.ignore)
+                [
+                  "update-ref",
+                  "-d",
+                  `refs/heads/${createdTrackingBranch.name}`,
+                  createdTrackingBranch.commit,
+                ],
+                { timeoutMs: 10_000 },
+              ).pipe(
+                Effect.andThen(
+                  executeGit(
+                    "GitVcsDriver.switchRef.removeTrackingBranchConfig",
+                    input.cwd,
+                    ["config", "--remove-section", `branch.${createdTrackingBranch.name}`],
+                    { timeoutMs: 10_000, writesSharedConfig: true },
+                  ),
+                ),
+                Effect.ignore,
+              )
             : Effect.void,
         ),
       );
