@@ -1793,14 +1793,12 @@ it.effect("promoting a subagent thread lists it on its own without changing its 
     assert.deepInclude(yield* projections.getThreadShell(childId), { lineage, promotedAt: null });
     assert.include(yield* projections.listActiveSubagentThreadIds(), childId);
 
-    const rejected = yield* orchestrator
-      .dispatch({
-        type: "thread.promote",
-        commandId: CommandId.make("promote-parent"),
-        threadId: parentId,
-      })
-      .pipe(Effect.flip);
-    assert.include(String(rejected.cause), "not a subagent");
+    for (const type of ["thread.promote", "thread.demote"] as const) {
+      const rejected = yield* orchestrator
+        .dispatch({ type, commandId: CommandId.make(`${type}-parent`), threadId: parentId })
+        .pipe(Effect.flip);
+      assert.include(String(rejected.cause), "not a subagent");
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 

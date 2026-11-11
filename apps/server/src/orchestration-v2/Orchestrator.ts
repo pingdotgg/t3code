@@ -3794,7 +3794,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is archived.`,
       });
     }
-    if (command.type === "thread.promote" && isListedThreadLineage(thread.lineage)) {
+    if (
+      (command.type === "thread.promote" || command.type === "thread.demote") &&
+      isListedThreadLineage(thread.lineage)
+    ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
