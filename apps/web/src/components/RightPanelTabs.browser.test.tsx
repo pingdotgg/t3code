@@ -62,6 +62,8 @@ const surfaces: RightPanelSurface[] = Array.from({ length: 16 }, (_, index) => (
 describe("RightPanelTabs", () => {
   it("a flick that scrolls the tab strip to its left edge keeps the thread, a swipe from the edge goes back", async () => {
     navigateHistory.mockReset();
+    // HistorySwipeNavigation only listens on macOS; CI runs Linux Chromium.
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     const { bridge, scroll } = trackpad();
     using _bridge = stubGlobal("desktopBridge", bridge);
     const panel = document.createElement("div");
