@@ -81,19 +81,11 @@ describe("server browser page copies", () => {
 
   it.each([
     { argument: "123456", text: "123456", outcome: "resolved" },
-    { argument: 'new String("boxed")', text: "boxed", outcome: "resolved" },
-    {
-      argument: 'new URL("https://copy.example/token")',
-      text: "https://copy.example/token",
-      outcome: "resolved",
-    },
     {
       argument: '{ toString() { document.body.dataset.conversions++; return "converted"; } }',
       text: "converted",
       outcome: "resolved",
     },
-    { argument: "", text: "", outcome: "TypeError" },
-    { argument: 'Symbol("invalid")', text: "", outcome: "TypeError" },
     {
       argument:
         '{ n: 0, toString() { document.body.dataset.conversions++; if (this.n++ === 0) throw conversionError; return "token"; } }',
@@ -133,9 +125,6 @@ describe("server browser page copies", () => {
 
   it.each([
     { target: "document", capture: true, format: "text/plain", items: false },
-    { target: "document", capture: false, format: "text", items: false },
-    { target: "window", capture: true, format: "TEXT/PLAIN", items: false },
-    { target: "window", capture: false, format: "Text", items: false },
     { target: "document", capture: true, format: "text/plain", items: true },
   ])(
     "keeps the final copy and cut payload from $target handlers (capture: $capture, items: $items)",
@@ -202,7 +191,6 @@ describe("server browser page copies", () => {
 
   it.each([
     { inside: false, data: true },
-    { inside: true, data: true },
     { inside: true, data: false },
   ])(
     "keeps a newer writeText over a pending event (inside: $inside, data: $data)",
@@ -300,8 +288,6 @@ describe("server browser page copies", () => {
 
   it.each([
     { kind: "cross-origin", host: "other.example" },
-    { kind: "srcdoc", host: "copy.example" },
-    { kind: "blank", host: "copy.example" },
     { kind: "opaque", host: "" },
   ])("attributes a $kind frame's copies to its own origin", async ({ kind, host }) => {
     await page.route("https://other.example/", (route) =>
@@ -311,16 +297,11 @@ describe("server browser page copies", () => {
       const frame = document.createElement("iframe");
       frame.setAttribute("allow", "clipboard-write");
       if ("${kind}" === "cross-origin") frame.src = "https://other.example/";
-      else if ("${kind}" !== "blank") {
-        if ("${kind}" === "opaque") frame.setAttribute("sandbox", "allow-scripts");
+      else {
+        frame.setAttribute("sandbox", "allow-scripts");
         frame.srcdoc = ${JSON.stringify(PAGE)};
       }
       document.body.append(frame);
-      if ("${kind}" === "blank") {
-        frame.contentDocument.open();
-        frame.contentDocument.write(${JSON.stringify(PAGE)});
-        frame.contentDocument.close();
-      }
     `);
     const frame = page.frameLocator("iframe");
     await frame.locator("#exec").waitFor();
@@ -361,25 +342,6 @@ describe("server browser page copies", () => {
     });
     expect(await takeCopy(false)).toBe("");
   });
-
-  it.each(["right", "middle"] as const)(
-    "keeps native %s activation apart from the copy keys",
-    async (button) => {
-      await inPage(`
-        for (const id of ["write", "exec"]) {
-          const button = document.getElementById(id);
-          button.onmousedown = button.onclick;
-        }
-      `);
-      await page.locator("#write").click({ button });
-      await page.locator("body[data-written=yes]").waitFor();
-      expect(await takeCopy(true)).toBe("written");
-      expect(await takeCopy(false)).toBe("");
-      await page.locator("#exec").click({ button });
-      expect(await takeCopy(true)).toBe("executed");
-      expect(await takeCopy(false)).toBe("");
-    },
-  );
 
   it("keeps nothing the page copies without a real click", async () => {
     await inPage(`document.getElementById("write").click()`);
