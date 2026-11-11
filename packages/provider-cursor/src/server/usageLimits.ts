@@ -57,8 +57,13 @@ export function cursorUsageResponseToLimits(
       });
     }
   }
-  return windows.length > 0
-    ? makeUsageLimits({ checkedAt, windows })
+  const total = windows.find((window) => window.id === "totalPercentUsed");
+  const pools = windows.filter((window) => window !== total);
+  // Unified plans report their one allowance as both the total and a pool.
+  const visibleWindows =
+    total && pools.length === 1 && pools[0]?.usedPercent === total.usedPercent ? [total] : windows;
+  return visibleWindows.length > 0
+    ? makeUsageLimits({ checkedAt, windows: visibleWindows })
     : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
 }
 
