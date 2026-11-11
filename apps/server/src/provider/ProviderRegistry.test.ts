@@ -793,6 +793,38 @@ it.layer(
       );
     });
 
+    it("does not report no Muse models while it keeps listing retained ones", () => {
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("muse"),
+        driver: ProviderDriverKind.make("muse"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "unknown" },
+        checkedAt: "2026-11-10T00:00:00.000Z",
+        version: "1.4.14",
+        models: [{ slug: "muse-spark-1.3", name: "Muse Spark 1.3", isCustom: false }],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      // Shape checkMuseProviderStatus returns when the MSP host's model/list is empty.
+      const emptyCatalogProvider = {
+        ...previousProvider,
+        status: "warning",
+        version: "1.4.15",
+        checkedAt: "2026-11-11T00:00:00.000Z",
+        message:
+          "Muse Code returned no models. Run `muse login` on this T3 server host and refresh its status.",
+        models: [],
+      } satisfies ServerProvider;
+
+      const merged = ProviderRegistry.mergeProviderSnapshot(previousProvider, emptyCatalogProvider);
+
+      assert.deepStrictEqual(merged.models, [...previousProvider.models]);
+      assert.notStrictEqual(merged.status, "warning");
+      assert.strictEqual(merged.message, undefined);
+    });
+
     it("does not bring back models the installed CLI is too old to run", () => {
       const pendingProvider = {
         instanceId: ProviderInstanceId.make("claudeAgent"),
