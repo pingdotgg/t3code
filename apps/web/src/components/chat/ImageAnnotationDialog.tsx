@@ -72,15 +72,33 @@ export function ImageAnnotationDialog({
   readonly onClose: () => void;
   readonly onSave: (result: ImageAnnotationResult) => void;
 }) {
+  const [session, setSession] = useState(() => ({
+    image,
+    controller: new AbortController(),
+    id: 0,
+  }));
+  if (session.image !== image) {
+    setSession({ image, controller: new AbortController(), id: session.id + 1 });
+  }
   return (
     <Dialog
       open={image !== null}
       onOpenChange={(open) => {
-        if (!open) onClose();
+        if (!open) {
+          session.controller.abort();
+          onClose();
+        }
       }}
     >
       <DialogPopup className="sm:max-w-[min(96vw,1400px)]" {...composerFloatingLayerProps}>
-        {image ? <AnnotationEditor key={image.id} image={image} onSave={onSave} /> : null}
+        {image ? (
+          <AnnotationEditor
+            key={session.id}
+            image={image}
+            signal={session.controller.signal}
+            onSave={onSave}
+          />
+        ) : null}
       </DialogPopup>
     </Dialog>
   );
@@ -143,9 +161,11 @@ interface TextDraft {
 
 function AnnotationEditor({
   image,
+  signal,
   onSave,
 }: {
   readonly image: ComposerImageAttachment;
+  readonly signal: AbortSignal;
   readonly onSave: (result: ImageAnnotationResult) => void;
 }) {
   const [source, setSource] = useState<HTMLImageElement | null>(null);
@@ -294,7 +314,7 @@ function AnnotationEditor({
   };
 
   const save = async () => {
-    if (!source || saving) return;
+    if (!source || saving || signal.aborted) return;
     const pendingText = commitTextDraft();
     setSaving(true);
     setSaveError(null);
@@ -303,7 +323,7 @@ function AnnotationEditor({
       image.name,
       pendingText ? [...ops, pendingText] : ops,
     );
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || signal.aborted) return;
     setSaving(false);
     if (typeof result === "string") setSaveError(result);
     else onSave(result);
