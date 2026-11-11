@@ -5,10 +5,10 @@ import {
   FolderTreeIcon,
   PilcrowIcon,
   TextWrapIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
 } from "lucide-react";
-import { ChevronsDownUp, ChevronsUpDown } from "lucide";
 
-import { MorphIcon } from "~/components/MorphIcon";
 import { updateClientSettings } from "~/hooks/useSettings";
 import { Button } from "../ui/button";
 import {
@@ -125,10 +125,11 @@ export function DiffViewControls({
                 />
               }
             >
-              <MorphIcon
-                className="size-3.5"
-                icon={allFilesCollapsed ? ChevronsUpDown : ChevronsDownUp}
-              />
+              {allFilesCollapsed ? (
+                <ChevronsUpDownIcon className="size-3.5" />
+              ) : (
+                <ChevronsDownUpIcon className="size-3.5" />
+              )}
             </TooltipTrigger>
             <TooltipPopup side="top">
               {allFilesCollapsed ? "Expand all files" : "Collapse all files"}
