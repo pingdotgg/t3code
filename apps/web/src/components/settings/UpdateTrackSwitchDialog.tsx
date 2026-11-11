@@ -107,7 +107,7 @@ function SwitchPlan({
       );
       return;
     }
-    try {
+    const switchTrack = async () => {
       // Stay open while the feed is checked; the run's own progress takes over after.
       setChecking(true);
       const fail = (description: string) =>
@@ -162,9 +162,8 @@ function SwitchPlan({
         const error = squashAtomCommandFailure(result);
         fail(error instanceof Error ? error.message : "An unexpected error occurred.");
       }
-    } finally {
-      await bridge.updateCommand.finish(reservation);
-    }
+    };
+    await switchTrack().finally(() => bridge.updateCommand.finish(reservation));
   };
 
   return (
