@@ -161,10 +161,10 @@ const layerBase: Layer.Layer<
         receipts.getByCommandId({ commandId }).pipe(
           Effect.flatMap(
             Option.match({
-              onNone: () => Effect.succeed(Option.none()),
+              onNone: () => Effect.succeedNone,
               onSome: (receipt) =>
                 receipt.aggregateKind !== "thread"
-                  ? Effect.succeed(Option.none())
+                  ? Effect.succeedNone
                   : fromApplicationReceipt(receipt).pipe(Effect.asSome),
             }),
           ),
@@ -180,7 +180,7 @@ const layerBase: Layer.Layer<
         receipts.getByCommandId({ commandId }).pipe(
           Effect.flatMap((receipt) =>
             Option.isNone(receipt) || receipt.value.aggregateKind !== "project"
-              ? Effect.succeed(Option.none())
+              ? Effect.succeedNone
               : decodeProjectReceipt({
                   commandId: receipt.value.commandId,
                   projectId: receipt.value.aggregateId,

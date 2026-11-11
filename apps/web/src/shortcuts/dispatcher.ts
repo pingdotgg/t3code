@@ -22,12 +22,12 @@ export interface CommandScopeOptions {
   /** For shortcuts that are not keybinding commands (Escape, "/"); runs before command lookup. */
   readonly onKeyDown?: CommandHandler;
   /**
-   * App-global only: run in the capture phase, ahead of focused widgets that consume the key
+   * Run in the capture phase, ahead of focused widgets that consume the key
    * themselves (the terminal encodes Ctrl+Shift+T and stops propagation).
    */
   readonly capture?: boolean;
   /**
-   * App-global only: hear every bubbling keydown after the scopes ran, with whether one of them
+   * Hear every bubbling keydown after the scopes ran, with whether one of them
    * (or the page) consumed it. Observers never consume. For listeners that react to keys other
    * scopes may also handle, such as scroll keys.
    */
@@ -39,8 +39,7 @@ interface CommandScope {
   readonly options: CommandScopeOptions;
 }
 
-// Element scopes sit above app-global scopes; within each list the newest wins.
-const elementScopes: CommandScope[] = [];
+// Within each list the newest scope wins.
 const globalScopes: CommandScope[] = [];
 const captureScopes: CommandScope[] = [];
 const observerScopes: CommandScope[] = [];
@@ -54,6 +53,10 @@ function readFocusContext(event: KeyboardEvent): Partial<ShortcutMatchContext> {
   };
 }
 
+function isInsideConfirmation(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[role="alertdialog"]') !== null;
+}
+
 function runScope(scope: CommandScope, event: KeyboardEvent): boolean {
   const { commands, options } = scope;
   if (options.when && !options.when(event)) return false;
@@ -64,7 +67,12 @@ function runScope(scope: CommandScope, event: KeyboardEvent): boolean {
     { context: { ...readFocusContext(event), ...options.context?.() } },
   );
   const handler = command === null ? undefined : commands[command];
-  return handler !== undefined && handler(event) !== false;
+  if (handler === undefined) return false;
+  if (isInsideConfirmation(event.target)) {
+    event.preventDefault();
+    return true;
+  }
+  return handler(event) !== false;
 }
 
 function runScopes(scopes: readonly CommandScope[], event: KeyboardEvent): boolean {
@@ -81,8 +89,7 @@ function dispatchCaptureKeyDown(event: KeyboardEvent): void {
 }
 
 function dispatchKeyDown(event: KeyboardEvent): void {
-  const consumed =
-    runScopes(elementScopes, event) || runScopes(globalScopes, event) || event.defaultPrevented;
+  const consumed = runScopes(globalScopes, event) || event.defaultPrevented;
   for (const scope of observerScopes.slice()) scope.options.observe?.(event, consumed);
 }
 
@@ -110,18 +117,6 @@ export function registerCommands(
 ): () => void {
   const scopes = options.observe ? observerScopes : options.capture ? captureScopes : globalScopes;
   return pushScope(scopes, { commands, options });
-}
-
-/**
- * Ref callback that keeps a command scope registered while its element is
- * mounted. Handlers should read changing values from stores at event time so
- * the callback stays stable across renders.
- */
-export function commandScopeRef(
-  commands: CommandHandlers,
-  options: CommandScopeOptions = {},
-): (node: Element | null) => (() => void) | undefined {
-  return (node) => (node === null ? undefined : pushScope(elementScopes, { commands, options }));
 }
 
 type MenuActionHandler = () => void;
