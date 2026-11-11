@@ -366,7 +366,7 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
 
 const EnvironmentSpawnTool = Tool.make("t3_environment_spawn", {
   description:
-    "Provision and pair a fleet worker. Ephemeral workers self-retire; persistent ones are named lanes. Same `clientRequestId` converges retries.",
+    "Provision and pair a fleet worker. Ephemeral workers self-retire on the TTL sweep; persistent ones are named lanes. Same `clientRequestId` converges retries and re-pairs a worker whose delegation session expired.",
   parameters: OrchestratorMcpEnvironmentSpawnInput,
   success: OrchestratorMcpEnvironmentSpawnResult,
   failure: OrchestratorMcpFailure,
@@ -381,7 +381,7 @@ const EnvironmentSpawnTool = Tool.make("t3_environment_spawn", {
 
 const EnvironmentRemoveTool = Tool.make("t3_environment_remove", {
   description:
-    "Drain a fleet worker to this instance, then delete its sandbox. Refused while the drain is incomplete; the sandbox is kept.",
+    "Drain a fleet worker to this instance (thread histories plus a git bundle of every checkout ref, committed and uncommitted), then delete its sandbox. Refused while the drain is incomplete; the sandbox is kept. `force` skips the checkout bundles after an explicit user ack: thread histories still export, but the checkouts are lost with the sandbox.",
   parameters: OrchestratorMcpEnvironmentRemoveInput,
   success: OrchestratorMcpEnvironmentRemoveResult,
   failure: OrchestratorMcpFailure,

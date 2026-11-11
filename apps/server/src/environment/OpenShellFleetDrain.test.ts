@@ -15,7 +15,8 @@ const deps = (input: {
   readonly projects?: ReadonlyArray<string>;
   readonly now?: number;
   readonly failThread?: string;
-  readonly pushExitCode?: number;
+  readonly failShell?: boolean;
+  readonly bundleExitCode?: number;
   readonly liveThread?: string;
   readonly sequences?: Readonly<Record<string, number>>;
   readonly attachmentFiles?: Readonly<Record<string, ReadonlyArray<string>>>;
@@ -31,7 +32,7 @@ const deps = (input: {
   readonly written: Array<{ drainId: string; threadId: string; body: string }>;
   readonly fetched: Array<string>;
   readonly fetchedAttachments: Array<string>;
-  readonly pushed: Array<string>;
+  readonly exported: Array<string>;
 } => {
   const manifest = [{ name: "a.bin", hash: "h0", size: 3 }];
   const envelope = (entry: {
@@ -51,22 +52,26 @@ const deps = (input: {
   const written: Array<{ drainId: string; threadId: string; body: string }> = [];
   const fetched: Array<string> = [];
   const fetchedAttachments: Array<string> = [];
-  const pushed: Array<string> = [];
+  const exported: Array<string> = [];
   return {
     written,
     fetched,
     fetchedAttachments,
-    pushed,
+    exported,
     now: Effect.succeed(input.now ?? 0),
     source: {
       shell: () =>
-        Effect.succeed({
-          threads: input.threads.map((threadId) => ({
-            threadId,
-            live: input.liveThread === threadId,
-          })),
-          projects: (input.projects ?? []).map((workspaceRoot) => ({ workspaceRoot })),
-        }),
+        input.failShell === true
+          ? Effect.fail(
+              new FleetDrainStepError({ step: "shell", message: "the worker link is unusable" }),
+            )
+          : Effect.succeed({
+              threads: input.threads.map((threadId) => ({
+                threadId,
+                live: input.liveThread === threadId,
+              })),
+              projects: (input.projects ?? []).map((workspaceRoot) => ({ workspaceRoot })),
+            }),
       threadSequence: ({ threadId }) =>
         Effect.succeed({ snapshotSequence: input.sequences?.[threadId] ?? 1 }),
       threadHistory: ({ threadId }) => {
@@ -144,10 +149,14 @@ const deps = (input: {
         ),
     },
     git: {
-      push: ({ workspaceRoot }) =>
+      bundle: ({ workspaceRoot }) =>
         Effect.sync(() => {
-          pushed.push(workspaceRoot);
-          return { exitCode: input.pushExitCode ?? 0, stderr: "" };
+          exported.push(workspaceRoot);
+          return {
+            exitCode: input.bundleExitCode ?? 0,
+            stdout: `QlVORExFOiR7d29ya3NwYWNlUm9vdH0=`,
+            stderr: "",
+          };
         }),
     },
   };
@@ -166,7 +175,7 @@ const drain = (
   });
 
 describe("fleet drain", () => {
-  it.effect("acks threads and checkout pushes only when each one landed", () =>
+  it.effect("acks threads and checkout bundles only when each one landed", () =>
     Effect.gen(function* () {
       const dependencies = deps({ threads: ["thread:a", "thread:b"], projects: ["/work/a"] });
       const outcome = yield* drain(dependencies);
@@ -174,7 +183,7 @@ describe("fleet drain", () => {
       expect(outcome.state).toBe("acked");
       expect(outcome.threads).toEqual({ total: 2, acked: 2, failed: 0 });
       expect(outcome.worktrees).toEqual({ total: 1, acked: 1, failed: 0 });
-      expect(dependencies.pushed).toEqual(["/work/a"]);
+      expect(dependencies.exported).toEqual(["/work/a"]);
     }),
   );
 
@@ -322,12 +331,30 @@ describe("fleet drain", () => {
     }),
   );
 
-  it.effect("keeps the sandbox when a checkout was not pushed", () =>
+  it.effect("returns failed with no acks when the worker's shell cannot be read", () =>
     Effect.gen(function* () {
       const dependencies = deps({
         threads: ["thread:a"],
         projects: ["/work/a"],
-        pushExitCode: 1,
+        failShell: true,
+      });
+      const outcome = yield* drain(dependencies);
+
+      expect(outcome.state).toBe("failed");
+      expect(outcome.finishedAt).toBeNull();
+      expect(outcome.threads).toEqual({ total: 0, acked: 0, failed: 0 });
+      expect(outcome.worktrees).toEqual({ total: 0, acked: 0, failed: 0 });
+      expect(dependencies.written).toHaveLength(0);
+      expect(dependencies.exported).toHaveLength(0);
+    }),
+  );
+
+  it.effect("keeps the sandbox when a checkout bundle was not created", () =>
+    Effect.gen(function* () {
+      const dependencies = deps({
+        threads: ["thread:a"],
+        projects: ["/work/a"],
+        bundleExitCode: 1,
       });
       const outcome = yield* drain(dependencies);
 
@@ -354,7 +381,7 @@ describe("fleet drain", () => {
 
       expect(outcome.state).toBe("acked");
       expect(outcome.threads.acked).toBe(1);
-      expect(dependencies.pushed).toHaveLength(0);
+      expect(dependencies.exported).toHaveLength(0);
     }),
   );
 

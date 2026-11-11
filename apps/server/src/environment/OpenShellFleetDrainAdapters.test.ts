@@ -246,6 +246,57 @@ describe("fileDrainSink attachments", () => {
   );
 });
 
+describe("execDrainGitBundle", () => {
+  const execStub = (stdout: string, commands?: Array<ReadonlyArray<string>>) => ({
+    exec: (_sandboxName: string, command: ReadonlyArray<string>) =>
+      Effect.sync(() => {
+        commands?.push(command);
+        return { exitCode: 0, stdout, stderr: "" };
+      }),
+  });
+
+  it.effect("bundles every ref without contacting a remote", () =>
+    Effect.gen(function* () {
+      const commands: Array<ReadonlyArray<string>> = [];
+      const adapter = OpenShellFleetDrainAdapters.execDrainGitBundle({
+        ...execStub("Qg==", commands),
+      });
+      const result = yield* adapter.bundle({
+        environmentId: EnvironmentId.make("environment:worker"),
+        sandboxName: "sandbox-1",
+        workspaceRoot: "/work/a",
+      });
+      expect(result.exitCode).toBe(0);
+      const line = commands[0]?.join(" ") ?? "";
+      // No push: a worker's origin is a read-only mirror, and a branch that
+      // fell behind would reject a push as non-fast-forward anyway. --all
+      // carries the refs/t3 checkpoints holding uncommitted work too.
+      expect(line).toContain("bundle create");
+      expect(line).toContain("--all");
+      expect(line).not.toContain("push");
+      expect(line).toContain("'/work/a'");
+    }),
+  );
+
+  it.effect("refuses a bundle beyond the size cap", () =>
+    Effect.gen(function* () {
+      const adapter = OpenShellFleetDrainAdapters.execDrainGitBundle({
+        ...execStub("Qg==".repeat(12)),
+        maxBytes: 8,
+      });
+      const outcome = yield* adapter
+        .bundle({
+          environmentId: EnvironmentId.make("environment:worker"),
+          sandboxName: "sandbox-1",
+          workspaceRoot: "/work/a",
+        })
+        .pipe(Effect.flip);
+      expect(outcome.step).toBe("bundle");
+      expect(outcome.message).toContain("size cap");
+    }),
+  );
+});
+
 describe("execDrainAttachments", () => {
   const frame = (name: string, bytes: string) => `==T3ATT ${name}\n${bytes}\n`;
 
@@ -364,7 +415,7 @@ describe("linkDrainSource", () => {
             }),
           read: ({ threadId }) => Effect.succeed(files.get(threadId) ?? null),
         },
-        git: { push: () => Effect.succeed({ exitCode: 0, stderr: "" }) },
+        git: { bundle: () => Effect.succeed({ exitCode: 0, stdout: "", stderr: "" }) },
         now: Effect.succeed(0),
       });
       const outcome = yield* executor.drain({

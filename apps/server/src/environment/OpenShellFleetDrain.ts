@@ -14,7 +14,7 @@ export class FleetDrainStepError extends Schema.TaggedError<
   FleetDrainStepError,
   { readonly brand: unique symbol }
 >()("FleetDrainStepError", {
-  step: Schema.Literals(["shell", "thread", "history", "write", "read", "push", "attachments"]),
+  step: Schema.Literals(["shell", "thread", "history", "write", "read", "bundle", "attachments"]),
   message: Schema.String,
 }) {}
 
@@ -73,13 +73,16 @@ export interface DrainSink {
   }) => Effect.Effect<DrainSinkRecord | null, FleetDrainStepError>;
 }
 
-/** Pushes one checkout and its checkpoint refs to the remote it already has. */
-export interface DrainGitPush {
-  readonly push: (input: {
+/** Exports one checkout and its checkpoint refs as a base64 git bundle on exec stdout. */
+export interface DrainGitBundle {
+  readonly bundle: (input: {
     readonly environmentId: EnvironmentId;
     readonly sandboxName: string;
     readonly workspaceRoot: string;
-  }) => Effect.Effect<{ readonly exitCode: number; readonly stderr: string }, FleetDrainStepError>;
+  }) => Effect.Effect<
+    { readonly exitCode: number; readonly stdout: string; readonly stderr: string },
+    FleetDrainStepError
+  >;
 }
 
 /** The worker's own view of what it holds, read over its authenticated link. */
@@ -114,7 +117,7 @@ export interface DrainSource {
 export interface DrainDependencies {
   readonly source: DrainSource;
   readonly sink: DrainSink;
-  readonly git: DrainGitPush;
+  readonly git: DrainGitBundle;
   readonly now: Effect.Effect<number>;
 }
 
@@ -152,13 +155,11 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
     const threads = zero();
     const worktrees = zero();
     const warnings: string[] = [];
-    let failure: string | undefined;
     let deadlineHit = false;
     let shellFailed = false;
     const shell = yield* deps.source.shell(input.environmentId).pipe(
-      Effect.catch((cause) =>
+      Effect.catch(() =>
         Effect.sync(() => {
-          failure = cause.message;
           shellFailed = true;
           return { threads: [], projects: [] } as {
             threads: ReadonlyArray<{ threadId: string; live: boolean }>;
@@ -189,7 +190,6 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
     }
     for (const thread of shell.threads) {
       if ((yield* deps.now) >= input.deadlineAt) {
-        failure = "The drain deadline passed before every thread was copied.";
         deadlineHit = true;
         break;
       }
@@ -262,14 +262,7 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
         const sent = attachments.files.map((file) => file.name).sort();
         const stored = (back.attachments ?? []).map((entry) => entry.name).sort();
         return sent.length === stored.length && sent.every((name, index) => name === stored[index]);
-      }).pipe(
-        Effect.catch((cause) =>
-          Effect.sync(() => {
-            failure = cause.message;
-            return false;
-          }),
-        ),
-      );
+      }).pipe(Effect.orElseSucceed(() => false));
       if (copied) threads.acked += 1;
       else threads.failed += 1;
     }
@@ -277,30 +270,40 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
     if (!input.snapshotOnly) {
       for (const project of shell.projects) {
         if ((yield* deps.now) >= input.deadlineAt) {
-          failure = "The drain deadline passed before every checkout was pushed.";
           deadlineHit = true;
           break;
         }
         worktrees.total += 1;
-        const pushed = yield* deps.git
-          .push({
+        // One bundle per checkout, keyed by its root, lands beside the thread
+        // copies and is verified the same way: an ack means the bytes are here.
+        const worktreeId = `worktree:${project.workspaceRoot}`;
+        const copied = yield* Effect.gen(function* () {
+          const exported = yield* deps.git.bundle({
             environmentId: input.environmentId,
             sandboxName: input.sandboxName,
             workspaceRoot: project.workspaceRoot,
-          })
-          .pipe(
-            Effect.catch((cause) =>
-              Effect.sync(() => {
-                failure = cause.message;
-                return { exitCode: 1, stderr: failure ?? "" };
-              }),
-            ),
-          );
-        if (pushed.exitCode === 0) worktrees.acked += 1;
-        else {
-          worktrees.failed += 1;
-          if (failure === undefined) failure = pushed.stderr.trim() || "A checkout was not pushed.";
-        }
+          });
+          if (exported.exitCode !== 0)
+            return yield* new FleetDrainStepError({
+              step: "bundle",
+              message: exported.stderr.trim() || "The checkout bundle was not created.",
+            });
+          const written = yield* deps.sink.write({
+            environmentId: input.environmentId,
+            drainId: input.drainId,
+            threadId: worktreeId,
+            body: exported.stdout,
+            snapshotSequence: null,
+          });
+          const back = yield* deps.sink.read({
+            environmentId: input.environmentId,
+            drainId: input.drainId,
+            threadId: worktreeId,
+          });
+          return back !== null && back.body === exported.stdout && written.bytes > 0;
+        }).pipe(Effect.orElseSucceed(() => false));
+        if (copied) worktrees.acked += 1;
+        else worktrees.failed += 1;
       }
     }
     // A deadline that cut the run short is never an ack, even with no failures.

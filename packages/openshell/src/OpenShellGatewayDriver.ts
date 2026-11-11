@@ -847,7 +847,19 @@ export class OpenShellGatewayDriver implements GatewayDriver {
       // managing id (or before a rename) is missing from it while still running,
       // and finalizing its row would hide a live worker from status and removal.
       if (row.sandboxName !== null) {
-        const sandbox = await this.client.get(row.sandboxName).catch(() => null);
+        let sandbox: Awaited<ReturnType<OpenShellGatewayClient["get"]>>;
+        try {
+          sandbox = await this.client.get(row.sandboxName);
+        } catch (cause) {
+          // A lookup error is not absence: the client already separates confirmed
+          // 404s (null) from transport failures, and finalizing here would hide a
+          // live worker that a later successful lookup still finds.
+          leftInPlace.push({
+            name: row.sandboxName,
+            reason: `the sandbox lookup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          });
+          continue;
+        }
         if (sandbox !== null) {
           leftInPlace.push({
             name: row.sandboxName,
