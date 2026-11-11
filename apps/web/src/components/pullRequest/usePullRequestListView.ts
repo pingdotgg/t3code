@@ -24,7 +24,6 @@ import {
   pullRequestEnvironmentSetKey,
   pullRequestHostActions,
   resolveProjectScope,
-  resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
   type MergedPullRequestList,
@@ -38,7 +37,11 @@ import {
   pullRequestProjectQueries,
   type PullRequestHostAvailability,
 } from "./pullRequestProjectAssignment.logic";
-import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
+import { useSidebarProjectGroups } from "~/hooks/useSidebarProjectGroups";
+import {
+  pullRequestFilterProjects,
+  pullRequestProjectFilterQueries,
+} from "@t3tools/client-runtime/pull-request-project-filter";
 import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
 import { SORT_OPTIONS } from "./pullRequestListOptions";
 
@@ -93,8 +96,20 @@ export function usePullRequestScope(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
   );
   const scopedProjectId = resolveProjectScope(search.projectId, projects, projectsKnown);
-  const scopedProject = findScopedProject(projects, scopedEnvironmentId, scopedProjectId);
-  const scopedProjects = pullRequestFilterProjects(projects, environmentLabels, scopedProject);
+  const scopedProject = findScopedProject(
+    projects,
+    search.projectEnvironmentId ?? scopedEnvironmentId,
+    scopedProjectId,
+  );
+  const sidebarProjectGroups = useSidebarProjectGroups();
+  const scopedProjects = pullRequestFilterProjects(
+    projects,
+    sidebarProjectGroups.map((group) => ({
+      label: group.displayName,
+      memberProjectRefs: group.memberProjectRefs,
+    })),
+    scopedProject,
+  );
 
   const selectedHost = search.selectedHost ?? search.host;
   // A named server still connecting is kept named rather than falling back: falling back while it
@@ -120,18 +135,22 @@ export function usePullRequestScope(
     linkedProjectId === undefined && search.repository !== undefined
       ? projectForRepository
       : findScopedProject(projects, selectedEnvironmentId, linkedProjectId ?? scopedProjectId);
-  const queryEnvironmentIds = resolveQueryEnvironmentIds(
+  const selectedQueries = pullRequestProjectFilterQueries(
+    scopedProjects,
     environmentIds,
-    projects,
-    scopedProject,
-    scopedProjectId,
-    projectsKnown,
+    scopedProjectId === undefined
+      ? undefined
+      : {
+          id: scopedProjectId,
+          environmentId: scopedProject?.environmentId ?? search.projectEnvironmentId,
+        },
   );
   const unreachable = new Set(
     environments.flatMap((environment) =>
       UNREACHABLE_PHASES.has(environment.connection.phase) ? [environment.environmentId] : [],
     ),
   );
+  const queryEnvironmentIds = selectedQueries.map((query) => query.environmentId);
   const queriesFor = (
     availability?: PullRequestHostAvailability,
   ): ReadonlyArray<{
@@ -139,7 +158,8 @@ export function usePullRequestScope(
     readonly projectIds?: ReadonlyArray<ProjectId>;
   }> => {
     const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
-    if (!projectsKnown || scopedProjectId !== undefined) return plain;
+    if (!projectsKnown) return plain;
+    if (scopedProjectId !== undefined) return selectedQueries;
     return pullRequestProjectQueries(projects, queryEnvironmentIds, availability, unreachable);
   };
   const environmentQueries = queriesFor(hostAvailability);
@@ -379,6 +399,9 @@ export function validatePullRequestsSearch(raw: Record<string, unknown>): PullRe
       : {}),
     ...(typeof raw.environmentId === "string" && raw.environmentId
       ? { environmentId: raw.environmentId as EnvironmentId }
+      : {}),
+    ...(typeof raw.projectEnvironmentId === "string" && raw.projectEnvironmentId
+      ? { projectEnvironmentId: raw.projectEnvironmentId as EnvironmentId }
       : {}),
     ...(typeof raw.host === "string" && raw.host ? { host: raw.host.slice(0, 200) } : {}),
     ...(typeof raw.selectedProjectId === "string" && raw.selectedProjectId
