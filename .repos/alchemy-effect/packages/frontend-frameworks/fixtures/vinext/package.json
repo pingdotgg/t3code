@@ -1,0 +1,20 @@
+{
+  "name": "@fixtures/vinext",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-server-dom-webpack": "catalog:",
+    "vinext": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-rsc": "catalog:",
+    "vite": "catalog:"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
