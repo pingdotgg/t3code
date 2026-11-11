@@ -1,14 +1,13 @@
-import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
-import * as cloudrun from "@distilled.cloud/gcp/run_v2";
 import { describe, expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
+import * as cloudrun from "@distilled.cloud/gcp/run_v2";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
-import { spawnSync } from "node:child_process";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -20,19 +19,10 @@ const { getWhenReady } = Test;
 
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
-
-// Both services are built from `main`, which needs a local image build.
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 }).status ===
-  0;
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 // Deploy, tests and destroy all sit behind the same Docker guard.
-describe.skipIf(!dockerAvailable)("gcp-service-to-service", () => {
+describe("gcp-service-to-service", () => {
   const stack = beforeAll(deploy(Stack), { timeout: 900_000 });
 
   const serviceState = (name: string) =>
@@ -102,8 +92,7 @@ describe.skipIf(!dockerAvailable)("gcp-service-to-service", () => {
         .getIamPolicyProjectsLocationsServices({ resource: quotesName })
         .pipe(Effect.orDie, Effect.provide(GcpHttp));
       const invokers =
-        policy.bindings?.find((binding) => binding.role === "roles/run.invoker")
-          ?.members ?? [];
+        policy.bindings?.find((binding) => binding.role === "roles/run.invoker")?.members ?? [];
       expect(invokers).toEqual([`serviceAccount:${gatewayServiceAccount}`]);
 
       // A fresh run.invoker grant can take a moment to reach Cloud Run's
