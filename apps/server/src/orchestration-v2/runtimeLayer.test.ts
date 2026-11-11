@@ -8651,24 +8651,41 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             snoozedUntil: DateTime.formatIso(manualWakeAt),
           });
         const waiting = yield* orchestrator.getThreadProjection(threadId);
-        // A reset of another account, or one from before this run failed, clears nothing here.
+        const instances = { providerInstanceIds: [run.providerInstanceId] };
+        // A reset of another account, one from before this run failed, or one that left this
+        // run's limit used up clears nothing here.
         yield* orchestrator.recordLimitReset({
           providerInstanceIds: [alternateInstanceId],
           failedBefore: now,
         });
         yield* orchestrator.recordLimitReset({
-          providerInstanceIds: [run.providerInstanceId],
+          ...instances,
           failedBefore: DateTime.subtract(now, { seconds: 1 }),
         });
+        yield* orchestrator.recordLimitReset({
+          ...instances,
+          failedBefore: now,
+          resetBefore: DateTime.makeUnsafe(resetAt),
+        });
+        // So does a reset of a limit this thread does not wait on.
+        yield* orchestrator
+          .dispatch({
+            type: "thread.limit-recovery.reset",
+            commandId: CommandId.make(`recovery:other-limit:${scenario}`),
+            threadId,
+            runId: run.id,
+            resetAt: DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(resetAt), { hours: 1 })),
+          })
+          .pipe(Effect.flip);
         assert.deepEqual(
           (yield* orchestrator.getThreadProjection(threadId)).thread,
           waiting.thread,
         );
-        const recordReset = orchestrator.recordLimitReset({
-          providerInstanceIds: [run.providerInstanceId],
+        yield* orchestrator.recordLimitReset({
+          ...instances,
           failedBefore: now,
+          resetBefore: DateTime.add(DateTime.makeUnsafe(resetAt), { seconds: 1 }),
         });
-        yield* recordReset;
         const reset = (yield* orchestrator.getThreadProjection(threadId)).thread;
         assert.deepInclude(reset.limitRecovery, { autoResume, snooze: false, resetEarly: true });
         // The reset ends the snooze the recovery set, never one the user chose.
@@ -8705,7 +8722,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert(resume?.type === "message.dispatch");
         assert.isBelow(DateTime.toEpochMillis(yield* DateTime.now), Date.parse(resetAt));
         yield* orchestrator.dispatch(resume);
-        yield* recordReset;
+        // A second redemption, and a repeat of the continuation, start nothing more.
+        yield* orchestrator.recordLimitReset({ ...instances, failedBefore: yield* DateTime.now });
         yield* orchestrator.dispatch(resume);
         const resumed = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(resumed.runs, 2);

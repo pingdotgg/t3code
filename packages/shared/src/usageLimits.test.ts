@@ -21,7 +21,7 @@ import {
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
-  resetCreditInstanceIds,
+  resetCreditReach,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
@@ -1163,11 +1163,12 @@ describe("/usage-limits", () => {
     });
   });
 
-  it("finds the instances signed in to the account a reset credit was redeemed for", () => {
+  it("finds what a redeemed reset credit cleared", () => {
     const instance = (id: string, email?: string, extra: Partial<ServerProvider> = {}) =>
       provider({
         instanceId: ProviderInstanceId.make(id),
         auth: { status: "authenticated", ...(email ? { email } : {}) },
+        usageLimits: limits,
         ...extra,
       });
     const providers = [
@@ -1183,20 +1184,53 @@ describe("/usage-limits", () => {
       accountId,
       creditId: "credit",
     });
-    expect(resetCreditInstanceIds({ instanceId: selected.instanceId }, providers, [])).toEqual([
-      "codex",
-      "second-home",
-    ]);
+    const since = Date.parse(limits.checkedAt) - 1;
+    const sameAccount = { instanceIds: ["codex", "second-home"] };
+    expect(resetCreditReach({ instanceId: selected.instanceId }, providers, [], since)).toEqual(
+      sameAccount,
+    );
     // An account nothing else can be matched to still covers the instance it was redeemed on.
     expect(
-      resetCreditInstanceIds({ instanceId: ProviderInstanceId.make("signed-out") }, providers, []),
-    ).toEqual(["signed-out"]);
-    expect(resetCreditInstanceIds(hub("duplicate"), providers, sources)).toEqual([
-      "codex",
-      "second-home",
-    ]);
-    expect(resetCreditInstanceIds(hub("oss"), providers, sources)).toEqual([]);
-    expect(resetCreditInstanceIds(hub("removed"), providers, sources)).toEqual([]);
+      resetCreditReach({ instanceId: ProviderInstanceId.make("signed-out") }, providers, [], since),
+    ).toEqual({ instanceIds: ["signed-out"] });
+    expect(resetCreditReach(hub("duplicate"), providers, sources, since)).toEqual(sameAccount);
+    expect(resetCreditReach(hub("oss"), providers, sources, since)).toEqual({ instanceIds: [] });
+
+    // Nothing is known to be cleared until the account's limits are read after the redemption.
+    expect(resetCreditReach(hub("removed"), providers, sources, since)).toBeNull();
+    expect(
+      resetCreditReach({ instanceId: selected.instanceId }, providers, [], since + 1),
+    ).toBeNull();
+    const redeemedWith = (usageLimits: ServerProvider["usageLimits"]) =>
+      resetCreditReach(
+        { instanceId: selected.instanceId },
+        [{ ...selected, usageLimits }, ...providers.slice(1)],
+        [],
+        since,
+      );
+    expect(redeemedWith(undefined)).toBeNull();
+    expect(redeemedWith({ ...limits, unavailable: { reason: "probeFailed" } })).toBeNull();
+
+    // A limit that is still used up keeps the waits that last until it resets.
+    const usedUp = (resetsAt?: string) => ({
+      ...window,
+      id: resetsAt ?? "monthly_spend",
+      usedPercent: 100,
+      resetsAt,
+    });
+    expect(
+      redeemedWith({
+        ...limits,
+        windows: [
+          window,
+          usedUp("2026-09-06T12:00:00.000Z"),
+          usedUp("2026-09-04T12:00:00.000Z"),
+          // One that already reset, and one with no reset to wait for.
+          usedUp("2026-09-03T10:00:00.000Z"),
+          usedUp(),
+        ],
+      }),
+    ).toEqual({ ...sameAccount, resetBefore: Date.parse("2026-09-04T11:59:00.000Z") });
   });
 
   it("gives a hub credit to no native row when its email is signed in to two workspaces", () => {

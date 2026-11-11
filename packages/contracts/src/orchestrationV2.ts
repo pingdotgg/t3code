@@ -414,7 +414,6 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
   resetAt: IsoDateTime,
   autoResume: Schema.optional(Schema.Boolean),
   snooze: Schema.optional(Schema.Boolean),
-  resetEarly: Schema.optional(Schema.Literal(true)),
 }).check(
   Schema.makeFilter(
     (update) =>
@@ -3443,6 +3442,14 @@ const OrchestrationV2InternalCommand = Schema.Union([
     guestMessageId: GuestMessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  }),
+  /** The provider reset this recovery's limit before `resetAt`. */
+  Schema.Struct({
+    type: Schema.Literal("thread.limit-recovery.reset"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    resetAt: IsoDateTime,
   }),
   /** Moves a thread to a project rooted at the folder it already works in, so its cwd never changes. */
   Schema.Struct({

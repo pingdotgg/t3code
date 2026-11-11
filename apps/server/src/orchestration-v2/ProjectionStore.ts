@@ -569,6 +569,7 @@ export interface ProjectionStoreV2Shape {
     readonly now: DateTime.Utc;
     readonly providerInstanceIds: ReadonlyArray<ProviderInstanceId>;
     readonly failedBefore: DateTime.Utc;
+    readonly resetBefore?: DateTime.Utc;
   }) => Effect.Effect<ReadonlyArray<ProjectionAwaitedLimitRecovery>, ProjectionStoreV2Error>;
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
@@ -4249,6 +4250,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         options: Parameters<ProjectionStoreV2Shape["getLimitRecoveriesAwaitingReset"]>[0],
       ) {
         if (options.providerInstanceIds.length === 0) return [];
+        const resetBefore = options.resetBefore ? DateTime.formatIso(options.resetBefore) : null;
         const rows = yield* sql<{ readonly payload_json: string }>`
           SELECT t.payload_json
           FROM orchestration_v2_projection_threads t
@@ -4261,6 +4263,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND r.provider_instance_id IN ${sql.in(options.providerInstanceIds)}
             AND julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt'))) <= julianday(${DateTime.formatIso(options.failedBefore)})
             AND julianday(json_extract(t.payload_json, '$.limitRecovery.resetAt')) > julianday(${DateTime.formatIso(options.now)})
+            AND (
+              ${resetBefore} IS NULL
+              OR julianday(json_extract(t.payload_json, '$.limitRecovery.resetAt')) < julianday(${resetBefore})
+            )
             AND json_extract(t.payload_json, '$.limitRecovery.resetEarly') IS NOT 1
             AND (
               json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1

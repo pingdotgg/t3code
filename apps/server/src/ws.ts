@@ -77,7 +77,6 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   ProjectMutationError,
-  type ProviderConsumeResetCreditInput,
   ProviderUploadFeedbackError,
   ProviderSetupError,
   RelayClientInstallFailedError,
@@ -272,12 +271,12 @@ import {
 } from "@t3tools/shared/socketFrameParts";
 import { isTelemetryIdHash } from "@t3tools/shared/telemetryId";
 import {
-  resetCreditInstanceIds,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
+import * as ResetCredits from "./usage/ResetCredits.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
 
@@ -1479,6 +1478,7 @@ export const layerWsRpc = (
             );
       const usage = yield* UsageService.UsageService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
+      const resetCredits = yield* ResetCredits.ResetCredits;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const repositoryIdentityResolver =
@@ -1900,23 +1900,6 @@ export const layerWsRpc = (
               }),
           ),
         );
-
-      // The credit is already spent, so a failure here must not fail its redemption.
-      const endLimitWaits = Effect.fn("ws.providers.endLimitWaits")(
-        function* (input: ProviderConsumeResetCreditInput, failedBefore: DateTime.Utc) {
-          yield* orchestrationEngine.recordLimitReset({
-            providerInstanceIds: resetCreditInstanceIds(
-              input,
-              yield* providerRegistry.getProviders,
-              yield* usageLimitSources.current,
-            ),
-            failedBefore,
-          });
-        },
-        Effect.catchCause((cause) =>
-          Effect.logWarning("limit recovery skipped after a usage reset", { cause }),
-        ),
-      );
 
       const loadServerConfig = Effect.fn("ws.loadServerConfig")(function* (options: {
         readonly usageLimitsCommand: boolean;
@@ -2649,44 +2632,7 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           providerMaintenanceRunner.updateProvider(input),
-        [WS_METHODS.providerConsumeResetCredit]:
-          /* Request instrumentation already owns the span; keep this helper in that context. */
-          Effect.fnUntraced(function* (input) {
-            const startedAt = yield* DateTime.now;
-            if ("sourceId" in input) {
-              const result = yield* usageLimitSources.consumeResetCredit(input);
-              if (result.outcome === "reset") yield* endLimitWaits(input, startedAt);
-              return result;
-            }
-            const instance = yield* providerInstances.getInstance(input.instanceId);
-            if (instance === undefined || !instance.enabled) {
-              return yield* new ProviderSetupError({
-                instanceId: input.instanceId,
-                operation: "consume-reset-credit",
-                detail: instance ? "This provider is disabled." : "Provider instance not found.",
-              });
-            }
-            if (instance.consumeResetCredit === undefined) {
-              return yield* new ProviderSetupError({
-                instanceId: input.instanceId,
-                operation: "consume-reset-credit",
-                detail: "This provider does not bank reset credits.",
-              });
-            }
-            const outcome = yield* instance.consumeResetCredit(input.creditId).pipe(
-              Effect.mapError(
-                (error) =>
-                  new ProviderSetupError({
-                    instanceId: input.instanceId,
-                    operation: "consume-reset-credit",
-                    detail: error.detail,
-                    cause: error,
-                  }),
-              ),
-            );
-            if (outcome === "reset") yield* endLimitWaits(input, startedAt);
-            return { outcome };
-          }),
+        [WS_METHODS.providerConsumeResetCredit]: (input) => resetCredits.redeem(input),
         [WS_METHODS.providerAuthStart]: (input) => providerAuth.start(input, currentSessionId),
         [WS_METHODS.providerAuthRespond]: (input) =>
           Effect.annotateCurrentSpan({ instanceId: input.instanceId }).pipe(

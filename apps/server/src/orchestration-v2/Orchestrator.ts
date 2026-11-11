@@ -390,6 +390,8 @@ export interface OrchestratorV2Shape {
     readonly providerInstanceIds: ReadonlyArray<ProviderInstanceId>;
     /** A run that failed later hit a limit the reset did not clear. */
     readonly failedBefore: DateTime.Utc;
+    /** A recovery that waits until this time or later waits on a limit the reset did not clear. */
+    readonly resetBefore?: DateTime.Utc;
   }) => Effect.Effect<void, OrchestratorV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
@@ -590,6 +592,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request-watch.sync":
     case "thread.pull-request.sync":
     case "thread.title.regeneration.complete":
+    case "thread.limit-recovery.reset":
     case "thread.project.adopt-folder":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
@@ -4700,6 +4703,71 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       } satisfies PendingOrchestrationEffectV2;
       yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
+    },
+  );
+
+  const dispatchLimitRecoveryReset = Effect.fn("orchestrationV2.dispatch.limitRecoveryReset")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.limit-recovery.reset" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs", "turnItems"], { turnItemTypes: ["error"] })
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const thread = projection.thread;
+      const recovery = thread.limitRecovery;
+      const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
+      const now = yield* DateTime.now;
+      if (
+        recovery?.runId !== command.runId ||
+        recovery.resetAt !== command.resetAt ||
+        recovery.resetEarly === true ||
+        !(recovery.autoResume || recovery.snooze) ||
+        Date.parse(recovery.resetAt) <= DateTime.toEpochMillis(now) ||
+        run?.id !== recovery.runId ||
+        latestRootProviderFailure(run, projection.turnItems)?.resetAt !== recovery.resetAt ||
+        thread.archivedAt !== null ||
+        thread.deletedAt !== null ||
+        thread.settledOverride === "settled"
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} no longer waits on that limit.`,
+        });
+      }
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...thread,
+          limitRecovery: {
+            ...recovery,
+            snooze: false,
+            resetEarly: true,
+            requestId: command.commandId,
+          },
+          // Ends only the snooze this recovery set; one the user chose stays.
+          ...(recovery.snooze &&
+          thread.snoozedUntil != null &&
+          DateTime.toEpochMillis(thread.snoozedUntil) === Date.parse(recovery.resetAt)
+            ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
+            : {}),
+          updatedAt: now,
+        },
+      });
     },
   );
 
@@ -13664,6 +13732,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
+      case "thread.limit-recovery.reset":
+        yield* dispatchLimitRecoveryReset(command, events);
+        break;
       case "thread.project.adopt-folder":
         yield* dispatchThreadProjectAdoptFolder(command, events);
         break;
@@ -14577,15 +14648,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const waiting = yield* projectionStore
         .getLimitRecoveriesAwaitingReset({ ...input, now: yield* DateTime.now })
         .pipe(Effect.mapError(shellProjectionError));
+      // A refusal is stored under its command id, so each reset tries under its own.
+      const reset = DateTime.toEpochMillis(input.failedBefore);
       yield* Effect.forEach(
         waiting,
         ({ threadId, limitRecovery: { runId, resetAt } }) =>
           dispatchWithReceipt({
-            type: "thread.metadata.update",
-            commandId: CommandId.make(`limit-reset:${threadId}:${runId}:${Date.parse(resetAt)}`),
+            type: "thread.limit-recovery.reset",
+            commandId: CommandId.make(`limit-reset:${threadId}:${runId}:${reset}`),
             threadId,
-            // Ends only the snooze this recovery set; one the user chose stays.
-            limitRecovery: { runId, resetAt, snooze: false, resetEarly: true },
+            runId,
+            resetAt,
           }).pipe(
             // A thread that moved on since the read is refused and keeps its own schedule.
             Effect.catchCause((cause) =>
