@@ -110,41 +110,58 @@ it("puts the task in the composer before checkout finishes", async () => {
   );
 });
 
-it("cancels preparation and keeps the prompt without pointing the thread", async () => {
-  reset();
-  const prepare = deferred<PreparedResult>();
-  const clearHandoff = vi.fn();
-  const pointThread = vi.fn(async () => true);
-  const pending = runPullRequestCheckoutHandoff({
-    terminology,
-    mode: "worktree",
-    task: { prompt: "Fix the failing check" },
-    clearHandoff,
-    openThread: async () => opened,
-    prepare: () => prepare.promise,
-    pointThread,
-  });
+it.each(["worktree", "local"] as const)(
+  "cancels %s preparation without pointing the thread",
+  async (mode) => {
+    reset();
+    const prepare = deferred<PreparedResult>();
+    const clearHandoff = vi.fn();
+    const pointThread = vi.fn(async () => true);
+    const pending = runPullRequestCheckoutHandoff({
+      terminology,
+      mode,
+      task: { prompt: "Fix the failing check" },
+      clearHandoff,
+      openThread: async () => opened,
+      prepare: () => prepare.promise,
+      pointThread,
+    });
 
-  await vi.waitFor(() => expect(state.setPrompt).toHaveBeenCalled());
-  expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(true);
-  cancelFromToast();
-  expect(clearHandoff).toHaveBeenCalled();
-  expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(false);
-  expect(state.update).toHaveBeenCalledWith(
-    state.toastId,
-    expect.objectContaining({
-      type: "info",
-      title: "Stopped applying the checkout",
-      timeout: 8_000,
-      actionProps: undefined,
-    }),
-  );
+    await vi.waitFor(() => expect(state.setPrompt).toHaveBeenCalled());
+    expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(true);
+    cancelFromToast();
+    expect(clearHandoff).toHaveBeenCalledTimes(mode === "local" ? 0 : 1);
+    expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(
+      mode === "local",
+    );
+    expect(state.update).toHaveBeenCalledWith(
+      state.toastId,
+      expect.objectContaining({
+        type: mode === "local" ? "loading" : "info",
+        title:
+          mode === "local" ? "Waiting for the local checkout" : "Stopped applying the checkout",
+        timeout: mode === "local" ? 0 : 8_000,
+        actionProps: undefined,
+      }),
+    );
 
-  prepare.resolve(AsyncResult.success(preparedCheckout));
-  await pending;
-  expect(pointThread).not.toHaveBeenCalled();
-  expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(false);
-});
+    prepare.resolve(AsyncResult.success(preparedCheckout));
+    await pending;
+    expect(pointThread).not.toHaveBeenCalled();
+    expect(clearHandoff).toHaveBeenCalled();
+    expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(false);
+    if (mode === "local") {
+      expect(state.update).toHaveBeenLastCalledWith(
+        state.toastId,
+        expect.objectContaining({
+          title: "Local checkout finished",
+          description: "This repository is now on `pr-1`. The thread is still open.",
+          timeout: 8_000,
+        }),
+      );
+    }
+  },
+);
 
 it("seeds the prompt when cancel lands while openThread is still pending", async () => {
   reset();

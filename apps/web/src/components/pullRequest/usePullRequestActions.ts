@@ -319,6 +319,18 @@ export async function runPullRequestCheckoutHandoff(input: {
       onClick: () => {
         if (cancelled || settled) return;
         cancelled = true;
+        // A local branch switch keeps running on the server, so send must wait for its result.
+        if (input.mode === "local" && pendingDraftId !== null) {
+          toastManager.update(toastId, {
+            type: "loading",
+            title: "Waiting for the local checkout",
+            description:
+              "The branch switch is already running. Sending stays blocked until it finishes.",
+            timeout: 0,
+            actionProps: undefined,
+          });
+          return;
+        }
         // Unblock send immediately; finally clears again after prepare/point settle.
         if (pendingDraftId !== null) setPullRequestCheckoutPending(pendingDraftId, false);
         input.clearHandoff();
@@ -356,7 +368,7 @@ export async function runPullRequestCheckoutHandoff(input: {
   setPullRequestCheckoutPending(opened.draftId, true);
   try {
     const prepared = await input.prepare(opened.threadId);
-    if (cancelled) return;
+    if (cancelled && input.mode !== "local") return;
     if (prepared._tag === "Failure") {
       settled = true;
       input.clearHandoff();
@@ -366,6 +378,17 @@ export async function runPullRequestCheckoutHandoff(input: {
         description: checkoutFailureDescription(
           isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
         ),
+      });
+      return;
+    }
+
+    if (cancelled) {
+      settled = true;
+      input.clearHandoff();
+      finishCheckoutHandoffToast(toastId, {
+        type: "info",
+        title: "Local checkout finished",
+        description: `This repository is now on \`${prepared.value.branch}\`. The thread is still open.`,
       });
       return;
     }
