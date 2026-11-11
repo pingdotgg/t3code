@@ -2,6 +2,7 @@
 // Real GitHub reads share repository-permission caches, excluding browser and service caches.
 // HTTP client request counts are exact; GraphQL cost uses changes in `x-ratelimit-used`,
 // which are approximate when other clients spend the same token's quota.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -13,6 +14,7 @@ import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import * as GitHubAppAccess from "../src/server/GitHubAppAccess.ts";
 import * as GitHubPullRequestApi from "../src/server/GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "../src/server/GitHubPullRequestProvider.ts";
 import * as GitHubRest from "../src/server/GitHubRest.ts";
@@ -96,9 +98,10 @@ const sourceControlHost = Layer.unwrap(
       },
     });
   }),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const services = GitHubPullRequestApi.layer.pipe(
+  Layer.provideMerge(GitHubAppAccess.layer),
   Layer.provideMerge(GitHubRest.layerWithDependencies),
   Layer.provideMerge(SourceControlRateLimit.layer),
   Layer.provideMerge(measuredHttp),
