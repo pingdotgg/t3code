@@ -34,7 +34,7 @@ const SECTION_ICONS: Partial<Record<SettingsSectionId, AppSymbolName>> = {
   access: "exclamationmark.shield",
   secrets: "exclamationmark.shield",
   maintenance: "arrow.clockwise",
-  labs: "sparkles",
+  labs: "flask",
   about: "info.circle",
   archived: "archivebox",
   diagnostics: "stethoscope",
