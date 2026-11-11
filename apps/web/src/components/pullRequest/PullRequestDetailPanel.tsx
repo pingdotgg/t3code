@@ -1542,9 +1542,8 @@ export function PullRequestDetailPanel({
     );
 
   const headerBranches = detail ? (
-    <span className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5 font-mono text-caption text-dim-foreground">
+    <span className="ml-auto flex min-w-0 flex-1 basis-full items-center justify-end gap-1.5 font-mono text-caption text-dim-foreground @md/pr-header:basis-0">
       <PullRequestBaseBranch
-        compact
         baseBranch={detail.baseBranch}
         freshness={freshness}
         stacked={isStackedPullRequest}
