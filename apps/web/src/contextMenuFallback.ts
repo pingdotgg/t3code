@@ -245,8 +245,11 @@ export function showContextMenuFallback<T extends string>(
 ): Promise<T | null> {
   dismissContextMenu();
   return new Promise<T | null>((resolve) => {
-    const previouslyFocusedElement =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    let focusedElement = document.activeElement;
+    while (focusedElement?.shadowRoot?.activeElement) {
+      focusedElement = focusedElement.shadowRoot.activeElement;
+    }
+    const previouslyFocusedElement = focusedElement instanceof HTMLElement ? focusedElement : null;
     const menuStack: HTMLDivElement[] = [];
     const submenuTriggerStack: Array<HTMLButtonElement | undefined> = [];
     let isDisposed = false;
