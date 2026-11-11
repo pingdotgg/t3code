@@ -80,6 +80,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
           prepareModel: Effect.void,
           models: () => Effect.succeed({ models: [] }),
           downloadModel: () => Effect.succeed({ models: [] }),
+          linkModels: () => Effect.succeed({ models: [] }),
           selectModel: () => Effect.succeed({ models: [] }),
           cancelDownload: () => Effect.succeed({ models: [] }),
           updateAcceleration: () => Effect.succeed({ supported: false as const, reason: "test" }),
@@ -164,7 +165,31 @@ effectIt.effect(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
           Layer.provide(principal(AuthOrchestrationOperateScope, AuthSettingsWriteScope)),
-          Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+          Layer.provide(
+            Layer.mock(SpeechService.SpeechService)({
+              models: () =>
+                Effect.succeed({
+                  models: [
+                    {
+                      id: "fixture/model",
+                      name: "Fixture",
+                      description: "",
+                      size: 1,
+                      languages: ["en"],
+                      accuracy: 0,
+                      speed: 0,
+                      recommended: false,
+                      supportsStreaming: false,
+                      supportsLanguageDetection: false,
+                      supportsTranslation: false,
+                      active: true,
+                      state: "installed",
+                      linkedFrom: "/home/someone/models/fixture.gguf",
+                    },
+                  ],
+                }),
+            }),
+          ),
           Layer.provide(cloud),
           Layer.provide(dependencies),
           Layer.provide(HttpServer.layerServices),
@@ -228,6 +253,22 @@ effectIt.effect(
         422,
       );
       expect(transcribe).toHaveBeenLastCalledWith("openrouter", "acme/transcribe-1");
+      // Naming a path on the environment needs filesystem access, not only settings access.
+      const link = yield* Effect.promise(() =>
+        handler(
+          new Request("http://localhost/api/voice/models/link", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ path: "/models" }),
+          }),
+          context,
+        ),
+      );
+      expect(link.status).toBe(403);
+      const listed = yield* Effect.promise(() =>
+        handler(new Request("http://localhost/api/voice/models"), context),
+      );
+      expect(yield* Effect.promise(() => listed.text())).not.toContain("/home/someone");
     }).pipe(Effect.scoped),
 );
 
@@ -268,6 +309,7 @@ effectIt.effect.each([
         prepareModel: Effect.void,
         models: () => Effect.succeed({ models: [] }),
         downloadModel: () => Effect.fail(error),
+        linkModels: () => Effect.fail(error),
         selectModel: () => Effect.fail(error),
         cancelDownload: () => Effect.fail(error),
         updateAcceleration: () => Effect.fail(error),
