@@ -178,6 +178,7 @@ interface ComposerSendInput {
   readonly runtimeMode: RuntimeMode;
   readonly sendEnvMode: DraftThreadEnvMode;
   readonly startFromOrigin: boolean;
+  readonly checkoutBranch: boolean;
   readonly localCheckoutBranchMismatch: {
     readonly threadBranch: string;
     readonly currentBranch: string;
@@ -277,6 +278,7 @@ export function useComposerSend(input: ComposerSendInput) {
     runtimeMode,
     sendEnvMode,
     startFromOrigin,
+    checkoutBranch,
     localCheckoutBranchMismatch,
     logicalProjectEnvironments,
     providerInstanceEntries,
@@ -776,7 +778,7 @@ export function useComposerSend(input: ComposerSendInput) {
       freshContext: freshArm !== undefined,
     });
     if (missingWorktreeBaseBranch) {
-      setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
+      setThreadError(threadIdForSend, "Pick a branch before sending.");
       return;
     }
     // Records bind attachments by the id each side knows: the local id for the optimistic
@@ -1233,7 +1235,11 @@ export function useComposerSend(input: ComposerSendInput) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
-                      ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      ...(checkoutBranch
+                        ? { checkoutExisting: true }
+                        : startFromOrigin
+                          ? { startFromOrigin: true }
+                          : {}),
                     },
                     runSetupScript: true,
                   }

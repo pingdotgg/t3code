@@ -5,11 +5,15 @@ import {
   deriveLocalBranchNameFromRemoteRef,
   isWorktreeChangeBlocked,
   resolveBranchSelectionTarget,
+  resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
   resolveLocalCheckoutBranchMismatch,
+  findRunningThreadTitle,
   resolveLockedWorkspaceLabel,
+  resolveWorkspaceMode,
+  resolveWorkspaceModeNotice,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -325,5 +329,76 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("resolveWorkspaceMode", () => {
+  it.each([
+    [{ envMode: "local", activeWorktreePath: null, checkoutBranch: false }, "switch"],
+    [{ envMode: "worktree", activeWorktreePath: null, checkoutBranch: false }, "branch-off"],
+    [{ envMode: "worktree", activeWorktreePath: null, checkoutBranch: true }, "open"],
+    [{ envMode: "worktree", activeWorktreePath: "/repo-wt", checkoutBranch: false }, "open"],
+  ] as const)("%o -> %s", (input, expected) => {
+    expect(resolveWorkspaceMode(input)).toBe(expected);
+  });
+});
+
+describe("resolveBranchToolbarValue", () => {
+  const base = { activeWorktreePath: null, currentGitBranch: "dev" } as const;
+  it.each([
+    [{ ...base, envMode: "worktree", activeThreadBranch: null }, "dev"],
+    [{ ...base, envMode: "worktree", activeThreadBranch: null, checkoutBranch: true }, null],
+    [{ ...base, envMode: "worktree", activeThreadBranch: "feat", checkoutBranch: true }, "feat"],
+    [{ ...base, envMode: "local", activeThreadBranch: "feat" }, "dev"],
+  ] as const)("%o -> %s", (input, expected) => {
+    expect(resolveBranchToolbarValue(input)).toBe(expected);
+  });
+});
+
+describe("resolveWorkspaceModeNotice", () => {
+  const base = { projectRoot: "/repo", runningThreadTitle: null } as const;
+
+  it.each([
+    [{ mode: "open", branch: "main", branchWorktreePath: "/repo/" }, "branch-in-project-folder"],
+    [{ mode: "open", branch: "feat", branchWorktreePath: "/wt/feat" }, "joins-worktree"],
+    [{ mode: "open", branch: "feat", branchWorktreePath: null }, null],
+    [{ mode: "branch-off", branch: "main", branchWorktreePath: "/repo" }, null],
+    [{ mode: "switch", branch: "main", branchWorktreePath: "/repo" }, null],
+  ] as const)("%o -> %s", (input, expected) => {
+    expect(resolveWorkspaceModeNotice({ ...base, ...input })?.kind ?? null).toBe(expected);
+  });
+
+  it("warns when another thread runs where the new thread would work", () => {
+    expect(
+      resolveWorkspaceModeNotice({
+        ...base,
+        mode: "switch",
+        branch: "main",
+        branchWorktreePath: null,
+        runningThreadTitle: "Fix login",
+      }),
+    ).toEqual({ kind: "project-folder-busy", runningThreadTitle: "Fix login" });
+  });
+});
+
+describe("findRunningThreadTitle", () => {
+  const thread = (
+    id: string,
+    worktreePath: string | null,
+    activeRunId: string | null,
+    archivedAt: string | null = null,
+  ) => ({ id, title: id, worktreePath, runtime: { activeRunId }, archivedAt });
+
+  it.each([
+    ["finds a thread running in the project root", [thread("root", null, "run")], "/repo", "root"],
+    ["finds a thread running in the worktree", [thread("wt", "/wt/", "run")], "/wt", "wt"],
+    ["skips idle threads", [thread("idle", null, null)], "/repo", null],
+    ["skips archived threads", [thread("old", null, "run", "2026-01-01")], "/repo", null],
+    ["skips the current thread", [thread("self", null, "run")], "/repo", null],
+    ["skips threads in another folder", [thread("other", "/wt", "run")], "/repo", null],
+  ])("%s", (_label, threads, folder, expected) => {
+    expect(
+      findRunningThreadTitle({ threads, folder, projectRoot: "/repo", currentThreadId: "self" }),
+    ).toBe(expected);
   });
 });
