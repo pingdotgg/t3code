@@ -74,6 +74,22 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
         assert.isFalse(
           yield* fs.exists(path.join(root, "userdata", "db-backup", "partial.staging")),
         );
+
+        // If `runtime/db-backup` cannot be enumerated for a non-NotFound reason (e.g. ENOTDIR),
+        // uninstall aborts before deleting `runtimeDir`.
+        yield* fs.makeDirectory(path.join(runtimeDir, "versions", "1.0.0"), { recursive: true });
+        yield* fs.writeFileString(path.join(runtimeDir, "versions", "1.0.0", "t3"), "");
+        yield* fs.writeFileString(path.join(runtimeDir, "db-backup"), "not-a-directory");
+        const failedError = yield* runUninstall({ baseDir: root, assumeYes: true }).pipe(
+          Effect.provideService(BootService.BootService, bootService),
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provideService(HostProcess.IsExecutable, false),
+          Effect.flip,
+        );
+        assert.equal(failedError._tag, "CliUninstallError");
+        assert.include(failedError.message, "Could not inspect pending update database backups");
+        assert.isTrue(yield* fs.exists(path.join(runtimeDir, "versions", "1.0.0", "t3")));
       }).pipe(Effect.scoped),
   );
 

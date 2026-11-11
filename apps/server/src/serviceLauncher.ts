@@ -310,7 +310,11 @@ const databaseBackupDir = (baseDir: string, updateId: string) => {
 
 function resolvePathForContainment(baseDir: string, candidate: string) {
   const useWin32 =
-    IS_WINDOWS || /^[A-Za-z]:[\\/]/.test(baseDir) || /^[A-Za-z]:[\\/]/.test(candidate);
+    IS_WINDOWS ||
+    baseDir.startsWith("\\\\") ||
+    candidate.startsWith("\\\\") ||
+    /^[A-Za-z]:[\\/]/.test(baseDir) ||
+    /^[A-Za-z]:[\\/]/.test(candidate);
   const pathMod = useWin32 ? NodePath.win32 : NodePath.posix;
   const normalizeCase = (value: string) => (useWin32 ? value.toLowerCase() : value);
   if (!pathMod.isAbsolute(baseDir) || !pathMod.isAbsolute(candidate)) return undefined;
@@ -668,9 +672,9 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
     throw createStateDirOwnedDuringBackupError();
   }
   const stagingDir = `${backupDir}.staging`;
-  await NodeFSP.rm(stagingDir, { recursive: true, force: true });
-  await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
   try {
+    await NodeFSP.rm(stagingDir, { recursive: true, force: true });
+    await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
     for (const suffix of DB_FILE_SUFFIXES) {
       const source = `${pending.dbPath}${suffix}`;
       if (suffix !== "" && !(await pathExists(source))) continue;
@@ -709,25 +713,31 @@ async function markDatabaseRestorePending(backupDir: string): Promise<void> {
   }
 }
 
-// Resolve symlink targets even if a crashed cp -c left the final target missing.
-async function restoreTarget(path: string): Promise<string> {
+// Resolve symlink targets and missing leaves under symlinked ancestors.
+async function restoreTarget(path: string, depth = 0): Promise<string> {
   let current = path;
-  for (let hops = 0; hops < 40; hops++) {
+  for (let hops = depth; hops < 40; hops++) {
     try {
       return await NodeFSP.realpath(current);
     } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw cause;
     }
     const link = await NodeFSP.readlink(current).catch((cause: unknown) => {
       const code = (cause as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "EINVAL") return undefined;
+      if (code === "ENOENT" || code === "EINVAL" || code === "ENOTDIR") return undefined;
       throw cause;
     });
-    if (link === undefined) return current;
-    // Do not normalize .. before following directory symlinks; match filesystem resolution.
-    current = NodePath.isAbsolute(link)
-      ? link
-      : `${await NodeFSP.realpath(NodePath.dirname(current))}${NodePath.sep}${link}`;
+    if (link !== undefined) {
+      // Do not normalize .. before following directory symlinks; match filesystem resolution.
+      const resolvedParent = await restoreTarget(NodePath.dirname(current), hops + 1);
+      current = NodePath.isAbsolute(link) ? link : `${resolvedParent}${NodePath.sep}${link}`;
+      continue;
+    }
+    const parent = NodePath.dirname(current);
+    if (parent === current) return current;
+    const resolvedParent = await restoreTarget(parent, hops + 1);
+    return NodePath.join(resolvedParent, NodePath.basename(current));
   }
   throw new Error(`Too many symbolic links resolving ${path}.`);
 }
@@ -738,13 +748,15 @@ async function isDatabaseRestoreTargetInsideBaseDir(
 ): Promise<boolean> {
   if (!isDatabasePathInsideBaseDir(baseDir, dbPath)) return false;
   try {
-    const realBaseDir = await NodeFSP.realpath(baseDir).catch(() => baseDir);
+    const realBaseDir = await restoreTarget(baseDir);
     const mainTarget = await restoreTarget(dbPath);
     if (resolvePathForContainment(realBaseDir, mainTarget) === undefined) return false;
     for (const suffix of DB_FILE_SUFFIXES) {
-      const livePath = suffix === "" ? dbPath : `${mainTarget}${suffix}`;
-      const target = await restoreTarget(livePath);
-      if (resolvePathForContainment(realBaseDir, target) === undefined) return false;
+      if (suffix === "") continue;
+      for (const candidate of [`${dbPath}${suffix}`, `${mainTarget}${suffix}`]) {
+        const target = await restoreTarget(candidate);
+        if (resolvePathForContainment(realBaseDir, target) === undefined) return false;
+      }
     }
     return true;
   } catch {

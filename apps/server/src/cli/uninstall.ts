@@ -201,7 +201,18 @@ const preserveUnrecoveredDatabaseBackups = Effect.fn("cli.uninstall.preserve_db_
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const backupRoot = path.join(input.runtimeDir, "db-backup");
-    const entries = yield* fs.readDirectory(backupRoot).pipe(Effect.orElseSucceed(() => []));
+    const entries = yield* fs.readDirectory(backupRoot).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed([] as Array<string>),
+      ),
+      Effect.mapError(
+        () =>
+          new CliUninstallError({
+            reason: `Could not inspect pending update database backups under ${backupRoot}.`,
+          }),
+      ),
+    );
     const preserved = entries.filter((entry) => !entry.endsWith(".staging"));
     if (preserved.length === 0) return;
     const destinationRoot = path.join(input.userdataDir, "db-backup");

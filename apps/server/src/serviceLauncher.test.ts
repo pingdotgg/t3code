@@ -2401,4 +2401,74 @@ setInterval(() => {}, 1_000);
       }),
     ),
   );
+
+  it.effect(
+    "accepts Windows UNC database paths and recovers missing databases through a symlinked home",
+    () =>
+      runNode(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+
+          const uncDecoded = decodeServiceState({
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+            update: {
+              id: "unc-update",
+              fromVersion: "1.0.0",
+              targetVersion: "1.1.0",
+              dbPath: "\\\\server\\share\\t3\\userdata\\statev2.sqlite",
+              status: "pending",
+            },
+          });
+          assert.equal(uncDecoded?.update?.status, "pending");
+
+          const outer = yield* fs.makeTempDirectoryScoped({
+            prefix: "t3-service-launcher-symlink-home-",
+          });
+          const realHome = path.join(outer, "real-home");
+          const symlinkHome = path.join(outer, "symlink-home");
+          yield* fs.makeDirectory(path.join(realHome, "userdata"), { recursive: true });
+          yield* fs.symlink(realHome, symlinkHome);
+
+          const symlinkDbPath = path.join(symlinkHome, "userdata", "statev2.sqlite");
+          const backupDir = path.join(symlinkHome, "runtime", "db-backup", "interrupted-restore");
+          yield* fs.makeDirectory(backupDir, { recursive: true });
+          yield* fs.writeFileString(path.join(backupDir, "database"), "restored-through-symlink");
+          yield* fs.writeFileString(path.join(backupDir, ".restore-pending"), "");
+
+          const statePath = path.join(symlinkHome, "runtime", "service-state.json");
+          yield* Effect.promise(() =>
+            writeServiceState(statePath, {
+              protocol: SERVICE_LAUNCHER_PROTOCOL,
+              activeVersion: "1.0.0",
+              update: {
+                id: "interrupted-restore",
+                fromVersion: "1.0.0",
+                targetVersion: "1.1.0",
+                dbPath: symlinkDbPath,
+                status: "pending",
+              },
+            }),
+          );
+
+          const controlDir = path.join(outer, "control");
+          yield* fs.makeDirectory(controlDir, { recursive: true });
+          yield* Effect.promise(() =>
+            recoverServiceLauncherUninstall({
+              baseDir: symlinkHome,
+              controlDir,
+              acl: trustedTestAcl,
+            }),
+          );
+
+          assert.equal(
+            yield* fs.readFileString(path.join(realHome, "userdata", "statev2.sqlite")),
+            "restored-through-symlink",
+          );
+          const recoveredState = yield* Effect.promise(() => readServiceState(statePath));
+          assert.equal(recoveredState.update?.status, "failed");
+        }),
+      ),
+  );
 });

@@ -208,7 +208,8 @@ export const isValidServiceUpdateId = (id: string): boolean =>
   /^[A-Za-z0-9._-]{1,128}$/.test(id) && id !== "." && id !== "..";
 
 const isAbsoluteServiceDatabasePath = (dbPath: string): boolean =>
-  !dbPath.includes("\0") && (dbPath.startsWith("/") || /^[A-Za-z]:[\\/]/.test(dbPath));
+  !dbPath.includes("\0") &&
+  (dbPath.startsWith("/") || dbPath.startsWith("\\\\") || /^[A-Za-z]:[\\/]/.test(dbPath));
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

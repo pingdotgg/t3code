@@ -43,15 +43,22 @@ export async function acquireServiceSelectionLock(selectionPath: string): Promis
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code ?? "";
         const windowsContention =
-          (code === "EPERM" || code === "EACCES") &&
-          (NodePath.sep === "\\" || NodeFS.existsSync(lock));
+          (code === "EPERM" || code === "EACCES") && NodeFS.existsSync(lock);
         if (!["EEXIST", "ENOTEMPTY"].includes(code) && !windowsContention) throw error;
       }
       let owners: string[];
       try {
         owners = NodeFS.readdirSync(lock);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          if (Date.now() >= deadline)
+            throw new Error(
+              `Service selection is locked at ${lock}. Retry when the other operation finishes.`,
+              { cause: error },
+            );
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+          continue;
+        }
         throw error;
       }
       if (owners.length === 1) {
