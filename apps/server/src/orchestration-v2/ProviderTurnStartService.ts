@@ -852,7 +852,8 @@ export const layer: Layer.Layer<
           mentionRoot !== null &&
           record.kind === "mention" &&
           "path" in record &&
-          !path.isAbsolute(record.path)
+          !path.isAbsolute(record.path) &&
+          !/^~(?:[\\/]|$)/.test(record.path)
             ? { ...record, path: path.join(mentionRoot, record.path) }
             : record,
         ),

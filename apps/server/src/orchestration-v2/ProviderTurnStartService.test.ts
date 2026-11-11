@@ -1271,9 +1271,14 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
 );
 
 effectIt.effect.each([
-  { agentCwd: "/tmp/checkout/ios", expected: "path: /tmp/checkout/README.md" },
-  { agentCwd: "/tmp/checkout", expected: "path: README.md" },
-])("resolves saved checkout mentions for an agent cwd of $agentCwd", ({ agentCwd, expected }) =>
+  { agentCwd: "/tmp/checkout/ios", path: "README.md", expected: "path: /tmp/checkout/README.md" },
+  { agentCwd: "/tmp/checkout", path: "README.md", expected: "path: README.md" },
+  {
+    agentCwd: "/tmp/checkout/ios",
+    path: "~/.agents/AGENTS.md",
+    expected: "path: ~/.agents/AGENTS.md",
+  },
+])("resolves saved mention $path for an agent cwd of $agentCwd", ({ agentCwd, path, expected }) =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
       text: "Read [README.md](t3-context://v1/mention/ctx_readme)",
@@ -1283,9 +1288,9 @@ effectIt.effect.each([
           {
             version: 1,
             contextId: "ctx_readme",
-            label: "README.md",
+            label: path,
             kind: "mention",
-            path: "README.md",
+            path,
           },
         ],
       } as never,
