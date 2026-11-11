@@ -2389,7 +2389,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             "a cancelled blocking delegation left the task settled_only, so its result never reaches the still-live parent run",
           );
         }).pipe(Effect.provide(layerTest));
-      }),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
