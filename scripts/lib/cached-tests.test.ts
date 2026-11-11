@@ -6,7 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { cachedTestTasks, matchesTestPath } from "./cached-tests.ts";
+import { cachedTestTasks, matchesTestPath, relativeTestPath } from "./cached-tests.ts";
 
 describe("cachedTestTasks", () => {
   it("selects every test for a checkout-root path", () => {
@@ -20,6 +20,15 @@ describe("cachedTestTasks", () => {
     }
     expect(matchesTestPath("apps/server/src/auth/utils.test.ts", ["apps/server"])).toBe(true);
     expect(matchesTestPath("apps/server-other/a.test.ts", ["apps/server"])).toBe(false);
+  });
+  it("matches file and directory filters derived from native paths", () => {
+    const root = NodePath.resolve(import.meta.dirname, "../..");
+    const file = "apps/server/src/auth/utils.test.ts";
+    for (const filter of [file, "apps/server"]) {
+      expect(matchesTestPath(file, [relativeTestPath(root, NodePath.join(root, filter))])).toBe(
+        true,
+      );
+    }
   });
   it("keeps a file's cache task stable when unrelated tests are added", () => {
     const first = cachedTestTasks(JSON.stringify({ files: ["src/b.test.ts"], groupSize: 1 }));
@@ -59,7 +68,7 @@ describe("cachedTestTasks", () => {
     expect(cachedTestTasks(undefined)).toEqual({});
   });
 
-  it("reuses individual results, invalidates filesystem inputs, and never caches failures", async () => {
+  it("reuses only valid test results on platforms with reliable file tracking", async () => {
     const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cached-tests-"));
     const root = NodePath.resolve(import.meta.dirname, "../..");
     const run = (files = ["a.test.ts", "b.test.ts"], uncached: Array<string> = []) =>
@@ -89,12 +98,14 @@ describe("cachedTestTasks", () => {
       );
       return value.tasks.filter((task) => "CacheHit" in task.result).length;
     };
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- The child Vite process runs on the host platform.
+    const expectedHits = (count: number) => (process.platform === "win32" ? 0 : count);
     try {
       await NodeFSP.mkdir(NodePath.join(directory, "node_modules"));
       await NodeFSP.symlink(
         NodePath.join(root, "node_modules/vite-plus"),
         NodePath.join(directory, "node_modules/vite-plus"),
-        "dir",
+        "junction",
       );
       await NodeFSP.writeFile(NodePath.join(directory, "package.json"), '{"type":"module"}');
       await NodeFSP.writeFile(
@@ -112,18 +123,18 @@ describe("cachedTestTasks", () => {
       await NodeFSP.writeFile(NodePath.join(directory, "fixture.txt"), "hello");
       expect(await run()).toBe(0);
       expect(await run()).toBe(0);
-      expect(await summary()).toBe(2);
+      expect(await summary()).toBe(expectedHits(2));
       expect(await run(["b.test.ts"])).toBe(0);
-      expect(await summary()).toBe(1);
+      expect(await summary()).toBe(expectedHits(1));
       expect(await run()).toBe(0);
-      expect(await summary()).toBe(2);
+      expect(await summary()).toBe(expectedHits(2));
       await NodeFSP.writeFile(NodePath.join(directory, "fixture.txt"), "hello changed");
       expect(await run()).toBe(0);
-      expect(await summary()).toBe(1);
+      expect(await summary()).toBe(expectedHits(1));
       await NodeFSP.writeFile(NodePath.join(directory, "fixture.txt"), "broken");
       expect(await run()).toBe(1);
       expect(await run()).toBe(1);
-      expect(await summary()).toBe(1);
+      expect(await summary()).toBe(expectedHits(1));
       await NodeFSP.writeFile(NodePath.join(directory, "fixture.txt"), "hello again");
       await NodeFSP.writeFile(
         NodePath.join(directory, "b.test.ts"),

@@ -3,9 +3,10 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 
-import { matchesTestPath } from "./lib/cached-tests.ts";
+import { matchesTestPath, relativeTestPath } from "./lib/cached-tests.ts";
 import { shardedTestFiles } from "./lib/sharded-tests.ts";
 
 const root = NodePath.resolve(import.meta.dirname, "..");
@@ -41,14 +42,14 @@ if (values.shard && positionals.length !== 1) {
 }
 const candidates = values.shard
   ? (await shardedTestFiles(NodePath.resolve(positionals[0]!), values.shard)).map((file) =>
-      NodePath.relative(root, file),
+      relativeTestPath(root, file),
     )
   : NodeChildProcess.execFileSync(
       "git",
       ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
       { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
     ).split("\0");
-const filters = positionals.map((path) => NodePath.relative(root, NodePath.resolve(path)));
+const filters = positionals.map((path) => relativeTestPath(root, NodePath.resolve(path)));
 const isSelectable = (file: string) =>
   /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file) &&
   !file.startsWith(".repos/") &&
@@ -72,19 +73,18 @@ const env = {
   T3_CACHED_TESTS: JSON.stringify({
     files,
     groupSize,
-    uncached: values.uncached.map((file) => NodePath.relative(root, NodePath.resolve(file))),
+    uncached: values.uncached.map((file) => relativeTestPath(root, NodePath.resolve(file))),
   }),
 };
-const started = performance.now();
-const result = NodeChildProcess.spawnSync(
-  NodePath.join(root, "node_modules/.bin/vp"),
-  ["run", "--concurrency-limit", String(concurrency), "test-cache"],
-  {
+const vp = NodeURL.fileURLToPath(import.meta.resolve("vite-plus/bin"));
+const runVp = (args: string[]) =>
+  NodeChildProcess.spawnSync(process.execPath, [vp, ...args], {
     cwd: root,
     env,
     stdio: "inherit",
-  },
-);
+  });
+const started = performance.now();
+const result = runVp(["run", "--concurrency-limit", String(concurrency), "test-cache"]);
 if (result.error) throw result.error;
 const cacheRunMs = performance.now() - started;
 process.exitCode = result.status ?? 1;
@@ -117,11 +117,7 @@ if (values.report || verifyHits > 0) {
     for (const task of verify) {
       console.log(`Verifying cached result without cache: ${task.task_name}`);
       const start = performance.now();
-      const audit = NodeChildProcess.spawnSync(
-        NodePath.join(root, "node_modules/.bin/vp"),
-        ["run", "--no-cache", "--remote-cache", "off", task.task_name],
-        { cwd: root, env, stdio: "inherit" },
-      );
+      const audit = runVp(["run", "--no-cache", "--remote-cache", "off", task.task_name]);
       if (audit.error) throw audit.error;
       verification.push({
         task: task.task_name,
