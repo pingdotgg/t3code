@@ -37,20 +37,6 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
   const text = liveText ?? row.message.text;
   const messageText =
     text || (row.message.streaming || row.suppressEmptyResponse ? "" : "(empty response)");
-  const markdown = (
-    <ChatMarkdown
-      text={messageText}
-      cwd={ctx.markdownCwd}
-      threadRef={ctx.threadRef ?? undefined}
-      isStreaming={Boolean(row.message.streaming)}
-      lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-      skills={ctx.skills}
-      headingLevelOffset={MESSAGE_HEADING_LEVEL}
-      onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-      onRunShellCommand={ctx.onRunShellCommand}
-      onImageExpand={ctx.onImageExpand}
-    />
-  );
 
   return (
     <>
@@ -65,7 +51,19 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             listRef={ctx.listRef}
             quotable={isQuotableAssistantMessage(row.projectedItem?.item.nativeItemRef)}
           >
-            {markdown}
+            <ChatMarkdown
+              text={messageText}
+              renderInsights
+              cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+              isStreaming={Boolean(row.message.streaming)}
+              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+              skills={ctx.skills}
+              headingLevelOffset={MESSAGE_HEADING_LEVEL}
+              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+              onRunShellCommand={ctx.onRunShellCommand}
+              onImageExpand={ctx.onImageExpand}
+            />
           </AssistantCitationSource>
         </div>
         {ctx.onOpenTurnDiff ? (
