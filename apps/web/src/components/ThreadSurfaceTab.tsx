@@ -217,7 +217,7 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
       context.serverThread !== null &&
       context.serverThread.lineage.sideChat !== true &&
       context.serverThread.lineage.relationshipToParent !== "subagent" &&
-      context.serverThread.delegatedFrom === undefined &&
+      context.serverThread.delegatedFrom === null &&
       !orchestrationV2WorktreePending(context.worktreePath, projection?.runs ?? []) &&
       context.serverConfig?.environment.capabilities.sideChats === true
         ? threadRef
