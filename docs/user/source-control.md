@@ -206,8 +206,8 @@ repository default. Choose the first and last commits to regroup an inclusive ra
 last five commits. The default includes the whole branch. Earlier commits stay unchanged; later
 commits keep their contents and messages but receive new IDs. If a later commit is a merge or
 signed, extend the selected range through it.
-The dialog closes when the action starts. Follow its running state in the Git sidebar (or the
-progress overlay on mobile), where you can cancel it. A notification shows the result when it
+Setup dialogs close when an action starts. Follow its running state in the Git sidebar or mobile
+Git panel; commit splitting can be cancelled there. A notification shows the result when it
 finishes. Nothing is pushed.
 
 On the default branch or detached HEAD, **Create feature branch** appears first. **Commit**,
