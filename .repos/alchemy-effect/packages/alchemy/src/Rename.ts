@@ -19,10 +19,9 @@ export type FormerId = string | { fqn: string };
  * `AdoptPolicy` / `RemovalPolicy`) and resolved against the same namespace
  * as the resource's own id — see `ResourceLike.FormerFqns`.
  */
-export class RenamePolicy extends Context.Service<
-  RenamePolicy,
-  readonly FormerId[]
->()("RenamePolicy") {}
+export class RenamePolicy extends Context.Service<RenamePolicy, readonly FormerId[]>()(
+  "RenamePolicy",
+) {}
 
 /**
  * Declare the logical id(s) this resource was previously registered under,

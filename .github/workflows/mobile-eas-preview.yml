@@ -6,8 +6,10 @@ on:
 
 jobs:
   preview:
-    name: EAS Preview
+    name: EAS Preview (iOS)
+    # Fork PRs deploy one reviewed commit per label through mobile-eas-preview-fork.yml.
     if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, '🚀 Mobile Continuous Deployment') &&
       (github.event.action != 'labeled' || github.event.label.name == '🚀 Mobile Continuous Deployment')
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -23,15 +25,15 @@ jobs:
       MOBILE_VERSION_POLICY: fingerprint
     steps:
       - id: expo-token
-        name: Check for EXPO_TOKEN
+        name: Check for EXPO_PREVIEW_TOKEN
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
           if [ -n "$EXPO_TOKEN" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "EXPO_TOKEN is not available; skipping EAS preview."
+            echo "EXPO_PREVIEW_TOKEN is not available; skipping EAS preview."
           fi
 
       - name: Checkout
@@ -70,7 +72,7 @@ jobs:
           # continuous-deploy-fingerprint still reads `build.project.ownerAccount`.
           # Unpin once https://github.com/expo/expo-github-action/issues/358 is fixed.
           eas-version: 21.8.0
-          token: ${{ secrets.EXPO_TOKEN }}
+          token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
           # npm, not pnpm: this only installs eas-cli into the action's own
           # tool dir, and pnpm 11 hard-fails that install on dtrace-provider's
           # ignored build script (no allowBuilds config outside the repo).
@@ -80,7 +82,7 @@ jobs:
         if: steps.expo-token.outputs.present == 'true'
         working-directory: apps/mobile
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
           eas env:pull preview --non-interactive
           # EAS Update disables dotenv loading. Keep the downloaded native config
@@ -99,13 +101,355 @@ jobs:
         if: steps.expo-token.outputs.present == 'true'
         uses: expo/expo-github-action/continuous-deploy-fingerprint@main
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
           # The Expo action otherwise suppresses the EAS command's failure output.
           RUNNER_DEBUG: "1"
         with:
           profile: preview:dev
           branch: pr-${{ github.event.pull_request.number }}
-          platform: all
+          # Android is the android job below: its client builds on Blacksmith.
+          platform: ios
           environment: preview
           working-directory: apps/mobile
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Android publishes its own update and comment, because the Expo action can only
+  # find a client that EAS built. A fingerprint with no client is built by
+  # android-build with `eas build --local` on Blacksmith (about 4 minutes warm,
+  # against about 40 on EAS) and recorded as a mobile-android-preview-build/<fingerprint>
+  # tag whose message is the install link. Clients EAS built earlier still count.
+  android:
+    name: EAS Preview (Android)
+    if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, '🚀 Mobile Continuous Deployment') &&
+      (github.event.action != 'labeled' || github.event.label.name == '🚀 Mobile Continuous Deployment')
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    concurrency:
+      group: mobile-eas-preview-android-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      build: ${{ steps.client.outputs.build }}
+      fingerprint: ${{ steps.client.outputs.fingerprint }}
+    env:
+      APP_VARIANT: preview
+      NODE_OPTIONS: --max-old-space-size=8192
+      MOBILE_VERSION_POLICY: fingerprint
+      EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - id: expo-token
+        name: Check for EXPO_PREVIEW_TOKEN
+        run: |
+          if [ -n "$EXPO_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "EXPO_PREVIEW_TOKEN is not available; skipping the Android preview."
+          fi
+
+      - name: Checkout
+        if: steps.expo-token.outputs.present == 'true'
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # The steps below run the PR's dependency and build scripts; they get no token.
+      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
+      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
+      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      - name: Drop checkout credentials
+        if: steps.expo-token.outputs.present == 'true'
+        run: |
+          for dir in . .trusted; do
+            [ -e "$dir/.git" ] || continue
+            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+              rm -f "$file"
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
+              echo "::error::checkout credentials are still configured in $dir"
+              exit 1
+            fi
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::a checkout credential file is still present"
+            exit 1
+          fi
+
+      - name: Setup Vite+
+        if: steps.expo-token.outputs.present == 'true'
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Expose pnpm
+        if: steps.expo-token.outputs.present == 'true'
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
+          echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
+          "$vp_pnpm_bin/pnpm" --version
+
+      - name: Setup EAS
+        if: steps.expo-token.outputs.present == 'true'
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+          packager: npm
+
+      - name: Pull preview environment variables
+        if: steps.expo-token.outputs.present == 'true'
+        working-directory: apps/mobile
+        run: |
+          eas env:pull preview --non-interactive
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          import { parseEnv } from "node:util";
+          const env = parseEnv(readFileSync(".env.local", "utf8"));
+          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
+          if (googleServicesFile) {
+            appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
+          }
+          NODE
+
+      # The same command the Expo action runs, so this is the runtime version the update gets.
+      - id: client
+        name: Find the client for this fingerprint
+        if: steps.expo-token.outputs.present == 'true'
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          hash="$(eas env:exec --non-interactive preview "npx expo-updates fingerprint:generate --platform android" | sed -n '/^{/,$p' | jq -er '.hash | select(type == "string" and length > 0)')"
+          echo "fingerprint=$hash" >> "$GITHUB_OUTPUT"
+          tag="mobile-android-preview-build/$hash"
+          link=""
+          if git fetch --quiet origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null; then
+            link="$(git tag -l --format='%(contents:subject)' "$tag")"
+          else
+            # A client EAS built before this job existed; expired ones are gone.
+            link="$(eas build:list --platform android --build-profile preview:dev --runtime-version "$hash" --status finished --limit 5 --json --non-interactive \
+              | sed -n '/^\[/,$p' \
+              | jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '[.[] | select((.expirationDate // "9999") > $now)][0] | select(. != null) | "https://expo.dev/accounts/pingdotgg/projects/t3-code/builds/\(.id)"')"
+          fi
+          echo "link=$link" >> "$GITHUB_OUTPUT"
+          if [ -z "$link" ]; then echo "build=true" >> "$GITHUB_OUTPUT"; fi
+          echo "android fingerprint \`$hash\`: ${link:-no client yet, building on Blacksmith}" >> "$GITHUB_STEP_SUMMARY"
+
+      - id: update
+        name: Publish the update
+        if: steps.expo-token.outputs.present == 'true'
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          group="$(eas update --auto --branch "pr-$PR" --platform android --environment preview --non-interactive --json | sed -n '/^\[/,$p' | jq -er '.[0].group')"
+          echo "group=$group" >> "$GITHUB_OUTPUT"
+
+      - name: Comment
+        if: steps.expo-token.outputs.present == 'true'
+        env:
+          FINGERPRINT: ${{ steps.client.outputs.fingerprint }}
+          CLIENT: ${{ steps.client.outputs.link }}
+          GROUP: ${{ steps.update.outputs.group }}
+        run: node .github/scripts/mobile-preview-comment.cjs
+
+  android-build:
+    name: Android preview client
+    needs: android
+    if: needs.android.outputs.build == 'true'
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 60
+    concurrency:
+      # One build per fingerprint; a second PR with the same one finds the tag.
+      group: mobile-android-preview-build-${{ needs.android.outputs.fingerprint }}
+      cancel-in-progress: false
+    permissions:
+      contents: write # pushes the build record tag
+      pull-requests: write
+    env:
+      APP_VARIANT: preview
+      NODE_OPTIONS: --max-old-space-size=8192
+      MOBILE_VERSION_POLICY: fingerprint
+      EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+      FINGERPRINT: ${{ needs.android.outputs.fingerprint }}
+      BUILD_TAG: mobile-android-preview-build/${{ needs.android.outputs.fingerprint }}
+      # Phones only: emulators use the development client from the native-client cache.
+      ORG_GRADLE_PROJECT_reactNativeArchitectures: armeabi-v7a,arm64-v8a
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: record
+        name: Check build record
+        run: |
+          if git fetch --quiet origin "refs/tags/$BUILD_TAG:refs/tags/$BUILD_TAG" 2>/dev/null; then
+            echo "built=true" >> "$GITHUB_OUTPUT"
+            echo "link=$(git tag -l --format='%(contents:subject)' "$BUILD_TAG")" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The steps below run the PR's dependency and build scripts; they get no token.
+      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
+      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
+      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      - name: Drop checkout credentials
+        run: |
+          for dir in . .trusted; do
+            [ -e "$dir/.git" ] || continue
+            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+              rm -f "$file"
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+              git -C "$dir" config --local --unset-all "$key"
+            done
+            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
+              echo "::error::checkout credentials are still configured in $dir"
+              exit 1
+            fi
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::a checkout credential file is still present"
+            exit 1
+          fi
+
+      - name: Prepare build directories
+        if: steps.record.outputs.built != 'true'
+        run: |
+          cache="$HOME/.cache/t3-android-preview"
+          {
+            echo "GRADLE_USER_HOME=$cache/gradle"
+            echo "CCACHE_DIR=$cache/ccache"
+            echo "CCACHE_MAXSIZE=5G"
+            # Gradle installs the NDK fresh each run, so key on the compiler's version, not its mtime.
+            echo "CCACHE_COMPILERCHECK=%compiler% -v"
+            echo "pnpm_config_store_dir=$cache/pnpm-store"
+            # eas build --local copies the project here. A fixed path keeps
+            # ccache keys stable, and the same disk as the store lets pnpm hardlink.
+            echo "EAS_LOCAL_BUILD_WORKINGDIR=$cache/eas-build"
+            echo "CCACHE_BASEDIR=$cache/eas-build"
+            echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
+          } >> "$GITHUB_ENV"
+
+      - name: Mount build cache
+        if: steps.record.outputs.built != 'true'
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-android-preview-build
+          path: ~/.cache/t3-android-preview
+
+      - name: Configure Gradle and ccache
+        if: steps.record.outputs.built != 'true'
+        run: |
+          mkdir -p "$GRADLE_USER_HOME" "$CCACHE_DIR"
+          rm -rf "$EAS_LOCAL_BUILD_WORKINGDIR"
+          # No daemon: nothing should hold the sticky disk open when it is committed.
+          printf 'org.gradle.caching=true\norg.gradle.daemon=false\n' > "$GRADLE_USER_HOME/gradle.properties"
+          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update -qq && sudo apt-get install -y -qq ccache
+          ccache --zero-stats
+
+      - name: Setup Node
+        if: steps.record.outputs.built != 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Enable corepack
+        if: steps.record.outputs.built != 'true'
+        run: |
+          npm install --global corepack@latest
+          corepack enable
+          pnpm --version
+
+      - name: Install mobile dependencies
+        if: steps.record.outputs.built != 'true'
+        run: pnpm install --frozen-lockfile --prefer-offline --filter=@t3tools/mobile...
+
+      - name: Setup Java
+        if: steps.record.outputs.built != 'true'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup EAS
+        if: steps.record.outputs.built != 'true'
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+          packager: npm
+
+      - name: Pull preview environment variables
+        if: steps.record.outputs.built != 'true'
+        working-directory: apps/mobile
+        run: |
+          eas env:pull preview --non-interactive
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          import { parseEnv } from "node:util";
+          const env = parseEnv(readFileSync(".env.local", "utf8"));
+          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
+          if (googleServicesFile) {
+            appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
+          }
+          NODE
+
+      # `eas upload` hosts the APK on EAS and returns the page testers install from.
+      - id: build
+        name: Build and upload
+        if: steps.record.outputs.built != 'true'
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          eas build --local --platform android --profile preview:dev --non-interactive --output "$RUNNER_TEMP/t3code-preview.apk"
+          eas upload --platform android --build-path "$RUNNER_TEMP/t3code-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
+          link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
+          if [ -z "$link" ]; then
+            echo "::error::eas upload returned no install link"
+            exit 1
+          fi
+          echo "link=$link" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Android preview client for \`$FINGERPRINT\`: $link"
+            echo '```'
+            ccache --show-stats
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The tag is the record later runs look up; its message is the install link.
+      - name: Record build
+        if: steps.record.outputs.built != 'true'
+        env:
+          LINK: ${{ steps.build.outputs.link }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$BUILD_TAG" -m "$LINK"
+          # Only this step has the token; the checkout's copy was removed before the build.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$BUILD_TAG"
+
+      - name: Comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          CLIENT: ${{ steps.build.outputs.link || steps.record.outputs.link }}
+        run: node .github/scripts/mobile-preview-comment.cjs

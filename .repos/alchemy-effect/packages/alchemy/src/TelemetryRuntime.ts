@@ -1,19 +1,20 @@
-import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Redacted from "effect/Redacted";
-import * as Result from "effect/Result";
-import type * as Scope from "effect/Scope";
+import * as Formatter from "effect/Formatter";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Layer from "effect/Layer";
 import * as OtlpLogger from "effect/observability/OtlpLogger";
 import * as OtlpMetrics from "effect/observability/OtlpMetrics";
 import * as OtlpSerialization from "effect/observability/OtlpSerialization";
 import * as OtlpTracer from "effect/observability/OtlpTracer";
+import * as Predicate from "effect/Predicate";
+import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
+import type * as Scope from "effect/Scope";
 import { unpackEnvValue } from "./RuntimeContext.ts";
-import type { layer, layerOtlp } from "./Telemetry.ts";
 
 /**
  * The shape of the {@link Telemetry} reference: a Layer of telemetry
@@ -31,10 +32,15 @@ export type TelemetryLayer = Layer.Layer<never, any, any>;
  * Redacted marker, and a raw string set directly in the environment).
  */
 const readBoundValue = (key: string): Effect.Effect<unknown> =>
-  Config.String(key).pipe(
-    Config.withDefault(undefined),
-    Effect.orElseSucceed(() => undefined),
-    Effect.map((raw) => {
+  Effect.flatMap(ConfigProvider.ConfigProvider, (provider) => provider.load([key])).pipe(
+    // Missing optional bindings are normal on every event. Read their scalar
+    // directly instead of constructing a Config/Schema error for each absence.
+    Effect.orDie,
+    Effect.catchDefect((defect) =>
+      Predicate.isTagged(defect, "SourceError") ? Effect.undefined : Effect.die(defect),
+    ),
+    Effect.map((node) => {
+      const raw = node?.value;
       if (raw === undefined || raw === "") {
         return undefined;
       }
@@ -46,11 +52,7 @@ const readBoundValue = (key: string): Effect.Effect<unknown> =>
 const readBound = (key: string): Effect.Effect<string | undefined> =>
   readBoundValue(key).pipe(
     Effect.map((inner) =>
-      inner === undefined
-        ? undefined
-        : typeof inner === "string"
-          ? inner
-          : String(inner),
+      inner === undefined ? undefined : typeof inner === "string" ? inner : Formatter.format(inner),
     ),
   );
 
@@ -87,9 +89,7 @@ const defaultResource = Effect.gen(function* () {
  * Parse the OpenTelemetry `OTEL_EXPORTER_OTLP_HEADERS` format:
  * `key1=value1,key2=value2` with URL-encoded values.
  */
-const parseOtlpHeaders = (
-  raw: string | undefined,
-): Record<string, string> | undefined => {
+const parseOtlpHeaders = (raw: string | undefined): Record<string, string> | undefined => {
   if (raw === undefined || raw === "") {
     return undefined;
   }
@@ -147,10 +147,9 @@ export const EXPORTERS_KEY = "ALCHEMY_OTEL_EXPORTERS";
  * forms an *implicit extra destination*, so platform-injected OTLP config
  * exports without any layer.
  */
-const signalConfig = (signal: "TRACES" | "LOGS" | "METRICS") =>
+const signalConfig = (signal: "TRACES" | "LOGS" | "METRICS", base: string | undefined) =>
   Effect.gen(function* () {
     const specific = yield* readBound(`OTEL_EXPORTER_OTLP_${signal}_ENDPOINT`);
-    const base = yield* readBound("OTEL_EXPORTER_OTLP_ENDPOINT");
     const url =
       specific !== undefined && specific !== ""
         ? specific
@@ -199,8 +198,9 @@ const fanoutClient = (
           return effect;
         }
         return Effect.gen(function* () {
-          const results = yield* Effect.all(
-            targets.map((target) =>
+          const results = yield* Effect.forEach(
+            targets,
+            (target) =>
               Effect.result(
                 base.execute(
                   request.pipe(
@@ -209,7 +209,6 @@ const fanoutClient = (
                   ),
                 ),
               ),
-            ),
             { concurrency: "unbounded" },
           );
           const healthy = results.find(
@@ -218,15 +217,11 @@ const fanoutClient = (
               result.success.status >= 200 &&
               result.success.status < 300,
           );
-          const anySuccess =
-            healthy ?? results.find((result) => Result.isSuccess(result));
+          const anySuccess = healthy ?? results.find((result) => Result.isSuccess(result));
           if (anySuccess !== undefined && Result.isSuccess(anySuccess)) {
             for (const result of results) {
               if (result !== anySuccess && Result.isFailure(result)) {
-                yield* Effect.logDebug(
-                  "telemetry destination failed",
-                  result.failure,
-                );
+                yield* Effect.logDebug("telemetry destination failed", result.failure);
               }
             }
             return anySuccess.success;
@@ -240,34 +235,45 @@ const fanoutClient = (
     }),
   );
 
+/**
+ * Every destination this runtime exports to: the bound `layerOtlp` list,
+ * plus the standard `OTEL_EXPORTER_OTLP_*` variables as an implicit extra
+ * destination. Resolved per call, since providers can change between events.
+ *
+ * @internal
+ */
+export const configuredDestinations: Effect.Effect<ResolvedDestination[]> = Effect.gen(
+  function* () {
+    // Depending on the secret/plain packing path, the bound list arrives
+    // as a JSON string or already parsed into an array.
+    const rawList = yield* readBoundValue(EXPORTERS_KEY);
+    const bound: ResolvedDestination[] = Array.isArray(rawList)
+      ? (rawList as ResolvedDestination[])
+      : typeof rawList === "string" && rawList !== ""
+        ? yield* Effect.try(() => JSON.parse(rawList) as ResolvedDestination[]).pipe(Effect.orDie)
+        : [];
+    const baseEndpoint = yield* readBound("OTEL_EXPORTER_OTLP_ENDPOINT");
+    const [stdTraces, stdLogs, stdMetrics] = yield* Effect.all([
+      signalConfig("TRACES", baseEndpoint),
+      signalConfig("LOGS", baseEndpoint),
+      signalConfig("METRICS", baseEndpoint),
+    ]);
+    return [
+      ...bound,
+      ...(stdTraces || stdLogs || stdMetrics
+        ? [{ traces: stdTraces, logs: stdLogs, metrics: stdMetrics }]
+        : []),
+    ];
+  },
+);
+
 const makeExporterLayer = (options?: {
   exportInterval?: Duration.Input;
   shutdownTimeout?: Duration.Input;
 }): TelemetryLayer =>
   Layer.unwrap(
     Effect.gen(function* () {
-      // Depending on the secret/plain packing path, the bound list arrives
-      // as a JSON string or already parsed into an array.
-      const rawList = yield* readBoundValue(EXPORTERS_KEY);
-      const bound: ResolvedDestination[] = Array.isArray(rawList)
-        ? (rawList as ResolvedDestination[])
-        : typeof rawList === "string" && rawList !== ""
-          ? yield* Effect.try(
-              () => JSON.parse(rawList) as ResolvedDestination[],
-            )
-          : [];
-      // The standard OTEL_* env vars form an implicit extra destination.
-      const [stdTraces, stdLogs, stdMetrics] = yield* Effect.all([
-        signalConfig("TRACES"),
-        signalConfig("LOGS"),
-        signalConfig("METRICS"),
-      ]);
-      const destinations: ResolvedDestination[] = [
-        ...bound,
-        ...(stdTraces || stdLogs || stdMetrics
-          ? [{ traces: stdTraces, logs: stdLogs, metrics: stdMetrics }]
-          : []),
-      ];
+      const destinations = yield* configuredDestinations;
       const targets = (signal: keyof ResolvedDestination) =>
         destinations.flatMap((destination) => {
           const resolved = destination[signal];
@@ -312,7 +318,12 @@ const makeExporterLayer = (options?: {
             resource,
             exportInterval: options?.exportInterval,
             shutdownTimeout: options?.shutdownTimeout,
-          }),
+          }).pipe(
+            // Metrics go out as protobuf: OTLP/HTTP receivers must accept
+            // it, while JSON is optional and some reject it on /v1/metrics
+            // (Axiom answers 415 Unsupported Media Type).
+            Layer.provide(OtlpSerialization.layerProtobuf),
+          ),
         );
       }
       return Layer.mergeAll(...(layers as [Layer.Layer<never>])).pipe(
@@ -321,10 +332,9 @@ const makeExporterLayer = (options?: {
       );
     }).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning(
-          "Invalid telemetry configuration; telemetry disabled",
-          cause,
-        ).pipe(Effect.as(Layer.empty)),
+        Effect.logWarning("Invalid telemetry configuration; telemetry disabled", cause).pipe(
+          Effect.as(Layer.empty),
+        ),
       ),
     ),
   );
@@ -332,9 +342,10 @@ const makeExporterLayer = (options?: {
 /**
  * The runtime half of the {@link layerOtlp} binding, and the default
  * per-event Layer: reads the bound `OTEL_EXPORTER_OTLP_*` values back and
- * constructs the OTLP JSON exporters. Each signal resolves independently;
+ * constructs the OTLP exporters (JSON for traces and logs, protobuf for
+ * metrics). Each signal resolves independently;
  * only configured signals export; resolves to `Layer.empty` when nothing is
- * bound, so telemetry is free until a layer is provided.
+ * bound, so no exporters are built until a destination is configured.
  *
  * The periodic export intervals are effectively disabled: the exporter is
  * built per event and the request-scope flush delivers everything. An
@@ -366,12 +377,9 @@ const fromBoundConfigProcess: TelemetryLayer = makeExporterLayer();
  * Provide it via {@link layerOtlp} / {@link layer} rather than directly —
  * see the module documentation.
  */
-export const Telemetry = Context.Reference<TelemetryLayer>(
-  "alchemy/Telemetry",
-  {
-    defaultValue: () => fromBoundConfig,
-  },
-);
+export const Telemetry = Context.Reference<TelemetryLayer>("alchemy/Telemetry", {
+  defaultValue: () => fromBoundConfig,
+});
 
 const reference = Telemetry;
 
@@ -403,8 +411,8 @@ const reference = Telemetry;
 export const buildEventTelemetry = (
   context: Context.Context<never>,
   scope: Scope.Scope,
-  override?: TelemetryLayer | undefined,
-  base?: TelemetryLayer | undefined,
+  override?: TelemetryLayer,
+  base?: TelemetryLayer,
 ): Effect.Effect<Context.Context<never>> =>
   Effect.suspend(() => {
     const bound = base ?? Context.get(context, reference);
@@ -414,9 +422,7 @@ export const buildEventTelemetry = (
     );
   }).pipe(
     Effect.catchCause((cause) =>
-      Effect.logWarning("Failed to build telemetry layer", cause).pipe(
-        Effect.as(Context.empty()),
-      ),
+      Effect.logWarning("Failed to build telemetry layer", cause).pipe(Effect.as(Context.empty())),
     ),
   ) as Effect.Effect<Context.Context<never>>;
 
@@ -437,9 +443,7 @@ export const buildEventTelemetry = (
  */
 export const provideProcessTelemetry =
   (runtimeContext?: { telemetry?: TelemetryLayer | undefined }) =>
-  <A, E, R>(
-    effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R | Scope.Scope> =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R | Scope.Scope> =>
     Effect.gen(function* () {
       const context = yield* Effect.context<never>();
       const scope = yield* Effect.scope;
