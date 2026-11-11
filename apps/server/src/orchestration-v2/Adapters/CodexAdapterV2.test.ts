@@ -2521,6 +2521,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             approvalsReviewer: round.mode === "auto" ? "auto_review" : "user",
             sandboxPolicy: round.sandboxPolicy,
             summary: "detailed",
+            collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
           },
           { result: { turn: makeCodexReplayTurn({ id: `turn-${index}`, status: "inProgress" }) } },
         );
@@ -2596,7 +2597,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
       ),
     );
 
