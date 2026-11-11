@@ -141,6 +141,8 @@ export const TailnetLinkRefusal = Schema.Literals([
   "node_mismatch",
   /** Already a member of another network, which joining would merge. */
   "other_network",
+  /** In this network, but below full access here, so it cannot change who is in it. */
+  "not_admin",
   "revoked",
   "wrong_issuer",
   "unreachable",

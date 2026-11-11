@@ -350,7 +350,9 @@ machine in the network picks them up.
   their own, at the access they had. Any other member shows **Needs re-adding
   after the update**, and the other machines refuse it until then. On that
   machine, choose **Allow joining**, then choose **Add again** on its row from
-  another full-access machine.
+  another full-access machine. The machine you add keeps the access it gave
+  the adding machine before the update; only a full-access machine there can
+  raise it.
 - **Open** adds a member to this app without a code. Below full access, it
   opens read-only, and its row shows **Read-only in this app**. When its
   session in this app expires or is cut, **Open** shows again.
