@@ -1067,9 +1067,9 @@ function acpMcpFallbackInput(value: string | undefined): Record<string, unknown>
   return undefined;
 }
 
-// Known T3 inventory gates matches, so server-name separators can stay loose.
+// Known T3 inventory gates matches, so server-name separators can stay loose. Kiro titles "@t3-code/<tool>".
 const T3_MCP_TITLE_CALL =
-  /^(?:mcp[-_]{1,2})?t3[-_ ]?code[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
+  /^(?:@|mcp[-_]{1,2})?t3[-_ ]?code[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
 
 const T3_MCP_TITLE_SUFFIX_CALL =
   /^(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*?)(?: \(t3[-_ ]?code MCP Server\)(?::|$)|[-_.]t3[-_ ]?code$)/i;
@@ -1141,6 +1141,16 @@ export function extractMcpToolCallIdentity(
     );
     const tool = prefix === undefined ? metaToolName : metaToolName.slice(prefix.length);
     return tool ? { server: metaServerId, tool } : undefined;
+  }
+  // OMP mounts MCP tools as xd://mcp__<server>_<tool> devices and calls them by writing JSON
+  // args; a read of the same path only fetches the tool's docs.
+  const devicePath = typeof rawInput?.path === "string" ? rawInput.path : "";
+  if (devicePath.startsWith("xd://") && typeof rawInput?.content === "string") {
+    const deviceTool = T3_MCP_TITLE_CALL.exec(devicePath.slice("xd://".length))?.groups?.tool;
+    if (deviceTool !== undefined && T3_MCP_TOOL_NAMES.has(deviceTool)) {
+      const input = acpMcpFallbackInput(rawInput.content);
+      return { server: "t3-code", tool: deviceTool, ...(input === undefined ? {} : { input }) };
+    }
   }
   const candidates = [
     meta?.toolName,
