@@ -719,7 +719,7 @@ export function PullRequestDetailPanel({
   useEffect(() => {
     readHostForReveal();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- each load that misses the linked item is checked against the host read
-  }, [revealMissedAt, revealReadFailed]);
+  }, [revealMissedAt, revealReadFailed, revealUrl]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a host read outliving the panel must not settle a later link
   useEffect(
     () => () => {
