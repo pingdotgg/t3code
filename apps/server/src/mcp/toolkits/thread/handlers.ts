@@ -265,6 +265,25 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       }),
     ),
   ),
+  t3_submit_output: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const { scope, threads } = yield* readCaller();
+      if (scope.thread === undefined) return yield* unavailable();
+      return yield* threads
+        .submitRunOutput({
+          threadId: scope.thread.threadId,
+          commandId: yield* newCommandId(),
+          json: input.json,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "ThreadManagementRunOutputRejectedError"
+              ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
+              : unavailable(),
+          ),
+        );
+    }),
+  ),
   t3_queue: McpToolAccess.either(
     (input) => input.action === "list" || input.action === "read",
     McpToolAccess.reads((input) =>

@@ -514,6 +514,7 @@ type WaitOutcome =
       readonly type: "ended";
       readonly runId: RunId | null;
       readonly status: OrchestratorMcpThreadStatus;
+      readonly output?: Schema.Json;
     }
   | { readonly type: "needs_input" };
 
@@ -584,7 +585,12 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
       OrchestratorMcpThreadWaitResult,
     );
   const ended = (waited: OrchestratorMcpThreadWaitResult) =>
-    ({ type: "ended", runId: waited.runId, status: waited.status }) satisfies WaitOutcome;
+    ({
+      type: "ended",
+      runId: waited.runId,
+      status: waited.status,
+      ...(waited.output === undefined ? {} : { output: waited.output }),
+    }) satisfies WaitOutcome;
   const ownRun = Effect.gen(function* () {
     while (true) {
       const waited = yield* waitSlice(WAIT_SLICE_MS);
@@ -670,7 +676,15 @@ const finishRun = Effect.fn("cli.thread.finishRun")(function* (
       ? null
       : yield* runResultText(tools, input.threadId, runId, "error");
   if (input.json) {
-    yield* printJson({ threadId: input.threadId, runId, status, reply, error });
+    const output = outcome.type === "ended" ? outcome.output : undefined;
+    yield* printJson({
+      threadId: input.threadId,
+      runId,
+      status,
+      reply,
+      error,
+      ...(output === undefined ? {} : { output }),
+    });
   } else if (reply !== null) {
     yield* Console.log(reply);
   }
@@ -725,6 +739,25 @@ const waitFlag = Flag.Boolean("wait").pipe(
   ),
   Flag.withDefault(false),
 );
+const outputSchemaFlag = Flag.String("output-schema").pipe(
+  Flag.withDescription(
+    "File holding a JSON Schema. The agent must return data matching it; --wait --json prints it as `output`.",
+  ),
+  Flag.optional,
+);
+const decodeOutputSchema = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+);
+const readOutputSchema = Effect.fn("cli.thread.readOutputSchema")(function* (
+  path: Option.Option<string>,
+) {
+  if (Option.isNone(path)) return {};
+  const fileSystem = yield* FileSystem.FileSystem;
+  const usage = () =>
+    new ThreadUsageError({ detail: `${path.value} does not hold a JSON Schema object.` });
+  const text = yield* fileSystem.readFileString(path.value).pipe(Effect.mapError(usage));
+  return { outputSchema: yield* decodeOutputSchema(text).pipe(Effect.mapError(usage)) };
+});
 const messageArgument = Argument.String("message").pipe(
   Argument.withDescription("Message for the agent, or - to read it from stdin."),
 );
@@ -801,6 +834,7 @@ const threadStartCommand = Command.make("start", {
     Flag.withDescription("Branch name for the new worktree."),
     Flag.optional,
   ),
+  outputSchema: outputSchemaFlag,
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -808,6 +842,7 @@ const threadStartCommand = Command.make("start", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const message = yield* readMessageArgument(flags.message);
+      const output = yield* readOutputSchema(flags.outputSchema);
       const workspaceStrategy = yield* launchWorkspaceStrategy(flags);
       if (Option.isSome(flags.provider) !== Option.isSome(flags.model)) {
         return yield* new ThreadUsageError({ detail: "--provider and --model go together." });
@@ -825,6 +860,7 @@ const threadStartCommand = Command.make("start", {
               projectId: project.id,
               title,
               message,
+              ...output,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
               ...(Option.isSome(flags.provider) && Option.isSome(flags.model)
                 ? {
@@ -857,6 +893,7 @@ const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
   thread: threadArgument,
   message: messageArgument,
+  outputSchema: outputSchemaFlag,
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -867,6 +904,7 @@ const threadSendCommand = Command.make("send", {
     Effect.gen(function* () {
       const threadId = yield* decodeThreadId(flags.thread);
       const message = yield* readMessageArgument(flags.message);
+      const output = yield* readOutputSchema(flags.outputSchema);
       yield* withThreadTools(
         flags,
         Effect.fn("cli.thread.send")(function* (tools) {
@@ -874,7 +912,7 @@ const threadSendCommand = Command.make("send", {
           const followWakes = flags.wait ? yield* threadIsIdle(tools, threadId) : false;
           const sent = yield* tools.call(
             "t3_thread_send",
-            { threadId, message, mode: "queue" },
+            { threadId, message, mode: "queue", ...output },
             OrchestratorMcpThreadSendResult,
           );
           if (flags.wait) {

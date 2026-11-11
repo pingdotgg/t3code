@@ -477,12 +477,27 @@ The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for
 idempotent retries.
 
+`outputSchema` (also on `t3_thread_launch`) asks the run for a result as data.
+The run stores the schema, the turn's prompt ends with how to hand the result
+back, and the agent calls `t3_submit_output`. The server checks the value
+against the schema before storing it, so the caller never parses a reply. A send
+that asks for a result is queued instead of steered: the result belongs to one
+whole turn. A turn can end without submitting; the caller sees a finished run
+with no `output`.
+
+### `t3_submit_output`
+
+Stores the calling thread's result on its running turn, once it fits the schema
+that turn was sent with. A rejection names what did not fit, so the agent can
+correct it and call again; a later accepted submission replaces an earlier one.
+
 ### `t3_thread_wait`
 
 Waits for a selected run to become `completed`, `failed`, `cancelled`,
 `interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
 time; an idle thread returns immediately. A timeout reports the latest durable
-status and does not cancel work.
+status and does not cancel work. `output` carries what the run submitted
+against its `outputSchema`.
 
 ### `t3_thread_interrupt`
 

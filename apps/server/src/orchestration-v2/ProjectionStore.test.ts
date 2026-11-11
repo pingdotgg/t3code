@@ -7317,6 +7317,19 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         payload: task,
       });
 
+      const output = { value: { verdict: "merge" }, submittedAt: "2026-11-11T00:00:00.000Z" };
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-delegated-completion:output"),
+        type: "run.output-submitted",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { runId, output },
+      });
+
+      // Lifecycle writers hold the run as it was when the turn started.
       const { delegatedCompletion: _delegatedCompletion, ...staleRun } = run;
       const { completionDelivery: _completionDelivery, ...staleTask } = task;
       yield* projectionStore.apply({
@@ -7348,6 +7361,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(projection.runs[0]?.delegatedCompletion, run.delegatedCompletion);
+      assert.deepEqual(projection.runs[0]?.output, output);
       assert.deepEqual(projection.subagents[0]?.completionDelivery, task.completionDelivery);
       assert.deepEqual(
         (yield* projectionStore.getThreadRecords(threadId, ["subagents"], {

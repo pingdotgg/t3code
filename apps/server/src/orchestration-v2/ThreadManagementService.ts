@@ -54,6 +54,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -70,6 +71,7 @@ import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
+import { checkOutput, outputSchemaProblem } from "./runOutput.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -153,6 +155,8 @@ export interface ThreadManagementSendInput {
   readonly mode: ThreadManagementSendMode;
   /** Start a new provider session; the orchestrator queues it instead of steering. */
   readonly freshContext?: boolean;
+  /** Ask the run for a result as data matching this JSON Schema; it is queued, never steered. */
+  readonly outputSchema?: Readonly<Record<string, Schema.Json>>;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -266,6 +270,18 @@ export class ThreadManagementNoSteerableRunError extends Schema.TaggedError<Thre
   }
 }
 
+export class ThreadManagementRunOutputRejectedError extends Schema.TaggedError<ThreadManagementRunOutputRejectedError>()(
+  "ThreadManagementRunOutputRejectedError",
+  {
+    threadId: ThreadId,
+    problem: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.problem;
+  }
+}
+
 export class ThreadManagementThreadNotInterruptibleError extends Schema.TaggedError<ThreadManagementThreadNotInterruptibleError>()(
   "ThreadManagementThreadNotInterruptibleError",
   {
@@ -369,6 +385,7 @@ export const ThreadManagementError = Schema.Union([
   ThreadManagementRunNotFoundError,
   ThreadManagementThreadArchivedError,
   ThreadManagementNoSteerableRunError,
+  ThreadManagementRunOutputRejectedError,
   ThreadManagementThreadNotInterruptibleError,
   ThreadManagementProjectionLoadError,
   ThreadManagementProjectThreadsListError,
@@ -455,6 +472,12 @@ export interface ThreadManagementServiceShape {
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
+  /** Stores what the thread's running turn returns, once it fits the schema that turn declared. */
+  readonly submitRunOutput: (input: {
+    readonly threadId: ThreadId;
+    readonly commandId: CommandId;
+    readonly json: string;
+  }) => Effect.Effect<{ readonly runId: RunId }, ThreadManagementFailure>;
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
@@ -867,10 +890,19 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
       });
     }
+    const schemaProblem =
+      input.outputSchema === undefined ? null : outputSchemaProblem(input.outputSchema);
+    if (schemaProblem !== null) {
+      return yield* new ThreadManagementRunOutputRejectedError({
+        threadId: input.threadId,
+        problem: schemaProblem,
+      });
+    }
     const steerableRun = latestSteerableRun(target);
-    // A fresh send never joins a running turn, so it needs none to steer or restart.
+    // A fresh send, or one that asks for a result, never joins a running turn.
     const mode =
-      input.freshContext && (input.mode === "steer" || input.mode === "restart")
+      (input.freshContext || input.outputSchema !== undefined) &&
+      (input.mode === "steer" || input.mode === "restart")
         ? "queue"
         : input.mode;
     let dispatchMode: Extract<
@@ -928,6 +960,7 @@ const make = Effect.gen(function* () {
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.freshContext ? { freshContext: true } : {}),
+      ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
       dispatchMode,
       ...(mode === "auto" ? { deliveryIntent: "auto" } : {}),
       createdBy: input.createdBy,
@@ -979,6 +1012,34 @@ const make = Effect.gen(function* () {
             ? "restarted"
             : "steered";
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
+  });
+
+  const submitRunOutput: ThreadManagementServiceShape["submitRunOutput"] = Effect.fn(
+    "ThreadManagementService.submitRunOutput",
+  )(function* (input) {
+    const records = yield* orchestrator.getThreadRecords(input.threadId, ["runs"]);
+    const run = latestActiveRun(records);
+    if (run?.outputSchema === undefined) {
+      return yield* new ThreadManagementRunOutputRejectedError({
+        threadId: input.threadId,
+        problem: "This turn was not asked for a result. Reply in your message instead.",
+      });
+    }
+    const checked = yield* checkOutput(run.outputSchema, input.json);
+    if (Result.isFailure(checked)) {
+      return yield* new ThreadManagementRunOutputRejectedError({
+        threadId: input.threadId,
+        problem: `The result does not match the schema:\n${checked.failure}`,
+      });
+    }
+    yield* dispatch({
+      type: "run.output.submit",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      runId: run.id,
+      value: checked.success,
+    });
+    return { runId: run.id };
   });
 
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(
@@ -1741,6 +1802,7 @@ const make = Effect.gen(function* () {
     getThreadLinkMetadata: orchestrator.getThreadLinkMetadata,
     listProjectThreads,
     sendToThread,
+    submitRunOutput,
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,

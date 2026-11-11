@@ -562,6 +562,105 @@ it.effect("retains automation and sender attribution while a message waits in th
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("a run asked for a result stores what its agent submits once it fits the schema", () => {
+  const harness = makeHarness({ runSetup: () => Effect.never });
+  const outputSchema = {
+    type: "object",
+    properties: { verdict: { enum: ["merge", "fix-first"] } },
+    required: ["verdict"],
+  };
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const input = launchInput({
+      command: "command:output:launch",
+      thread: "thread:output",
+      message: "Review it",
+      workspace: { type: "worktree", baseRef: "main" },
+    });
+    const launched = yield* launches.launch({
+      ...input,
+      initialMessage: { ...input.initialMessage!, outputSchema },
+    });
+    const submit = (command: string, json: string) =>
+      threads.submitRunOutput({
+        threadId: launched.threadId,
+        commandId: CommandId.make(command),
+        json,
+      });
+
+    const rejected = yield* submit("command:output:bad", '{"verdict":"maybe"}').pipe(Effect.flip);
+    assert.equal(rejected._tag, "ThreadManagementRunOutputRejectedError");
+    assert.include(rejected.message, "verdict");
+    const unparsed = yield* submit("command:output:text", "merge").pipe(Effect.flip);
+    assert.include(unparsed.message, "not valid JSON");
+
+    const accepted = yield* submit("command:output:good", '{"verdict":"merge","note":"kept"}');
+    const stored = (yield* threads.getThreadProjection(launched.threadId)).runs.find(
+      (run) => run.id === accepted.runId,
+    );
+    assert.deepStrictEqual(stored?.outputSchema, outputSchema);
+    // Kept as submitted, including what the schema does not name.
+    assert.deepStrictEqual(stored?.output?.value, { verdict: "merge", note: "kept" });
+
+    // Asking for a result never joins the running turn, and a plain turn has nothing to submit to.
+    const next = yield* threads.sendToThread({
+      projectId,
+      commandId: CommandId.make("command:output:next"),
+      threadId: launched.threadId,
+      messageId: MessageId.make("message:output:next"),
+      text: "Review it again",
+      attachments: [],
+      mode: "steer",
+      outputSchema,
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    assert.equal(next.delivery, "queued");
+    assert.deepStrictEqual(next.run.outputSchema, outputSchema);
+    assert.isUndefined(next.run.output);
+    const unusable = yield* threads
+      .sendToThread({
+        projectId,
+        commandId: CommandId.make("command:output:unusable"),
+        threadId: launched.threadId,
+        messageId: MessageId.make("message:output:unusable"),
+        text: "Review it again",
+        attachments: [],
+        mode: "queue",
+        outputSchema: { $ref: "#/$defs/Missing" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      })
+      .pipe(Effect.result);
+    assert.isTrue(Result.isFailure(unusable));
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("a run that was not asked for a result rejects a submission", () => {
+  const harness = makeHarness({ runSetup: () => Effect.never });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:no-output:launch",
+        thread: "thread:no-output",
+        message: "Just talk",
+        workspace: { type: "worktree", baseRef: "main" },
+      }),
+    );
+    const rejected = yield* threads
+      .submitRunOutput({
+        threadId: launched.threadId,
+        commandId: CommandId.make("command:no-output:submit"),
+        json: "{}",
+      })
+      .pipe(Effect.flip);
+    assert.include(rejected.message, "not asked for a result");
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("provisions independent launches concurrently instead of behind a global semaphore", () =>
   Effect.gen(function* () {
     const setupCount = yield* Ref.make(0);

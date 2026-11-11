@@ -79,6 +79,8 @@ export interface ThreadLaunchInitialMessage {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
+  /** Ask the first run for a result as data matching this JSON Schema. */
+  readonly outputSchema?: Readonly<Record<string, Schema.Json>> | undefined;
 }
 
 export interface ThreadLaunchInput {
@@ -1204,6 +1206,9 @@ const make = Effect.gen(function* () {
                 : { senderThreadId: input.initialMessage.senderThreadId }),
               attachments: input.initialMessage.attachments,
               ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
+              ...(input.initialMessage.outputSchema === undefined
+                ? {}
+                : { outputSchema: input.initialMessage.outputSchema }),
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
               modelSelection: input.modelSelection,
               dispatchMode: { type: "defer_start", workspaceStrategy },
@@ -1361,6 +1366,7 @@ const make = Effect.gen(function* () {
                 text: message.text,
                 attachments: message.attachments,
                 ...(message.context ? { context: message.context } : {}),
+                ...(run.outputSchema === undefined ? {} : { outputSchema: run.outputSchema }),
               },
             }),
       },
