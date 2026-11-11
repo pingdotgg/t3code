@@ -49,6 +49,7 @@ const PREVIEW_FORWARDED_COMMANDS = [
   "sidebar.toggle",
   "rightPanel.toggle",
   "preview.focusUrl",
+  "preview.find",
 ] as const;
 
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>

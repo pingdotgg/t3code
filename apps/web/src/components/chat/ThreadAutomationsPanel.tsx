@@ -16,7 +16,8 @@ import {
 
 import { Switch } from "../ui/switch";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { ScheduledRelativeLabel, scheduleLabel } from "../settings/ScheduledTasksSettings";
+import { ScheduledRelativeLabel } from "../settings/ScheduledTasksSettings";
+import { scheduleLabel } from "../settings/scheduledTasksSettings.logic";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -172,7 +173,11 @@ export function ThreadAutomationsPanel(props: {
                         ? "Paused"
                         : task.lastRunStatus === "running"
                           ? "Running"
-                          : scheduleLabel(task.schedule))}
+                          : scheduleLabel(
+                              task.schedule,
+                              tasksQuery.data?.timeZone,
+                              task.nextRunAt,
+                            ))}
                   </span>
                 </span>
               </MenuTrigger>
