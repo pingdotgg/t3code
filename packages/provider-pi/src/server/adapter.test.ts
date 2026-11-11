@@ -1953,6 +1953,62 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([true, false])(
+    "aborts work a session switch hook starts before T3 owns the thread (abort ok=%s)",
+    (abortSucceeds) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        fake.deferNextLifecycle("switch_session");
+        const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+        const switchRequest = yield* fake.takeRequest("switch_session");
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: "resume-goal",
+          method: "confirm",
+          title: "Resume goal?",
+        });
+        const dialog = yield* takeEvent((event) => event.type === "runtime_request.updated");
+        assert.isTrue(dialog.type === "runtime_request.updated");
+        if (dialog.type !== "runtime_request.updated") return;
+        yield* runtime.respondToRuntimeRequest({
+          requestId: dialog.runtimeRequest.id,
+          decision: "accept",
+        });
+        yield* fake.takeRequest("extension_ui_response");
+        if (!abortSucceeds) fake.deferNextLifecycle("abort");
+        yield* fake.emit({ type: "agent_start" });
+        const abort = yield* fake.takeRequest("abort");
+        if (!abortSucceeds) {
+          yield* fake.emit({
+            type: "response",
+            id: abort["id"],
+            command: "abort",
+            success: false,
+            error: "abort failed",
+          });
+          const failure = yield* Fiber.join(resumed).pipe(Effect.flip);
+          assert.include(JSON.stringify(failure), "invisible tool execution");
+          return;
+        }
+        yield* fake.emit({ type: "agent_settled", aborted: true });
+        yield* fake.emit({
+          type: "response",
+          id: switchRequest["id"],
+          command: "switch_session",
+          success: true,
+          data: { cancelled: false },
+        });
+        yield* Fiber.join(resumed);
+        assert.notEqual(runtime.providerSession.status, "error");
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each(["session", "process"] as const)("cleans up detached work on Pi %s exit", (exit) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

@@ -552,6 +552,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // Turn failures can leave Pi alive; pump termination retires the runtime.
       let runtimeRetired = false;
       let pendingWake: PiWake | null = null;
+      let switchAbort: Fiber.Fiber<void> | null = null;
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
         readonly touched: Set<string>;
@@ -1868,6 +1869,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         yield* connection.terminate;
       });
 
+      const stopUnsolicitedWork = Effect.gen(function* () {
+        unsolicitedActivityDetected = true;
+        yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
+        yield* connection.terminate;
+      });
+
       const handleSessionEvent = Effect.fnUntraced(function* (event: PiRpcRecord) {
         if (event["type"] === "t3.extension_status_reset") {
           const reset = extensionStatusReset;
@@ -1941,10 +1948,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 .pipe(Effect.tapError(() => stopPendingWake(wake)));
               return;
             }
+            // A session hook can start work mid-switch, before T3 owns the thread or applies its model.
+            if (state === null && extensionStatusReset !== null && !closed && !stopRequested) {
+              switchAbort = yield* request({ type: "abort" }).pipe(
+                Effect.asVoid,
+                Effect.catchCause(() => sessionEventPermit.withPermits(1)(stopUnsolicitedWork)),
+                Effect.forkIn(scope),
+              );
+              return;
+            }
             if (turn === null) {
-              unsolicitedActivityDetected = true;
-              yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
-              yield* connection.terminate;
+              yield* stopUnsolicitedWork;
               return;
             }
             turn.sawAgentActivity = true;
@@ -2509,7 +2523,21 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             resumeId != null
               ? { type: "switch_session", sessionPath: resumeId }
               : { type: "new_session" },
+          ).pipe(
+            Effect.ensuring(
+              Effect.suspend(() => {
+                const fiber = switchAbort;
+                switchAbort = null;
+                return fiber === null ? Effect.void : Fiber.await(fiber);
+              }),
+            ),
+            // Stopping Pi fails the switch with a transport error; report why it was stopped.
+            Effect.mapError((error) =>
+              unsolicitedActivityDetected ? protocolError(PI_UNSOLICITED_ACTIVITY_ERROR) : error,
+            ),
           );
+          if (unsolicitedActivityDetected)
+            return yield* protocolError(PI_UNSOLICITED_ACTIVITY_ERROR);
           if (recordField(result, "cancelled") === true) {
             return yield* protocolError("A Pi extension cancelled the session switch");
           }
