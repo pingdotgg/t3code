@@ -1580,6 +1580,8 @@ describe("UsageService", () => {
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
       const cursor = makeFakeCursor();
+      let inFlight = 0;
+      let mostInFlight = 0;
       const started = yield* Deferred.make<void>();
       const gate = yield* Deferred.make<void>();
       yield* Effect.gen(function* () {
@@ -1587,17 +1589,28 @@ describe("UsageService", () => {
           layerCursorUsageAccounts(
             Layer.succeed(CursorAccountReader.CursorAccountReader, {
               read: (credential, sinceMs, untilMs) =>
-                (credential as { apiKey?: string }).apiKey === "failing-key"
-                  ? Effect.succeed({
+                Effect.gen(function* () {
+                  inFlight++;
+                  mostInFlight = Math.max(mostInFlight, inFlight);
+                  if (credential.apiKey === "failing-key") {
+                    yield* Deferred.await(started);
+                    return {
                       accountKey: null,
                       records: [],
                       missing: false,
                       error: "Cursor account usage could not be read.",
-                    })
-                  : Deferred.succeed(started, undefined).pipe(
-                      Effect.andThen(Deferred.await(gate)),
-                      Effect.andThen(cursor.read(credential, sinceMs, untilMs)),
-                    ),
+                    };
+                  }
+                  yield* Deferred.succeed(started, undefined);
+                  yield* Deferred.await(gate);
+                  return yield* cursor.read(credential, sinceMs, untilMs);
+                }).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      inFlight--;
+                    }),
+                  ),
+                ),
             }),
           ),
         );
@@ -1613,6 +1626,14 @@ describe("UsageService", () => {
                 instanceId: ProviderInstanceId.make("cursor-work"),
                 environment: { CURSOR_API_KEY: "new-key" },
               },
+              {
+                instanceId: ProviderInstanceId.make("cursor-third"),
+                environment: { CURSOR_API_KEY: "third-key" },
+              },
+              {
+                instanceId: ProviderInstanceId.make("cursor-fourth"),
+                environment: { CURSOR_API_KEY: "fourth-key" },
+              },
             ],
             windowStartMs: 0,
             retentionCutoffMs: 0,
@@ -1624,6 +1645,8 @@ describe("UsageService", () => {
         assert.isTrue(sources.some((source) => source.refreshing === true));
         yield* Deferred.succeed(gate, undefined);
         yield* Fiber.join(first);
+        assert.strictEqual(mostInFlight, 2);
+        assert.strictEqual(inFlight, 0);
       }).pipe(
         Effect.provide(
           layerService({
@@ -2564,7 +2587,7 @@ describe("UsageService", () => {
   );
 
   it.live.each([4, 5, 6, 7, 8, 10])(
-    "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
+    "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts, removes the old file",
     (version) =>
       Effect.gen(function* () {
         const { home, settings } = yield* setup;
@@ -2613,7 +2636,7 @@ describe("UsageService", () => {
           yield* first.readSummary(WINDOW);
           yield* first.awaitPersisted;
 
-          const legacy = yield* Effect.promise(async () => {
+          yield* Effect.promise(async () => {
             const livePath = await NodeFSP.realpath(live);
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
               files: Record<string, { r: unknown[][]; mr: number; cs: Record<string, unknown> }>;
@@ -2651,7 +2674,9 @@ describe("UsageService", () => {
               }
             }
             await NodeFSP.rm(deleted);
-            return text;
+            await NodeFSP.mkdir(`${cachePath}.stale`);
+            await NodeFSP.utimes(`${cachePath}.stale`, 0, 0);
+            await NodeFSP.mkdir(`${cachePath}.active`);
           });
 
           const upgraded = yield* UsageService.make;
@@ -2663,9 +2688,11 @@ describe("UsageService", () => {
           );
           yield* upgraded.awaitPersisted;
           assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
-          assert.strictEqual(
-            yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
-            legacy,
+          assert.deepStrictEqual(
+            (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
+              .filter((name) => name.startsWith("usage-scan-cache"))
+              .toSorted(),
+            [SCAN_CACHE_FILE_NAME, `${SCAN_CACHE_FILE_NAME}.active`],
           );
         }).pipe(
           Effect.provide(
