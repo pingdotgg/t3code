@@ -4299,17 +4299,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   // A failed post-checkout hook leaves the worktree registered, holding the branch that
   // createWorktree just made, so Git refuses to delete the branch until the worktree is gone.
+  // `pathWasFree`: no checkout sat at the path before, so a worktree there now is this attempt's.
   const discardFailedWorktree = Effect.fn("discardFailedWorktree")(
-    function* (cwd: string, worktreePath: string, branch: string) {
-      const head = yield* executeGit(
-        "GitVcsDriver.createWorktree.rollbackHead",
-        path.resolve(cwd, worktreePath),
-        ["rev-parse", "--symbolic-full-name", "HEAD"],
-        { allowNonZeroExit: true },
-      ).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.orElseSucceed(() => ""),
-      );
+    function* (cwd: string, worktreePath: string, branch: string, pathWasFree: boolean) {
+      const head = !pathWasFree
+        ? ""
+        : yield* executeGit(
+            "GitVcsDriver.createWorktree.rollbackHead",
+            path.resolve(cwd, worktreePath),
+            ["rev-parse", "--symbolic-full-name", "HEAD"],
+            { allowNonZeroExit: true },
+          ).pipe(
+            Effect.map((result) => result.stdout.trim()),
+            Effect.orElseSucceed(() => ""),
+          );
       if (head === `refs/heads/${branch}`) {
         yield* removeWorktree({ cwd, path: worktreePath, force: true });
       }
@@ -4363,6 +4366,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
     const checkoutRef = newRefName ?? input.refName;
+    const pathWasFree =
+      newRefName !== undefined &&
+      !(yield* fileSystem
+        .exists(path.join(path.resolve(input.cwd, worktreePath), ".git"))
+        .pipe(Effect.orElseSucceed(() => true)));
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
@@ -4420,7 +4428,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : stockCheckout
     ).pipe(
       Effect.onError(() =>
-        newRefName ? discardFailedWorktree(input.cwd, worktreePath, newRefName) : Effect.void,
+        newRefName
+          ? discardFailedWorktree(input.cwd, worktreePath, newRefName, pathWasFree)
+          : Effect.void,
       ),
     );
     if (fastCheckout) {
