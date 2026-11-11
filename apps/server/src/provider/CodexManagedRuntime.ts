@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
@@ -45,6 +46,10 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
   const environmentIdentity = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* environmentIdentity.getEnvironmentId;
   const invocation = yield* resolveSelfInvocation();
+  // On desktop the self-invocation is Electron, which runs the helper as Node only with this flag.
+  // Scope it to the auth command so Codex's own children do not inherit it; Windows has no `env`.
+  const electronAsNode = (yield* HostProcess.Environment).ELECTRON_RUN_AS_NODE === "1";
+  const wrapAuthCommand = electronAsNode && (yield* HostProcess.Platform) !== "win32";
   const auth = yield* makeCodexChatGptAuth({
     instanceId: options.instanceId,
     defaultReturnUrl: new URL(
@@ -116,6 +121,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     // Ambient CLI overrides cannot redirect a T3-owned token to a different provider.
     const environment: NodeJS.ProcessEnv = {
       ...options.environment,
+      ...(electronAsNode && !wrapAuthCommand ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
       CODEX_HOME: homePath,
     };
     delete environment.ACCESS_TOKEN;
@@ -128,7 +134,13 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
         setupMode: "managed",
         binaryPath: executable.executablePath,
         homePath,
-        launchArgs: managedCodexLaunchArgs(invocation.command, authArgs),
+        launchArgs: wrapAuthCommand
+          ? managedCodexLaunchArgs("/usr/bin/env", [
+              "ELECTRON_RUN_AS_NODE=1",
+              invocation.command,
+              ...authArgs,
+            ])
+          : managedCodexLaunchArgs(invocation.command, authArgs),
       }),
       environment,
       revision: profileKey,

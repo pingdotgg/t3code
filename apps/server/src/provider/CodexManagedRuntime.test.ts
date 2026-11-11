@@ -156,6 +156,14 @@ it.live.each(
             const [command, helperArgs] = decodeCommand(
               `[${commandMatch![1]},${commandMatch![2]}]`,
             );
+            // The desktop backend runs Electron as Node; only the helper may inherit that mode.
+            if ((yield* HostProcess.Platform) !== "win32") {
+              assert.deepEqual(
+                [command, ...helperArgs.slice(0, 2)],
+                ["/usr/bin/env", "ELECTRON_RUN_AS_NODE=1", process.execPath],
+              );
+              assert.isUndefined(effective.environment.ELECTRON_RUN_AS_NODE);
+            }
             const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
             const runHelper = Effect.gen(function* () {
               const child = yield* spawner.spawn(
@@ -217,6 +225,10 @@ it.live.each(
         );
       }).pipe(
         Effect.provide(CodexManagedTokenBroker.layer),
+        Effect.provideService(HostProcess.Environment, {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: "1",
+        }),
         Effect.provideService(HostProcess.Arguments, [
           process.execPath,
           NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url)),
