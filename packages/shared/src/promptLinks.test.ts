@@ -7,6 +7,7 @@ import {
   parseThreadLinkPrompt,
   promptLinkAppPath,
   promptLinkDeepLink,
+  promptLinkRepositoryName,
   sanitizeLinkedPrompt,
   withoutPromptLinkParams,
 } from "./promptLinks.ts";
@@ -69,6 +70,11 @@ describe("parseNewThreadLink", () => {
       owner: "pingdotgg",
       name: "t3code",
     });
+    // Another host's repository must not be shown as the GitHub repository with the same path.
+    expect(promptLinkRepositoryName(repositoryOf("https://evil.example/pingdotgg/t3code")!)).toBe(
+      "evil.example/pingdotgg/t3code",
+    );
+    expect(promptLinkRepositoryName(repositoryOf("pingdotgg/t3code")!)).toBe("pingdotgg/t3code");
     for (const refused of [
       "https://github.com/pingdotgg/t3code/tree/main",
       "https://gitlab.example.com/mono",

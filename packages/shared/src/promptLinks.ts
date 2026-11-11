@@ -103,6 +103,11 @@ export function parsePromptLinkRepository(value: string): PromptLinkRepository |
   return match?.[1] && match[2] ? repositoryOf(match[1], match[2]) : null;
 }
 
+/** `owner/name`, prefixed with the host when the link named one, so it cannot pass for GitHub's. */
+export function promptLinkRepositoryName(repository: PromptLinkRepository): string {
+  return `${repository.host ? `${repository.host}/` : ""}${repository.owner}/${repository.name}`;
+}
+
 /** HTTPS clone URL, on github.com unless the link named another host. */
 export function promptLinkRepositoryCloneUrl(repository: PromptLinkRepository): string {
   return `https://${repository.host ?? "github.com"}/${repository.owner}/${repository.name}.git`;

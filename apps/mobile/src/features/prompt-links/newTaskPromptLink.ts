@@ -25,6 +25,7 @@ import {
   type PromptLinkPullRequest,
   type PromptLinkRepository,
   promptLinkRepositoryCloneUrl,
+  promptLinkRepositoryName,
 } from "@t3tools/shared/promptLinks";
 import { Atom, type AsyncResult } from "effect/reactivity";
 
@@ -47,7 +48,6 @@ import { applyLinkedPromptToThreadDraft, showPromptLinkNotice } from "./prompt-l
 import {
   latestThreadEnvironmentIds,
   promptLinkNotice,
-  promptLinkRepositoryName,
   promptLinkScratchEnvironmentId,
   promptLinkSearchFromParams,
   stepPendingPromptLink,

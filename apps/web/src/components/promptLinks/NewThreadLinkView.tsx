@@ -21,6 +21,7 @@ import {
   type PromptLinkRepository,
   promptLinkPullRequestUrl,
   promptLinkRepositoryCloneUrl,
+  promptLinkRepositoryName,
 } from "@t3tools/shared/promptLinks";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -257,7 +258,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     if (link.kind === "pull-request") {
       setState({
         status: "failed",
-        title: `Cloning ${repository.owner}/${repository.name}`,
+        title: `Cloning ${promptLinkRepositoryName(repository)}`,
         message: "Open this link again when the clone finishes.",
       });
       return;
@@ -366,7 +367,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
         <LinkPage title={state.title ?? "Could not open the link"} description={state.message} />
       );
     case "missing-repository": {
-      const name = `${state.repository.owner}/${state.repository.name}`;
+      const name = promptLinkRepositoryName(state.repository);
       return (
         <LinkPage
           title={`You don't have ${name}`}
