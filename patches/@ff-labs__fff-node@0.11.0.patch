@@ -46,7 +46,7 @@ index 452102d720cc19b0560cfc9e2f1a320687047c92..312046cb4195000ef91f41ffd07cf127
       * Check if a scan is currently in progress.
       */
 diff --git a/dist/index.js b/dist/index.js
-index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..2dae1cc0ba3dc8b99f8104dde9c555b4fcb41d66 100644
+index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..cf3dac957335027ba9cb33621fb8ef1041da261c 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -1,7 +1,7 @@
@@ -299,23 +299,73 @@ index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..2dae1cc0ba3dc8b99f8104dde9c555b4
  function ffiIsScanning(handle) {
    loadLibrary();
    return load({
-@@ -1429,6 +1468,7 @@ var FileFinder = class _FileFinder {
+@@ -1212,6 +1251,48 @@ function ffiGetScanProgress(handle) {
+   });
+   return { ok: true, value: result };
+ }
++async function ffiGetScanProgressAsync(handle) {
++  loadLibrary();
++  const rawPtr = await load({
++    library: LIBRARY_KEY,
++    funcName: "fff_get_scan_progress",
++    retType: DataType.External,
++    paramsType: [DataType.External],
++    paramsValue: [handle],
++    freeResultMemory: false,
++    runInNewThread: true
++  });
++  const [structData] = restorePointer({
++    retType: [FFF_RESULT_STRUCT],
++    paramsValue: wrapPointer([rawPtr])
++  });
++  if (structData.success === 0) {
++    const errorStr = readCString(structData.error);
++    freeResult(rawPtr);
++    return err(errorStr || "Unknown error");
++  }
++  const handlePtr = structData.handle;
++  freeResult(rawPtr);
++  if (isNullPointer(handlePtr)) return err("scan progress returned null");
++  const [sp] = restorePointer({
++    retType: [FFF_SCAN_PROGRESS_STRUCT],
++    paramsValue: wrapPointer([handlePtr])
++  });
++  const result = {
++    scannedFilesCount: Number(sp.scanned_files_count),
++    isScanning: sp.is_scanning !== 0,
++    isWatcherReady: sp.is_watcher_ready !== 0,
++    isWarmupComplete: sp.is_warmup_complete !== 0
++  };
++  load({
++    library: LIBRARY_KEY,
++    funcName: "fff_free_scan_progress",
++    retType: DataType.Void,
++    paramsType: [DataType.External],
++    paramsValue: [handlePtr]
++  });
++  return { ok: true, value: result };
++}
+ function ffiWaitForScan(handle, timeoutMs) {
+   return callBoolResult(
+     "fff_wait_for_scan",
+@@ -1429,6 +1510,8 @@ var FileFinder = class _FileFinder {
    handle;
    /** Native ids of this instance's active watch subscriptions. */
    watchers = /* @__PURE__ */ new Set();
 +  pendingScan = null;
++  pendingNativeCalls = /* @__PURE__ */ new Set();
    constructor(handle) {
      this.handle = handle;
    }
-@@ -1485,6 +1525,16 @@ var FileFinder = class _FileFinder {
+@@ -1485,6 +1568,16 @@ var FileFinder = class _FileFinder {
    destroy() {
      if (this.handle !== null) {
        const handle = this.handle;
-+      if (this.pendingScan) {
++      if (this.pendingNativeCalls.size > 0) {
 +        this.handle = null;
 +        const watchers = this.watchers;
 +        this.watchers = /* @__PURE__ */ new Set();
-+        this.pendingScan.finally(() => {
++        Promise.allSettled(this.pendingNativeCalls).then(() => {
 +          ffiDestroy(handle);
 +          ffiWatchCleanupAfterDestroy(handle, watchers);
 +        });
@@ -324,7 +374,7 @@ index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..2dae1cc0ba3dc8b99f8104dde9c555b4
        ffiDestroy(handle);
        this.handle = null;
        ffiWatchCleanupAfterDestroy(handle, this.watchers);
-@@ -1757,6 +1807,20 @@ var FileFinder = class _FileFinder {
+@@ -1757,6 +1850,28 @@ var FileFinder = class _FileFinder {
      if (!guard.ok) return guard;
      return ffiScanFiles(guard.value);
    }
@@ -336,15 +386,35 @@ index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..2dae1cc0ba3dc8b99f8104dde9c555b4
 +    const guard = this.ensureAlive();
 +    if (!guard.ok) return Promise.resolve(guard);
 +    if (this.pendingScan) return this.pendingScan;
-+    const scan = ffiScanFilesAsync(guard.value).catch((cause) => err(String(cause))).finally(() => {
++    const scan = this.runOnNativeThread(ffiScanFilesAsync(guard.value)).finally(() => {
 +      if (this.pendingScan === scan) this.pendingScan = null;
 +    });
 +    this.pendingScan = scan;
 +    return scan;
 +  }
++  /** Keeps the handle alive until a native-thread call settles. Patched in T3 Code. */
++  runOnNativeThread(call) {
++    const tracked = call.catch((cause) => err(String(cause))).finally(() => {
++      this.pendingNativeCalls.delete(tracked);
++    });
++    this.pendingNativeCalls.add(tracked);
++    return tracked;
++  }
    /**
     * Check if a scan is currently in progress.
     */
+@@ -1838,7 +1953,10 @@ var FileFinder = class _FileFinder {
+     if (!guard.ok) return guard;
+     const deadline = Date.now() + timeoutMs;
+     while (true) {
+-      const progress = this.getScanProgress();
++      // Patched in T3 Code: the progress read takes the picker lock, so it runs on a native thread.
++      const alive = this.ensureAlive();
++      if (!alive.ok) return alive;
++      const progress = await this.runOnNativeThread(ffiGetScanProgressAsync(alive.value));
+       if (!progress.ok) return progress;
+       if (!progress.value.isScanning && progress.value.isWarmupComplete) {
+         return { ok: true, value: true };
 diff --git a/package.json b/package.json
 index e000a78b3f79826200979ebb3fe297b599bcea67..84325461c2d963cb42cf72267079d36a419c1398 100644
 --- a/package.json
