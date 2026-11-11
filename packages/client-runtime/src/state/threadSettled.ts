@@ -331,7 +331,7 @@ export function resolveSnoozePresets(
 }
 
 /**
- * A menu choice as picked. A duration re-resolves from its setting (not the deduped menu) so it
+ * A menu choice as picked. A duration re-resolves from its setting (not the combined menu) so it
  * starts at selection. A set time keeps the shown wake, which a day change would otherwise shift.
  */
 export function pickSnoozePreset(input: {
