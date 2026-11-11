@@ -14,7 +14,7 @@ import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
-import { ChevronDown, ChevronUp } from "lucide";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -25,7 +25,6 @@ import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { MorphIcon } from "~/components/MorphIcon";
 import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadStatusIndicators";
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
@@ -168,12 +167,12 @@ export function ThreadDetailsPrRows({
         tone="muted"
         className="w-full active:scale-100"
       >
-        <MorphIcon
-          aria-hidden
-          className="size-4 shrink-0"
-          // Chevrons, not plus and minus: the plus already means "add" in this card.
-          icon={expanded ? ChevronUp : ChevronDown}
-        />
+        {/* Chevrons, not plus and minus: the plus already means "add" in this card. */}
+        {expanded ? (
+          <ChevronUpIcon aria-hidden className="size-4 shrink-0" />
+        ) : (
+          <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
+        )}
         {expanded ? "Show less" : `Show ${rest.length} more`}
       </ThreadDetailsControl>
     </>

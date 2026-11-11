@@ -21,12 +21,14 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 
 import {
   type ProviderChangeRequestWatchFingerprint,
@@ -269,6 +271,10 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => reportEnd(lifeKey(target), lifeOf(target), reason));
 
   const readFailures = new Map<string, number>();
+  /** The last sweep's groups, whose pull requests get host change feeds. */
+  let currentGroups: ReadonlyArray<WatchGroup> = [];
+  // A pass reads watches and records new ones, so passes must not overlap.
+  const passes = Semaphore.makeUnsafe(1);
   const lastReads = new Map<string, LastRead>();
   const threadTails = new Map<
     string,
@@ -295,7 +301,11 @@ export const make = Effect.gen(function* () {
   const record = Effect.fn("PullRequestWatchReactor.record")(function* (
     target: WatchTarget,
     next: ThreadPullRequestWatch | null,
-    wake?: { readonly text: string; readonly notification: OrchestrationV2Notification },
+    wake?: {
+      readonly text: string;
+      readonly notification: OrchestrationV2Notification;
+      readonly includesRemarks?: boolean;
+    },
     endedWatch?: ThreadPullRequestWatch,
   ) {
     const uuid = yield* random.uuidV4();
@@ -654,14 +664,17 @@ export const make = Effect.gen(function* () {
         const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
         const mode = target.watch.agentMerge;
         if (report.changes.length > 0) {
-          const wake = pullRequestWatchMessage({
-            number: target.link.number,
-            url: target.link.url,
-            baseBranch: detail.baseBranch,
-            headSha: report.next.headSha,
-            agentMerge: mode,
-            report,
-          });
+          const wake = {
+            ...pullRequestWatchMessage({
+              number: target.link.number,
+              url: target.link.url,
+              baseBranch: detail.baseBranch,
+              headSha: report.next.headSha,
+              agentMerge: mode,
+              report,
+            }),
+            includesRemarks: report.changes.some((change) => change.kind === "remarks"),
+          };
           // An ending watch keeps what this pass saw, so watching again starts from it.
           yield* (
             report.exhausted
@@ -805,19 +818,26 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const sweep = Effect.gen(function* () {
+  /** Every watch, or with `changed`, only that pull request's after its host reported a change. */
+  // The sweep and change reads each name their own span.
+  const pass = Effect.fnUntraced(function* (changed: string | undefined) {
     const threads = yield* projections.getThreadsWithPullRequests();
     const targets = threads.flatMap((thread) =>
       visibleThreadPullRequests(thread.pullRequests ?? []).flatMap((link) =>
-        link.watch === undefined ? [] : [{ thread, link, watch: link.watch }],
+        link.watch === undefined ||
+        (changed !== undefined && threadPullRequestKeyOf(link) !== changed)
+          ? []
+          : [{ thread, link, watch: link.watch }],
       ),
     );
-    const present = new Set(targets.map(lifeKey));
-    yield* Effect.forEach(
-      [...lives].filter(([key]) => !present.has(key)),
-      ([key, life]) => reportEnd(key, life, "stopped"),
-      { discard: true },
-    );
+    if (changed === undefined) {
+      const present = new Set(targets.map(lifeKey));
+      yield* Effect.forEach(
+        [...lives].filter(([key]) => !present.has(key)),
+        ([key, life]) => reportEnd(key, life, "stopped"),
+        { discard: true },
+      );
+    }
     for (const target of targets) lifeOf(target);
     const byPullRequest = new Map<string, Array<WatchTarget>>();
     const ending: Array<readonly [WatchTarget, WatchEndReason]> = [];
@@ -836,8 +856,11 @@ export const make = Effect.gen(function* () {
       targets: members,
       fingerprint: [...new Set(members.map(snapshotFingerprint))].toSorted().join("\n"),
     }));
-    for (const cache of [readFailures, lastReads, threadTails]) {
-      for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
+    if (changed === undefined) {
+      currentGroups = groups;
+      for (const cache of [readFailures, lastReads, threadTails]) {
+        for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
+      }
     }
     yield* Effect.forEach(
       ending,
@@ -859,7 +882,24 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       groups,
       (group) =>
-        fingerprintOf(group).pipe(
+        // The host just reported a change, so a cached fingerprint may predate it.
+        (changed === undefined
+          ? Effect.void
+          : pullRequests.invalidate({ reference: referenceOf(group) })
+        ).pipe(
+          Effect.andThen(fingerprintOf(group)),
+          Effect.tap((fingerprint) => {
+            const last = lastReads.get(group.key);
+            // Open pull request views refresh only when the host state moved.
+            return changed !== undefined &&
+              fingerprint !== null &&
+              fingerprint !== "paused" &&
+              (last === undefined ||
+                last.status !== fingerprint.status ||
+                last.remarks !== fingerprint.remarks)
+              ? pullRequests.invalidate({ reference: referenceOf(group) }, { notifyReaders: true })
+              : Effect.void;
+          }),
           Effect.flatMap((fingerprint) =>
             fingerprint === "paused"
               ? Effect.void
@@ -874,15 +914,53 @@ export const make = Effect.gen(function* () {
         ),
       { concurrency: "unbounded", discard: true },
     );
-  }).pipe(
+  }, passes.withPermit);
+
+  const sweep = pass(undefined).pipe(
     Effect.catchCause(logFailure("pull request watch sweep failed", {})),
     Effect.withSpan("PullRequestWatchReactor.sweep"),
   );
 
-  const start: PullRequestWatchReactor["Service"]["start"] = () =>
-    forkParked(
-      sweep.pipe(Effect.repeat(Schedule.spaced(`${SWEEP_MINUTES} minutes`)), Effect.asVoid),
+  const pullRequestOf = (group: WatchGroup) => threadPullRequestKeyOf(group.targets[0]!.link);
+
+  const readOnChange = (pullRequest: string) =>
+    pass(pullRequest).pipe(
+      Effect.catchCause(logFailure("pull request watch change read failed", { pullRequest })),
+      Effect.withSpan("PullRequestWatchReactor.readOnChange"),
     );
+
+  const start: PullRequestWatchReactor["Service"]["start"] = Effect.fn(
+    "PullRequestWatchReactor.start",
+  )(function* () {
+    // One feed per pull request: the host keeps one subscription per pull request and account.
+    const feeds = yield* FiberMap.make<string>();
+    const follow = Effect.gen(function* () {
+      const wanted = new Map(currentGroups.map((group) => [pullRequestOf(group), group]));
+      const stale = Array.from(feeds, ([pullRequest]) => pullRequest).filter(
+        (pullRequest) => !wanted.has(pullRequest),
+      );
+      yield* Effect.forEach(stale, (pullRequest) => FiberMap.remove(feeds, pullRequest), {
+        discard: true,
+      });
+      for (const [pullRequest, group] of wanted) {
+        // An ended feed restarts here, so a host that refused it is asked again each sweep.
+        yield* FiberMap.run(feeds, pullRequest, { onlyIfMissing: true })(
+          pullRequests.changes(referenceOf(group)).pipe(
+            // A review sends an event per comment; those landing during a read make one more.
+            Stream.buffer({ capacity: 1, strategy: "sliding" }),
+            Stream.runForEach(() => readOnChange(pullRequest)),
+          ),
+        );
+      }
+    });
+    yield* forkParked(
+      sweep.pipe(
+        Effect.andThen(follow),
+        Effect.repeat(Schedule.spaced(`${SWEEP_MINUTES} minutes`)),
+        Effect.asVoid,
+      ),
+    );
+  });
 
   return { start, sweep } satisfies PullRequestWatchReactor["Service"];
 });
