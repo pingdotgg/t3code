@@ -57,6 +57,7 @@ export const SHARED_CACHE_LANES: ReadonlyArray<{
 /** Never copied into a sandbox: these are the keys the gateway injects instead. */
 const CREDENTIAL_NAMES = [
   "credentials.json",
+  ".credentials.json",
   "auth.json",
   ".netrc",
   "hosts.yml",
