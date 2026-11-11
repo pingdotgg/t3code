@@ -23,6 +23,7 @@ import {
   writeLocalStorageValue,
 } from "~/hooks/useLocalStorage";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
+import { useSidebarSwipe } from "./sidebarSwipe";
 import * as Schema from "effect/Schema";
 import { announceSidebarVisibility } from "~/lib/accessibilityAnnouncements";
 
@@ -198,9 +199,17 @@ function SidebarProvider({
     store.getSnapshot,
   );
   const [mobileSheetMounted, setMobileSheetMounted] = React.useState(false);
+  const mobileSheetRef = React.useRef<HTMLDivElement | null>(null);
   const setMobileSheetElement = (element: HTMLDivElement | null) => {
+    mobileSheetRef.current = element;
     setMobileSheetMounted(element !== null);
   };
+  useSidebarSwipe({
+    enabled: isMobile,
+    open: openMobile,
+    setOpen: store.setOpenMobile,
+    sheetRef: mobileSheetRef,
+  });
 
   const state = resolveSidebarState({ isMobile, open, openMobile });
 

@@ -1,3 +1,4 @@
+import type { Ref } from "react";
 import { usePreviewPanelInlineSize } from "../../hooks/usePreviewPanelInlineSize";
 import { RightPanelSheet } from "../RightPanelSheet";
 import { RightPanelTabs, type RightPanelTabsProps } from "../RightPanelTabs";
@@ -9,6 +10,7 @@ type ChatRightPanelProps = Omit<RightPanelTabsProps, "mode" | "inlineSize" | "ma
   readonly widthStorageKey: string;
   readonly sheetAnimationDurationMs: number;
   readonly onCloseSheet: () => void;
+  readonly sheetRef?: Ref<HTMLDivElement>;
 };
 
 /**
@@ -23,6 +25,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     widthStorageKey,
     sheetAnimationDurationMs,
     onCloseSheet,
+    sheetRef,
     maximized,
     layoutControls,
     ...tabs
@@ -39,6 +42,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
       animationDurationMs={sheetAnimationDurationMs}
       open={tabs.open === true}
       onClose={onCloseSheet}
+      sheetRef={sheetRef}
     >
       <RightPanelTabs
         {...tabs}
