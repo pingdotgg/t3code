@@ -285,7 +285,7 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
 
 const ThreadAskTool = Tool.make("t3_thread_ask", {
   description:
-    "Ask an existing thread a question and wait for its reply. No child task, no owned work. Queues a dedicated turn (`consult`). Prefer this over `delegate_task` for a simple answer from a specialist thread. On timeout, call again with the same `clientRequestId`, or `t3_thread_interrupt` to stop. In your reply, name it as its `link` verbatim.",
+    "Ask an existing thread a question and wait for its reply. No child task, no owned work. Queues a dedicated turn (`consult`). Prefer this over `delegate_task` for a simple answer from a specialist thread. On timeout, call again with the same `clientRequestId`. To stop: while `delivery:'queued'`, `t3_queue` `action:'cancel'` with that `runId` as `queuedRunId`; once the ask turn is active, `t3_thread_interrupt` with that `runId`. In your reply, name it as its `link` verbatim.",
   parameters: OrchestratorMcpThreadAskInput,
   success: OrchestratorMcpThreadAskResult,
   failure: OrchestratorMcpFailure,

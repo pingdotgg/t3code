@@ -473,7 +473,10 @@ consult message (`consult: true`, delivery `queue`/`started`), waits for the
 run, and returns `reply` text. It does not create a child thread or an
 `app_owned` task. Prefer this over `delegate_task` when a specialist thread can
 answer without taking owned work. On timeout, retry with the same
-`clientRequestId`, or stop the run with `t3_thread_interrupt`.
+`clientRequestId`. To cancel: while the ask is still queued, `t3_queue` with
+`action: "cancel"` and `queuedRunId` set to the ask's `runId`; once that turn
+is active, `t3_thread_interrupt` with the same `runId` (interrupt does not
+cancel a queued run).
 
 ### `t3_thread_wait`
 
