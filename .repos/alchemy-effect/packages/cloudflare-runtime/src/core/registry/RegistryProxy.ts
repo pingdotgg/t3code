@@ -1,15 +1,12 @@
-import { loadInternalWorker } from "../internal/internal-worker.ts";
+import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
-import * as NodeCrypto from "node:crypto";
+import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
+import { loadInternalWorker } from "../internal/internal-worker.ts";
 const RegistryProxyWorker = {
-  worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-core-worker/registry/RegistryProxy.worker",
-    ),
+  worker: () => loadInternalWorker("#cloudflare-runtime-core-worker/registry/RegistryProxy.worker"),
 };
 import {
   defaultDurableObjectUniqueKey,
@@ -22,7 +19,11 @@ import { PluginContext } from "../PluginContext.ts";
 import { SystemError } from "../RuntimeError.shared.ts";
 import * as WorkerdConfig from "../workerd/Config.ts";
 import * as Registry from "./Registry.ts";
-import type { ResolvedTargetMap, Subscriber } from "./RegistryTypes.shared.ts";
+import {
+  HEADER_REGISTRY_UPDATE_SECRET,
+  type ResolvedTargetMap,
+  type Subscriber,
+} from "./RegistryTypes.shared.ts";
 
 export class RegistryProxy extends Plugin.Service<
   RegistryProxy,
@@ -53,6 +54,7 @@ type ServiceDesignatorFromSubscriber<T extends Subscriber> = T extends {
   : WorkerdConfig.ServiceDesignator;
 
 const SERVICE_REGISTRY_PROXY = "cloudflare-runtime:registry-proxy";
+
 const SOCKET_REGISTRY_PROXY = "registry-proxy-socket";
 const SOCKET_DEBUG_PORT = "debug-port";
 
@@ -76,6 +78,9 @@ export const RegistryProxyLive = Layer.effect(
               defaultDurableObjectUniqueKey(worker.name, namespace.className),
           })) ?? [];
         const subscribed: Array<Subscriber> = [];
+        // The proxy's update socket is reachable by any local process, so
+        // pushes must prove they came from the process that owns the proxy.
+        const updateSecret = NodeCrypto.randomBytes(32).toString("hex");
 
         return {
           defer: Effect.gen(function* () {
@@ -94,15 +99,17 @@ export const RegistryProxyLive = Layer.effect(
                   .read(subscribed)
                   .pipe(
                     Effect.flatMap((targets) =>
-                      Effect.promise(() =>
-                        buildWorkerModules(targets, durableObjects),
-                      ),
+                      Effect.promise(() => buildWorkerModules(targets, durableObjects)),
                     ),
                   ),
                 bindings: [
                   {
                     name: "REGISTRY_DEBUG_PORT",
                     workerdDebugPort: WorkerdConfig.kVoid,
+                  },
+                  {
+                    name: "REGISTRY_UPDATE_SECRET",
+                    data: new TextEncoder().encode(updateSecret),
                   },
                 ],
                 durableObjectStorage: { inMemory: WorkerdConfig.kVoid },
@@ -130,7 +137,7 @@ export const RegistryProxyLive = Layer.effect(
                 Effect.gen(function* () {
                   const debugPort = ports[SOCKET_DEBUG_PORT];
                   if (!debugPort) {
-                    return yield* new SystemError({
+                    return yield* SystemError.make({
                       subtag: "RegistryProxyDebugPort",
                       message: "Debug port not found.",
                       detail: { debugPort },
@@ -139,6 +146,8 @@ export const RegistryProxyLive = Layer.effect(
                   yield* registry.write({
                     scriptName: worker.name,
                     debugPortAddress: `127.0.0.1:${debugPort}`,
+                    // `start` runs again for a replacement process on the same ports.
+                    instanceId: crypto.randomUUID(),
                     services: [
                       {
                         kind: "worker",
@@ -148,10 +157,7 @@ export const RegistryProxyLive = Layer.effect(
                       },
                       ...published.map((service) => ({
                         ...service,
-                        service:
-                          "service" in service
-                            ? service.service
-                            : SERVICE_USER_WORKER,
+                        service: "service" in service ? service.service : SERVICE_USER_WORKER,
                       })),
                     ],
                   });
@@ -162,7 +168,7 @@ export const RegistryProxyLive = Layer.effect(
                   }
                   const proxyPort = ports[SOCKET_REGISTRY_PROXY];
                   if (!proxyPort) {
-                    return yield* new SystemError({
+                    return yield* SystemError.make({
                       subtag: "RegistryProxyPort",
                       message: "Registry proxy port not found.",
                       detail: { proxyPort },
@@ -174,17 +180,16 @@ export const RegistryProxyLive = Layer.effect(
                   const update = (targets: ResolvedTargetMap) =>
                     HttpClient.filterStatusOk(http)
                       .post(`http://127.0.0.1:${proxyPort}/`, {
+                        headers: { [HEADER_REGISTRY_UPDATE_SECRET]: updateSecret },
                         body: HttpBody.jsonUnsafe(targets),
                       })
                       .pipe(
-                        Effect.mapError(
-                          (cause) =>
-                            new SystemError({
-                              subtag: "RegistryProxyUpdate",
-                              message:
-                                "Failed to update the registry proxy targets.",
-                              cause,
-                            }),
+                        Effect.mapError((cause) =>
+                          SystemError.make({
+                            subtag: "RegistryProxyUpdate",
+                            message: "Failed to update the registry proxy targets.",
+                            cause,
+                          }),
                         ),
                       );
                   yield* registry.read(subscribed).pipe(Effect.flatMap(update));
@@ -246,10 +251,7 @@ export const RegistryProxyLive = Layer.effect(
 );
 
 /** Generates a stable, variable-safe class name for an external Durable Object. */
-const externalDurableObjectClassName = (
-  scriptName: string,
-  className: string,
-) =>
+const externalDurableObjectClassName = (scriptName: string, className: string) =>
   `ExternalDurableObject_${NodeCrypto.createHash("sha256").update(scriptName).update(className).digest("hex").slice(0, 16)}`;
 
 /** Builds the worker modules for the registry proxy, including a pre-populated registry and proxy classes for each external Durable Object. */
@@ -260,18 +262,8 @@ const buildWorkerModules = async (
   const worker = await RegistryProxyWorker.worker();
   const main = [
     `import { makeExternalDurableObject, Target } from "./${worker.main}";`,
-    `export { ExternalService, ExternalWorkflow, ExternalQueueConsumer } from "./${worker.main}";`,
+    `export { default, ExternalService, ExternalWorkflow, ExternalQueueConsumer } from "./${worker.main}";`,
     `Target.set(${JSON.stringify(targets)});`,
-    `export default {`,
-    `  async fetch(request) {`,
-    `    if (request.method === "POST") {`,
-    `      const data = await request.json();`,
-    `      Target.set(data);`,
-    `      return new Response("ok");`,
-    `    }`,
-    `    return new Response("not found", { status: 404 });`,
-    `  }`,
-    `};`,
     ...durableObjects.map(
       (subscriber) =>
         `export const ${externalDurableObjectClassName(subscriber.scriptName, subscriber.className)} = makeExternalDurableObject(${JSON.stringify(subscriber)});`,
