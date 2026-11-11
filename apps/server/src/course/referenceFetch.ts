@@ -151,7 +151,7 @@ const childRssBytes = async (pid: number): Promise<number | undefined> => {
   return undefined;
 };
 
-export const runPdfWorker = async (
+const runPdfWorker = async (
   bytes: Uint8Array,
   requested: ReadonlyArray<number>,
   spawnImpl: typeof nodeSpawn = nodeSpawn,

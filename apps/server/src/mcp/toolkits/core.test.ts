@@ -1310,6 +1310,13 @@ it.effect("course_prepare starts a standalone prep thread and sends nothing to t
     });
     const beforeSearch = yield* callAs("course_problems", { courseId: course.id });
     expect(JSON.stringify(beforeSearch.content)).toContain("one web search");
+    const invalidPrep = yield* callAs("course_prepare", {
+      courseId: course.id,
+      units: [99],
+      solutionLeads: ["https://example.com/solutions"],
+    });
+    expect(invalidPrep.isError).toBe(true);
+    expect((yield* service.get({ id: course.id })).solutionSearchedAt).toBeUndefined();
     const leadResult = yield* callAs("course_prepare", {
       units: [1],
       solutionLeads: ["https://example.com/solutions"],

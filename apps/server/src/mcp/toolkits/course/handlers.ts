@@ -206,6 +206,12 @@ const handlers = {
           code: "invalid_request",
           message: "solutionLeads must contain at most 10 http(s) URLs",
         });
+      const units = [...new Set(input.units)].sort((a, b) => a - b);
+      if (units.length === 0 || units.some((unit) => unit < 1 || unit > course.units.length))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "units must name one or more course units",
+        });
       if (input.solutionLeads !== undefined)
         yield* service
           .update({
@@ -221,12 +227,6 @@ const handlers = {
               .pipe(Effect.mapError(fail));
         }
       }
-      const units = [...new Set(input.units)].sort((a, b) => a - b);
-      if (units.length === 0 || units.some((unit) => unit < 1 || unit > course.units.length))
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: "units must name one or more course units",
-        });
       const first = units[0];
       const last = units[units.length - 1];
       const title = `Prep: ${course.title} L${first}–${last}`;
