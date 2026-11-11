@@ -10,6 +10,7 @@ import {
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2ThreadProjection,
+  type RuntimeMode,
   type ServerConfig,
 } from "@t3tools/contracts";
 import {
@@ -18,6 +19,8 @@ import {
 } from "../../../../packages/client-runtime/src/state/orchestrationV2TestFixtures";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import { sendApprovalFeedback } from "@t3tools/client-runtime/state/thread-requests";
+import { DateTime } from "effect";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -28,11 +31,15 @@ const state = vi.hoisted(() => ({
     text: "Keep my draft",
     attachments: [] as DraftComposerImageAttachment[],
     modelSelection: undefined as ModelSelection | undefined,
+    runtimeMode: undefined as RuntimeMode | undefined,
   },
   serverConfig: null as ServerConfig | null,
   projection: null as OrchestrationV2ThreadProjection | null,
   pendingRequests: { approvals: [], userInputs: [] } as PendingThreadRequests,
   enqueue: vi.fn(async () => undefined),
+  freshPending: false,
+  compactDue: false,
+  setFreshPending: vi.fn(),
   clearDraft: vi.fn(),
   approve: vi.fn(),
   answer: vi.fn(),
@@ -48,12 +55,13 @@ const state = vi.hoisted(() => ({
   thread: {
     id: "thread",
     environmentId: "secondary",
+    lineage: { rootThreadId: "thread", parentThreadId: null, relationshipToParent: null },
     projectId: "project",
     modelSelection: { instanceId: "codex", model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
     runtime: null,
-    latestRun: null,
+    latestRun: null as unknown,
   },
 }));
 
@@ -69,6 +77,10 @@ vi.mock("react", () => ({
   ],
 }));
 vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
+vi.mock("@t3tools/client-runtime/state/context-window", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/context-window")>()),
+  shouldCompactBeforeSend: () => state.compactDue,
+}));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));
 vi.mock("./queued-run-edit", () => ({
@@ -112,6 +124,8 @@ vi.mock("./threads", async () => {
     environmentThreadDetails: {
       queueWorkflowAtom: () => Atom.make(null),
       checkpointSummariesAtom: () => Atom.make([]),
+      sequenceAtom: () => Atom.make(0),
+      pendingRequestsAtom: () => Atom.make(state.pendingRequests),
     },
     threadEnvironment: {
       respondToApproval: state.approve,
@@ -139,6 +153,8 @@ vi.mock("./use-composer-drafts", async () => {
     composerDraftsAtom: Atom.make({}),
     composerContextImportsAtom: Atom.make({}),
     getComposerDraftSnapshot: () => state.draft,
+    isFreshSessionPending: () => state.freshPending,
+    setFreshSessionPending: state.setFreshPending,
     clearComposerDraftContent: state.clearDraft,
     clearComposerDraft: state.clearDraft,
     setComposerDraftText: (_key: string, text: string) => {
@@ -158,7 +174,6 @@ vi.mock("./use-composer-drafts", async () => {
 });
 vi.mock("../lib/composerImages", () => ({
   convertPastedImagesToAttachments: vi.fn(),
-  pasteComposerClipboard: vi.fn(),
   pickComposerFiles: vi.fn(),
   pickComposerMedia: vi.fn(),
 }));
@@ -172,13 +187,24 @@ vi.mock("../lib/commandMetadata", () => ({
 vi.mock("../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: vi.fn() }));
 vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: vi.fn() }));
 
+import { Alert } from "react-native";
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
+
+const NO_SIDE_CHATS = { startSideChat: async () => false };
 
 beforeEach(() => {
   state.grantedEnvironments = new Set(["primary"]);
   state.connectionState = "connected";
-  state.draft = { text: "Keep my draft", attachments: [], modelSelection: undefined };
+  state.draft = {
+    text: "Keep my draft",
+    attachments: [],
+    modelSelection: undefined,
+    runtimeMode: undefined,
+  };
+  state.freshPending = false;
+  state.compactDue = false;
+  state.thread.latestRun = null;
   state.projection = null;
   state.serverConfig = {
     providers: [{ instanceId: "codex", driver: "codex", enabled: true }],
@@ -202,22 +228,179 @@ beforeEach(() => {
 });
 
 describe("mobile task permissions", () => {
+  it("consumes an approval reply without queueing a parent message", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    const requests = useSelectedThreadRequests();
+    const approval = { ...state.pendingRequests.approvals[0]!, supportsFeedback: true };
+    const messageId = await composer.onSendMessage(undefined, async (text) =>
+      (await sendApprovalFeedback(approval, text, requests.onRespondToApproval))
+        ? "responded"
+        : false,
+    );
+    expect(messageId).toBeNull();
+    expect(state.approve).toHaveBeenCalledWith({
+      environmentId: "secondary",
+      input: {
+        threadId: "thread",
+        requestId: "approval",
+        decision: "decline",
+        feedback: "Keep my draft",
+      },
+    });
+    expect(state.enqueue).not.toHaveBeenCalled();
+    expect(state.clearDraft).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a draft changed during an approval reply and never sends it to the parent", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    const beforeDispatch = async () => {
+      state.draft = { ...state.draft, text: "New feedback" };
+      return "responded" as const;
+    };
+    expect(await composer.onSendMessage(undefined, beforeDispatch)).toBeNull();
+    expect(state.enqueue).not.toHaveBeenCalled();
+    expect(state.clearDraft).not.toHaveBeenCalled();
+    expect(state.draft.text).toBe("New feedback");
+  });
+
   it("keeps a connected read-only task's draft instead of queueing it with another environment's grant", async () => {
-    const composer = useThreadComposerState();
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
     expect(await composer.onSendMessage()).toBeNull();
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(state.clearDraft).not.toHaveBeenCalled();
     composer.onChangeDraftMessage("Edited locally");
-    composer.onUpdateInteractionMode("plan");
     expect(state.draft.text).toBe("Edited locally");
-    expect(state.updateSettings).toHaveBeenCalledWith("secondary:thread", {
-      interactionMode: "plan",
+  });
+
+  it("keeps an armed fresh session for the message after an approval redirect", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.freshPending = true;
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(await composer.onSendMessage(undefined, async () => true)).toBe("message");
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ freshContext: true }),
+    );
+    expect(state.setFreshPending).not.toHaveBeenCalled();
+    expect(await composer.onSendMessage()).toBe("message");
+    expect(state.enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ freshContext: true }));
+    expect(state.setFreshPending).toHaveBeenCalledWith("secondary:thread", false);
+  });
+
+  it("compacts a stale thread before sending unless a fresh session is armed", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.projection = {
+      thread: {
+        ...state.thread,
+        activeProviderThreadId: null,
+        lineage: { rootThreadId: "thread", parentThreadId: null, relationshipToParent: null },
+      },
+      runs: [],
+      attempts: [],
+      nodes: [],
+      subagents: [],
+      providerSessions: [],
+      providerThreads: [],
+      providerTurns: [],
+      runtimeRequests: [],
+      messages: [],
+      plans: [],
+      turnItems: [],
+      checkpointScopes: [],
+      checkpoints: [],
+      contextHandoffs: [],
+      contextTransfers: [],
+      visibleTurnItems: [],
+      updatedAt: DateTime.makeUnsafe(0),
+    } as unknown as OrchestrationV2ThreadProjection;
+    state.compactDue = true;
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    await composer.onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ compactBeforeSend: true }),
+    );
+    state.freshPending = true;
+    await composer.onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ compactBeforeSend: true }),
+    );
+    expect(state.enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ freshContext: true }));
+  });
+
+  it("sends a typed /clear with an approval redirect as that reply's text", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.serverConfig = {
+      ...state.serverConfig,
+      environment: { capabilities: { freshContext: true } },
+    } as ServerConfig;
+    state.thread.latestRun = { runId: "run" };
+    state.draft = { ...state.draft, text: "/clear" };
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    const beforeDispatch = vi.fn(async () => "responded" as const);
+    expect(await composer.onSendMessage(undefined, beforeDispatch)).toBeNull();
+    expect(beforeDispatch).toHaveBeenCalledWith("/clear", false);
+    expect(state.setFreshPending).not.toHaveBeenCalled();
+  });
+
+  it("starts a side chat for /side instead of sending to the thread", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.serverConfig = {
+      ...state.serverConfig,
+      environment: { capabilities: { sideChats: true } },
+    } as ServerConfig;
+    // The thread gets the composer's mode and model only on its next send.
+    const selection: ModelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    };
+    state.draft = {
+      ...state.draft,
+      text: "/side why does this fail?",
+      modelSelection: selection,
+      runtimeMode: "approval-required",
+    };
+    const startSideChat = vi.fn(async () => true);
+    const composer = useThreadComposerState({ startSideChat });
+    expect(composer.sideChatUnavailableReason).toBeNull();
+    expect(await composer.onSendMessage()).toBeNull();
+    expect(startSideChat).toHaveBeenCalledExactlyOnceWith(
+      { environmentId: "secondary", threadId: "thread" },
+      "why does this fail?",
+      { runtimeMode: "approval-required", modelSelection: selection },
+    );
+    expect(state.enqueue).not.toHaveBeenCalled();
+    expect(state.clearDraft).toHaveBeenCalled();
+
+    // An attachment added while the side chat starts stays in the draft.
+    vi.clearAllMocks();
+    startSideChat.mockImplementationOnce(async () => {
+      state.draft = {
+        ...state.draft,
+        attachments: [{ id: "added" } as DraftComposerImageAttachment],
+      };
+      return true;
     });
+    state.draft = { ...state.draft, text: "/side again?", attachments: [] };
+    expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
+    expect(startSideChat).toHaveBeenCalledOnce();
+    expect(state.clearDraft).not.toHaveBeenCalled();
+    // A model the send would refuse does not start a side chat either.
+    vi.clearAllMocks();
+    state.serverConfig = {
+      ...state.serverConfig,
+      providers: [{ instanceId: "codex", driver: "codex", enabled: false }],
+    } as unknown as ServerConfig;
+    state.draft = { ...state.draft, attachments: [] };
+    expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
+    expect(startSideChat).not.toHaveBeenCalled();
+    expect(Alert.alert).toHaveBeenCalledOnce();
   });
 
   it("rechecks a retained send callback before clearing or queueing the draft", async () => {
     state.grantedEnvironments.add("secondary");
-    const composer = useThreadComposerState();
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
     state.grantedEnvironments.delete("secondary");
     expect(await composer.onSendMessage()).toBeNull();
     expect(state.clearDraft).not.toHaveBeenCalled();
@@ -294,6 +477,7 @@ describe("mobile handoff preview and submission", () => {
       auth: { status: "authenticated" as const },
       availability: "available" as "available" | "unavailable",
       models: [{ slug: selection.model }],
+      slashCommands: [],
     };
     const projectOverride = { enabled: false };
     state.serverConfig = {
@@ -360,24 +544,27 @@ describe("mobile handoff preview and submission", () => {
       ],
     };
 
-    const disabled = useThreadComposerState();
+    const disabled = useThreadComposerState(NO_SIDE_CHATS);
     expect(disabled.pendingHandoff).toBeNull();
     expect(await disabled.onSendMessage()).toBeNull();
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(state.clearDraft).not.toHaveBeenCalled();
 
     projectOverride.enabled = true;
-    expect(useThreadComposerState().pendingHandoff).toEqual({ from: [source], to: selection });
+    expect(useThreadComposerState(NO_SIDE_CHATS).pendingHandoff).toEqual({
+      from: [source],
+      to: selection,
+    });
 
     provider.availability = "unavailable";
-    const unavailable = useThreadComposerState();
+    const unavailable = useThreadComposerState(NO_SIDE_CHATS);
     expect(unavailable.pendingHandoff).toBeNull();
     expect(await unavailable.onSendMessage()).toBeNull();
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(state.clearDraft).not.toHaveBeenCalled();
 
     provider.availability = "available";
-    const available = useThreadComposerState();
+    const available = useThreadComposerState(NO_SIDE_CHATS);
     expect(available.pendingHandoff).toEqual({ from: [source], to: selection });
     expect(await available.onSendMessage()).toBe("message");
     expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(

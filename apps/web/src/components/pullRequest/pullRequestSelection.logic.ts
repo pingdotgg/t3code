@@ -10,3 +10,14 @@ export function resolvePullRequestSelectionFile(
     ? file
     : undefined;
 }
+
+export function isPullRequestSelectionStale(
+  files: ReadonlyArray<FileDiffMetadata>,
+  anchor: { readonly fileKey: string; readonly contentVersion: number },
+  diffComplete: boolean,
+) {
+  const file = files.find((candidate) => buildFileDiffIdentityKey(candidate) === anchor.fileKey);
+  return file === undefined
+    ? diffComplete
+    : buildFileDiffContentVersion(file) !== anchor.contentVersion;
+}
