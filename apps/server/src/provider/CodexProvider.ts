@@ -733,7 +733,8 @@ function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnaps
     };
   }
 
-  return { status: "ready", auth };
+  // No OpenAI login needed means a custom model provider, such as a hub, serves the requests.
+  return { status: "ready", auth: { ...auth, type: "customEndpoint" } };
 }
 
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
