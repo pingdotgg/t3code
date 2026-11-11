@@ -705,6 +705,44 @@ it.effect.each([
               ],
             });
           }
+          if (notice === "delegated task question") {
+            const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+            const now = yield* DateTime.now;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("event:question-task"),
+                  type: "subagent.updated",
+                  threadId,
+                  runId: parentRun.id,
+                  nodeId: NodeId.make("task:question"),
+                  occurredAt: now,
+                  payload: {
+                    id: NodeId.make("task:question"),
+                    threadId,
+                    runId: parentRun.id,
+                    parentNodeId: parentRun.rootNodeId!,
+                    origin: "app_owned",
+                    createdBy: "agent",
+                    driver,
+                    providerInstanceId: instanceId,
+                    providerThreadId: null,
+                    childThreadId: ThreadId.make("thread:question-child"),
+                    nativeTaskRef: null,
+                    prompt: "Ask a question",
+                    title: null,
+                    model: null,
+                    completionWake: "always",
+                    status: "running",
+                    result: null,
+                    startedAt: now,
+                    completedAt: null,
+                    updatedAt: now,
+                  },
+                },
+              ],
+            });
+          }
           const messageId = MessageId.make("message:notice");
           const notification =
             notice === "delegated task question"
