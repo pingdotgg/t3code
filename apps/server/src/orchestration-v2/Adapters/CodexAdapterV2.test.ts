@@ -1375,6 +1375,74 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  it.effect("keeps native image views available to the clients", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "image-view-thread";
+      const nativeTurnId = "image-view-turn";
+      const imagePath = "file:///workspace/reference.png";
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "image-view",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Show the reference." }),
+            ...(["started", "completed"] as const).map((phase) => ({
+              type: "emit_inbound" as const,
+              label: `image ${phase}`,
+              frame: {
+                method: `item/${phase}`,
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  item: { type: "imageView", id: "image-view", path: imagePath },
+                  ...(phase === "started" ? { startedAtMs: 1 } : { completedAtMs: 2 }),
+                },
+              },
+            })),
+            {
+              type: "emit_inbound",
+              label: "turn completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("image-view-attempt"),
+          text: "Show the reference.",
+        }),
+      );
+      yield* harness.firstTerminal;
+      const images = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(images, 1);
+      assert.equal(images[0]?.viewedImagePath, imagePath);
+      assert.equal(images[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["before", "after"] as const)(
     "rejects a previous run's native turn when it completes %s the new start response",
     (completionOrder) =>
@@ -4116,6 +4184,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     id: `image-${index}`,
                     status: "completed",
                     result,
+                    revisedPrompt: "A tree shaped like T3",
+                    transparentBackground: true,
                     ...image,
                   },
                 },
@@ -4136,6 +4206,42 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       );
       yield* harness.firstTerminal;
 
+      const imageItems = harness.events
+        .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []))
+        .filter((item) => item.type === "dynamic_tool" && item.toolName === "image_gen.imagegen");
+      const latestItems = new Map(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" ? [[event.turnItem.id, event.turnItem] as const] : [],
+        ),
+      );
+      assert.strictEqual(
+        [...latestItems.values()].filter((item) => item.type === "dynamic_tool").length,
+        images.length,
+      );
+      assert.strictEqual(imageItems.length, images.length);
+      assert.deepEqual(
+        imageItems.map((item) => item.status),
+        images.map((image) =>
+          ("status" in image && image.status === "failed") || "failure" in image
+            ? "failed"
+            : "completed",
+        ),
+      );
+      for (const [index, item] of imageItems.entries()) {
+        assert.strictEqual(item.title, "Generate image");
+        if (item.type !== "dynamic_tool") continue;
+        assert.deepEqual(item.input, {
+          prompt: "A tree shaped like T3",
+          transparent_background: true,
+        });
+        const image = images[index]!;
+        assert.deepEqual(
+          item.output,
+          Object.fromEntries(
+            Object.entries({ status: "completed", ...image }).filter(([, value]) => value != null),
+          ),
+        );
+      }
       const messages = assistantMessages(harness.events);
       assert.strictEqual(messages.at(-1)?.message.text, expected);
       assert.strictEqual(messages.at(-1)?.message.streaming, false);
@@ -4179,6 +4285,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               item: {
                 type: "imageGeneration",
                 id: image,
+                revisedPrompt: "A friendly green tree",
+                transparentBackground: true,
                 status: phase === "started" ? "inProgress" : "completed",
                 result: "",
                 ...(phase === "completed" ? { savedPath: `/tmp/${image}.png` } : {}),
@@ -4249,6 +4357,31 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* Deferred.await(drained);
         assert.deepEqual(yield* pending, [false, false]);
         assert.lengthOf(harness.terminalEvents(), 1);
+        const imageItems = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.toolName === "image_gen.imagegen"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          imageItems.slice(0, 2).map((item) => item.status),
+          ["running", "running"],
+        );
+        for (const id of new Set(imageItems.map((item) => item.id))) {
+          const updates = imageItems.filter((item) => item.id === id);
+          assert.lengthOf(updates, 2);
+          assert.strictEqual(
+            updates[1]?.status,
+            outcome === "complete" ? "completed" : "cancelled",
+          );
+          assert.strictEqual(updates[1]?.ordinal, updates[0]?.ordinal);
+          assert.deepEqual(updates[1]?.input, updates[0]?.input);
+          assert.deepEqual(updates[1]?.input, {
+            prompt: "A friendly green tree",
+            transparent_background: true,
+          });
+        }
         // Run ingestion follows these updates, so they must bracket the terminal and the images.
         const indexOf = (predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean) =>
           harness.events.findIndex(predicate);
