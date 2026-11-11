@@ -115,11 +115,9 @@ export function resolveNewThreadDefaults(input: {
 }
 
 /**
- * Moves a draft that keeps its content to another project, or to the same
- * project on another machine. The draft session holds only defaults, since
- * the composer holds what the user picked and outranks it, so the session
- * takes the destination's defaults rather than keeping the source's.
- * A logical project key also remaps that project's draft to this one.
+ * Moves a draft that keeps its content to another project or machine. The
+ * session holds only defaults (the composer holds the user's picks and outranks
+ * it), so it takes the destination's defaults instead of keeping the source's.
  */
 export function retargetDraftToProject(input: {
   readonly draftId: DraftId;

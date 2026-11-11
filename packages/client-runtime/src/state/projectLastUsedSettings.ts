@@ -1,9 +1,4 @@
-import type {
-  EnvironmentId,
-  ModelSelection,
-  ProjectId,
-  RuntimeMode,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ModelSelection, ProjectId, RuntimeMode } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "./models.ts";
 
 export type ProjectLastUsedSettingsThread = Pick<
@@ -20,11 +15,9 @@ export interface ProjectLastUsedSettings {
 }
 
 /**
- * The composer settings of the project thread the user last wrote in. Agents
- * pick subagent settings, and a null latestUserAuthoredMessageAt marks a
- * thread only automation has written in, so neither says anything about the
- * user's choice. Servers that predate the field omit it; their threads fall
- * back to updatedAt and only count when no thread carries the field.
+ * Settings of the project thread the user last wrote in. Subagent threads and a null
+ * latestUserAuthoredMessageAt (automation only) say nothing about the user's choice.
+ * Older servers omit the field; those threads rank by updatedAt, below any that carry it.
  */
 export function resolveProjectLastUsedSettings(
   threads: ReadonlyArray<ProjectLastUsedSettingsThread>,

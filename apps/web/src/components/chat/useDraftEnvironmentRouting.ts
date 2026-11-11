@@ -237,7 +237,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         project,
         environmentSettings: environmentById.get(target.environmentId)?.serverConfig?.settings,
         providers: providersByEnvironment.get(target.environmentId) ?? [],
-      providers: providersByEnvironment.get(target.environmentId) ?? [],
         threads: readThreadShells(),
         logicalProjectKey: activeProjectIsScratch
           ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
