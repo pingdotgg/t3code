@@ -54,6 +54,21 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("opens only the bare Grok Bot launch link", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const results = yield* Effect.forEach(
+        ["grokbot://app", "grokbot://app/v1/prompt?id=bot&text=hi", "grokbot://"],
+        (url) => electronShell.openExternal(url),
+      );
+
+      assert.deepEqual(results, [true, false, false]);
+      assert.deepEqual(openExternalMock.mock.calls, [["grokbot://app"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("opens local editor file deep links", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);

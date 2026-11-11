@@ -6,6 +6,7 @@ import {
   ModelSelection,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
+  type OrchestrationV2PromptSuggestion,
   type OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
@@ -32,6 +33,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { normalizeModelMetricLabel } from "../observability/Attributes.ts";
 import {
@@ -64,6 +66,8 @@ const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThread
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
   `${busyTurnPrefix(providerThreadId)}${runOrdinal}`;
 const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
+/** Suggestions outlive their sessions, so keep only the most recently updated threads. */
+const MAX_PROMPT_SUGGESTIONS = 256;
 const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
   "preparing",
   "starting",
@@ -208,6 +212,10 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
   }) => Effect.Effect<ReadonlyArray<ThreadId>>;
+  /** The thread's latest predicted next prompt, then each replacement. */
+  readonly subscribePromptSuggestion: (
+    threadId: ThreadId,
+  ) => Stream.Stream<OrchestrationV2PromptSuggestion>;
 }
 
 export class ProviderSessionManagerV2 extends Context.Service<
@@ -345,10 +353,21 @@ export const layerWithOptions = (
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
+      const promptSuggestionStore = yield* SubscriptionRef.make<
+        ReadonlyMap<ThreadId, NonNullable<OrchestrationV2PromptSuggestion>>
+      >(new Map());
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const agentScope = yield* AgentScope;
+      // Labs flag, read live: Codex per turn (its shared session outlives a toggle), Claude per query.
+      // Unreadable settings keep it off.
+      const promptSuggestionsEnabled = Option.isNone(serverSettings)
+        ? Effect.succeed(false)
+        : serverSettings.value.getSettings.pipe(
+            Effect.map((settings) => settings.promptSuggestionsEnabled),
+            Effect.orElseSucceed(() => false),
+          );
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
           if (Option.isNone(serverSettings)) return { browser: true, device: false };
@@ -646,12 +665,23 @@ export const layerWithOptions = (
         });
       });
 
+      // A detach removes its thread before releasing, but that thread's records still need releasing.
+      const releasedThreadIds = (input: {
+        readonly entry: LiveSessionEntry;
+        readonly detachedThreadId?: ThreadId;
+      }) => {
+        const threadIds = new Set(input.entry.attachedThreadIds);
+        if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
+        return threadIds;
+      };
+
       const writeReleasedRuntimeRequestEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedRuntimeRequestEvents",
       )(function* (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
         readonly releasedAt: DateTime.Utc;
+        readonly detachedThreadId?: ThreadId;
       }) {
         const providerSessionId = input.entry.runtime.providerSessionId;
         const now = yield* DateTime.now;
@@ -662,7 +692,7 @@ export const layerWithOptions = (
             : "Provider session was closed before this runtime request was resolved.";
 
         const events: Array<OrchestrationV2DomainEvent> = [];
-        for (const threadId of input.entry.attachedThreadIds) {
+        for (const threadId of releasedThreadIds(input)) {
           const projection = yield* projectionStore.getThreadRecords(
             threadId,
             ["runtimeRequests"],
@@ -781,10 +811,8 @@ export const layerWithOptions = (
             return [];
           }
           const providerSessionId = input.entry.runtime.providerSessionId;
-          const threadIds = new Set(input.entry.attachedThreadIds);
-          if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
           const released = [];
-          for (const threadId of threadIds) {
+          for (const threadId of releasedThreadIds(input)) {
             const projection = yield* projectionStore.getThreadRecords(threadId, [
               "providerThreads",
             ]);
@@ -873,6 +901,7 @@ export const layerWithOptions = (
         readonly detail?: string;
         readonly releasedBackgroundTasks: ReadonlyArray<ReleasedBackgroundTasks>;
         readonly releasedAt: DateTime.Utc;
+        readonly detachedThreadId?: ThreadId;
         readonly replaced: boolean;
       }) =>
         Effect.all(
@@ -1049,12 +1078,14 @@ export const layerWithOptions = (
               onNone: () => Effect.void,
               onSome: (entry) =>
                 Effect.gen(function* () {
+                  const detachedThread =
+                    input.detachedThreadId === undefined
+                      ? {}
+                      : { detachedThreadId: input.detachedThreadId };
                   const releasedBackgroundTasks = yield* readReleasedBackgroundTasks({
                     entry,
                     reason: input.reason,
-                    ...(input.detachedThreadId === undefined
-                      ? {}
-                      : { detachedThreadId: input.detachedThreadId }),
+                    ...detachedThread,
                   });
                   if (input.cancelIdleFiber !== false) {
                     yield* cancelIdleFiber(entry.idleFiber);
@@ -1079,6 +1110,7 @@ export const layerWithOptions = (
                     ...(input.detail === undefined ? {} : { detail: input.detail }),
                     releasedBackgroundTasks,
                     releasedAt,
+                    ...detachedThread,
                   };
                   const recorded = yield* Effect.exit(
                     writeReleaseRecords({ ...records, replaced: false }),
@@ -2175,6 +2207,18 @@ export const layerWithOptions = (
             if (event.type === "command_output.delta") {
               return commandOutput.append(event);
             }
+            if (event.type === "prompt_suggestion.updated") {
+              return SubscriptionRef.update(promptSuggestionStore, (current) => {
+                const next = new Map(current);
+                next.delete(event.threadId);
+                next.set(event.threadId, { runId: event.runId, text: event.text });
+                for (const threadId of next.keys()) {
+                  if (next.size <= MAX_PROMPT_SUGGESTIONS) break;
+                  next.delete(threadId);
+                }
+                return next;
+              });
+            }
             const releaseLiveOutput =
               event.type === "turn_item.updated" &&
               event.turnItem.type === "command_execution" &&
@@ -2418,6 +2462,7 @@ export const layerWithOptions = (
                   providerSessionId: input.providerSessionId,
                   modelSelection: input.modelSelection,
                   runtimePolicy: input.runtimePolicy,
+                  promptSuggestions: promptSuggestionsEnabled,
                   ...(input.resumeFromSession === undefined
                     ? {}
                     : { resumeFromSession: input.resumeFromSession }),
@@ -2795,6 +2840,21 @@ export const layerWithOptions = (
               ),
             ),
         ),
+        // Stored suggestions can outlive a deleted thread, so check the thread before serving one.
+        subscribePromptSuggestion: (threadId) =>
+          SubscriptionRef.changes(promptSuggestionStore).pipe(
+            Stream.map((suggestions) => suggestions.get(threadId) ?? null),
+            Stream.changes,
+            Stream.mapEffect((suggestion) =>
+              suggestion === null
+                ? Effect.succeed(null)
+                : projectionStore.getThread(threadId).pipe(
+                    Effect.map((thread) => (thread.deletedAt === null ? suggestion : null)),
+                    Effect.orElseSucceed(() => null),
+                  ),
+            ),
+            Stream.changes,
+          ),
       } satisfies ProviderSessionManagerV2Shape);
     }),
   );
