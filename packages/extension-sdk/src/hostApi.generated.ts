@@ -786,6 +786,7 @@ type Wire85 = {
   readonly completedAt: Wire83;
   readonly updatedAt: string;
   readonly type: "assistant_message";
+  readonly phase?: "commentary" | "partial_answer" | "final_answer" | undefined;
   readonly messageId: string;
   readonly text: string;
   readonly textOmitted?: true;
