@@ -346,10 +346,11 @@ machine in the network picks them up.
   joining** on it, then **Add again** on its row from a full-access machine.
   After that, pair with it by code.
 - After updating from a version before machines were tied to their Tailscale
-  identity, existing members show **Needs re-adding after the update**, and the
-  other machines refuse them until then. On that machine, choose **Allow
-  joining**, then choose **Add again** on its row from another full-access
-  machine.
+  identity, members whose existing Tailscale link still works reconnect on
+  their own, at the access they had. Any other member shows **Needs re-adding
+  after the update**, and the other machines refuse it until then. On that
+  machine, choose **Allow joining**, then choose **Add again** on its row from
+  another full-access machine.
 - **Open** adds a member to this app without a code. Below full access, it
   opens read-only, and its row shows **Read-only in this app**. When its
   session in this app expires or is cut, **Open** shows again.
@@ -674,7 +675,9 @@ full compatibility, such as a signed-in CLI.
 Ask an assistant connected to the **T3 Agents MCP** to create a shared skill and assign it to
 an agent. For example: “Create a shared skill for reviewing pull requests and assign it to Randy.”
 The MCP can list skills with read access and create, update, or delete them with create or admin
-access. One shared library supplies every assigned agent, regardless of provider.
+access. Only a chat running in full access with default mode can change skills or agents, since every
+machine shares the library; a more limited chat can read it, and you can always edit it yourself.
+One shared library supplies every assigned agent, regardless of provider.
 
 For manual editing, open **Skills** on the Agents board and expand **Create or edit manually**.
 Assign skills in the agent editor. Skills can include references, scripts, and binary assets beside

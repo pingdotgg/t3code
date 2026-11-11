@@ -131,10 +131,13 @@ trusted:
   answering, so one request yields a mutual link, each half proven by the side
   granting it. Gossip between linked members only adds addresses to try.
 - **A member is bound to its Tailscale node** (`StableID` from whois, `ID` in
-  status). Only an explicit add binds or rebinds it, and a different node
-  answering for the same environment id is refused. A member with no binding,
-  as after an upgrade, is refused until the user adds it again; an inbound or
-  first answer never binds one.
+  status). An explicit add binds or rebinds it, and a different node answering
+  for the same environment id is refused. A member left unbound by the upgrade
+  rebinds only through this machine's own handshake-made link to it: proved at
+  that link's stored addresses (a MagicDNS name is whichever owner node holds it
+  now, as the link always trusted), with a live session the other side issued,
+  confirmed by challenge, at the roster's level. Otherwise it is refused until
+  the user adds it again; an inbound or first answer never binds one.
 - **A machine in no network joins only while its owner allows it** there
   (`allowJoin`, ten minutes, in memory), and so do rebinding an unbound admin
   and a link to that machine alone (`local`), which may replace a code-paired
