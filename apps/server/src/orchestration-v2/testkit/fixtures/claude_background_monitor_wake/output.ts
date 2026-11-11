@@ -40,6 +40,7 @@ export function assertClaudeBackgroundMonitorWakeOutput(
       taskId: MONITOR_TASK_ID,
       description: "Background monitor test",
       kind: "monitor",
+      individualControl: true,
     });
   }
   assert.deepEqual(projection.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
