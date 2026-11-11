@@ -78,7 +78,7 @@ export function ThreadDetailsUsage({
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
         {showHubLimits ? (
-          <div className="col-span-3 flex items-center justify-between gap-2 px-2.5">
+          <div className="col-span-3 flex h-6 items-center justify-between gap-2 px-2.5">
             <span className="text-muted-foreground">Limits</span>
             <Button variant="link" size="micro" onClick={onOpenUsageLimits}>
               View hub limits
