@@ -30,20 +30,23 @@ interface Gesture extends PointerInput {
   moved: boolean;
 }
 type Commit = (frame: PreviewMiniPlayerFrame, direction: Direction) => void;
+interface Space {
+  readonly container: PreviewMiniPlayerSize;
+  readonly source: PreviewMiniPlayerSize;
+}
 
 export function createPreviewMiniPlayerGesture() {
   let gesture: Gesture | null = null;
 
-  const finish = (container: PreviewMiniPlayerSize | null, commit: Commit) => {
+  const finish = (space: Space | null, commit: Commit) => {
     const active = gesture;
     if (!active) return;
     gesture = null;
-    if (container && active.moved) {
+    if (space && active.moved) {
       const { x, y } = resolvePreviewMiniPlayerFrame({
         width: active.currentFrame.width,
         position: active.currentFrame,
-        source: active.frame,
-        container,
+        ...space,
       });
       // Only persist the end position; fitting a smaller viewport must not replace the chosen width.
       commit({ ...active.currentFrame, x, y }, active.direction);
@@ -95,18 +98,14 @@ export function createPreviewMiniPlayerGesture() {
       };
       return true;
     },
-    move(
-      event: PointerInput & { readonly buttons: number },
-      container: PreviewMiniPlayerSize | null,
-      commit: Commit,
-    ) {
+    move(event: PointerInput & { readonly buttons: number }, space: Space | null, commit: Commit) {
       const active = gesture;
       if (!active || active.pointerId !== event.pointerId) return;
       if ((event.buttons & 1) === 0) {
-        finish(container, commit);
+        finish(space, commit);
         return;
       }
-      if (!container) return;
+      if (!space) return;
       const delta = { x: event.clientX - active.clientX, y: event.clientY - active.clientY };
       if (!active.moved && Math.hypot(delta.x, delta.y) < HANDLE_TAP_SLOP_PX) return;
       active.moved = true;
@@ -116,7 +115,7 @@ export function createPreviewMiniPlayerGesture() {
               ...active.frame,
               ...clampPreviewMiniPlayerPosition(
                 { x: active.frame.x + delta.x, y: active.frame.y + delta.y },
-                container,
+                space.container,
                 active.frame,
               ),
             }
@@ -124,24 +123,18 @@ export function createPreviewMiniPlayerGesture() {
               start: active.frame,
               direction: active.direction,
               delta,
-              // Freeze the rendered aspect ratio for the entire gesture, even if the source changes.
-              source: active.frame,
-              container,
+              ...space,
             });
       commit(active.currentFrame, active.direction);
     },
-    end(
-      event: PointerInput & { readonly type: string },
-      container: PreviewMiniPlayerSize | null,
-      commit: Commit,
-    ) {
+    end(event: PointerInput & { readonly type: string }, space: Space | null, commit: Commit) {
       if (!gesture || gesture.pointerId !== event.pointerId) return null;
       const tapped =
         event.type === "pointerup" &&
         gesture.direction === null &&
         gesture.pointerType === "touch" &&
         !gesture.moved;
-      finish(container, commit);
+      finish(space, commit);
       return tapped;
     },
     finish,

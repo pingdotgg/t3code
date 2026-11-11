@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createPreviewMiniPlayerGesture } from "./previewMiniPlayerGesture";
 import { resolvePreviewMiniPlayerFrame } from "./previewMiniPlayerLayout";
 
-const container = { width: 1000, height: 800 };
+const source = { width: 1600, height: 1000 };
+const space = { container: { width: 1000, height: 800 }, source };
 const baseline = { x: 100.25, y: 80.75, width: 355.5, height: 222.25 };
 
 function setup(frame = baseline) {
@@ -39,21 +40,25 @@ function setup(frame = baseline) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("floating preview gestures", () => {
-  it("resizes from the rendered frame's ratio, not a source that disagrees or changes", () => {
-    const frame = { x: 100.25, y: 80.75, width: 355, height: 222 };
-    const { gesture, down, commit, style } = setup(frame);
+  it("keeps the opposite edge anchored when the source ratio changes mid-resize", () => {
+    const frame = { x: 1000, y: 300, width: 320, height: 200 };
+    const { gesture, down, commit } = setup(frame);
+    const space = {
+      container: { width: 1440, height: 900 },
+      source: { width: 1600, height: 1000 },
+    };
     gesture.begin(down, "northwest");
-    style.width = "460px";
-    style.height = "288px";
-    gesture.move(
-      { ...down, clientX: down.clientX - 6, clientY: down.clientY + 53 },
-      container,
-      commit,
-    );
-    expect(commit).toHaveBeenLastCalledWith(
-      { x: 120.25, y: 92.75, width: 335, height: 210 },
-      "northwest",
-    );
+    const live = { ...space, source: { width: 1600, height: 1200 } };
+    gesture.move({ ...down, clientX: down.clientX - 40, clientY: down.clientY - 25 }, live, commit);
+    gesture.end({ ...down, type: "pointerup" }, live, commit);
+    const [persisted] = commit.mock.lastCall!;
+    const rendered = resolvePreviewMiniPlayerFrame({
+      width: persisted.width,
+      position: persisted,
+      ...live,
+    });
+    expect(rendered.x + rendered.width).toBeCloseTo(frame.x + frame.width);
+    expect(rendered.y + rendered.height).toBeCloseTo(frame.y + frame.height);
   });
 
   describe.each([null, "southeast"] as const)("a %s gesture", (direction) => {
@@ -62,22 +67,21 @@ describe("floating preview gestures", () => {
       (termination) => {
         const { gesture, down, commit, target } = setup();
         gesture.begin(down, direction);
-        gesture.move({ ...down, clientX: 700, clientY: 500 }, container, commit);
+        gesture.move({ ...down, clientX: 700, clientY: 500 }, space, commit);
         const chosen = commit.mock.lastCall![0];
-        const smaller = { width: 500, height: 400 };
+        const smaller = { container: { width: 500, height: 400 }, source };
         if (termination === "blur") gesture.finish(smaller, commit);
         else if (termination === "buttons0") gesture.move({ ...down, buttons: 0 }, smaller, commit);
         else gesture.end({ ...down, type: termination }, smaller, commit);
         const fitted = resolvePreviewMiniPlayerFrame({
           width: chosen.width,
           position: chosen,
-          source: baseline,
-          container: smaller,
+          ...smaller,
         });
         expect(commit).toHaveBeenLastCalledWith({ ...chosen, x: fitted.x, y: fitted.y }, direction);
         expect(target.releasePointerCapture).toHaveBeenCalledWith(7);
         const calls = commit.mock.calls.length;
-        gesture.move({ ...down, clientX: 900 }, container, commit);
+        gesture.move({ ...down, clientX: 900 }, space, commit);
         expect(commit).toHaveBeenCalledTimes(calls);
       },
     );
@@ -86,23 +90,27 @@ describe("floating preview gestures", () => {
   it("keeps the chosen resize width when the viewport shrinks before release", () => {
     const { gesture, down, commit } = setup();
     gesture.begin(down, "east");
-    gesture.move({ ...down, clientX: down.clientX + 100 }, container, commit);
+    gesture.move({ ...down, clientX: down.clientX + 100 }, space, commit);
     const chosen = commit.mock.lastCall![0];
-    gesture.end({ ...down, type: "pointerup" }, { width: 300, height: 300 }, commit);
+    gesture.end(
+      { ...down, type: "pointerup" },
+      { container: { width: 300, height: 300 }, source },
+      commit,
+    );
     expect(commit.mock.lastCall![0].width).toBe(chosen.width);
   });
 
   it("discards a gesture whose handle lost capture before a new pointerdown", () => {
     const { gesture, down, commit, target } = setup();
     gesture.begin(down, "east");
-    gesture.move({ ...down, clientX: 400 }, container, commit);
+    gesture.move({ ...down, clientX: 400 }, space, commit);
     commit.mockClear();
     target.hasPointerCapture.mockReturnValueOnce(false);
     const next = { ...down, pointerId: 8 };
     expect(gesture.begin(next, null)).toBe(true);
-    gesture.move({ ...down, clientX: 500 }, container, commit);
+    gesture.move({ ...down, clientX: 500 }, space, commit);
     expect(commit).not.toHaveBeenCalled();
-    gesture.move({ ...next, clientX: next.clientX + 10 }, container, commit);
+    gesture.move({ ...next, clientX: next.clientX + 10 }, space, commit);
     expect(commit).toHaveBeenCalledExactlyOnceWith({ ...baseline, x: baseline.x + 10 }, null);
   });
 
@@ -111,8 +119,8 @@ describe("floating preview gestures", () => {
     const touch = { ...down, pointerType: "touch" };
     const tap = (event: typeof down, direction: "east" | null, type: string, dy = 2) => {
       gesture.begin(event, direction);
-      gesture.move({ ...event, clientY: event.clientY + dy }, container, commit);
-      return gesture.end({ ...event, type }, container, commit);
+      gesture.move({ ...event, clientY: event.clientY + dy }, space, commit);
+      return gesture.end({ ...event, type }, space, commit);
     };
     expect(tap(touch, null, "pointerup")).toBe(true);
     expect(tap(down, null, "pointerup")).toBe(false);
