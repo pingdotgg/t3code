@@ -4,12 +4,13 @@
  * glyph, with small flanking dots for the 17th-c. engraved-rule feel.
  *
  * Glyphs are mathematically perfect regular polygons (or a line / a
- * circle as the limit cases). The home page uses these to compose
- * a "platonic descent" — line → triangle → square → pentagon →
- * hexagon → heptagon → octagon → circle — down the page.
+ * circle as the limit cases). The home page uses them in order down the
+ * page — dot → line → triangle → square → pentagon → hexagon → heptagon
+ * → octagon → circle — from zero dimensions to the infinite-sided limit.
  */
 
 type Variant =
+  | "dot"
   | "line"
   | "triangle"
   | "square"
@@ -20,13 +21,14 @@ type Variant =
   | "circle";
 
 interface PolygonSpec {
-  /** number of sides; 0 means special-cased (line / circle) */
+  /** number of sides; 0 means special-cased (dot / line / circle) */
   sides: number;
   /** rotation of the first vertex in degrees (SVG: 0° = right, 90° = down) */
   startDeg: number;
 }
 
 const POLYGON: Record<Variant, PolygonSpec> = {
+  dot: { sides: 0, startDeg: 0 },
   line: { sides: 0, startDeg: 0 },
   triangle: { sides: 3, startDeg: -90 }, // apex up
   square: { sides: 4, startDeg: -45 }, // sides axis-aligned
@@ -91,6 +93,11 @@ const points = spec.sides >= 3 ? polygonPoints(spec.sides, spec.startDeg) : "";
     stroke-linejoin="miter"
     stroke-miterlimit="6"
   >
+    {
+      variant === "dot" && (
+        <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
+      )
+    }
     {variant === "line" && <line x1="2" y1="12" x2="22" y2="12" />}
     {variant === "circle" && <circle cx="12" cy="12" r="9.5" />}
     {points !== "" && <polygon points={points} />}
