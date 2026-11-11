@@ -2357,13 +2357,11 @@ export function ChatComposer(props: ChatComposerProps) {
         dictation={{
           level: speechInput.level,
           onStop: () => void speechInput.stop(),
+          onCancel: () => speechInput.cancel(),
           onSkipPostProcessing: () => speechInput.skipPostProcessing(),
         }}
       />
     ) : null;
-  // While recording, the send slot becomes Stop and finishes the recording.
-  const stopDictationStable = useStableCallback(() => void speechInput.stop());
-  const onStopDictation = speechInput.state.phase === "recording" ? stopDictationStable : undefined;
 
   // Escape dismisses the suggestion so Tab moves focus again.
   const { suggestion: promptSuggestion, dismiss: dismissPromptSuggestion } = usePromptSuggestion(
@@ -3503,22 +3501,24 @@ export function ChatComposer(props: ChatComposerProps) {
                     <button
                       type="button"
                       className={COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME}
-                      disabled={onStopDictation ? false : collapsedComposerPrimaryActionDisabled}
+                      hidden={voiceInputActive && !canInterrupt}
+                      disabled={
+                        voiceInputActive ? !canInterrupt : collapsedComposerPrimaryActionDisabled
+                      }
                       aria-label={
-                        onStopDictation ? "Stop voice input" : collapsedComposerPrimaryActionLabel
+                        voiceInputActive ? "Stop generation" : collapsedComposerPrimaryActionLabel
                       }
                       onPointerDown={(event) => event.preventDefault()}
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (onStopDictation) onStopDictation();
-                        else if (collapsedComposerShowsStop) onInterrupt();
+                        if (voiceInputActive || collapsedComposerShowsStop) onInterrupt();
                         else if (showResumeAction) onResume();
                         else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
                           expandMobileComposer();
                         else submitComposer();
                       }}
                     >
-                      {onStopDictation || collapsedComposerShowsStop ? (
+                      {voiceInputActive || collapsedComposerShowsStop ? (
                         <span
                           className="size-2.5 rounded-xs bg-error-foreground"
                           aria-hidden="true"
@@ -3751,8 +3751,6 @@ export function ChatComposer(props: ChatComposerProps) {
                   onResume={onResume}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryActionStable}
-                  onStopDictation={onStopDictation}
-                  stopDictationShortcutLabel={dictationShortcutLabel}
                   compactBeforeSendTokens={props.resumeCompactionTokens}
                   keepFullHistory={props.keepFullHistory}
                   onToggleKeepFullHistory={props.onToggleKeepFullHistory}

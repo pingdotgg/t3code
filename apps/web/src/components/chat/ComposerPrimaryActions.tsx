@@ -63,9 +63,6 @@ interface ComposerPrimaryActionsProps {
   onResume?: () => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
-  /** Set while dictation records: the stop slot finishes it instead of sending. */
-  onStopDictation?: (() => void) | undefined;
-  stopDictationShortcutLabel?: string | null;
   compactBeforeSendTokens?: number | null;
   keepFullHistory?: boolean;
   onToggleKeepFullHistory?: () => void;
@@ -143,8 +140,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onResume,
   onPreviousPendingQuestion,
   onInterrupt,
-  onStopDictation,
-  stopDictationShortcutLabel = null,
   compactBeforeSendTokens = null,
   keepFullHistory = false,
   onToggleKeepFullHistory,
@@ -186,9 +181,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
 
   // The stop square sits in the same pill as send, so the pill never changes shape.
-  // While dictating it ends the recording; a running turn's stop returns after.
-  const stopsDictation = onStopDictation !== undefined && !pendingAction;
-  const stopLabel = stopsDictation ? "Stop voice input" : generationStopLabel;
   const renderStopSlot = (insidePendingAction: boolean) => (
     <Tooltip>
       <TooltipTrigger
@@ -197,36 +189,29 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             type="button"
             className={cn(COMPOSER_PILL_SLOT_CLASS_NAME, "w-8", insidePendingAction && "sm:w-6.5")}
             {...pointerFocusProps}
-            disabled={!stopsDictation && (!canOperateThread || isStopDisabled)}
+            disabled={!canOperateThread || isStopDisabled}
             onClick={() => {
-              if (stopsDictation) onStopDictation();
-              else {
-                if (!canOperateThread || isStopDisabled) return;
-                setStopPhase("pending");
-                onInterrupt();
-              }
+              if (!canOperateThread || isStopDisabled) return;
+              setStopPhase("pending");
+              onInterrupt();
             }}
-            aria-label={stopLabel}
+            aria-label={generationStopLabel}
           />
         }
       >
         <span aria-hidden className="size-2.5 rounded-xs bg-error-foreground" />
       </TooltipTrigger>
       <TooltipPopup>
-        {stopsDictation
-          ? `${stopLabel}${stopDictationShortcutLabel ? ` (${stopDictationShortcutLabel})` : ""}`
-          : stopPhase === "pending"
-            ? "Stopping…"
-            : stopPhase === "landed"
-              ? "Stopped"
-              : "Interrupt"}
+        {stopPhase === "pending" ? "Stopping…" : stopPhase === "landed" ? "Stopped" : "Interrupt"}
       </TooltipPopup>
     </Tooltip>
   );
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <ComposerSendPill key="interrupt" className={cn(insidePendingAction && "sm:h-7")}>
       {insidePendingAction ? null : renderSpeechAction?.(true)}
-      {renderStopSlot(insidePendingAction)}
+      {!voiceInputActive || canInterrupt || stopPhase !== null
+        ? renderStopSlot(insidePendingAction)
+        : null}
     </ComposerSendPill>
   );
 
@@ -287,7 +272,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (
-    stopsDictation ||
+    voiceInputActive ||
     ((canInterrupt || stopPhase === "pending" || stopPhase === "timedOut") &&
       !hasSendableContent &&
       !isEditingQueuedMessage)
