@@ -196,7 +196,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           ref={closeButtonRef}
           size="sm"
           variant="media-close"
-          className="absolute left-0 top-0 z-20"
+          className="absolute left-0 top-0 z-20 max-[8rem]:left-1/2 max-[8rem]:-translate-x-1/2"
           onClick={close}
           aria-label={`Back, close ${mediaLabel} preview`}
         >

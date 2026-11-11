@@ -158,7 +158,7 @@ function DialogPopup({
         className={cn(
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
           variant === "media" &&
-            "z-[60] grid-rows-1 place-items-center px-4 pb-6 pt-[min(calc(var(--media-dialog-titlebar-height,0px)+1.5rem),50dvh)] [-webkit-app-region:no-drag]",
+            "z-[60] grid-rows-1 place-items-center px-4 max-[8rem]:px-0 pb-6 pt-[min(calc(var(--media-dialog-titlebar-height,0px)+1.5rem),50dvh)] [-webkit-app-region:no-drag]",
         )}
         style={
           variant === "media"
