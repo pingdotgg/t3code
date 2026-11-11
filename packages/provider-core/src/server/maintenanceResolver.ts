@@ -269,6 +269,11 @@ function isMiseExecutablePath(commandPath: string): boolean {
   return /(?:^|\/)mise(?:\.exe)?$/.test(normalizeCommandPath(commandPath));
 }
 
+/** The Nix store is read-only, so no updater can replace a CLI that lives there. */
+export function isNixStoreCommandPath(commandPath: string): boolean {
+  return normalizeCommandPath(commandPath).startsWith("/nix/store/");
+}
+
 const winGetClaudeCommandPath =
   /^[a-z]:\/(?:users\/[^/]+\/appdata\/local\/microsoft|program files(?: \(x86\))?)\/winget\/(?:links|packages\/anthropic\.claudecode_[^/]+)\/claude\.exe$/;
 
@@ -672,6 +677,10 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     context,
   );
   if (mise) return mise;
+  // After mise: a shim of a Nix-installed mise resolves into the store, yet its installs are writable.
+  if (commandPaths.some(isNixStoreCommandPath)) {
+    return manual;
+  }
 
   const nativeUpdate = definition.nativeUpdate;
   const nativeEnv = nativeUpdate?.env;
