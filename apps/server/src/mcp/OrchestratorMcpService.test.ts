@@ -2943,6 +2943,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
   it.effect("recovers an accepted delegation without a live parent or projection", () => {
     let childRun: OrchestrationV2ThreadProjection["runs"][number] | undefined;
+    let failChildRead = false;
     const layerDependencies = Layer.mergeAll(
       NodeServices.layer,
       NodeCrypto.layer,
@@ -2970,7 +2971,9 @@ describe("OrchestratorMcpService provider resolution", () => {
                 : null,
           ),
         getReceiptChildRun: () =>
-          childRun === undefined ? Effect.fail({} as never) : Effect.succeed(childRun),
+          failChildRead
+            ? Effect.fail(new OrchestratorProjectionError({ threadId: childThreadId }))
+            : Effect.succeed(childRun ?? null),
       }),
       providerRegistryLayer([]),
       adapterRegistryLayer([]),
@@ -2986,6 +2989,12 @@ describe("OrchestratorMcpService provider resolution", () => {
       assert.equal(result.acceptance, "accepted");
       assert.equal(result.status, "unknown");
       assert.equal(result.binding?.taskId, taskId);
+      failChildRead = true;
+      const readFailure = yield* Effect.flip(
+        service.taskReceipt(scope, { clientRequestId: "lost-response" }),
+      );
+      assert.equal(readFailure.code, "orchestration_error");
+      failChildRead = false;
       const rejected = yield* service.taskReceipt(scope, { clientRequestId: "rejected" });
       assert.equal(rejected.acceptance, "rejected");
       assert.equal(rejected.status, "failed");
