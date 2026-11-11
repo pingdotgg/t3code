@@ -9,7 +9,6 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -414,13 +413,35 @@ it.effect("lists a peer asleep at every address as unreachable within one probe 
       const listing = yield* a.links.list.pipe(Effect.forkScoped);
       yield* Queue.take(b.unanswered);
       yield* TestClock.adjust(Duration.seconds(3));
-      yield* Effect.yieldNow;
-      const listed = listing.pollUnsafe();
-      expect(
-        listed === undefined
-          ? "still waiting on the asleep peer"
-          : Exit.map(listed, (links) => links.map((link) => link.status)),
-      ).toEqual(Exit.succeed(["unreachable"]));
+      const listed = yield* Fiber.join(listing);
+      expect(listed.map((link) => link.status)).toEqual(["unreachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("lists a peer as reachable at another address while its first one sleeps", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const described = yield* HttpClient.get(`${b.url}/.well-known/t3/environment`).pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.provide(FetchHttpClient.layer),
+      );
+      // Another address of the same machine that answers.
+      const elsewhere = yield* serveRaw(() =>
+        Effect.succeed(HttpServerResponse.text(described, { contentType: "application/json" })),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({
+        url: b.url,
+        alternateUrls: [elsewhere],
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+
+      yield* Ref.set(b.asleep, true);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
