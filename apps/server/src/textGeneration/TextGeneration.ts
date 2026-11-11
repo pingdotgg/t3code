@@ -150,7 +150,6 @@ export const make = Effect.gen(function* () {
             const provider = snapshots.find((provider) => provider.instanceId === instanceId);
             return !attempted.has(instanceId) && provider !== undefined && canServe(provider);
           },
-          { includeConfiguredInstances: true },
         );
         if (candidate === null) break;
         attempted.add(candidate.instanceId);

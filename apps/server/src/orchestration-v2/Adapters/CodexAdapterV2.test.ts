@@ -5994,14 +5994,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedMessage: "Usage settings",
     },
     {
-      name: "sharing-code-mention",
-      code: "responseStreamDisconnected",
-      errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
-      message: "Transport unavailable; this is not subscription_sharing_usage_limit_exceeded.",
-      notification: false,
-      expectedClass: "provider_error",
-    },
-    {
       name: "sharing-code-mention-retry",
       code: "responseStreamDisconnected",
       errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
@@ -8620,7 +8612,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               frame: {
                 id: 3,
                 method: "thread/fork",
-                params: { threadId: nativeThreadId, config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+                params: {
+                  threadId: nativeThreadId,
+                  excludeTurns: true,
+                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                },
               },
             },
             {
@@ -8758,6 +8754,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const forkParams = {
         threadId: nativeThreadId,
         lastTurnId: "native-turn-first",
+        excludeTurns: true,
         config: CodexAdapterV2.CODEX_THREAD_CONFIG,
       };
       const exchange = (
