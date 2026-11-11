@@ -44,7 +44,9 @@ import {
   deriveTimelineEntriesFromVisibleTurnItems,
 } from "../../session-logic";
 import type { Root } from "mdast";
+import { ViewedImagesTimelineRow } from "./TimelineWorkEntryRow";
 import { remarkThoughtPreview, THOUGHT_PREVIEW_MAX_LENGTH } from "./TimelineWorkEntryRow.logic";
+import { TimelineRowCtx } from "./timelineRowContext";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
@@ -74,14 +76,14 @@ vi.mock(import("~/state/query"), async (original) => ({
   })) as never,
 }));
 
-const audioAsset = vi.hoisted(() => ({ url: "" }));
+const stubbedAsset = vi.hoisted(() => ({ url: "" }));
 vi.mock(import("~/assets/assetUrls"), async (original) => {
   const actual = await original();
   return {
     ...actual,
     useAssetUrlState: ((...args: Parameters<typeof actual.useAssetUrlState>) =>
-      audioAsset.url
-        ? { _tag: "Success", url: audioAsset.url }
+      stubbedAsset.url
+        ? { _tag: "Success", url: stubbedAsset.url }
         : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
   };
 });
@@ -1457,9 +1459,9 @@ describe("MessagesTimeline attachments", () => {
     );
     const src =
       "data:audio/wav;base64,UklGRiUAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQEAAACA";
-    audioAsset.url = src;
+    stubbedAsset.url = src;
     onTestFinished(() => {
-      audioAsset.url = "";
+      stubbedAsset.url = "";
     });
     const props = baseProps();
     await using screen = await renderTimeline(
@@ -1526,6 +1528,44 @@ describe("MessagesTimeline attachments", () => {
       void props.listRef.current!.scrollToIndex({ index: 20, animated: false });
     });
     await vi.waitFor(() => expect(one!.isConnected).toBe(false));
+  });
+
+  it("opens a viewed image as a gallery of the images beside it", async () => {
+    stubbedAsset.url =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    onTestFinished(() => {
+      stubbedAsset.url = "";
+    });
+    const onImageExpand = vi.fn<ComponentProps<typeof MessagesTimeline>["onImageExpand"]>();
+    await using screen = await renderElement(
+      <TimelineRowCtx
+        value={
+          {
+            threadRef: { environmentId: ENVIRONMENT_ID, threadId: ThreadId.make("thread-1") },
+            workspaceRoot: "/repo",
+            onImageExpand,
+          } as never
+        }
+      >
+        <ViewedImagesTimelineRow
+          row={{
+            kind: "viewed-images",
+            id: "viewed",
+            createdAt: CREATED_AT,
+            paths: ["/repo/first.png", "/repo/second.png", "/repo/third.png"],
+          }}
+        />
+      </TimelineRowCtx>,
+    );
+    await screen.getByRole("button", { name: "Preview second.png" }).click();
+    expect(onImageExpand).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        index: 1,
+        images: ["first.png", "second.png", "third.png"].map((name) =>
+          expect.objectContaining({ name }),
+        ),
+      }),
+    );
   });
 });
 
