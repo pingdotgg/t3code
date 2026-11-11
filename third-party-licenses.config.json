@@ -270,7 +270,7 @@
     },
     {
       "name": "@betteroffice/pptx",
-      "version": "0.2.0",
+      "version": "0.5.1",
       "license": "Apache-2.0",
       "sourceUrl": "https://github.com/openooxml/betteroffice",
       "generatedNotice": {
