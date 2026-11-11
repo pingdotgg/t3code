@@ -89,6 +89,11 @@ function markdownNodeText(node: Nodes): string {
   return node.type === "link" && parseThreadLinkHref(text) !== null ? "a thread" : text;
 }
 
+/** Markdown as one line of the text it renders, without markup or link targets. */
+export function markdownPlainText(markdown: string): string {
+  return markdownNodeText(markdownPreviewParser.parse(markdown)).replace(/\s+/g, " ").trim();
+}
+
 function compactMinimapPreview(text: string | null | undefined) {
   const compact = text?.replace(/\s+/g, " ").trim() ?? "";
   return compact.length > 0 ? compact : null;
