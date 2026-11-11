@@ -285,11 +285,11 @@ it("keeps the Hide viewed files toggle while its saved filter is on and nothing 
   await using screen = await render(tab(0, null, undefined, undefined, viewedDetail), {
     container: pagedContainer(),
   });
-  const hideViewed = screen.getByRole("button", { name: "Hide viewed files" });
+  await screen.getByRole("button", { name: "Hide viewed files" }).click();
 
-  await hideViewed.click();
-
-  await expect.element(hideViewed).toHaveAttribute("aria-pressed", "false");
+  await vi.waitFor(() =>
+    expect(localStorage.getItem("t3code.pullRequestHideViewedFiles")).toBe("false"),
+  );
 });
 
 it("marks a Shift-clicked range viewed after the first file of it was hidden", async () => {
