@@ -35,6 +35,7 @@
         "e2e.config.ts",
         "prove-scenario.ts",
         "scenarios/*.ts",
+        "scenarios/claude-fast-mode-cli.mjs",
         "setup-worktree.ts",
         "sign-macos.ts",
         "prepare-server-compile-cache.cjs",
