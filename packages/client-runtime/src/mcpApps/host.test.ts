@@ -206,7 +206,7 @@ describe("makeMcpAppHost", () => {
     const { host, sent } = setup({
       callTool: async (input) => {
         if (input.name === "delete_everything")
-          throw new McpAppHostRefusal("Declined by the user.");
+          throw new McpAppHostRefusal({ message: "Declined by the user." });
         return { content: [], structuredContent: { ok: true } };
       },
     });
@@ -311,7 +311,7 @@ describe("makeMcpAppHost", () => {
       updateModelContext: async (update) => void contexts.push(update),
       downloadFile: async (files) => {
         downloads.push(files);
-        if (files.length > 1) throw new McpAppHostRefusal("Declined by the user.");
+        if (files.length > 1) throw new McpAppHostRefusal({ message: "Declined by the user." });
       },
     });
     initialize(host);

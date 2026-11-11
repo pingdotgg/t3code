@@ -9,7 +9,12 @@ import {
   readHtmlRenderReference,
   type HtmlRenderReference,
 } from "./htmlRender.ts";
-import { MCP_APP_OUTPUT_KEY, readMcpAppReference, type McpAppReference } from "./mcpApp.ts";
+import {
+  claudeMcpToolName,
+  MCP_APP_OUTPUT_KEY,
+  readMcpAppReference,
+  type McpAppReference,
+} from "./mcpApp.ts";
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 const MAX_PARSED_BYTES = 16_384;
@@ -43,6 +48,8 @@ interface CompactToolOutput {
   [MCP_APP_OUTPUT_KEY]?: McpAppReference;
   thread?: { threadId: string };
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
+  linkedCount?: number;
+  unlinkedCount?: number;
 }
 
 function readResult(value: unknown, budget: ResultReadBudget, depth = 0): ResultEnvelope {
@@ -123,6 +130,10 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       if (id !== undefined) output[key] = id;
     }
     if (data.status === "rolled_back") output.status = "rolled_back";
+    for (const key of ["linkedCount", "unlinkedCount"] as const) {
+      const count = data[key];
+      if (typeof count === "number" && Number.isSafeInteger(count)) output[key] = count;
+    }
     const htmlRender = readHtmlRenderReference(data.htmlRender);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);
@@ -185,13 +196,32 @@ export function htmlRenderFromToolItem(item: {
   return output?.isError ? undefined : output?.htmlRender;
 }
 
+/** The thread-owned file `preview_recording_stop` stored for the agent. */
+export function previewRecordingIdFromToolItem(item: {
+  readonly toolName: string | null | undefined;
+  readonly output?: unknown;
+}): string | undefined {
+  if (resolveT3McpToolId(item.toolName) !== "preview_recording_stop") return undefined;
+  const budget: ResultReadBudget = {
+    remainingBytes: MAX_PARSED_BYTES,
+    remainingNodes: MAX_ENVELOPE_NODES,
+    exceeded: false,
+  };
+  const result = readResult(item.output, budget);
+  return result.failed || budget.exceeded ? undefined : boundedId(result.data?.id);
+}
+
 /** Accept app references only when server and tool match the item, so tools cannot impersonate another app source. */
 export function mcpAppFromToolItem(item: {
   readonly toolName: string | null | undefined;
   readonly output?: unknown;
 }): McpAppReference | undefined {
   const app = compactDynamicToolOutput(item.output)?.[MCP_APP_OUTPUT_KEY];
-  return app !== undefined && item.toolName === `${app.server}.${app.tool}` ? app : undefined;
+  return app !== undefined &&
+    (item.toolName === `${app.server}.${app.tool}` ||
+      item.toolName === claudeMcpToolName(app.server, app.tool))
+    ? app
+    : undefined;
 }
 
 /** Some providers report completion even when command output describes a failure. */
@@ -251,6 +281,16 @@ export function toolOutputImageBlocks(value: unknown): ReadonlyArray<unknown> {
 /** Order defines the shared tool-output-image asset index. */
 export function toolOutputImages(value: unknown): ReadonlyArray<ToolOutputImage> {
   return toolOutputImageBlocks(value).flatMap((block) => readToolOutputImage(block) ?? []);
+}
+
+export function mcpToolResultOutput(result: {
+  readonly content?: unknown;
+  readonly structuredContent?: unknown;
+}): unknown {
+  if (result.structuredContent != null && toolOutputImages(result.content).length > 0) {
+    return { content: result.content, structuredContent: result.structuredContent };
+  }
+  return result.structuredContent ?? result.content;
 }
 
 export function omitToolOutputImageData(value: unknown): unknown {

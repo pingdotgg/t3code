@@ -1,13 +1,18 @@
 import {
   isListedThreadLineage,
   type EnvironmentId,
+  isProviderNativeSubagentThread,
   type OrchestrationV2ThreadShell,
   type Project,
+  type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { backgroundWorkHoldsCompletion } from "./orchestrationV2PendingBackgroundWork.ts";
+import {
+  backgroundWorkHoldsCompletion,
+  monitorHoldsWakeCompletion,
+} from "./orchestrationV2PendingBackgroundWork.ts";
 
 export type AgentAwarenessPhase =
   | "starting"
@@ -18,6 +23,31 @@ export type AgentAwarenessPhase =
   | "failed"
   | "stale"
   | "woke";
+
+export interface SubagentRequestAwareness {
+  readonly requestId: RuntimeRequestId;
+  /** The child's own update time, which moves whenever its request changes. */
+  readonly updatedAt: DateTime.Utc;
+}
+
+/** Provider-native subagents ask on their parent; the coordinator answers child questions. */
+export function subagentAwaitsApproval(
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "activityRunStatus" | "creationSource" | "lineage" | "pendingRuntimeRequest"
+  >,
+): boolean {
+  const kind = thread.pendingRuntimeRequest?.kind;
+  return (
+    kind !== undefined &&
+    kind !== "auth_refresh" &&
+    kind !== "user_input" &&
+    thread.lineage.relationshipToParent === "subagent" &&
+    !isProviderNativeSubagentThread(thread) &&
+    // The activity run stays set when a follow-up is queued behind a blocked run.
+    thread.activityRunStatus != null
+  );
+}
 
 export interface AgentAwarenessState {
   readonly environmentId: EnvironmentId;
@@ -57,6 +87,7 @@ export interface ProjectThreadAwarenessV2Input {
       | "activityRunStatus"
       | "id"
       | "lineage"
+      | "latestRunBackgroundWake"
       | "latestRunStopRequested"
       | "modelSelection"
       | "pendingBackgroundTasks"
@@ -66,18 +97,16 @@ export interface ProjectThreadAwarenessV2Input {
       | "title"
       | "updatedAt"
     >;
+  /** The approval a live subagent below this thread is waiting on. */
+  readonly pendingSubagentRequest?: SubagentRequestAwareness | null;
 }
 
 export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
-  if (
-    !isListedThreadLineage(thread.lineage) ||
-    thread.archivedAt != null ||
-    thread.settledOverride === "settled"
-  )
-    return null;
+  if (!isListedThreadLineage(thread.lineage) || thread.archivedAt != null) return null;
+  const subagentRequest = input.pendingSubagentRequest ?? null;
   if (
     input.now !== undefined &&
     thread.snoozedUntil != null &&
@@ -89,7 +118,8 @@ export function projectThreadAwarenessV2(
         (thread.latestRunCompletedAt != null &&
           DateTime.toEpochMillis(thread.latestRunCompletedAt) >
             DateTime.toEpochMillis(thread.snoozedAt)));
-    if (thread.pendingRuntimeRequest == null && !failedAfterSnooze) return null;
+    if (thread.pendingRuntimeRequest == null && subagentRequest === null && !failedAfterSnooze)
+      return null;
   }
   const snoozeWakeAt = thread.snoozedUntil;
   const woke =
@@ -100,12 +130,24 @@ export function projectThreadAwarenessV2(
       DateTime.toEpochMillis(thread.lastVisitedAt) < DateTime.toEpochMillis(snoozeWakeAt)) &&
     (thread.latestRunCompletedAt == null ||
       DateTime.toEpochMillis(thread.latestRunCompletedAt) < DateTime.toEpochMillis(snoozeWakeAt));
-  const runPhase = resolveThreadAwarenessPhaseV2(thread);
+  const runPhase = resolveThreadAwarenessPhaseV2(thread, subagentRequest !== null);
   const phase = woke && (runPhase === null || runPhase === "completed") ? "woke" : runPhase;
   if (phase === null) {
     return null;
   }
   if (phase === "completed" && thread.latestRunStopRequested === true) return null;
+  // Resolve the phase first so live or waiting work stays visible after settlement.
+  const runStatus = thread.activityRunStatus ?? thread.status;
+  if (
+    thread.settledOverride === "settled" &&
+    (phase === "completed" ||
+      phase === "failed" ||
+      phase === "woke" ||
+      (phase === "running" && runStatus === "completed")) &&
+    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+  ) {
+    return null;
+  }
   const completedAt =
     phase === "completed" || phase === "failed" ? thread.latestRunCompletedAt : null;
   const unread =
@@ -132,8 +174,14 @@ export function projectThreadAwarenessV2(
     ...(completedAt == null ? {} : { completedAt: DateTime.formatIso(completedAt) }),
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
+    // A child's request leaves the parent's own timestamp alone. Alerts are
+    // keyed by phase and time, so a second wait needs the child's time.
     updatedAt: DateTime.formatIso(
-      phase === "woke" && snoozeWakeAt != null ? snoozeWakeAt : thread.updatedAt,
+      phase === "woke" && snoozeWakeAt != null
+        ? snoozeWakeAt
+        : subagentRequest === null
+          ? thread.updatedAt
+          : DateTime.max(thread.updatedAt, subagentRequest.updatedAt),
     ),
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
   };
@@ -141,23 +189,19 @@ export function projectThreadAwarenessV2(
 
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
+  childAwaitsApproval: boolean,
 ): AgentAwarenessPhase | null {
-  const runStatus = thread.activityRunStatus ?? thread.status;
-  if (
-    thread.pendingRuntimeRequest?.kind === "user_input" &&
-    (thread.pendingRuntimeRequest.blocking !== false ||
-      !(runStatus === "preparing" || runStatus === "starting" || runStatus === "running"))
-  ) {
-    return "waiting_for_input";
-  }
+  if (thread.pendingRuntimeRequest?.kind === "user_input") return "waiting_for_input";
   if (
     thread.pendingRuntimeRequest !== null &&
-    thread.pendingRuntimeRequest.kind !== "user_input" &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
   ) {
     return "waiting_for_approval";
   }
-  switch (runStatus) {
+  // The parent can finish its own turn while a delegated child keeps working,
+  // so a child's request outranks the parent's run status.
+  if (childAwaitsApproval) return "waiting_for_approval";
+  switch (thread.activityRunStatus ?? thread.status) {
     case "preparing":
     case "starting":
       return "starting";
@@ -165,7 +209,8 @@ function resolveThreadAwarenessPhaseV2(
     case "waiting":
       return "running";
     case "completed":
-      return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+      return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
+        monitorHoldsWakeCompletion(thread)
         ? "running"
         : "completed";
     case "failed":

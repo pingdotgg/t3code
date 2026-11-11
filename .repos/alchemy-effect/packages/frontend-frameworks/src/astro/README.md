@@ -244,7 +244,7 @@ generated `_redirects` and `_headers` files). No `wrangler.json`, no
   cloudflare-runtime).
 - **Version pinning.** Astro's JS API is `@experimental`, and the integration
   internals (virtual module names, adapter features) are versioned with Astro
-  majors. The fork tracks `astro` 7.x / adapter v14.1.3; treat version bumps
+  majors. The fork tracks `astro` >=7.4 / adapter v14.4.2 (the vendored runtime; `integration.ts` is still based on v14.1.3); treat version bumps
   as deliberate migrations backed by the fixture e2e suite.
 
 ## Testing

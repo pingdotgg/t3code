@@ -33,6 +33,73 @@ const requestJson = (request: HttpClientRequest.HttpClientRequest): unknown => {
 };
 const encodeJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+it.effect("reads clone URLs on the given host rather than the checkout's", () => {
+  const urls: string[] = [];
+  const client = HttpClient.make((request) => {
+    urls.push(request.url);
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        new Response(
+          encodeJson({
+            full_name: "maria/project",
+            clone_url: "https://forgejo.test/maria/project.git",
+            ssh_url: "git@forgejo.test:maria/project.git",
+          }),
+        ),
+      ),
+    );
+  });
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const provider = yield* ForgejoSourceControlProvider.make.pipe(
+      Effect.provideService(ForgejoCli.ForgejoCli, cli),
+    );
+    const cloneUrls = yield* provider.getRepositoryCloneUrls({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+    });
+    assert.strictEqual(cloneUrls.url, "https://forgejo.test/maria/project.git");
+    assert.deepStrictEqual(urls, ["https://forgejo.test/api/v1/repos/maria/project"]);
+  }).pipe(
+    Effect.provideService(HttpClient.HttpClient, client),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: {
+                "forgejo.test": { type: "Application", token: "test-token" },
+                "code.example": { type: "Application", token: "other-token" },
+              },
+            }),
+          ),
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            if (input.command === "git") {
+              assert.deepStrictEqual(input.args, ["remote", "-v"]);
+              // The checkout is on another Forgejo server with a same-named repository.
+              return Effect.succeed(
+                processOutput("origin\thttps://code.example/maria/project.git (fetch)"),
+              );
+            }
+            assert.strictEqual(input.command, "fj");
+            assert.deepStrictEqual(input.args, ["--host", "https://forgejo.test", "whoami"]);
+            return Effect.succeed(processOutput(""));
+          },
+        },
+      }),
+    ),
+  );
+});
+
 const requiredChecksPullRequest = {
   number: 7,
   title: "Required checks",
@@ -506,7 +573,10 @@ it.effect.each([
       updated_at: "2026-09-16T00:00:00Z",
       closed_at: null,
       merged_at: null,
-      labels: [],
+      labels: [
+        { id: 1, name: "bug", color: "ee0701", description: "Something is broken" },
+        { id: 2, name: "triage", color: "c5def5", description: "" },
+      ],
     };
     const requests: string[] = [];
     return Effect.gen(function* () {
@@ -536,6 +606,10 @@ it.effect.each([
       const detail = yield* provider.getChangeRequest(input);
       assert.strictEqual(list.items.length, 1);
       assert.strictEqual(detail.headSha, "head");
+      assert.deepStrictEqual(detail.labels, [
+        { name: "bug", color: "ee0701", description: "Something is broken" },
+        { name: "triage", color: "c5def5", description: null },
+      ]);
       for (const result of [list.items[0]!, summary, detail]) {
         assert.strictEqual(result.mergeability, mergeability);
         assert.strictEqual(result.isDraft, isDraft);
@@ -640,6 +714,43 @@ it.effect("lists nothing for an author Forgejo has no account for", () =>
     ),
   ),
 );
+
+it.effect.each([
+  { query: undefined, count: 3 },
+  { query: "", count: 3 },
+  { query: " \t ", count: 3 },
+  { query: "", count: 101 },
+])("reads all $count assignees once for author query '$query'", ({ query, count }) => {
+  const paths: string[] = [];
+  const users = Array.from({ length: count }, (_, index) => ({ login: `dev-${index}` }));
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const search = provider.searchRepositoryAuthors;
+    if (search === undefined) return yield* Effect.die("author search missing");
+    const found = yield* search({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+      ...(query === undefined ? {} : { query }),
+    });
+    assert.strictEqual(paths.length, 1);
+    assert.deepStrictEqual(found, {
+      items: users.map(({ login }) => ({ login, name: null, avatarUrl: null })),
+      truncated: false,
+    });
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          paths.push(input.path);
+          assert.strictEqual(input.path.split("?")[0], "repos/maria/project/assignees");
+          // Forgejo ignores paging here: every page is the full list, with no Link header.
+          return encodeJsonEffect(users).pipe(Effect.orDie, Effect.map(processOutput));
+        },
+      }),
+    ),
+  );
+});
 
 it.effect("says an author search was cut short by a server that pages below its limit", () =>
   Effect.gen(function* () {
@@ -850,6 +961,77 @@ it.effect("loads Forgejo pull request references from files and commits views", 
               base: { ref: "main", sha: "base", repo: null },
               head: { ref: "feature", sha: "head", repo: null },
             }).pipe(Effect.orDie, Effect.map(processOutput));
+          },
+        }),
+      ),
+    ),
+  ),
+);
+
+it.effect("finds a merged Forgejo pull request whose head branch was deleted", () =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    const found = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "feature",
+      state: "merged",
+    });
+    assert.deepStrictEqual(
+      found.map((pr) => [pr.number, pr.headRefName]),
+      [[7, "feature"]],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        TestSourceControlHost.layer({ process: {} }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              login: "work",
+              repository: "maria/project",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) => {
+            const repo = { full_name: "maria/project", owner: { login: "maria" } };
+            const page = new URLSearchParams(input.path.split("?")[1]).get("page");
+            return encodeJsonEffect(
+              page === "1"
+                ? [
+                    {
+                      number: 7,
+                      title: "Merged feature",
+                      html_url: "https://forgejo.test/maria/project/pulls/7",
+                      state: "closed",
+                      merged: true,
+                      merged_at: "2026-10-12T00:00:00Z",
+                      base: { ref: "main", label: "main", sha: "base", repo },
+                      head: { ref: "refs/pull/7/head", label: "feature", sha: "head", repo },
+                    },
+                    {
+                      number: 8,
+                      title: "Merged from a deleted fork",
+                      html_url: "https://forgejo.test/maria/project/pulls/8",
+                      state: "closed",
+                      merged: true,
+                      merged_at: "2026-10-11T00:00:00Z",
+                      base: { ref: "main", label: "main", sha: "base", repo },
+                      head: { ref: "refs/pull/8/head", label: "feature", sha: "fork", repo: null },
+                    },
+                    {
+                      number: 9,
+                      title: "AGit topic",
+                      html_url: "https://forgejo.test/maria/project/pulls/9",
+                      state: "closed",
+                      merged: true,
+                      merged_at: "2026-10-10T00:00:00Z",
+                      flow: 1,
+                      base: { ref: "main", label: "main", sha: "base", repo },
+                      head: { ref: "refs/pull/9/head", label: "feature", sha: "topic", repo },
+                    },
+                  ]
+                : [],
+            ).pipe(Effect.orDie, Effect.map(processOutput));
           },
         }),
       ),

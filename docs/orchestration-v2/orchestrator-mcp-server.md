@@ -11,8 +11,9 @@ agent can use this endpoint to:
 - create one or more ordinary top-level T3 threads;
 - list a project's threads and incrementally read any thread;
 - rename threads, regenerate titles, and link or unlink pull requests;
-- send or steer follow-up messages; and
-- wait for or interrupt ordinary thread runs.
+- send or steer follow-up messages;
+- wait for or interrupt ordinary thread runs; and
+- schedule recurring work that runs without an active turn.
 
 These are T3 orchestration operations, not provider-native sub-agent APIs.
 Delegated tasks always create a T3 child thread and run. The child receives
@@ -58,17 +59,18 @@ check the `orchestration` capability before reading or mutating state.
 
 ### Codex V2
 
-Codex app-server receives the remote MCP server through command-line config
-overrides:
+Codex gets T3's MCP server in each thread's `thread/start`, `thread/resume`,
+and `thread/fork` config, with the provider-session token in an
+`Authorization` header. The same server is registered twice:
 
-```text
--c mcp_servers.t3-code.url=http://127.0.0.1:<port>/mcp
--c mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"
-```
+- `t3-code`: every tool except `t3_thread_wait`.
+- `t3-code-direct`: only `t3_thread_wait`, with `omit_tools_from = ["code_mode", "deferred"]`.
 
-The provider-session token is placed in `T3_MCP_BEARER_TOKEN`. Both the
-production Codex launcher and the injectable test launcher use the same
-projection helper.
+Code Mode runs a nested call as part of a script, so the model keeps working
+while a blocking wait runs. The second entry makes the wait a direct tool call,
+like Codex's own wait tools. Codex reports calls as `<server>.<tool>`, so
+`packages/shared/src/t3McpToolPresentation.ts` must resolve both server names.
+Tool display and pending-work detection depend on it.
 
 ### Claude Agent SDK V2
 
@@ -98,8 +100,11 @@ server headers or token.
 ### Cursor Agent SDK V2
 
 Cursor receives the same authenticated HTTP MCP endpoint through the SDK's
-`mcpServers` agent and send options. The adapter passes the authorization header
-to the SDK but projects only redacted option metadata into protocol diagnostics.
+`mcpServers` on `Agent.create` / `Agent.resume` and each `send`. With
+`@cursor/sdk` 1.0.39+, send-level servers replace only the create-time inline
+set; ambient servers from `settingSources` (`project`, `user`, `team`, `mdm`,
+`plugins`) stay available. The adapter passes the authorization header to the
+SDK but projects only redacted option metadata into protocol diagnostics.
 
 ### Grok ACP V2
 
@@ -192,7 +197,12 @@ provider selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+`OrchestratorToolkit` in
+[`toolkits/orchestrator/tools.ts`](../../apps/server/src/mcp/toolkits/orchestrator/tools.ts)
+is the authoritative list of orchestration tools. The sections below cover
+delegation and thread tools. `t3_thread_launch` is documented with them but
+registered by the project toolkit in
+[`toolkits/project/tools.ts`](../../apps/server/src/mcp/toolkits/project/tools.ts).
 
 ### `orchestrator_capabilities`
 
@@ -317,12 +327,19 @@ the published task result.
 
 ### `task_cancel`
 
-Stops the child thread with the internal `thread.stop` command, then stops every
-task the child delegated, and disposes automatic parent delivery. Like a user Stop,
-`thread.stop` interrupts the running turn, holds queued turns, and ends pull request
-watches. A nonterminal task with no interruptible run is rejected. A terminal task
-returns its existing status, and its child thread still stops, including later
-runs and watch wakes. Published task results remain available. It accepts an
+Stops every task the child delegated, then the child thread with the internal
+`thread.stop` command, cancels the task's own queued turn, and disposes automatic
+parent delivery. Like a user Stop, `thread.stop` interrupts the running turn, holds
+queued turns, and ends pull request watches. The task's own queued turn is cancelled
+even if Stop already held it, so a task that is only queued can be cancelled; other
+queued turns in the child stay held for Resume. A nonterminal task is rejected when
+it has no interruptible run, no queued turn of its own, and its finished turn no
+longer waits on background work or delegated tasks. Once a cancelled task's turn
+ends, a completed result settles as `interrupted` and a failed one stays `failed`. A
+terminal task returns its existing status, and its child thread still stops,
+including later runs and watch wakes. In both cases, a follow-up that lost its child
+run but still shows as running on the parent is cancelled there and reported as
+`cancelled`. Published task results remain available. It accepts an
 optional cancellation reason.
 
 ### `create_threads`
@@ -402,8 +419,9 @@ know renders as a label that opens nothing. Older `t3-thread://v1/<threadId>`
 links name no environment: clients resolve them in the message's environment,
 then by a unique match in another enabled environment. An outside OAuth client,
 one that is not a linked environment, cannot render `t3-thread://` links, so it
-gets a web URL on the origin it reached, `<origin>/<environmentId>/<threadId>`,
-for threads in this environment.
+gets the link Copy thread copies, `https://app.t3.codes/threads/<environmentId>/<threadId>`
+on the server's `T3CODE_HOSTED_APP_URL`, for threads in this environment. The
+hosted app offers the desktop app, the mobile app, or itself.
 
 List and read results report `snoozed` and `snoozedUntil`, and
 `t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the
@@ -414,10 +432,10 @@ runs, background wakes, and delegated completions keep it snoozed.
 ### `t3_thread_update`
 
 Updates metadata for the calling thread or any other thread in the environment.
-The typed actions are `rename`, `regenerate_title`, `link_pull_request`, and
-`unlink_pull_request`. A link input supplies the repository, number, and URL;
-the server records the target thread's project ID. Branch and workspace changes
-are outside this tool.
+The typed actions are `rename`, which requires `title`, and `regenerate_title`,
+which rejects one. Pull request links go through the separate
+`link_pull_request` and `unlink_pull_request` tools. Branch and workspace
+changes are outside this tool.
 
 The result includes the command ID and durable event sequence together with the
 resultant title, title-regeneration marker, and linked pull request. Reusing a
@@ -434,7 +452,12 @@ Sends a message to any ordinary or delegated thread in the environment:
 - `queue` creates a separate follow-up run after active work;
 - `steer` requires a steerable active provider turn; and
 - `restart` requires an active provider turn and uses the orchestrator's
-  interrupt-and-restart path.
+  interrupt-and-restart path. On a provider that can stop a turn and queue
+  messages but not restart a turn with new input, it stops the turn and queues
+  the message ahead of other queued messages; an unheld delegated-task result
+  that survives the stop still runs first. It is rejected when neither path
+  applies: the provider cannot stop a turn, Stop has already reached the turn,
+  or the turn or the new message is `/compact` or `/logout`.
 
 The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for
@@ -453,6 +476,22 @@ Interrupts a selected active run through the normal V2 `run.interrupt` command.
 Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
+
+### Scheduled tasks
+
+`schedule_task`, `list_scheduled_tasks`, and `delete_scheduled_task` manage
+recurring work in the app scheduler; `schedule_task` with a `scheduledTaskId`
+updates an existing task. A schedule
+runs its prompt on an interval, at a fixed time in the server's local time
+zone, or on each qualifying webhook request, even when no turn is active.
+Without a signature, anyone with the webhook URL can trigger a run.
+Signature checks, filters, and dedupe can skip a webhook request.
+`bindToCurrentThread` defaults to `true` only when the caller has a thread in
+the task's project; otherwise it defaults to `false`. Bound runs post into
+that thread; unbound runs each launch a fresh thread in the task's project.
+Explicit `bindToCurrentThread: true` without a caller thread in that project
+is rejected. Pausing uses `schedule_task` with `scheduledTaskId` and `enabled: false`;
+deletion is permanent.
 
 ## Delegated Task Lifecycle
 
@@ -489,8 +528,12 @@ Users rarely watch child threads, so a child question would otherwise go
 unanswered. When a child opens a pending `user_input` request, the parent gets
 a notification message telling it to answer with the pending request tools or
 ask the user. The message says whether the child is blocked or, for a Codex
-async question, still working. If the question is answered or dismissed before
-the notification starts a turn, that queued turn is cancelled. Approvals are not
+async question, still working. If the parent's turn is running and its provider
+can steer without interrupting tools, the notification steers into that turn,
+like a background task's completion. A queued notice would wait behind a
+long-running orchestrator turn that may never end. Otherwise it queues. If the
+question is answered or dismissed before a queued notification starts a turn,
+that queued turn is cancelled. Approvals are not
 routed, because those tools cannot answer them.
 A parent still blocked in a `delegate_task` wait gets the blocking question
 through that wait instead.
