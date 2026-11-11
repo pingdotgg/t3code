@@ -340,6 +340,7 @@ describe("machineControls", () => {
       promote: false,
       readd: false,
       readdVia: null,
+      reopenBlocked: false,
       needsReadd: false,
       left: false,
       forgetHosts: [studio],
@@ -384,6 +385,7 @@ describe("machineControls", () => {
       promote: false,
       readd: true,
       readdVia: studio,
+      reopenBlocked: false,
       needsReadd: true,
       left: false,
       forgetHosts: [studio],
@@ -486,6 +488,28 @@ describe("machineControls", () => {
     // Saved with a session that still works: nothing to open. Expired or cut: open again.
     expect(opened({}, new Map([memberStatus(laptop, "open")]))[0]).toBe(false);
     expect(opened({}, new Map([memberStatus(laptop, "reopen")]))[0]).toBe(true);
+    // Expired with no connected host that may open it: no Open, and the row says what will help.
+    const [stranded] = view(
+      [host(studio, { devices: [target], mayWrite: false })],
+      studio,
+      new Map([memberStatus(laptop, "reopen")]),
+    );
+    const strandedRow = stranded?.machines.find((row) => row.entry.environmentId === laptop);
+    if (stranded === undefined || strandedRow === undefined) throw new Error("missing row");
+    expect(machineControls(strandedRow, stranded)).toMatchObject({
+      open: false,
+      reopenBlocked: true,
+    });
+    expect(
+      machineControls(
+        strandedRow,
+        view(
+          [host(studio, { devices: [target] })],
+          studio,
+          new Map([memberStatus(laptop, "reopen")]),
+        )[0] ?? stranded,
+      ),
+    ).toMatchObject({ open: true, reopenBlocked: false });
     // An app of the network needs only orchestration:read, and is capped by its own level.
     expect(opened({ mayWrite: false, callerAppId: "app-phone", apps: [app("read-only")] })).toEqual(
       [true, "read-only"],

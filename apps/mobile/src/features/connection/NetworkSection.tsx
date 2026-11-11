@@ -1,4 +1,5 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import {
   type DeviceNetworkHostState,
   deviceNetworkHostsKey,
@@ -382,6 +383,7 @@ function machineDetail(
   machine: DeviceNetworkMachine,
   now: DateTime.Utc,
   readOnlyHere: boolean,
+  reopenBlocked: boolean,
 ) {
   const { entry } = machine;
   const live = entry.member !== null && entry.member.access !== "revoked";
@@ -404,7 +406,9 @@ function machineDetail(
         ? "Read-only in this app"
         : "In this app"
       : entry.inApp?.kind === "reopen"
-        ? "Its session in this app ended: open it again"
+        ? reopenBlocked
+          ? "Its session in this app ended. To open it again, connect this app to a machine in its network that can open it, or pair with it by code"
+          : "Its session in this app ended: open it again"
         : null,
     // Only a known limit is shown before opening; the result shows once it is open.
     entry.inApp?.kind !== "open" &&
@@ -439,6 +443,7 @@ function MachineRow(props: {
   const openMember = useAtomCommand(networkMembers.open, { reportFailure: false });
   const now = DateTime.makeUnsafe(useNowMinuteMs());
   const operatesHere = useEnvironmentScope(entry.environmentId, AuthOrchestrationOperateScope);
+  const navigation = useNavigation();
   const [panel, setPanel] = useState<Panel | null>(null);
   const [saving, setSaving] = useState(false);
   const access = entry.member?.access ?? "revoked";
@@ -515,6 +520,7 @@ function MachineRow(props: {
   const open = () => run(openMember(entry.environmentId), `Could not open ${entry.label}`);
   const canExpand =
     controls.open ||
+    controls.reopenBlocked ||
     controls.changeAccess ||
     controls.restore ||
     controls.add ||
@@ -532,7 +538,13 @@ function MachineRow(props: {
           ? controls.left && entry.inApp?.kind === "left"
             ? `${readdState}. ${keptInApp(entry.inApp.until, now)}`
             : `${readdState}: allow joining on it, then add it again`
-          : machineDetail(group, machine, now, entry.inApp?.kind === "open" && !operatesHere)
+          : machineDetail(
+              group,
+              machine,
+              now,
+              entry.inApp?.kind === "open" && !operatesHere,
+              controls.reopenBlocked,
+            )
       }
       danger={entry.status === "revoked" || readdState !== null}
       value={
@@ -552,6 +564,13 @@ function MachineRow(props: {
         <>
           {controls.open ? (
             <ListActionRow label="Open in this app" loading={saving} onPress={open} />
+          ) : null}
+          {controls.reopenBlocked ? (
+            <ListActionRow
+              label="Pair with a code"
+              description="Enter its address and a pairing code from that machine."
+              onPress={() => navigation.navigate("SettingsEnvironmentNew")}
+            />
           ) : null}
           {controls.changeAccess || controls.restore
             ? ACCESS_CHOICES.map((choice) => (

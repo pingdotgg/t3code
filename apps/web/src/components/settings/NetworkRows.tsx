@@ -240,6 +240,7 @@ function machineDetails(
   openHint: ReturnType<typeof openAccessHint>,
   /** Opened in this app and its session there cannot change anything. */
   readOnlyHere: boolean,
+  reopenBlocked: boolean,
 ): ReadonlyArray<string | null> {
   const { entry } = machine;
   if (readd !== null) {
@@ -278,7 +279,9 @@ function machineDetails(
         ? "Read-only in this app"
         : "In this app"
       : entry.inApp?.kind === "reopen"
-        ? "Its session in this app ended: open it again"
+        ? reopenBlocked
+          ? "Its session in this app ended. To open it again, connect this app to a machine in its network that can open it, or pair with it by code under Add environment in Environments"
+          : "Its session in this app ended: open it again"
         : null,
     // Only a known limit is shown before opening; the result shows once it is open.
     entry.inApp?.kind !== "open" && !entry.isHost && live && openHint === "read-only"
@@ -389,6 +392,7 @@ export function DeviceMachineRow({
         readdReason,
         openAccessHint(machine, group),
         entry.inApp?.kind === "open" && !operatesHere,
+        controls.reopenBlocked,
       )}
       actions={
         <>

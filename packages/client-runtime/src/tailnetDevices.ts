@@ -424,6 +424,8 @@ export function deviceNetworkView(input: {
 
 export interface MachineControls {
   readonly open: boolean;
+  /** Its session here ended and no connected host may open it again. */
+  readonly reopenBlocked: boolean;
   /** Narrow or widen it on every machine, through the authority. */
   readonly changeAccess: boolean;
   readonly revoke: boolean;
@@ -486,17 +488,16 @@ export function machineControls(
         : (writers(group.hosts).find((host) => host.environmentId !== entry.environmentId)
             ?.environmentId ?? null)
       : null;
+  const opensHere = entry.inApp === null || entry.inApp.kind === "reopen";
+  const hasOpener = openers(group.hosts).length > 0;
   const forgetHosts = member
     ? manages
       ? [authority, ...hostsListing(group, entry, null).filter((id) => id !== authority)]
       : []
     : hostsListing(group, entry, authority);
   return {
-    open:
-      live &&
-      !entry.isHost &&
-      (entry.inApp === null || entry.inApp.kind === "reopen") &&
-      openers(group.hosts).length > 0,
+    open: live && !entry.isHost && opensHere && hasOpener,
+    reopenBlocked: live && !entry.isHost && entry.inApp?.kind === "reopen" && !hasOpener,
     changeAccess: live && manages,
     revoke: live && manages,
     restore: member && !live && !needsReadd && !left && manages,
