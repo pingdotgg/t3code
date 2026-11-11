@@ -7,13 +7,9 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 const SESSION_ADDRESS_PREFIX = "DBUS_SESSION_BUS_ADDRESS=";
 
 /**
- * Runs `gh` without letting it autolaunch a D-Bus session bus.
- *
- * gh reads its keyring through godbus. With no bus address and no bus under `/run/user/<uid>`,
- * godbus runs `dbus-launch`, whose daemon outlives gh. On hosts without a user session (WSL,
- * headless servers) every keyring read then leaks a daemon until inotify instances run out.
- * Only in that case, turn the bus off so the keyring read fails instead; a configured or
- * discoverable bus is left alone, matching godbus's own lookup.
+ * gh reads its keyring through godbus, which autolaunches a `dbus-launch` daemon that outlives gh
+ * when no session bus is configured or discoverable. On WSL and headless hosts each lookup leaks one
+ * until inotify runs out, so only then turn the bus off and let the keyring read fail.
  */
 export const makeGhProcess = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
