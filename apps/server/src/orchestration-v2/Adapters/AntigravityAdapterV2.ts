@@ -279,7 +279,8 @@ export function makeAntigravityAcpAdapterFlavor(
     supportsCompaction: false,
     requiresSignIn: isAntigravitySignInRequiredError,
     // Antigravity can drop its in-memory session while returning only an internal error.
-    restartRuntimeAfterPromptError: (error) => isAcpRequestError(error) && error.code === -32603,
+    restartRuntimeAfterPromptError: (error) =>
+      isAcpRequestError(error) && error.method === "session/prompt" && error.code === -32603,
     // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
     promptInactivityTimeout: "15 minutes",
     // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.

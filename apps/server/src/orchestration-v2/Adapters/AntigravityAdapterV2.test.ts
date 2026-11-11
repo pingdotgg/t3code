@@ -286,12 +286,6 @@ describe("AntigravityAdapterV2 prompt recovery", () => {
       restarts: true,
     },
     {
-      failure: "a missing session",
-      code: -32603,
-      message: "Session not found: antigravity-session",
-      restarts: true,
-    },
-    {
       failure: "invalid prompt parameters",
       code: -32602,
       message: "Invalid params",
