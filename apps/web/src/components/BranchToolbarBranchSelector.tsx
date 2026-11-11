@@ -267,8 +267,8 @@ export function BranchToolbarBranchSelector({
   const branchByName = new Map(refs.map((refName) => [refName.name, refName] as const));
   const normalizedBranchQuery = trimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
-  const isSelectingWorktreeBase =
-    effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
+  const needsWorktree = effectiveEnvMode === "worktree" && !activeWorktreePath;
+  const isSelectingWorktreeBase = needsWorktree && !envLocked;
   const isWorktreeChangeBlockedForRef = (refName: VcsRef) =>
     activeProjectCwd !== null &&
     isWorktreeChangeBlocked({
@@ -798,6 +798,12 @@ export function BranchToolbarBranchSelector({
         {displayMode === "panel" && prNumber !== undefined && prUrl !== undefined ? (
           <ThreadDetailsPrRows
             threadRef={threadRef}
+            handoffDisabled={needsWorktree && envLocked}
+            currentThread={
+              branchPr && !needsWorktree
+                ? { target: draftId ?? threadRef, pullRequestUrl: branchPr.url }
+                : undefined
+            }
             links={serverThread?.pullRequests ?? []}
             currentLink={currentLinkedPr}
             onOpenLink={openPrLink}

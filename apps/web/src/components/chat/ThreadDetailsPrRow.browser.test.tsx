@@ -1,10 +1,12 @@
 import { EnvironmentId, ProjectId, ThreadId, type PullRequestCheck } from "@t3tools/contracts";
-import { DraftId } from "~/composerDraftStore";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
+  url: "https://github.com/owner/repo/pull/1",
+  conflicting: false,
   extraStatus: null as PullRequestCheck["status"] | null,
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
   perform: vi.fn(),
@@ -29,12 +31,12 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
 const queryData = () => ({
   projectId: ProjectId.make("project"),
   workspaceRoot: "/workspace",
-  url: "https://github.com/owner/repo/pull/1",
+  url: state.url,
   number: 1,
   title: "Test PR",
-  state: "open",
+  state: "open" as const,
   isDraft: false,
-  mergeability: "mergeable",
+  mergeability: state.conflicting ? "conflicting" : "mergeable",
   headBranch: "feature",
   baseBranch: "main",
   changedFiles: 1,
@@ -103,6 +105,10 @@ vi.mock(import("../ui/toast"), async (original) => {
 import { act, render as renderUi } from "../../../test/render";
 import { useUiStateStore } from "~/uiStateStore";
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
+import {
+  buildFixFindingsHandoff,
+  buildResolveConflictsPrompt,
+} from "../pullRequest/pullRequestDetail.logic";
 
 it("merges with the last selected merge method", async () => {
   await using screen = await setup();
@@ -177,6 +183,96 @@ it("requires a new merge click after passing checks become pending and pass agai
   expect(state.perform).not.toHaveBeenCalled();
 });
 
+it.each([
+  { matches: true, conflicting: false, draft: false },
+  { matches: false, conflicting: false, draft: false },
+  { matches: true, conflicting: true, draft: false },
+  { matches: true, conflicting: false, draft: true },
+  {
+    matches: true,
+    conflicting: false,
+    draft: false,
+    url: "https://git.cafe/Owner/Repo/pulls/1",
+    currentUrl: "https://git.cafe/owner/repo/pull/1",
+  },
+  {
+    matches: true,
+    conflicting: true,
+    draft: false,
+    url: "https://git.cafe/Owner/Repo/pulls/1",
+    currentUrl: "https://git.cafe/owner/repo/pull/1",
+  },
+  { matches: false, conflicting: false, draft: false, checkoutPending: true },
+  { matches: false, conflicting: true, draft: false, checkoutPending: true },
+])("uses the matching checkout for PR tasks: %j", async (scenario) => {
+  const { matches, conflicting, draft } = scenario;
+  const checkoutPending = "checkoutPending" in scenario && scenario.checkoutPending;
+  await using screen = await setup();
+  state.status = "failure";
+  state.conflicting = conflicting;
+  if ("url" in scenario) state.url = scenario.url;
+  const threadRef = {
+    environmentId: EnvironmentId.make("environment"),
+    threadId: ThreadId.make("existing-thread"),
+  };
+  const target = draft ? DraftId.make("existing-draft") : threadRef;
+  useComposerDraftStore.getState().setPrompt(target, "Keep my notes");
+  const render = (pending: boolean) => (
+    <ThreadDetailsPrRow
+      handoffDisabled={pending}
+      environmentId={threadRef.environmentId}
+      pr={null}
+      number={1}
+      status={null}
+      project={null}
+      label="Test PR"
+      openAriaLabel="Open PR"
+      onOpen={vi.fn()}
+      currentThread={{
+        target,
+        pullRequestUrl:
+          "currentUrl" in scenario
+            ? scenario.currentUrl
+            : `https://github.com/owner/repo/pull/${matches ? 1 : 2}`,
+      }}
+    />
+  );
+  await screen.rerender(render(checkoutPending));
+  const button = screen.getByRole("button", { name: conflicting ? "Resolve" : "Fix", exact: true });
+  if (checkoutPending) {
+    await expect.element(button).toBeDisabled();
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe("Keep my notes");
+    expect(state.newThread).not.toHaveBeenCalled();
+    await screen.rerender(render(false));
+  }
+  await button.click();
+  if (matches) {
+    await vi.waitFor(() => {
+      expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toContain(
+        state.url,
+      );
+    });
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toContain(
+      "Keep my notes",
+    );
+    const detail = queryData();
+    const task = conflicting
+      ? buildResolveConflictsPrompt(detail)
+      : buildFixFindingsHandoff({
+          ...detail,
+          reviewThreads: [],
+          comments: [],
+          commentsTruncated: false,
+        }).prompt;
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toContain(task);
+    expect(state.newThread).not.toHaveBeenCalled();
+    expect(state.prepareThread).not.toHaveBeenCalled();
+  } else {
+    await vi.waitFor(() => expect(state.prepareThread).toHaveBeenCalled());
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe("Keep my notes");
+  }
+});
+
 async function setup() {
   state.perform.mockReset();
   state.checkoutError = null;
@@ -184,11 +280,21 @@ async function setup() {
     draftId: DraftId.make("new-draft"),
     threadId: ThreadId.make("new-thread"),
   });
-  state.prepareThread.mockReset();
+  state.prepareThread.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: {
+      branch: "feature",
+      worktreePath: "/workspace/pr",
+      isOnPullRequestHead: true,
+      pullRequest: { url: "https://github.com/owner/repo/pull/1" },
+    },
+  });
   state.addToast.mockReset().mockReturnValue("checkout-toast");
   state.updateToast.mockReset();
 
   state.status = "success";
+  state.url = "https://github.com/owner/repo/pull/1";
+  state.conflicting = false;
   state.extraStatus = null;
   state.mergeMethods = ["merge"];
   useUiStateStore.getState().setPullRequestMergeMethod("merge");

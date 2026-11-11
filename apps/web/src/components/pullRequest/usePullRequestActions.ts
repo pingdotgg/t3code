@@ -31,7 +31,11 @@ import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 
-import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import {
+  type ComposerThreadTarget,
+  type DraftId,
+  useComposerDraftStore,
+} from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
@@ -263,12 +267,19 @@ export type PullRequestHandoffDetail = Pick<
   "projectId" | "workspaceRoot" | "url"
 >;
 
+export interface PullRequestHandoffThread {
+  target: ComposerThreadTarget;
+  pullRequestUrl: string;
+}
+
 export function usePullRequestHandoffs({
   environmentId,
   detail,
+  currentThread,
 }: {
   environmentId: EnvironmentId;
   detail: PullRequestHandoffDetail | null;
+  currentThread?: PullRequestHandoffThread | undefined;
 }) {
   const newThread = useNewThreadHandler();
   const prepareThread = usePreparePullRequestThreadAction({
@@ -282,6 +293,11 @@ export function usePullRequestHandoffs({
     (detail && sourceControlClients.findByChangeRequestUrl(detail.url)) ||
     sourceControlClients.get(undefined)
   ).changeRequest;
+
+  const handoffInCurrentThread =
+    currentThread !== undefined &&
+    detail !== null &&
+    sourceControlClients.isSameChangeRequest(detail.url, currentThread.pullRequestUrl);
 
   // Questions must not change checkouts or create worktrees.
   const openThreadWithTask = async (
@@ -331,6 +347,15 @@ export function usePullRequestHandoffs({
     mode: "worktree" | "local" = "worktree",
   ) => {
     if (!detail || handoff !== null) return;
+    if (handoffInCurrentThread && currentThread !== undefined && task !== null) {
+      writeHandoffToComposer(currentThread.target, task);
+      toastManager.add({
+        type: "success",
+        title: "Task ready",
+        description: "The task is in the composer. Read it over, then send.",
+      });
+      return;
+    }
     setHandoff(kind);
     // Explicit timeouts survive toast updates and would pin the result after loading.
     const toastId = toastManager.add({
@@ -424,5 +449,5 @@ export function usePullRequestHandoffs({
     );
   };
 
-  return { handoff, startAsk, startHandoff };
+  return { handoff, startAsk, startHandoff, handoffInCurrentThread };
 }
