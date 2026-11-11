@@ -390,8 +390,13 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   const isDeferred = (name: string) => deferOptionalTools && !directTools.has(name);
   // An alias follows its public tool: gone when --exclude-tools removed it,
   // off while a direct one is off.
-  const followsPublicTool = (name: string, registered: ReadonlySet<string>, active: ReadonlyArray<string>) =>
-    registered.has("mcp__t3-code__" + name) && (isDeferred(name) || active.includes("mcp__t3-code__" + name));
+  const followsPublicTool = (
+    name: string,
+    registered: ReadonlySet<string>,
+    active: ReadonlyArray<string>,
+  ) =>
+    registered.has("mcp__t3-code__" + name) &&
+    (isDeferred(name) || active.includes("mcp__t3-code__" + name));
   let catalog: ReadonlyArray<McpTool> = [];
 
   const client = createMcpClient(endpoint, token);
@@ -420,7 +425,10 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
           ...(isAlias ? { prepareLoadout: () => ({ hiddenDeclarations: [toolName] }) } : {}),
           async execute(_toolCallId, params, signal) {
             // Another extension may switch the public tool off after reconciliation.
-            if (isAlias && !followsPublicTool(name, new Set(pi.getAllTools().map((tool) => tool.name)), pi.getActiveTools())) {
+            if (
+              isAlias &&
+              !followsPublicTool(name, new Set(pi.getAllTools().map((tool) => tool.name)), pi.getActiveTools())
+            ) {
               return { content: [{ type: "text", text: \`Tool \${toolName} not found\` }], details: {}, isError: true };
             }
             const result = await client.callTool(

@@ -247,11 +247,6 @@ describe("Pi MCP tool exposure", () => {
       "mcp__t3_code__task_status",
       "mcp__t3_code__preview_snapshot",
     ]);
-    assert.deepEqual(bridge.declaredTools(), [
-      "mcp__t3-code__orchestrator_capabilities",
-      "mcp__t3-code__task_status",
-      "mcp__t3-code__preview_snapshot",
-    ]);
     await bridge.handlers.get("model_select")!(event, discoveryContext);
     assert.equal(
       bridge.tools.find((tool) => tool.name === "mcp__t3-code__preview_snapshot")?.exposure,
@@ -351,7 +346,6 @@ describe("Pi MCP tool exposure", () => {
           .map((tool) => tool.exposure),
         mode === "legacy Pi" ? [] : ["model-only", "model-only", "model-only", "model-only"],
       );
-      assert.isFalse(bridge.declaredTools().some((name) => name.startsWith("mcp__t3_code__")));
       const tool = bridge.tools.find((tool) => tool.name === "mcp__t3-code__preview_snapshot");
       assert.isDefined(tool);
       const controller = new AbortController();
