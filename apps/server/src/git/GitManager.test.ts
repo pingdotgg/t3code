@@ -1014,6 +1014,48 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("create_pr reads the base from the branch remote when only it has that base", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const labDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:main"]);
+      yield* runGit(repoDir, ["remote", "add", "lab", "https://gitlab.com/acme/repo.git"]);
+      yield* runGit(repoDir, ["config", "remote.lab.pushurl", labDir]);
+      yield* runGit(repoDir, ["update-ref", "refs/remotes/lab/develop", "HEAD"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/lab-base"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "lab.txt"), "lab\n");
+      yield* runGit(repoDir, ["add", "lab.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Lab base"]);
+      yield* runGit(repoDir, ["push", "-u", "lab", "feature/lab-base"]);
+
+      const gitlab = createFakeSourceControlProvider({
+        kind: "gitlab",
+        defaultBranch: "develop",
+        prListSequence: [
+          [],
+          [
+            {
+              number: 8,
+              title: "Lab base",
+              url: "https://gitlab.com/acme/repo/-/merge_requests/8",
+              baseRefName: "develop",
+              headRefName: "feature/lab-base",
+            },
+          ],
+        ],
+      });
+      const { manager } = yield* makeManager({ remoteSourceControlProvider: gitlab.service });
+
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+      expect(result.pr.status).toBe("created");
+      expect(created(gitlab.calls).map((call) => call.baseRefName)).toEqual(["develop"]);
+    }),
+  );
+
   it.effect("status finds the PR on the branch remote's host when both hosts are GitHub", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

@@ -2138,26 +2138,29 @@ export const make = Effect.gen(function* () {
     return { baseBranch: "main", baseRef: "main" };
   });
 
+  // A base read from the branch remote's host can exist only on that remote.
   const resolveBaseRangeRef = Effect.fn("resolveBaseRangeRef")(function* (
     cwd: string,
     baseBranch: string,
+    branchRemoteName: string | null,
   ) {
     if (baseBranch.startsWith("refs/")) return baseBranch;
-    const remoteName = yield* gitCore
+    const primaryRemoteName = yield* gitCore
       .resolvePrimaryRemoteName(cwd)
       .pipe(Effect.orElseSucceed(() => null));
-    if (!remoteName) return baseBranch;
-
-    return yield* gitCore
-      .resolveRemoteTrackingCommit({
-        cwd,
-        refName: baseBranch,
-        fallbackRemoteName: remoteName,
-      })
-      .pipe(
-        Effect.map((resolved) => resolved.commitSha),
-        Effect.orElseSucceed(() => baseBranch),
-      );
+    const remoteNames = [...new Set([primaryRemoteName, branchRemoteName])].filter(
+      (remoteName) => remoteName !== null,
+    );
+    for (const remoteName of remoteNames) {
+      const commitSha = yield* gitCore
+        .resolveRemoteTrackingCommit({ cwd, refName: baseBranch, fallbackRemoteName: remoteName })
+        .pipe(
+          Effect.map((resolved) => resolved.commitSha),
+          Effect.orElseSucceed(() => null),
+        );
+      if (commitSha) return commitSha;
+    }
+    return baseBranch;
   });
 
   const resolveCommitAndBranchSuggestion = Effect.fn("resolveCommitAndBranchSuggestion")(
@@ -2409,7 +2412,7 @@ export const make = Effect.gen(function* () {
       phase: "pr",
       label: `Generating ${terms.shortLabel} content...`,
     });
-    const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
+    const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef, headContext.remoteName);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
     const policy = yield* resolveStylePolicy(cwd, settings);
     const changeRequestTemplate =
