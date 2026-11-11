@@ -11,7 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-export const STILL_FRAME_DELAY = Duration.millis(100);
+const STILL_FRAME_DELAY = Duration.millis(100);
 
 const HEADER_END = Buffer.from("\r\n\r\n");
 const MAX_HEADER_BYTES = 16 * 1024;

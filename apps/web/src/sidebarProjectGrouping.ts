@@ -1,11 +1,32 @@
-import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScopedProjectRef,
+  SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
+  resolveScratchProjectScopeKey,
   type ProjectGroupingSettings,
-} from "./logicalProject";
-import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
+} from "@t3tools/client-runtime/state/project-grouping";
 import type { Project } from "./types";
+
+export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
+  repository: "Group by repository",
+  repository_path: "Group by repository path",
+  separate: "Keep separate",
+};
+
+export function withProjectGroupingOverride(
+  overrides: Readonly<Record<string, SidebarProjectGroupingMode>> | undefined,
+  overrideKey: string,
+  selection: SidebarProjectGroupingMode | "inherit",
+): Record<string, SidebarProjectGroupingMode> {
+  const next = { ...overrides };
+  if (selection === "inherit") delete next[overrideKey];
+  else next[overrideKey] = selection;
+  return next;
+}
 
 export type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
 
@@ -24,18 +45,8 @@ export interface SidebarProjectSnapshot extends Project {
   memberProjects: readonly SidebarProjectGroupMember[];
   memberProjectRefs: readonly ScopedProjectRef[];
   remoteEnvironmentLabels: readonly string[];
-}
-
-export function countSidebarProjectChoices(groups: ReadonlyArray<SidebarProjectSnapshot>): number {
-  let checkoutCount = 0;
-  let hasScratch = false;
-  for (const group of groups) {
-    for (const project of group.memberProjects) {
-      if (project.isScratch) hasScratch = true;
-      else checkoutCount += 1;
-    }
-  }
-  return checkoutCount + Number(hasScratch);
+  pinned: boolean;
+  archived: boolean;
 }
 
 export function projectGroupsSpanEnvironments(
@@ -94,6 +105,17 @@ export function resolveSidebarProjectScopeKey(input: {
           candidate.projectKey,
     );
   return group?.projectKey ?? (input.canClearMissingScope ? null : input.key);
+}
+
+export function resolveSidebarProjectScopeKeys(input: {
+  readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly keys: ReadonlyArray<string>;
+  readonly settings?: ProjectGroupingSettings;
+  readonly canClearMissingScope?: boolean;
+}): string[] {
+  return [
+    ...new Set(input.keys.flatMap((key) => resolveSidebarProjectScopeKey({ ...input, key }) ?? [])),
+  ];
 }
 
 export function buildPhysicalToLogicalProjectKeyMap(input: {
@@ -178,6 +200,8 @@ export function buildSidebarProjectSnapshots(input: {
       memberProjects: members,
       memberProjectRefs: group.memberProjectRefs,
       remoteEnvironmentLabels,
+      pinned: group.pinned,
+      archived: group.archived,
     };
   });
 }
@@ -185,33 +209,8 @@ export function buildSidebarProjectSnapshots(input: {
 export function buildSidebarProjectPickerEntries(input: {
   groups: ReadonlyArray<SidebarProjectSnapshot>;
   preferredProjectRef: ScopedProjectRef | null;
-  expandCheckouts?: boolean;
-  isEnvironmentReachable?: (environmentId: EnvironmentId) => boolean;
 }) {
   const preferredProjectRef = input.preferredProjectRef;
-  if (input.expandCheckouts) {
-    // memberProjects already deduplicates physical checkouts. Keep distinct
-    // worktrees on the same environment as separate choices.
-    return input.groups
-      .flatMap((group) =>
-        group.memberProjects.map((targetProject): SidebarProjectPickerEntry => ({
-          group,
-          targetProject,
-          isPreferred:
-            preferredProjectRef !== null &&
-            targetProject.environmentId === preferredProjectRef.environmentId &&
-            targetProject.id === preferredProjectRef.projectId,
-        })),
-      )
-      .toSorted((left, right) => {
-        const reachability = input.isEnvironmentReachable;
-        const reachableDelta = reachability
-          ? Number(reachability(right.targetProject.environmentId)) -
-            Number(reachability(left.targetProject.environmentId))
-          : 0;
-        return reachableDelta || Number(right.isPreferred) - Number(left.isPreferred);
-      });
-  }
   const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
     const isPreferred = preferredProjectRef
       ? group.memberProjectRefs.some(
@@ -240,12 +239,8 @@ export function buildSidebarProjectPickerEntries(input: {
 
     return [{ group, targetProject, isPreferred }];
   });
-  const preferredIndex = entries.findIndex((entry) => entry.isPreferred);
-  if (preferredIndex <= 0) return entries;
-
-  return [
-    entries[preferredIndex]!,
-    ...entries.slice(0, preferredIndex),
-    ...entries.slice(preferredIndex + 1),
-  ];
+  // The current project leads, even ahead of pinned projects.
+  const preferred = entries.find((entry) => entry.isPreferred);
+  if (!preferred) return entries;
+  return [preferred, ...entries.filter((entry) => entry !== preferred)];
 }

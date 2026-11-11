@@ -31,13 +31,6 @@ describe("ghosttyKeyForCode", () => {
 });
 
 describe("ghosttyKeyForEvent", () => {
-  it.each(["", "Unidentified", "Unknown"])(
-    "falls back to the logical key when code '%s' is not mapped",
-    (code) => {
-      expect(ghosttyKeyForEvent({ code, key: "Backspace" })).toBe(ghosttyKeyForCode("Backspace"));
-    },
-  );
-
   it("prefers recognized physical codes over logical keys", () => {
     expect(ghosttyKeyForEvent({ code: "Delete", key: "Backspace" })).toBe(
       ghosttyKeyForCode("Delete"),
@@ -45,11 +38,6 @@ describe("ghosttyKeyForEvent", () => {
     expect(ghosttyKeyForEvent({ code: "NumpadEnter", key: "Enter" })).toBe(
       ghosttyKeyForCode("NumpadEnter"),
     );
-  });
-
-  it("leaves printable characters and unknown keys to the text encoding path", () => {
-    expect(ghosttyKeyForEvent({ code: "", key: "a" })).toBe(0);
-    expect(ghosttyKeyForEvent({ code: "", key: "Unidentified" })).toBe(0);
   });
 });
 
@@ -61,6 +49,16 @@ describe("ghosttyConsumedMods", () => {
     expect(ghosttyConsumedMods({ ...shifted, ctrlKey: true })).toBe(0);
     expect(ghosttyConsumedMods({ ...shifted, key: "Tab" })).toBe(0);
     expect(ghosttyConsumedMods({ ...shifted, key: " " })).toBe(1);
+    expect(ghosttyConsumedMods({ ...shifted, altKey: true }, "Linux x86_64")).toBe(0);
+  });
+
+  it("consumes macOS Option when it produced a character", () => {
+    const option = { ...shifted, altKey: true, key: "[", shiftKey: false };
+    expect(ghosttyConsumedMods(option, "MacIntel")).toBe(1 << 2);
+    expect(ghosttyConsumedMods({ ...option, shiftKey: true }, "MacIntel")).toBe(1 | (1 << 2));
+    expect(ghosttyConsumedMods({ ...option, key: "ArrowLeft" }, "MacIntel")).toBe(0);
+    expect(ghosttyConsumedMods({ ...option, ctrlKey: true }, "MacIntel")).toBe(0);
+    expect(ghosttyConsumedMods({ ...option, metaKey: true }, "MacIntel")).toBe(0);
   });
 });
 

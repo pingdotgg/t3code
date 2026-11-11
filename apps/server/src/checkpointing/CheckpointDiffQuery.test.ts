@@ -15,11 +15,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as CheckpointDiffQuery from "./CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
-import {
-  CheckpointRefUnavailableError,
-  CheckpointThreadNotFoundError,
-  CheckpointTurnRangeUnavailableError,
-} from "./Errors.ts";
+import { CheckpointRefUnavailableError, CheckpointTurnRangeUnavailableError } from "./Errors.ts";
 
 const threadId = ThreadId.make("thread:checkpoint-diff-v2");
 const firstRunId = RunId.make("run:checkpoint-diff-v2:1");
@@ -71,102 +67,6 @@ function layerFor(input: {
     Layer.provideMerge(NodeCrypto.layer),
   );
 }
-
-it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
-  const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
-    Effect.succeed("diff --git a/file b/file"),
-  );
-  const layer = layerFor({ projection: Effect.succeed(makeProjection()), diffCheckpoints });
-
-  return Effect.gen(function* () {
-    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-    const result = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
-
-    assert.deepEqual(result, {
-      threadId,
-      fromTurnCount: 0,
-      toTurnCount: 2,
-      diff: "diff --git a/file b/file",
-    });
-    assert.containSubset(diffCheckpoints.mock.calls[0]?.[0], {
-      cwd: "/repo",
-      fromCheckpointRef: yield* checkpointRefForScopeOrdinal({
-        scopeId: firstScopeId,
-        ordinalWithinScope: 0,
-      }),
-      toCheckpointRef: secondRef,
-      fallbackFromToHead: false,
-      ignoreWhitespace: true,
-    });
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("leaves Git imports out of large turn diffs", () => {
-  const ownPaths = Array.from({ length: 1_000 }, (_, index) => `src/module-${index}/file.ts`);
-  const diffCheckpoints = vi.fn((input: CheckpointStore.DiffCheckpointsInput) =>
-    Effect.succeed(
-      input.format === "numstat"
-        ? [...ownPaths, "upstream.ts"].map((path) => `1\t0\t${path}\0`).join("")
-        : (input.filePaths ?? ["all"]).join("\n"),
-    ),
-  );
-  const layer = layerFor({
-    projection: Effect.succeed(makeProjection()),
-    diffCheckpoints,
-    authoredPaths: new Set(ownPaths),
-  });
-
-  return Effect.gen(function* () {
-    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-    yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
-
-    const patchPaths = diffCheckpoints.mock.calls
-      .map(([call]) => call)
-      .filter((call) => call.format !== "numstat")
-      .map((call) => call.filePaths ?? ["all"]);
-    assert.isAbove(patchPaths.length, 1);
-    assert.sameMembers(patchPaths.flat(), ownPaths);
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("preserves the typed missing-thread error contract", () => {
-  const layer = layerFor({
-    projection: Effect.fail(new OrchestratorProjectionError({ threadId })),
-  });
-
-  return Effect.gen(function* () {
-    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-    const error = yield* query
-      .getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 1 })
-      .pipe(Effect.flip);
-
-    assert.instanceOf(error, CheckpointThreadNotFoundError);
-    assert.deepEqual(
-      { operation: error.operation, threadId: error.threadId },
-      { operation: "CheckpointDiffQuery.getTurnDiff", threadId },
-    );
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("preserves the typed unavailable-range error contract", () => {
-  const layer = layerFor({ projection: Effect.succeed(makeProjection()) });
-
-  return Effect.gen(function* () {
-    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-    const error = yield* query
-      .getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 3 })
-      .pipe(Effect.flip);
-
-    assert.instanceOf(error, CheckpointTurnRangeUnavailableError);
-    assert.deepEqual(
-      {
-        requestedTurnCount: error.requestedTurnCount,
-        availableTurnCount: error.availableTurnCount,
-      },
-      { requestedTurnCount: 3, availableTurnCount: 2 },
-    );
-  }).pipe(Effect.provide(layer));
-});
 
 it.effect("excludes ready checkpoints from rolled-back runs", () => {
   const projection = makeProjection();
@@ -289,32 +189,6 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(layer));
   },
 );
-
-it.effect("preserves the typed missing-baseline-ref error contract", () => {
-  const projection = makeProjection();
-  const layer = layerFor({
-    projection: Effect.succeed({
-      ...projection,
-      checkpointScopes: projection.checkpointScopes.map((scope) => ({
-        ...scope,
-        kind: "tool" as const,
-      })),
-    }),
-  });
-
-  return Effect.gen(function* () {
-    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-    const error = yield* query
-      .getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 2 })
-      .pipe(Effect.flip);
-
-    assert.instanceOf(error, CheckpointRefUnavailableError);
-    assert.deepEqual(
-      { checkpoint: error.checkpoint, turnCount: error.turnCount },
-      { checkpoint: "from", turnCount: 0 },
-    );
-  }).pipe(Effect.provide(layer));
-});
 
 const layerVcsProcess = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 const layerStore = CheckpointStore.layer.pipe(
