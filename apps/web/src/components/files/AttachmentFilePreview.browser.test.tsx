@@ -1039,71 +1039,90 @@ it.each(["utf-16le", "utf-16be", "windows-1252"])(
 );
 
 it.each([
-  ["", "worksheets/./sheet1.xml", false],
-  ["x:", "../xl/worksheets/sheet1.xml", false],
-  ["", "/xl/worksheets/sheet1.xml", true],
-])("preserves %sworksheet metadata with relationship target %s", async (prefix, target, empty) => {
-  const { default: JSZip } = await import("jszip");
-  const archive = new JSZip();
-  const ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-  archive.file(
-    "xl/workbook.xml",
-    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet" sheetId="1" r:id="s"/></sheets></workbook>',
-  );
-  archive.file(
-    "xl/_rels/workbook.xml.rels",
-    `<Relationships><Relationship Id="s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${target}"/></Relationships>`,
-  );
-  archive.file(
-    "xl/worksheets/sheet1.xml",
-    `<${prefix}worksheet xmlns${prefix ? ":x" : ""}="${ns}"><${prefix}dimension ref="XFD1048576"/><${prefix}cols><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS - 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 10}" width="20"/><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS + 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 30}" hidden="1"/></${prefix}cols><${prefix}sheetData><${prefix}row ht="42" customHeight="1" hidden="1"><${prefix}c r="A50" t="inlineStr"><${prefix}is><${prefix}t>${"value".repeat(1000)}</${prefix}t></${prefix}is></${prefix}c></${prefix}row></${prefix}sheetData><${prefix}mergeCells><${prefix}mergeCell ref="XFD1048576"/></${prefix}mergeCells></${prefix}worksheet>`
-      .replace(/<((?:x:)?(?:col|dimension|mergeCell))\b([^>]*)\/>/g, prefix ? "<$1$2></$1>" : "$&")
-      .replace(/<sheetData>[\s\S]*?<\/sheetData>/, (data) => (empty ? "<sheetData/>" : data))
-      .replace(/="([^"]*)"/g, (attribute, value: string) =>
-        prefix || empty
-          ? ` = '${value.replace(/\d/g, (digit) => `&#${digit.charCodeAt(0)};`)}'`
-          : attribute,
-      ),
-  );
-  const bytes = await archive.generateAsync({ type: "arraybuffer" });
-  const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
-    type: "module",
-  });
-  try {
-    const result = await new Promise<OfficeWorkerResult>((resolve) => {
-      worker.addEventListener(
-        "message",
-        (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
-        { once: true },
-      );
-      worker.postMessage({ type: "open", kind: "xlsx", bytes }, [bytes]);
-    });
-    expect(result.type).toBe("xlsx");
-    if (result.type !== "xlsx") throw new Error("Expected bounded workbook");
-    const bounded = await JSZip.loadAsync(result.bytes);
-    const sheet = new DOMParser().parseFromString(
-      await bounded.file("xl/worksheets/sheet1.xml")!.async("string"),
-      "application/xml",
+  ["", "worksheets/./sheet1.xml", false, false],
+  ["x:", "../xl/worksheets/sheet1.xml", false, false],
+  ["", "/xl/worksheets/sheet1.xml", true, false],
+  ["", "worksheets/sheet1.xml", false, true],
+  ["", "worksheets/sheet1.xml", true, true],
+])(
+  "preserves %sworksheet metadata with relationship target %s",
+  async (prefix, target, empty, localPrefix) => {
+    const { default: JSZip } = await import("jszip");
+    const archive = new JSZip();
+    const ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    archive.file(
+      "xl/workbook.xml",
+      '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Chart" sheetId="2" r:id="c"/><sheet name="Sheet" sheetId="1" r:id="s"/></sheets></workbook>',
     );
-    expect(sheet.querySelector("parsererror")).toBeNull();
-    const row = sheet.getElementsByTagNameNS(ns, "row")[0];
-    if (empty) expect(row).toBeUndefined();
-    else {
-      expect(row!.getAttribute("ht")).toBe("42");
-      expect(row!.getAttribute("hidden")).toBe("1");
-      expect(row!.getElementsByTagNameNS(ns, "c")[0]!.getAttribute("r")).toBe("A50");
-      expect(row!.getElementsByTagNameNS(ns, "t")[0]!.textContent).toHaveLength(4096);
+    archive.file(
+      "xl/_rels/workbook.xml.rels",
+      `<Relationships><Relationship Id="s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${target}"/><Relationship Id="c" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet" Target="chartsheets/sheet1.xml"/></Relationships>`,
+    );
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      `<${prefix}worksheet xmlns${prefix ? ":x" : ""}="${ns}"><${prefix}dimension ref="XFD1048576"/><${prefix}sheetViews><${prefix}sheetView showGridLines="0"/></${prefix}sheetViews><${prefix}sheetFormatPr defaultColWidth="30"/><${prefix}cols><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS - 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 10}" width="20"/><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS + 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 30}" hidden="1"/></${prefix}cols><${prefix}sheetData><${prefix}row ht="42" customHeight="1" hidden="1"><${prefix}c r="A50" t="inlineStr"><${prefix}is><${prefix}t>${"value".repeat(1000)}</${prefix}t></${prefix}is></${prefix}c></${prefix}row></${prefix}sheetData><${prefix}mergeCells><${prefix}mergeCell ref="XFD1048576"/></${prefix}mergeCells></${prefix}worksheet>`
+        .replace(
+          /<((?:x:)?(?:col|dimension|mergeCell))\b([^>]*)\/>/g,
+          prefix ? "<$1$2></$1>" : "$&",
+        )
+        .replace(/<sheetData>[\s\S]*?<\/sheetData>/, (data) => (empty ? "<sheetData/>" : data))
+        .replace(/<(\/?)sheetData\b/g, (tag, closing: string) =>
+          localPrefix ? `<${closing}x:sheetData${closing ? "" : ` xmlns:x="${ns}"`}` : tag,
+        )
+        .replace(/="([^"]*)"/g, (attribute, value: string) =>
+          prefix || empty
+            ? ` = '${value.replace(/\d/g, (digit) => `&#${digit.charCodeAt(0)};`)}'`
+            : attribute,
+        ),
+    );
+    const bytes = await archive.generateAsync({ type: "arraybuffer" });
+    const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    try {
+      const result = await new Promise<OfficeWorkerResult>((resolve) => {
+        worker.addEventListener(
+          "message",
+          (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
+          { once: true },
+        );
+        worker.postMessage({ type: "open", kind: "xlsx", bytes }, [bytes]);
+      });
+      expect(result.type).toBe("xlsx");
+      if (result.type !== "xlsx") throw new Error("Expected bounded workbook");
+      // The engine counts the chart sheet before it.
+      expect(result.view?.hiddenGridlines).toEqual([1]);
+      const bounded = await JSZip.loadAsync(result.bytes);
+      const sheet = new DOMParser().parseFromString(
+        await bounded.file("xl/worksheets/sheet1.xml")!.async("string"),
+        "application/xml",
+      );
+      expect(sheet.querySelector("parsererror")).toBeNull();
+      const row = sheet.getElementsByTagNameNS(ns, "row")[0];
+      if (empty) expect(row).toBeUndefined();
+      else {
+        expect(row!.getAttribute("ht")).toBe("42");
+        expect(row!.getAttribute("hidden")).toBe("1");
+        expect(row!.getElementsByTagNameNS(ns, "c")[0]!.getAttribute("r")).toBe("A50");
+        expect(row!.getElementsByTagNameNS(ns, "t")[0]!.textContent).toHaveLength(4096);
+      }
+      expect(sheet.getElementsByTagNameNS(ns, "dimension")).toHaveLength(0);
+      expect(sheet.getElementsByTagNameNS(ns, "mergeCell")).toHaveLength(0);
+      const columns = [...sheet.getElementsByTagNameNS(ns, "col")].map((column) =>
+        ["min", "max", "width"].map((name) => column.getAttribute(name)),
+      );
+      // The engine ignores `defaultColWidth`, so the columns it sizes are spelled out.
+      expect(columns).toEqual([
+        [String(OFFICE_PREVIEW_MAX_COLUMNS - 1), String(OFFICE_PREVIEW_MAX_COLUMNS), "20"],
+        // Hidden columns keep their span past the limit, so they stay hidden.
+        [String(OFFICE_PREVIEW_MAX_COLUMNS + 1), String(OFFICE_PREVIEW_MAX_COLUMNS + 30), null],
+        ["1", String(OFFICE_PREVIEW_MAX_COLUMNS - 2), "30"],
+      ]);
+    } finally {
+      worker.terminate();
     }
-    expect(sheet.getElementsByTagNameNS(ns, "dimension")).toHaveLength(0);
-    expect(sheet.getElementsByTagNameNS(ns, "mergeCell")).toHaveLength(0);
-    const columns = sheet.getElementsByTagNameNS(ns, "col");
-    expect(columns).toHaveLength(1);
-    expect(columns[0]!.getAttribute("min")).toBe(String(OFFICE_PREVIEW_MAX_COLUMNS - 1));
-    expect(columns[0]!.getAttribute("max")).toBe(String(OFFICE_PREVIEW_MAX_COLUMNS));
-  } finally {
-    worker.terminate();
-  }
-});
+  },
+);
 
 it("reports the final slide at maximum scroll after page visibility changes", async () => {
   const { OfficePages } = await import("./office/OfficePages");
@@ -1717,7 +1736,7 @@ it.each(["repeated binary", "XML relationship alias", "duplicate relationship ID
   },
 );
 
-it.each(["XFD200", "XFD1048576", "AX500", "AZ9999999"])(
+it.each(["XFD200", "XFD300", "XFD1048576", "AX500", "AZ9999999"])(
   "bounds spreadsheet cells at %s before padding",
   async (ref) => {
     const { default: JSZip } = await import("jszip");
@@ -1733,7 +1752,7 @@ it.each(["XFD200", "XFD1048576", "AX500", "AZ9999999"])(
     );
     archive.file(
       "xl/custom.xml",
-      `<worksheet><dimension ref="A1:${ref}"/><sheetData><row r="1"><c r="A1"><v>7</v></c></row><row r="${ref.replace(/\D/g, "")}"><c r="${ref}"><v>9</v></c></row></sheetData></worksheet>`,
+      `<worksheet><dimension ref="A1:${ref}"/><sheetData><row r="1"><c r="A1"><v>7</v></c></row><row r="${ref.replace(/\D/g, "")}">${ref === "XFD300" ? `<c r="${ref}" s="1"/>` : `<c r="${ref}"><v>9</v></c>`}</row></sheetData></worksheet>`,
     );
     const bytes = await archive.generateAsync({ type: "arraybuffer" });
     const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
@@ -1763,13 +1782,69 @@ it.each(["XFD200", "XFD1048576", "AX500", "AZ9999999"])(
         );
         expect(sheet.querySelector('c[r="A1"] v')?.textContent).toBe("7");
         expect(sheet.querySelectorAll("row").length).toBeLessThanOrEqual(500);
-        expect(result.truncated).toBe(ref !== "AX500");
+        expect(result.truncated).toBe(ref === "XFD200" || ref === "XFD300");
         if (ref === "AX500") expect(sheet.querySelector('c[r="AX500"] v')?.textContent).toBe("9");
         else expect(sheet.querySelector('c[r="' + ref + '"]')).toBeNull();
       }
     } finally {
       worker.terminate();
     }
+  },
+);
+
+it.each(['<u val="double"/>', '<u val="double"></u>'])(
+  "shows workbook formats and underline %s",
+  async (underline) => {
+    const { default: JSZip } = await import("jszip");
+    const archive = new JSZip();
+    archive.file(
+      "xl/workbook.xml",
+      '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Styles" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    );
+    archive.file(
+      "xl/_rels/workbook.xml.rels",
+      '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+    );
+    archive.file(
+      "xl/styles.xml",
+      `<styleSheet><numFmts count="4"><numFmt numFmtId="164" formatCode="0.000"/><numFmt numFmtId="65535" formatCode="0.0000"/><numFmt numFmtId="007" formatCode="&quot;￥&quot;#,##0.00"/><numFmt numFmtId="82" formatCode="[$-010409]dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/></font><font>${underline}<sz val="11"/></font></fonts><cellXfs count="4"><xf numFmtId="0" fontId="0"/><xf numFmtId="7" fontId="0"/><xf numFmtId="82" fontId="0"/><xf numFmtId="0" fontId="1"/></cellXfs></styleSheet>`,
+    );
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      '<worksheet><sheetData><row r="1"><c r="A1" s="1"><v>100</v></c><c r="B1" s="2"><v>44986</v></c><c r="C1" s="3" t="inlineStr"><is><t>Total</t></is></c></row></sheetData></worksheet>',
+    );
+    const { prepareOffice } = await import("./officeArchive");
+    const prepared = await prepareOffice(
+      await archive.generateAsync({ type: "arraybuffer" }),
+      "xlsx",
+    );
+    const styles = await (
+      await JSZip.loadAsync(prepared.bytes)
+    )
+      .file("xl/styles.xml")!
+      .async("string");
+    expect(styles).toContain("<font><u/>");
+    const worker = new Worker(new URL("./office/spreadsheet.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    try {
+      const { createWorkerClient } = await import("./office/worker-rpc");
+      const client = createWorkerClient<import("./office/sheet-protocol").SheetMethods>(worker);
+      const bytes = prepared.bytes;
+      await client.call("open", { bytes, view: prepared.view! }, { transfer: [bytes] });
+      const cells = await client.call("cells", {
+        sheet: 0,
+        range: { top: 0, bottom: 0, left: 0, right: 1 },
+      });
+      // Ids under 164 that a workbook defines keep its formats, not Excel's built-in ones.
+      expect(cells[0]).toEqual(["￥100.00", "01-Mar-2023"]);
+    } finally {
+      worker.terminate();
+    }
+    archive.file("xl/styles.xml", "<styleSheet><numFmts/><numFmts/></styleSheet>");
+    await expect(
+      prepareOffice(await archive.generateAsync({ type: "arraybuffer" }), "xlsx"),
+    ).rejects.toThrow("duplicate stylesheet blocks");
   },
 );
 
@@ -1831,7 +1906,14 @@ it("keeps spreadsheet dates on their calendar day west of UTC", async () => {
     });
     const { createWorkerClient } = await import("./office/worker-rpc");
     const client = createWorkerClient<import("./office/sheet-protocol").SheetMethods>(worker);
-    await client.call("open", { bytes }, { transfer: [bytes] });
+    await client.call(
+      "open",
+      {
+        bytes,
+        view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+      },
+      { transfer: [bytes] },
+    );
     const cells = await client.call("cells", {
       sheet: 0,
       range: { top: 0, bottom: 0, left: 0, right: 0 },

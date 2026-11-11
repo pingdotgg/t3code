@@ -14,6 +14,7 @@ import {
   type CellAddr,
 } from "@betteroffice/xlsx/headless";
 import { FileSurfaceLoading, FileSurfaceNotice } from "../fileSurfaceChrome";
+import type { WorkbookView } from "../officePreviewProtocol";
 import { createWorkerClient, SupersededError } from "./worker-rpc";
 import type { SheetLayout, SheetMethods, SheetFrameRequest, SheetTab } from "./sheet-protocol";
 import {
@@ -45,10 +46,11 @@ type Opened = {
 };
 export default function Spreadsheet(props: {
   bytes: ArrayBuffer;
+  view: WorkbookView;
   onDetails: (text: string) => void;
   onError: (cause: unknown) => void;
 }) {
-  const { onError, bytes: source, onDetails } = props;
+  const { onError, bytes: source, onDetails, view } = props;
   const [opened, setOpened] = useState<Opened>();
   const [error, setError] = useState("");
   const picking = useRef<AbortController | null>(null);
@@ -66,7 +68,7 @@ export default function Spreadsheet(props: {
     worker.addEventListener("messageerror", fail);
     const bytes = source.slice(0);
     void engine
-      .call("open", { bytes }, { transfer: [bytes], signal: controller.signal })
+      .call("open", { bytes, view }, { transfer: [bytes], signal: controller.signal })
       .then((value) => {
         if (!value) throw new Error("This workbook has no visible sheets.");
         setOpened({ ...value, engine });
@@ -78,7 +80,7 @@ export default function Spreadsheet(props: {
       picking.current?.abort();
       engine.close();
     };
-  }, [source, onDetails, onError]);
+  }, [source, view, onDetails, onError]);
   const show = (sheet: number, target?: CellAddr) => {
     if (!opened) return;
     picking.current?.abort();
