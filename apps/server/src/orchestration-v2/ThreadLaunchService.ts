@@ -276,7 +276,9 @@ const make = Effect.gen(function* () {
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
     const strategy = input.workspaceStrategy;
-    if (strategy.type !== "worktree") return;
+    // launch() turns a Scratch worktree request into a root launch.
+    if (strategy.type !== "worktree" || (yield* managedFolders.isScratchProject(input.projectId)))
+      return;
     const project = Option.getOrUndefined(
       yield* projects.getById(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
     );
