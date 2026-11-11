@@ -33,7 +33,7 @@ export function AdvancedSettings({
         Advanced
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
+        <div className="border-t border-border/50 *:not-first:border-t *:not-first:border-border/50">
           {children}
         </div>
       </CollapsiblePanel>
