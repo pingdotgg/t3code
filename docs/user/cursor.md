@@ -49,14 +49,14 @@ The adapter supports:
 - assistant text, reasoning, tool activity, plans, and todo streaming;
 - thread-scoped T3 Code MCP tools alongside ambient Cursor MCP/plugins from disk;
 - image attachments;
-- interruption, queued app messages, and in-turn steering through the Agent SDK's `Run.steer`;
+- interruption, queued app messages, and in-turn steering;
 - provider conversation snapshots through `Agent.messages.list()`;
 - Cursor `task` subagents, projected as read-only child app threads with their tool activity and
   final result.
 
 The public SDK does not currently expose native agent fork, conversation rollback, or interactive
-approval callbacks. A text-only steer injects into the live run with `Run.steer` and leaves that run
-in place. When the SDK declines the injection, the same message is queued for the next turn after
+approval callbacks. A text-only steer reaches the current run without restarting it.
+When Cursor cannot deliver the steer, the same message is queued for the next turn after
 this run finishes. If you press Stop, that follow-up stays held until you resume the queue. Steers
 with attachments and provider or runtime changes that must apply immediately interrupt and restart
 the run.

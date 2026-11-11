@@ -5734,6 +5734,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerTurnId: providerTurn.id,
             messageId: input.messageId,
             ...(steerCarriesSelection ? { modelSelection: input.modelSelection } : {}),
+            steerFollowUpAfterRunOrdinal: Math.max(
+              0,
+              ...input.projection.runs.map((run) => run.ordinal),
+            ),
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);
@@ -6956,6 +6960,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.createdBy === "agent" &&
         command.creationSource === "provider" &&
         !(yield* stopReachedRun(command, command.threadId, activeRun.id));
+      let steerFollowUpQueuePosition: number | undefined;
+      if (
+        command.steerFollowUpOfRunId !== undefined &&
+        command.steerFollowUpAfterRunOrdinal !== undefined
+      ) {
+        const afterRunOrdinal = command.steerFollowUpAfterRunOrdinal;
+        const steerOrdinal =
+          projection.turnItems.find(
+            (item) => item.type === "user_message" && item.messageId === command.messageId,
+          )?.ordinal ?? -1;
+        // Earlier declined steers have newer runs but retain their original turn-item ordinals.
+        const earlierSteerMessageIds = new Set(
+          projection.turnItems.flatMap((item) =>
+            item.type === "user_message" && item.ordinal < steerOrdinal ? [item.messageId] : [],
+          ),
+        );
+        steerFollowUpQueuePosition =
+          Math.max(
+            0,
+            ...projection.runs
+              .filter(
+                (candidate) =>
+                  candidate.status === "queued" &&
+                  (candidate.ordinal <= afterRunOrdinal ||
+                    earlierSteerMessageIds.has(candidate.userMessageId)),
+              )
+              .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
+          ) + 1;
+      }
       const run: OrchestrationV2Run = {
         id: runId,
         threadId: command.threadId,
@@ -6978,12 +7011,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         queuePosition:
           queuedRunStop !== undefined
             ? 1
-            : Math.max(
+            : (steerFollowUpQueuePosition ??
+              Math.max(
                 0,
                 ...projection.runs
                   .filter((candidate) => candidate.status === "queued")
                   .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
-              ) + 1,
+              ) + 1),
         requestedAt: now,
         startedAt: null,
         completedAt: null,
@@ -7070,6 +7104,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: run,
       });
+      if (steerFollowUpQueuePosition !== undefined) {
+        for (const queued of projection.runs) {
+          if (
+            queued.status !== "queued" ||
+            (queued.queuePosition ?? queued.ordinal) < steerFollowUpQueuePosition
+          )
+            continue;
+          yield* emitEvent({
+            type: "run.updated",
+            threadId: command.threadId,
+            runId: queued.id,
+            providerInstanceId: queued.providerInstanceId,
+            occurredAt: now,
+            payload: { ...queued, queuePosition: (queued.queuePosition ?? queued.ordinal) + 1 },
+          });
+        }
+      }
       yield* completeSourcePlan(now);
       yield* emitEvent({
         type: "run-attempt.created",

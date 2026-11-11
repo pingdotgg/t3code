@@ -1434,6 +1434,22 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued
               createdBy: "user",
               creationSource: "web",
             });
+            beforeDecline = Effect.forEach(["queued-later", "steer-later", "queued-last"], (id) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(id),
+                threadId,
+                messageId: MessageId.make(`message:${id}`),
+                text: id,
+                attachments: [],
+                dispatchMode:
+                  id === "steer-later"
+                    ? { type: "steer_active", targetRunId: first.runId }
+                    : { type: "queue_after_active" },
+                createdBy: "user",
+                creationSource: "web",
+              }),
+            ).pipe(Effect.asVoid, Effect.orDie);
           }
           const messageId = MessageId.make("message:declined");
           yield* orchestrator.dispatch({
@@ -1469,6 +1485,22 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued
           assert.equal(queued?.userMessageId, messageId);
           if (timing === "queued-model") {
             assert.deepEqual(queued?.modelSelection, steerSelection);
+            assert.deepEqual(
+              pending.runs
+                .filter((run) => run.status === "queued")
+                .toSorted(
+                  (left, right) =>
+                    (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal),
+                )
+                .map((run) => run.userMessageId),
+              [
+                MessageId.make("message:queued-model"),
+                messageId,
+                MessageId.make("message:queued-later"),
+                MessageId.make("message:steer-later"),
+                MessageId.make("message:queued-last"),
+              ],
+            );
             return;
           }
           if (timing === "stop-after-decline") {
