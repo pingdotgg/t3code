@@ -27,6 +27,15 @@ const OwnershipRecord = Schema.Struct({
 });
 const decodeRecord = Schema.decodeUnknownSync(Schema.fromJsonString(OwnershipRecord));
 
+// A concurrent exit can remove the record. Incomplete/unknown records never authorize a signal.
+const readRecord = (recordPath: string) => {
+  try {
+    return decodeRecord(NodeFS.readFileSync(recordPath, "utf8"));
+  } catch {
+    return undefined;
+  }
+};
+
 export const ProviderProcesses = Context.Reference<{
   readonly register?: (pid: number) => () => void;
   readonly hasOtherLiveOwner?: boolean;
@@ -48,6 +57,14 @@ const make = Effect.gen(function* () {
   };
   const matches = (expected: typeof ProcessIdentity.Type) =>
     identity(expected.pid)?.startTime === expected.startTime;
+  // A failed signal only matters while the recorded process is still the same one.
+  const kill = (survivor: typeof ProcessIdentity.Type) => {
+    try {
+      controller.signalProcess(survivor.pid, "SIGKILL");
+    } catch (cause) {
+      if (matches(survivor)) throw cause;
+    }
+  };
   const owner = identity(process.pid);
   if (owner === undefined) return yield* Effect.die(new Error("Cannot identify provider owner"));
   NodeFS.mkdirSync(directory, { recursive: true });
@@ -81,14 +98,8 @@ const make = Effect.gen(function* () {
   for (const file of NodeFS.readdirSync(directory)) {
     if (!file.endsWith(".json")) continue;
     const recordPath = NodePath.join(directory, file);
-    let record: typeof OwnershipRecord.Type;
-    try {
-      record = decodeRecord(NodeFS.readFileSync(recordPath, "utf8"));
-    } catch {
-      // A concurrent exit can remove the record. Incomplete/unknown records
-      // never authorize a signal.
-      continue;
-    }
+    const record = readRecord(recordPath);
+    if (record === undefined) continue;
     if (record.hostname !== hostname || record.stateDir !== stateDir) continue;
     if (matches(record.owner)) {
       if (record.owner.pid !== process.pid) hasOtherLiveOwner = true;
@@ -99,11 +110,7 @@ const make = Effect.gen(function* () {
       // Never infer ownership from argv, executable names, or group membership.
       // As in the ACP controller, starttime blocks reuse between observations.
       // Node has no pidfd_send_signal, so the final read-to-signal race remains.
-      try {
-        controller.signalProcess(survivor.pid, "SIGKILL");
-      } catch (cause) {
-        if (matches(survivor)) return yield* Effect.die(cause);
-      }
+      kill(survivor);
       for (let attempt = 0; matches(survivor); attempt++) {
         if (attempt === 100) {
           return yield* Effect.die(new Error("Recorded provider survived restart cleanup"));
