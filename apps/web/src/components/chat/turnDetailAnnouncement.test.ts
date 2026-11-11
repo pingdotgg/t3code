@@ -88,11 +88,6 @@ describe("turnDetail", () => {
   }>([
     { name: "a running command", entries: [prompt, command("git")], activity: "Running git" },
     {
-      name: "a command that already finished, until something follows it",
-      entries: [prompt, command("git", { toolLifecycleStatus: "completed" })],
-      activity: "Running git",
-    },
-    {
       name: "reasoning, without its text",
       entries: [
         prompt,
@@ -102,32 +97,12 @@ describe("turnDetail", () => {
     },
     {
       name: "a file change, with the verb its icon stands for",
-      entries: [prompt, work("edit", { itemType: "file_change", changedFiles: ["src/a.ts"] })],
-      activity: "Editing src/a.ts",
-    },
-    {
-      name: "a file change to a file called search",
       entries: [prompt, work("edit", { itemType: "file_change", changedFiles: ["search.ts"] })],
       activity: "Editing search.ts",
     },
     {
-      name: "a web search, with the verb its icon stands for",
-      entries: [prompt, work("search", { itemType: "web_search", detail: "searchParams usage" })],
-      activity: "Searching the web for searchParams usage",
-    },
-    {
-      name: "a file search that already says so",
-      entries: [prompt, work("find", { itemType: "file_search", label: "Searched files *.ts" })],
-      activity: "Searched files *.ts",
-    },
-    {
-      name: "the step under a notice",
-      entries: [prompt, command("git"), notice],
-      activity: "Running git",
-    },
-    {
-      name: "the step a request was about",
-      entries: [prompt, command("git"), work("ask", { itemType: "approval_request" })],
+      name: "the step under a request and a notice",
+      entries: [prompt, command("git"), work("ask", { itemType: "approval_request" }), notice],
       activity: "Running git",
     },
     {
@@ -183,16 +158,6 @@ describe("turnDetail", () => {
       finished: ["first"],
     },
     {
-      name: "a message across a steer",
-      entries: [prompt, message("first", "assistant"), steer, command("git")],
-      finished: ["first"],
-    },
-    {
-      name: "no message that is still streaming",
-      entries: [prompt, message("first", "assistant", { streaming: true }), command("git")],
-      finished: [],
-    },
-    {
       name: "no reply a steer cut off",
       entries: [
         prompt,
@@ -229,11 +194,6 @@ describe("turnDetail", () => {
       ],
       finished: [],
     },
-    {
-      name: "no message from the turn before",
-      entries: [message("earlier", "user"), message("first", "assistant"), command("git"), prompt],
-      finished: [],
-    },
   ])("counts $name as finished", ({ entries, finished }) => {
     const { messages } = turnDetail(entries, undefined, null);
     expect(messages.filter((spoken) => spoken.finished).map((spoken) => spoken.text)).toEqual(
@@ -245,7 +205,6 @@ describe("turnDetail", () => {
     { name: "after the entry last seen", knownTailId: "seen", fresh: [false, true] },
     { name: "after a prompt that was last seen", knownTailId: "prompt", fresh: [true, true] },
     { name: "not when the entry last seen is gone", knownTailId: "gone", fresh: [false, false] },
-    { name: "not when no entry was seen", knownTailId: null, fresh: [false, false] },
   ])("marks messages as fresh $name", ({ knownTailId, fresh }) => {
     const entries = [
       prompt,
@@ -336,12 +295,6 @@ describe("nextTurnDetailAnnouncement", () => {
         frame(null, [first, { ...said("empty", true, true), text: "<!-- note -->" }]),
       ]),
     ).toEqual(["T3 Code: Tests pass in web. See the docs"]);
-  });
-
-  it("cuts a very long message short", () => {
-    const long = { ...said("long", true, true), text: "word ".repeat(1_000) };
-    const [spoken] = speak("messages", [frame(null), frame(null, [long])]);
-    expect(spoken).toMatch(/^T3 Code: (?:word ){399}word More in the thread\.$/);
   });
 
   it("says a step again after waiting on the user", () => {

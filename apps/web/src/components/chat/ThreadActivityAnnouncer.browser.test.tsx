@@ -61,16 +61,7 @@ const regions = (container: HTMLElement) => {
 };
 
 describe("ThreadActivityAnnouncer", () => {
-  it.each<{ name: string; props: Partial<ComponentProps<typeof ThreadActivityAnnouncer>> }>([
-    {
-      name: "the agent has moved on",
-      props: { entries: [prompt, command("git"), message("reply", "assistant", true)] },
-    },
-    {
-      name: "the thread's detail falls behind",
-      props: { entries: [prompt, command("git")], detailBehind: true },
-    },
-  ])("drops a waiting step once $name", async ({ props }) => {
+  it("drops a waiting step once the agent has moved on", async () => {
     // The announcer reads no route.
     await using screen = await render(announcer({ status: "idle", runStatus: "completed" }), {
       router: false,
@@ -81,7 +72,9 @@ describe("ThreadActivityAnnouncer", () => {
       using _timers = fakeTimers();
       await screen.rerender(announcer({}));
       await screen.rerender(announcer({ entries: [prompt, command("git")] }));
-      await screen.rerender(announcer(props));
+      await screen.rerender(
+        announcer({ entries: [prompt, command("git"), message("reply", "assistant", true)] }),
+      );
       await act(() => vi.advanceTimersByTime(5_000));
     }
 
@@ -89,23 +82,27 @@ describe("ThreadActivityAnnouncer", () => {
     await expect.element(detail).toBeEmptyDOMElement();
   });
 
-  it("reads a waiting step once the thread's detail catches up", async () => {
+  it("holds a waiting step while the thread's detail is behind, then reads it", async () => {
     // The announcer reads no route.
     await using screen = await render(announcer({ status: "idle", runStatus: "completed" }), {
       router: false,
     });
     const { detail } = regions(screen.container);
+    const entries = [prompt, command("git")];
+    const heard: string[] = [];
     {
       // Restored before the assertion, which polls on real timers.
       using _timers = fakeTimers();
       await screen.rerender(announcer({}));
-      const entries = [prompt, command("git")];
       await screen.rerender(announcer({ entries }));
       await screen.rerender(announcer({ entries, detailBehind: true }));
+      await act(() => vi.advanceTimersByTime(5_000));
+      heard.push(detail.textContent);
       await screen.rerender(announcer({ entries }));
       await act(() => vi.advanceTimersByTime(2_000));
     }
 
+    expect(heard).toEqual([""]);
     await expect.element(detail).toHaveTextContent("Running git");
   });
 
