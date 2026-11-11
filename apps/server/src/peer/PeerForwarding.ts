@@ -12,7 +12,7 @@ import {
   RuntimeMode,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -103,7 +103,7 @@ export const remoteTarget = (scope: Scope, environmentId: EnvironmentId | undefi
 const make = Effect.gen(function* () {
   const peers = yield* PeerMcpClient.PeerMcpClient;
   const links = yield* PeerLinks.PeerLinks;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const threads = yield* ThreadManagement.ThreadManagementService;
 
   /**
@@ -126,7 +126,7 @@ const make = Effect.gen(function* () {
    * key never collide there, and one agent retrying gets its first result.
    */
   const scopedRequestId = (namespace: string, clientRequestId: string) =>
-    crypto.digest("SHA-256", new TextEncoder().encode(`${namespace}\n${clientRequestId}`)).pipe(
+    crypto.digest(Digest.sha256, new TextEncoder().encode(`${namespace}\n${clientRequestId}`)).pipe(
       Effect.map((digest) => `fwd:${Hex.encode(digest)}`),
       Effect.orDie,
     );

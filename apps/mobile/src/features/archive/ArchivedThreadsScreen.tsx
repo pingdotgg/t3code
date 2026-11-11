@@ -16,7 +16,7 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppBar } from "../../components/ui/AppBar";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useMemo, useRef, type ComponentProps } from "react";
-import { Platform, RefreshControl, useWindowDimensions, View } from "react-native";
+import { RefreshControl, useWindowDimensions, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
@@ -24,7 +24,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { relativeTime } from "../../lib/time";
+import { RelativeTime } from "../../components/RelativeTime";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
@@ -53,7 +53,6 @@ function ArchivedThreadsHeader(props: {
   return (
     <AppBar
       title="Archived threads"
-      sidebar={false}
       onBack={() => navigation.goBack()}
       search={{
         value: props.searchQuery,
@@ -106,15 +105,11 @@ function ArchivedThreadsHeader(props: {
                 },
               ],
             },
-            ...(Platform.OS === "android"
-              ? [
-                  {
-                    id: "refresh",
-                    title: "Refresh archived threads",
-                    onPress: props.onRefresh,
-                  },
-                ]
-              : []),
+            {
+              id: "refresh",
+              title: "Refresh archived threads",
+              onPress: props.onRefresh,
+            },
           ],
         },
       ]}
@@ -193,7 +188,6 @@ function ArchivedThreadRow(props: {
     props.thread.environmentId,
     AuthOrchestrationOperateScope,
   );
-  const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
@@ -219,7 +213,7 @@ function ArchivedThreadRow(props: {
             {props.thread.title}
           </Text>
           <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
-            {timestamp}
+            <RelativeTime timestamp={props.thread.archivedAt ?? props.thread.updatedAt} />
           </Text>
         </View>
         {subtitle.length > 0 ? (
@@ -420,7 +414,7 @@ export function ArchivedThreadsScreen(props: {
       <SettingsScreenContent>
         <GestureDetector gesture={archiveScrollGesture}>
           <LegendList
-            renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
+            renderScrollComponent={NativeScrollView}
             className="flex-1"
             contentContainerStyle={{
               paddingBottom: 32,
