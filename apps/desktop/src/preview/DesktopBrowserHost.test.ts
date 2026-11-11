@@ -1078,7 +1078,19 @@ describe("DesktopBrowserHost", () => {
       yield* raw({ id: 3, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
       expect(yield* Queue.take(replies)).toBe(3);
       yield* raw({ id: 4, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
-      yield* raw({ id: 5, method: "Input.dispatchMouseEvent", sessionId: "t3-preview-page-1" });
+      yield* raw({
+        id: 5,
+        method: "Input.dispatchMouseEvent",
+        params: { type: "mouseMoved", x: 1, y: 1 },
+        sessionId: "t3-preview-page-1",
+      });
+      expect(host.agentActedRecently(debuggee.tab.webContents)).toBe(true);
+      yield* raw({
+        id: 6,
+        method: "Input.dispatchMouseEvent",
+        params: { type: "mousePressed", x: 1, y: 1 },
+        sessionId: "t3-preview-page-1",
+      });
       expect(host.agentActedRecently(debuggee.tab.webContents)).toBe(false);
     }).pipe(Effect.scoped),
   );

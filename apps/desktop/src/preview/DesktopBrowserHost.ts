@@ -328,7 +328,7 @@ export const make = Effect.gen(function* () {
             if (owner === undefined || !streamingOwners.has(owner)) {
               tab.agentUsed = true;
               tab.agentInputAt = performance.now();
-            } else {
+            } else if (params["type"] === "mousePressed" || params["type"] === "touchStart") {
               // The viewer's press also hands focus back, so it must end the agent's window.
               tab.agentInputAt = Number.NEGATIVE_INFINITY;
             }
