@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - readdir with file types avoids an lstat per child
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 
@@ -15,6 +15,7 @@ import type {
   WatchEvent,
   WatchUnsubscribe,
 } from "@ff-labs/fff-node";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -50,6 +51,8 @@ const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
 const SYMLINK_SCAN_CONCURRENCY = 16;
+// A scan no watcher can invalidate is reused this long, so typing does not rescan every folder.
+const UNWATCHED_SYMLINK_SCAN_TTL_MS = 2_000;
 
 export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedError<WorkspaceSearchIndexCreateFailed>()(
   "WorkspaceSearchIndexCreateFailed",
@@ -299,6 +302,8 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
 interface ScannedDirectory {
   readonly directory: string;
   readonly links: ReadonlyArray<ProjectEntry>;
+  /** Every symlink in the folder, including ones dropped for leaving the workspace. */
+  readonly linkPaths: ReadonlyArray<string>;
   /** A nested repository (or the workspace's own), whose ignore rules own what is below it. */
   readonly isRepository: boolean;
   readonly ignoreFile: string | undefined;
@@ -308,11 +313,9 @@ const joinEntryPath = (directory: string, name: string) =>
   directory ? `${directory}/${name}` : name;
 
 /**
- * fff skips symlinks, and its `followSymlinks` is no substitute: it still drops file links,
- * dedupes directory links against their targets, and walks links out of the workspace and into
- * ignored folders. So the links themselves are found by reading the folders fff already indexed
- * (which ignore rules have filtered), without descending into them, and kept only when they
- * resolve inside the workspace.
+ * fff skips symlinks, and `followSymlinks` drops file links, dedupes folder links, and walks out
+ * of the workspace. So links are read from the folders fff already indexed (ignore rules applied),
+ * without descending into them, and kept only when they resolve inside the workspace.
  */
 const scanDirectory = Effect.fn("WorkspaceSearchIndex.scanDirectory")(function* (
   fileSystem: FileSystem.FileSystem,
@@ -326,6 +329,7 @@ const scanDirectory = Effect.fn("WorkspaceSearchIndex.scanDirectory")(function* 
     NodeFSP.readdir(path.join(cwd, directory), { withFileTypes: true }).catch(() => []),
   );
   const links: ProjectEntry[] = [];
+  const linkPaths: string[] = [];
   let isRepository = false;
   let ignoreFile: string | undefined;
   for (const child of children) {
@@ -337,6 +341,7 @@ const scanDirectory = Effect.fn("WorkspaceSearchIndex.scanDirectory")(function* 
     }
     if (!child.isSymbolicLink()) continue;
     const entryPath = joinEntryPath(directory, child.name);
+    linkPaths.push(entryPath);
     const absolutePath = path.join(cwd, entryPath);
     const target = yield* Effect.all([
       fileSystem.realPath(absolutePath),
@@ -355,7 +360,7 @@ const scanDirectory = Effect.fn("WorkspaceSearchIndex.scanDirectory")(function* 
     }
     links.push({ path: entryPath, kind: target[1].type === "Directory" ? "directory" : "file" });
   }
-  return { directory, links, isRepository, ignoreFile } satisfies ScannedDirectory;
+  return { directory, links, linkPaths, isRepository, ignoreFile } satisfies ScannedDirectory;
 });
 
 /** Whether `entryPath` is `directory` itself or below it. */
@@ -541,14 +546,20 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     return result.value;
   });
 
+  const root = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+
   const listIndexedDirectories = Effect.fn("WorkspaceSearchIndex.listIndexedDirectories")(
     function* () {
       const directories: string[] = [];
       // fff's pageIndex is an offset into the results, not a page number.
       for (let pageIndex = 0; ; pageIndex += WORKSPACE_INDEX_PAGE_SIZE) {
-        const result = yield* Effect.try(() =>
-          finder.directorySearch("", { pageIndex, pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
-        ).pipe(Effect.orElseSucceed(() => undefined));
+        const result = yield* Effect.sync(() => {
+          try {
+            return finder.directorySearch("", { pageIndex, pageSize: WORKSPACE_INDEX_PAGE_SIZE });
+          } catch {
+            return undefined;
+          }
+        });
         if (!result?.ok) return directories;
         for (const item of result.value.items) {
           const directory = trimDirectorySeparator(toPosixPath(item.relativePath));
@@ -584,7 +595,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       .pipe(Effect.orElseSucceed(() => undefined));
     // Exit 1 means nothing matched.
     if (result?.exitCode === 1) return [];
-    if (result?.exitCode !== 0) {
+    if (result?.exitCode !== 0 || result.stdoutTruncated) {
       // Outside git no rules apply (git exits before reading stdin, so the cause is lost).
       // Any other failure hides the repository's links rather than leaking ones it ignores.
       const insideRepository = yield* vcsProcess
@@ -609,7 +620,6 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const scanSymlinkEntries = Effect.fn("WorkspaceSearchIndex.scanSymlinkEntries")(function* () {
     const indexComplete = !finder.isScanning();
-    const root = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
     const directories = yield* listIndexedDirectories();
     const scanned = yield* Effect.forEach(
       ["", ...directories],
@@ -617,7 +627,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       { concurrency: SYMLINK_SCAN_CONCURRENCY },
     );
     const candidates = scanned.flatMap((directory) => directory.links);
-    if (candidates.length === 0) return { entries: candidates, indexComplete };
+    const linkPaths = new Set(scanned.flatMap((directory) => directory.linkPaths));
+    if (candidates.length === 0) return { entries: candidates, linkPaths, indexComplete };
 
     const ignoreFiles = scanned
       .flatMap(({ directory, ignoreFile }) =>
@@ -653,6 +664,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           ? !ignored.has(entry.path)
           : decisions.get(entry.path) === "included",
       ),
+      linkPaths,
       indexComplete,
     };
   });
@@ -664,14 +676,22 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     | {
         readonly scan: Effect.Effect<Effect.Success<ReturnType<typeof scanSymlinkEntries>>>;
         readonly watched: boolean;
+        expiresAt?: number;
       }
     | undefined;
+  let knownLinkPaths: ReadonlySet<string> = new Set();
   const invalidateSymlinkScan = () => {
     symlinkScan = undefined;
   };
+  const isKnownLink = (absolutePath: string) =>
+    [cwd, root].some((base) => knownLinkPaths.has(toPosixPath(path.relative(base, absolutePath))));
   const onWatchBatch = (events: ReadonlyArray<WatchEvent>) => {
+    // fff reports a link replaced in place as `modified`, so edits to known links count too.
     const editsOnly = events.every(
-      (event) => event.kind === "modified" && !/(^|[\\/])\.(git)?ignore$/.test(event.path),
+      (event) =>
+        event.kind === "modified" &&
+        !/(^|[\\/])\.(git)?ignore$/.test(event.path) &&
+        !isKnownLink(event.path),
     );
     if (!editsOnly) invalidateSymlinkScan();
   };
@@ -690,6 +710,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     return unwatch !== undefined;
   };
   const listSymlinkEntries = Effect.fn("WorkspaceSearchIndex.listSymlinkEntries")(function* () {
+    if (
+      symlinkScan?.expiresAt !== undefined &&
+      (yield* Clock.currentTimeMillis) >= symlinkScan.expiresAt
+    ) {
+      invalidateSymlinkScan();
+    }
     // Subscribing before the scan starts means no change during it goes unseen.
     const current = symlinkScan ?? {
       watched: ensureWatching(),
@@ -697,9 +723,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     };
     symlinkScan = current;
     const result = yield* current.scan;
-    // Without a watcher, or before fff has seen every folder, the result cannot be kept.
-    if ((!current.watched || !result.indexComplete) && symlinkScan === current) {
-      invalidateSymlinkScan();
+    if (symlinkScan === current) knownLinkPaths = result.linkPaths;
+    // Without a watcher, or before fff has seen every folder, the result is kept only briefly.
+    if ((!current.watched || !result.indexComplete) && current.expiresAt === undefined) {
+      current.expiresAt = (yield* Clock.currentTimeMillis) + UNWATCHED_SYMLINK_SCAN_TTL_MS;
     }
     return result.entries;
   });
@@ -760,7 +787,6 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
     "WorkspaceSearchIndex.search",
   )(function* (query, limit, kind, imageOnly) {
-    const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
     const incompleteBeforeQuery = hasIncompleteInitialScan();
     const allSymlinks = yield* listSymlinkEntries();
     const symlinks = allSymlinks.filter((entry) =>
@@ -768,11 +794,14 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         ? entry.kind === "file" && isProjectFaviconPath(entry.path)
         : kind === undefined || entry.kind === kind,
     );
+    // Index results that are filtered-out links get dropped in the merge, so fetch past them.
+    const indexLimit = limit + allSymlinks.length - symlinks.length;
+    const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, indexLimit + 1);
     if (kind === "file" || imageOnly) {
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
       );
-      const mapped = mapFileSearchResult(result, limit, imageOnly);
+      const mapped = mapFileSearchResult(result, indexLimit, imageOnly);
       return mergeSymlinkMatches(
         { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated },
         allSymlinks,
@@ -785,7 +814,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>
         finder.directorySearch(query, { pageSize }),
       );
-      const mapped = mapDirectorySearchResult(result, limit);
+      const mapped = mapDirectorySearchResult(result, indexLimit);
       return mergeSymlinkMatches(
         { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated },
         allSymlinks,

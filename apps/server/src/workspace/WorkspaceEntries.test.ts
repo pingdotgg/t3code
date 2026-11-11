@@ -521,33 +521,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         }
       }),
     );
-    it.effect("skips ignored symlinks and symlinks that leave the workspace", () =>
+    it.effect("skips symlinks that ignore rules hide or that leave the workspace", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-", git: true });
         const outside = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-outside-" });
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* writeTextFile(cwd, ".gitignore", "ignored-link\n");
-        yield* writeTextFile(cwd, "src/index.ts", "export {};");
-        yield* fileSystem.symlink("src", path.join(cwd, "ignored-link"));
-        yield* fileSystem.symlink(outside, path.join(cwd, "outside-link"));
-
-        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const searched = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
-        const listed = yield* workspaceEntries.list({ cwd });
-
-        for (const entries of [searched.entries, listed.entries]) {
-          const paths = entries.map((entry) => entry.path);
-          expect(paths).not.toContain("ignored-link");
-          expect(paths).not.toContain("outside-link");
-        }
-      }),
-    );
-    it.effect("honors .ignore files, ignored tracked links, and submodule rules for symlinks", () =>
-      Effect.gen(function* () {
-        if ((yield* HostProcess.Platform) === "win32") return;
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-", git: true });
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         yield* writeTextFile(cwd, "src/index.ts", "export {};");
@@ -556,6 +534,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* fileSystem.symlink("src/index.ts", path.join(cwd, "tracked-link.ts"));
         yield* fileSystem.symlink("src", path.join(cwd, "ignored-link"));
         yield* fileSystem.symlink("src", path.join(cwd, "kept-link"));
+        yield* fileSystem.symlink(outside, path.join(cwd, "outside-link"));
         yield* git(cwd, ["add", "tracked-link.ts"]);
         yield* writeTextFile(cwd, ".gitignore", "tracked-link.ts\nignored-link\n");
         // A submodule path makes `git check-ignore` refuse the whole batch without --no-index.
@@ -586,6 +565,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           expect(paths).not.toContain("custom-link");
           expect(paths).not.toContain("tracked-link.ts");
           expect(paths).not.toContain("ignored-link");
+          expect(paths).not.toContain("outside-link");
         }
       }),
     );

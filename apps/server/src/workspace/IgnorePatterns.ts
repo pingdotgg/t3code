@@ -1,11 +1,7 @@
 /**
- * Gitignore-syntax matching for `.ignore` files, which git cannot evaluate for us.
- *
- * Patterns come from the repository, so matching must stay linear: each pattern runs as an NFA
- * over the path (O(pattern × path)) rather than a backtracking regex, which a pattern such as
- * `a*a*a*…b` can stall for seconds. Supported: `#` comments, `!` negation, `\` escapes, trailing
- * `/` for folders, anchoring by an inner or leading `/`, `*`, `?`, `[…]` classes with `!`/`^` and
- * ranges, and `**` as a leading, inner, or trailing segment. POSIX `[:class:]` names are not.
+ * Gitignore-syntax matching for `.ignore` files, which git cannot evaluate for us. Patterns come
+ * from the repository, so each runs as an NFA over the path (O(pattern × path)): a backtracking
+ * regex stalls for seconds on `a*a*a*…b`. POSIX `[:class:]` names are not supported.
  */
 
 type Token =

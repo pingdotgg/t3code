@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -223,6 +224,7 @@ it.effect("reads symlinks again after the watcher reports a change", () =>
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-watch-" });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-outside-" });
       yield* fileSystem.writeFileString(path.join(cwd, "a.ts"), "");
       yield* fileSystem.symlink("a.ts", path.join(cwd, "old-link.ts"));
       const { directorySearch, notifyWatchers } = fakeSymlinkFinder([]);
@@ -240,12 +242,18 @@ it.effect("reads symlinks again after the watcher reports a change", () =>
       const afterEdit = yield* listedPaths(searchIndex);
       notifyWatchers([{ kind: "created", path: path.join(cwd, "new-link.ts") }]);
       const afterNotice = yield* listedPaths(searchIndex);
+      // fff reports a link replaced in place as modified.
+      yield* fileSystem.remove(path.join(cwd, "new-link.ts"));
+      yield* fileSystem.symlink(outside, path.join(cwd, "new-link.ts"));
+      notifyWatchers([{ kind: "modified", path: path.join(cwd, "new-link.ts") }]);
+      const afterReplace = yield* listedPaths(searchIndex);
 
       expect(concurrent).toEqual(Array.from({ length: 8 }, () => ["old-link.ts"]));
       expect(beforeNotice).toEqual(["old-link.ts"]);
       expect(afterEdit).toEqual(["old-link.ts"]);
       expect(afterNotice).toEqual(["new-link.ts"]);
-      expect(directorySearch).toHaveBeenCalledTimes(2);
+      expect(afterReplace).toEqual([]);
+      expect(directorySearch).toHaveBeenCalledTimes(3);
     }),
   ).pipe(Effect.provide(testLayer)),
 );
@@ -262,12 +270,16 @@ it.effect("keeps symlinks once the watcher subscribes after starting late", () =
       const { directorySearch } = fakeSymlinkFinder([], { watchFailures: 2 });
 
       const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
-      for (let read = 0; read < 5; read += 1) {
+      const scansAfterRound: number[] = [];
+      for (let round = 0; round < 5; round += 1) {
         expect(yield* listedPaths(searchIndex)).toEqual(["link.ts"]);
+        expect(yield* listedPaths(searchIndex)).toEqual(["link.ts"]);
+        scansAfterRound.push(directorySearch.mock.calls.length);
+        yield* TestClock.adjust("1 minute");
       }
 
-      // The first scans are not kept while no watcher could report changes; the third is.
-      expect(directorySearch).toHaveBeenCalledTimes(3);
+      // An unwatched scan serves reads only briefly; the third has a watcher and is kept.
+      expect(scansAfterRound).toEqual([1, 2, 3, 3, 3]);
     }),
   ).pipe(Effect.provide(testLayer)),
 );
@@ -281,16 +293,31 @@ it.effect("lists a symlink the watcher already indexed once, with the link's kin
       const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-dupe-" });
       yield* fileSystem.makeDirectory(path.join(cwd, "src"));
       yield* fileSystem.symlink("src", path.join(cwd, "src-link"));
-      fakeSymlinkFinder([], { indexed: [{ path: "src-link", kind: "file" }] });
+      fakeSymlinkFinder([], {
+        indexed: [
+          { path: "src-link", kind: "file" },
+          { path: "link-file.ts", kind: "file" },
+        ],
+      });
 
       const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
       const searched = yield* searchIndex.search("link", 10);
-      const files = yield* searchIndex.search("link", 10, "file");
+      const files = yield* searchIndex.search("link", 1, "file");
       const listed = yield* searchIndex.list();
 
-      expect(searched.entries).toEqual([{ path: "src-link", kind: "directory" }]);
-      expect(files.entries).toEqual([]);
-      expect(listed.entries).toEqual([{ path: "src-link", kind: "directory" }]);
+      expect(searched.entries).toEqual([
+        { path: "src-link", kind: "directory" },
+        { path: "link-file.ts", kind: "file" },
+      ]);
+      // The dropped link does not take the only slot.
+      expect(files).toEqual({
+        entries: [{ path: "link-file.ts", kind: "file" }],
+        truncated: false,
+      });
+      expect(listed.entries).toEqual([
+        { path: "link-file.ts", kind: "file" },
+        { path: "src-link", kind: "directory" },
+      ]);
     }),
   ).pipe(Effect.provide(testLayer)),
 );
