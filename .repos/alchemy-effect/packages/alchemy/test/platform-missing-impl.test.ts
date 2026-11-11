@@ -1,3 +1,8 @@
+import { describe, expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 /**
  * A tagged platform resource declared as a bare tag — no props, no inline
  * impl — gets both from its `.make(props, impl)` Layer. Yielding it without
@@ -14,11 +19,6 @@ import { Platform } from "@/Platform.ts";
 import * as Provider from "@/Provider.ts";
 import type { Resource } from "@/Resource.ts";
 import { InMemoryService, State } from "@/State/index.ts";
-import * as Test from "@/Test/Alchemy";
-import { describe, expect } from "alchemy-test";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 
 interface Widget extends Resource<
   "Test.PlatformWidget",
@@ -75,10 +75,7 @@ const MissingImplStack = Alchemy.Stack(
 );
 
 class ProvidedWidget extends Widget()("ProvidedWidget") {}
-const ProvidedWidgetLive = ProvidedWidget.make(
-  { name: "provided" },
-  Effect.succeed({}),
-);
+const ProvidedWidgetLive = ProvidedWidget.make({ name: "provided" }, Effect.succeed({}));
 
 const ProvidedStack = Alchemy.Stack(
   "PlatformProvidedStack",
@@ -148,80 +145,105 @@ const DoubleBareStack = Alchemy.Stack(
   }),
 );
 
-describe(
-  "tagged platform resource yielded without its impl layer",
-  { tags: ["local"] },
-  () => {
-    test(
-      "fails fast, naming the class and its layer",
-      Effect.gen(function* () {
-        const exit = yield* runDeploy(MissingImplStack);
+/** The same bare tag on a platform that installs a `transformProps` hook. */
+const TransformedWidget: any = Platform<Widget>("Test.PlatformWidget", {
+  createRuntimeContext: () => ({}) as any,
+  transformProps: (_id, props) => Effect.succeed(props),
+});
 
-        expect(Exit.isFailure(exit)).toBe(true);
-        const message = String(Exit.isFailure(exit) ? exit.cause : "");
-        expect(message).toContain("Test.PlatformWidget<BareWidget>");
-        expect(message).toContain("BareWidget.make(");
-        expect(message).toContain("Provide it to the Stack's program");
-        expect(message).toContain("Effect.provide([BareWidgetLive])");
-        // The provider must never be reached with undefined props.
-        expect(observed.ran).toBe(false);
-      }),
-      { timeout: 60_000 },
-    );
+class BareTransformedWidget extends TransformedWidget()("BareTransformedWidget") {}
 
-    test(
-      "still deploys when the .make(...) layer IS provided",
-      Effect.gen(function* () {
-        const exit = yield* runDeploy(ProvidedStack);
-        expect(Exit.isSuccess(exit)).toBe(true);
-        expect((observed.news as any)?.name).toBe("provided");
-      }),
-      { timeout: 60_000 },
-    );
-
-    test(
-      "still deploys a tag declared WITH props and no impl",
-      Effect.gen(function* () {
-        const exit = yield* runDeploy(ExternalStack);
-        expect(Exit.isSuccess(exit)).toBe(true);
-        expect((observed.news as any)?.name).toBe("external");
-        expect((observed.news as any)?.isExternal).toBe(true);
-      }),
-      { timeout: 60_000 },
-    );
-
-    test(
-      "still deploys a plain (non-tagged) instance",
-      Effect.gen(function* () {
-        const exit = yield* runDeploy(PlainStack);
-        expect(Exit.isSuccess(exit)).toBe(true);
-        expect((observed.news as any)?.name).toBe("plain");
-      }),
-      { timeout: 60_000 },
-    );
-
-    test(
-      "a forward reference yielded before the layer builds still deploys",
-      Effect.gen(function* () {
-        const exit = yield* runDeploy(ForwardRefStack);
-        expect(Exit.isSuccess(exit)).toBe(true);
-        // The provider must see the Layer's props, not the forward
-        // reference's `undefined`.
-        expect((observed.news as any)?.name).toBe("forward");
-      }),
-      { timeout: 60_000 },
-    );
-
-    test(
-      "yielding the bare tag twice registers once and still fails fast",
-      Effect.gen(function* () {
-        const exit = yield* runDeploy(DoubleBareStack);
-        expect(Exit.isFailure(exit)).toBe(true);
-        const message = String(Exit.isFailure(exit) ? exit.cause : "");
-        expect(message).toContain("Test.PlatformWidget<DoubleBareWidget>");
-        expect(observed.ran).toBe(false);
-      }),
-      { timeout: 60_000 },
-    );
-  },
+const TransformedMissingImplStack = Alchemy.Stack(
+  "PlatformTransformedMissingImplStack",
+  { providers, state },
+  Effect.gen(function* () {
+    const widget = yield* yieldWidget(BareTransformedWidget);
+    return { name: widget.name };
+  }),
 );
+
+describe("tagged platform resource yielded without its impl layer", { tags: ["local"] }, () => {
+  test(
+    "fails fast, naming the class and its layer",
+    Effect.gen(function* () {
+      const exit = yield* runDeploy(MissingImplStack);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      const message = String(Exit.isFailure(exit) ? exit.cause : "");
+      expect(message).toContain("Test.PlatformWidget<BareWidget>");
+      expect(message).toContain("BareWidget.make(");
+      expect(message).toContain("Provide it to the Stack's program");
+      expect(message).toContain("Effect.provide([BareWidgetLive])");
+      // The provider must never be reached with undefined props.
+      expect(observed.ran).toBe(false);
+    }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "still deploys when the .make(...) layer IS provided",
+    Effect.gen(function* () {
+      const exit = yield* runDeploy(ProvidedStack);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect((observed.news as any)?.name).toBe("provided");
+    }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "still deploys a tag declared WITH props and no impl",
+    Effect.gen(function* () {
+      const exit = yield* runDeploy(ExternalStack);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect((observed.news as any)?.name).toBe("external");
+      expect((observed.news as any)?.isExternal).toBe(true);
+    }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "still deploys a plain (non-tagged) instance",
+    Effect.gen(function* () {
+      const exit = yield* runDeploy(PlainStack);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect((observed.news as any)?.name).toBe("plain");
+    }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "a forward reference yielded before the layer builds still deploys",
+    Effect.gen(function* () {
+      const exit = yield* runDeploy(ForwardRefStack);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // The provider must see the Layer's props, not the forward
+      // reference's `undefined`.
+      expect((observed.news as any)?.name).toBe("forward");
+    }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "yielding the bare tag twice registers once and still fails fast",
+    Effect.gen(function* () {
+      const exit = yield* runDeploy(DoubleBareStack);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const message = String(Exit.isFailure(exit) ? exit.cause : "");
+      expect(message).toContain("Test.PlatformWidget<DoubleBareWidget>");
+      expect(observed.ran).toBe(false);
+    }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "fails fast when the platform transforms props",
+    Effect.gen(function* () {
+      const exit = yield* runDeploy(TransformedMissingImplStack);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const message = String(Exit.isFailure(exit) ? exit.cause : "");
+      expect(message).toContain("Test.PlatformWidget<BareTransformedWidget>");
+      expect(observed.ran).toBe(false);
+    }),
+    { timeout: 60_000 },
+  );
+});

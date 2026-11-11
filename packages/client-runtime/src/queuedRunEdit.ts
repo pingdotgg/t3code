@@ -1,7 +1,8 @@
 /**
  * A queued-message edit ends on save, cancel, or when its run leaves the queue.
  * The store owns one watcher per edit, so "run left the queue" is handled exactly
- * once, when the projection reports it, wherever the user is in the app.
+ * once, when the projection reports it, wherever the user is in the app. It also
+ * owns the edit's save, because a save outlives the view that started it.
  */
 import type { RunId } from "@t3tools/contracts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
@@ -60,12 +61,30 @@ export function resolveQueuedEditExit(input: {
   return input.threadDraftEmpty ? "kept" : "discarded";
 }
 
+/**
+ * Why a queued message can't be opened in the composer now, or null when it
+ * can. An open question takes the composer over for its answer, so an edit
+ * begun then would happen out of sight and could be sent before it is seen.
+ */
+export function queuedRunEditBlockedReason(input: {
+  readonly openQuestionCount: number;
+}): string | null {
+  return input.openQuestionCount > 0 ? "Answer the question to edit queued messages" : null;
+}
+
 interface ExitWatch<E> {
   readonly runs: QueuedRunsAtom;
   readonly runId: RunId;
   readonly onRunLeftQueue: (threadKey: string, edit: E) => void;
   cancel: (() => void) | null;
 }
+
+/**
+ * Settles a save from `startSave`. False, changing nothing, when the edit was
+ * ended or begun again meanwhile. Success ends the edit; failure resumes its
+ * exit watch and returns whether the edit survived it.
+ */
+export type FinishQueuedRunEditSave = (succeeded: boolean) => boolean;
 
 export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(options: {
   readonly registry: AtomRegistry.AtomRegistry;
@@ -76,7 +95,21 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
     Atom.keepAlive,
     Atom.withLabel(options.label),
   );
+  const savingAtom = Atom.make<Readonly<Record<string, true>>>({}).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`${options.label}-saving`),
+  );
+  // Each begin creates a new watch, so the watch is the edit's identity.
   const watches = new Map<string, ExitWatch<E>>();
+
+  const setSaving = (threadKey: string, saving: boolean) => {
+    const current = registry.get(savingAtom);
+    if (threadKey in current === saving) return;
+    const next = { ...current };
+    if (saving) next[threadKey] = true;
+    else delete next[threadKey];
+    registry.set(savingAtom, next);
+  };
 
   const get = (threadKey: string | null): E | null =>
     threadKey === null ? null : (registry.get(atom)[threadKey] ?? null);
@@ -122,6 +155,8 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
 
   return {
     atom,
+    /** Thread keys whose edit has a save in flight. */
+    savingAtom,
     get,
     /**
      * Starts an edit, replacing any edit already open on the thread. When the
@@ -151,17 +186,31 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
       write(threadKey, null);
     },
     /**
-     * Holds the exit transition while a save is in flight; the save's own
-     * result decides the edit's fate.
+     * Claims the open edit for a save, or returns null when there is no edit
+     * or a save is in flight. The exit watch pauses so the save's result decides
+     * the edit's fate. The claim outlives the edit: the server orders saves by
+     * arrival, so an overlapping older save could overwrite a newer one.
      */
-    suspendExitWatch(threadKey: string) {
+    startSave(threadKey: string): FinishQueuedRunEditSave | null {
       const watch = watches.get(threadKey);
-      if (watch !== undefined) unsubscribe(watch);
-    },
-    /** Resumes after a failed save, handling an exit that happened meanwhile. */
-    resumeExitWatch(threadKey: string) {
-      const watch = watches.get(threadKey);
-      if (watch !== undefined && watch.cancel === null) subscribe(threadKey, watch);
+      if (watch === undefined || threadKey in registry.get(savingAtom)) return null;
+      setSaving(threadKey, true);
+      unsubscribe(watch);
+      let settled = false;
+      return (succeeded) => {
+        if (!settled) {
+          settled = true;
+          setSaving(threadKey, false);
+        }
+        if (watches.get(threadKey) !== watch) return false;
+        if (succeeded) {
+          stopWatch(threadKey);
+          write(threadKey, null);
+          return true;
+        }
+        subscribe(threadKey, watch);
+        return watches.get(threadKey) === watch;
+      };
     },
   };
 }
