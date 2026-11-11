@@ -359,8 +359,12 @@ describe("usage pricing", () => {
         ...rate(1),
         input_cost_per_token_priority: 2,
         output_cost_per_token_priority: 10,
+        input_cost_per_token_above_272k_tokens: 2,
+        input_cost_per_token_above_272k_tokens_priority: 4,
+        output_cost_per_token_above_272k_tokens_priority: 20,
       },
-      "provider-b/example-model": rate(1),
+      "provider-b/example-model": { ...rate(1), input_cost_per_token_above_272k_tokens: 2 },
+      "provider-c/example-model": rate(1),
     });
 
     expect(lookupRate(table, "example-model")).toEqual(

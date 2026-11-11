@@ -196,39 +196,41 @@ function sameTokenRates(a: TokenRates | null, b: TokenRates | null): boolean {
   );
 }
 
-function sameSpeedRates(a: SpeedRates, b: SpeedRates): boolean {
-  return (
-    sameTokenRates(a, b) &&
-    sameTokenRates(a.fast, b.fast) &&
-    sameTokenRates(a.ultrafast, b.ultrafast)
-  );
-}
-
-function sameContextTiers(a: readonly ContextTier[], b: readonly ContextTier[]): boolean {
-  return (
-    a.length === b.length &&
-    a.every(
-      (tier, index) =>
-        tier.thresholdTokens === b[index]!.thresholdTokens &&
-        sameSpeedRates(tier.rate, b[index]!.rate),
-    )
-  );
-}
-
 // Resellers often omit speed and context tiers, so a missing tier fills from the other entry instead of conflicting.
-function mergeAliasRate(a: ModelRate, b: ModelRate): ModelRate | null {
+function mergeSpeedRates(a: SpeedRates, b: SpeedRates): SpeedRates | null {
   const fast = a.fast ?? b.fast;
   const ultrafast = a.ultrafast ?? b.ultrafast;
-  const contextTiers = a.contextTiers.length > 0 ? a.contextTiers : b.contextTiers;
   if (
     !sameTokenRates(a, b) ||
     !sameTokenRates(fast, b.fast ?? fast) ||
-    !sameTokenRates(ultrafast, b.ultrafast ?? ultrafast) ||
-    (b.contextTiers.length > 0 && !sameContextTiers(contextTiers, b.contextTiers))
+    !sameTokenRates(ultrafast, b.ultrafast ?? ultrafast)
   ) {
     return null;
   }
-  return { ...a, fast, ultrafast, contextTiers };
+  return { ...a, fast, ultrafast };
+}
+
+function mergeContextTiers(
+  a: readonly ContextTier[],
+  b: readonly ContextTier[],
+): readonly ContextTier[] | null {
+  if (a.length === 0) return b;
+  if (b.length === 0) return a;
+  if (a.length !== b.length) return null;
+  const merged: ContextTier[] = [];
+  for (const [index, tier] of a.entries()) {
+    const other = b[index]!;
+    const rate = mergeSpeedRates(tier.rate, other.rate);
+    if (tier.thresholdTokens !== other.thresholdTokens || rate === null) return null;
+    merged.push({ thresholdTokens: tier.thresholdTokens, rate });
+  }
+  return merged;
+}
+
+function mergeAliasRate(a: ModelRate, b: ModelRate): ModelRate | null {
+  const speeds = mergeSpeedRates(a, b);
+  const contextTiers = mergeContextTiers(a.contextTiers, b.contextTiers);
+  return speeds === null || contextTiers === null ? null : { ...speeds, contextTiers };
 }
 
 function promptTokens(totals: UsageTokenTotals): number {
