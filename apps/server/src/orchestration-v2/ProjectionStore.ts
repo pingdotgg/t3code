@@ -225,8 +225,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "pendingGuestMessageCount"
 > &
   Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt"> & {
-    readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
-    /** Latest user or intentional agent (MCP/CLI) message; excludes server/provider wakes. */
+    /** Latest user or MCP agent message; automatic server and provider wakes are excluded. */
     readonly latestResumingMessageAt: DateTime.Utc | null;
   };
 
@@ -1072,7 +1071,6 @@ type SettlementThreadRow = Pick<
   | "latest_run_started_at"
   | "latest_run_completed_at"
   | "latest_user_message_at"
-  | "latest_user_authored_message_at"
 > & {
   readonly latest_resuming_message_at: string | null;
 };
@@ -6713,23 +6711,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id AND message.role = 'user'
-                  AND json_extract(message.payload_json, '$.createdBy') = 'user'
-                  AND NOT ${isIdleCompactionMessage("message")}
-                ORDER BY message.updated_at DESC, message.message_id DESC
-                LIMIT 1
-              ) AS latest_user_authored_message_at,
-              -- isResumingSettlementMessage: user-authored, or agent from MCP/CLI, not server/provider wakes.
-              (
-                SELECT message.updated_at
-                FROM orchestration_v2_projection_messages message
-                WHERE message.thread_id = t.thread_id AND message.role = 'user'
                   AND NOT ${isIdleCompactionMessage("message")}
                   AND (
                     json_extract(message.payload_json, '$.createdBy') = 'user'
                     OR (
                       json_extract(message.payload_json, '$.createdBy') = 'agent'
-                      AND IFNULL(json_extract(message.payload_json, '$.creationSource'), '')
-                        NOT IN ('server', 'provider')
+                      AND json_extract(message.payload_json, '$.creationSource') = 'mcp'
                     )
                   )
                 ORDER BY message.updated_at DESC, message.message_id DESC
@@ -6813,10 +6800,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     row.latest_user_message_at === null
                       ? null
                       : DateTime.makeUnsafe(row.latest_user_message_at),
-                  latestUserAuthoredMessageAt:
-                    row.latest_user_authored_message_at === null
-                      ? null
-                      : DateTime.makeUnsafe(row.latest_user_authored_message_at),
                   latestResumingMessageAt:
                     row.latest_resuming_message_at === null
                       ? null
