@@ -28,7 +28,6 @@ import {
 } from "@t3tools/provider-core/server/driver";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { instanceDisplayName } from "@t3tools/provider-core/server/instanceIdentity";
 import {
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
@@ -66,11 +65,11 @@ const withInstanceIdentity =
     readonly accentColor: string | undefined;
     readonly continuationGroupKey: string;
   }) =>
-  ({ displayName: driverLabel, ...snapshot }: ServerProviderDraft): ServerProvider => ({
+  (snapshot: ServerProviderDraft): ServerProvider => ({
     ...snapshot,
     instanceId: input.instanceId,
     driver: DRIVER_KIND,
-    ...instanceDisplayName({ ...input, driverKind: DRIVER_KIND, driverLabel }),
+    ...(input.displayName ? { displayName: input.displayName, displayNameConfigured: true } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     continuation: { groupKey: input.continuationGroupKey },
   });

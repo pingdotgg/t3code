@@ -322,6 +322,7 @@ export function buildModelOptions(
         instanceId,
         driver,
         displayName: snapshot?.displayName ?? instance?.displayName,
+        displayNameConfigured: snapshot?.displayNameConfigured ?? Boolean(instance?.displayName),
       }),
       ...(accentColor ? { accentColor } : {}),
       showBadge: shouldShowInstanceBadge(

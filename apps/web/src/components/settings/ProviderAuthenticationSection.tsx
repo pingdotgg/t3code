@@ -3,7 +3,6 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import type {
   EnvironmentId,
   ProviderAuthRespondInput,
@@ -315,7 +314,7 @@ export function ProviderAuthenticationSection({
                 onClick={() => {
                   void ensureLocalApi()
                     .dialogs.confirm(
-                      `Sign out of ${resolveProviderInstanceDisplayName(provider)} on ${environmentLabel}? This stops running threads that share this sign-in. Thread history is kept.`,
+                      `Sign out of ${provider.displayName ?? provider.driver} on ${environmentLabel}? This stops running threads that share this sign-in. Thread history is kept.`,
                     )
                     .then((confirmed) => {
                       if (confirmed) void run(() => logout(target));

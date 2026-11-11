@@ -209,6 +209,8 @@ export const ServerProvider = Schema.Struct({
   instanceId: ProviderInstanceId,
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
+  // Absent when displayName is the driver label filled in for an unnamed instance.
+  displayNameConfigured: Schema.optional(Schema.Boolean),
   accentColor: Schema.optional(TrimmedNonEmptyString),
   // Validate driver-supplied remote icons against the driver's trusted origin.
   iconUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),

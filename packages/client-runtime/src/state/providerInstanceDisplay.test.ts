@@ -36,8 +36,19 @@ describe("resolveProviderInstanceDisplayName", () => {
         driver: codex,
         instanceId: ProviderInstanceId.make("codex_pool"),
         displayName: "Codex",
+        displayNameConfigured: true,
       }),
     ).toBe("Codex");
+  });
+
+  it("humanizes the instance id when the name is the filled-in driver label", () => {
+    expect(
+      resolveProviderInstanceDisplayName({
+        driver: codex,
+        instanceId: ProviderInstanceId.make("codex_pool"),
+        displayName: "Codex",
+      }),
+    ).toBe("Codex Pool");
   });
 });
 

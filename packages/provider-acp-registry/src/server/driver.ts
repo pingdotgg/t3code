@@ -207,7 +207,7 @@ function baseSnapshot(
   return {
     instanceId: input.instanceId,
     driver: DRIVER_KIND,
-    ...(input.displayName ? { displayName: input.displayName } : {}),
+    ...(input.displayName ? { displayName: input.displayName, displayNameConfigured: true } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     ...(iconUrl ? { iconUrl } : {}),
     continuation: { groupKey: input.continuationKey },

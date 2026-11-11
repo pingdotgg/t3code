@@ -1,5 +1,4 @@
 import * as Dialog from "../../components/ui/Dialog";
-import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
@@ -340,7 +339,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                               size={18}
                             />
                             <Text className="min-w-0 flex-1 text-base font-t3-medium text-foreground">
-                              {resolveProviderInstanceDisplayName(provider)}
+                              {provider.displayName ?? provider.driver}
                             </Text>
                           </View>
                           <Text className="text-sm text-foreground-muted">
@@ -384,7 +383,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                         {canUpdateEnvironmentProvider(provider) ? (
                           <SettingsActionRow
                             icon="arrow.up.circle"
-                            label={`Update ${resolveProviderInstanceDisplayName(provider)}`}
+                            label={`Update ${provider.displayName ?? provider.driver}`}
                             disabled={busy || !canManageProviders}
                             loading={pending === provider.instanceId}
                             onPress={() => requestProviderUpdate(provider)}

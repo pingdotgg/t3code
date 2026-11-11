@@ -1,5 +1,4 @@
 import * as Dialog from "../../components/ui/Dialog";
-import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -226,7 +225,7 @@ function ProviderAccount({
       />
     );
   }
-  const name = resolveProviderInstanceDisplayName(provider);
+  const name = provider.displayName ?? provider.driver;
   const email = signedIn && !active && provider.enabled ? provider.auth.email?.trim() : undefined;
   const methods = state?.methods ?? [];
   // The status line says why a provider that is missing or turned off can't sign in.

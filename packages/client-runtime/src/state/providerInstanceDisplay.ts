@@ -14,15 +14,17 @@ function humanizeSlug(slug: string): string {
 }
 
 export function resolveProviderInstanceDisplayName(
-  snapshot: Pick<ServerProvider, "instanceId" | "driver" | "displayName">,
+  snapshot: Pick<ServerProvider, "instanceId" | "driver" | "displayName" | "displayNameConfigured">,
 ): string {
   const trimmedSnapshotName = snapshot.displayName?.trim();
-  if (trimmedSnapshotName) return trimmedSnapshotName;
+  if (trimmedSnapshotName && snapshot.displayNameConfigured) return trimmedSnapshotName;
+  const kindLabel = PROVIDER_DISPLAY_NAMES[snapshot.driver] ?? humanizeSlug(snapshot.driver);
+  if (trimmedSnapshotName && trimmedSnapshotName !== kindLabel) return trimmedSnapshotName;
   if (snapshot.instanceId !== defaultInstanceIdForDriver(snapshot.driver)) {
     const humanized = humanizeSlug(snapshot.instanceId);
     if (humanized.length > 0) return humanized;
   }
-  return PROVIDER_DISPLAY_NAMES[snapshot.driver] ?? humanizeSlug(snapshot.driver);
+  return trimmedSnapshotName || kindLabel;
 }
 
 export function providerInstanceInitials(label: string): string {

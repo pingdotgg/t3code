@@ -42,7 +42,6 @@ import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -2584,7 +2583,7 @@ export default function ChatView(props: ChatViewProps) {
                   .find((provider) => provider.instanceId === fallbackSelection.instanceId)
                   ?.models.find((model) => model.slug === fallbackSelection.model)?.name ??
                 fallbackSelection.model,
-              defaultProviderName: resolveProviderInstanceDisplayName(fallback.provider),
+              defaultProviderName: fallback.provider.displayName ?? fallback.provider.driver,
               defaultModelName:
                 fallback.provider.models.find((model) => model.slug === defaultSelection.model)
                   ?.name ?? defaultSelection.model,
