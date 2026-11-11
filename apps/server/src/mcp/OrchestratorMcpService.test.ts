@@ -22,6 +22,7 @@ import {
   ProviderTurnId,
   RunId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
@@ -342,6 +343,268 @@ describe("OrchestratorMcpService", () => {
         const settled = yield* service.taskStatus(scope, taskId);
         assert.equal(settled.status, "cancelled");
         assert.equal(yield* Ref.get(dispatched), 1);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
+  it.effect("reports a follow-up as waiting while the child's own subagent runs", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:mcp-followup-parent");
+      const childThreadId = ThreadId.make("thread:mcp-followup-child");
+      const followupTaskId = NodeId.make("node:mcp-followup-task");
+      const childTransfers: Array<unknown> = [];
+      const parentProjection = {
+        thread: { id: parentThreadId },
+        runs: [],
+        contextTransfers: [],
+        subagents: [
+          {
+            id: followupTaskId,
+            threadId: parentThreadId,
+            origin: "app_owned",
+            childThreadId,
+            driver: "codex",
+            model: "gpt-5.6-terra",
+            status: "running",
+            result: null,
+            completionDelivery: { state: "pending" },
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const acknowledged: Array<NodeId> = [];
+      let childProjection = {
+        thread: {
+          id: childThreadId,
+          title: "Child",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-terra" },
+          lineage: { parentThreadId, relationshipToParent: "subagent" },
+          forkedFrom: { type: "node", nodeId: NodeId.make("node:mcp-followup-original") },
+          createdAt: DateTime.makeUnsafe("2026-10-03T10:00:00Z"),
+          updatedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
+        },
+        runs: [
+          {
+            id: RunId.make("run:mcp-followup-original"),
+            ordinal: 1,
+            status: "completed",
+            startedAt: DateTime.makeUnsafe("2026-10-03T10:00:00Z"),
+            completedAt: DateTime.makeUnsafe("2026-10-03T10:01:00Z"),
+          },
+          {
+            id: RunId.make("run:mcp-followup"),
+            ordinal: 2,
+            status: "completed",
+            delegatedTaskId: followupTaskId,
+            startedAt: DateTime.makeUnsafe("2026-10-03T10:02:00Z"),
+            completedAt: DateTime.makeUnsafe("2026-10-03T10:03:00Z"),
+          },
+        ],
+        contextTransfers: childTransfers,
+        messages: [],
+        subagents: [
+          {
+            id: NodeId.make("node:mcp-followup-grandchild"),
+            runId: RunId.make("run:mcp-followup"),
+            origin: "app_owned",
+            childThreadId: ThreadId.make("thread:mcp-followup-grandchild"),
+            status: "running",
+            result: null,
+            completionDelivery: { state: "pending" },
+          },
+        ],
+        providerThreads: [],
+        providerTurns: [],
+        runtimeRequests: [],
+        turnItems: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
+          getProjectThreadRecords: () => Effect.succeed(childProjection),
+          getThreadShell: () =>
+            Effect.succeed({
+              ...childProjection.thread,
+              deletedAt: null,
+            } as unknown as OrchestrationV2ThreadShell),
+          getTimelinePage: () =>
+            Effect.succeed({
+              items: [
+                {
+                  position: 0,
+                  visibility: "visible",
+                  sourceThreadId: childThreadId,
+                  sourceItemId: TurnItemId.make("turn-item:mcp-followup-wake-result"),
+                  item: {
+                    type: "assistant_message",
+                    runId: RunId.make("run:mcp-followup-wake"),
+                    messageId: MessageId.make("message:mcp-followup-wake-result"),
+                    text: "The grandchild finished the next step.",
+                    updatedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
+                  },
+                },
+              ] as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: 1,
+              hasMore: false,
+            }),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              if (command.type === "delegated_task.completion-delivery.acknowledge") {
+                acknowledged.push(command.taskId);
+              }
+              return {} as never;
+            }),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-followup"),
+        requestNamespace: "provider-session:mcp-followup",
+        thread: {
+          threadId: parentThreadId,
+          providerSessionId: "provider-session:mcp-followup",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const status = yield* service.taskStatus(scope, followupTaskId);
+        assert.equal(status.workState, "waiting_for_children");
+        assert.equal(status.status, "running");
+        assert.isNull(status.summary);
+
+        // A user turn in the child does not release the follow-up's own subagent hold.
+        const heldProjection = childProjection;
+        childProjection = {
+          ...childProjection,
+          runs: [
+            ...childProjection.runs,
+            {
+              id: RunId.make("run:mcp-followup-user"),
+              ordinal: 3,
+              status: "running",
+              startedAt: DateTime.makeUnsafe("2026-10-03T10:03:30Z"),
+              completedAt: null,
+            },
+          ],
+        } as unknown as OrchestrationV2ThreadProjection;
+        const busy = yield* service.taskStatus(scope, followupTaskId);
+        assert.equal(busy.workState, "waiting_for_children");
+        assert.isNull(busy.summary);
+        childProjection = heldProjection;
+
+        const wakeRunId = RunId.make("run:mcp-followup-wake");
+        const wakeMessageId = MessageId.make("message:mcp-followup-wake");
+        childProjection = {
+          ...childProjection,
+          runs: [
+            ...childProjection.runs,
+            {
+              id: wakeRunId,
+              ordinal: 3,
+              status: "completed",
+              userMessageId: wakeMessageId,
+              startedAt: DateTime.makeUnsafe("2026-10-03T10:04:00Z"),
+              completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
+            },
+          ],
+          messages: [
+            {
+              id: wakeMessageId,
+              runId: wakeRunId,
+              role: "user",
+              text: "Delegated task finished.",
+              delegatedCompletion: {
+                parentRunId: RunId.make("run:mcp-followup"),
+                generation: 1,
+                taskIds: [NodeId.make("node:mcp-followup-grandchild")],
+              },
+            },
+            {
+              id: MessageId.make("message:mcp-followup-wake-result"),
+              runId: wakeRunId,
+              role: "assistant",
+              text: "The grandchild finished the next step.",
+              updatedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
+              createdAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
+            },
+          ],
+          subagents: [],
+        } as unknown as OrchestrationV2ThreadProjection;
+        // An approval in the wake turn is the follow-up's own approval.
+        const settledProjection = childProjection;
+        const wakeNodeId = NodeId.make("node:mcp-followup-wake-root");
+        childProjection = {
+          ...childProjection,
+          runs: childProjection.runs.map((run) =>
+            run.id === wakeRunId ? { ...run, status: "running", completedAt: null } : run,
+          ),
+          nodes: [{ id: wakeNodeId, runId: wakeRunId }],
+          runtimeRequests: [
+            {
+              id: "request:mcp-followup-wake-approval",
+              nodeId: wakeNodeId,
+              kind: "command",
+              status: "pending",
+              responseCapability: { type: "live" },
+              createdAt: DateTime.makeUnsafe("2026-10-03T10:04:30Z"),
+            },
+          ],
+        } as unknown as OrchestrationV2ThreadProjection;
+        const approving = yield* service.taskStatus(scope, followupTaskId);
+        assert.deepEqual(approving.pendingApproval, {
+          requestId: "request:mcp-followup-wake-approval",
+          kind: "command",
+          runId: wakeRunId,
+        });
+        childProjection = settledProjection;
+
+        const settled = yield* service.taskStatus(scope, followupTaskId);
+        assert.equal(settled.workState, "result_available");
+        assert.equal(settled.status, "completed");
+        assert.equal(settled.summary, "The grandchild finished the next step.");
+
+        // Reading the wake's reply reads the follow-up's result, so it acknowledges the follow-up.
+        childTransfers.push({
+          id: "context-transfer:mcp-followup-result",
+          type: "subagent_result",
+          sourceThreadId: childThreadId,
+          targetThreadId: parentThreadId,
+          sourcePoint: { runId: wakeRunId },
+        });
+        acknowledged.length = 0;
+        yield* service.readThread(scope, { threadId: childThreadId, runLimit: 0 });
+        assert.deepEqual(acknowledged, [followupTaskId]);
+
+        // A held queue can run an older run after the follow-up; that run's wake reply counts too.
+        childProjection = {
+          ...childProjection,
+          runs: childProjection.runs.map((run) =>
+            run.id === wakeRunId
+              ? { ...run, ordinal: 2 }
+              : run.delegatedTaskId === followupTaskId
+                ? { ...run, ordinal: 3 }
+                : run,
+          ),
+        } as unknown as OrchestrationV2ThreadProjection;
+        acknowledged.length = 0;
+        yield* service.readThread(scope, { threadId: childThreadId, runLimit: 0 });
+        assert.deepEqual(acknowledged, [followupTaskId]);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

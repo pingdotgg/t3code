@@ -15,6 +15,7 @@ import type {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -248,6 +249,134 @@ export function subagentResultForRun(
   };
 }
 
+const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "rolled_back",
+]);
+
+type FollowupAttributionProjection = {
+  readonly runs: OrchestrationV2ThreadProjection["runs"];
+  readonly messages: ReadonlyArray<
+    Pick<OrchestrationV2ConversationMessage, "id" | "runId" | "delegatedCompletion">
+  >;
+};
+
+/**
+ * The follow-up task that owns each run: its own runs, then untagged runs that continue one, either
+ * a wake (initial or steered) for a subagent it started or a restart continuation. Untagged runs
+ * no follow-up owns belong to the original task.
+ */
+export function delegatedRunOwners(
+  projection: FollowupAttributionProjection,
+): ReadonlyMap<RunId, NodeId> {
+  const wokenByMessage = new Map<MessageId, RunId>();
+  const wokenInRun = new Map<RunId, Array<RunId>>();
+  for (const message of projection.messages) {
+    if (message.delegatedCompletion === undefined) continue;
+    const { parentRunId } = message.delegatedCompletion;
+    wokenByMessage.set(message.id, parentRunId);
+    if (message.runId === null) continue;
+    const woken = wokenInRun.get(message.runId);
+    if (woken === undefined) wokenInRun.set(message.runId, [parentRunId]);
+    else woken.push(parentRunId);
+  }
+  const runs = new Map(projection.runs.map((run) => [run.id, run]));
+  // Resolved through each run's sources, not by ordinal: held queues run out of ordinal order.
+  const owners = new Map<RunId, NodeId | undefined>();
+  const ownerOf = (runId: RunId | undefined): NodeId | undefined => {
+    const run = runId === undefined ? undefined : runs.get(runId);
+    if (run === undefined) return undefined;
+    if (owners.has(run.id)) return owners.get(run.id);
+    owners.set(run.id, undefined);
+    let owner = run.delegatedTaskId;
+    if (
+      owner === undefined &&
+      run.status !== "rolled_back" &&
+      !(run.status === "queued" && run.queueHeld === true)
+    ) {
+      for (const source of [
+        run.restartContinuationOfRunId,
+        wokenByMessage.get(run.userMessageId),
+        ...(wokenInRun.get(run.id) ?? []),
+      ]) {
+        owner = ownerOf(source);
+        if (owner !== undefined) break;
+      }
+    }
+    owners.set(run.id, owner);
+    return owner;
+  };
+  const resolved = new Map<RunId, NodeId>();
+  for (const run of projection.runs) {
+    const owner = ownerOf(run.id);
+    if (owner !== undefined) resolved.set(run.id, owner);
+  }
+  return resolved;
+}
+
+/** A follow-up task's runs in execution order; its result is the last, as the original's is. */
+export function delegatedFollowupRuns(
+  projection: FollowupAttributionProjection,
+  taskId: NodeId,
+): ReadonlyArray<OrchestrationV2Run> {
+  const owners = delegatedRunOwners(projection);
+  return projection.runs
+    .filter((run) => owners.get(run.id) === taskId)
+    .toSorted((a, b) => (runRanAfter(a, b) ? 1 : runRanAfter(b, a) ? -1 : 0));
+}
+
+const subagentHoldsCompletion = (
+  task: Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">,
+) =>
+  isOrchestrationV2WorkActive(task.status) ||
+  // Publishing a child's result precedes scheduling its parent's wake.
+  // The parent still owes that follow-up even between those transactions.
+  (task.status !== "idle" &&
+    (task.completionDelivery?.state === "pending" || task.completionDelivery?.state === "claimed"));
+
+/**
+ * A follow-up task waits only on subagents its own runs started. Background work is not
+ * attributable to a run, and its wakes become follow-ups of their own.
+ */
+export function delegatedFollowupProgress(
+  projection: FollowupAttributionProjection & {
+    readonly subagents: ReadonlyArray<
+      Pick<
+        OrchestrationV2ThreadProjection["subagents"][number],
+        "runId" | "status" | "completionDelivery"
+      >
+    >;
+  },
+  taskId: NodeId,
+) {
+  const runs = delegatedFollowupRuns(projection, taskId);
+  const runIds = new Set<RunId | null>(runs.map((run) => run.id));
+  // An untagged wake cancelled before it started produced nothing; the task's last reply stands.
+  const resultRun = runs
+    .filter(
+      (run) =>
+        run.delegatedTaskId !== undefined ||
+        run.startedAt !== null ||
+        !TERMINAL_RUN_STATUSES.has(run.status),
+    )
+    .at(-1);
+  return {
+    runs,
+    resultRun,
+    state:
+      resultRun === undefined || !TERMINAL_RUN_STATUSES.has(resultRun.status)
+        ? ("working" as const)
+        : projection.subagents.some(
+              (task) => runIds.has(task.runId) && subagentHoldsCompletion(task),
+            )
+          ? ("waiting_for_children" as const)
+          : ("result_available" as const),
+  };
+}
+
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
   readonly messages: ReadonlyArray<
@@ -260,8 +389,7 @@ export function delegatedTaskProgress(projection: {
     Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
   >;
 }) {
-  const terminal = (status: string) =>
-    ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
+  const terminal = (status: string) => TERMINAL_RUN_STATUSES.has(status);
   const monitorRuns = new Set(
     projection.messages
       .filter((message) => message.notification?.source.kind === "monitor")
@@ -274,15 +402,7 @@ export function delegatedTaskProgress(projection: {
     (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
   );
   const children =
-    projection.subagents.some(
-      (task) =>
-        isOrchestrationV2WorkActive(task.status) ||
-        // Publishing a child's result precedes scheduling its parent's wake.
-        // The parent still owes that follow-up even between those transactions.
-        (task.status !== "idle" &&
-          (task.completionDelivery?.state === "pending" ||
-            task.completionDelivery?.state === "claimed")),
-    ) ||
+    projection.subagents.some(subagentHoldsCompletion) ||
     projection.providerThreads.some((thread) =>
       backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
     );

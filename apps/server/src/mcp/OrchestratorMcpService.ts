@@ -90,6 +90,8 @@ import * as Stream from "effect/Stream";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
+  delegatedFollowupProgress,
+  delegatedRunOwners,
   delegatedTaskProgress,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
@@ -500,18 +502,20 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
 const isApprovalRequestKind = Schema.is(ProviderRequestKind);
 
 function pendingTaskApproval(
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests">,
+  child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests" | "messages">,
   taskId: NodeId,
   originalRun: OrchestrationV2Run | undefined,
 ) {
+  const owners = originalRun?.delegatedTaskId === taskId ? delegatedRunOwners(child) : undefined;
   const taskRunIds = new Set(
     child.runs
       .filter(
         (run) =>
           !ThreadManagementService.isTerminalRunStatus(run.status) &&
-          (run.delegatedTaskId === taskId ||
-            // Legacy tasks own only their original run, not later turns in the child thread.
-            (run.delegatedTaskId === undefined && run.id === originalRun?.id)),
+          (owners === undefined
+            ? // Legacy tasks own only their original run, not later turns in the child thread.
+              run.delegatedTaskId === undefined && run.id === originalRun?.id
+            : owners.get(run.id) === taskId),
       )
       .map((run) => run.id),
   );
@@ -538,22 +542,20 @@ function pendingTaskApproval(
 
 /** Every task `directAppOwnedChildTasks` can return, so callers load only those. */
 function directChildTaskIds(
-  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
   returnedRunIds: ReadonlySet<RunId | null>,
 ): ReadonlyArray<NodeId> {
   const ids = new Set<NodeId>();
   if (target.thread.forkedFrom?.type === "node") ids.add(target.thread.forkedFrom.nodeId);
-  for (const run of target.runs) {
-    if (returnedRunIds.has(run.id) && run.delegatedTaskId !== undefined) {
-      ids.add(run.delegatedTaskId);
-    }
+  for (const [runId, taskId] of delegatedRunOwners(target)) {
+    if (returnedRunIds.has(runId)) ids.add(taskId);
   }
   return [...ids];
 }
 
 function directAppOwnedChildTasks(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "subagents">,
-  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
   returnedRunIds: ReadonlySet<RunId | null>,
 ): ReadonlyArray<OrchestrationV2Subagent> {
   if (
@@ -570,10 +572,11 @@ function directAppOwnedChildTasks(
         (target.thread.forkedFrom?.type === "node" ? target.thread.forkedFrom.nodeId : undefined) &&
       task.childThreadId === target.thread.id,
   );
+  const owners = delegatedRunOwners(target);
   const taskIds = new Set(
     target.runs
       .filter((run) => returnedRunIds.has(run.id))
-      .map((run) => run.delegatedTaskId ?? original?.id),
+      .map((run) => owners.get(run.id) ?? original?.id),
   );
   return parent.subagents.filter(
     (task) =>
@@ -586,18 +589,14 @@ function directAppOwnedChildTasks(
 // The child's transfers include the results it sent, so the parent's transfers are never read.
 function taskResultTransfer(
   parentThreadId: ThreadId,
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "contextTransfers">,
+  child: Pick<OrchestrationV2ThreadProjection, "runs" | "messages" | "contextTransfers">,
   task: OrchestrationV2Subagent,
 ) {
   const originalRun = delegatedTaskRun(child, task);
+  const owners = delegatedRunOwners(child);
+  const owner = originalRun?.delegatedTaskId === undefined ? undefined : task.id;
   const resultRunIds = new Set(
-    child.runs
-      .filter(
-        (run) =>
-          run.delegatedTaskId === task.id ||
-          (originalRun?.delegatedTaskId === undefined && run.delegatedTaskId === undefined),
-      )
-      .map((run) => run.id),
+    child.runs.filter((run) => owners.get(run.id) === owner).map((run) => run.id),
   );
   if (originalRun !== undefined) resultRunIds.add(originalRun.id);
   return child.contextTransfers.find(
@@ -1486,19 +1485,12 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);
     const terminalRun = latestTerminalResultRun(childControls, childRun);
-    const progress = delegatedTaskProgress(childControls);
-    const taskResultRun =
+    const progress =
       childRun?.delegatedTaskId === task.id
-        ? childControls.runs
-            .filter((run) => run.delegatedTaskId === task.id)
-            .toSorted((a, b) => b.ordinal - a.ordinal)[0]
-        : progress.resultRun;
-    const taskWorkState =
-      childRun?.delegatedTaskId === task.id
-        ? isTerminalTaskStatus(taskStatusForRun(taskResultRun))
-          ? "result_available"
-          : "working"
-        : progress.state;
+        ? delegatedFollowupProgress(childControls, task.id)
+        : delegatedTaskProgress(childControls);
+    const taskResultRun = progress.resultRun;
+    const taskWorkState = progress.state;
     const resultRunIds = [
       ...new Set(
         [taskResultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
@@ -3040,6 +3032,36 @@ const make = Effect.gen(function* () {
       const returnedRunIds = new Set(
         page.filter((row) => row.sourceThreadId === target.thread.id).map((row) => row.item.runId),
       );
+      // Runs that ran after a follow-up may be its wakes; their wake messages say which.
+      const firstFollowup =
+        parent?.thread.id === target.thread.lineage.parentThreadId
+          ? target.runs.reduce<OrchestrationV2Run | undefined>(
+              (first, run) =>
+                run.delegatedTaskId !== undefined &&
+                (first === undefined || runRanAfter(first, run))
+                  ? run
+                  : first,
+              undefined,
+            )
+          : undefined;
+      const wakeRunIds =
+        firstFollowup === undefined
+          ? []
+          : target.runs
+              .filter((run) => run.delegatedTaskId === undefined && runRanAfter(run, firstFollowup))
+              .map((run) => run.id);
+      const attributed = {
+        ...target,
+        messages:
+          wakeRunIds.length === 0
+            ? []
+            : (yield* threadManagement
+                .getThreadRecords(target.thread.id, ["messages"], {
+                  messageRoles: ["user"],
+                  messageRunIds: wakeRunIds,
+                })
+                .pipe(Effect.mapError(threadManagementFailure))).messages,
+      };
       const tasks =
         parent === undefined
           ? []
@@ -3048,10 +3070,10 @@ const make = Effect.gen(function* () {
                 thread: parent.thread,
                 subagents: yield* loadTasks(
                   parent.thread.id,
-                  directChildTaskIds(target, returnedRunIds),
+                  directChildTaskIds(attributed, returnedRunIds),
                 ),
               },
-              target,
+              attributed,
               returnedRunIds,
             );
       if (
@@ -3061,7 +3083,7 @@ const make = Effect.gen(function* () {
         (input.textOffset ?? 0) === 0
       ) {
         for (const task of tasks) {
-          const transfer = taskResultTransfer(parent.thread.id, target, task);
+          const transfer = taskResultTransfer(parent.thread.id, attributed, task);
           const resultRunId = transfer?.sourcePoint.runId ?? delegatedTaskRun(target, task)?.id;
           const resultRunIds = resultRunId === undefined ? [] : [resultRunId];
           const resultRecords = yield* threadManagement
@@ -3077,7 +3099,11 @@ const make = Effect.gen(function* () {
               parentThreadId: parent.thread.id,
               page,
               task,
-              target: { ...target, ...resultRecords },
+              target: {
+                ...attributed,
+                ...resultRecords,
+                messages: [...attributed.messages, ...resultRecords.messages],
+              },
               maxChars,
             })
           ) {
