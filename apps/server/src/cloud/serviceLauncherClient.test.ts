@@ -132,7 +132,6 @@ it.effect("stops the server when the launcher asks over IPC", () =>
       ),
       { startImmediately: true },
     );
-    yield* Effect.yieldNow;
     host.emit({ type: "stop" });
     yield* Fiber.join(stopped);
   }),
