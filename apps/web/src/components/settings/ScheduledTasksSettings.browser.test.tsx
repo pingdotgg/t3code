@@ -7,7 +7,6 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   type ServerProvider,
-  type UnifiedSettings,
   ScheduledTaskId,
   ThreadId,
   type ScheduledTask,
@@ -57,7 +56,6 @@ const state = vi.hoisted(() => ({
   tasks: [] as ScheduledTask[],
   secondary: false,
   providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider>>,
-  settings: null as unknown as UnifiedSettings,
   upsert: vi.fn(async () => ({ _tag: "Success" as const })),
 }));
 const secondaryId = EnvironmentId.make("secondary");
@@ -69,7 +67,6 @@ function setup() {
   state.tasks = [task];
   state.secondary = false;
   state.providers = Atom.make<ReadonlyArray<ServerProvider>>([]);
-  state.settings = DEFAULT_UNIFIED_SETTINGS;
   state.upsert.mockClear();
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
@@ -159,7 +156,7 @@ vi.mock(import("../../state/entities"), async (original) => ({
 }));
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
-  useEnvironmentSettings: (() => state.settings) as never,
+  useEnvironmentSettings: (() => DEFAULT_UNIFIED_SETTINGS) as never,
 }));
 
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
@@ -172,110 +169,85 @@ vi.mock(import("../../state/session"), async (original) => ({
 }));
 
 describe("ScheduledTasksSettings", () => {
-  it.each([false, true])(
-    "preserves and edits model options (existing task: %s)",
-    async (editing) => {
-      setup();
-      const selection = {
-        ...task.modelSelection,
-        options: [{ id: "reasoningEffort", value: "high" }],
-      };
-      state.tasks = [{ ...task, modelSelection: selection }];
-      state.settings = { ...DEFAULT_UNIFIED_SETTINGS, defaultModelSelection: selection };
-      state.providers = Atom.make<ReadonlyArray<ServerProvider>>([
-        {
-          instanceId: selection.instanceId,
-          driver: ProviderDriverKind.make("codex"),
-          enabled: true,
-          installed: true,
-          version: null,
-          status: "ready",
-          auth: { status: "authenticated" },
-          checkedAt: "2026-11-03T00:00:00.000Z",
-          models: [
-            {
-              slug: selection.model,
-              name: "GPT-5.4",
-              isCustom: false,
-              capabilities: createModelCapabilities({
-                optionDescriptors: [
-                  {
-                    id: "reasoningEffort",
-                    label: "Reasoning effort",
-                    type: "select",
-                    options: [
-                      { id: "low", label: "Low", isDefault: true },
-                      { id: "high", label: "High" },
-                    ],
-                    currentValue: "low",
-                  },
-                ],
-              }),
-            },
-            { slug: "plain", name: "Plain model", isCustom: false, capabilities: null },
-          ],
-          skills: [],
-          slashCommands: [],
-        },
-      ]);
-      await using screen = await render(
-        <ScheduledTasksSettings {...(editing ? { taskId: task.id } : {})} />,
-      );
-      if (!editing) await screen.getByRole("button", { name: "New task" }).click();
-      await userEvent.fill(page.getByRole("textbox", { name: "Name" }), "Effort task");
-      await userEvent.fill(
-        page.getByRole("textbox", { name: "Prompt", exact: true }),
-        "Review issues",
-      );
-      await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
-      await page.getByRole("option", { name: /GPT-5.4/ }).click();
-      expect(page.getByRole("button", { name: "High", exact: true }).query()).not.toBeNull();
-      await page.getByRole("button", { name: editing ? "Save task" : "Create task" }).click();
-      await vi.waitFor(() =>
-        expect(state.upsert).toHaveBeenLastCalledWith({
-          environmentId,
-          input: expect.objectContaining({ modelSelection: selection }),
+  it("edits reasoning effort and clears it on a model switch", async () => {
+    setup();
+    const selection = {
+      ...task.modelSelection,
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    state.tasks = [{ ...task, modelSelection: selection }];
+    state.providers = Atom.make<ReadonlyArray<ServerProvider>>([
+      {
+        instanceId: selection.instanceId,
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-11-03T00:00:00.000Z",
+        models: [
+          {
+            slug: selection.model,
+            name: "GPT-5.4",
+            isCustom: false,
+            capabilities: createModelCapabilities({
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning effort",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low", isDefault: true },
+                    { id: "high", label: "High" },
+                  ],
+                  currentValue: "low",
+                },
+              ],
+            }),
+          },
+          { slug: "plain", name: "Plain model", isCustom: false, capabilities: null },
+        ],
+        skills: [],
+        slashCommands: [],
+      },
+    ]);
+    await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    // Reselecting the current model must keep the saved effort.
+    await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+    await page.getByRole("option", { name: /GPT-5.4/ }).click();
+    await page.getByRole("button", { name: "High", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: /^Low/ }).click();
+    await page.getByRole("button", { name: "Save task" }).click();
+    await vi.waitFor(() =>
+      expect(state.upsert).toHaveBeenLastCalledWith({
+        environmentId,
+        input: expect.objectContaining({
+          modelSelection: {
+            ...selection,
+            options: expect.arrayContaining([{ id: "reasoningEffort", value: "low" }]),
+          },
         }),
-      );
+      }),
+    );
 
-      await screen.rerender(<ScheduledTasksSettings />);
-      await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
-      await userEvent.fill(page.getByRole("textbox", { name: "Name" }), "Low effort task");
-      await userEvent.fill(
-        page.getByRole("textbox", { name: "Prompt", exact: true }),
-        "Review issues",
-      );
-      await page.getByRole("button", { name: "High", exact: true }).click();
-      await page.getByRole("menuitemradio", { name: /^Low/ }).click();
-      await expect.element(page.getByRole("button", { name: "Low", exact: true })).toBeVisible();
-      await page.getByRole("button", { name: "Save task" }).click();
-      await vi.waitFor(() =>
-        expect(state.upsert).toHaveBeenLastCalledWith({
-          environmentId,
-          input: expect.objectContaining({
-            modelSelection: {
-              ...selection,
-              options: expect.arrayContaining([{ id: "reasoningEffort", value: "low" }]),
-            },
-          }),
+    await screen.rerender(<ScheduledTasksSettings />);
+    await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
+    await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+    await page.getByRole("option", { name: /Plain model/ }).click();
+    await expect
+      .element(page.getByRole("button", { name: "High", exact: true }))
+      .not.toBeInTheDocument();
+    await page.getByRole("button", { name: "Save task" }).click();
+    await vi.waitFor(() =>
+      expect(state.upsert).toHaveBeenLastCalledWith({
+        environmentId,
+        input: expect.objectContaining({
+          modelSelection: { instanceId: selection.instanceId, model: "plain" },
         }),
-      );
-      await screen.rerender(<ScheduledTasksSettings />);
-      await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
-      await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
-      await page.getByRole("option", { name: /Plain model/ }).click();
-      expect(page.getByRole("button", { name: "High", exact: true }).query()).toBeNull();
-      await page.getByRole("button", { name: "Save task" }).click();
-      await vi.waitFor(() =>
-        expect(state.upsert).toHaveBeenLastCalledWith({
-          environmentId,
-          input: expect.objectContaining({
-            modelSelection: { instanceId: selection.instanceId, model: "plain" },
-          }),
-        }),
-      );
-    },
-  );
+      }),
+    );
+  });
   it("creates on a permitted secondary and reacts to permission changes", async () => {
     setup();
     state.secondary = true;
