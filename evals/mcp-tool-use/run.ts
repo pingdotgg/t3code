@@ -1797,7 +1797,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
 const CARD_PURPOSES: ReadonlyArray<CardPurpose> = ["opening-check", "explain-back"];
 const BOUND = /^([<>]=)(-?\d+(?:\.\d+)?)$/;
 /**
- * Partial match: `~text` is a case-insensitive substring, `re:pattern` is a case-insensitive regex, `<=N` / `>=N` bound a number, and `null`
+ * Partial match: `~text` is a case-insensitive substring, `<=N` / `>=N` bound a number, and `null`
  * matches a missing or null value.
  */
 const matches = (expected: unknown, actual: unknown): boolean => {
@@ -1809,9 +1809,6 @@ const matches = (expected: unknown, actual: unknown): boolean => {
   }
   if (typeof expected === "string" && expected.startsWith("~")) {
     return valueText(actual).toLowerCase().includes(expected.slice(1).toLowerCase());
-  }
-  if (typeof expected === "string" && expected.startsWith("re:")) {
-    return new RegExp(expected.slice(3), "i").test(valueText(actual));
   }
   if (Array.isArray(expected)) {
     return (
