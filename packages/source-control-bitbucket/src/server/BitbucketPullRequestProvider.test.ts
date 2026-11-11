@@ -1,5 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -293,6 +294,30 @@ it.effect(
 
       expect(statReads).toBe(7);
     }),
+);
+
+it.effect("serves only Bitbucket Cloud hosts unless an API base url is configured", () =>
+  Effect.gen(function* () {
+    const servedHosts = (env: Record<string, string>) =>
+      make.pipe(
+        Effect.map(({ servesHost }) =>
+          ["bitbucket.org", "altssh.bitbucket.org", "bitbucket.example.com"].filter(
+            (host) => servesHost?.(host) === true,
+          ),
+        ),
+        Effect.provide(
+          Layer.merge(
+            Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
+          ),
+        ),
+      );
+
+    expect(yield* servedHosts({})).toEqual(["bitbucket.org", "altssh.bitbucket.org"]);
+    expect(
+      yield* servedHosts({ T3CODE_BITBUCKET_API_BASE_URL: "https://bitbucket.example.com/api" }),
+    ).toEqual(["bitbucket.org", "altssh.bitbucket.org", "bitbucket.example.com"]);
+  }),
 );
 
 describe("bitbucketProviderFailure", () => {
