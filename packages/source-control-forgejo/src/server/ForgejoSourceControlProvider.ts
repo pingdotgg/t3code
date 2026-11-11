@@ -388,7 +388,18 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const repo = yield* cli.resolveRepository(input);
         return cloneUrls(
-          yield* request({ ...input, path: repositoryPath(repo.repository) }, RepositorySchema),
+          yield* request(
+            { ...input, path: repositoryPath(repo.repository) },
+            RepositorySchema,
+          ).pipe(
+            Effect.mapError((error) => {
+              if (error.reason !== "not-found") return error;
+              return new ForgejoCli.ForgejoCliError({
+                ...error,
+                userFacingDetail: SourceControlProvider.repositoryNotFoundDetail(repo.repository),
+              });
+            }),
+          ),
         );
       },
       (effect, input) => effect.pipe(mapError("getRepositoryCloneUrls", input.cwd)),

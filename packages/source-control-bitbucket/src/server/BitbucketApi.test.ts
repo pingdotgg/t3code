@@ -20,6 +20,7 @@ import type * as SourceControlHost from "@t3tools/source-control-core/server/Sou
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
+import { userFacingSourceControlDetail } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 type HostGit = SourceControlHost.SourceControlHost["Service"]["git"];
 
@@ -734,6 +735,26 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
       host: Option.some("bitbucket.org"),
       detail: Option.some("An access token is configured."),
     });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each([404, 403])("exposes repository lookup details only for HTTP 404 (%s)", (status) => {
+  const { layer } = makeLayer({
+    response: () => new Response("raw upstream response must not be shown", { status }),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    for (const repository of ["team/project", "https://bitbucket.org/team/project.git"]) {
+      const error = yield* bitbucket
+        .getRepositoryCloneUrls({ cwd: "/repo", repository })
+        .pipe(Effect.flip);
+      assert.strictEqual(
+        userFacingSourceControlDetail(error),
+        status === 404
+          ? "Repository team/project was not found. Check the owner and name and try again."
+          : undefined,
+      );
+    }
   }).pipe(Effect.provide(layer));
 });
 
