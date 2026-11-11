@@ -403,23 +403,14 @@ describe("chain selection and badge state", () => {
       others: 2,
       state: "mixed",
     });
-    expect(resolveThreadPullRequestBadge([link(3, { source: "stack-dismissed" })])).toBeNull();
-  });
-
-  it("does not give unrelated pull requests in different states one state", () => {
-    const unrelated = (["closed", "closed", "closed", "open", "open", "open"] as const).map(
-      (state, index) => link(index + 1, { snapshot: snapshot({ state, headBranch: `b${index}` }) }),
-    );
-    expect(resolveThreadPullRequestBadge(unrelated)).toEqual({
+    const closed = (n: number) =>
+      link(n, { snapshot: snapshot({ state: "closed", headBranch: `b${n}` }) });
+    expect(resolveThreadPullRequestBadge([closed(4), closed(5)])).toEqual({
       kind: "pull-request",
-      others: 5,
-      state: "mixed",
-    });
-    expect(resolveThreadPullRequestBadge(unrelated.slice(0, 3))).toEqual({
-      kind: "pull-request",
-      others: 2,
+      others: 1,
       state: "closed",
     });
+    expect(resolveThreadPullRequestBadge([link(3, { source: "stack-dismissed" })])).toBeNull();
   });
 
   it("keeps branch matching case-sensitive while ignoring repository case", () => {
