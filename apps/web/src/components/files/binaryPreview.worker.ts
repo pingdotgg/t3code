@@ -76,7 +76,7 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
         : "";
     const path =
       attributes.path || longPath || [prefix, text(offset, 100)].filter(Boolean).join("/");
-    const linkpath = attributes.linkpath || longLink || text(offset + 157, 100);
+    const linkpath = attributes.linkpath ?? longLink ?? text(offset + 157, 100);
     if (!metadata) {
       longLink = null;
       longPath = null;
@@ -117,7 +117,7 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
         const value = record.slice(equals + 1);
         if (["path", "linkpath", "size", "mtime"].includes(key)) {
           if (type === "x") localPax[key] = value;
-          else if (value) globalPax[key] = value;
+          else if (value || key === "linkpath") globalPax[key] = value;
           else delete globalPax[key];
         }
         cursor = end;
@@ -129,7 +129,7 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
         (attributes.mtime ? Number(attributes.mtime) : number(offset + 136, 12)) * 1000;
       const date = new Date(modified);
       // TAR hard links name an earlier member; sharing its bytes also resolves chains in one pass.
-      const linked = type === "1" ? files.get(linkpath) : undefined;
+      const linked = type === "1" && linkpath ? files.get(linkpath) : undefined;
       if (type === "1" && !linked)
         throw new Error("A TAR hard link does not refer to an earlier file in this archive.");
       entries.push({

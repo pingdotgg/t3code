@@ -199,6 +199,17 @@ describe("bounded binary previews", () => {
         [block("a.txt", encode(""), "1", 0, "b.txt"), block("b.txt", encode(""), "1", 0, "a.txt")],
         [block("folder/", encode(""), "5"), block("alias.txt", encode(""), "1", 0, "folder/")],
         [
+          block("original.txt", encode("hello")),
+          block("Local", attributes({ linkpath: "" }), "x"),
+          block("alias.txt", encode(""), "1", 0, "original.txt"),
+        ],
+        [
+          block("original.txt", encode("hello")),
+          block("LongLink", encode("original.txt\0"), "K"),
+          block("Global", attributes({ linkpath: "" }), "g"),
+          block("alias.txt", encode(""), "1", 0, "original.txt"),
+        ],
+        [
           block("replaced.txt", encode("stale")),
           block("replaced.txt", encode(""), "2", 0, "elsewhere.txt"),
           block("alias.txt", encode(""), "1", 0, "replaced.txt"),
