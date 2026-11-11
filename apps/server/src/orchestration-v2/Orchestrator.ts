@@ -5275,6 +5275,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  const ensureSteeringMessage = Effect.fn("Orchestrator.ensureSteeringMessage")(function* (
+    command: Extract<
+      OrchestrationV2Command,
+      { readonly type: "message.dispatch" | "queued-message.promote-to-steer" }
+    >,
+    message: Pick<OrchestrationV2ConversationMessage, "text" | "attachments" | "context">,
+  ) {
+    if (isNativeMaintenanceCommand(message)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause:
+          message.text.trim().toLowerCase() === "/compact"
+            ? "Context compaction must run as a separate turn. Queue it or wait for the active turn to finish."
+            : "Signing out must run as a separate turn. Queue it or wait for the active turn to finish.",
+      });
+    }
+    if (parseGoalCommand(message) !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause:
+          "Goal commands must run as a separate turn. Queue it or wait for the active turn to finish.",
+      });
+    }
+  });
+
   const dispatchSteerIntoRun = Effect.fn("Orchestrator.dispatchSteerIntoRun")(function* (input: {
     readonly command: Extract<
       OrchestrationV2Command,
@@ -5318,24 +5345,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Target run ${input.targetRunId} was not found.`,
       });
     }
-    if (isNativeMaintenanceCommand(input)) {
-      return yield* new OrchestratorDispatchError({
-        commandId: input.command.commandId,
-        commandType: input.command.type,
-        cause:
-          input.text.trim().toLowerCase() === "/compact"
-            ? "Context compaction must run as a separate turn. Queue it or wait for the active turn to finish."
-            : "Signing out must run as a separate turn. Queue it or wait for the active turn to finish.",
-      });
-    }
-    if (parseGoalCommand(input) !== null) {
-      return yield* new OrchestratorDispatchError({
-        commandId: input.command.commandId,
-        commandType: input.command.type,
-        cause:
-          "Goal commands must run as a separate turn. Queue it or wait for the active turn to finish.",
-      });
-    }
+    yield* ensureSteeringMessage(input.command, input);
     const targetMessage = input.projection.messages.find(
       (message) => message.id === targetRun.userMessageId,
     );
@@ -6547,6 +6557,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             capabilities,
           })
           .pipe(mapDispatchError(command));
+        yield* ensureSteeringMessage(command, command);
         steerWhenReadyRunId = target.id;
         dispatchMode = { type: "queue_after_active" };
       }
@@ -6611,6 +6622,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const incomingMessage = { ...command, delegatedCompletion };
     if (
       shouldQueue &&
+      steerWhenReadyRunId === undefined &&
       command.modelSelection === undefined &&
       queuedRunStop === undefined &&
       !followsCurrentConversation(incomingMessage) &&
@@ -10410,6 +10422,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (turn) => turn.runAttemptId === target.activeAttemptId && turn.status === "running",
         ))
     ) {
+      yield* ensureSteeringMessage(command, queuedMessage);
       const adapter = yield* providerAdapters
         .get(target.providerInstanceId)
         .pipe(mapDispatchError(command));
@@ -14664,7 +14677,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             for (const queued of pending) {
               yield* dispatchWithReceiptEffect({
                 type: "queued-message.promote-to-steer",
-                commandId: CommandId.make(`command:deferred-steer:${queued.id}:${run.id}`),
+                commandId: CommandId.make(
+                  `command:deferred-steer:${queued.id}:${run.id}:${turn.runAttemptId}`,
+                ),
                 threadId,
                 queuedRunId: queued.id,
                 targetRunId: run.id,
