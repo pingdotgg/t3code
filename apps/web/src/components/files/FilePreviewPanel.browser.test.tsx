@@ -7,7 +7,11 @@ import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
-import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
+import {
+  createWorkspaceFocusController,
+  startWorkspaceFocus,
+  workspaceAreaProps,
+} from "~/lib/workspaceFocus";
 
 const state = vi.hoisted(() => ({
   file: null as ProjectReadFileResult | null,
@@ -55,6 +59,18 @@ vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
   useWorkspaceMutationRefresh: vi.fn(),
 }));
 vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
+vi.mock(import("./FileBrowserPanel"), () => ({
+  default: () => (
+    <div role="tree">
+      <button type="button" role="treeitem" data-item-path="src/">
+        src
+      </button>
+      <button type="button" role="treeitem" data-item-path="server.ts">
+        server.ts
+      </button>
+    </div>
+  ),
+}));
 vi.mock(import("../DiffWorkerPoolProvider"), () => ({
   DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => <>{children}</>,
 }));
@@ -180,6 +196,44 @@ describe("source file focus", () => {
       isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
     );
     await vi.waitFor(() => expect(deepActiveElement()).toBeInstanceOf(HTMLInputElement));
+  });
+
+  it("focuses the editor when a file row is clicked or activated with Enter", async () => {
+    using _settings = setup();
+    localStorage.setItem("t3code.fileExplorerOpen", "true");
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    state.file = {
+      relativePath: "server.ts",
+      contents: "const server = 1;\n",
+      byteLength: 18,
+      truncated: false,
+    };
+    await using screen = await render(
+      <div {...workspaceAreaProps("panel", 1, "Workspace panel")}>
+        <div data-right-panel-surface-content>{filePreview("server.ts")}</div>
+      </div>,
+    );
+    using _focus = {
+      [Symbol.dispose]: startWorkspaceFocus({ subscribe: () => () => {} } as never),
+    };
+    const editorHasFocus = () => expect(deepActiveElement()?.matches("[data-content]")).toBe(true);
+    const folderRow = screen.getByRole("treeitem", { name: "src" });
+    const fileRow = screen.getByRole("treeitem", { name: "server.ts" });
+
+    (folderRow.element() as HTMLElement).focus();
+    await userEvent.keyboard("{Enter}");
+    expect(document.activeElement).toBe(folderRow.element());
+
+    await userEvent.click(fileRow);
+    await vi.waitFor(editorHasFocus);
+
+    (fileRow.element() as HTMLElement).focus();
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(editorHasFocus);
   });
 });
 
