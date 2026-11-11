@@ -6538,12 +6538,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
       if (
-        target?.status === "preparing" ||
-        target?.status === "starting" ||
-        (target?.status === "running" &&
-          !projection.providerTurns.some(
-            (turn) => turn.runAttemptId === target.activeAttemptId && turn.status === "running",
-          ))
+        (target?.status === "preparing" ||
+          target?.status === "starting" ||
+          (target?.status === "running" &&
+            !projection.providerTurns.some(
+              (turn) => turn.runAttemptId === target.activeAttemptId && turn.status === "running",
+            ))) &&
+        !(yield* stopReachedRun(command, command.threadId, target.id))
       ) {
         const adapter = yield* providerAdapters
           .get(target.providerInstanceId)
@@ -10415,12 +10416,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (
-      target?.status === "preparing" ||
-      target?.status === "starting" ||
-      (target?.status === "running" &&
-        !projection.providerTurns.some(
-          (turn) => turn.runAttemptId === target.activeAttemptId && turn.status === "running",
-        ))
+      (target?.status === "preparing" ||
+        target?.status === "starting" ||
+        (target?.status === "running" &&
+          !projection.providerTurns.some(
+            (turn) => turn.runAttemptId === target.activeAttemptId && turn.status === "running",
+          ))) &&
+      !(yield* stopReachedRun(command, command.threadId, target.id))
     ) {
       yield* ensureSteeringMessage(command, queuedMessage);
       const adapter = yield* providerAdapters
@@ -14683,7 +14685,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 threadId,
                 queuedRunId: queued.id,
                 targetRunId: run.id,
-              });
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Failed to deliver a deferred steer", {
+                    threadId,
+                    runId: queued.id,
+                    cause,
+                  }),
+                ),
+              );
             }
           },
           (effect, stored) => threadDispatch.withLock(stored.event.threadId, effect),

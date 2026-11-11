@@ -886,6 +886,30 @@ it.effect.each(
             },
           ],
         });
+        if (status === "preparing" && !direct) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("edited-steer"),
+            threadId,
+            messageId: MessageId.make("message:edited-steer"),
+            text: "edit this steer",
+            attachments: [],
+            deliveryIntent: "steer",
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const edited = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (candidate) => candidate.userMessageId === MessageId.make("message:edited-steer"),
+          )!;
+          yield* orchestrator.dispatch({
+            type: "queued-run.edit",
+            commandId: CommandId.make("edit-steer-to-compact"),
+            threadId,
+            runId: edited.id,
+            text: "/compact",
+          });
+        }
         if (direct) {
           yield* orchestrator.dispatch({
             type: "message.dispatch",
@@ -1981,61 +2005,90 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
 );
 
 // regression: #32891 a restart that Stop already reached is lost
-it.effect("refuses a steer but starts a restart sent into a run that Stop reached", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { started, steered, layer, startFirstTurn } =
-        yield* nextTurnSelectionHarness("restart-after-stop");
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const threadId = yield* startFirstTurn;
-        const first = started[0]!;
-        // The worker has not delivered the interrupt yet, so the run still reads as running.
-        yield* orchestrator.dispatch({
-          type: "run.interrupt",
-          commandId: CommandId.make("stop"),
-          threadId,
-          runId: first.runId,
-        });
-        const steerError = yield* orchestrator
-          .dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make("steer"),
+it.effect.each([false, true])(
+  "refuses a steer after Stop (provider turn ready: %s)",
+  (providerTurnReady) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { started, steered, layer, startFirstTurn } =
+          yield* nextTurnSelectionHarness("restart-after-stop");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = yield* startFirstTurn;
+          const first = started[0]!;
+          // The worker has not delivered the interrupt yet, so the run still reads as running.
+          yield* orchestrator.dispatch({
+            type: "run.interrupt",
+            commandId: CommandId.make("stop"),
             threadId,
-            messageId: MessageId.make("message:steer"),
-            text: "steer",
+            runId: first.runId,
+          });
+          const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+          if (!providerTurnReady) {
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("turn-not-ready"),
+                  type: "provider-turn.updated",
+                  threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: { ...turn, status: "pending" },
+                },
+              ],
+            });
+          }
+          const steerError = yield* orchestrator
+            .dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("steer"),
+              threadId,
+              messageId: MessageId.make("message:steer"),
+              text: "steer",
+              attachments: [],
+              modelSelection: runSelection,
+              dispatchMode: { type: "steer_active", targetRunId: first.runId },
+              createdBy: "user",
+              creationSource: "web",
+            })
+            .pipe(Effect.flip);
+          assert.equal(steerError._tag, "OrchestratorDispatchError");
+          assert.include(String(steerError.cause), "is stopping and cannot be steered");
+          if (!providerTurnReady) {
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("restore-ready-turn"),
+                  type: "provider-turn.updated",
+                  threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: turn,
+                },
+              ],
+            });
+          }
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("restart"),
+            threadId,
+            messageId: MessageId.make("message:restart"),
+            text: "restart",
             attachments: [],
             modelSelection: runSelection,
-            dispatchMode: { type: "steer_active", targetRunId: first.runId },
+            dispatchMode: { type: "restart_active", targetRunId: first.runId },
             createdBy: "user",
             creationSource: "web",
-          })
-          .pipe(Effect.flip);
-        assert.equal(steerError._tag, "OrchestratorDispatchError");
-        assert.include(String(steerError.cause), "is stopping and cannot be steered");
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("restart"),
-          threadId,
-          messageId: MessageId.make("message:restart"),
-          text: "restart",
-          attachments: [],
-          modelSelection: runSelection,
-          dispatchMode: { type: "restart_active", targetRunId: first.runId },
-          createdBy: "user",
-          creationSource: "web",
-        });
-        yield* worker.drain();
+          });
+          yield* worker.drain();
 
-        assert.deepEqual(steered, []);
-        assert.deepEqual(
-          started.map((turn) => turn.message.text),
-          ["first", "restart"],
-        );
-      }).pipe(Effect.provide(layer));
-    }),
-  ),
+          assert.deepEqual(steered, []);
+          assert.deepEqual(
+            started.map((turn) => turn.message.text),
+            ["first", "restart"],
+          );
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
 );
 
 // regression: #32891 a restart that arrives after the turn ended is lost
