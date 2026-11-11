@@ -609,16 +609,21 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A roster member no proof has bound yet, as after an upgrade. Such a member may still be
-   * proven from any of the owner's nodes by a side that holds the session the other side issued
-   * it before the upgrade: the token ties the proof to the machine that was linked, so the first
-   * node to answer cannot take its place. The proof then binds it.
+   * An unbound member's handshake-made link, whose addresses whois proved when it was made.
+   * Continuity proves the member only there, never at scanned or hinted addresses. A pairing-code
+   * link names its own environment id, so it never counts.
    */
-  const isUnboundMember = (environmentId: EnvironmentId) =>
-    membership.member(environmentId).pipe(
+  const historicalTailnetLink = Effect.fn("TailnetDevices.historicalTailnetLink")(function* (
+    environmentId: EnvironmentId,
+  ) {
+    const unbound = yield* membership.member(environmentId).pipe(
       Effect.map((found) => Option.isSome(found) && found.value.nodeId === null),
       Effect.orElseSucceed(() => false),
     );
+    if (!unbound) return Option.none<PeerLink>();
+    const link = yield* links.get(environmentId).pipe(Effect.orElseSucceed(() => Option.none()));
+    return Option.filter(link, (found) => found.origin === "tailnet" && found.urls.length > 0);
+  });
 
   /**
    * The first of `urls` that Tailscale proves is one of the owner's nodes and answers as
@@ -730,14 +735,18 @@ const make = Effect.gen(function* () {
         message: `${device.label} is revoked. Restore it to link it again.`,
       });
     }
-    const continuity = (yield* isUnboundMember(device.environmentId))
+    const historical = yield* historicalTailnetLink(device.environmentId);
+    const continuity = Option.isSome(historical)
       ? yield* links.resolve(device.environmentId).pipe(Effect.option)
       : Option.none<PeerLinks.ResolvedPeerLink>();
+    // The destination is proven before the stored token goes anywhere: only at the link's own
+    // addresses, by whois and descriptor. Binding waits until it grants.
     const { device: issuer } = yield* proveTarget(
-      device,
+      Option.isSome(continuity) && Option.isSome(historical)
+        ? { ...device, urls: historical.value.urls }
+        : device,
       Option.isSome(continuity) ? Option.none() : yield* bindingOf(device.environmentId),
     );
-    if (Option.isSome(continuity)) yield* membership.bindNode(device.environmentId, issuer.nodeId);
     if (!PeerLinks.linkLimitsHold(issuer.descriptor)) {
       return yield* unreachable(
         `${issuer.descriptor.label} runs a T3 Code version that cannot link automatically. Update it.`,
@@ -773,6 +782,7 @@ const make = Effect.gen(function* () {
         message: `${issuer.descriptor.label} refused: ${REFUSAL_MESSAGES[result.reason]}`,
       });
     }
+    if (Option.isSome(continuity)) yield* membership.bindNode(device.environmentId, issuer.nodeId);
     yield* upsertDevice(
       {
         environmentId: device.environmentId,
@@ -903,19 +913,33 @@ const make = Effect.gen(function* () {
         Effect.map(Option.isSome),
         Effect.orElseSucceed(() => false),
       );
+      // Continuity needs this machine's own handshake-made link to the requester, and a session
+      // it issued naming it. The proof then runs only at that link's addresses: the claimed ones
+      // and the session's self-declared id prove nothing on their own.
+      const historical =
+        httpRequest === undefined
+          ? Option.none<PeerLink>()
+          : yield* historicalTailnetLink(requester.environmentId);
       const continuity =
-        httpRequest !== undefined && (yield* isUnboundMember(requester.environmentId))
+        Option.isSome(historical) && httpRequest !== undefined
           ? yield* auth.authenticateMcpClient(httpRequest).pipe(
               Effect.map((caller) => caller.peerEnvironmentId === requester.environmentId),
               Effect.orElseSucceed(() => false),
             )
           : false;
       const proof = yield* proveCaller(
-        requester,
+        continuity && Option.isSome(historical)
+          ? { ...requester, urls: historical.value.urls }
+          : requester,
         continuity ? Option.none() : yield* bindingOf(requester.environmentId),
       );
       if (proof._tag === "refused") return yield* refuse(proof.reason, requester);
       const device = proof.device;
+      const client = yield* clientFor(device.origin).pipe(Effect.orDie);
+      // Nothing is minted until the address's owner says the challenge is its own.
+      const confirmed = yield* confirmAt(device, request.challenge, self);
+      if (Option.isNone(confirmed)) return yield* refuse("unreachable", requester);
+      if (!confirmed.value.accepted) return yield* refuse("grant_rejected", requester);
       if (continuity) {
         const bound = yield* membership.bindNode(requester.environmentId, device.nodeId).pipe(
           Effect.as(true),
@@ -923,11 +947,6 @@ const make = Effect.gen(function* () {
         );
         if (!bound) return yield* refuse("storage", requester);
       }
-      const client = yield* clientFor(device.origin).pipe(Effect.orDie);
-      // Nothing is minted until the address's owner says the challenge is its own.
-      const confirmed = yield* confirmAt(device, request.challenge, self);
-      if (Option.isNone(confirmed)) return yield* refuse("unreachable", requester);
-      if (!confirmed.value.accepted) return yield* refuse("grant_rejected", requester);
       const issued = yield* auth
         .issueMcpClientSession({
           label: `T3 Code · ${device.descriptor.label}`,

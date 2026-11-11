@@ -187,6 +187,7 @@ const serveDeviceOn = (
     const url = yield* Ref.make("http://127.0.0.1:0");
     const grants = yield* Ref.make(0);
     const descriptorReads = yield* Ref.make(0);
+    const bearerRequests = yield* Ref.make(0);
     const context = yield* TailnetDevices.layer.pipe(
       Layer.provideMerge(PeerLinks.layer),
       Layer.provideMerge(EnvironmentAuth.layer),
@@ -242,6 +243,12 @@ const serveDeviceOn = (
           const request = yield* HttpServerRequest.HttpServerRequest;
           if (request.url.startsWith("/api/tailnet-devices/grant")) {
             yield* Ref.update(grants, (count) => count + 1);
+          }
+          if (
+            request.url.startsWith("/api/tailnet-devices/request") &&
+            request.headers.authorization !== undefined
+          ) {
+            yield* Ref.update(bearerRequests, (count) => count + 1);
           }
           if (request.url.startsWith("/.well-known/t3/environment")) {
             yield* Ref.update(descriptorReads, (count) => count + 1);
@@ -300,6 +307,8 @@ const serveDeviceOn = (
       grants,
       /** Descriptor reads this device answered, each one a probe of it. */
       descriptorReads,
+      /** Link requests that reached this device carrying someone's token. */
+      bearerRequests,
       /** Sessions this device issued to other devices. */
       issued: auth
         .listSessions()
@@ -318,9 +327,16 @@ const studio = descriptorOf("env-studio", "Studio");
 const requestAs = (
   issuer: { readonly url: string; readonly descriptor: ExecutionEnvironmentDescriptor },
   requester: { readonly environmentId: string; readonly urls: ReadonlyArray<string> },
+  bearer?: string,
 ) =>
   Effect.gen(function* () {
-    const client = yield* PeerLinks.peerApiClient(yield* HttpClient.HttpClient, issuer.url);
+    const http = yield* HttpClient.HttpClient;
+    const client = yield* PeerLinks.peerApiClient(
+      bearer === undefined
+        ? http
+        : HttpClient.mapRequest(http, HttpClientRequest.bearerToken(bearer)),
+      issuer.url,
+    );
     return yield* client.tailnetDevices.request({
       payload: {
         requester: {
@@ -1473,6 +1489,59 @@ describe("crossing the upgrade", () => {
 
       expect(yield* nodeOf(a, studio.environmentId)).toEqual(Option.some(tailnet.nodeIdOf(b.url)));
       expect(yield* nodeOf(b, laptop.environmentId)).toEqual(Option.some(tailnet.nodeIdOf(a.url)));
+    }),
+  );
+});
+
+describe("crossing the upgrade without trusting a claim", () => {
+  /** Laptop and studio linked by the handshake, then left unbound as migration 017 does. */
+  const upgradedPair = Effect.gen(function* () {
+    const tailnet = yield* makeTailnet;
+    const a = yield* serveDevice(laptop, tailnet);
+    const b = yield* serveDevice(studio, tailnet);
+    // Another of the owner's nodes answers as the studio.
+    const impostor = yield* serveDevice(studio, tailnet);
+    yield* tailnet.join(a.url);
+    yield* tailnet.join(b.url);
+    yield* tailnet.join(impostor.url);
+    yield* knowsMember(b, a, null);
+    yield* admit(tailnet, a, b);
+    yield* a.sql`UPDATE network_members SET node_id = NULL`;
+    yield* b.sql`UPDATE network_members SET node_id = NULL`;
+    const studioNode = a.membership
+      .member(studio.environmentId)
+      .pipe(Effect.map(Option.map((member) => member.nodeId)));
+    return { tailnet, a, b, impostor, studioNode };
+  });
+
+  it.live("a pairing-code session naming a member does not bind another node as it", () =>
+    Effect.gen(function* () {
+      const { a, impostor, studioNode } = yield* upgradedPair;
+      // A read-only code holder names the studio's environment id; codes let it choose.
+      const paired = yield* a.issueLinkSession(studio.environmentId, "read-only");
+
+      const result = yield* requestAs(
+        a,
+        { environmentId: studio.environmentId, urls: [impostor.url] },
+        paired.token,
+      );
+
+      expect(result.outcome).toBe("refused");
+      expect(yield* studioNode).toEqual(Option.some(null));
+    }),
+  );
+
+  it.live("a hinted address is not trusted with the stored token or the binding", () =>
+    Effect.gen(function* () {
+      const { tailnet, a, b, impostor, studioNode } = yield* upgradedPair;
+
+      yield* a.devices.linkIfMine({ url: impostor.url }).pipe(Effect.ignore);
+
+      expect(yield* Ref.get(impostor.bearerRequests)).toBe(0);
+      expect(yield* studioNode).not.toEqual(Option.some(tailnet.nodeIdOf(impostor.url)));
+      // The studio's own address still proves it, and that binds the real node.
+      yield* a.devices.linkIfMine({ url: b.url });
+      expect(yield* studioNode).toEqual(Option.some(tailnet.nodeIdOf(b.url)));
     }),
   );
 });
