@@ -5,8 +5,7 @@ import { TriangleAlertIcon } from "lucide-react";
 import {
   createContext,
   memo,
-  useEffect,
-  useRef,
+  use,
   useState,
   type ComponentProps,
   type CSSProperties,
@@ -17,7 +16,6 @@ import {
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { cn } from "../../lib/utils";
 import { useRightPanelStore } from "../../rightPanelStore";
-import { usePreparedConnection } from "../../state/session";
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -74,6 +72,8 @@ const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
 );
 export const MarkdownLinkContext = createContext(false);
+/** The thread's workspace mutation id, so a host image the agent rewrites gets a fresh URL. */
+export const WorkspaceMutationIdContext = createContext<string | null | undefined>(undefined);
 
 function expandableMarkdownImageProps(
   onImageExpand: ((preview: ExpandedImagePreview) => void) | undefined,
@@ -341,44 +341,19 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly workspaceMutationId?: string | null | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
-  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
-  const connectionReady = usePreparedConnection(props.environmentId)._tag === "Some";
   const resource = props.resource;
-  const refreshToken = JSON.stringify([props.environmentId, resource, props.workspaceMutationId]);
-  const handledRefreshToken = useRef<string | null | undefined>(undefined);
-  const assetLoading = assetUrl._tag === "Loading" || assetUrl.waiting === true;
-  useEffect(() => {
-    if (!connectionReady) {
-      handledRefreshToken.current = null;
-      return;
-    }
-    if (
-      props.workspaceMutationId === undefined ||
-      props.kind === "video" ||
-      (resource._tag !== "media-file" && resource._tag !== "workspace-file") ||
-      handledRefreshToken.current === refreshToken
-    ) {
-      return;
-    }
-    if (assetLoading) {
-      // Only the initial mount shares a pending request; edits and reconnects need a new one.
-      if (handledRefreshToken.current === undefined) {
-        handledRefreshToken.current = refreshToken;
-      }
-      return;
-    }
-    handledRefreshToken.current = refreshToken;
-    void refreshAssetUrl().catch(() => undefined);
-  }, [
-    assetLoading,
-    connectionReady,
-    props.kind,
-    props.workspaceMutationId,
-    refreshAssetUrl,
-    refreshToken,
-    resource._tag,
-  ]);
+  const threadWorkspaceMutationId = use(WorkspaceMutationIdContext);
+  const workspaceMutationId = props.workspaceMutationId ?? threadWorkspaceMutationId;
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    resource,
+    workspaceMutationId !== undefined &&
+      props.kind !== "video" &&
+      (resource._tag === "media-file" || resource._tag === "workspace-file")
+      ? workspaceMutationId
+      : undefined,
+  );
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const path =
     resource._tag === "media-file"
       ? resource.path

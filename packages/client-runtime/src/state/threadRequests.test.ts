@@ -1,4 +1,11 @@
+import { presentThreadShell } from "./models.ts";
+import { threadKey } from "./entities.ts";
 import {
+  EnvironmentId,
+  EventId,
+  MessageId,
+  ThreadId,
+  type ScopedThreadRef,
   NodeId,
   ProviderSessionId,
   RuntimeRequestId,
@@ -6,16 +13,25 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { AsyncResult } from "effect/reactivity";
+import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
-import { v2Now, v2Projection } from "./orchestrationV2TestFixtures.ts";
+import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
+import { v2Now, v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import {
   createQuestionHistoryProjector,
+  createChildThreadApprovalsAtom,
+  type PendingThreadRequests,
   derivePendingThreadRequests,
   declinePendingApprovals,
   sendApprovalFeedback,
+  makeThreadRequestsResolvedAnnouncer,
+  onThreadRequestsResolved,
+  pruneResolvedUserInputDrafts,
+  resolvedQuestionDraftKeys,
   seedUserInputDraftAnswers,
+  userInputDraftKey,
   type ApprovalResponder,
+  type ThreadRequestsResolved,
   type ThreadPendingApproval,
 } from "./threadRequests.ts";
 
@@ -117,6 +133,81 @@ describe("declining approvals before sending", () => {
   });
 });
 
+describe("pruning resolved user input drafts", () => {
+  const answered = userInputDraftKey("env", "thread", "answered");
+  const pending = userInputDraftKey("env", "thread", "pending");
+  const otherThread = userInputDraftKey("env", "thread-2", "answered");
+  const otherEnvironment = userInputDraftKey("env-2", "thread", "answered");
+  const drafts = {
+    [answered]: 1,
+    [pending]: 2,
+    [otherThread]: 3,
+    [otherEnvironment]: 4,
+  };
+
+  it("drops only the thread's requests that are no longer pending", () => {
+    expect(pruneResolvedUserInputDrafts(drafts, "env", "thread", ["pending"])).toEqual({
+      [pending]: 2,
+      [otherThread]: 3,
+      [otherEnvironment]: 4,
+    });
+  });
+
+  it("returns the same record when nothing resolved", () => {
+    expect(pruneResolvedUserInputDrafts(drafts, "env", "thread", ["answered", "pending"])).toBe(
+      drafts,
+    );
+  });
+});
+
+describe("resolved question draft keys", () => {
+  const prefix = "env:question-thread-";
+  const key = (request: string, question: string) =>
+    `${prefix}${encodeURIComponent(JSON.stringify([request, question]))}`;
+
+  it("returns the thread's keys for requests that are no longer pending", () => {
+    const keys = [
+      key("pending", "first"),
+      key("pending", "second"),
+      key("pending-2", "first"),
+      key("answered", "first"),
+      "env:question-other-thread-x",
+    ];
+    expect(resolvedQuestionDraftKeys(keys, prefix, [RuntimeRequestId.make("pending")])).toEqual([
+      key("pending-2", "first"),
+      key("answered", "first"),
+    ]);
+  });
+});
+
+describe("announcing resolved thread requests", () => {
+  const environmentId = EnvironmentId.make("env");
+  const threadId = v2Projection.thread.id;
+  const first = RuntimeRequestId.make("first");
+  const second = RuntimeRequestId.make("second");
+
+  function record() {
+    const events: ThreadRequestsResolved[] = [];
+    const unsubscribe = onThreadRequestsResolved((event) => events.push(event));
+    return { events, [Symbol.dispose]: unsubscribe };
+  }
+
+  it("announces the first projection, then only when a request leaves pending", () => {
+    using recorder = record();
+    const announce = makeThreadRequestsResolvedAnnouncer(environmentId, threadId);
+
+    announce([first]);
+    announce([first, second]);
+    announce([first, second]);
+    announce([second]);
+
+    expect(recorder.events).toEqual([
+      { environmentId, threadId, pendingRequestIds: [first] },
+      { environmentId, threadId, pendingRequestIds: [second] },
+    ]);
+  });
+});
+
 describe("initial user input drafts", () => {
   const questions = [
     { id: "editor", initialAnswer: "  Proposed commit\n\n" },
@@ -143,6 +234,20 @@ describe("initial user input drafts", () => {
     expect(seedUserInputDraftAnswers(questions, {}).editor).toEqual({
       customAnswer: "  Proposed commit\n\n",
     });
+  });
+
+  it("seeds a question with the id __proto__ as its own draft", () => {
+    const seeded = seedUserInputDraftAnswers(
+      [
+        { id: "__proto__", initialAnswer: "Proposed" },
+        { id: "name", initialAnswer: "Control" },
+      ],
+      {},
+    );
+
+    expect(JSON.stringify(seeded)).toBe(
+      '{"__proto__":{"customAnswer":"Proposed"},"name":{"customAnswer":"Control"}}',
+    );
   });
 });
 const projection: OrchestrationV2ThreadProjection = {
@@ -270,4 +375,264 @@ it("restores old text answers without mutating history or replacing unchanged ro
   expect(row.item).not.toHaveProperty("questionAnswer");
   expect(project(answered)).toBe(result);
   expect(project({ ...answered, visibleTurnItems: [...rows] })[0]).toBe(result[0]);
+});
+
+type QuestionItem = Extract<
+  OrchestrationV2ThreadProjection["turnItems"][number],
+  { readonly type: "user_input_request" }
+>;
+
+describe("question history through exact row replacements", () => {
+  const baseItem = {
+    threadId: v2Projection.thread.id,
+    runId: null,
+    nodeId,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    status: "running" as const,
+    title: null,
+    startedAt: v2Now,
+    completedAt: null,
+    updatedAt: v2Now,
+  };
+  const assistantItem = (ordinal: number, text = "Hel") => ({
+    ...baseItem,
+    id: TurnItemId.make(`assistant-${ordinal}`),
+    ordinal,
+    type: "assistant_message" as const,
+    messageId: MessageId.make(`message-${ordinal}`),
+    text,
+    streaming: true,
+  });
+  const localRow = (
+    item: OrchestrationV2ThreadProjection["turnItems"][number],
+    position: number,
+  ) => ({
+    item,
+    position,
+    sourceItemId: item.id,
+    sourceThreadId: item.threadId,
+    visibility: "local" as const,
+  });
+  const updated = (
+    current: OrchestrationV2ThreadProjection,
+    item: OrchestrationV2ThreadProjection["turnItems"][number],
+  ) =>
+    applyOrchestrationV2ProjectionEvent(current, {
+      id: EventId.make(`event-${item.id}`),
+      type: "turn-item.updated",
+      threadId: current.thread.id,
+      occurredAt: v2Now,
+      payload: item,
+    })!;
+
+  it("reads only the replaced row and leaves the request index alone", () => {
+    const size = 1_000;
+    const counts = { items: 0, requestIds: 0 };
+    const items = Array.from({ length: size }, (_, index) => assistantItem(index));
+    const countedRows = items.map((item, index) => {
+      const row = localRow(item, index);
+      return Object.defineProperty(row, "item", {
+        enumerable: true,
+        get: () => {
+          counts.items += 1;
+          return item;
+        },
+      });
+    });
+    const countedRequests = Array.from({ length: 400 }, (_, index) => {
+      const request = {
+        ...projection.runtimeRequests[0]!,
+        id: RuntimeRequestId.make(`request-${index}`),
+      };
+      return Object.defineProperty(request, "id", {
+        enumerable: true,
+        get: () => {
+          counts.requestIds += 1;
+          return RuntimeRequestId.make(`request-${index}`);
+        },
+      });
+    });
+    const initial: OrchestrationV2ThreadProjection = {
+      ...v2Projection,
+      turnItems: items,
+      visibleTurnItems: countedRows,
+      runtimeRequests: countedRequests,
+    };
+    const project = createQuestionHistoryProjector();
+    const scan = (current: OrchestrationV2ThreadProjection) => {
+      counts.items = 0;
+      counts.requestIds = 0;
+      const result = project(current);
+      return { result, ...counts };
+    };
+    expect(scan(initial)).toMatchObject({ items: size, requestIds: 400 });
+
+    const adjacent = updated(initial, assistantItem(size - 1, "Hello"));
+    const hinted = scan(adjacent);
+    expect(hinted.result).toBe(adjacent.visibleTurnItems);
+    expect(hinted).toMatchObject({ items: 0, requestIds: 0 });
+
+    // A skipped delta has no hint for this exact pair, so it scans again.
+    const skipped = updated(
+      updated(adjacent, assistantItem(size - 1, "Hello t")),
+      assistantItem(size - 1, "Hello there"),
+    );
+    const fallback = scan(skipped);
+    expect(fallback.result).toBe(skipped.visibleTurnItems);
+    expect(fallback).toMatchObject({ items: size - 1, requestIds: 0 });
+  });
+
+  it("matches a full projection through streamed rows, request changes and answers", () => {
+    const question = projection.turnItems[0] as QuestionItem;
+    const resolved = (answers: Record<string, string>) => ({
+      ...projection.runtimeRequests[0]!,
+      status: "resolved" as const,
+      answers,
+    });
+    const explicitRequestId = RuntimeRequestId.make("explicit-question");
+    const explicitAnswer = {
+      requestId: explicitRequestId,
+      answers: { next: "Explicit" },
+      attachmentsByQuestionId: {},
+      questionTextById: { next: "What should happen next?" },
+    };
+    const unanswered: QuestionItem = {
+      ...question,
+      id: TurnItemId.make("explicit-question-item"),
+      ordinal: 1,
+      requestId: explicitRequestId,
+    };
+    const explicit: QuestionItem = { ...unanswered, questionAnswer: explicitAnswer };
+    const explicitRequest = {
+      ...resolved({ next: "From request" }),
+      id: explicitRequestId,
+    };
+    const stream = assistantItem(2);
+    const inherited = {
+      ...localRow({ ...question, id: TurnItemId.make("inherited-question-item") }, 3),
+      visibility: "inherited" as const,
+      sourceThreadId: ThreadId.make("parent-thread"),
+    };
+    const turnItems = [question, explicit, stream];
+    let current: OrchestrationV2ThreadProjection = {
+      ...v2Projection,
+      turnItems,
+      visibleTurnItems: [...turnItems.map(localRow), inherited],
+      runtimeRequests: [projection.runtimeRequests[0]!, explicitRequest],
+    };
+    const project = createQuestionHistoryProjector();
+    const step = (next: OrchestrationV2ThreadProjection) => {
+      current = next;
+      const result = project(next);
+      expect(result).toEqual(createQuestionHistoryProjector()(next));
+      return result;
+    };
+    const answerOf = (rows: ReadonlyArray<{ readonly item: unknown }>, index: number) =>
+      (rows[index]!.item as { readonly questionAnswer?: { readonly answers: unknown } })
+        .questionAnswer?.answers;
+
+    expect(step(current)).toBe(current.visibleTurnItems);
+    expect(step(updated(current, assistantItem(2, "Hello")))).toBe(current.visibleTurnItems);
+
+    // The last duplicate request wins, and every row asking it gets the answer.
+    const answered = step({
+      ...current,
+      runtimeRequests: [
+        projection.runtimeRequests[0]!,
+        resolved({ next: "Continue" }),
+        explicitRequest,
+      ],
+    });
+    expect(answerOf(answered, 0)).toEqual({ next: "Continue" });
+    expect(answerOf(answered, 1)).toEqual({ next: "Explicit" });
+    expect(answerOf(answered, 3)).toEqual({ next: "Continue" });
+
+    const whileOverlaid = step(updated(current, assistantItem(2, "Hello there")));
+    expect(whileOverlaid[0]).toBe(answered[0]);
+    expect(whileOverlaid[3]).toBe(answered[3]);
+
+    const changedAnswer = step({
+      ...current,
+      runtimeRequests: [resolved({ next: "Stop" }), explicitRequest],
+    });
+    expect(answerOf(changedAnswer, 0)).toEqual({ next: "Stop" });
+
+    const reopened = step({
+      ...current,
+      runtimeRequests: [projection.runtimeRequests[0]!, explicitRequest],
+    });
+    expect(reopened).toBe(current.visibleTurnItems);
+
+    // Dropping an explicit answer falls back to its resolved request.
+    const restored = step(updated(current, unanswered));
+    expect(answerOf(restored, 1)).toEqual({ next: "From request" });
+
+    const retitled: QuestionItem = {
+      ...unanswered,
+      questions: [{ ...question.questions[0]!, question: "Now what?" }],
+    };
+    const retitledRows = step(updated(current, retitled));
+    expect(retitledRows[1]!.item).toMatchObject({
+      questionAnswer: { questionTextById: { next: "Now what?" } },
+    });
+  });
+});
+
+it("loads only child approvals and retains their destination across environments", () => {
+  const local = EnvironmentId.make("local");
+  const remote = EnvironmentId.make("remote");
+  const parent = { environmentId: local, threadId: ThreadId.make("parent") };
+  const childId = ThreadId.make("child");
+  const children = Atom.make(
+    [local, remote].map((environmentId) => ({
+      ...presentThreadShell(environmentId, v2ThreadShell),
+      id: childId,
+      title: environmentId,
+      hasPendingApprovals: true,
+    })),
+  );
+  const details = Atom.family((key: string) =>
+    Atom.make<PendingThreadRequests | null>({
+      approvals: [
+        {
+          requestId: RuntimeRequestId.make(key),
+          requestKind: "command",
+          createdAt: "2026-10-19T00:00:00Z",
+          responseCapability: "live",
+        },
+      ],
+      userInputs: [],
+    }),
+  );
+  const readDetails = vi.fn((ref: ScopedThreadRef) => details(threadKey(ref)));
+  const approvalsAtom = createChildThreadApprovalsAtom({
+    childThreadInputsAtom: () => children,
+    pendingRequestsAtom: readDetails,
+  });
+  const registry = AtomRegistry.make();
+  const unmount = registry.mount(approvalsAtom(parent));
+  const pending = registry.get(approvalsAtom(parent));
+  expect(pending.map((entry) => entry.thread)).toEqual(
+    [local, remote].map((environmentId) => ({ environmentId, threadId: childId })),
+  );
+  expect(pending.map((entry) => entry.title)).toEqual(["local", "remote"]);
+  registry.set(details(threadKey({ environmentId: remote, threadId: childId })), {
+    approvals: [],
+    userInputs: [],
+  });
+  expect(registry.get(approvalsAtom(parent))).toEqual([pending[0]]);
+  readDetails.mockClear();
+  registry.set(
+    children,
+    registry
+      .get(children)
+      .map((child) => ({ ...child, hasPendingApprovals: false, hasPendingUserInput: true })),
+  );
+  expect(registry.get(approvalsAtom(parent))).toEqual([]);
+  expect(readDetails).not.toHaveBeenCalled();
+  unmount();
+  registry.dispose();
 });

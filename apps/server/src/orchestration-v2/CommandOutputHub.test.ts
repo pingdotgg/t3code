@@ -163,8 +163,9 @@ const subscribeFrames = (threadId: ThreadId) =>
 
 const takeFrame = (frames: Queue.Queue<OrchestrationV2CommandOutputFrame | "ended">) =>
   Queue.take(frames).pipe(
-    Effect.flatMap((frame) =>
-      frame === "ended" ? Effect.die("command output stream ended early") : Effect.succeed(frame),
+    Effect.filterOrElse(
+      (frame) => !(frame === "ended"),
+      (_frame) => Effect.die("command output stream ended early"),
     ),
   );
 

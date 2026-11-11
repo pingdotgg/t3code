@@ -34,10 +34,9 @@ export type ProviderMode = "live" | "local";
  * explicit distinction is load-bearing for conflict detection at
  * registration (see `Resource.ts`).
  */
-export const ProviderModePolicy = Context.Reference<boolean | undefined>(
-  "ProviderModePolicy",
-  { defaultValue: () => undefined },
-);
+export const ProviderModePolicy = Context.Reference<boolean | undefined>("ProviderModePolicy", {
+  defaultValue: () => undefined,
+});
 
 /**
  * The same resource (identified by FQN) was registered (`yield*`ed) from two
@@ -48,9 +47,7 @@ export const ProviderModePolicy = Context.Reference<boolean | undefined>(
  * Fix: register the resource once and close over the returned value, or make
  * both registration sites agree.
  */
-export class ConflictingProviderModeError extends Data.TaggedError(
-  "ConflictingProviderModeError",
-)<{
+export class ConflictingProviderModeError extends Data.TaggedError("ConflictingProviderModeError")<{
   message: string;
   fqn: string;
   /** The mode captured at the first registration site (undefined = default). */
@@ -112,8 +109,7 @@ export const hasLocalIdentity = (value: unknown): boolean => {
 export const stampedMode = (row: {
   readonly providerMode?: ProviderMode | undefined;
   readonly attr?: unknown;
-}): ProviderMode =>
-  row.providerMode ?? (hasLocalIdentity(row.attr) ? "local" : "live");
+}): ProviderMode => row.providerMode ?? (hasLocalIdentity(row.attr) ? "local" : "live");
 
 /**
  * Run the wrapped resources **remotely (against the real cloud) even during
@@ -143,14 +139,10 @@ export const stampedMode = (row: {
 export const remote: {
   // Identity-typed so branded effect interfaces (e.g. a Worker-only
   // binding's `BindingEffect`) survive the pipe with their brand intact.
-  (
-    enabled?: boolean,
-  ): <Eff extends Effect.Effect<any, any, any>>(effect: Eff) => Eff;
+  (enabled?: boolean): <Eff extends Effect.Effect<any, any, any>>(effect: Eff) => Eff;
   <R1 = never>(
     enabled: Effect.Effect<boolean, never, R1>,
-  ): <A, E, R2 = never>(
-    effect: Effect.Effect<A, E, R2>,
-  ) => Effect.Effect<A, E, R1 | R2>;
+  ): <A, E, R2 = never>(effect: Effect.Effect<A, E, R2>) => Effect.Effect<A, E, R1 | R2>;
 } = ((enabled: boolean | Effect.Effect<boolean, never, any> = true) =>
   (eff: Effect.Effect<any, any, any>) =>
     eff.pipe(
@@ -167,13 +159,11 @@ export const remote: {
  * 2. Otherwise `AlchemyContext.dev` decides: `dev: true` → `"local"`.
  * 3. Without an AlchemyContext (bare engine tests), default to `"live"`.
  */
-export const defaultProviderMode: Effect.Effect<ProviderMode> = Effect.gen(
-  function* () {
-    if (yield* ProviderModePolicy) return "live" as const;
-    const ctx = yield* Effect.serviceOption(AlchemyContext);
-    return Option.match(ctx, {
-      onNone: () => "live" as const,
-      onSome: (c) => (c.dev ? ("local" as const) : ("live" as const)),
-    });
-  },
-);
+export const defaultProviderMode: Effect.Effect<ProviderMode> = Effect.gen(function* () {
+  if (yield* ProviderModePolicy) return "live" as const;
+  const ctx = yield* Effect.serviceOption(AlchemyContext);
+  return Option.match(ctx, {
+    onNone: () => "live" as const,
+    onSome: (c) => (c.dev ? ("local" as const) : ("live" as const)),
+  });
+});
