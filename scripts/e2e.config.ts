@@ -46,6 +46,11 @@ export const T3_HOME = resolved.home;
 export const MOBILE_T3_HOME = `${T3_HOME}-mobile`;
 export const MOBILE = resolved.mobile;
 const startApp = resolved.startApp;
+/**
+ * The one address e2e opens the web app at and the app is told to bind. Never `localhost`: the
+ * runner and the app can resolve that name to different addresses.
+ */
+const LOOPBACK = "127.0.0.1";
 
 /**
  * Leases a device from the Simlock pool, whose gateway speaks agent-device's lease protocol.
@@ -131,12 +136,12 @@ export default {
       name: "web",
       engine: web({ viewport: { width: 1280, height: 800 } }),
       app: {
-        url: "http://127.0.0.1:0",
+        url: `http://${LOOPBACK}:0`,
         // Vite answers before the server does; this path is proxied to the server.
-        readyUrl: "http://127.0.0.1:{port}/.well-known/t3/environment",
+        readyUrl: `http://${LOOPBACK}:{port}/.well-known/t3/environment`,
         command: {
           executable: resolved.node,
-          args: [startApp, "web", T3_HOME, "{port}"],
+          args: [startApp, "web", T3_HOME, LOOPBACK, "{port}"],
           cwd: APP_DIR,
           startupTimeout: 300_000,
           log: ".e2e/app.log",
