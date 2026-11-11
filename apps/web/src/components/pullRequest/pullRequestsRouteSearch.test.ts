@@ -30,6 +30,12 @@ function matchedSearch(url: string) {
 }
 
 describe("pull requests route search", () => {
+  it("keeps a project member selection without narrowing to its server", () => {
+    const search = matchedSearch("/pull-requests?projectId=main&projectEnvironmentId=env-cups");
+    expect(search?.projectId).toBe("main");
+    expect(search?.projectEnvironmentId).toBe("env-cups");
+    expect(search?.environmentId).toBeUndefined();
+  });
   it("keeps a q the URL parser turned into a number or boolean as text", () => {
     expect(matchedSearch("/pull-requests?q=4089")?.q).toBe("4089");
     expect(matchedSearch("/pull-requests?q=true")?.q).toBe("true");
