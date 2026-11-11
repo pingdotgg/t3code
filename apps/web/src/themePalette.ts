@@ -8,6 +8,7 @@ import "culori/css";
 import { converter, parse } from "culori/fn";
 import {
   BUILT_IN_THEMES,
+  T3_CODE_CLASSIC_THEME,
   EMBER_THEME,
   GROVE_THEME,
   IRIS_THEME,
@@ -32,7 +33,15 @@ import {
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
 
-export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
+export {
+  EMBER_THEME,
+  GROVE_THEME,
+  IRIS_THEME,
+  OCEAN_THEME,
+  T3_CHAT_THEME,
+  T3_CODE_CLASSIC_THEME,
+  THEME_COLOR_ROLES,
+};
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
 
 const T3_CHAT_THEME_ID = "t3-chat" as const;
@@ -1741,6 +1750,27 @@ export function isKnownThemePreference(theme: string): boolean {
 }
 
 export type ThemeHalves = Readonly<{ light?: string; dark?: string }>;
+
+export function themeVariantHalves(
+  theme: ThemePreference,
+  halves: ThemeHalves | null,
+  variantIds: ReadonlyArray<string | null>,
+  nextVariantId: string | null,
+): ThemeHalves | null {
+  const baseId = getThemeDefinition(theme)?.id ?? null;
+  const next: { light?: string; dark?: string } = {};
+  let ownsHalf = false;
+  // Switch both owned halves, or just one when another theme owns the other.
+  // With neither owned, only the card preview changes; applying it is a separate action.
+  for (const appearance of ["light", "dark"] as const) {
+    const owner = halves?.[appearance] ?? baseId;
+    const owned = variantIds.includes(owner);
+    ownsHalf ||= owned;
+    const nextOwner = owned ? nextVariantId : owner;
+    if (nextOwner !== null) next[appearance] = nextOwner;
+  }
+  return ownsHalf ? next : null;
+}
 
 export function parseThemeHalves(raw: string | null): ThemeHalves | null {
   if (!raw) return null;

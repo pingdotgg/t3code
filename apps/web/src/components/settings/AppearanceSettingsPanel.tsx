@@ -263,7 +263,12 @@ export function AppearanceSettingsPanel() {
                     updateSettings({ chatWidth: value });
                 }}
               >
-                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Chat width">
+                <SelectTrigger
+                  variant="well"
+                  size="compact"
+                  className="w-full min-w-0"
+                  aria-label="Chat width"
+                >
                   <SelectValue>{CHAT_WIDTH_LABELS[settings.chatWidth]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -298,7 +303,12 @@ export function AppearanceSettingsPanel() {
                     updateSettings({ effortDisplay: value });
                 }}
               >
-                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Effort display">
+                <SelectTrigger
+                  variant="well"
+                  size="compact"
+                  className="w-full min-w-0"
+                  aria-label="Effort display"
+                >
                   <SelectValue>{EFFORT_DISPLAY_LABELS[settings.effortDisplay]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -385,7 +395,7 @@ export function AppearanceSettingsPanel() {
           {...searchableSetting("panel-animations")}
           description="Set how fast panels open and close."
           control={
-            <div className="grid w-full grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 sm:w-auto sm:grid-cols-[7rem_13rem] sm:gap-4">
+            <div className="grid w-full grid-cols-1 items-center gap-3 sm:w-auto sm:grid-cols-[7rem_13rem] sm:gap-4">
               <PanelAnimationsPreview durationMs={settings.panelAnimationDurationMs} />
               <div className="flex w-full items-center gap-3">
                 <output

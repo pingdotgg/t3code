@@ -54,6 +54,7 @@ import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures
 import {
   completeSidebarRouteReveal,
   pendingSidebarRouteReveal,
+  observeSidebarDraftPromotion,
   resolveSidebarRouteReveal,
 } from "./sidebar/routeReveal";
 
@@ -640,7 +641,28 @@ describe("getFallbackThreadIdAfterDelete", () => {
       { snoozedUntil: "2099-01-01T00:00:00.000Z", snoozedAt: "2026-03-09T10:06:00.000Z" },
     ],
     ["settled", { settledOverride: "settled", settledAt: "2026-03-09T10:06:00.000Z" }],
-  ] as const)("skips a %s thread parked on its shelf", (_state, parked) => {
+    [
+      "side chat",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("thread-visible"),
+          parentThreadId: ThreadId.make("thread-visible"),
+          relationshipToParent: "fork",
+          sideChat: true,
+        },
+      },
+    ],
+    [
+      "subagent",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("thread-visible"),
+          parentThreadId: ThreadId.make("thread-visible"),
+          relationshipToParent: "subagent",
+        },
+      },
+    ],
+  ] as const)("skips a %s thread the sidebar does not list", (_state, parked) => {
     const fallbackThreadId = getFallbackThreadIdAfterDelete({
       threads: [
         makeThread({
@@ -1473,6 +1495,21 @@ describe("resolveSidebarRouteReveal", () => {
     expect(
       resolveSidebarRouteReveal({
         reveal: { observedKey: hiddenKey, pendingKey: null },
+        routeKey: hiddenKey,
+        isSearching: false,
+        scopedProjectKeys,
+        delegatedUnderParent: new Set(),
+        findThread,
+      }),
+    ).toEqual({ pendingKey: null, widensScope: false });
+  });
+
+  it("never reveals the thread an open draft became", () => {
+    const reveal = { observedKey: "environment-test:other", pendingKey: null };
+    observeSidebarDraftPromotion(reveal, hiddenKey);
+    expect(
+      resolveSidebarRouteReveal({
+        reveal,
         routeKey: hiddenKey,
         isSearching: false,
         scopedProjectKeys,

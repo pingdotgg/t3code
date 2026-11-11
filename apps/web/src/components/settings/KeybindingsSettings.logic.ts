@@ -60,6 +60,7 @@ export type KeybindingCommandOption = KeybindingCommand;
 const CORE_WHEN_VARIABLES = [
   "terminalFocus",
   "terminalOpen",
+  "previewOpen",
   "isWeb",
   "isDesktop",
   "true",
@@ -367,6 +368,7 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "view.reopenClosed": "Reopen closed tab",
   "pullRequest.copyNumber": "Copy pull request number",
   "diff.toggle": "Toggle diff panel",
+  "pullRequests.toggle": "Toggle linked pull requests",
   "preview.toggle": "Toggle browser",
   "preview.refresh": "Reload browser",
   "preview.focusUrl": "Focus browser address",

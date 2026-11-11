@@ -401,6 +401,7 @@ describe("deriveMessagesTimelineRows", () => {
                     status: "superseded" as const,
                     attemptOrdinal: 0,
                     rootNodeId: "old-root" as never,
+                    startedAt: null,
                     completedAt: null,
                   },
                 }
@@ -3038,6 +3039,7 @@ describe("v2 run and attempt history", () => {
       attemptOrdinal: 1,
       rootNodeId: "node-attempt-1" as never,
       status: "superseded" as const,
+      startedAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
       completedAt: null,
     };
     const activeAttempt = {
@@ -3046,6 +3048,7 @@ describe("v2 run and attempt history", () => {
       attemptOrdinal: 2,
       rootNodeId: "node-attempt-2" as never,
       status: "running" as const,
+      startedAt: DateTime.makeUnsafe("2026-01-01T00:00:05Z"),
       completedAt: null,
     };
     const timelineEntries = [
@@ -3165,6 +3168,28 @@ describe("v2 run and attempt history", () => {
       supportsConversationRollback: false,
     };
 
+    const completedInput = {
+      ...common,
+      latestRun: {
+        ...common.latestRun,
+        status: "completed" as const,
+        startedAt: "2026-01-01T00:00:03Z",
+        completedAt: "2026-01-01T00:00:08Z",
+      },
+      timelineEntries: timelineEntries.map((entry) =>
+        entry.kind === "message" && entry.id === "active-assistant-entry"
+          ? {
+              ...entry,
+              message: { ...entry.message, streaming: false, updatedAt: "2026-01-01T00:00:08Z" },
+            }
+          : entry,
+      ),
+    };
+    const completedRows = deriveMessagesTimelineRows(completedInput);
+    expect(completedRows.find((row) => row.kind === "turn-fold")).toMatchObject({
+      label: "Worked for 8s",
+    });
+
     const collapsedRows = deriveMessagesTimelineRows(common);
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "context-handoff-entry",
@@ -3253,6 +3278,7 @@ describe("v2 run and attempt history", () => {
       attemptOrdinal: 1,
       rootNodeId: NodeId.make("node-attempt-1"),
       status: "superseded" as const,
+      startedAt: null,
       completedAt: DateTime.makeUnsafe(at(10)),
     };
     const nextAttempt = {
@@ -3261,6 +3287,7 @@ describe("v2 run and attempt history", () => {
       attemptOrdinal: 2,
       rootNodeId: NodeId.make("node-attempt-2"),
       status: "completed" as const,
+      startedAt: null,
       completedAt: DateTime.makeUnsafe(at(14)),
     };
     const assistantEntry = (
@@ -4411,6 +4438,7 @@ describe("failed turn transcript", () => {
                   attemptOrdinal: 1,
                   rootNodeId: NodeId.make("superseded-root"),
                   status: "superseded" as const,
+                  startedAt: null,
                   completedAt: null,
                 },
               },
@@ -4512,13 +4540,13 @@ describe("working window", () => {
     createdAt: time(second),
     entry: { id, createdAt: time(second), runId, tone: "tool" as const, ...entry },
   });
-  const run = (entries: ReadonlyArray<unknown>) => {
+  const run = (entries: ReadonlyArray<unknown>, activeTurnStartedAt = time(0)) => {
     const input = {
       timelineEntries: entries as never,
       latestRun: { runId, status: "running" as const, startedAt: time(0), completedAt: null },
       runningRunId: runId,
       isWorking: true,
-      activeTurnStartedAt: time(0),
+      activeTurnStartedAt,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
     };
@@ -4530,7 +4558,7 @@ describe("working window", () => {
     );
 
   it("moves the running turn's work under the bar and keeps steers and replies above it", () => {
-    const rows = run([
+    const entries = [
       prompt("prompt", 0),
       work("edit", 2, {
         label: "Edited a.ts",
@@ -4561,7 +4589,8 @@ describe("working window", () => {
         itemType: "command_execution",
         toolLifecycleStatus: "inProgress",
       }),
-    ]);
+    ];
+    const rows = run(entries);
     expect(rows.map((row) => row.id)).toEqual([
       "prompt",
       "reply",
@@ -4574,6 +4603,47 @@ describe("working window", () => {
     // Sending a steer re-keys the window, which closes an open history.
     expect(window?.key).toBe("steer");
     expect(window?.historyOpen).toBe(false);
+
+    const [promptEntry, edit, reply, , command] = entries;
+    const pendingSteer = prompt("steer", 3);
+    const pendingSteerEntry = {
+      ...pendingSteer,
+      message: { ...pendingSteer.message, inputIntent: "steer" as const, runId: null },
+    };
+    const pendingRows = run([promptEntry, edit, reply, pendingSteerEntry, command]);
+    expect(pendingRows.map((row) => row.id)).toEqual(["prompt", "steer", "working-indicator-row"]);
+    expect(workingRow(pendingRows)?.window?.items.map((item) => item.id)).toEqual([
+      "edit",
+      "reply",
+      "command",
+    ]);
+
+    const attempt = (ordinal: number, status: "superseded" | "running", second: number) => ({
+      id: RunAttemptId.make(`attempt-${ordinal}`),
+      runId,
+      attemptOrdinal: ordinal,
+      rootNodeId: NodeId.make(`node-${ordinal}`),
+      status,
+      startedAt: DateTime.makeUnsafe(time(second)),
+      completedAt: status === "superseded" ? DateTime.makeUnsafe(time(3)) : null,
+    });
+    const restarted = run(
+      entries.map((entry, index) => ({
+        ...entry,
+        attempt: index < 3 ? attempt(1, "superseded", 0) : attempt(2, "running", 3),
+      })),
+      time(3),
+    );
+    expect(restarted.map((row) => row.id)).toEqual([
+      "prompt",
+      "steer",
+      "attempt-fold:attempt-1",
+      "working-indicator-row",
+    ]);
+    expect(workingRow(restarted)).toMatchObject({
+      createdAt: time(0),
+      window: { diff: { additions: 84, deletions: 22 } },
+    });
   });
 
   it("groups a steer with its prompt once the bar moves below both", () => {
@@ -4923,6 +4993,7 @@ describe("turn fold endings", () => {
       updates: [],
       active: false,
       expanded,
+      revealedRowIds: [],
     });
     const rows = [group("a", [runId], false), group("b", [RunId.make("other")], false)];
     expect(withRunGroupsOpen(new Set(), rows, runId)).toEqual(new Set(["a"]));
@@ -5106,6 +5177,11 @@ it.each([
   });
   expect(expanded.slice(1)).toEqual(original);
   expect(expanded.slice(1).every((row, index) => row === original[index])).toBe(true);
+  expect(expanded[0]).toMatchObject({
+    revealedRowIds: original
+      .filter((row) => !keptAnswer(original).includes(row))
+      .map((row) => row.id),
+  });
   expect(applyBackgroundActivityGroups(original, input)).toEqual(collapsed);
 
   const recentInput = {
@@ -5360,6 +5436,7 @@ describe("live subagents after their parent turn settles", () => {
       attemptOrdinal: 1,
       rootNodeId: NodeId.make("superseded-root"),
       status: "superseded" as const,
+      startedAt: null,
       completedAt: null,
     };
     const entries = deriveTimelineEntriesFromVisibleTurnItems({

@@ -1,5 +1,6 @@
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 import {
+  PlugIcon,
   CheckIcon,
   CopyIcon,
   MonitorIcon,
@@ -67,6 +68,7 @@ import { readEnvironmentScope } from "~/state/session";
 import { useManagedPolicy, usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { ManagedControl } from "../ManagedPolicy";
+import { openUseInAnotherApp } from "../mcp/UseInAnotherAppDialog";
 import { StatusDot } from "../ui/status-dot";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import {
@@ -386,11 +388,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 ) : null}
               </DialogPanel>
               <DialogFooter variant="bare">
-                <Button variant="secondary" onClick={() => setIsRevealDialogOpen(false)}>
+                <Button
+                  size="standard"
+                  variant="secondary"
+                  onClick={() => setIsRevealDialogOpen(false)}
+                >
                   Done
                 </Button>
                 {canCopyToClipboard ? (
-                  <Button variant="secondary" onClick={handleCopyCode}>
+                  <Button size="standard" variant="secondary" onClick={handleCopyCode}>
                     Copy code
                   </Button>
                 ) : null}
@@ -682,7 +688,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
   if (part === "revoke") {
     return (
       <Button
-        size="xs"
+        size="standard"
         variant="destructive-outline"
         disabled={isRevokingOtherClients || !canRevokeOtherClients(clientSessions)}
         onClick={() => void onRevokeOtherClients()}
@@ -693,10 +699,14 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <Button size="xs" variant="secondary" onClick={() => openUseInAnotherApp(environmentId)}>
+        <PlugIcon className="size-3" />
+        Use in another app (MCP)
+      </Button>
       {pairingDenial !== undefined ? (
         <ManagedControl reason={pairingDenial}>
-          <Button size="xs" variant="default" disabled>
+          <Button size="standard" variant="default" disabled>
             <QrCodeIcon />
             Create pairing link
           </Button>
@@ -717,7 +727,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
         {pairingDenial === undefined ? (
           <DialogTrigger
             render={
-              <Button size="xs" variant="default">
+              <Button size="standard" variant="default">
                 <QrCodeIcon />
                 Create pairing link
               </Button>
@@ -821,6 +831,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
           </DialogPanel>
           <DialogFooter variant="bare">
             <Button
+              size="standard"
               variant="secondary"
               disabled={isCreatingPairingLink}
               onClick={() => setDialogOpen(false)}
@@ -828,6 +839,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
               Cancel
             </Button>
             <Button
+              size="standard"
               disabled={isCreatingPairingLink || selectedScopes.length === 0}
               onClick={() => void handleCreatePairingLink()}
             >

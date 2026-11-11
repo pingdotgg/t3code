@@ -43,12 +43,21 @@ import {
   searchableSetting,
 } from "./settingsSearch";
 
-function useFontDefaultFamilies() {
-  const settings = useScopedSettings();
-  const [defaults] = useState(() => ({
+let fontDefaultFamilies: { readonly sans: string; readonly code: string } | undefined;
+
+function resolveFontDefaultFamilies() {
+  if (fontDefaultFamilies !== undefined) return fontDefaultFamilies;
+  const families = {
     sans: resolveDefaultFamilyLabel(DEFAULT_SANS_FONT_STACK) ?? "System default",
     code: resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ?? "System monospace",
-  }));
+  };
+  if (document.fonts.status === "loaded") fontDefaultFamilies = families;
+  return families;
+}
+
+function useFontDefaultFamilies() {
+  const settings = useScopedSettings();
+  const [defaults] = useState(resolveFontDefaultFamilies);
   return {
     sans: defaults.sans,
     code: defaults.code,
@@ -445,7 +454,7 @@ function FontFamilySettingsRow({
       />
     ) : (
       <Input
-        size="sm"
+        size="settings"
         aria-label={`${title} family`}
         aria-invalid={draftPending || undefined}
         autoCapitalize="off"
@@ -505,7 +514,12 @@ function FontFamilySettingsRow({
           }
         }}
       >
-        <SelectTrigger size="sm" className="w-22 shrink-0" aria-label={size.label}>
+        <SelectTrigger
+          variant="well"
+          size="compact"
+          className="w-22 shrink-0"
+          aria-label={size.label}
+        >
           <SelectValue>{size.value} px</SelectValue>
         </SelectTrigger>
         <SelectPopup align="end" alignItemWithTrigger={false}>

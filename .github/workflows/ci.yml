@@ -140,10 +140,16 @@ jobs:
       - name: Start installing browser secret helper build libraries
         if: needs.changes.outputs.build != 'false'
         run: |
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+          # Fetch only the indexes these main and universe packages need. The full set is ~42 MB,
+          # which a slow mirror can stretch past the wait below.
+          sudo sed -i -e 's|http://|https://|g' -e 's/^Components: .*/Components: main universe/' \
+            /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           (
             set +e
-            sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config xvfb
+            sudo apt-get update -o Acquire::Languages=none \
+              -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false \
+              -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false &&
+              sudo apt-get install -y libsecret-1-dev pkg-config xvfb
             echo "$?" > "$RUNNER_TEMP/apt-status"
           ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
 
@@ -287,10 +293,16 @@ jobs:
       # the background while Vite+ installs; the step before the tests waits for it.
       - name: Start installing browser secret helper build libraries
         run: |
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+          # Fetch only the indexes these main and universe packages need. The full set is ~42 MB,
+          # which a slow mirror can stretch past the wait below.
+          sudo sed -i -e 's|http://|https://|g' -e 's/^Components: .*/Components: main universe/' \
+            /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           (
             set +e
-            sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+            sudo apt-get update -o Acquire::Languages=none \
+              -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false \
+              -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false &&
+              sudo apt-get install -y libsecret-1-dev pkg-config
             echo "$?" > "$RUNNER_TEMP/apt-status"
           ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
 
@@ -314,7 +326,7 @@ jobs:
         run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
       - name: Test release checks
-        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs
+        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs
 
       - name: Finish installing browser secret helper build libraries
         timeout-minutes: 5
@@ -592,7 +604,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.release_smoke != 'false' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6

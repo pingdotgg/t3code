@@ -4,6 +4,7 @@ import { useEffectEvent, useLayoutEffect, useRef } from "react";
 
 import { useClientSettings } from "../hooks/useSettings";
 import { MotionAnimation, playMotion, toDevicePixel, type MotionRun } from "./animation";
+import { takePaneDrop } from "./paneDrop";
 import { configureMotion } from "./registry";
 import { stripCameraPosition } from "./stripCamera";
 
@@ -71,7 +72,7 @@ function slide(
     if (earlier) rest = onRest ? () => (earlier(), onRest()) : earlier;
   }
   const motion = MotionAnimation.start("window-movement", 1, 0);
-  if (motion.durationMs <= 0 || (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5)) {
+  if (motion.durationMs <= 0 || (toDevicePixel(dx) === 0 && toDevicePixel(dy) === 0)) {
     kept?.remove();
     rest?.();
     return;
@@ -391,6 +392,7 @@ export function usePaneMotion(
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure committed pane boxes and start DOM animations before paint.
   useLayoutEffect(() => {
+    const drop = takePaneDrop();
     const stage = stageRef.current;
     if (!stage || key === null) {
       previous.current = null;
@@ -493,16 +495,35 @@ export function usePaneMotion(
       );
     }
     if (!before || !animate) return;
+    const paneWas = new Map<string, PaneBox>();
+    for (const box of previousBoxes.values()) paneWas.set(box.paneId, box);
+    const wasOf = (tabId: string, box: PaneBox) => {
+      const was = drop
+        ? paneWas.get(box.paneId)
+        : (previousBoxes.get(tabId) ?? paneWas.get(box.paneId));
+      const inherited = was && was.element !== box.element ? slides.get(was.element) : undefined;
+      if (!was || !inherited) return was;
+      const owed = inherited.run.value();
+      return { ...was, x: was.x + inherited.dx * owed, y: was.y + inherited.dy * owed };
+    };
+    const wasBy = new Map([...boxes].map(([tabId, box]) => [tabId, wasOf(tabId, box)]));
+    const kept = (from: number, fromSize: number, to: number, toSize: number) =>
+      drop && Math.abs(from + fromSize - to - toSize) < 1;
+    const moved = (was: Box, box: Box) => ({
+      dx: kept(was.x, was.width, box.x, box.width) ? 0 : was.x - box.x,
+      dy: kept(was.y, was.height, box.y, box.height) ? 0 : was.y - box.y,
+    });
     // Where each pane shows now against its new place, before any slide
     // below retargets it: its move plus what a running slide still owes.
     const shows = new Map<string, { dx: number; dy: number }>();
     for (const [tabId, box] of boxes) {
-      const was = previousBoxes.get(tabId);
+      const was = wasBy.get(tabId);
       const running = slides.get(box.element);
       const owed = running ? running.run.value() : 0;
+      const move = was ? moved(was, box) : { dx: 0, dy: 0 };
       shows.set(tabId, {
-        dx: (was ? was.x - box.x : 0) + (running ? running.dx * owed : 0),
-        dy: (was ? was.y - box.y : 0) + (running ? running.dy * owed : 0),
+        dx: move.dx + (running ? running.dx * owed : 0),
+        dy: move.dy + (running ? running.dy * owed : 0),
       });
     }
     /** Hold the neighbor surface behind its moving edge when panes separate, so resizing or
@@ -549,11 +570,25 @@ export function usePaneMotion(
         if (travel - own <= 1 || own < 0) return undefined;
         return makeEdge(stage, box, side, beside.gap, radius ?? 0, travel, false);
       };
-    const panesBefore = new Set([...previousBoxes.values()].map((box) => box.paneId));
+    const panesBefore = new Set(paneWas.keys());
+    const raised: HTMLElement[] = [];
+    let moving = 1;
+    const settle = () => {
+      moving -= 1;
+      if (moving > 0) return;
+      for (const element of raised) {
+        if (element.style.zIndex === "1") element.style.zIndex = "";
+      }
+    };
     for (const [tabId, box] of boxes) {
-      const was = previousBoxes.get(tabId);
+      const was = wasBy.get(tabId);
+      if (!was && drop) {
+        box.element.style.zIndex = "1";
+        raised.push(box.element);
+        continue;
+      }
       if (!was) {
-        if (panesBefore.has(box.paneId) || previousBoxes.size === 0) continue;
+        if (previousBoxes.size === 0) continue;
         const donor = findDonor(
           box,
           [...boxes]
@@ -590,11 +625,16 @@ export function usePaneMotion(
         });
         continue;
       }
-      const dx = was.x - box.x;
-      const dy = was.y - box.y;
+      if (!panesBefore.has(box.paneId)) {
+        box.element.style.zIndex = "1";
+        raised.push(box.element);
+      }
+      const { dx, dy } = moved(was, box);
       if ((Math.abs(dx) >= 1 || Math.abs(dy) >= 1) && !unseen(box, dx, view)) {
-        slide(box.element, dx, dy, undefined, openingEdge(box));
+        moving += 1;
+        slide(box.element, dx, dy, settle, openingEdge(box));
       }
     }
+    settle();
   }, [framed, key, placement, stageRef]);
 }

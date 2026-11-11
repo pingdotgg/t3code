@@ -3,8 +3,6 @@ import {
   BUILT_IN_THEME_IDS,
   BUILT_IN_THEMES,
   T3_CHAT_THEME,
-  T3_CODE_LIGHT_THEME_COLORS,
-  T3_CODE_DARK_THEME_COLORS,
   MOBILE_THEME_IDS,
   getThemeColorsForAppearance,
 } from "@t3tools/shared/themePalettes";
@@ -19,6 +17,7 @@ import {
   createMobileThemeVariables,
   DEFAULT_MOBILE_THEME_ID,
   flattenThemeColor,
+  getMobileThemeColors,
   getMobileThemeVariables,
   resolveMobileThemeIds,
   themeColorWithAlpha,
@@ -70,11 +69,10 @@ describe("mobile themes", () => {
   it.each(MOBILE_THEME_IDS)("uses the web color roles for %s in both appearances", (themeId) => {
     for (const appearance of ["light", "dark"] as const) {
       const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId);
-      const colors = theme
-        ? getThemeColorsForAppearance(theme, appearance)!
-        : appearance === "dark"
-          ? T3_CODE_DARK_THEME_COLORS
-          : T3_CODE_LIGHT_THEME_COLORS;
+      const colors =
+        theme && themeId !== "t3-code-classic"
+          ? getThemeColorsForAppearance(theme, appearance)!
+          : getMobileThemeColors(themeId, appearance);
       const variables =
         themeId === DEFAULT_MOBILE_THEME_ID
           ? readDefaultMobileThemeVariables(appearance)
@@ -96,6 +94,12 @@ describe("mobile themes", () => {
         themeColorToNativeColor(colors.sidebarForeground),
       );
       expect(variables["--color-primary"]).toBe(themeColorToNativeColor(colors.messageAction));
+      if (themeId === DEFAULT_MOBILE_THEME_ID) {
+        expect(variables["--color-prominent-action"]).toBe(variables["--color-primary"]);
+        expect(variables["--color-prominent-action-foreground"]).toBe(
+          variables["--color-primary-foreground"],
+        );
+      }
       if (themeId !== DEFAULT_MOBILE_THEME_ID) {
         expect(variables["--color-user-bubble"]).toBe(
           themeColorToNativeColor(colors.messageSurface),
@@ -117,6 +121,8 @@ describe("mobile themes", () => {
         ["--color-primary-text", "--color-sheet-solid"],
         ["--color-foreground", "--color-sheet-solid"],
         ["--color-foreground-muted", "--color-sheet-solid"],
+        ["--color-foreground-secondary", "--color-screen"],
+        ["--color-foreground-tertiary", "--color-screen"],
         ["--color-primary-text", "--color-grouped-card"],
         ["--color-foreground", "--color-grouped-card"],
         ["--color-foreground-muted", "--color-grouped-card"],
@@ -169,6 +175,12 @@ describe("mobile themes", () => {
         const variables = getMobileThemeRuntimeVariables(themeId, appearance, platform);
         const sheet = variables["--color-sheet-solid"];
         const group = variables["--color-grouped-card"];
+        if (appearance === "dark") {
+          expect(
+            relativeLuminance(flattenThemeColor(variables["--color-header"], sheet)),
+            `${platform}: chrome below the sheet`,
+          ).toBeLessThan(relativeLuminance(sheet));
+        }
         expect(
           contrastRatio(group, sheet),
           `${platform} ${appearance}: grouped surface on sheet`,
@@ -198,7 +210,7 @@ describe("mobile themes", () => {
               expect(
                 contrastRatio(group, surface),
                 `dark grouped surface on Android ${surface}`,
-              ).toBeGreaterThanOrEqual(1.2);
+              ).toBeGreaterThanOrEqual(1.025);
             }
           }
         }

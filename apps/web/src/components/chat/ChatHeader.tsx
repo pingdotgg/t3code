@@ -13,7 +13,6 @@ import {
 import { GitForkIcon, PlusIcon, SquarePenIcon, SquareTerminal } from "lucide-react";
 import {
   memo,
-  useEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -44,9 +43,10 @@ import {
   PaneTabButton,
 } from "../PaneNotch";
 import { Button, ContentButton } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
+import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { surfaceShortcutActionForKey } from "../RightPanelTabs";
-import { SURFACE_LAUNCHER_ENTRIES } from "../SurfaceLauncher";
+import { SURFACE_LAUNCHER_ENTRIES, SurfaceMenuItems, surfaceMenuActions } from "../SurfaceLauncher";
+import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { GuestShareIndicator } from "./GuestShareControls";
@@ -60,11 +60,13 @@ import {
   buildLayoutTabMenuItems,
   closeLayoutTabOnMiddleClick,
   ghostTabTooltip,
+  finishLayoutTabRename,
   isLayoutTabMenuId,
   runLayoutTabMenuAction,
   useLayoutPaneSiblingTabs,
   useLayoutTabGhostOf,
   useLayoutTabGhostShown,
+  useLayoutTabRenameRequested,
 } from "../../layout/PaneTabs";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { useLayoutStore } from "../../layout/layoutStore";
@@ -88,7 +90,7 @@ interface ChatHeaderProps {
   onNewThreadInProject: () => void;
   /** What the "+" menu can open beside the chat after a new thread. */
   besideAvailable: ReadonlySet<LayoutBesideKind>;
-  onOpenBeside: (kind: LayoutBesideKind) => void;
+  onOpenBeside: (kind: LayoutBesideKind, paneId?: string | null, browserProfileId?: string) => void;
   newTabShortcutLabel?: string | null | undefined;
   onOpenProjectSettings?: (() => void) | undefined;
   onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
@@ -111,9 +113,6 @@ function resolveRenameCommit(input: {
   if (trimmed === input.originalTitle) return { action: "noop" };
   return { action: "commit", title: trimmed };
 }
-
-// Delay the input-swallowing native menu through the double-click rename interval.
-const TITLE_MENU_OPEN_DELAY_MS = 500;
 
 const OPEN_BESIDE_MENU: ContextMenuItem<LayoutBesideKind>[] = [
   { id: "browser", label: "Browser", icon: "globe" },
@@ -193,12 +192,24 @@ export const ChatHeader = memo(function ChatHeader({
   ) {
     setRenaming(null);
   }
+  const renameRequested = useLayoutTabRenameRequested(layoutTabId);
+  if (renaming === null && renameRequested && canOperateThread && isServerThread) {
+    setRenaming({
+      environmentId: activeThreadEnvironmentId,
+      threadId: activeThreadId,
+      title: activeThreadTitle,
+    });
+  }
   const renamingTitle =
     canOperateThread &&
     renaming?.threadId === activeThreadId &&
     renaming.environmentId === activeThreadEnvironmentId
       ? renaming.title
       : null;
+  const stopRenaming = () => {
+    setRenaming(null);
+    finishLayoutTabRename(layoutTabId);
+  };
   const renameCommittedRef = useRef(false);
   const startRename = () => {
     if (
@@ -214,7 +225,7 @@ export const ChatHeader = memo(function ChatHeader({
     });
   };
   const commitRename = (title: string) => {
-    setRenaming(null);
+    stopRenaming();
     if (!readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)) return;
     const resolution = resolveRenameCommit({
       title,
@@ -248,46 +259,15 @@ export const ChatHeader = memo(function ChatHeader({
     leadingItems: layoutMenuItems,
     onLeadingAction: runLayoutMenuAction,
   });
-  const titleButtonRef = useRef<HTMLButtonElement | null>(null);
-  const titleMenuTimerRef = useRef<number | null>(null);
-  const cancelPendingTitleMenu = () => {
-    if (titleMenuTimerRef.current === null) return;
-    clearTimeout(titleMenuTimerRef.current);
-    titleMenuTimerRef.current = null;
-  };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending title-menu timer when the thread switches or the header unmounts
-  useEffect(
-    () => () => {
-      if (titleMenuTimerRef.current === null) return;
-      clearTimeout(titleMenuTimerRef.current);
-      titleMenuTimerRef.current = null;
-    },
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A pending title menu belongs to the thread that was clicked, so switching threads drops it.
-    [activeThreadEnvironmentId, activeThreadId],
-  );
-  const openTitleMenuNow = () => {
-    cancelPendingTitleMenu();
-    const rect = titleButtonRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    openMenu({ x: rect.left, y: rect.bottom + 4 });
-  };
   const openMenuFromTitle = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (isTrailingDoubleClick(event.detail)) return;
-    // Keyboard activation can never be the first half of a double-click, so
-    // it opens without waiting.
-    if (event.detail === 0 || window.desktopBridge === undefined) {
-      openTitleMenuNow();
-      return;
-    }
-    cancelPendingTitleMenu();
-    titleMenuTimerRef.current = window.setTimeout(() => {
-      titleMenuTimerRef.current = null;
-      openTitleMenuNow();
-    }, TITLE_MENU_OPEN_DELAY_MS);
+    const rect = event.currentTarget.getBoundingClientRect();
+    openMenu({ x: rect.left, y: rect.bottom + 4 });
   };
+  // A native menu takes the second click, so only the in-page menu lets a double-click reach here.
   const handleTitleDoubleClick = (event: ReactMouseEvent) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    cancelPendingTitleMenu();
+    if ((event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null) return;
     closeMenu();
     // A ghost tab is kept first; the next double-click renames.
     if (ghostShown && layoutTabId !== null) {
@@ -301,7 +281,6 @@ export const ChatHeader = memo(function ChatHeader({
     if (!isServerThread) {
       const layoutItems = layoutMenuItems();
       if (onOpenProjectSettings === undefined && layoutItems.length === 0) return;
-      cancelPendingTitleMenu();
       event.preventDefault();
       const api = readLocalApi();
       if (!api) return;
@@ -328,13 +307,11 @@ export const ChatHeader = memo(function ChatHeader({
         });
       return;
     }
-    cancelPendingTitleMenu();
     event.preventDefault();
     openMenu({ x: event.clientX, y: event.clientY });
   };
   const handleTabAuxClick = (event: ReactMouseEvent) => {
     if (layoutTabId === null) return;
-    cancelPendingTitleMenu();
     closeLayoutTabOnMiddleClick(event, layoutTabId);
   };
   const handleRenameKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -344,7 +321,7 @@ export const ChatHeader = memo(function ChatHeader({
       commitRename(event.currentTarget.value);
     } else if (event.key === "Escape") {
       renameCommittedRef.current = true;
-      setRenaming(null);
+      stopRenaming();
     }
   };
   const tabIcon = ghostOf ? (
@@ -414,12 +391,15 @@ export const ChatHeader = memo(function ChatHeader({
                     event.relatedTarget instanceof HTMLElement &&
                     event.relatedTarget.closest("button")
                   ) {
-                    setRenaming(null);
+                    stopRenaming();
                     return;
                   }
                   commitRename(event.currentTarget.value);
                 }}
-                onFocus={(event) => event.currentTarget.select()}
+                onFocus={(event) => {
+                  renameCommittedRef.current = false;
+                  event.currentTarget.select();
+                }}
                 onKeyDown={handleRenameKeyDown}
               />
             </div>
@@ -430,7 +410,6 @@ export const ChatHeader = memo(function ChatHeader({
                   render={
                     isServerThread ? (
                       <PaneTabButton
-                        ref={titleButtonRef}
                         data-layout-pane-tab={layoutTabId ?? undefined}
                         type="button"
                         aria-label={`Thread actions for ${activeThreadTitle}`}
@@ -439,7 +418,6 @@ export const ChatHeader = memo(function ChatHeader({
                         onAuxClick={handleTabAuxClick}
                         onPointerDown={handleTabPointerDown}
                         onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
-                        onBlur={cancelPendingTitleMenu}
                       />
                     ) : (
                       <div
@@ -549,27 +527,23 @@ function NewTabMenu(props: {
   newTabShortcutLabel: string | null | undefined;
   besideAvailable: ReadonlySet<LayoutBesideKind>;
   onNewThread: () => void;
-  onOpenBeside: (kind: LayoutBesideKind) => void;
+  onOpenBeside: (kind: LayoutBesideKind, paneId?: string | null, browserProfileId?: string) => void;
   onContextMenu: (event: ReactMouseEvent) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const actions = [
-    {
-      label: "New thread",
-      icon: SquarePenIcon,
-      shortcut: "N",
-      available: true,
-      onClick: props.onNewThread,
-    },
-    // Then what the launcher offers, as it offers them.
-    ...SURFACE_LAUNCHER_ENTRIES.map((item) => ({
-      label: item.label,
-      icon: item.icon,
-      shortcut: item.shortcut,
-      available: props.besideAvailable.has(item.kind),
-      onClick: () => props.onOpenBeside(item.kind),
-    })),
-  ];
+  const browserProfiles = useBrowserDefaults().profiles;
+  const actions = surfaceMenuActions({
+    onNewThread: props.onNewThread,
+    surfaces: Object.fromEntries(
+      SURFACE_LAUNCHER_ENTRIES.map((item) => [
+        item.kind,
+        {
+          available: props.besideAvailable.has(item.kind),
+          onClick: () => props.onOpenBeside(item.kind),
+        },
+      ]),
+    ),
+  });
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(actions, event.nativeEvent);
     if (!action) return;
@@ -604,21 +578,12 @@ function NewTabMenu(props: {
         </TooltipPopup>
       </Tooltip>
       <MenuPopup align="start" side="bottom" sideOffset={6} onKeyDownCapture={handleKeyDown}>
-        {actions.map((action) => {
-          const Icon = action.icon;
-          return (
-            <MenuItem
-              key={action.label}
-              disabled={!action.available}
-              aria-keyshortcuts={action.shortcut}
-              onClick={action.onClick}
-            >
-              <Icon />
-              {action.label}
-              <MenuShortcut>{action.shortcut}</MenuShortcut>
-            </MenuItem>
-          );
-        })}
+        <SurfaceMenuItems
+          actions={actions}
+          browserProfiles={browserProfiles}
+          onAddBrowserInProfile={(profileId) => props.onOpenBeside("browser", undefined, profileId)}
+          onClose={() => setOpen(false)}
+        />
       </MenuPopup>
     </Menu>
   );

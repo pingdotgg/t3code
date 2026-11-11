@@ -11,7 +11,7 @@ function Root(props: Omit<ComponentProps<"div">, "className" | "style">) {
   return (
     <div
       data-slot="composer-request-card"
-      className="relative flex w-full min-w-0 flex-col gap-1 rounded-t-2xl p-1 text-meta"
+      className="surface-composer-banner flex w-full min-w-0 flex-col gap-1 p-1 text-meta"
       {...props}
     />
   );

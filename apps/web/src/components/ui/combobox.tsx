@@ -141,7 +141,7 @@ function ComboboxSearchInput({
       <div
         className={cn(
           "relative -translate-y-px border-b pb-1.5 transition-colors",
-          separator ? "border-border/70 focus-within:border-ring" : "border-transparent",
+          separator ? "surface-search-separator focus-within:border-ring" : "border-transparent",
         )}
       >
         <SearchIcon
@@ -211,7 +211,8 @@ function ComboboxPopup({
           )}
         >
           <ComboboxPrimitive.Popup
-            className="flex min-w-0 max-h-[min(var(--available-height),23rem)] flex-1 flex-col overflow-hidden text-foreground"
+            // Electron drag hit-testing ignores z-index; items over a drag region would swallow clicks.
+            className="flex min-w-0 max-h-[min(var(--available-height),23rem)] flex-1 flex-col overflow-hidden text-foreground [-webkit-app-region:no-drag]"
             data-slot="combobox-popup"
             {...props}
           >

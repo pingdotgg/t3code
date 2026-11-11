@@ -1,3 +1,4 @@
+import { startPaletteThreadDrag } from "./CommandPalette.drag";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -81,7 +82,15 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
   );
 }
 
-export function scrollCommandPaletteRowIntoView(list: LegendListRef | null, rowIndex: number) {
+export function scrollCommandPaletteRowIntoView(
+  list: LegendListRef | null,
+  rowIndex: number,
+  isFirstItem: boolean,
+) {
+  if (isFirstItem) {
+    void list?.scrollToOffset({ offset: 0, animated: false });
+    return;
+  }
   void list?.scrollIndexIntoView({
     index: rowIndex,
     animated: false,
@@ -236,6 +245,7 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
           <span
             className={cn(
               "flex min-w-0 items-center gap-1.5",
+              !stacked && "shrink-0",
               MENU_ROW_TEXT_CLASS,
               "text-foreground in-data-[active=true]:text-strong-foreground",
             )}
@@ -248,7 +258,12 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
           ) : item.matchHint ? (
             <SearchMatchHintLine hint={item.matchHint} />
           ) : item.description ? (
-            <span className="min-w-0 text-dim-foreground text-meta font-normal">
+            <span
+              className={cn(
+                "min-w-0 text-dim-foreground text-meta font-normal",
+                !stacked && "truncate",
+              )}
+            >
               {item.description}
             </span>
           ) : null}
@@ -285,6 +300,16 @@ function CommandPaletteResultRow(props: {
       {...(props.index === undefined ? {} : { index: props.index })}
       value={props.item.value}
       active={props.isActive}
+      onPointerDown={(event) => {
+        if (props.item.threadRef) {
+          startPaletteThreadDrag(
+            event.nativeEvent,
+            props.item.threadRef,
+            props.item.searchTitle ??
+              (typeof props.item.title === "string" ? props.item.title : "Thread"),
+          );
+        }
+      }}
       onMouseDown={(event) => {
         event.preventDefault();
       }}

@@ -27,7 +27,7 @@ export function WorkLogBlock({
 }
 
 export function WorkLogList({ children }: { children: ReactNode }) {
-  return <div className="flex min-w-0 flex-col gap-1">{children}</div>;
+  return <div className="flex min-w-0 flex-col gap-1 ps-4">{children}</div>;
 }
 
 type RowContent = {

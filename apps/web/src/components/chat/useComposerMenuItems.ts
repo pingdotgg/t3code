@@ -30,10 +30,8 @@ import {
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useProjects, useVisibleThreadShells } from "~/state/entities";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
-import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   pullRequestEnvironment,
   usePullRequestList,
@@ -53,6 +51,8 @@ import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
+
+import { retainPendingComposerMenuItems } from "./composerMenuResults";
 
 const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
 const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
@@ -149,8 +149,7 @@ export function useComposerMenuItems({
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
   }));
   const environmentProjects = useProjects();
-  const nowMinute = useNowMinute();
-  // Thread rows read "project · 2h ago", like the sidebar.
+  // Thread rows show project and age, like the sidebar.
   const describeComposerThread = makeComposerThreadDescription(environmentProjects);
   const withThreadAge = (item: Extract<ComposerCommandItem, { type: "thread" }>) => {
     const shell = environmentThreadShells.find(
@@ -164,9 +163,7 @@ export function useComposerMenuItems({
         item.thread.environmentId === environmentId
           ? undefined
           : linkedEnvironments.get(item.thread.environmentId),
-      metadata: shell
-        ? formatRelativeTimeLabel(shell.updatedAt, Date.parse(`${nowMinute}:00.000Z`))
-        : undefined,
+      updatedAt: shell?.updatedAt,
     };
   };
   const workspaceEntries = useComposerPathSearch({
@@ -466,9 +463,46 @@ export function useComposerMenuItems({
         : "No pull requests found in this repository.";
     }
     return composerTriggerKind === "path"
-      ? "No matching files or folders."
+      ? pathTriggerQuery.trim()
+        ? "No matching files or folders."
+        : "Type to search files and folders."
       : "No matching command.";
   })();
 
-  return { items, isLoading, emptyState };
+  const scope =
+    composerTrigger?.kind === "path"
+      ? JSON.stringify([
+          environmentId,
+          gitCwd,
+          activeThreadId,
+          questionAttachmentTarget,
+          composerTrigger.rangeStart,
+        ])
+      : null;
+  const [settled, setSettled] = useState({
+    scope,
+    query: pathTriggerQuery,
+    isPending: isLoading,
+    entries: workspaceEntries.entries,
+    items,
+  });
+  if (
+    settled.scope !== scope ||
+    (!isLoading &&
+      (settled.isPending ||
+        settled.query !== pathTriggerQuery ||
+        settled.entries !== workspaceEntries.entries ||
+        settled.items.length !== items.length ||
+        settled.items.some((item, index) => item.id !== items[index]?.id)))
+  ) {
+    setSettled({
+      scope,
+      query: pathTriggerQuery,
+      isPending: isLoading,
+      entries: workspaceEntries.entries,
+      items: isLoading ? [] : items,
+    });
+  }
+  const visibleItems = retainPendingComposerMenuItems(settled, scope, items, isLoading);
+  return { items: visibleItems, isLoading, emptyState };
 }

@@ -199,7 +199,11 @@ import { useThreadContextDrop, threadContextDropTargetProps } from "./threadCont
 import { readThreadShell } from "~/state/entities";
 import { useLinkedEnvironments } from "~/state/peerLinks";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import type { ComposerContextRecord, ThreadPullRequestLink } from "@t3tools/contracts";
+import type {
+  ComposerContextRecord,
+  OrchestrationV2Run,
+  ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import { threadContextAttachment } from "~/lib/threadContextAttachment";
 import {
   type ComposerCommandItem,
@@ -221,17 +225,14 @@ import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
 import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
+import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
 import {
   buildAttachmentVideoPreview,
   buildExpandedImagePreview,
   type ExpandedImagePreview,
 } from "./ExpandedImagePreview";
 import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
-import {
-  getComposerPromptLengthValidationMessage,
-  getComposerSubmissionValidationMessage,
-  submitComposerDraft,
-} from "./composerSubmission";
+import { getComposerSubmissionValidationMessage, submitComposerDraft } from "./composerSubmission";
 import { composerPromptLengthBannerItem } from "./ComposerPromptLengthValidation";
 import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
@@ -365,6 +366,7 @@ export interface ChatComposerProps {
 
   activeThreadId: ThreadId | null;
   activeThread: Thread | undefined;
+  activeThreadRuns: ReadonlyArray<OrchestrationV2Run>;
   promptHistoryEntries: ReadonlyArray<TimelineEntry>;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
@@ -523,6 +525,7 @@ export function ChatComposer(props: ChatComposerProps) {
     onMultipleModelSelectionsChange: setMultipleModelSelections,
     activeThreadId,
     activeThread,
+    activeThreadRuns,
     promptHistoryEntries,
     forceExpandedOnMobile,
     projectSelectionRequired,
@@ -629,6 +632,7 @@ export function ChatComposer(props: ChatComposerProps) {
   const activePendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
   const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
   const isEditingQueuedMessage = editingQueuedAttachments !== null;
+  const applyThreadModelPick = useApplyThreadModelPick();
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
   const composerDraftTargetKeyRef = useRef("");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft target key to a ref read by async handlers
@@ -787,11 +791,15 @@ export function ChatComposer(props: ChatComposerProps) {
         ? needsReattachFileCount === 1
           ? "Attach the interrupted file again or remove it"
           : "Attach the interrupted files again or remove them"
-        : attachmentUploadBlockReason({
-            imageIds: [...composerImages, ...composerFiles].map((attachment) => attachment.id),
-            uploadsByImageId,
-            environmentId,
-          })
+        : // A plain send waits for its uploads. Answers and approval redirects need them first.
+          questionAttachmentTarget ||
+            pendingApprovals.some((approval) => !heldRequestIds.has(approval.requestId))
+          ? attachmentUploadBlockReason({
+              imageIds: [...composerImages, ...composerFiles].map((attachment) => attachment.id),
+              uploadsByImageId,
+              environmentId,
+            })
+          : null
       : null);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
@@ -929,7 +937,10 @@ export function ChatComposer(props: ChatComposerProps) {
     selectedModel,
   );
   // Over-limit prompts show their line as soon as they overflow, and send stays off until they fit.
-  const promptLengthMessage = getComposerPromptLengthValidationMessage(prompt);
+  const promptLengthMessage = getComposerSubmissionValidationMessage({
+    prompt,
+    submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+  });
   const [promptLengthDismissed, setPromptLengthDismissed] = useState(false);
   if (promptLengthDismissed && promptLengthMessage === null) setPromptLengthDismissed(false);
   const sendDisabledReason =
@@ -1003,9 +1014,6 @@ export function ChatComposer(props: ChatComposerProps) {
     targetKey: string;
     position: ComposerPromptHistoryPosition;
   } | null>(null);
-  const [composerHighlightedSearchKey, setComposerHighlightedSearchKey] = useState<string | null>(
-    null,
-  );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
@@ -1189,14 +1197,9 @@ export function ChatComposer(props: ChatComposerProps) {
     composerTrigger?.kind ?? null,
   ).flatMap((group) => group.items);
   const composerMenuOpen = Boolean(composerTrigger) && isComposerEditorFocused;
-  const composerMenuSearchKey = composerTrigger
-    ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
-    : null;
   const activeComposerMenuItemId = resolveComposerMenuActiveItemId({
     items: composerMenuItems,
     highlightedItemId: composerHighlightedItemId,
-    currentSearchKey: composerMenuSearchKey,
-    highlightedSearchKey: composerHighlightedSearchKey,
   });
   const activeComposerMenuItem =
     composerMenuItems.find((item) => item.id === activeComposerMenuItemId) ?? null;
@@ -1209,8 +1212,6 @@ export function ChatComposer(props: ChatComposerProps) {
   });
 
   const isComposerApprovalState = activePendingApproval !== null;
-  // A send declines the approvals shown here to redirect the agent, so it steers the waiting
-  // turn instead of queueing behind it. Approvals the typing guard holds stay unseen and pending.
   const followUpBehavior = pendingApprovals.some(
     (approval) => !heldRequestIds.has(approval.requestId),
   )
@@ -1428,7 +1429,11 @@ export function ChatComposer(props: ChatComposerProps) {
   }
 
   if (composerSubmissionError !== null) {
-    const nextError = getComposerPromptLengthValidationMessage(prompt);
+    const nextError = getComposerSubmissionValidationMessage({
+      prompt,
+      isSendBusy,
+      submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+    });
     if (nextError !== composerSubmissionError) {
       setComposerSubmissionError(nextError);
     }
@@ -1465,12 +1470,8 @@ export function ChatComposer(props: ChatComposerProps) {
   }, [composerTerminalContexts, composerTerminalContextsRef]);
 
   const resolvedHighlightedItemId = composerMenuOpen ? activeComposerMenuItemId : null;
-  const resolvedHighlightedSearchKey = composerMenuOpen ? composerMenuSearchKey : null;
   if (composerHighlightedItemId !== resolvedHighlightedItemId) {
     setComposerHighlightedItemId(resolvedHighlightedItemId);
-  }
-  if (composerHighlightedSearchKey !== resolvedHighlightedSearchKey) {
-    setComposerHighlightedSearchKey(resolvedHighlightedSearchKey);
   }
 
   const lastSyncedPendingInputRef = useRef<{
@@ -1528,7 +1529,6 @@ export function ChatComposer(props: ChatComposerProps) {
   if (shownComposerSessionKey !== composerSessionKey) {
     setShownComposerSessionKey(composerSessionKey);
     setComposerHighlightedItemId(null);
-    setComposerHighlightedSearchKey(null);
     setComposerSubmissionError(null);
     setProviderInputSubmissionError(null);
     const pendingAnswer = activePendingProgress?.customAnswer;
@@ -2112,7 +2112,6 @@ export function ChatComposer(props: ChatComposerProps) {
 
   const onComposerMenuItemHighlighted = (itemId: string | null) => {
     setComposerHighlightedItemId(itemId);
-    setComposerHighlightedSearchKey(composerMenuSearchKey);
   };
   const onComposerMenuItemHighlightedStable = useStableCallback(onComposerMenuItemHighlighted);
 
@@ -2170,7 +2169,7 @@ export function ChatComposer(props: ChatComposerProps) {
     if (voiceInputActive) {
       event?.preventDefault();
       submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
-      return;
+      return false;
     }
     if (
       noProviderAvailable ||
@@ -2178,7 +2177,7 @@ export function ChatComposer(props: ChatComposerProps) {
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     ) {
       event?.preventDefault();
-      return;
+      return false;
     }
     // A send while a pasted image is still compressing would strand that image:
     // the turn snapshot wouldn't include it, and it would surface in the *next*
@@ -2190,7 +2189,7 @@ export function ChatComposer(props: ChatComposerProps) {
         title: "Still compressing a pasted image.",
         description: "Send again once its thumbnail appears.",
       });
-      return;
+      return false;
     }
     if (pendingDraftWork.has(attachmentTargetKey)) {
       event?.preventDefault();
@@ -2199,9 +2198,10 @@ export function ChatComposer(props: ChatComposerProps) {
         title: "Still bringing attached context into this message.",
         description: "Send again once its chip resolves.",
       });
-      return;
+      return false;
     }
     const submission = submitComposerDraft({
+      isSendBusy,
       prompt: promptRef.current,
       submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
       event,
@@ -2222,11 +2222,12 @@ export function ChatComposer(props: ChatComposerProps) {
       },
     });
     setComposerSubmissionError(submission.validationMessage);
-    if (!submission.didDispatch) return;
+    if (!submission.didDispatch) return false;
     onTypingGuardSend();
     if (shouldBlurMobileComposerOnSubmit()) {
       blurMobileComposerAfterSend();
     }
+    return true;
   };
   const submitComposerStable = useStableCallback(submitComposer);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
@@ -2275,7 +2276,7 @@ export function ChatComposer(props: ChatComposerProps) {
   };
   const handleSubmitMessageStable = useStableCallback(handleSubmitMessage);
   const submitCitationAndSend = () => {
-    submitComposer(
+    return submitComposer(
       undefined,
       resolveComposerDispatchMode({
         running: phase === "running",
@@ -2361,6 +2362,7 @@ export function ChatComposer(props: ChatComposerProps) {
   const { suggestion: promptSuggestion, dismiss: dismissPromptSuggestion } = usePromptSuggestion(
     environmentId,
     activeThread,
+    activeThreadRuns,
   );
   // After /clear the next message starts a fresh session that cannot see what the suggestion refers to.
   const freshSessionArmed = useFreshSessionArmed(scopedThreadKey(routeThreadRef));
@@ -3056,6 +3058,7 @@ export function ChatComposer(props: ChatComposerProps) {
             model: selectedModel,
             persistSticky: true,
           });
+        applyThreadModelPick(composerDraftTarget);
         if (change.prompt !== promptRef.current) {
           applyPromptReplacementStable(0, promptRef.current.length, change.prompt, {
             expandedCursorAfterReplace: change.cursor,
@@ -3326,6 +3329,7 @@ export function ChatComposer(props: ChatComposerProps) {
       <ComposerApprovalPanel
         key={activePendingApproval.requestId}
         approval={activePendingApproval}
+        workspaceRoot={gitCwd ?? undefined}
         count={pendingApprovals.length}
         disabled={!canOperateThread}
         isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}

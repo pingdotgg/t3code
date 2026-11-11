@@ -100,7 +100,9 @@ function ProviderStatusDiagnostic({
 }
 
 let environmentVariableDraftId = 0;
-const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
+const DRAFT_ROW_ID_PREFIX = "provider-env-";
+const nextEnvironmentVariableDraftId = () =>
+  `${DRAFT_ROW_ID_PREFIX}${environmentVariableDraftId++}`;
 
 type EnvironmentDraftRow = {
   readonly id: string;
@@ -300,7 +302,7 @@ function ProviderEnvironmentFieldRow(props: {
           {props.field.sensitive === false ? (
             <DraftInput
               id={inputId}
-              size="sm"
+              size="settings"
               className="min-w-0 flex-1"
               autoComplete="off"
               value={typeof value === "string" ? value : ""}
@@ -311,7 +313,7 @@ function ProviderEnvironmentFieldRow(props: {
           ) : (
             <SecretSourceInput
               id={inputId}
-              size="sm"
+              size="settings"
               className="min-w-0 flex-1"
               value={value}
               onCommit={(next) => props.onCommit(props.field, next)}
@@ -350,12 +352,23 @@ export function ProviderEnvironmentSection(props: {
   const [storedDraft, setDraft] = useState(() =>
     seedRowsDraft(props.environment, toEnvironmentDraftRows),
   );
-  const draft = reconcileRowsDraft(
+  let draft = reconcileRowsDraft(
     storedDraft,
     props.environment,
     providerEnvironmentsEqual,
     toEnvironmentDraftRows,
   );
+  if (draft.rows !== storedDraft.rows) {
+    // Keep rows the server never acknowledged, even across an external reseed.
+    const acknowledged = new Set(storedDraft.seen.map((variable) => variable.name));
+    const unpublished = storedDraft.rows.filter(
+      (row) =>
+        row.id.startsWith(DRAFT_ROW_ID_PREFIX) &&
+        !acknowledged.has(row.name) &&
+        !draft.rows.some((incoming) => incoming.name === row.name),
+    );
+    if (unpublished.length > 0) draft = { ...draft, rows: [...draft.rows, ...unpublished] };
+  }
   if (draft !== storedDraft) setDraft(draft);
   const rows = draft.rows;
   const setRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) =>
@@ -1321,7 +1334,7 @@ export function ProviderInstanceCard({
                 />
                 <DraftInput
                   id={`provider-instance-${instanceId}-display-name`}
-                  size="sm"
+                  size="settings"
                   className="min-w-0 flex-1 @min-[26rem]/settings-row:w-50"
                   value={instance.displayName ?? ""}
                   onCommit={updateDisplayName}

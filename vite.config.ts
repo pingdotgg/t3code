@@ -328,6 +328,12 @@ export default defineConfig({
         rules: { "t3code/prefer-effect-fn": "off" },
       },
       {
+        files: ["apps/web/src/**", "apps/mobile/src/**", "apps/desktop/src/**"],
+        // Users still pick their own project icon from the full Lucide set.
+        excludeFiles: ["apps/web/src/projectIconOptions.ts"],
+        rules: { "t3code/no-sparkles-icon": "error" },
+      },
+      {
         files: ["apps/web/**/*.test.{ts,tsx}"],
         rules: { "t3code/require-disposable-render": "error" },
       },
@@ -747,7 +753,6 @@ export default defineConfig({
         "apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx": 1,
         "apps/web/src/components/ThreadStatusIndicators.tsx": 1,
         "apps/web/src/components/usage/UsageLimitsPooled.tsx": 1,
-        "apps/web/src/components/settings/TextGeneratorsSettings.tsx": 2,
       }).map(([file, maxOccurrences]) => {
         const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
         return { files: [file], rules: { "t3code/no-styled-raw-controls": rule } };

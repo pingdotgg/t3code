@@ -18,7 +18,7 @@ import { createPortal } from "react-dom";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { shortcutLabelForCommand } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
-import { findInOpenLayers } from "../lib/openLayers";
+import { findInOpenLayers, isInOpenLayer } from "../lib/openLayers";
 import { isModalDialogOpen } from "../lib/modalDialog";
 import { cn, isMacPlatform } from "../lib/utils";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -37,6 +37,7 @@ import {
   findLayoutTab,
   selectFocusedTab,
   selectLayoutPaneSlots,
+  selectWindowStartPaneId,
   type LayoutDirection,
   type LayoutPaneSlot,
   type LayoutState,
@@ -173,7 +174,8 @@ export function LayoutOverview() {
             rowOffset: handoff.rowOffset,
           };
           // The panes go inert under the overview; keys belong to it now.
-          if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+          const active = document.activeElement;
+          if (active instanceof HTMLElement && !inPopoverAbove(active)) active.blur();
         }
         // Reopened mid-close too: "open" only once the zoom out lands.
         setPhase("opening");
@@ -230,6 +232,10 @@ function useChooseOverviewTab(): (tabId: string | null) => void {
   };
 }
 
+function inPopoverAbove(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[data-slot="popover-popup"]') !== null;
+}
+
 /** Overview focus changes are real and update the URL. Leave typing and Escape to any palette or
  * dialog opened above the overview. */
 function useOverviewKeys(): void {
@@ -241,6 +247,7 @@ function useOverviewKeys(): void {
       if (isCommandPaletteOpen() || isModalDialogOpen()) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const direction = OVERVIEW_KEYS[event.key];
+      if (!direction && inPopoverAbove(event.target)) return;
       // The overview owns the keyboard: other text goes nowhere, not into the
       // composer behind it, and Tab does not walk the sidebar under it.
       const text = event.key.length === 1 && !isEditableFocused(event.target);
@@ -339,6 +346,7 @@ function useOverviewGestures(): void {
     let gestureOverflow = 1;
     const onWheel = (event: WheelEvent) => {
       if (event.defaultPrevented || isModalDialogOpen() || isOverviewInteractive()) return;
+      if (isInOpenLayer(event.target)) return;
       if (!event.ctrlKey || Number.isInteger(event.deltaY)) return;
       event.preventDefault();
       travel += event.deltaY;
@@ -354,13 +362,13 @@ function useOverviewGestures(): void {
     };
     // Safari's GestureEvent is not in the DOM typings; its scale is cumulative.
     const startGesture = (event: Event) => {
-      if (isModalDialogOpen()) return;
+      if (isModalDialogOpen() || isInOpenLayer(event.target)) return;
       event.preventDefault();
       gestureScale = 1;
       gestureOverflow = 1;
     };
     const onGesture = (event: Event) => {
-      if (isModalDialogOpen()) return;
+      if (isModalDialogOpen() || isInOpenLayer(event.target)) return;
       event.preventDefault();
       const gesture = event as Event & { scale?: number; clientX?: number; clientY?: number };
       const scale = gesture.scale ?? 1;
@@ -497,6 +505,23 @@ function exitScrollLeft(row: OverviewRow, width: number): number {
     else if (right > scroll + width) scroll = Math.min(left, right - width);
   }
   return Math.max(0, Math.min(stripPx - width, scroll));
+}
+
+export function selectOverviewStartPaneIds(
+  stage: OverviewStageLayout,
+  width: number,
+): ReadonlySet<string> {
+  const startPaneIds = new Set<string>();
+  for (const row of stage.rows) {
+    const stripPx = row.stripWidth * width;
+    const startPaneId = selectWindowStartPaneId(row.slots, exitScrollLeft(row, width), stripPx);
+    for (const slot of row.slots) {
+      if (startPaneId === null ? !slot.hasLeft && !slot.hasAbove : slot.paneId === startPaneId) {
+        startPaneIds.add(slot.paneId);
+      }
+    }
+  }
+  return startPaneIds;
 }
 
 interface StageTransform {
@@ -770,6 +795,7 @@ export function useOverviewStage(
     let foreignWheelUntil = 0;
     const onWheel = (event: WheelEvent) => {
       if (!isOverviewInteractive() || event.defaultPrevented) return;
+      if (isInOpenLayer(event.target)) return;
       event.preventDefault();
       // Own only the overview: do not also drive the strip's modifier-wheel handler.
       event.stopPropagation();
@@ -868,11 +894,13 @@ export function useOverviewStage(
       element.style.transform = "";
       scroller.scrollLeft = exitScroll.current;
       // DOM focus comes back to the pane the overview landed on.
-      document
-        .querySelector<HTMLElement>(
-          "[data-layout-pane-focused='true'][data-layout-pane-id] [contenteditable='true']",
-        )
-        ?.focus({ preventScroll: true });
+      if (!inPopoverAbove(document.activeElement)) {
+        document
+          .querySelector<HTMLElement>(
+            "[data-layout-pane-focused='true'][data-layout-pane-id] [contenteditable='true']",
+          )
+          ?.focus({ preventScroll: true });
+      }
       return;
     }
     if (phaseNow === "open") {

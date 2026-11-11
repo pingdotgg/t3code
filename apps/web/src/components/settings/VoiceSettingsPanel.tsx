@@ -3,6 +3,7 @@ import {
   downloadEnvironmentSpeechModel,
   getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
+  linkEnvironmentSpeechModels,
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
   updateEnvironmentSpeechAcceleration,
@@ -11,6 +12,7 @@ import {
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { openRouterIcon } from "@t3tools/client-runtime/provider-clients";
 import {
+  AuthFilesystemReadScope,
   AuthSettingsWriteScope,
   CLOUD_SPEECH_LABELS,
   CloudSpeechProvider,
@@ -21,6 +23,7 @@ import {
   type ProjectId,
   ProviderDriverKind,
   type SpeechAcceleration,
+  type SpeechBenchmarkTier,
   type SpeechCustomWords,
   type SpeechModelUnloadTimeout,
   type VoiceShortcutMode,
@@ -41,6 +44,7 @@ import {
   StarIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
+  UnlinkIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -161,6 +165,7 @@ const spellingsOf = (words: SpeechCustomWords) =>
 type ModelCardProps = {
   readonly model: EnvironmentSpeechModel;
   readonly comparisonLanguages: readonly string[];
+  readonly benchmarkTier: SpeechBenchmarkTier;
   readonly busy: boolean;
   readonly canCancel: boolean;
   readonly onDownload: () => void;
@@ -215,9 +220,15 @@ function ModelCard(props: ModelCardProps) {
           ) : null}
         </div>
         <p className="mt-0.5 text-meta text-muted-foreground">{model.description}</p>
+        {model.linkedFrom ? (
+          <p className="mt-0.5 break-all text-caption text-muted-foreground">
+            Using your file at {model.linkedFrom}
+          </p>
+        ) : null}
         <ModelBenchmarks
           model={model}
           languages={props.comparisonLanguages}
+          tier={props.benchmarkTier}
           facts={[
             ...(model.languages.length > 1
               ? [`${model.languages.length} languages`]
@@ -282,10 +293,18 @@ function ModelCard(props: ModelCardProps) {
             size="icon-sm"
             variant="ghost"
             disabled={props.busy}
-            aria-label={`Delete ${model.name}`}
+            aria-label={
+              model.linkedFrom
+                ? `Stop using your ${model.name} file; the file stays on disk`
+                : `Delete ${model.name}`
+            }
             onClick={props.onDelete}
           >
-            <Trash2Icon />
+            {model.linkedFrom ? (
+              <UnlinkIcon className="size-3.5" />
+            ) : (
+              <Trash2Icon className="size-3.5" />
+            )}
           </Button>
         ) : null}
       </div>
@@ -341,6 +360,7 @@ function DictionaryEditor(props: {
     <>
       <div className="flex items-start gap-1.5">
         <Textarea
+          size="sm"
           value={termDraft}
           rows={1}
           maxLength={5_100}
@@ -354,7 +374,7 @@ function DictionaryEditor(props: {
             addTerm();
           }}
         />
-        <Button type="button" disabled={!canAddTerm} onClick={addTerm}>
+        <Button size="standard" type="button" disabled={!canAddTerm} onClick={addTerm}>
           Add
         </Button>
       </div>
@@ -373,6 +393,7 @@ function DictionaryEditor(props: {
               ) : null}
               {aliasDraft?.term === term ? (
                 <Input
+                  size="settings"
                   autoFocus
                   value={aliasDraft.value}
                   maxLength={50}
@@ -705,7 +726,12 @@ function AdvancedSpeechSettings({
                 );
             }}
           >
-            <SelectTrigger size="sm" aria-label="Transcription hardware" className="max-w-72">
+            <SelectTrigger
+              variant="well"
+              size="compact"
+              aria-label="Transcription hardware"
+              className="max-w-72"
+            >
               <SelectValue>
                 {supported.acceleration === "auto"
                   ? "Auto"
@@ -747,7 +773,12 @@ function AdvancedSpeechSettings({
                 );
             }}
           >
-            <SelectTrigger size="sm" aria-label="Unload model" className="max-w-72">
+            <SelectTrigger
+              variant="well"
+              size="compact"
+              aria-label="Unload model"
+              className="max-w-72"
+            >
               <SelectValue>{UNLOAD_LABELS[supported.modelUnloadTimeout]}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -778,6 +809,8 @@ function SpeechModelBrowser(props: {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SpeechModelSort>("recommended");
   const [downloadedOnly, setDownloadedOnly] = useState(false);
+  const [existingPath, setExistingPath] = useState("");
+  const canReadFiles = useEnvironmentScope(prepared.environmentId, AuthFilesystemReadScope);
   const [languageSearch, setLanguageSearch] = useState("");
   const [selection, setSelection] = useState<string[] | null>(null);
   const [preferred] = useState(preferredSpeechLanguages);
@@ -803,6 +836,7 @@ function SpeechModelBrowser(props: {
     downloadedOnly,
     sort,
     accuracyLanguage,
+    benchmarkTier: status?.supported ? status.benchmarkTier : "accelerated",
   });
   const activeModel = models.find((model) => model.active);
   const renderedModels =
@@ -824,7 +858,7 @@ function SpeechModelBrowser(props: {
             <SettingsNote>
               Pick languages to see models that support all of them. Accuracy is word or character
               error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on
-              Handy’s benchmark GPU.
+              Handy’s benchmark {status.benchmarkTier === "cpu" ? "CPU" : "GPU"}.
             </SettingsNote>
           </div>
           <div className="@min-[32rem]/voice-models:grid @min-[32rem]/voice-models:grid-cols-[11rem_minmax(0,1fr)]">
@@ -834,7 +868,7 @@ function SpeechModelBrowser(props: {
                   Languages
                 </Text>
                 <Input
-                  size="compact"
+                  size="settings"
                   aria-label="Search languages"
                   placeholder="Search languages"
                   value={languageSearch}
@@ -879,7 +913,7 @@ function SpeechModelBrowser(props: {
                 </Text>
                 <InputGroup>
                   <InputGroupInput
-                    size="compact"
+                    size="settings"
                     aria-label="Search transcription models"
                     placeholder="Search models"
                     value={search}
@@ -942,6 +976,7 @@ function SpeechModelBrowser(props: {
                     busy: controlsDisabled,
                     canCancel,
                     comparisonLanguages: selectedLanguages,
+                    benchmarkTier: status.benchmarkTier,
                     onDownload: () =>
                       void run(
                         "Could not download the model",
@@ -978,6 +1013,38 @@ function SpeechModelBrowser(props: {
                   );
                 })}
               </div>
+              {status.supportsModelLinking && canReadFiles ? (
+                <form
+                  className="flex items-center gap-2 border-t border-border/60 p-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void run("Could not use a model from that path", async () => {
+                      await runEnvironmentSpeech(
+                        linkEnvironmentSpeechModels(prepared, existingPath),
+                      );
+                      setExistingPath("");
+                    });
+                  }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <Input
+                      size="compact"
+                      aria-label="Path to a model file or folder already on this environment"
+                      placeholder="Already downloaded elsewhere? Paste the model file or folder path"
+                      value={existingPath}
+                      onChange={(e) => setExistingPath(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant="secondary"
+                    disabled={controlsDisabled || !existingPath.trim()}
+                  >
+                    Use existing
+                  </Button>
+                </form>
+              ) : null}
             </div>
           </div>
         </>
@@ -1230,7 +1297,12 @@ export function VoiceSettingsPanel() {
                       });
                   }}
                 >
-                  <SelectTrigger size="sm" aria-label="Microphone" className="max-w-64">
+                  <SelectTrigger
+                    variant="well"
+                    size="compact"
+                    aria-label="Microphone"
+                    className="max-w-64"
+                  >
                     <SelectValue>{selectedMicrophoneLabel}</SelectValue>
                   </SelectTrigger>
                   <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -1267,7 +1339,12 @@ export function VoiceSettingsPanel() {
                   void updateClientSettings({ voiceShortcutMode: value as VoiceShortcutMode });
               }}
             >
-              <SelectTrigger size="sm" aria-label="Dictation shortcut mode" className="max-w-72">
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                aria-label="Dictation shortcut mode"
+                className="max-w-72"
+              >
                 <SelectValue>{SHORTCUT_MODE_LABELS[settings.voiceShortcutMode]}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -1316,7 +1393,8 @@ export function VoiceSettingsPanel() {
                 }}
               >
                 <SelectTrigger
-                  size="sm"
+                  variant="well"
+                  size="compact"
                   aria-label="Transcribe with"
                   className="w-auto min-w-0 max-w-72"
                 >
@@ -1572,7 +1650,12 @@ export function VoiceSettingsPanel() {
                     });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Cleanup instructions" className="max-w-64">
+                <SelectTrigger
+                  variant="well"
+                  size="compact"
+                  aria-label="Cleanup instructions"
+                  className="max-w-64"
+                >
                   <SelectValue>
                     {settings.speechPostProcessingPrompt.mode === "custom" ? "Custom" : "Built-in"}
                   </SelectValue>
@@ -1613,6 +1696,7 @@ export function VoiceSettingsPanel() {
             description="The word or phrase you say to flag a correction, like “sorry” or “scratch that”. Cleanup applies the correction only where one is meant, and hears the cue as a hint."
             control={
               <Input
+                size="settings"
                 key={settings.speechCorrectionWord}
                 defaultValue={settings.speechCorrectionWord}
                 maxLength={50}

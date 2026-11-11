@@ -230,6 +230,87 @@ function threadCreatedEvent(
 
 const layer = it.layer(layerTest);
 
+layer("context breakdown", (it) => {
+  it.effect.each(["claudeAgent", "codex"])(
+    "persists and streams the last category split for %s",
+    (provider) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const sink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const events = yield* EventStore.EventStoreV2;
+        const thread = yield* threadCreatedEvent(now);
+        yield* sink.write({ events: [thread] });
+        const breakdown = [
+          { kind: "system_prompt", tokens: 300 },
+          { kind: "messages", tokens: 700 },
+        ] as const;
+        const turn = {
+          id: ProviderTurnId.make("context:first"),
+          providerThreadId: ProviderThreadId.make("context:provider-thread"),
+          nodeId: NodeId.make("context:node"),
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "completed" as const,
+          startedAt: now,
+          completedAt: now,
+          tokenUsage: { usedTokens: 1_000, breakdown, updatedAt: DateTime.formatIso(now) },
+        };
+        yield* sink.write({
+          events: [
+            {
+              id: yield* (yield* IdAllocator.IdAllocatorV2).allocate.event({
+                threadId: thread.threadId,
+              }),
+              type: "provider-turn.updated",
+              threadId: thread.threadId,
+              driver: ProviderDriverKind.make(provider),
+              occurredAt: now,
+              payload: turn,
+            },
+          ],
+        });
+        const stored = yield* sink.write({
+          events: [
+            {
+              id: yield* (yield* IdAllocator.IdAllocatorV2).allocate.event({
+                threadId: thread.threadId,
+              }),
+              type: "provider-turn.updated",
+              threadId: thread.threadId,
+              driver: ProviderDriverKind.make(provider),
+              occurredAt: now,
+              payload: {
+                ...turn,
+                id: ProviderTurnId.make("context:second"),
+                ordinal: 2,
+                status: "running",
+                completedAt: null,
+                tokenUsage: { usedTokens: 1_200, updatedAt: DateTime.formatIso(now) },
+              },
+            },
+          ],
+        });
+        const expected =
+          provider === "claudeAgent"
+            ? ([
+                { kind: "system_prompt", tokens: 300 },
+                { kind: "messages", tokens: 900 },
+              ] as const)
+            : undefined;
+        const live = stored[0]!.event;
+        assert.equal(live.type, "provider-turn.updated");
+        if (live.type !== "provider-turn.updated") return;
+        assert.deepEqual(live.payload.tokenUsage?.breakdown, expected);
+        const reloaded = yield* projections.getThreadProjection(thread.threadId);
+        assert.deepEqual(reloaded.providerTurns[1]?.tokenUsage?.breakdown, expected);
+        const replayed = yield* events.read({ threadId: thread.threadId }).pipe(Stream.runCollect);
+        assert.deepEqual(replayed.at(-1)?.event, live);
+      }),
+  );
+});
+
 it.effect("refreshes the failing instance snapshot after a committed usage_limit terminal", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1639,6 +1720,73 @@ layer("ProviderEventIngestorV2", (it) => {
         ),
         [{ mimeType: "image/png", data: screenshotBase64 }],
       );
+    }),
+  );
+
+  it.effect("keeps a steered message pending until the provider reports it read", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const runId = RunId.make("run:steer-read");
+      const messageId = MessageId.make("message:steer-read");
+      const steer: OrchestrationV2TurnItem = {
+        id: idAllocator.derive.userTurnItem({ messageId }),
+        threadId: threadEvent.threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "user_message",
+        createdBy: "user",
+        creationSource: "web",
+        messageId,
+        inputIntent: "steer",
+        text: "Steer behind a command",
+        attachments: [],
+      };
+      yield* eventSink.write({ events: [threadEvent] });
+      const ingest = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event,
+        });
+      const projected = projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: steer.id,
+      });
+      const steerUpdated = (status: "pending" | "completed") =>
+        ingest({
+          type: "steer.updated",
+          driver: CODEX_DRIVER,
+          threadId: threadEvent.threadId,
+          runId,
+          messageId,
+          status,
+        });
+
+      yield* ingest({ type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: steer });
+      yield* steerUpdated("pending");
+      assert.deepInclude(yield* projected, { status: "pending", completedAt: null });
+      yield* steerUpdated("completed");
+      assert.equal((yield* projected)?.status, "completed");
     }),
   );
 

@@ -1,7 +1,7 @@
+import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
-import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import {
   dropThreadContext,
   endThreadContextDrag,
@@ -19,7 +19,7 @@ import {
   openThreadToTheSide,
   withOpenThreadToTheSideItem,
 } from "../layout/layoutDrag";
-import { appearanceFontStack } from "../appearanceFonts";
+import { appearanceFontStack, DEFAULT_SANS_FONT_STACK } from "../appearanceFonts";
 import { wasThreadSettledByUser } from "../layout/settledByUser";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
@@ -88,6 +88,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 
 import {
@@ -100,15 +101,11 @@ import { isElectron } from "../env";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
-  shouldShowThreadJumpHintsForModifiers,
   threadJumpCommandForIndex,
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
-import { useShortcutModifierSelector } from "../shortcutModifierState";
-import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { observeResize } from "~/lib/observeResize";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
@@ -138,7 +135,6 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { useProjectPin } from "../hooks/useProjectGroupUpdate";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
-import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -217,6 +213,8 @@ import {
   sortThreadsForSidebar,
   sortWorkingThreadsBySend,
   useSnoozeWakeClock,
+  threadShortcutContext,
+  useThreadJumpHintsVisible,
   type SidebarListItem,
   type SidebarSection,
   resolveSidebarRowThreadId,
@@ -235,6 +233,7 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import {
   resolveSidebarRouteReveal,
   type SidebarRouteReveal,
+  observeSidebarDraftPromotion,
   useActiveRowReveal,
 } from "./sidebar/routeReveal";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -968,6 +967,20 @@ function revealSidebarRow(viewport: HTMLElement, row: HTMLElement) {
  */
 const settledWhenOpened = new Map<string, boolean>();
 
+function revealSidebarShelf(header: HTMLElement) {
+  const viewport = header.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+  const lastRow = Array.from(
+    header
+      .closest("ul")
+      ?.querySelectorAll<HTMLElement>(
+        `[data-sidebar-parent="${CSS.escape(header.dataset.sidebarRow ?? "")}"]`,
+      ) ?? [],
+  ).at(-1);
+  if (!viewport || !lastRow) return;
+  revealSidebarRow(viewport, lastRow);
+  revealSidebarRow(viewport, header);
+}
+
 export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const {
     projects,
@@ -1136,7 +1149,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } | null>(null);
   const snoozingThreadKeysRef = useRef(new Set<string>());
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
-  const terminalFocused = useTerminalFocus();
   const openAddProjectCommandPalette = () => openCommandPalette({ open: "add-project" });
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
@@ -1198,6 +1210,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
 
+  if (routeTarget?.kind === "draft") {
+    observeSidebarDraftPromotion(routeReveal, routeRowThreadKey);
+  }
   // History, the palette and links can open a thread the scope hides or the list
   // scrolled away; a remount starts at the top, so each mount scrolls to the open
   // thread once. Render decides the widening, so the first frame of the new route
@@ -1359,8 +1374,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             [
-              { id: "new-thread", label: "New thread" },
-              { id: "copy-path", label: "Copy path" },
+              { id: "new-thread", label: "New thread", icon: "square-pen" },
+              { id: "copy-path", label: "Copy path", icon: "copy" },
               ...(canPinProject(group)
                 ? [
                     group.pinned
@@ -1898,17 +1913,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     restoreDragScroll();
     const threads = contextDragThreads();
-    const overComposer = moveThreadContextDragGhost(point, {
+    const threadRef = parseScopedThreadKey(contextDragKeyRef.current ?? "");
+    const title = (threadRef && readThreadShell(threadRef)?.title.trim()) || "Thread";
+    const composer = moveThreadContextDragGhost(point, {
+      title,
       count: threads.length,
       width: threadListRef.current?.getBoundingClientRect().width ?? 0,
     });
     // One thread can also land in the layout (pen jVRc4). A composer under
-    // the pointer keeps the drop as context; the zones stay lit but idle.
+    // the pointer keeps the drop as context.
     const [thread] = threads;
     if (threads.length === 1 && thread) {
-      moveLayoutDrag({ kind: "thread", threadRef: thread }, point, {
-        allowTarget: !overComposer,
-      });
+      moveLayoutDrag({ kind: "thread", threadRef: thread }, point, { composer });
     } else {
       cancelLayoutDrag();
     }
@@ -2196,6 +2212,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the active row visible as layout changes until the user scrolls.
   useEffect(() => {
     if (routeRowThreadKey === null || !routeRowRendered || isSearchingThreads) return;
+    if (routeReveal.quietKey === routeRowThreadKey) return;
     const list = threadListRef.current;
     const viewport = list?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
     if (!list || !viewport) return;
@@ -2220,7 +2237,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       release();
       for (const type of userInput) viewport.removeEventListener(type, release);
     };
-  }, [isSearchingThreads, routeRowRendered, routeRowThreadKey]);
+  }, [isSearchingThreads, routeReveal, routeRowRendered, routeRowThreadKey]);
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
   const dragActivationY = dragState?.activationY;
@@ -2421,7 +2438,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         threadKey,
         currentThreadKey: readRouteThreadKey(router),
         action: "snooze",
-        // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
         now: new Date().toISOString(),
         thread: readThreadShell(threadRef),
       })
@@ -2430,26 +2446,28 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     return { status: "success" } as const;
   };
-  const attemptSnooze = (
-    threadRef: ScopedThreadRef,
-    preset: Pick<SnoozePreset, "snoozedUntil">,
-    opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
-  ) => {
-    void (async () => {
-      const outcome = await performSnooze(threadRef, preset, opts);
-      if (outcome.status === "failure") {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to snooze thread",
-            description:
-              outcome.error instanceof Error ? outcome.error.message : "An error occurred.",
-          }),
-        );
-        return;
-      }
-    })();
-  };
+  const attemptSnooze = useStableCallback(
+    (
+      threadRef: ScopedThreadRef,
+      preset: Pick<SnoozePreset, "snoozedUntil">,
+      opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
+    ) => {
+      void (async () => {
+        const outcome = await performSnooze(threadRef, preset, opts);
+        if (outcome.status === "failure") {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to snooze thread",
+              description:
+                outcome.error instanceof Error ? outcome.error.message : "An error occurred.",
+            }),
+          );
+          return;
+        }
+      })();
+    },
+  );
 
   const handleMultiSelectContextMenu = useStableCallback(
     async (position: { x: number; y: number }) => {
@@ -2461,7 +2479,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       );
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
-      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
       const selectionNow = new Date();
       const selectedThreads = threadKeys.flatMap((threadKey) => {
         const thread = threadByKeyRef.current.get(threadKey);
@@ -2492,7 +2509,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         pinnedCount: pinnedSelectedThreads.length,
       });
       // Presets sync across environments, so the first selected thread's stand for all.
-      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
       const menuOpenedAt = new Date();
       const snoozePresets = resolveSnoozePresets(
         menuOpenedAt,
@@ -3067,11 +3083,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
-  const routeTerminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
-      : false,
-  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation shortcuts using the current thread list
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -3080,13 +3091,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
       const command = resolveShortcutCommand(event, keybindings, {
         platform: navigator.platform,
-        context: {
-          terminalFocus: isTerminalFocused(),
-          terminalOpen: routeTerminalOpen,
-          modelPickerOpen: isModelPickerOpen(),
-          isWeb: !isElectron,
-          isDesktop: isElectron,
-        },
+        context: threadShortcutContext(routeThreadRef),
       });
       const navigateToThreadKey = (targetThreadKey: string | null) => {
         if (!targetThreadKey) return false;
@@ -3119,25 +3124,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     navigateToThread,
     orderedThreadKeys,
     routeRowThreadKey,
-    routeTerminalOpen,
+    routeThreadRef,
     threadByKey,
   ]);
 
-  // Reads held modifiers outside render state so a quick chord like Mod+K never re-renders the list.
-  const showJumpHints = useShortcutModifierSelector(
-    (shortcutModifiers, held) =>
-      held &&
-      shouldShowThreadJumpHintsForModifiers(shortcutModifiers, keybindings, {
-        platform: navigator.platform,
-        context: {
-          terminalFocus: terminalFocused,
-          terminalOpen: routeTerminalOpen,
-          modelPickerOpen: isModelPickerOpen(),
-          isWeb: !isElectron,
-          isDesktop: isElectron,
-        },
-      }),
-  );
+  const showJumpHints = useThreadJumpHintsVisible(keybindings, routeThreadRef);
 
   const handleNewThreadClick = () => {
     if (isMobile) setOpenMobile(false);
@@ -3483,10 +3474,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
                     style={{
-                      fontFamily: appearanceFontStack(
-                        sidebarFontFamily,
-                        '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif',
-                      ),
+                      fontFamily: appearanceFontStack(sidebarFontFamily, DEFAULT_SANS_FONT_STACK),
                     }}
                     ref={attachTreeRef}
                     // Presentation flattens VoiceOver's list interaction boundary while preserving descendant
@@ -3626,6 +3614,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           />
                         );
                       };
+                      const shelfToggle = (
+                        shelfThreads: readonly EnvironmentThreadShell[],
+                        count: number,
+                        expanded: boolean,
+                        toggle: () => void,
+                      ) =>
+                        count > shelfThreads.length ||
+                        shelfThreads.some((thread) => threadShellKey(thread) !== routeRowThreadKey)
+                          ? {
+                              expanded,
+                              onToggle: (header: HTMLElement) => {
+                                if (expanded) return toggle();
+                                flushSync(toggle);
+                                revealSidebarShelf(header);
+                              },
+                            }
+                          : null;
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
                         <SidebarDraftBlock
@@ -3720,10 +3725,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 className="mt-auto"
                                 label="Working"
                                 count={workingThreads.length}
-                                toggle={{
-                                  expanded: workingShelfExpanded,
-                                  onToggle: toggleWorkingShelf,
-                                }}
+                                toggle={shelfToggle(
+                                  workingThreads,
+                                  workingThreads.length,
+                                  workingShelfExpanded,
+                                  toggleWorkingShelf,
+                                )}
                               />,
                             );
                             break;
@@ -3735,10 +3742,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 className={cn(workingThreads.length === 0 && "mt-auto")}
                                 label="Snoozed"
                                 count={snoozedThreads.length}
-                                toggle={{
-                                  expanded: snoozedShelfExpanded,
-                                  onToggle: toggleSnoozedShelf,
-                                }}
+                                toggle={shelfToggle(
+                                  snoozedThreads,
+                                  snoozedThreads.length,
+                                  snoozedShelfExpanded,
+                                  toggleSnoozedShelf,
+                                )}
                               />,
                             );
                             break;
@@ -3760,10 +3769,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 concealed={settledCount === 0 && from === null}
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
-                                toggle={{
-                                  expanded: settledShelfExpanded,
-                                  onToggle: toggleSettledShelf,
-                                }}
+                                toggle={shelfToggle(
+                                  settledThreads,
+                                  settledCount,
+                                  settledShelfExpanded,
+                                  toggleSettledShelf,
+                                )}
                               />,
                             );
                             break;

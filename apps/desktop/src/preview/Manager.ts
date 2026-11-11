@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.copyFile cannot request an exclusive copy.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewAnnotationVoiceEventSchema,
@@ -49,6 +51,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -480,46 +483,25 @@ export const previewWindowOpenAction = (details: {
     : "navigate";
 };
 
-const FORWARDED_SHORTCUT_CODE_KEYS: Readonly<Record<string, string>> = {
-  BracketLeft: "[",
-  BracketRight: "]",
-  Backslash: "\\",
-  Comma: ",",
-  Period: ".",
-  Slash: "/",
-  Semicolon: ";",
-  Quote: "'",
-  Backquote: "`",
-  Minus: "-",
-  Equal: "=",
-};
-
-/**
- * The keybinding key token for a key press: letters and digits by physical
- * position (Option on macOS changes the typed character, e.g. to "®"),
- * named keys lowercased ("arrowleft", "home").
- */
-const forwardedShortcutKey = (input: Electron.Input): string => {
-  const letter = input.code.match(/^Key([A-Z])$/)?.[1];
-  if (letter) return letter.toLowerCase();
-  const digit = input.code.match(/^Digit([0-9])$/)?.[1];
-  if (digit) return digit;
-  return FORWARDED_SHORTCUT_CODE_KEYS[input.code] ?? input.key.toLowerCase();
-};
-
 const isForwardedShortcut = (
   input: Electron.Input,
   shortcuts: ReadonlyArray<DesktopForwardedShortcut>,
+  platform: NodeJS.Platform,
 ): boolean => {
   if (input.type !== "keyDown" || shortcuts.length === 0) return false;
-  const key = forwardedShortcutKey(input);
-  return shortcuts.some(
-    (shortcut) =>
-      shortcut.key === key &&
-      shortcut.metaKey === input.meta &&
-      shortcut.ctrlKey === input.control &&
-      shortcut.altKey === input.alt &&
-      shortcut.shiftKey === input.shift,
+  return shortcuts.some((shortcut) =>
+    matchesKeybindingShortcut(
+      {
+        key: input.key,
+        code: input.code,
+        metaKey: input.meta,
+        ctrlKey: input.control,
+        altKey: input.alt,
+        shiftKey: input.shift,
+      },
+      { ...shortcut, modKey: false },
+      platform === "darwin" ? "MacIntel" : platform,
+    ),
   );
 };
 
@@ -1551,7 +1533,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         return;
       }
       // App chords (the layout map) go to the app window, not the page.
-      if (isForwardedShortcut(input, forwardedKeyChords)) {
+      if (isForwardedShortcut(input, forwardedKeyChords, hostPlatform)) {
         event.preventDefault();
         const forwardedKey = {
           key: input.key,
@@ -2078,8 +2060,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return;
     }
-    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () =>
-      wc.loadURL(url),
+    let unloadPrevented = false;
+    const onPreventUnload = () => {
+      unloadPrevented = true;
+    };
+    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () => {
+      wc.on("will-prevent-unload", onPreventUnload);
+      return wc.loadURL(url);
+    }).pipe(
+      // Blocked unloads and superseding navigations both reject with ERR_ABORTED.
+      Effect.catchIf(
+        (error) =>
+          !unloadPrevented &&
+          Predicate.hasProperty(error.cause, "errno") &&
+          error.cause.errno === -3,
+        () => Effect.void,
+      ),
+      Effect.ensuring(Effect.sync(() => wc.off("will-prevent-unload", onPreventUnload))),
     );
   });
 
@@ -3747,7 +3744,18 @@ export const make = Effect.gen(function* PreviewManagerMake() {
         attempt === 0 ? `${stem}${extension}` : `${stem} (${attempt})${extension}`,
       );
       if (yield* fileSystem.exists(target)) continue;
-      yield* fileSystem.copyFile(source, target);
+      const copied = yield* Effect.tryPromise({
+        try: () => NodeFSP.copyFile(source, target, NodeFSP.constants.COPYFILE_EXCL),
+        catch: (cause) => new PreviewOperationError({ operation: "copyToDownloads", cause }),
+      }).pipe(
+        Effect.as(true),
+        Effect.catchIf(
+          (error) =>
+            error.cause instanceof Error && "code" in error.cause && error.cause.code === "EEXIST",
+          () => Effect.succeed(false),
+        ),
+      );
+      if (!copied) continue;
       shell.showItemInFolder(target);
       return;
     }

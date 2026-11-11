@@ -17,6 +17,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   ArrowUpRightIcon,
+  ArrowDownUpIcon,
   BookOpenIcon,
   CopyIcon,
   HammerIcon,
@@ -25,7 +26,7 @@ import {
   MessageCircleQuestionIcon,
   MoreHorizontalIcon,
   RotateCcwIcon,
-  SparklesIcon,
+  ScrollTextIcon,
   Trash2Icon,
   FolderGit2Icon,
   PencilIcon,
@@ -77,6 +78,8 @@ export function PullRequestActionsMenu({
   onThreadPickerOpenChange,
   refreshing,
   refreshFromHost,
+  timelineOrder,
+  onToggleTimelineOrder,
   handoff,
   attachesToComposer,
   askAboutPullRequest,
@@ -126,6 +129,8 @@ export function PullRequestActionsMenu({
   onThreadPickerOpenChange: (open: boolean) => void;
   refreshing: boolean;
   refreshFromHost: () => Promise<void>;
+  timelineOrder: "newest" | "oldest" | null;
+  onToggleTimelineOrder: () => void;
   handoff: string | null;
   attachesToComposer: boolean;
   askAboutPullRequest: () => void;
@@ -253,6 +258,14 @@ export function PullRequestActionsMenu({
           <RefreshIcon size="sm" refreshing={refreshing} />
           Refresh
         </MenuItem>
+        {timelineOrder !== null ? (
+          <MenuItem onClick={onToggleTimelineOrder}>
+            <ArrowDownUpIcon className="size-3.5" />
+            {timelineOrder === "newest"
+              ? "Show oldest activity first"
+              : "Show newest activity first"}
+          </MenuItem>
+        ) : null}
         <MenuItem disabled={handoff !== null} onClick={askAboutPullRequest}>
           <MessageCircleQuestionIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
           <span className="flex min-w-0 flex-col">
@@ -281,7 +294,7 @@ export function PullRequestActionsMenu({
         </MenuItem>
         {canWriteGuide ? (
           <MenuItem disabled={guideRunning} onClick={writeGuide}>
-            <SparklesIcon className="size-3.5" />
+            <ScrollTextIcon className="size-3.5" />
             {guideRunning ? "Writing guide..." : !guideWritten ? "Write guide" : "Rewrite guide"}
           </MenuItem>
         ) : null}

@@ -60,6 +60,7 @@ import { isModalDialogOpen } from "../lib/modalDialog";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { WorkspacePlane } from "../layout/WorkspacePlane";
+import { overviewZoomTransition, useOverviewPhase } from "../layout/Overview";
 import { ChromeChannelArt, useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import {
   clampThreadSidebarWidth,
@@ -340,7 +341,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
   };
 }
 
-function SidebarControl() {
+function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -352,9 +353,16 @@ function SidebarControl() {
     context: { usagePageOpen },
   });
   const onStageBackdrop = isSidebarVisible && stageBackdropVariant !== null;
+  const overviewPhase = useOverviewPhase();
+  const overviewShown = overviewPhase === "opening" || overviewPhase === "open";
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener that toggles the sidebar on its shortcut
   useEffect(() => {
+    // A hidden sidebar would still save the toggle, so the shortcut does nothing without one.
+    if (!showSidebar) return;
+    const toggleOutsideOverview = () => {
+      if (!useLayoutStore.getState().overviewOpen) toggleSidebar();
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (
@@ -386,18 +394,18 @@ function SidebarControl() {
 
       event.preventDefault();
       event.stopPropagation();
-      toggleSidebar();
+      toggleOutsideOverview();
     };
 
     window.addEventListener("keydown", onKeyDown, true);
     const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "sidebar.toggle") toggleSidebar();
+      if (action === "sidebar.toggle") toggleOutsideOverview();
     });
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
       unsubscribe?.();
     };
-  }, [keybindings, toggleSidebar, usagePageOpen]);
+  }, [keybindings, showSidebar, toggleSidebar, usagePageOpen]);
 
   // The control lives as long as the shell, so it carries the shell's commands. Created
   // once so re-renders never re-register them.
@@ -417,23 +425,35 @@ function SidebarControl() {
       data-chrome-scope=""
       data-sidebar-control=""
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarTrigger
-              variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
-              className={cn(
-                "pointer-events-auto",
-                isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
-              )}
-              aria-label="Toggle main sidebar"
+      {showSidebar ? (
+        <div
+          className="flex"
+          inert={overviewShown}
+          style={{
+            ...overviewZoomTransition(),
+            transitionProperty: "opacity",
+            ...(overviewShown && { opacity: 0 }),
+          }}
+        >
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <SidebarTrigger
+                  variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
+                  className={cn(
+                    "pointer-events-auto",
+                    isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+                  )}
+                  aria-label="Toggle main sidebar"
+                />
+              }
             />
-          }
-        />
-        <TooltipPopup side="bottom">
-          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
-        </TooltipPopup>
-      </Tooltip>
+            <TooltipPopup side="bottom">
+              Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+            </TooltipPopup>
+          </Tooltip>
+        </div>
+      ) : null}
       {/* Phones keep the header for the page; the system back gesture covers them. */}
       <div className="pointer-events-auto hidden items-center [-webkit-app-region:no-drag] md:flex">
         <NavigationHistoryButton direction="back" onStageBackdrop={onStageBackdrop} />
@@ -498,7 +518,13 @@ const DesignSystemSidebarNav = import.meta.env.DEV
     )
   : null;
 
-export function AppSidebarLayout({ children }: { children: ReactNode }) {
+export function AppSidebarLayout({
+  children,
+  showSidebar = true,
+}: {
+  children: ReactNode;
+  showSidebar?: boolean;
+}) {
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
@@ -540,6 +566,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   });
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const chromeArtVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
+  const overviewPhase = useOverviewPhase();
+  const overviewStaged = overviewPhase !== "closed" && !isMobileLayout;
+  const overviewShown = overviewPhase === "opening" || overviewPhase === "open";
+  const overviewTransition = overviewStaged ? overviewZoomTransition() : {};
   const hideWindowControlsWhenSidebarCollapsed = useHideWindowControlsWhenSidebarCollapsed();
   const isWindowFullscreen = useSyncExternalStore(
     subscribeToWindowFullscreen,
@@ -564,6 +594,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       : {}
   ) as CSSProperties;
   const sidebarProviderStyle = {
+    "--overview-sidebar-duration": overviewTransition.transitionDuration,
+    "--overview-sidebar-easing": overviewTransition.transitionTimingFunction,
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...windowControlsInsetStyle,
@@ -583,61 +615,84 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
 
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
-      <SidebarProvider
-        className="h-dvh! min-h-0!"
-        data-chrome-art={chromeArtVariant ?? undefined}
-        data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
-        store={sidebarOpenStore}
-        style={sidebarProviderStyle}
+      <div
+        className={cn(
+          "contents",
+          "md:[&_[data-app-sidebar][data-overview-zoom]:not([data-overview-zoom=open])]:bg-sidebar",
+          "md:[&_[data-app-sidebar][data-overview-zoom]>[data-slot=sidebar-inner]]:transition-opacity md:[&_[data-app-sidebar][data-overview-zoom]>[data-slot=sidebar-inner]]:duration-(--overview-sidebar-duration) md:[&_[data-app-sidebar][data-overview-zoom]>[data-slot=sidebar-inner]]:ease-(--overview-sidebar-easing)",
+          "md:[&_[data-app-sidebar][data-overview-zoom=opening]>[data-slot=sidebar-inner]]:opacity-0 md:[&_[data-app-sidebar][data-overview-zoom=open]>[data-slot=sidebar-inner]]:opacity-0",
+        )}
       >
-        <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
-        {chromeArtVariant ? <ChromeChannelArt variant={chromeArtVariant} /> : null}
-        <Sidebar
-          side="left"
-          collapsible="offcanvas"
-          variant="inset"
-          data-app-sidebar=""
-          {...sidebarArea}
-          role="navigation"
-          aria-label={isOnDesignSystem ? "Design system" : "Threads"}
-          // Light, black chrome paints the sidebar with the dark tokens (index.css).
-          data-chrome-scope=""
-          resizable={{
-            maxWidth: sidebarMaximumWidth,
-            minWidth: sidebarMinimumWidth,
-            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-              nextWidth <= currentWidth ||
-              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-            onResize: setSidebarWidth,
-          }}
-          style={windowControlsInsetStyle}
+        <SidebarProvider
+          className="h-dvh! min-h-0!"
+          data-chrome-art={chromeArtVariant ?? undefined}
+          data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
+          store={sidebarOpenStore}
+          style={sidebarProviderStyle}
         >
-          {isOnDesignSystem && DesignSystemSidebarNav ? (
+          {showSidebar ? (
             <>
-              <SidebarChromeHeader isElectron={isElectron} />
-              <Suspense fallback={null}>
-                <DesignSystemSidebarNav />
-              </Suspense>
+              <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+              {chromeArtVariant ? <ChromeChannelArt variant={chromeArtVariant} /> : null}
+              <Sidebar
+                side="left"
+                collapsible="offcanvas"
+                variant="inset"
+                data-app-sidebar=""
+                {...sidebarArea}
+                role="navigation"
+                aria-label={isOnDesignSystem ? "Design system" : "Threads"}
+                // Light, black chrome paints the sidebar with the dark tokens (index.css).
+                data-chrome-scope=""
+                resizable={{
+                  maxWidth: sidebarMaximumWidth,
+                  minWidth: sidebarMinimumWidth,
+                  shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+                    nextWidth <= currentWidth ||
+                    wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+                  storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+                  onResize: setSidebarWidth,
+                }}
+                className={cn(overviewStaged && "z-35")}
+                data-overview-zoom={overviewStaged ? overviewPhase : undefined}
+                inert={overviewStaged && overviewShown}
+                style={
+                  overviewStaged
+                    ? {
+                        ...windowControlsInsetStyle,
+                        ...overviewTransition,
+                      }
+                    : windowControlsInsetStyle
+                }
+              >
+                {isOnDesignSystem && DesignSystemSidebarNav ? (
+                  <>
+                    <SidebarChromeHeader isElectron={isElectron} />
+                    <Suspense fallback={null}>
+                      <DesignSystemSidebarNav />
+                    </Suspense>
+                  </>
+                ) : (
+                  <ThreadSidebar routeReveal={sidebarRouteReveal} />
+                )}
+                <SidebarRail onDoubleClick={resetSidebarWidth} />
+              </Sidebar>
             </>
-          ) : (
-            <ThreadSidebar routeReveal={sidebarRouteReveal} />
-          )}
-          <SidebarRail onDoubleClick={resetSidebarWidth} />
-        </Sidebar>
-        <WorkspacePlane>{children}</WorkspacePlane>
-        <BackgroundThreadAnnouncer />
-        {isElectron ? (
-          // The chrome strip above the inset pane moves the window like the
-          // header rows on either side of it.
-          <div
-            aria-hidden
-            className="drag-region fixed inset-x-0 top-0 hidden h-(--workspace-pane-inset-top) md:block"
-          />
-        ) : null}
-        <SidebarControl />
-        {isElectron ? <HistorySwipeNavigation /> : null}
-      </SidebarProvider>
+          ) : null}
+          <WorkspacePlane>{children}</WorkspacePlane>
+          <BackgroundThreadAnnouncer />
+          {isElectron ? (
+            // The chrome strip above the inset pane moves the window like the
+            // header rows on either side of it.
+            <div
+              aria-hidden
+              className="drag-region fixed inset-x-0 top-0 hidden h-(--workspace-pane-inset-top) md:block"
+            />
+          ) : null}
+          <SidebarControl showSidebar={showSidebar} />
+          {isElectron ? <HistorySwipeNavigation /> : null}
+        </SidebarProvider>
+      </div>
     </PanelAnimationSuppressionProvider>
   );
 }

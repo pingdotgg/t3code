@@ -14,3 +14,7 @@ export function findInOpenLayers(selector: string): Element | null {
 export function openLayerMatches(selector: string): boolean {
   return findInOpenLayers(selector) !== null;
 }
+
+export function isInOpenLayer(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("body > :not(#root)") !== null;
+}
