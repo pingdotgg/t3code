@@ -42,7 +42,7 @@ const snapshot: ServerProvider = {
 };
 
 const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (
-  install: "native" | "npm" | "wrapper" = "native",
+  install: "native" | "xdgNative" | "npm" | "wrapper" = "native",
   platform: NodeJS.Platform = "linux",
   programFiles?: string,
 ) {
@@ -57,7 +57,9 @@ const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (
   const realBinaryPath =
     install === "native" && platform !== "win32"
       ? path.join(directory, ".local/share/claude/versions/2.1.314")
-      : binaryPath;
+      : install === "xdgNative"
+        ? path.join(directory, "xdg/data/claude/versions/2.1.314")
+        : binaryPath;
   yield* fs.makeDirectory(path.dirname(realBinaryPath), { recursive: true });
   yield* fs.writeFileString(realBinaryPath, "#!/bin/sh\n");
   yield* fs.chmod(realBinaryPath, 0o755);
@@ -298,16 +300,23 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps a wrapper script at the native launcher path manual-only", () =>
+  it.effect.each([
+    { name: "a wrapper script", install: "wrapper", lockKey: undefined },
+    {
+      name: "a native install under XDG_DATA_HOME",
+      install: "xdgNative",
+      lockKey: "claudeAgent-native",
+    },
+  ] as const)("resolves the native launcher path for $name", (row) =>
     Effect.gen(function* () {
-      const f = yield* fixture("wrapper");
+      const f = yield* fixture(row.install);
       const resolve = yield* f.makeResolution.pipe(
         Effect.provideService(
           HttpClient.HttpClient,
-          HttpClient.make(() => Effect.die("an unowned install must not look up a version")),
+          HttpClient.make(() => Effect.die("resolution must not look up a version")),
         ),
       );
-      expect((yield* resolve()).update).toBeNull();
+      expect((yield* resolve()).update?.lockKey).toBe(row.lockKey);
     }).pipe(Effect.scoped),
   );
 
