@@ -218,9 +218,9 @@ describe("course reference fetch", () => {
       "7 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n" +
       "trailer << /Root 1 0 R /Size 8 >>\n%%EOF";
     const result = await extractPdf(Buffer.from(pdf), [1, 2]);
-    assert.isAbove(result.pages[0]?.text.length ?? 0, 0);
+    assert.isAbove((result.pages ?? [])[0]?.text.length ?? 0, 0);
     assert.strictEqual(
-      result.pages.reduce((sum, page) => sum + page.text.length, 0),
+      (result.pages ?? []).reduce((sum, page) => sum + page.text.length, 0),
       20_000,
     );
   });
