@@ -835,6 +835,44 @@ function useChatMarkdownState({
       isClientHost &&
       canOperateHost &&
       availableEditors.includes("file-manager");
+    const wslDistro = remoteOpen.state.mode === "wsl-links" ? remoteOpen.state.distro : null;
+    const openInWslEditor =
+      wslDistro !== null && canOperateHost && wslEditor
+        ? async () => {
+            if (
+              environmentId === null ||
+              !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+            ) {
+              throw new Error("This connection cannot open an editor on this environment.");
+            }
+            let path = (await resolveHostPath()).absolutePath;
+            const absolutePath = cwd ? resolvePathLinkTarget(path, cwd) : path;
+            if (absolutePath.split("/").includes("..")) {
+              const metadata = await getFilesystemMetadata({
+                environmentId,
+                input: { paths: [absolutePath], resolveRealPath: true },
+              });
+              const realPath =
+                metadata._tag === "Success" ? metadata.value.entries[0]?.realPath : undefined;
+              if (!realPath)
+                throw new Error("Could not resolve the file path on the WSL environment.");
+              path = realPath;
+            }
+            const url = buildWslMarkdownFileUrl({
+              editor: wslEditor,
+              distro: wslDistro,
+              path,
+              cwd,
+              line: fileLinkMeta.line,
+              column: fileLinkMeta.column,
+            });
+            if (!url || !(await openRemoteEditorUrl(url)))
+              throw new Error(
+                `Could not open the file. ${openInEditorMenuLabel(wslEditor)} failed.`,
+              );
+            return AsyncResult.success(undefined);
+          }
+        : undefined;
     const mediaPath = mediaSource ?? fileLinkMeta.filePath;
     const canPreviewMedia =
       mediaMimeTypeFromExtension(
@@ -871,51 +909,19 @@ function useChatMarkdownState({
         theme={resolvedTheme}
         threadRef={threadRef}
         onOpen={
-          remoteOpen.state.mode === "wsl-links" && canOperateHost && wslEditor
-            ? async () => {
-                if (
-                  environmentId === null ||
-                  !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-                ) {
-                  throw new Error("This connection cannot open an editor on this environment.");
-                }
-                let path = (await resolveHostPath()).absolutePath;
-                const absolutePath = cwd ? resolvePathLinkTarget(path, cwd) : path;
-                if (absolutePath.split("/").includes("..")) {
-                  const metadata = await getFilesystemMetadata({
-                    environmentId,
-                    input: { paths: [absolutePath], resolveRealPath: true },
-                  });
-                  const realPath =
-                    metadata._tag === "Success" ? metadata.value.entries[0]?.realPath : undefined;
-                  if (!realPath)
-                    throw new Error("Could not resolve the file path on the WSL environment.");
-                  path = realPath;
-                }
-                const url = buildWslMarkdownFileUrl({
-                  editor: wslEditor,
-                  distro: remoteOpen.state.mode === "wsl-links" ? remoteOpen.state.distro : "",
-                  path,
-                  cwd,
-                  line: fileLinkMeta.line,
-                  column: fileLinkMeta.column,
-                });
-                if (!url || !(await openRemoteEditorUrl(url)))
-                  throw new Error("Could not open the file in VS Code.");
-                return AsyncResult.success(undefined);
-              }
-            : canOpenApp
+          openInWslEditor ??
+          (canOpenApp
+            ? async () =>
+                openInEditor({
+                  environmentId,
+                  input: { cwd: (await resolveHostPath()).absolutePath, editor: "file-manager" },
+                })
+            : canUseShellActions
               ? async () =>
-                  openInEditor({
-                    environmentId,
-                    input: { cwd: (await resolveHostPath()).absolutePath, editor: "file-manager" },
-                  })
-              : canUseShellActions
-                ? async () =>
-                    openInPreferredEditor(
-                      markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
-                    )
-                : undefined
+                  openInPreferredEditor(
+                    markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
+                  )
+              : undefined)
         }
         resolveCopyPaths={async () =>
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
