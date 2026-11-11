@@ -46,6 +46,7 @@ import {
   buildMenuItems,
   formatGitActionElapsed,
   GIT_ACTION_SUCCESS_VISIBLE_MS,
+  hasUsableGitMenuContent,
   type GitActionProgressPresentation,
   type GitActionIconName,
   type GitActionMenuItem,
@@ -93,6 +94,15 @@ import {
 import { useQuietThreadProjection, useQuietThreadShell } from "~/state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
+import { useFilesystemReadAccess } from "~/state/filesystem";
+import { reviewEnvironment } from "~/state/review";
+import { revisionedQuery } from "~/state/revisionedQuery";
+import {
+  selectThreadBranchBaseRef,
+  useDiffPanelSessionStore,
+  useDiffPanelStore,
+} from "~/diffPanelStore";
+import { useClientSettings } from "~/hooks/useSettings";
 import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
@@ -121,6 +131,7 @@ interface GitActionsControlProps {
   showActions?: boolean;
   showChanges?: boolean;
   onOpenChanges?: () => void;
+  workspaceMutationId?: string | null;
 }
 
 interface PendingDefaultBranchAction {
@@ -932,6 +943,7 @@ export default function GitActionsControl({
   showActions = true,
   showChanges = true,
   onOpenChanges,
+  workspaceMutationId = null,
 }: GitActionsControlProps) {
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const updateThreadMetadata = useAtomCommand(
@@ -1049,7 +1061,53 @@ export default function GitActionsControl({
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
-  const resolvedChangesTotals = resolveChangesTotals(gitStatusForActions);
+  const changesBaseRef = useDiffPanelStore((state) =>
+    selectThreadBranchBaseRef(state, activeThreadRef),
+  );
+  const ignoreWhitespaceSetting = useClientSettings((settings) => settings.diffIgnoreWhitespace);
+  const ignoreWhitespace =
+    useDiffPanelSessionStore((state) => state.ignoreWhitespace) ?? ignoreWhitespaceSetting;
+  const { canReadFiles } = useFilesystemReadAccess(activeEnvironmentId);
+  // Same input as the Diff panel's branch query, so both read one cached result. Status
+  // totals join the revision because edits, pulls and resets outside a turn leave the mutation
+  // id as is.
+  const changesRevision = gitStatusForActions
+    ? JSON.stringify([
+        workspaceMutationId,
+        gitStatusForActions.refName,
+        gitStatusForActions.workingTree.insertions,
+        gitStatusForActions.workingTree.deletions,
+        gitStatusForActions.branchChanges?.baseRef,
+        gitStatusForActions.branchChanges?.insertions,
+        gitStatusForActions.branchChanges?.deletions,
+      ])
+    : null;
+  const changesPreview = useEnvironmentQuery(
+    showChanges &&
+      isRepo &&
+      canReadFiles &&
+      changesRevision !== null &&
+      activeEnvironmentId !== null &&
+      gitCwd !== null
+      ? revisionedQuery(
+          reviewEnvironment.diffPreview({
+            environmentId: activeEnvironmentId,
+            input: {
+              cwd: gitCwd,
+              ...(changesBaseRef ? { baseRef: changesBaseRef } : {}),
+              ignoreWhitespace,
+              metadataOnly: true,
+              sourceKind: "branch-range",
+            },
+          }),
+          changesRevision,
+        )
+      : null,
+  );
+  const resolvedChangesTotals = resolveChangesTotals(
+    gitStatusForActions,
+    changesPreview.data?.sources.find((source) => source.kind === "branch-range"),
+  );
   const changesTotals = resolvedChangesTotals ?? { insertions: 0, deletions: 0 };
   const changesBaseLabel = resolvedChangesTotals
     ? resolvedChangesTotals.baseRef === null
@@ -1395,6 +1453,23 @@ export default function GitActionsControl({
 
   const canPublishRepository =
     canWriteSourceControl && isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
+  const isDetachedHead = gitStatusForActions?.refName === null;
+  const isCleanAndBehind =
+    gitStatusForActions !== null &&
+    gitStatusForActions.refName !== null &&
+    !gitStatusForActions.hasWorkingTreeChanges &&
+    gitStatusForActions.behindCount > 0 &&
+    gitStatusForActions.aheadCount === 0;
+  const hasGitMenuContent = hasUsableGitMenuContent({
+    menuItems: gitActionMenuItems,
+    canWriteSourceControl,
+    canPublishRepository,
+    hasNotice: isDetachedHead || isCleanAndBehind || Boolean(gitStatusError),
+  });
+
+  // A disabled menu cannot refresh on open, and terminal edits or commits publish no status.
+  const refreshStatusForEmptyMenu = () =>
+    requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
 
   const initializeGit = () => {
     void (async () => {
@@ -1466,19 +1541,15 @@ export default function GitActionsControl({
           <MenuItemLabel>Publish repository...</MenuItemLabel>
         </MenuItem>
       ) : null}
-      {gitStatusForActions?.refName === null && (
+      {isDetachedHead && (
         <p className="px-2 py-1.5 text-xs text-warning">
           Detached HEAD: create and check out a branch to enable push and{" "}
           {changeRequestTerminology.singular} actions.
         </p>
       )}
-      {gitStatusForActions &&
-        gitStatusForActions.refName !== null &&
-        !gitStatusForActions.hasWorkingTreeChanges &&
-        gitStatusForActions.behindCount > 0 &&
-        gitStatusForActions.aheadCount === 0 && (
-          <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
-        )}
+      {isCleanAndBehind && (
+        <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
+      )}
       {gitStatusError && <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError}</p>}
     </>
   );
@@ -1506,6 +1577,8 @@ export default function GitActionsControl({
           role="group"
           aria-label="Git actions"
           ref={panelAnchorRef}
+          onPointerEnter={hasGitMenuContent ? undefined : refreshStatusForEmptyMenu}
+          onFocus={hasGitMenuContent ? undefined : refreshStatusForEmptyMenu}
           className={cn(
             "shrink-0",
             THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
@@ -1613,7 +1686,7 @@ export default function GitActionsControl({
                       panel
                     />
                   }
-                  disabled={isGitActionRunning}
+                  disabled={isGitActionRunning || !hasGitMenuContent}
                 >
                   <ChevronDownIcon
                     aria-hidden="true"
@@ -1639,35 +1712,41 @@ export default function GitActionsControl({
           onClick={onOpenChanges}
         >
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className={cn("shrink-0", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          {changesBaseLabel ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="pointer-events-auto min-w-0 truncate text-xs text-muted-foreground" />
+          <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+            <span className="shrink-0">Changes</span>
+            {changesBaseLabel ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span className="pointer-events-auto min-w-0 truncate font-normal text-muted-foreground" />
+                  }
+                >
+                  {changesBaseLabel}
+                </TooltipTrigger>
+                <TooltipPopup side="top" className="max-w-96 break-words">
+                  {changesBaseLabel}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+            <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
+              <span
+                className={
+                  changesTotals.insertions
+                    ? "text-diff-addition-foreground"
+                    : "text-muted-foreground"
                 }
               >
-                {changesBaseLabel}
-              </TooltipTrigger>
-              <TooltipPopup side="top" className="max-w-96 break-words">
-                {changesBaseLabel}
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
-            <span
-              className={
-                changesTotals.insertions ? "text-diff-addition-foreground" : "text-muted-foreground"
-              }
-            >
-              +{formatDiffCount(changesTotals.insertions)}
-            </span>
-            <span
-              className={
-                changesTotals.deletions ? "text-diff-deletion-foreground" : "text-muted-foreground"
-              }
-            >
-              -{formatDiffCount(changesTotals.deletions)}
+                +{formatDiffCount(changesTotals.insertions)}
+              </span>
+              <span
+                className={
+                  changesTotals.deletions
+                    ? "text-diff-deletion-foreground"
+                    : "text-muted-foreground"
+                }
+              >
+                -{formatDiffCount(changesTotals.deletions)}
+              </span>
             </span>
           </span>
         </ThreadDetailsControl>
