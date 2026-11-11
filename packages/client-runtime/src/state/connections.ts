@@ -1,6 +1,5 @@
 import type { EnvironmentId as EnvironmentIdType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -17,6 +16,7 @@ import {
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
+  environmentSessionGenerationAtom,
   followStreamInEnvironment,
 } from "./runtime.ts";
 
@@ -62,7 +62,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
   );
 
   const catalogValueAtom = Atom.make((get) =>
-    Option.getOrElse(AsyncResult.value(get(catalogAtom)), () => EMPTY_ENVIRONMENT_CATALOG_STATE),
+    AsyncResult.getOrElse(get(catalogAtom), () => EMPTY_ENVIRONMENT_CATALOG_STATE),
   ).pipe(Atom.withLabel("environment-catalog-value"));
 
   const pullRequestRoutingPermissionsAtom = runtime.atom(
@@ -72,7 +72,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
     { initialValue: [] as ReadonlyArray<StoredPullRequestRoutingPermission> },
   );
   const pullRequestRoutingPermissionsValueAtom = Atom.make((get) =>
-    Option.getOrElse(AsyncResult.value(get(pullRequestRoutingPermissionsAtom)), () => []),
+    AsyncResult.getOrElse(get(pullRequestRoutingPermissionsAtom), () => []),
   ).pipe(Atom.withLabel("environment-pull-request-routing-permissions"));
   const setPullRequestRoutingPermission = createRuntimeCommand(runtime, {
     label: "environment-catalog:pull-request-routing-permission",
@@ -103,7 +103,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
   );
 
   const networkStatusValueAtom = Atom.make((get) =>
-    Option.getOrElse(AsyncResult.value(get(networkStatusAtom)), () => "unknown" as const),
+    AsyncResult.getOrElse(get(networkStatusAtom), () => "unknown" as const),
   ).pipe(Atom.withLabel("environment-network-status-value"));
 
   const stateAtom = Atom.family((environmentId: EnvironmentIdType) =>
@@ -119,6 +119,9 @@ export function createEnvironmentCatalogAtoms<R, E>(
       { initialValue: AVAILABLE_CONNECTION_STATE },
     ),
   );
+
+  const sessionGenerationAtom = (environmentId: EnvironmentIdType) =>
+    environmentSessionGenerationAtom(runtime, environmentId);
 
   const register = createRuntimeCommand(runtime, {
     label: "environment-catalog:register",
@@ -197,6 +200,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
     networkStatusAtom,
     networkStatusValueAtom,
     stateAtom,
+    sessionGenerationAtom,
     register,
     remove,
     removeRoute,
