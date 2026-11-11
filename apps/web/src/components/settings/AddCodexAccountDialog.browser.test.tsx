@@ -74,7 +74,13 @@ function createdInstanceId(): ProviderInstanceId {
   return ProviderInstanceId.make(Object.keys(call[0].input.patch.providerInstances)[0]!);
 }
 
-function Owner({ onClose }: { readonly onClose: () => void }) {
+function Owner({
+  onClose,
+  onAccountCreated,
+}: {
+  readonly onClose: () => void;
+  readonly onAccountCreated: (instanceId: ProviderInstanceId) => void;
+}) {
   const [shown, setShown] = useState(true);
   return shown ? (
     <AddCodexAccountDialog
@@ -83,6 +89,7 @@ function Owner({ onClose }: { readonly onClose: () => void }) {
         onClose();
         setShown(false);
       }}
+      onAccountCreated={onAccountCreated}
       renderSetup={() => <p>Sign in to ChatGPT</p>}
     />
   ) : null;
@@ -93,6 +100,7 @@ describe("AddCodexAccountDialog", () => {
     const atom = Atom.make<ReadonlyArray<ServerProvider> | null>([]).pipe(Atom.keepAlive);
     providersAtom.current = atom;
     const onClose = vi.fn();
+    const onAccountCreated = vi.fn();
     // A long exit transition that the test finishes by hand, so the close is
     // observable mid-animation without waiting on real time.
     const style = document.createElement("style");
@@ -102,13 +110,14 @@ describe("AddCodexAccountDialog", () => {
     using _style = { [Symbol.dispose]: () => style.remove() };
     await using _screen = await render(
       <AppAtomRegistryProvider>
-        <Owner onClose={onClose} />
+        <Owner onClose={onClose} onAccountCreated={onAccountCreated} />
       </AppAtomRegistryProvider>,
     );
 
     await userEvent.click(page.getByRole("button", { name: "Continue" }));
     const instanceId = createdInstanceId();
     await act(() => registry.set(atom, [codexProvider(instanceId, { status: "unauthenticated" })]));
+    // Telling the owner about the account does not skip the dialog's own sign-in.
     await expect.element(page.getByText("Sign in to ChatGPT")).toBeVisible();
 
     await act(() =>
