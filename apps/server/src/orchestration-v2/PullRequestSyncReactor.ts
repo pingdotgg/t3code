@@ -47,6 +47,8 @@ const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
 // A pull request closed this long ago is rarely reopened, so the sweep stops reading it, as it
 // does merged ones. A reader that sees it open, or a requested refresh, still reads it at once.
 const CLOSED_FINAL_AFTER_MS = 24 * 60 * 60 * 1_000;
+// A link whose host read failed waits a sweep, then twice as long after each further failure.
+const FAILED_READ_BACKOFF_MS = 60 * 1_000;
 
 const isChangeRequestCloseCommand = (command: string) =>
   sourceControlDefinitions.definitions.some(
@@ -346,10 +348,12 @@ export const make = Effect.gen(function* () {
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
+  const failedReads = new Map<string, { readonly retryAtMs: number; readonly backoffMs: number }>();
   // Pause per project and host because credentials are project-specific; leave paused PRs due until reset.
   const pausedUntil = new Map<string, number>();
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
+    if ((failedReads.get(key)?.retryAtMs ?? 0) > nowMs) return false;
     if (requested.has(key) || retryStacks.has(key)) return true;
     if (entries.some((entry) => entry.link.snapshot === null)) return true;
     const active = entries.filter((entry) => isUnsettled(entry.thread));
@@ -397,12 +401,17 @@ export const make = Effect.gen(function* () {
 
     // A host-level refresh reaches every project, each retaining its own pending retry.
     for (const [key, entries] of groups) {
-      if (pendingRequests.has(threadPullRequestKeyOf(entries[0]!.link))) requested.add(key);
+      if (!pendingRequests.has(threadPullRequestKeyOf(entries[0]!.link))) continue;
+      requested.add(key);
+      // A new request reads at once; a failure after it backs off further, not from the start.
+      const failed = failedReads.get(key);
+      if (failed !== undefined) failedReads.set(key, { ...failed, retryAtMs: nowMs });
     }
     pendingRequests.clear();
 
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
+    for (const key of failedReads.keys()) if (!groups.has(key)) failedReads.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
     const linkedThisSweep = new Set<string>();
@@ -562,6 +571,7 @@ export const make = Effect.gen(function* () {
       }
       // The host answered, so the cadence clock ticks even if a dispatch below is rejected.
       lastSyncedAt.set(key, nowMs);
+      failedReads.delete(key);
       requested.delete(key);
       yield* Effect.forEach(
         entries,
@@ -587,6 +597,13 @@ export const make = Effect.gen(function* () {
           const retryAt = rateLimitRetryAt(cause);
           if (retryAt !== undefined) {
             pausedUntil.set(pauseKey, Math.max(retryAt, pausedUntil.get(pauseKey) ?? 0));
+          } else {
+            const previous = failedReads.get(key);
+            const backoffMs =
+              previous === undefined
+                ? FAILED_READ_BACKOFF_MS
+                : Math.min(previous.backoffMs * 2, SLOW_SYNC_INTERVAL_MS);
+            failedReads.set(key, { retryAtMs: nowMs + backoffMs, backoffMs });
           }
           const reason = skipReason(cause);
           const skip = skips.get(reason);
