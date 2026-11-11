@@ -90,7 +90,7 @@ describe("UsageThreadIndex", () => {
 
     expect(threads[known.thread!]).toMatchObject({ threadId: agentThread, parent: parent.thread });
     expect(threads[unknown.thread!]).toEqual({
-      key: "agent:claude:parent-session:agent-2",
+      key: "agent:claude:@claude-work:parent-session:agent-2",
       title: "Run tests",
       projectId: app,
       parent: parent.thread,
@@ -148,6 +148,21 @@ describe("UsageThreadIndex", () => {
     expect(session.thread).toBe(threads[agent.thread!]?.parent);
     expect(threads[session.thread!]).toMatchObject({ projectId: app, located: true });
     expect(threads[agent.thread!]).toMatchObject({ projectId: app, located: true });
+  });
+
+  it("keeps outside-T3 sessions with the same native id separate by account", () => {
+    const index = new UsageThreadIndex(attribution);
+    const work = index.groupFor(
+      source({ sessionId: "shared-cli", instanceId: "work", cwd: "/work/app" }),
+    );
+    const personal = index.groupFor(
+      source({ sessionId: "shared-cli", instanceId: "personal", cwd: "/work/app/docs" }),
+    );
+    const { threads } = index.finish();
+
+    expect(work.thread).not.toBe(personal.thread);
+    expect(threads[work.thread!]?.projectId).toBe(app);
+    expect(threads[personal.thread!]?.projectId).toBe(nested);
   });
 
   it("places sessions from outside T3 by folder, deepest project first", () => {

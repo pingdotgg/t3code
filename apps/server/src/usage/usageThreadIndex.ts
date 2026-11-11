@@ -166,13 +166,22 @@ export class UsageThreadIndex {
         }
       }
       const parentThread = parent.thread === undefined ? undefined : this.#threads[parent.thread];
-      const index = this.#add(`agent:${source.provider}:${source.sessionId}:${source.agentId}`, {
-        ...(source.label === null ? {} : { title: source.label }),
-        ...(parentThread?.projectId === undefined ? {} : { projectId: parentThread.projectId }),
-        ...(parent.thread === undefined ? {} : { parent: parent.thread }),
-        subagent: true,
-        located: parentThread?.located ?? source.cwd !== null,
-      });
+      const index = this.#add(
+        syntheticThreadKey(
+          "agent",
+          source.provider,
+          parent.instanceId ?? source.instanceId,
+          source.sessionId,
+          source.agentId,
+        ),
+        {
+          ...(source.label === null ? {} : { title: source.label }),
+          ...(parentThread?.projectId === undefined ? {} : { projectId: parentThread.projectId }),
+          ...(parent.thread === undefined ? {} : { parent: parent.thread }),
+          subagent: true,
+          located: parentThread?.located ?? source.cwd !== null,
+        },
+      );
       return withInstance({ thread: index }, parent.instanceId ?? null);
     }
     const native =
@@ -189,10 +198,13 @@ export class UsageThreadIndex {
       if (thread !== null) return withInstance(thread, native.instanceId ?? source.instanceId);
     }
     const projectId = source.cwd === null ? null : this.#projectFor(source.cwd);
-    const index = this.#add(`session:${source.provider}:${source.sessionId}`, {
-      ...(projectId === null ? {} : { projectId }),
-      located: source.cwd !== null,
-    });
+    const index = this.#add(
+      syntheticThreadKey("session", source.provider, source.instanceId, source.sessionId),
+      {
+        ...(projectId === null ? {} : { projectId }),
+        located: source.cwd !== null,
+      },
+    );
     return withInstance({ thread: index }, source.instanceId);
   }
 
@@ -274,6 +286,25 @@ export class UsageThreadIndex {
     this.#indexByKey.set(key, index);
     return index;
   }
+}
+
+/** Provider-native ids are only unique inside an account when one is known. */
+function syntheticThreadKey(
+  kind: "session" | "agent",
+  provider: UsageProviderKind,
+  instanceId: string | null,
+  sessionId: string,
+  agentId?: string,
+): string {
+  if (instanceId === null) {
+    return agentId === undefined
+      ? `${kind}:${provider}:${sessionId}`
+      : `${kind}:${provider}:${sessionId}:${agentId}`;
+  }
+  const scope = `@${encodeURIComponent(instanceId)}:${encodeURIComponent(sessionId)}`;
+  return agentId === undefined
+    ? `${kind}:${provider}:${scope}`
+    : `${kind}:${provider}:${scope}:${encodeURIComponent(agentId)}`;
 }
 
 function withInstance(

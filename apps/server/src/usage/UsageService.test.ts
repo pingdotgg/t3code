@@ -1522,12 +1522,12 @@ describe("UsageService", () => {
         [atlas]: { output: 7, instanceId: "claudeAgent" },
         outside: { output: 3, instanceId: "claudeAgent" },
       });
-      assert.isFalse(threads.some((thread) => thread.key === "session:claude:s-old"));
+      assert.isFalse(threads.some((thread) => thread.key === "session:claude:@claudeAgent:s-old"));
       const t3Index = threads.findIndex((thread) => thread.threadId === threadId);
       assert.deepStrictEqual(
         threads.find((thread) => thread.subagent),
         {
-          key: "agent:claude:s-t3:a1",
+          key: "agent:claude:@claude-work:s-t3:a1",
           title: "Map the API",
           projectId: orbit,
           parent: t3Index,
@@ -1537,7 +1537,7 @@ describe("UsageService", () => {
       );
       assert.deepStrictEqual(
         threads.find((thread) => thread.projectId === undefined),
-        { key: "session:claude:s-none", located: true },
+        { key: "session:claude:@claudeAgent:s-none", located: true },
       );
       assert.deepStrictEqual(
         [...(grouped.projects ?? [])].sort((a, b) => a.title.localeCompare(b.title)),
@@ -1551,7 +1551,8 @@ describe("UsageService", () => {
         "Map the REST API",
       );
       assert.strictEqual(
-        relabeled.threads?.find((thread) => thread.key === "session:claude:s-cli")?.projectId,
+        relabeled.threads?.find((thread) => thread.key === "session:claude:@claudeAgent:s-cli")
+          ?.projectId,
         atlas,
       );
       // Without the option the summary keeps its original shape.
