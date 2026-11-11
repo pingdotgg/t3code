@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type * as Stream from "effect/Stream";
 import type {
   PullRequestStackMembership,
   PullRequestAction,
@@ -409,6 +410,13 @@ export interface PullRequestProviderApi {
   readonly listChangeRequestNotifications?: (
     input: ProviderRepositoryRef & { readonly since: number },
   ) => Effect.Effect<ProviderChangeRequestNotifications | null, PullRequestProviderError>;
+  /**
+   * Emits whenever the host says the change request may have changed, and once on connecting.
+   * Ends where the host or account offers no such feed; readers then rely on polling alone.
+   */
+  readonly changeRequestEvents?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Stream.Stream<void>;
 
   readonly getChangeRequestStack?: (
     input: ProviderRepositoryRef & { readonly includeDetails?: boolean; readonly number: number },
