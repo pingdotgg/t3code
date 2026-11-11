@@ -298,10 +298,10 @@ const mobileEndorsementRows = [
       >
         <div class="demo-chrome">
           <div class="demo-chrome-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-          <span class="demo-chrome-title">{t.demoWindowTitle}</span>
+          <span class="demo-chrome-title" id="staged-demo-chrome-title">{t.demoWindowTitle}</span>
           <span class="demo-chrome-badge">{t.demoEyebrow}</span>
         </div>
-        <div class="demo-log" id="staged-demo-log" aria-live="polite"></div>
+        <div class="demo-viewport" id="staged-demo-log" aria-live="polite"></div>
         <div class="demo-controls">
           <button type="button" class="btn btn-primary demo-btn" id="staged-demo-play">{t.demoPlay}</button>
           <button type="button" class="btn btn-ghost demo-btn" id="staged-demo-replay">{t.demoReplay}</button>
@@ -527,6 +527,7 @@ const mobileEndorsementRows = [
   const demoPlay = document.getElementById("staged-demo-play");
   const demoReplay = document.getElementById("staged-demo-replay");
   const demoStatus = document.getElementById("staged-demo-status");
+  const demoChromeTitle = document.getElementById("staged-demo-chrome-title");
   if (
     demoRoot instanceof HTMLElement &&
     demoLog instanceof HTMLElement &&
@@ -540,6 +541,7 @@ const mobileEndorsementRows = [
       playButton: demoPlay,
       replayButton: demoReplay,
       status: demoStatus,
+      chromeTitle: demoChromeTitle instanceof HTMLElement ? demoChromeTitle : null,
       labels: {
         play: demoRoot.dataset.demoPlay ?? "Play",
         replay: demoRoot.dataset.demoReplay ?? "Replay",
@@ -965,50 +967,321 @@ const mobileEndorsementRows = [
     white-space: nowrap;
   }
 
-  .demo-log {
+  .demo-viewport {
     flex: 1;
-    min-height: 280px;
-    max-height: 360px;
+    min-height: 300px;
+    max-height: 420px;
     overflow: auto;
-    padding: 18px 20px;
+    padding: 16px 16px 18px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Scenes are created in JS, so they never get Astro's scope attribute. */
+  .demo-viewport :global(.demo-gui) {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 100%;
+  }
+
+  .demo-viewport :global(.demo-thread-bar) {
     font-family: var(--font-mono);
-    font-size: 12.5px;
-    line-height: 1.65;
+    font-size: 11px;
+    color: var(--fg-dim);
+    letter-spacing: 0.02em;
+  }
+
+  .demo-viewport :global(.demo-bubble) {
+    align-self: flex-start;
+    max-width: 92%;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--fg);
+  }
+
+  .demo-viewport :global(.demo-section-label) {
+    margin-top: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+  }
+
+  .demo-viewport :global(.demo-card) {
+    display: grid;
+    grid-template-columns: 28px 1fr 14px;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-elev);
+  }
+
+  .demo-viewport :global(.demo-mark) {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: #0a0a0a;
+  }
+
+  .demo-viewport :global(.demo-mark--claude) { background: oklch(0.78 0.12 55); }
+  .demo-viewport :global(.demo-mark--codex) { background: oklch(0.78 0.1 200); }
+
+  .demo-viewport :global(.demo-card-body) {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .demo-viewport :global(.demo-card-head) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .demo-viewport :global(.demo-card-title) {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .demo-viewport :global(.demo-card-detail),
+  .demo-viewport :global(.demo-card-status) {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .demo-viewport :global(.demo-card-chevron) {
+    color: var(--fg-faint);
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  .demo-viewport :global(.demo-dot) {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    flex: none;
+  }
+  .demo-viewport :global(.demo-dot--run) { background: oklch(0.72 0.12 230); }
+  .demo-viewport :global(.demo-dot--ok) { background: var(--ok); }
+  .demo-viewport :global(.demo-dot--wait) { background: var(--warn); }
+
+  .demo-viewport :global(.demo-details) {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-elev);
+    padding: 14px 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .demo-viewport :global(.demo-details-title) {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+
+  .demo-viewport :global(.demo-details-h) {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+    margin-bottom: 8px;
+  }
+
+  .demo-viewport :global(.demo-details-list) {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .demo-viewport :global(.demo-details-row) {
+    display: grid;
+    grid-template-columns: 10px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+  }
+
+  .demo-viewport :global(.demo-details-label) { color: var(--fg); min-width: 0; }
+  .demo-viewport :global(.demo-details-meta) {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+  .demo-viewport :global(.demo-details-note) {
+    font-size: 12px;
+    color: var(--fg-muted);
+  }
+
+  .demo-viewport :global(.demo-pending) {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-elev);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .demo-viewport :global(.demo-pending-eyebrow) {
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--warn);
+  }
+
+  .demo-viewport :global(.demo-pending-title) {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+
+  .demo-viewport :global(.demo-pending-detail) {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg);
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.35);
+    overflow-wrap: anywhere;
+  }
+
+  .demo-viewport :global(.demo-pending-reason) {
+    font-size: 12px;
+    color: var(--fg-muted);
+  }
+
+  .demo-viewport :global(.demo-pending-actions) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .demo-viewport :global(.demo-pending-wait) {
+    font-size: 12px;
+    color: var(--warn);
+    margin-right: auto;
+  }
+
+  .demo-viewport :global(.demo-pending-btn) {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    color: var(--fg-muted);
+  }
+
+  .demo-viewport :global(.demo-pending-btn--ok) {
+    background: var(--fg);
+    color: #000;
+    border-color: transparent;
+  }
+
+  .demo-viewport :global(.demo-gui--phone) {
+    align-items: center;
+    justify-content: center;
+  }
+
+  .demo-viewport :global(.demo-phone) {
+    width: min(260px, 100%);
+    border: 1px solid var(--border-strong);
+    border-radius: 22px;
+    background: #050505;
+    padding: 10px 12px 14px;
     display: flex;
     flex-direction: column;
     gap: 10px;
   }
 
-  /* Rows are created in JS, so they never get Astro's scope attribute. */
-  .demo-log :global(.demo-line) {
-    display: grid;
-    grid-template-columns: 64px 1fr;
-    gap: 12px;
-    align-items: start;
+  .demo-viewport :global(.demo-phone-notch) {
+    width: 72px;
+    height: 6px;
+    border-radius: 999px;
+    background: #1a1a1a;
+    margin: 2px auto 4px;
   }
 
-  .demo-log :global(.demo-who) {
-    color: var(--fg-dim);
+  .demo-viewport :global(.demo-phone-bar) {
+    font-family: var(--font-mono);
     font-size: 11px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    padding-top: 2px;
-  }
-
-  .demo-log :global(.demo-line--you .demo-who) { color: var(--fg-muted); }
-  .demo-log :global(.demo-line--lead .demo-who) { color: var(--accent); }
-  .demo-log :global(.demo-line--claude .demo-who) { color: oklch(0.78 0.12 55); }
-  .demo-log :global(.demo-line--codex .demo-who) { color: oklch(0.78 0.1 200); }
-  .demo-log :global(.demo-line--phone .demo-who) { color: var(--ok); }
-  .demo-log :global(.demo-line--system .demo-who) { color: var(--fg-faint); }
-
-  .demo-log :global(.demo-text) {
-    color: var(--fg);
-    overflow-wrap: anywhere;
-  }
-
-  .demo-log :global(.demo-line--system .demo-text) {
     color: var(--fg-dim);
+    text-align: center;
+  }
+
+  .demo-viewport :global(.demo-phone-chip) {
+    align-self: center;
+    font-size: 11px;
+    color: var(--warn);
+    border: 1px solid color-mix(in oklab, var(--warn) 35%, transparent);
+    border-radius: 999px;
+    padding: 3px 8px;
+  }
+
+  .demo-viewport :global(.demo-phone-card) {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-elev);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .demo-viewport :global(.demo-phone-card-title) {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+
+  .demo-viewport :global(.demo-phone-card-body) {
+    font-size: 12px;
+    color: var(--fg-muted);
+  }
+
+  .demo-viewport :global(.demo-phone-card-meta) {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ok);
+  }
+
+  .demo-viewport :global(.demo-phone-cta) {
+    margin-top: 2px;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: #000;
+    background: var(--fg);
+    border-radius: 10px;
+    padding: 9px 12px;
   }
 
   .demo-controls {

@@ -44,17 +44,17 @@ export const de: Messages = {
       "Jede Woche neue Agents.",
     ],
     demoEyebrow: "Inszenierte Demo",
-    demoTitle: "Eine Anfrage. Agents auf dem Schreibtisch und dem Handy.",
+    demoTitle: "Eine Anfrage. Specialists, Thread Details, Review am Handy.",
     demoBody:
-      "Ein Lead-Thread kann Arbeit parallel an Claude und Codex in eigenen Worktrees geben, während du von einem anderen Gerät zusiehst. Feature-Karten zeigen diesen Rhythmus nicht. Eine kurze abspielbare Geschichte schon.",
-    demoLabel: "Illustrierte Geschichte · hier laufen keine Agents",
+      "Spiele eine kurze GUI-Reise: ein Lead-Thread gibt Specialists Worktrees, Work erscheint in Thread Details, eine Pending Request wartet, und du schliesst den Review vom Handy ab. Nur illustriert.",
+    demoLabel: "Illustrierte Geschichte. Hier laufen keine Agents.",
     demoPlay: "Abspielen",
     demoReplay: "Nochmal",
-    demoPlaying: "Inszenierte Geschichte läuft…",
+    demoPlaying: "Inszenierte Geschichte laeuft...",
     demoComplete: "Ende der inszenierten Geschichte",
-    demoWindowTitle: "t3 · remote multi-agent",
+    demoWindowTitle: "checkout-flake · lead",
     demoVisualLabel:
-      "Inszenierte Illustration eines Multi-Agent-Remote-Workflows in T3 Code: ein Lead-Agent delegiert an Claude und Codex, während du vom Handy zusiehst.",
+      "Inszenierte Illustration einer T3-Code-GUI-Reise: Delegation Cards, Work in Thread Details, Pending Approval und Phone Review.",
     gitVisualLabel:
       "Illustration des Git-Workflows in T3 Code: Diff prüfen, Änderungen committen und pushen, Pull Request öffnen.",
     prReady: "Bereit",

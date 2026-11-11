@@ -46,17 +46,17 @@ export const ja: Messages = {
       "対応エージェントは毎週追加。",
     ],
     demoEyebrow: "ステージデモ",
-    demoTitle: "ひとつの依頼。机のエージェントとスマホが同期する。",
+    demoTitle: "ひとつの依頼。スペシャリスト、Thread Details、スマホでの確認。",
     demoBody:
-      "リードのスレッドが Claude と Codex に並列の worktree で仕事を渡し、別デバイスから見守れます。機能カードではこのリズムは伝わらない。短い再生可能な物語なら伝わる。",
-    demoLabel: "イラストの物語 · このページではエージェントは動きません",
+      "短い GUI の旅を再生: リードのスレッドがスペシャリストを worktree に委譲し、Work が Thread Details に現れ、保留リクエストが待ち、スマホからレビューを終えます。イラストのみ。",
+    demoLabel: "イラストの物語。このページではエージェントは動きません。",
     demoPlay: "再生",
     demoReplay: "もう一度",
-    demoPlaying: "ステージデモを再生中…",
+    demoPlaying: "ステージデモを再生中...",
     demoComplete: "ステージデモの終わり",
-    demoWindowTitle: "t3 · remote multi-agent",
+    demoWindowTitle: "checkout-flake · lead",
     demoVisualLabel:
-      "T3 Code のマルチエージェント遠隔ワークフローのステージドイラスト：リードエージェントが Claude と Codex に委譲し、スマホから見守る様子。",
+      "T3 Code の GUI ジャーニーのステージドイラスト: 委譲カード、Thread Details の Work、保留承認、スマホでのレビュー。",
     gitVisualLabel:
       "T3 Code の Git ワークフローの図：diff を確認し、変更をコミットしてプッシュし、プルリクエストを作成する。",
     prReady: "準備完了",

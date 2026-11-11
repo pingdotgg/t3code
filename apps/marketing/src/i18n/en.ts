@@ -44,17 +44,17 @@ export const en = {
       "More harnesses shipping weekly.",
     ],
     demoEyebrow: "Staged demo",
-    demoTitle: "One ask. Agents on your desk and your phone.",
+    demoTitle: "One ask. Specialists, Thread Details, phone review.",
     demoBody:
-      "A lead thread can hand work to Claude and Codex in parallel worktrees while you watch from another device. Feature cards cannot show that rhythm. A short playable story can.",
+      "Play a short GUI journey: a lead thread delegates specialists into worktrees, Work shows up in Thread Details, a pending request waits, and you finish the review from your phone. Illustrated only.",
     demoLabel: "Illustrated story. No agents run on this page.",
     demoPlay: "Play",
     demoReplay: "Replay",
     demoPlaying: "Playing staged story...",
     demoComplete: "End of staged story",
-    demoWindowTitle: "t3 · remote multi-agent",
+    demoWindowTitle: "checkout-flake · lead",
     demoVisualLabel:
-      "Staged illustration of a T3 Code multi-agent remote workflow: a lead agent delegates to Claude and Codex while you watch from your phone.",
+      "Staged illustration of a T3 Code GUI journey: delegation cards, Thread Details work, a pending approval, and phone review.",
     gitVisualLabel:
       "Illustration of the T3 Code Git workflow: review a diff, commit and push changes, and open a pull request.",
     prReady: "Ready",

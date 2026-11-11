@@ -45,17 +45,17 @@ export const es: Messages = {
       "Nuevas integraciones cada semana.",
     ],
     demoEyebrow: "Demo escenificada",
-    demoTitle: "Una petición. Agentes en el escritorio y en el teléfono.",
+    demoTitle: "Una petición. Especialistas, Thread Details y revisión en el teléfono.",
     demoBody:
-      "Un hilo principal puede repartir trabajo a Claude y Codex en worktrees en paralelo mientras miras desde otro dispositivo. Las tarjetas de funciones no muestran ese ritmo. Una historia reproducible corta sí.",
-    demoLabel: "Historia ilustrada · no hay agentes en esta página",
+      "Reproduce un recorrido corto de la GUI: un hilo principal delega especialistas en worktrees, el trabajo aparece en Thread Details, una solicitud pendiente espera y terminas la revisión desde el teléfono. Solo ilustrado.",
+    demoLabel: "Historia ilustrada. No hay agentes en esta página.",
     demoPlay: "Reproducir",
     demoReplay: "Repetir",
-    demoPlaying: "Reproduciendo historia escenificada…",
+    demoPlaying: "Reproduciendo historia escenificada...",
     demoComplete: "Fin de la historia escenificada",
-    demoWindowTitle: "t3 · remote multi-agent",
+    demoWindowTitle: "checkout-flake · lead",
     demoVisualLabel:
-      "Ilustración escenificada de un flujo multiagente remoto en T3 Code: un agente principal delega a Claude y Codex mientras miras desde el teléfono.",
+      "Ilustración escenificada de un recorrido GUI de T3 Code: tarjetas de delegación, trabajo en Thread Details, una aprobación pendiente y revisión en el teléfono.",
     gitVisualLabel:
       "Ilustración del flujo de Git en T3 Code: revisar un diff, hacer commit y push de los cambios y abrir un pull request.",
     prReady: "Listo",
