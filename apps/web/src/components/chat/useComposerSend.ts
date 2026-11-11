@@ -433,9 +433,10 @@ export function useComposerSend(input: ComposerSendInput) {
       Boolean(activePendingProgress) && sendCtx?.answeringPendingUserInput !== false;
     const startsSideChat =
       onSideChat !== undefined && sideChatCommand !== null && sideChatDisabledReason === null;
+    const folderMove = parseFolderMoveCommand(promptAtSend);
     // An answer responds to the open request rather than starting a turn, so the new-message
     // guards below (loading, busy, provider) must not swallow it.
-    if (answeringQuestion && !startsSideChat && !directAnnotation) {
+    if (answeringQuestion && !startsSideChat && !directAnnotation && !(sendCtx && folderMove)) {
       if (readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) && activeThread) {
         onAdvanceActivePendingUserInput();
       }
@@ -538,7 +539,6 @@ export function useComposerSend(input: ComposerSendInput) {
       }
       return;
     }
-    const folderMove = parseFolderMoveCommand(promptAtSend);
     if (sendCtx && folderMove) {
       const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
       const blockReason = folderMoveBlockReason({
