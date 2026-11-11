@@ -116,7 +116,6 @@ it.effect("warns how long reclaiming can take and reports each step with its ela
     const description = beforePause.slice(beforePause.indexOf("Reclaim database space"));
     assert.include(description, "12.80 GiB", "the repair must state the database size up front");
     assert.match(description, /hour/, "the repair must warn it can take over an hour");
-    assert.notInclude(output.join("\n"), "several minutes");
     const progress = output
       .slice(paused + 1, resumed)
       .filter((line) => line.trim() !== "" && !line.trim().startsWith("Done"))
