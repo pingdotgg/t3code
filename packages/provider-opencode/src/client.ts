@@ -6,6 +6,7 @@ import { OpenCodeSettings } from "./settings.ts";
 export const openCodeClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("opencode"),
   label: "OpenCode",
+  acpRegistryAgentIds: ["opencode", "opencode-v2"],
   settingsSchema: OpenCodeSettings,
   icon: {
     viewBox: "0 0 32 40",
