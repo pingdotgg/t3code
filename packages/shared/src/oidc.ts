@@ -321,13 +321,25 @@ export async function refreshOidcTokens(input: {
 
 const isOidcError = Schema.is(OidcError);
 
+const OIDC_ACCOUNT_PREFIX = "oidc:";
+/**
+ * The relay's account id for a user of an OpenID Connect provider. Issuers are URLs and cannot
+ * contain a raw "|", so the first one always ends the issuer.
+ */
+export const oidcAccountId = (issuer: string, subject: string): string =>
+  `${OIDC_ACCOUNT_PREFIX}${issuer}|${subject}`;
+export const isOidcAccountId = (accountId: string): boolean =>
+  accountId.startsWith(OIDC_ACCOUNT_PREFIX);
+
 /** True when a refresh failure means the session is over rather than temporarily unavailable. */
 export const isPermanentRefreshFailure = (error: unknown): boolean =>
   isOidcError(error) &&
-  error.code === "token_request_failed" &&
-  (error.oauthError === "invalid_grant" ||
-    (error.status !== undefined &&
-      error.status >= 400 &&
-      error.status < 500 &&
-      error.status !== 408 &&
-      error.status !== 429));
+  // A provider that refreshes without a new ID token can never give the relay a fresh one.
+  (error.code === "missing_id_token" ||
+    (error.code === "token_request_failed" &&
+      (error.oauthError === "invalid_grant" ||
+        (error.status !== undefined &&
+          error.status >= 400 &&
+          error.status < 500 &&
+          error.status !== 408 &&
+          error.status !== 429))));

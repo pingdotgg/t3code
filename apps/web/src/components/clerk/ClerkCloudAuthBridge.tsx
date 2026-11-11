@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { CloudAuthProvider, type CloudAuth } from "../../cloud/cloudAuth";
 import { resolveRelayClerkTokenOptions } from "../../cloud/publicConfig";
 import { isElectron } from "../../env";
+import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { resolveClerkSignInProps } from "./authRedirect";
 import { useClerkAccountPage } from "./T3ConnectAccountPages";
 
@@ -32,7 +33,8 @@ export function ClerkCloudAuthBridge({ children }: { readonly children: ReactNod
   return (
     <CloudAuthProvider value={value}>
       {children}
-      {accountPage.portals}
+      {/* This bridge wraps the app root, so the account pages need the app's atom registry. */}
+      <AppAtomRegistryProvider>{accountPage.portals}</AppAtomRegistryProvider>
     </CloudAuthProvider>
   );
 }

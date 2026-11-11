@@ -109,54 +109,55 @@ const makeRequest = Effect.gen(function* () {
   };
 });
 
-const makePublishOnlyRequest = Effect.gen(function* () {
-  const now = yield* DateTime.now;
-  const expiresAt = DateTime.add(now, { minutes: 5 });
-  const relayTokens = yield* RelayTokens.RelayTokens;
-  const challenge = yield* relayTokens.issueLinkChallenge({
-    userId: "user_123",
-    request: {
+const makePublishOnlyRequest = (httpBaseUrl = "http://127.0.0.1:3773/") =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const expiresAt = DateTime.add(now, { minutes: 5 });
+    const relayTokens = yield* RelayTokens.RelayTokens;
+    const challenge = yield* relayTokens.issueLinkChallenge({
+      userId: "user_123",
+      request: {
+        notificationsEnabled: true,
+        liveActivitiesEnabled: true,
+        managedTunnelsEnabled: false,
+      },
+      jti: "publish-only-challenge-jti",
+      issuedAtEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+      expiresAtEpochSeconds: Math.floor(expiresAt.epochMilliseconds / 1_000),
+    });
+    const payload = {
+      iss: "t3-env:env-link-test",
+      aud: "https://relay.example.test",
+      sub: "env-link-test",
+      jti: "publish-only-proof-jti",
+      iat: Math.floor(now.epochMilliseconds / 1_000),
+      exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
+      challenge,
+      environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+      descriptor: {
+        environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+        label: "Link Test Environment",
+        platform: { os: "darwin", arch: "arm64" },
+        serverVersion: "0.0.0-test",
+        capabilities: { repositoryIdentity: true },
+      },
+      environmentPublicKey: environmentKeyPair.publicKey.trim(),
+      endpoint: {
+        httpBaseUrl,
+        wsBaseUrl: httpBaseUrl.replace(/^http/u, "ws"),
+        providerKind: "manual",
+      },
+      origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      scopes: ["agent_activity_notifications"],
+    } satisfies RelayEnvironmentLinkProofPayload;
+    const request = {
+      proof: signTestJwt(payload, RELAY_LINK_PROOF_TYP, environmentKeyPair.privateKey),
       notificationsEnabled: true,
       liveActivitiesEnabled: true,
       managedTunnelsEnabled: false,
-    },
-    jti: "publish-only-challenge-jti",
-    issuedAtEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-    expiresAtEpochSeconds: Math.floor(expiresAt.epochMilliseconds / 1_000),
+    } satisfies RelayEnvironmentLinkRequest;
+    return request;
   });
-  const payload = {
-    iss: "t3-env:env-link-test",
-    aud: "https://relay.example.test",
-    sub: "env-link-test",
-    jti: "publish-only-proof-jti",
-    iat: Math.floor(now.epochMilliseconds / 1_000),
-    exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
-    challenge,
-    environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
-    descriptor: {
-      environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
-      label: "Link Test Environment",
-      platform: { os: "darwin", arch: "arm64" },
-      serverVersion: "0.0.0-test",
-      capabilities: { repositoryIdentity: true },
-    },
-    environmentPublicKey: environmentKeyPair.publicKey.trim(),
-    endpoint: {
-      httpBaseUrl: "http://127.0.0.1:3773/",
-      wsBaseUrl: "ws://127.0.0.1:3773/",
-      providerKind: "manual",
-    },
-    origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
-    scopes: ["agent_activity_notifications"],
-  } satisfies RelayEnvironmentLinkProofPayload;
-  const request = {
-    proof: signTestJwt(payload, RELAY_LINK_PROOF_TYP, environmentKeyPair.privateKey),
-    notificationsEnabled: true,
-    liveActivitiesEnabled: true,
-    managedTunnelsEnabled: false,
-  } satisfies RelayEnvironmentLinkRequest;
-  return request;
-});
 
 function layerTest(input?: {
   readonly channels?: boolean;
@@ -235,7 +236,7 @@ describe("EnvironmentLinker", () => {
     let persistedEndpoint: string | null = null;
     let deprovisionedEnvironmentId: string | null = null;
     return Effect.gen(function* () {
-      const request = yield* makePublishOnlyRequest;
+      const request = yield* makePublishOnlyRequest();
       const linker = yield* EnvironmentLinker.EnvironmentLinker;
       const result = yield* linker.link({ userId: "user_123", request });
       expect(result.environmentCredential).toBe("t3env_credential_secret");
@@ -259,12 +260,16 @@ describe("EnvironmentLinker", () => {
     );
   });
 
-  it.effect(
-    "carries a publish-only environment with no public address over a relay channel",
-    () => {
+  it.effect.each([
+    ["no public address", "http://127.0.0.1:3773/"],
+    // Manual endpoints are off by default, so the relay may not contact even a public one.
+    ["a public address", "https://env.example.test/"],
+  ] as const)(
+    "carries a publish-only environment with %s over a relay channel",
+    ([_name, address]) => {
       let persistedEndpoint: string | null = null;
       return Effect.gen(function* () {
-        const request = yield* makePublishOnlyRequest;
+        const request = yield* makePublishOnlyRequest(address);
         const linker = yield* EnvironmentLinker.EnvironmentLinker;
         const result = yield* linker.link({ userId: "user_123", request });
         expect(result.endpoint).toEqual({

@@ -14,13 +14,10 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
 
+import { oidcAccountId } from "@t3tools/shared/oidc";
+
 import type * as RelayConfiguration from "../Config.ts";
-import {
-  makeOidcKeySet,
-  makeOidcVerifier,
-  oidcAccountId,
-  verifySubjectToken,
-} from "./SubjectTokens.ts";
+import { makeOidcKeySet, makeOidcVerifier, verifySubjectToken } from "./SubjectTokens.ts";
 
 vi.mock("@clerk/backend", () => ({
   createClerkClient: vi.fn(),

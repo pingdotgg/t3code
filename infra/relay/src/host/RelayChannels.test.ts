@@ -58,7 +58,7 @@ const connectEnvironment = (port: number, token: string) =>
               id: frame.id,
               status: 302,
               headers: {
-                "content-type": "text/plain",
+                "content-type": frame.path.endsWith(".pdf") ? "application/pdf" : "text/plain",
                 location: "/next",
                 "Set-Cookie": "s=1",
                 "Content-Security-Policy": "default-src *",
@@ -99,9 +99,11 @@ describe("makeRelayChannels", () => {
         body: `GET /api/state?x=1 ${prefix}`,
         location: `${prefix}/next`,
         cookie: null,
-        csp: "sandbox",
+        csp: "sandbox allow-scripts allow-forms allow-popups allow-downloads",
         clearSiteData: null,
       });
+      // A browser's PDF viewer will not load in a sandboxed document.
+      expect((yield* get(port, `${prefix}/file.pdf`)).csp).toBeNull();
       expect(yield* get(port, "/v1/metadata")).toEqual({
         status: 200,
         body: "relay api",
@@ -122,6 +124,29 @@ describe("makeRelayChannels", () => {
         });
         socket.send(JSON.stringify({ type: "ping" }));
       });
+    }).pipe(Effect.scoped, Effect.provide(makeLayer())),
+  );
+
+  it.live("ends a channel once its environment reconnects", () =>
+    Effect.gen(function* () {
+      const port = yield* serveRelay;
+      const first = yield* connectEnvironment(port, "good");
+      const firstClosed = Effect.callback<void>((resume) =>
+        first.addEventListener("close", () => resume(Effect.void)),
+      );
+      yield* connectEnvironment(port, "good");
+      yield* firstClosed;
+    }).pipe(Effect.scoped, Effect.provide(makeLayer())),
+  );
+
+  it.effect("closes a channel its environment went silent on", () =>
+    Effect.gen(function* () {
+      const socket = yield* connectEnvironment(yield* serveRelay, "good");
+      const closed = Effect.callback<void>((resume) =>
+        socket.addEventListener("close", () => resume(Effect.void)),
+      );
+      for (let check = 0; check < 3; check++) yield* TestClock.adjust("25 seconds");
+      yield* closed;
     }).pipe(Effect.scoped, Effect.provide(makeLayer())),
   );
 

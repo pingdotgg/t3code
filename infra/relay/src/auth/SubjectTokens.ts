@@ -1,5 +1,5 @@
 import { createClerkClient, verifyToken } from "@clerk/backend";
-import { decodeIdTokenClaims, oidcDiscoveryUrl } from "@t3tools/shared/oidc";
+import { decodeIdTokenClaims, oidcAccountId, oidcDiscoveryUrl } from "@t3tools/shared/oidc";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Exit from "effect/Exit";
@@ -31,13 +31,6 @@ export interface VerifiedSubject {
   readonly sub: string;
   readonly mode: SubjectTokenMode;
 }
-
-const OIDC_ACCOUNT_PREFIX = "oidc:";
-// Issuers are URLs and cannot contain a raw "|", so the first one always ends the issuer.
-export const oidcAccountId = (issuer: string, subject: string): string =>
-  `${OIDC_ACCOUNT_PREFIX}${issuer}|${subject}`;
-export const isOidcAccountId = (accountId: string): boolean =>
-  accountId.startsWith(OIDC_ACCOUNT_PREFIX);
 
 const OIDC_ALGORITHMS = ["RS256", "ES256", "EdDSA"] as const;
 const OIDC_DISCOVERY_TIMEOUT = "10 seconds";

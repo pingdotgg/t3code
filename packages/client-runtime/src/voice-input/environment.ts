@@ -1,3 +1,4 @@
+import { resolveEnvironmentUrl } from "@t3tools/shared/advertisedEndpoint";
 import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -160,19 +161,16 @@ export const transcribeCloudPcm = (
 };
 
 export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
-  let endpoint = prepared.httpBaseUrl;
   return request({
     group: "auth",
     prepared,
     method: "POST",
-    path: (urls) => {
-      endpoint = urls.webSocketTicketFor({ params: { use: "media" } });
-      return endpoint;
-    },
+    path: (urls) => urls.webSocketTicketFor({ params: { use: "media" } }),
     run: ({ client, headers }) => client.webSocketTicketFor({ headers, params: { use: "media" } }),
   }).pipe(
     Effect.map(({ ticket }) => {
-      const url = new URL(SPEECH_STREAM_PATH, endpoint);
+      // Keeps a base path, such as the `/env/<key>` a relay serves an environment under.
+      const url = resolveEnvironmentUrl(prepared.httpBaseUrl, SPEECH_STREAM_PATH);
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       url.searchParams.set("wsTicket", Redacted.value(ticket));
       return url.toString();

@@ -1,7 +1,12 @@
 import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
 
-const CHANNEL_PATH = /^\/env\/([0-9a-f]{32})(?=[/?]|$)(.*)$/su;
+// A fragment never reaches an environment: its WebSocket URLs may not carry one.
+const CHANNEL_PATH = /^\/env\/([0-9a-f]{32})(?=[/?]|$)([^#]*)$/su;
+// OAuth metadata for an issuer or resource under `/env/<key>` lives at the relay root, with that
+// path after the well-known name (RFC 8414, RFC 9728).
+const CHANNEL_WELL_KNOWN_PATH =
+  /^\/\.well-known\/(oauth-authorization-server|oauth-protected-resource)\/env\/([0-9a-f]{32})(?=[/?]|$)([^#]*)$/su;
 
 /**
  * Path key for an environment's relay channel. Environment ids are public, so the key also
@@ -36,6 +41,14 @@ export function channelEndpoint(relayOrigin: string, key: string): RelayManagedE
 export function channelPathTarget(
   url: string,
 ): { readonly key: string; readonly prefix: string; readonly path: string } | null {
+  const wellKnown = CHANNEL_WELL_KNOWN_PATH.exec(url);
+  if (wellKnown?.[1] !== undefined && wellKnown[2] !== undefined) {
+    return {
+      key: wellKnown[2],
+      prefix: `/env/${wellKnown[2]}`,
+      path: `/.well-known/${wellKnown[1]}${wellKnown[3] ?? ""}`,
+    };
+  }
   const match = CHANNEL_PATH.exec(url);
   if (match?.[1] === undefined) return null;
   const rest = match[2] ?? "";

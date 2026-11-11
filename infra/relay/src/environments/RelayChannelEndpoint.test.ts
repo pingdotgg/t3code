@@ -21,6 +21,18 @@ describe("channelPathTarget", () => {
     ["a relay route", "/v1/environments/env-1/connect", null],
     ["a short key", "/env/abc/ws", null],
     ["a longer segment", `/env/${key}0/ws`, null],
+    ["a fragment", `/env/${key}/ws?a#b`, null],
+    [
+      "authorization server metadata for a carried issuer",
+      `/.well-known/oauth-authorization-server/env/${key}`,
+      { key, prefix: `/env/${key}`, path: "/.well-known/oauth-authorization-server" },
+    ],
+    [
+      "resource metadata for a carried resource",
+      `/.well-known/oauth-protected-resource/env/${key}/mcp`,
+      { key, prefix: `/env/${key}`, path: "/.well-known/oauth-protected-resource/mcp" },
+    ],
+    ["the relay's own metadata", "/.well-known/oauth-authorization-server", null],
   ] as const)("reads %s", (_name, url, expected) => {
     expect(channelPathTarget(url)).toEqual(expected);
   });

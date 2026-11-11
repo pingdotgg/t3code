@@ -1,7 +1,13 @@
-import { RelayChannelFrame } from "@t3tools/contracts/relay";
+import {
+  RELAY_CHANNEL_MAX_BODY_BYTES,
+  RELAY_CHANNEL_RESPONSE_TIMEOUT_MS,
+  RelayChannelFrame,
+} from "@t3tools/contracts/relay";
+import * as ByteSize from "effect/ByteSize";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Option from "effect/Option";
@@ -22,9 +28,18 @@ interface Channel {
   readonly send: (frame: RelayChannelFrame) => Effect.Effect<void>;
   readonly responses: Map<number, Deferred.Deferred<HttpResponseFrame>>;
   readonly sockets: Map<number, Queue.Queue<SocketFrame>>;
+  /** Completed when a reconnect takes this channel's place. */
+  readonly replaced: Deferred.Deferred<void>;
+  /** Rechecks since the environment last sent a frame. */
+  quietChecks: number;
 }
 
 const CREDENTIAL_RECHECK_INTERVAL = "25 seconds";
+// Environments ping as often as the relay rechecks, so this much silence is a dead connection.
+const MAX_QUIET_CHECKS = 2;
+// The environment's own document sandbox: scripts run, but in an opaque origin, never the relay's.
+const CARRIED_CONTENT_SECURITY_POLICY =
+  "sandbox allow-scripts allow-forms allow-popups allow-downloads";
 const CHANNEL_SOCKET_PATH = /^\/v1\/environments\/([^/?]+)\/channel(?:\?.*)?$/u;
 // Per-connection headers stay on their own side of the relay.
 const HOP_BY_HOP_HEADERS = new Set([
@@ -148,8 +163,13 @@ export const makeRelayChannels = () => {
       send: (frame) => writer.write(JSON.stringify(frame)).pipe(Effect.ignore),
       responses: new Map(),
       sockets: new Map(),
+      replaced: yield* Deferred.make<void>(),
+      quietChecks: 0,
     };
+    const previous = channels.get(key);
     channels.set(key, channel);
+    // The environment reconnected, so the old connection is dead even if its socket looks open.
+    if (previous !== undefined) yield* Deferred.succeed(previous.replaced, undefined);
     yield* Effect.logInfo("Relay channel connected", { environmentId });
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
@@ -169,25 +189,39 @@ export const makeRelayChannels = () => {
       }),
     );
     const readFrames = reader.pull.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          channel.quietChecks = 0;
+        }),
+      ),
       Effect.flatMap((chunks) =>
         Effect.forEach(chunks, (chunk) => dispatch(channel, chunk), { discard: true }),
       ),
       Effect.forever,
     );
-    // Revocation ends the channel on the relay's own clock, whatever the environment sends.
-    // A failed lookup keeps the channel: a database hiccup should not drop every environment.
-    const revoked = yield* Effect.sleep(CREDENTIAL_RECHECK_INTERVAL).pipe(
-      Effect.andThen(credentials.authenticate(token)),
-      Effect.map((current) =>
-        Option.exists(current, (now) => now.credentialId === principal.credentialId),
-      ),
-      Effect.orElseSucceed(() => true),
+    // Revocation and silence end the channel on the relay's own clock, whatever the environment
+    // sends. A failed lookup keeps the channel: a database hiccup should not drop every environment.
+    const recheck = Effect.suspend(() => {
+      channel.quietChecks += 1;
+      if (channel.quietChecks > MAX_QUIET_CHECKS) return Effect.succeed(false);
+      return credentials.authenticate(token).pipe(
+        Effect.map((current) =>
+          Option.exists(current, (now) => now.credentialId === principal.credentialId),
+        ),
+        Effect.orElseSucceed(() => true),
+      );
+    });
+    const ended = yield* Effect.sleep(CREDENTIAL_RECHECK_INTERVAL).pipe(
+      Effect.andThen(recheck),
       Effect.repeat({ while: (stillValid) => stillValid }),
       Effect.forkScoped({ startImmediately: true }),
     );
     // Tells the environment its channel now receives traffic.
     yield* channel.send({ type: "ping" });
-    yield* Effect.raceFirst(readFrames, Fiber.join(revoked)).pipe(Effect.ignore);
+    yield* Effect.raceFirst(
+      readFrames,
+      Effect.raceFirst(Fiber.join(ended), Deferred.await(channel.replaced)),
+    ).pipe(Effect.ignore);
     return HttpServerResponse.empty();
   }, Effect.scoped);
 
@@ -196,8 +230,20 @@ export const makeRelayChannels = () => {
     request: HttpServerRequest.HttpServerRequest,
     target: ChannelTarget,
   ) {
+    const body = yield* request.arrayBuffer.pipe(
+      Effect.provideService(
+        HttpIncomingMessage.MaxBodySize,
+        ByteSize.bytes(RELAY_CHANNEL_MAX_BODY_BYTES),
+      ),
+      Effect.map((buffer) => new Uint8Array(buffer)),
+      Effect.option,
+    );
+    if (Option.isNone(body)) {
+      return HttpServerResponse.text("The request body is too large for the relay.", {
+        status: 413,
+      });
+    }
     const id = ++nextId;
-    const body = new Uint8Array(yield* request.arrayBuffer);
     const response = yield* Deferred.make<HttpResponseFrame>();
     channel.responses.set(id, response);
     yield* channel.send({
@@ -206,10 +252,10 @@ export const makeRelayChannels = () => {
       method: request.method,
       path: target.path,
       headers: forwardedHeaders(request, target),
-      ...(body.byteLength > 0 ? { body: Buffer.from(body).toString("base64") } : {}),
+      ...(body.value.byteLength > 0 ? { body: Buffer.from(body.value).toString("base64") } : {}),
     });
     const result = yield* Deferred.await(response).pipe(
-      Effect.timeoutOption("60 seconds"),
+      Effect.timeoutOption(RELAY_CHANNEL_RESPONSE_TIMEOUT_MS),
       Effect.ensuring(Effect.sync(() => channel.responses.delete(id))),
     );
     if (Option.isNone(result)) {
@@ -219,10 +265,12 @@ export const makeRelayChannels = () => {
       result.value.headers,
     );
     // Every carried environment shares the relay's origin, and anyone can link one: its responses
-    // may not run script there or set cookies the relay and other environments would see.
+    // may not run script with that origin or set cookies the relay and other environments would
+    // see. A PDF viewer refuses a sandboxed frame, and nosniff keeps a PDF from rendering as HTML.
+    const isPdf = contentType?.split(";")[0]?.trim().toLowerCase() === "application/pdf";
     const headers: Record<string, string> = {
       ...forwarded,
-      "content-security-policy": "sandbox",
+      ...(isPdf ? {} : { "content-security-policy": CARRIED_CONTENT_SECURITY_POLICY }),
       "x-content-type-options": "nosniff",
     };
     // A root-relative redirect from the environment stays under its prefix.
@@ -243,7 +291,13 @@ export const makeRelayChannels = () => {
     const id = ++nextId;
     const inbox = yield* Queue.unbounded<SocketFrame>();
     channel.sockets.set(id, inbox);
-    yield* Effect.addFinalizer(() => Effect.sync(() => channel.sockets.delete(id)));
+    // However this ends, even when the client vanishes mid-handshake, the environment closes its
+    // side: its local socket would otherwise stay open, sending into an inbox nobody reads.
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => channel.sockets.delete(id)).pipe(
+        Effect.andThen(channel.send({ type: "ws-close", id })),
+      ),
+    );
     yield* channel.send({
       type: "ws-open",
       id,
@@ -252,7 +306,6 @@ export const makeRelayChannels = () => {
     });
     const opened = yield* Queue.take(inbox).pipe(Effect.timeoutOption("15 seconds"));
     if (Option.isNone(opened) || opened.value.type !== "ws-opened") {
-      yield* channel.send({ type: "ws-close", id });
       return HttpServerResponse.text("The environment refused the WebSocket.", { status: 502 });
     }
     const socket = yield* request.upgrade;
@@ -291,7 +344,6 @@ export const makeRelayChannels = () => {
       Effect.forever,
     );
     yield* Effect.raceFirst(toClient, toEnvironment).pipe(Effect.ignore);
-    yield* channel.send({ type: "ws-close", id });
     return HttpServerResponse.empty();
   }, Effect.scoped);
 

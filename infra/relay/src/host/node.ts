@@ -63,9 +63,13 @@ const MINUTE_STEP_CRON = /^\*\/(\d+) \* \* \* \*$/;
 export const fixedWindowLimit = (limit: number, periodSeconds: number) => {
   const windows = new Map<string, { readonly windowStart: number; count: number }>();
   const periodMillis = periodSeconds * 1000;
+  let sweptAt = 0;
   return (key: string): Effect.Effect<boolean> =>
     Effect.map(Clock.currentTimeMillis, (now) => {
-      if (windows.size > 10_000) {
+      // Once a period: callers pick the keys, so a flood of new ones must not make every call
+      // walk the whole map.
+      if (now - sweptAt >= periodMillis) {
+        sweptAt = now;
         for (const [windowKey, window] of windows) {
           if (now - window.windowStart >= periodMillis) windows.delete(windowKey);
         }
@@ -180,15 +184,19 @@ export const makeNodeHost = Effect.fn("relay.node.host")(function* (options: Nod
     MobileTelemetry.MOBILE_TELEMETRY_RATE_LIMIT.periodSeconds,
   );
 
+  // Drawn once: queue consumers build their own runtimes, and must verify what requests signed.
+  const apnsJobSigningSecret =
+    options.apnsJobSigningSecret ??
+    Redacted.make(
+      Array.from(yield* random.randomBytes(32), (byte) => byte.toString(16).padStart(2, "0")).join(
+        "",
+      ),
+    );
+
   const host: RelayHost<Scope.Scope> = {
     deployment: { relayPublicOrigin: options.relayPublicOrigin, stage: options.stage },
     mintKeyPair: Effect.succeed(options.mintKeyPair),
-    apnsJobSigningSecret:
-      options.apnsJobSigningSecret === undefined
-        ? Effect.map(random.randomBytes(32), (bytes) =>
-            Redacted.make(Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")),
-          )
-        : Effect.succeed(options.apnsJobSigningSecret),
+    apnsJobSigningSecret: Effect.succeed(apnsJobSigningSecret),
     managedEndpointBaseDomain: undefined,
     channels: options.channels ?? false,
     database: options.database,

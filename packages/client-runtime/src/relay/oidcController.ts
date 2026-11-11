@@ -7,6 +7,7 @@ import {
   exchangeAuthorizationCode,
   isIdTokenFresh,
   isPermanentRefreshFailure,
+  oidcAccountId,
   oidcAccountLabel,
   randomToken,
   refreshOidcTokens,
@@ -105,7 +106,8 @@ export function createOidcController(deps: OidcControllerDeps) {
     idToken: tokens.idToken,
     refreshToken: tokens.refreshToken,
     expiresAtEpochMs: tokens.expiresAtEpochMs,
-    userId: tokens.claims.sub,
+    // The relay's name for this account, so it matches the `cloudUserId` of what the user links.
+    userId: oidcAccountId(tokens.claims.iss, tokens.claims.sub),
     label: oidcAccountLabel(tokens.claims),
   });
 
@@ -203,6 +205,12 @@ export function createOidcController(deps: OidcControllerDeps) {
           refreshToken: current.refreshToken,
           fetch: fetchImpl,
         });
+        // A sign-out, or another sign-in, while the request was out wins over its answer.
+        const latest = readSession();
+        if (latest?.refreshToken !== current.refreshToken) {
+          publish(latest);
+          return latest?.idToken ?? null;
+        }
         publish(toStored(tokens));
         return tokens.idToken;
       } catch (error) {

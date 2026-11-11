@@ -316,15 +316,14 @@ const make = Effect.gen(function* () {
           })
         : null;
       // A publish-only link with no address the relay may contact is carried over a relay channel.
+      const manualEndpoints = config.manualEndpoints ?? "off";
       const channel =
         !input.request.managedTunnelsEnabled &&
         config.channels === true &&
-        Result.isFailure(
-          validateManualEndpoint({
-            endpoint: verified.endpoint,
-            manualEndpoints: config.manualEndpoints ?? "off",
-          }),
-        )
+        (manualEndpoints === "off" ||
+          Result.isFailure(
+            validateManualEndpoint({ endpoint: verified.endpoint, manualEndpoints }),
+          ))
           ? channelEndpoint(
               config.relayIssuer,
               yield* channelKey(verified.environmentId, verified.environmentPublicKey),

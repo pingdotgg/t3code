@@ -5,6 +5,7 @@ import { createOidcController, type KeyValueStore } from "./oidcController.ts";
 
 const ISSUER = "https://sso.example.com/realms/t3";
 const REDIRECT_URI = "https://app.example.com/oidc/callback";
+const ALICE = `oidc:${ISSUER}|alice`;
 
 const memoryStore = (): KeyValueStore & { readonly entries: Map<string, string> } => {
   const entries = new Map<string, string>();
@@ -33,7 +34,7 @@ interface Harness {
   readonly navigations: Array<string>;
   readonly tokenRequests: Array<URLSearchParams>;
   clock: number;
-  tokenReply: () => Response;
+  tokenReply: () => Response | Promise<Response>;
 }
 
 function makeHarness(options: { readonly crypto?: OidcCrypto } = {}): Harness {
@@ -121,10 +122,10 @@ describe("sign-in redirect", () => {
     expect(harness.tokenRequests[0]?.get("grant_type")).toBe("authorization_code");
     expect(harness.tokenRequests[0]?.get("code")).toBe("code-1");
     expect(harness.controller.getSnapshot()).toEqual({
-      userId: "alice",
+      userId: ALICE,
       label: "alice@example.com",
     });
-    expect(seen).toEqual([null, "alice"]);
+    expect(seen).toEqual([null, ALICE]);
     expect(harness.pending.entries.size).toBe(0);
   });
 
@@ -152,7 +153,7 @@ describe("sign-in redirect", () => {
       return `${REDIRECT_URI}?code=code-1&state=${url.searchParams.get("state")}`;
     });
 
-    expect(harness.controller.getSnapshot().userId).toBe("alice");
+    expect(harness.controller.getSnapshot().userId).toBe(ALICE);
     expect(harness.navigations).toEqual([]);
   });
 
@@ -230,10 +231,35 @@ describe("tokens", () => {
 
     harness.tokenReply = () => Response.json({}, { status: 503 });
     await expect(harness.controller.getToken()).rejects.toThrow();
-    expect(harness.controller.getSnapshot().userId).toBe("alice");
+    expect(harness.controller.getSnapshot().userId).toBe(ALICE);
 
     harness.tokenReply = () => Response.json({ error: "invalid_grant" }, { status: 400 });
     expect(await harness.controller.getToken()).toBeNull();
+    expect(harness.controller.getSnapshot().userId).toBeNull();
+    expect(harness.sessions.entries.size).toBe(0);
+  });
+
+  it("keeps a sign-out made while a refresh was out", async () => {
+    const harness = makeHarness();
+    await signInWith(harness);
+    harness.clock += 3600 * 1000;
+    let answer!: () => void;
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    harness.tokenReply = () =>
+      answered.then(() =>
+        Response.json({
+          id_token: idToken({ exp: harness.clock / 1000 + 3600 }),
+          refresh_token: "refresh-2",
+        }),
+      );
+
+    const refreshing = harness.controller.getToken();
+    await harness.controller.signOut();
+    answer();
+
+    expect(await refreshing).toBeNull();
     expect(harness.controller.getSnapshot().userId).toBeNull();
     expect(harness.sessions.entries.size).toBe(0);
   });

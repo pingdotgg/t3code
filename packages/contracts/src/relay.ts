@@ -230,6 +230,14 @@ export const RelayChannelFrame = Schema.Union([
 ]);
 export type RelayChannelFrame = typeof RelayChannelFrame.Type;
 
+/**
+ * A body crosses a channel in one frame. Base64 makes it a third larger, which keeps the largest
+ * one under the 100 MiB a WebSocket server accepts by default.
+ */
+export const RELAY_CHANNEL_MAX_BODY_BYTES = 64 * 1024 * 1024;
+/** How long the relay waits for an environment's HTTP response before answering 504. */
+export const RELAY_CHANNEL_RESPONSE_TIMEOUT_MS = 60_000;
+
 export const RelayManagedEndpointRecoveryRequest = Schema.Struct({
   cloudUserId: TrimmedNonEmptyString,
   origin: RelayManagedEndpointOrigin,

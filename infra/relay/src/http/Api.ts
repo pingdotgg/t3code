@@ -1,5 +1,6 @@
 import { sql as drizzleSql } from "drizzle-orm";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import { isOidcAccountId } from "@t3tools/shared/oidc";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -63,7 +64,7 @@ import * as AgentActivityRows from "../agentActivity/AgentActivityRows.ts";
 import * as Devices from "../agentActivity/Devices.ts";
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
-import { isOidcAccountId, verifySubjectToken } from "../auth/SubjectTokens.ts";
+import { verifySubjectToken } from "../auth/SubjectTokens.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";

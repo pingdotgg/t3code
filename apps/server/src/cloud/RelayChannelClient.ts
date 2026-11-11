@@ -1,6 +1,12 @@
-import { RelayChannelFrame } from "@t3tools/contracts/relay";
+import {
+  RELAY_CHANNEL_MAX_BODY_BYTES,
+  RELAY_CHANNEL_RESPONSE_TIMEOUT_MS,
+  RelayChannelFrame,
+} from "@t3tools/contracts/relay";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { request as undiciRequest, WebSocket, type Dispatcher } from "undici";
@@ -15,13 +21,16 @@ const CONNECTION_HEADERS = new Set([
   "upgrade",
   "transfer-encoding",
   "content-length",
+  // The relay already holds the whole body, so there is nothing to wait for.
+  "expect",
   "sec-websocket-key",
   "sec-websocket-version",
   "sec-websocket-extensions",
   "sec-websocket-accept",
 ]);
 const KEEPALIVE_INTERVAL = "25 seconds";
-const RECONNECT_DELAY = "3 seconds";
+const RECONNECT_DELAY = Duration.seconds(3);
+const MAX_RECONNECT_DELAY = Duration.minutes(5);
 
 const decodeFrame = Schema.decodeUnknownOption(RelayChannelFrame);
 
@@ -35,7 +44,7 @@ function parseFrame(data: unknown): RelayChannelFrame | null {
 }
 
 /** Requests reach this server as they would through a TLS-terminating tunnel. */
-export function forwardedRequestHeaders(
+function forwardedRequestHeaders(
   headers: Readonly<Record<string, string>>,
 ): Record<string, string> {
   const forwarded = Object.fromEntries(
@@ -48,9 +57,12 @@ export function forwardedRequestHeaders(
   };
 }
 
-/** The local URL for a forwarded path; anything but an origin-relative path is refused. */
+/**
+ * The local URL for a forwarded path; anything but an origin-relative path is refused, and so is
+ * a fragment, which a WebSocket URL may not carry.
+ */
 export function localTargetUrl(localOrigin: string, path: string): string | null {
-  return /^\/(?!\/)/u.test(path) ? `${localOrigin.replace(/\/+$/u, "")}${path}` : null;
+  return /^\/(?!\/)[^#]*$/u.test(path) ? `${localOrigin.replace(/\/+$/u, "")}${path}` : null;
 }
 
 function flattenHeaders(headers: Readonly<Record<string, string | string[] | undefined>>) {
@@ -71,8 +83,22 @@ async function forwardHttp(localOrigin: string, frame: HttpRequestFrame) {
       method: frame.method as Dispatcher.HttpMethod,
       headers: forwardedRequestHeaders(frame.headers),
       ...(frame.body ? { body: Buffer.from(frame.body, "base64") } : {}),
+      // The relay stops waiting then, so the work is dropped with it.
+      signal: AbortSignal.timeout(RELAY_CHANNEL_RESPONSE_TIMEOUT_MS),
     });
-    const body = Buffer.from(await response.body.arrayBuffer());
+    // shortcut: a response crosses the channel whole, so streams and bodies over the cap fail;
+    // send bodies in chunked frames if streaming or large downloads must work over a relay.
+    const chunks: Array<Buffer> = [];
+    let size = 0;
+    for await (const chunk of response.body) {
+      size += (chunk as Buffer).byteLength;
+      if (size > RELAY_CHANNEL_MAX_BODY_BYTES) {
+        response.body.destroy();
+        return failed;
+      }
+      chunks.push(chunk as Buffer);
+    }
+    const body = Buffer.concat(chunks);
     return {
       type: "http-response",
       id: frame.id,
@@ -119,6 +145,12 @@ function openLocalSocket(
   return socket;
 }
 
+interface ChannelEnd {
+  /** Whether the relay accepted the channel before it ended. */
+  readonly opened: boolean;
+  readonly reason: string;
+}
+
 function openChannel(input: RelayChannelInput) {
   const channel = new WebSocket(input.channelUrl, {
     headers: { authorization: `Bearer ${input.token}` },
@@ -137,9 +169,7 @@ function openChannel(input: RelayChannelInput) {
   channel.addEventListener("open", () => {
     opened = true;
   });
-  channel.addEventListener("message", (event) => {
-    heard = true;
-    const frame = parseFrame(event.data);
+  const handleFrame = (frame: RelayChannelFrame | null) => {
     switch (frame?.type) {
       case "http-request":
         void forwardHttp(input.localOrigin, frame).then(send);
@@ -167,12 +197,22 @@ function openChannel(input: RelayChannelInput) {
       default:
         return;
     }
+  };
+  channel.addEventListener("message", (event) => {
+    heard = true;
+    const frame = parseFrame(event.data);
+    try {
+      handleFrame(frame);
+    } catch {
+      // A listener's exception is rethrown as an uncaught one; one frame must not end this server.
+      if (frame?.type === "ws-open") send({ type: "ws-close", id: frame.id, code: 1011 });
+    }
   });
-  const closed = new Promise<string>((resolve) => {
-    end = resolve;
+  const closed = new Promise<ChannelEnd>((resolve) => {
+    end = (reason) => resolve({ opened, reason });
     channel.addEventListener("close", (event) => {
       closeLocals();
-      resolve(opened ? `closed with code ${event.code}` : "could not connect");
+      end(opened ? `closed with code ${event.code}` : "could not connect");
     });
   });
   return {
@@ -223,9 +263,29 @@ export const runRelayChannel = Effect.fn("RelayChannelClient.run")(function* (
   yield* Effect.logInfo("Connecting the T3 Connect relay channel", {
     channelUrl: input.channelUrl,
   });
+  let failures = 0;
   return yield* connectOnce(input).pipe(
-    Effect.tap((reason) => Effect.logWarning("T3 Connect relay channel ended", { reason })),
-    Effect.andThen(Effect.sleep(RECONNECT_DELAY)),
+    Effect.tap((ended) => {
+      failures = ended.opened ? 0 : failures + 1;
+      return Effect.logWarning("T3 Connect relay channel ended", { reason: ended.reason });
+    }),
+    Effect.andThen(() => reconnectDelay(failures)),
+    Effect.flatMap(Effect.sleep),
     Effect.forever,
   );
 });
+
+/**
+ * Doubles after each attempt the relay refused, up to a cap, so a revoked or unreachable channel
+ * is not retried every few seconds; jitter spreads environments out after a relay restart.
+ */
+const reconnectDelay = (failures: number) =>
+  Effect.map(Random.next, (jitter) =>
+    Duration.times(
+      Duration.min(
+        Duration.times(RECONNECT_DELAY, 2 ** Math.min(failures, 10)),
+        MAX_RECONNECT_DELAY,
+      ),
+      0.5 + jitter / 2,
+    ),
+  );

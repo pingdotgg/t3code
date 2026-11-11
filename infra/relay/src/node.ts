@@ -79,9 +79,11 @@ const program = Effect.gen(function* () {
   const handler = yield* relay.fetch.pipe(Effect.provideContext(context));
   yield* HttpServer.serveEffect(
     handler.pipe(
-      withPublicOrigin(relayPublicOrigin),
-      // Outermost, so channel traffic skips the relay API's middleware and tracing.
+      // Around the relay API, so channel traffic skips its middleware and tracing.
       channels ? makeRelayChannels() : (effect) => effect,
+      // Outermost: carried environments rebuild the URLs clients sign from this host, whatever
+      // Host the reverse proxy in front of the relay sends.
+      withPublicOrigin(relayPublicOrigin),
       Effect.provideContext(context),
     ),
   );
