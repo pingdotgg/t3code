@@ -15,6 +15,8 @@ import {
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
+  OwnedWorkItem,
+  OwnedWorkItemId,
   ThreadId,
   RunId,
   NonNegativeInt,
@@ -104,6 +106,39 @@ const QueueTool = Tool.make("t3_queue", {
   success: Schema.Union([
     Schema.Struct({ items: Schema.Array(queueEntry), nextCursor: Schema.NullOr(NonNegativeInt) }),
     queueEntry,
+    OrchestrationV2DispatchCommandResult,
+  ]),
+}).annotate(Tool.Destructive, true);
+
+const OWNED_WORK_READ_ACTIONS = ["list", "read"] as const;
+const OwnedWorkTool = Tool.make("t3_owned_work", {
+  ...commandTool,
+  description:
+    "Owned work queue on a thread: assign → claim → progress → handoff. Omit `threadId` for this thread. list/read. assign: `title`. claim/progress/handoff/complete/cancel: `itemId` (+ `progress` or `toThreadId`).",
+  parameters: Schema.Struct({
+    action: Schema.Literals([
+      ...OWNED_WORK_READ_ACTIONS,
+      "assign",
+      "claim",
+      "progress",
+      "handoff",
+      "complete",
+      "cancel",
+    ]),
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    threadId: Schema.optional(ThreadId),
+    itemId: Schema.optional(OwnedWorkItemId),
+    title: Schema.optional(TrimmedNonEmptyString),
+    description: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    assigneeThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+    toThreadId: Schema.optional(ThreadId),
+    progress: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    note: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    openOnly: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Union([
+    Schema.Struct({ items: Schema.Array(OwnedWorkItem) }),
+    OwnedWorkItem,
     OrchestrationV2DispatchCommandResult,
   ]),
 }).annotate(Tool.Destructive, true);
@@ -245,4 +280,5 @@ export const ThreadToolkit = Toolkit.make(
   ThreadOrganizeTool,
   PendingRequestTool,
   QueueTool,
+  OwnedWorkTool,
 );

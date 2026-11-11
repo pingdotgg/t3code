@@ -181,6 +181,7 @@ import {
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
+import { OwnedWorkPanel } from "./chat/OwnedWorkPanel";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { ComposerContextPermissions } from "./ComposerContextPermissions";
@@ -2975,6 +2976,14 @@ export default function ChatView(props: ChatViewProps) {
       message.status === "pending" ? [message.id] : [],
     ) ?? [];
   const pendingGuestMessageCount = pendingGuestMessageIds.length;
+  const openOwnedWorkCount =
+    serverProjection?.thread.ownedWorkItems?.filter(
+      (item) =>
+        item.status === "assigned" ||
+        item.status === "claimed" ||
+        item.status === "in_progress" ||
+        item.status === "handed_off",
+    ).length ?? 0;
   const pendingGuestMessageKey = pendingGuestMessageIds.join(",");
   const previousPendingGuestMessagesRef = useRef({
     threadKey: routeThreadKey,
@@ -3093,6 +3102,7 @@ export default function ChatView(props: ChatViewProps) {
     !hasThreadNow &&
     threadStatusLine === null &&
     pendingGuestMessageCount === 0 &&
+    openOwnedWorkCount === 0 &&
     !hasQueuedTurns ? null : (
       <>
         {pendingHandoff === null ? null : (
@@ -3119,6 +3129,9 @@ export default function ChatView(props: ChatViewProps) {
             onImageExpand={onExpandTimelineImageStable}
             onFileOpen={openFileAttachmentStable}
           />
+        ) : null}
+        {openOwnedWorkCount > 0 && isServerThread && activeThread ? (
+          <OwnedWorkPanel threadRef={scopeThreadRef(activeThread.environmentId, activeThread.id)} />
         ) : null}
         {hasQueuedTurns ? queuedRunsControl : null}
       </>

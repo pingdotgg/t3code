@@ -152,6 +152,12 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
+    case "owned-work.assign":
+    case "owned-work.claim":
+    case "owned-work.progress":
+    case "owned-work.handoff":
+    case "owned-work.complete":
+    case "owned-work.cancel":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":

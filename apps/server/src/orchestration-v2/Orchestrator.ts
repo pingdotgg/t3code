@@ -141,6 +141,7 @@ import {
   decideGuestShareCommand,
   type GuestShareCommand,
 } from "./GuestShareDecider.ts";
+import { decideOwnedWorkCommand, type OwnedWorkCommand } from "./OwnedWorkDecider.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -612,6 +613,12 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
+    case "owned-work.assign":
+    case "owned-work.claim":
+    case "owned-work.progress":
+    case "owned-work.handoff":
+    case "owned-work.complete":
+    case "owned-work.cancel":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -3582,6 +3589,40 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: decided.success,
     });
     yield* releaseGuestAttachments(command, thread.guestShare, decided.success.guestShare, effects);
+  });
+
+  const dispatchOwnedWork = Effect.fn("orchestrationV2.dispatch.ownedWork")(function* (
+    command: OwnedWorkCommand,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, [])
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    const thread = projection.thread;
+    const now = yield* DateTime.now;
+    const decided = decideOwnedWorkCommand({ thread, command, now });
+    if (Result.isFailure(decided)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: decided.failure,
+      });
+    }
+    if (decided.success === thread) return;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.owned-work-updated",
+      threadId: command.threadId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: decided.success,
+    });
   });
 
   // Emitted before the message so the send and the status change commit together, and so
@@ -13878,6 +13919,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.guest-message.submit":
       case "thread.guest-message.dismiss":
         yield* dispatchGuestShare(command, events, effects);
+        break;
+      case "owned-work.assign":
+      case "owned-work.claim":
+      case "owned-work.progress":
+      case "owned-work.handoff":
+      case "owned-work.complete":
+      case "owned-work.cancel":
+        yield* dispatchOwnedWork(command, events);
         break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
