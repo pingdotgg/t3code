@@ -166,6 +166,19 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
   }
 }
 
+export class ThreadLaunchNotRepositoryError extends Schema.TaggedError<ThreadLaunchNotRepositoryError>()(
+  "ThreadLaunchNotRepositoryError",
+  {
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    workspaceRoot: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Project "${this.projectTitle}" (${this.workspaceRoot}) is not a Git repository.`;
+  }
+}
+
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
@@ -178,7 +191,7 @@ export class ThreadLaunchService extends Context.Service<
     /** Check before creation for early errors; launch otherwise accepts and reports base failures inside the thread. */
     readonly checkWorktreeBase: (
       input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
-    ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
+    ) => Effect.Effect<void, ThreadLaunchBaseRefError | ThreadLaunchNotRepositoryError>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -263,13 +276,27 @@ const make = Effect.gen(function* () {
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
     const strategy = input.workspaceStrategy;
+    // launch() turns a Scratch worktree request into a root launch.
+    if (strategy.type !== "worktree" || (yield* managedFolders.isScratchProject(input.projectId)))
+      return;
+    const project = Option.getOrUndefined(
+      yield* projects.getById(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
+    );
+    if (project === undefined) return;
+    const cwd = project.workspaceRoot;
+    const repositoryRoot = yield* git
+      .repositoryRoot(cwd)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (repositoryRoot === null)
+      return yield* new ThreadLaunchNotRepositoryError({
+        projectId: project.id,
+        projectTitle: project.title,
+        workspaceRoot: cwd,
+      });
     // `:/text` is a commit search, which cannot be asked for a commit type.
-    if (strategy.type !== "worktree" || strategy.baseRef.startsWith(":")) return;
+    if (strategy.baseRef.startsWith(":")) return;
     const { baseRef } = strategy;
     const unresolved = yield* Effect.gen(function* () {
-      const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
-      if (project === undefined) return undefined;
-      const cwd = project.workspaceRoot;
       // `git worktree add` reads `-` as the previous checkout.
       if (yield* git.hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef }))
         return undefined;
