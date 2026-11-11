@@ -71,12 +71,7 @@ export const rawPlugin = (): rolldown.Plugin => ({
 export function splitFileAndPostfix(id: string): [string, string] {
   const queryIdx = id.indexOf("?");
   const hashIdx = id.indexOf("#");
-  const idx =
-    queryIdx === -1
-      ? hashIdx
-      : hashIdx === -1
-        ? queryIdx
-        : Math.min(queryIdx, hashIdx);
+  const idx = queryIdx === -1 ? hashIdx : hashIdx === -1 ? queryIdx : Math.min(queryIdx, hashIdx);
   if (idx === -1) return [id, ""];
   return [id.slice(0, idx), id.slice(idx)];
 }

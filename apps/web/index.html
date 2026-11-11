@@ -6,14 +6,14 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="theme-color" content="#000000" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <script>
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
-        const DARK_BACKGROUND = "#0a0a0a";
+        const DARK_BACKGROUND = "#000000";
         const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
         const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
         const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
@@ -25,7 +25,7 @@
             accent: "#4f46e5",
           },
           dark: {
-            background: "#0a0a0a",
+            background: "#000000",
             foreground: "#f5f5f5",
             accent: "#818cf8",
           },
@@ -398,11 +398,12 @@
       body {
         background: #ffffff;
         color: #262626;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
       }
 
       html.dark body {
-        background: #0a0a0a;
+        background: #000000;
         color: #f5f5f5;
       }
 
@@ -438,28 +439,233 @@
         object-fit: contain;
       }
 
+      /* App CSS locks body and #root scrolling once main loads, so the error screen scrolls itself. */
+      #boot-shell:has(> #boot-error) {
+        height: 100%;
+        overflow-x: hidden;
+        overflow-y: auto;
+      }
+
       #boot-error {
-        display: grid;
-        justify-items: center;
-        gap: 16px;
-        max-width: 600px;
-        padding: 24px;
-        text-align: center;
+        --boot-error-fg: #262626;
+        --boot-error-bg: #ffffff;
+        --boot-error-line: color-mix(in srgb, currentColor 12%, transparent);
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        align-self: flex-start;
+        width: min(400px, calc(100% - 48px));
+        padding: clamp(24px, 22vh, 220px) 0 24px;
+        font-size: 13px;
+        line-height: 20px;
+      }
+
+      html.dark #boot-error {
+        --boot-error-fg: #f5f5f5;
+        --boot-error-bg: #000000;
+      }
+
+      html[data-theme-selected="true"] #boot-error {
+        --boot-error-fg: var(--boot-foreground);
+        --boot-error-bg: var(--boot-background);
+      }
+
+      #boot-error h1 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        line-height: 22px;
       }
 
       #boot-error p {
-        margin: 0;
+        margin: 4px 0 0;
+        opacity: 0.7;
+        overflow-wrap: anywhere;
+        text-wrap: pretty;
+      }
+
+      #boot-error code,
+      #boot-error pre {
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 12px;
         overflow-wrap: anywhere;
       }
 
+      #boot-error a {
+        color: inherit;
+        text-decoration-line: underline;
+        text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+        text-underline-offset: 3px;
+      }
+
+      #boot-error a:hover {
+        text-decoration-color: currentColor;
+      }
+
       #boot-error button {
-        padding: 8px 16px;
-        border: 1px solid currentColor;
-        border-radius: 4px;
+        height: 32px;
+        padding: 0 14px;
+        border: 1px solid var(--boot-error-line);
+        border-radius: 6px;
         background: transparent;
         color: inherit;
         font: inherit;
+        font-weight: 500;
         cursor: pointer;
+      }
+
+      #boot-error button[aria-disabled="true"] {
+        opacity: 0.6;
+        cursor: default;
+      }
+
+      #boot-error :is(button, a, summary, pre):focus-visible {
+        outline: 2px solid var(--boot-error-fg);
+        outline-offset: 2px;
+      }
+
+      #boot-error-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      #boot-error #boot-error-reload {
+        border-color: var(--boot-error-fg);
+        background: var(--boot-error-fg);
+        color: var(--boot-error-bg);
+      }
+
+      #boot-error-reload:hover {
+        opacity: 0.9;
+      }
+
+      #boot-error #boot-error-update-note {
+        margin-top: 8px;
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      #boot-error details {
+        width: 100%;
+        margin-top: 32px;
+      }
+
+      #boot-error summary {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 4px;
+        list-style: none;
+        opacity: 0.7;
+        cursor: pointer;
+      }
+
+      #boot-error summary::-webkit-details-marker {
+        display: none;
+      }
+
+      #boot-error summary::before {
+        content: "";
+        width: 5px;
+        height: 5px;
+        border-right: 1.5px solid currentColor;
+        border-bottom: 1.5px solid currentColor;
+        transform: rotate(-45deg);
+      }
+
+      #boot-error details[open] summary::before {
+        transform: rotate(45deg);
+      }
+
+      #boot-error summary:hover,
+      #boot-error details[open] summary {
+        opacity: 1;
+      }
+
+      #boot-error details > :not(summary) {
+        display: grid;
+        gap: 8px;
+        margin-top: 20px;
+      }
+
+      #boot-error details > a {
+        display: block;
+        width: fit-content;
+      }
+
+      #boot-error details p {
+        margin: 0;
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      #boot-error-command {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 4px 4px 10px;
+        border: 1px solid var(--boot-error-line);
+        border-radius: 6px;
+      }
+
+      #boot-error-command code {
+        flex: 1;
+        min-width: 0;
+        opacity: 0.8;
+      }
+
+      #boot-error .boot-error-icon {
+        display: grid;
+        flex: none;
+        place-items: center;
+        min-width: 24px;
+        height: 24px;
+        padding: 0 4px;
+        border: 0;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 400;
+        opacity: 0.7;
+      }
+
+      #boot-error .boot-error-icon:hover {
+        opacity: 1;
+        background: color-mix(in srgb, currentColor 8%, transparent);
+      }
+
+      #boot-error-details {
+        max-height: 200px;
+        margin: 0;
+        padding: 10px 12px;
+        overflow: auto;
+        border: 1px solid var(--boot-error-line);
+        border-radius: 6px;
+        font-size: 11px;
+        line-height: 16px;
+        white-space: pre-wrap;
+        opacity: 0.8;
+      }
+
+      #boot-error-report {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      #boot-error-report button {
+        height: 28px;
+        padding: 0 10px;
+      }
+
+      .boot-error-sr {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
       }
     </style>
     <title>T3 Code (Beta)</title>

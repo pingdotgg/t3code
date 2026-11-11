@@ -1,15 +1,15 @@
-import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
 import * as cloudfunctions from "@distilled.cloud/gcp/cloudfunctions_v2";
 import * as firestore from "@distilled.cloud/gcp/firestore_v1";
-import { expect } from "bun:test";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -19,11 +19,7 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
 
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 interface Note {
   id: string;
@@ -39,28 +35,22 @@ afterAll.skipIf(!!process.env.NO_DESTROY)(
     const { functionName, databaseName } = yield* stack;
     yield* destroy(Stack);
 
-    const fn = yield* cloudfunctions
-      .getProjectsLocationsFunctions({ name: functionName })
-      .pipe(
-        Effect.as("found" as const),
-        Effect.catchTag("NotFound", () => Effect.succeed("gone" as const)),
-        Effect.orDie,
-        Effect.provide(GcpHttp),
-      );
+    const fn = yield* cloudfunctions.getProjectsLocationsFunctions({ name: functionName }).pipe(
+      Effect.as("found" as const),
+      Effect.catchTag("NotFound", () => Effect.succeed("gone" as const)),
+      Effect.orDie,
+      Effect.provide(GcpHttp),
+    );
     expect(fn).toEqual("gone");
 
     // Firestore soft-deletes: the database either 404s or reports a
     // `deleteTime` until it is purged.
-    const db = yield* firestore
-      .getProjectsDatabases({ name: databaseName })
-      .pipe(
-        Effect.map((database) =>
-          database.deleteTime === undefined ? "found" : "gone",
-        ),
-        Effect.catchTag("NotFound", () => Effect.succeed("gone" as const)),
-        Effect.orDie,
-        Effect.provide(GcpHttp),
-      );
+    const db = yield* firestore.getProjectsDatabases({ name: databaseName }).pipe(
+      Effect.map((database) => (database.deleteTime === undefined ? "found" : "gone")),
+      Effect.catchTag("NotFound", () => Effect.succeed("gone" as const)),
+      Effect.orDie,
+      Effect.provide(GcpHttp),
+    );
     expect(db).toEqual("gone");
   }),
   { timeout: 600_000 },
@@ -81,9 +71,7 @@ test(
     // Right after a deploy the public invoker grant (403) and the
     // project-level Firestore grant (500) can each take minutes to
     // propagate. Poll the list route until both have landed.
-    const ready = yield* HttpClient.execute(
-      HttpClientRequest.get(`${baseUrl}/notes`),
-    ).pipe(
+    const ready = yield* HttpClient.execute(HttpClientRequest.get(`${baseUrl}/notes`)).pipe(
       Effect.repeat({
         schedule: Schedule.spaced("10 seconds"),
         until: (response) => response.status === 200,
@@ -118,19 +106,13 @@ test(
       .pipe(Effect.orDie, Effect.provide(GcpHttp));
     expect(document.fields?.title?.stringValue).toEqual("groceries");
     expect(document.fields?.body?.stringValue).toEqual("eggs, milk");
-    expect(document.fields?.createdAt?.timestampValue).toEqual(
-      expect.any(String),
-    );
+    expect(document.fields?.createdAt?.timestampValue).toEqual(expect.any(String));
 
-    const read = yield* HttpClient.execute(
-      HttpClientRequest.get(`${baseUrl}/notes/${note.id}`),
-    );
+    const read = yield* HttpClient.execute(HttpClientRequest.get(`${baseUrl}/notes/${note.id}`));
     expect(read.status).toBe(200);
     expect((yield* read.json) as unknown as Note).toEqual(note);
 
-    const listed = yield* HttpClient.execute(
-      HttpClientRequest.get(`${baseUrl}/notes`),
-    );
+    const listed = yield* HttpClient.execute(HttpClientRequest.get(`${baseUrl}/notes`));
     expect(listed.status).toBe(200);
     const { notes } = (yield* listed.json) as unknown as { notes: Note[] };
     expect(notes.map((n) => n.id)).toContain(note.id);
@@ -147,9 +129,7 @@ test(
     );
     expect(deleted.status).toBe(204);
 
-    const gone = yield* HttpClient.execute(
-      HttpClientRequest.get(`${baseUrl}/notes/${note.id}`),
-    );
+    const gone = yield* HttpClient.execute(HttpClientRequest.get(`${baseUrl}/notes/${note.id}`));
     expect(gone.status).toBe(404);
 
     const documentGone = yield* firestore
