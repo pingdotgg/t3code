@@ -36,6 +36,7 @@ export function makeUnavailableUsageLimits(input: {
   readonly checkedAt: string;
   readonly reason: "unsupported" | "probeFailed";
   readonly message?: string;
+  readonly externalUsage?: ServerProviderUsageLimits["externalUsage"];
 }): ServerProviderUsageLimits {
   return {
     checkedAt: input.checkedAt,
@@ -44,6 +45,7 @@ export function makeUnavailableUsageLimits(input: {
       reason: input.reason,
       ...(input.message ? { message: input.message } : {}),
     },
+    ...(input.externalUsage ? { externalUsage: input.externalUsage } : {}),
   };
 }
 

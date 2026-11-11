@@ -174,7 +174,16 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   const email = credential.value?.email?.trim() || undefined;
   const token = credential.value?.key?.trim();
   if (!token) {
-    return { email, usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }) };
+    return {
+      email,
+      usageLimits: makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message:
+          "Grok subscription limits need a default `grok login` session. API keys and custom authentication do not report them.",
+        externalUsage: { label: "xAI console", url: "https://console.x.ai" },
+      }),
+    };
   }
   const usageLimits = yield* Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
