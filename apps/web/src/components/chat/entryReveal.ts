@@ -35,25 +35,57 @@ function isEntryLoaded(ref: ScopedThreadRef, entryId: string): boolean {
   );
 }
 
+/** One history fetch stops at a size cap, so a pin further back needs another page. */
+export const MAX_PIN_HISTORY_PAGES = 20;
+
+export interface PinHistorySnapshot {
+  readonly loaded: boolean;
+  readonly hasMoreHistory: boolean;
+}
+
+export type PinHistoryPage = "loaded" | "noop" | "busy" | "error";
+
+/**
+ * Keeps loading older pages until the entry is in the open window. A page that
+ * misses it is not a failure while older history remains.
+ */
+export async function pageUntilPinnedEntry(input: {
+  readonly read: () => PinHistorySnapshot;
+  readonly loadPage: () => Promise<PinHistoryPage>;
+}): Promise<boolean> {
+  for (let pages = 0; ; pages += 1) {
+    const snapshot = input.read();
+    if (snapshot.loaded) return true;
+    if (!snapshot.hasMoreHistory || pages >= MAX_PIN_HISTORY_PAGES) return false;
+    const page = await input.loadPage();
+    if (page !== "loaded") return false;
+  }
+}
+
 /** Loads history through the entry when it is older than the loaded page, then reveals it. */
 export async function revealThreadEntry(ref: ScopedThreadRef, entryId: string) {
-  if (
-    !isEntryLoaded(ref, entryId) &&
-    appAtomRegistry.get(environmentThreadDetails.historyAtom(ref)).hasMoreHistory
-  ) {
-    const result = await runAtomCommand(
-      appAtomRegistry,
-      threadEnvironment.loadEarlierHistory,
-      {
-        environmentId: ref.environmentId,
-        input: { threadId: ref.threadId, throughEntryId: entryId },
-      },
-      { label: "load pinned entry history", reportFailure: false },
-    );
-    if (result._tag === "Failure" || !isEntryLoaded(ref, entryId)) {
-      toastManager.add({ type: "error", title: "Could not load the pinned item" });
-      return;
-    }
+  const found = await pageUntilPinnedEntry({
+    read: () => ({
+      loaded: isEntryLoaded(ref, entryId),
+      hasMoreHistory: appAtomRegistry.get(environmentThreadDetails.historyAtom(ref)).hasMoreHistory,
+    }),
+    loadPage: async () => {
+      const result = await runAtomCommand(
+        appAtomRegistry,
+        threadEnvironment.loadEarlierHistory,
+        {
+          environmentId: ref.environmentId,
+          input: { threadId: ref.threadId, throughEntryId: entryId },
+        },
+        { label: "load pinned entry history", reportFailure: false },
+      );
+      if (result._tag === "Failure") return "error";
+      return result.value._tag === "loaded" ? "loaded" : result.value._tag;
+    },
+  });
+  if (!found) {
+    toastManager.add({ type: "error", title: "Could not load the pinned item" });
+    return;
   }
   const previous = appAtomRegistry.get(entryRevealRequestAtom);
   appAtomRegistry.set(entryRevealRequestAtom, {
