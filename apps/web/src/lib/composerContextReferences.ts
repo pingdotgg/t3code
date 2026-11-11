@@ -37,6 +37,16 @@ export function stripInlineContextReferences(prompt: string): string {
   return replaceComposerContextReferences(prompt, () => "");
 }
 
+/** Strips references with no record in `contextIds`, which would otherwise show as dead chips. */
+export function keepInlineContextReferences(
+  prompt: string,
+  contextIds: ReadonlySet<string>,
+): string {
+  return replaceComposerContextReferences(prompt, (occurrence) =>
+    contextIds.has(occurrence.contextId) ? occurrence.source : "",
+  );
+}
+
 function isBoundaryWhitespace(char: string | undefined): boolean {
   return char === undefined || char === " " || char === "\n" || char === "\t" || char === "\r";
 }

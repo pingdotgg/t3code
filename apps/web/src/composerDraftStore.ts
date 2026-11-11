@@ -1,4 +1,3 @@
-import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { composerFileAttachmentMimeType } from "./components/chat/composerAttachmentFiles";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
@@ -74,12 +73,15 @@ import {
 import {
   appendInlineContextReference,
   type ComposerContextReference,
+  collectInlineContextIds,
   ensureInlineContextReferences,
   formatInlineContextReference,
+  keepInlineContextReferences,
   removeInlineContextReference,
 } from "./lib/composerContextReferences";
 import {
   fileContextReference,
+  imageContextReference,
   previewAnnotationContextId,
   previewAnnotationContextReference,
   reviewCommentContextId,
@@ -656,8 +658,8 @@ interface ComposerDraftStoreState {
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
   /** Clears text and attachments, preserving terminal/element contexts, preview annotations, and review comments. */
   clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
-  /** Keeps attachments over destination limits, other environments' uploads, terminal/element contexts, annotations, and review comments in source. */
-  moveComposerPromptAndImages: (from: ComposerThreadTarget, to: ComposerThreadTarget) => void;
+  /** For a destination with no user content. Attachments over its limit or uploaded to another environment stay in source. */
+  moveComposerContent: (from: ComposerThreadTarget, to: ComposerThreadTarget) => void;
 }
 
 export interface EffectiveComposerModelState {
@@ -4189,7 +4191,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
-        moveComposerPromptAndImages: (from, to) => {
+        moveComposerContent: (from, to) => {
           const fromKey = resolveComposerDraftKey(get(), from) ?? "";
           const toKey = resolveComposerDraftKey(get(), to) ?? "";
           if (fromKey.length === 0 || toKey.length === 0 || fromKey === toKey) {
@@ -4240,15 +4242,40 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               });
             const movedFileIds = new Set(movedFiles.map((file) => file.id));
             const retainedFiles = source.files.filter((file) => !movedFileIds.has(file.id));
-            const movedPrompt = ensureInlineContextReferences(
-              stripInlineContextReferences(source.prompt),
-              destination.terminalContexts.map(terminalContextReference),
-            );
+            const referencedIds = new Set(collectInlineContextIds(source.prompt));
+            const referenced = <Value>(
+              values: ReadonlyArray<Value>,
+              reference: (value: Value) => ComposerContextReference,
+            ) => values.filter((value) => referencedIds.has(reference(value).contextId));
             const nextDestination: ComposerThreadDraftState = {
               ...destination,
-              prompt: movedPrompt,
+              prompt: keepInlineContextReferences(
+                source.prompt,
+                new Set(
+                  [
+                    ...source.terminalContexts.map(terminalContextReference),
+                    ...source.previewAnnotations.map(previewAnnotationContextReference),
+                    ...source.reviewComments.map(reviewCommentContextReference),
+                    ...source.threadContexts.map(threadContextReference),
+                    ...source.environmentContexts.map(environmentContextReference),
+                    ...movedImages.map(imageContextReference),
+                    ...movedFiles.map(fileContextReference),
+                  ].map((reference) => reference.contextId),
+                ),
+              ),
               images: [...destination.images, ...movedImages],
               files: [...destination.files, ...movedFiles],
+              terminalContexts: referenced(source.terminalContexts, terminalContextReference),
+              previewAnnotations: referenced(
+                source.previewAnnotations,
+                previewAnnotationContextReference,
+              ),
+              reviewComments: referenced(source.reviewComments, reviewCommentContextReference),
+              threadContexts: referenced(source.threadContexts, threadContextReference),
+              environmentContexts: referenced(
+                source.environmentContexts,
+                environmentContextReference,
+              ),
               nonPersistedImageIds: [
                 ...destination.nonPersistedImageIds,
                 ...source.nonPersistedImageIds.filter((imageId) => movedImageIds.has(imageId)),
@@ -4263,12 +4290,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             // Moved images still use these blob URLs at the destination; do not revoke them.
             const nextSource: ComposerThreadDraftState = {
               ...source,
-              prompt: ensureInlineContextReferences(
-                "",
-                source.terminalContexts.map(terminalContextReference),
-              ),
+              prompt: "",
               images: retainedImages,
               files: retainedFiles,
+              terminalContexts: [],
+              previewAnnotations: [],
+              reviewComments: [],
+              threadContexts: [],
+              environmentContexts: [],
               nonPersistedImageIds: source.nonPersistedImageIds.filter(
                 (imageId) => !movedImageIds.has(imageId),
               ),
