@@ -4526,6 +4526,7 @@ interface ClaudeLiveQueryContext {
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
   selection: CompiledClaudeModelSelection;
+  modelSelection: ModelSelection;
   readonly closed: Deferred.Deferred<void, never>;
   lastTurn: ActiveClaudeTurnContext | null;
   // "early" echoes on the first frame; "acknowledged" confirms uuid acceptance, but resume turns can still precede the prompt.
@@ -9629,18 +9630,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const nativeItemId = message.uuid;
             // "local" covers a subagent or side question; absent (older CLIs) means "session".
             if (message.subtype === "model_refusal_fallback" && message.scope !== "local") {
+              const previousModelSelection = liveQuery.modelSelection;
               const modelSelection = {
-                ...context.input.modelSelection,
+                ...previousModelSelection,
                 model: resolveClaudeModelSlug(modelCatalog, message.fallback_model),
               };
               liveQuery.selection = compileClaudeModelSelection(modelSelection, modelCatalog);
+              liveQuery.modelSelection = modelSelection;
               yield* emitProviderEvent({
                 type: "app_thread.model_selection.updated",
                 runId: context.input.runId,
                 attemptId: context.input.attemptId,
                 driver: CLAUDE_PROVIDER,
                 threadId: context.input.threadId,
-                previousModelSelection: context.input.modelSelection,
+                previousModelSelection,
                 modelSelection,
               });
             }
@@ -11212,6 +11215,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const applySelectionLive = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
           selection: CompiledClaudeModelSelection,
+          modelSelection: ModelSelection,
         ) {
           // Preserve launcher-selected models unless the model changed or a failed update left it unknown.
           yield* (
@@ -11230,6 +11234,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
           );
           live.selection = selection;
+          live.modelSelection = modelSelection;
         });
 
         const openQuery = Effect.fnUntraced(function* (
@@ -11272,7 +11277,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (existing.selection.apiModelId === compiledSelection.apiModelId ||
               existing.openedPermissionMode === queryPolicy.permissionMode)
           ) {
-            yield* applySelectionLive(existing, compiledSelection);
+            yield* applySelectionLive(existing, compiledSelection, turnInput.modelSelection);
           }
           if (
             existing !== null &&
@@ -11436,6 +11441,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             query: querySession,
             queryPolicyKey,
             selection: compiledSelection,
+            modelSelection: turnInput.modelSelection,
             closed,
             lastTurn: null,
             promptEchoMode: "unknown",
@@ -12117,8 +12123,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(Path.Path, path),
             );
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
-            if (liveSteerSelection !== undefined) {
-              yield* applySelectionLive(existing, liveSteerSelection);
+            if (liveSteerSelection !== undefined && turnInput.modelSelection !== undefined) {
+              yield* applySelectionLive(existing, liveSteerSelection, turnInput.modelSelection);
             }
             // The turn can end while the moves or the selection change are answered.
             // A steer offered then would start a new turn the orchestrator never
@@ -12511,7 +12517,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return;
             }
             // A failed update clears the live identity, so the next turn applies the selection again.
-            yield* applySelectionLive(live, selection).pipe(
+            yield* applySelectionLive(live, selection, modelSelection).pipe(
               Effect.catch((cause) =>
                 Effect.logWarning("orchestration-v2.claude-live-selection-failed", { cause }),
               ),

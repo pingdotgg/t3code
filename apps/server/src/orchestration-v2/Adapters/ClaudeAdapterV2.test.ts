@@ -6533,6 +6533,37 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.runtime.startTurn(turn(3, original));
       yield* settle;
       assert.deepEqual(harness.liveSelectionChanges[0], { model: original.model });
+      const steered = { ...original, model: "claude-sonnet-4-6" };
+      const input = turn(4, original);
+      yield* harness.runtime.startTurn(input);
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: input.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: "turn:" + input.attemptId,
+        }),
+        modelSelection: steered,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("steer-fallback"),
+          text: "Try this model",
+          attachments: [],
+        },
+      });
+      yield* Queue.offer(
+        harness.sdkMessages,
+        refusalFallback("session", "00000000-0000-4000-8000-000000000403"),
+      );
+      yield* settle;
+      const updates = harness.events.filter(
+        (event) => event.type === "app_thread.model_selection.updated",
+      );
+      assert.deepEqual(updates.at(-1)?.previousModelSelection, steered);
+      assert.deepEqual(updates.at(-1)?.modelSelection, fallback);
     }).pipe(
       Effect.scoped,
       Effect.provide(
