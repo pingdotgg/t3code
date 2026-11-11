@@ -116,7 +116,7 @@ export function buildPrContentPrompt(input: PrContentPromptInput) {
       : []),
     ...(producedBy.length > 0
       ? [
-          "- you only write this description; you did not make the change. Add attribution (the model or harness that made the change) only where your instructions or the template ask for it, and then credit the models and harnesses listed under 'Change produced by' (all of them, comma-separated, when there are several), never yourself",
+          "- when your instructions or the template ask for the model or harness that made the change, include that attribution and credit every model and harness listed under 'Change produced by' (comma-separated), never the model writing this description; otherwise add no attribution",
         ]
       : []),
     ...policyInstruction(input.policy?.changeRequestInstructions),
