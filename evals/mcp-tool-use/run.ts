@@ -1235,6 +1235,20 @@ const branchPullRequest = (sample: Sample) => {
   return { number, created: true, pr: undefined };
 };
 
+/** The checks `ci_logs` and `ci_rerun` act on, selected as PullRequestService does. */
+const selectedWorldChecks = (sample: Sample, input: Readonly<Record<string, unknown>>) => {
+  const number = typeof input.number === "number" ? input.number : branchPullRequest(sample).number;
+  const world = worldPullRequests(sample).find((pr) => Number(pr.number) === number);
+  const all = Array.isArray(world?.checks) ? world.checks.filter(isRecord) : [];
+  const named = typeof input.check === "string" ? input.check.trim().toLowerCase() : null;
+  const checks = all.filter((check) =>
+    named === null
+      ? check.state === "fail" || check.state === "cancelled"
+      : valueText(check.name).toLowerCase() === named,
+  );
+  return { number, all, checks, named };
+};
+
 /** A believable T3 result for a tool the case does not mock. */
 export const t3Default = (
   sample: Sample,
@@ -1455,17 +1469,7 @@ export const t3Default = (
       };
     case "ci_logs":
     case "ci_rerun": {
-      const number =
-        typeof input.number === "number" ? input.number : branchPullRequest(sample).number;
-      const world = worldPullRequests(sample).find((pr) => Number(pr.number) === number);
-      // Selects as PullRequestService does: a name ignoring case, else every failed check.
-      const named = typeof input.check === "string" ? input.check.trim().toLowerCase() : null;
-      const checks = (Array.isArray(world?.checks) ? world.checks.filter(isRecord) : []).filter(
-        (check) =>
-          named === null
-            ? check.state === "fail" || check.state === "cancelled"
-            : valueText(check.name).toLowerCase() === named,
-      );
+      const { number, checks } = selectedWorldChecks(sample, input);
       return {
         ...pullRequest(sample.repo, { number }),
         checks: checks.map((check) =>
@@ -1934,6 +1938,13 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
       return failed(SUBAGENT_WATCH_ERROR);
+    }
+    if (name === "ci_logs" || name === "ci_rerun") {
+      const { all, checks, named } = selectedWorldChecks(sample, input);
+      if (named !== null && checks.length === 0) {
+        const names = all.map((check) => valueText(check.name)).join(", ") || "none";
+        return failed(`No check is named ${valueText(input.check)}. Checks: ${names}.`);
+      }
     }
     if (BRANCH_PULL_REQUEST_TOOLS.has(name) && input.number === undefined) {
       // Until the agent opens it, the PR a create would open does not exist.

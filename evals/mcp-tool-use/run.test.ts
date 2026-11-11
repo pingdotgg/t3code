@@ -1156,6 +1156,22 @@ it.effect("reads the branch's PR only once the agent has opened it", () =>
       input: {},
     });
     assert.isTrue(linkedRead.is_error);
+
+    // A check name that matches nothing is refused, as the service refuses it.
+    const ciWorld = { ...world, prs: [{ number: 7, checks: [{ name: "Test", state: "fail" }] }] };
+    const ciSample = makeSample(
+      { ...childCase, setup: { ...childCase.setup, world: ciWorld } },
+      base,
+    );
+    ciSample.tools.push({ name: "mcp__t3-code__ci_logs" });
+    const unknown = yield* answerToolCall(ciSample, config, {
+      type: "tool_use",
+      id: "g",
+      name: "mcp__t3-code__ci_logs",
+      input: { number: 7, check: "Tests" },
+    });
+    assert.isTrue(unknown.is_error);
+    assert.include(String(unknown.content), "Checks: Test.");
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 

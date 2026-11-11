@@ -798,7 +798,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("tails Actions job logs and re-runs a run's failed jobs together", () =>
     Effect.gen(function* () {
-      const runOf: Record<string, number> = { "11": 10, "12": 10, "21": 20, "41": 40, "42": 40 };
+      const runOf: Record<string, number> = {
+        "11": 10,
+        "12": 10,
+        "21": 20,
+        "41": 40,
+        "42": 40,
+        "51": 50,
+        "52": 50,
+      };
       const runJobs: Record<string, Array<{ id: number; conclusion: string }>> = {
         "10": [
           { id: 11, conclusion: "failure" },
@@ -809,6 +817,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
           { id: 41, conclusion: "success" },
           { id: 42, conclusion: "failure" },
           { id: 43, conclusion: "failure" },
+        ],
+        "50": [
+          { id: 51, conclusion: "failure" },
+          { id: 52, conclusion: "failure" },
         ],
       };
       mockedExecute.mockImplementation((call) => {
@@ -828,7 +840,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
         const job = /actions\/jobs\/(\d+)$/.exec(call.path);
         if (job) return Effect.succeed(output(encodeJson({ run_id: runOf[job[1]!] })));
         const run = /actions\/runs\/(\d+)\/jobs\?/.exec(call.path);
-        if (run) return Effect.succeed(output(encodeJson({ jobs: runJobs[run[1]!] ?? [] })));
+        if (run) {
+          const jobs = runJobs[run[1]!] ?? [];
+          // Run 50 has more jobs than one page shows.
+          const total = run[1] === "50" ? 150 : jobs.length;
+          return Effect.succeed(output(encodeJson({ total_count: total, jobs })));
+        }
         return Effect.succeed(output("{}"));
       });
       const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
@@ -867,6 +884,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
           external,
           job(41, 40),
           { name: "job 42", url: "https://github.com/octo/repo/actions/runs/40/jobs/42" },
+          job(51, 50),
+          job(52, 50),
         ],
       });
       expect(reruns.map(({ name, rerun }) => [name, rerun])).toEqual([
@@ -876,6 +895,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         ["Vercel", false],
         ["job 41", true],
         ["job 42", false],
+        ["job 51", true],
+        ["job 52", false],
       ]);
       expect(
         mockedExecute.mock.calls.flatMap(([call]) =>
@@ -885,6 +906,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         "repos/octo/repo/actions/runs/10/rerun-failed-jobs",
         "repos/octo/repo/actions/jobs/21/rerun",
         "repos/octo/repo/actions/jobs/41/rerun",
+        "repos/octo/repo/actions/jobs/51/rerun",
       ]);
     }),
   );

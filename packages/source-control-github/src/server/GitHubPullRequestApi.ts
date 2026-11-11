@@ -819,6 +819,7 @@ const decodeActionsJob = Schema.decodeEffect(
 const decodeRunJobs = Schema.decodeEffect(
   Schema.fromJsonString(
     Schema.Struct({
+      total_count: Schema.Number,
       jobs: Schema.Array(
         Schema.Struct({ id: Schema.Number, conclusion: Schema.NullOr(Schema.String) }),
       ),
@@ -2919,13 +2920,15 @@ export const make = Effect.gen(function* () {
           })
           .pipe(
             Effect.flatMap((response) => decodeRunJobs(response.body)),
-            Effect.map(
-              ({ jobs }) =>
-                new Set(
-                  jobs
-                    .filter((job) => FAILED_CONCLUSIONS.has(job.conclusion ?? ""))
-                    .map((job) => String(job.id)),
-                ),
+            // Jobs past the first page are unseen, so such a run counts as unknown.
+            Effect.map(({ total_count, jobs }) =>
+              total_count > jobs.length
+                ? new Set<string>()
+                : new Set(
+                    jobs
+                      .filter((job) => FAILED_CONCLUSIONS.has(job.conclusion ?? ""))
+                      .map((job) => String(job.id)),
+                  ),
             ),
             Effect.catchTags({
               GitHubApiNotFoundError: () => Effect.succeed(new Set<string>()),
