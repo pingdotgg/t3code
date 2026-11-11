@@ -1018,8 +1018,8 @@ importers:
         specifier: 0.4.0
         version: 0.4.0
       '@betteroffice/pptx':
-        specifier: 0.2.0
-        version: 0.2.0
+        specifier: 0.5.1
+        version: 0.5.1
       '@betteroffice/xlsx':
         specifier: 0.3.0
         version: 0.3.0
@@ -3260,8 +3260,8 @@ packages:
       '@betteroffice/fonts-cjk':
         optional: true
 
-  '@betteroffice/pptx@0.2.0':
-    resolution: {integrity: sha512-pNPQ58tlA+pVibERbLdQNskvP7a0GIMf4jhkCU/gPp8043Ichf6gB3PSb4ra9sfqoIaWqOaZKCWyptovA2+Q0A==}
+  '@betteroffice/pptx@0.5.1':
+    resolution: {integrity: sha512-2Rn51fx1GCDfcus1Ly2giDk7CnhLmWjJFPq3QL2DiBAF2BF+A5R9PdRDHYX5gQm0sfWK97C2osTmR3/klJKF2Q==}
 
   '@betteroffice/xlsx@0.3.0':
     resolution: {integrity: sha512-K2bHtdk/epAxsmvxJlIWBRndjP3ltQU0Oh3p4gcZd2n5/YgXglo3SmMYX4nQe8WEm/yvz91p+aIasKyXXQP9Wg==}
@@ -13462,7 +13462,7 @@ snapshots:
 
   '@betteroffice/fonts@0.4.0': {}
 
-  '@betteroffice/pptx@0.2.0': {}
+  '@betteroffice/pptx@0.5.1': {}
 
   '@betteroffice/xlsx@0.3.0': {}
 
