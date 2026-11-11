@@ -1089,7 +1089,7 @@ const basicChallenge = {
 it.live("signs in to an HTTP Basic challenge without holding the action queue", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
+      const { broker, browser, tabId } = yield* ready;
       const page = contexts[0]!.page;
       const session = contexts[0]!.sessions[0]!;
       const signedIn = Promise.withResolvers<void>();
@@ -1124,11 +1124,14 @@ it.live("signs in to an HTTP Basic challenge without holding the action queue", 
         type: "auth",
         message: "http://localhost:18914 asks you to sign in. It says: test",
       });
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      yield* viewer.input({ type: "dialog", accept: true, username: "test", password: "hunter2" });
       const status = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         tabId,
-        operation: "dialog",
-        input: { accept: true, username: "test", password: "hunter2" },
+        operation: "status",
+        input: {},
       });
       expect(session.send).toHaveBeenCalledWith("Fetch.continueWithAuth", {
         requestId: "auth-1",
@@ -1164,7 +1167,7 @@ it.live("a sign-in prompt Chromium already dropped clears when answering it fail
           scope,
           tabId,
           operation: "dialog",
-          input: { accept: true, username: "test", password: "test" },
+          input: { accept: true },
         })
         .pipe(Effect.flip);
       expect(JSON.stringify(failed)).toContain("Invalid InterceptionId.");
