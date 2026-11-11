@@ -3184,7 +3184,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           function* (rollbackInput) {
             // A fresh runtime (restart or idle release) must load the persisted session before forking.
             // Unpublished: the rollback service persists the returned snapshot.
-            if (threadState === null && rollbackInput.providerThread.nativeThreadRef != null) {
+            if (
+              threadState === null &&
+              rollbackInput.providerThread.nativeThreadRef?.nativeId != null
+            ) {
               yield* registerThread(
                 {
                   threadId: rollbackInput.providerThread.appThreadId ?? input.threadId,
