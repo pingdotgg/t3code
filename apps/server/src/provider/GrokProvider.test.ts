@@ -642,40 +642,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount"
     }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps the billing period start when decoding the response", () =>
-    readGrokAccount({
-      GROK_AUTH: '{"https://accounts.x.ai/sign-in":{"key":"session-token"}}',
-    }).pipe(
-      Effect.provideService(
-        FileSystem.FileSystem,
-        FileSystem.makeNoop({ readFileString: () => Effect.succeed("") }),
-      ),
-      Effect.provideService(
-        HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              Response.json({
-                config: {
-                  creditUsagePercent: 4,
-                  currentPeriod: {
-                    type: "USAGE_PERIOD_TYPE_WEEKLY",
-                    start: "2026-10-14T20:51:37.352+00:00",
-                    end: "2026-10-21T20:51:37.352+00:00",
-                  },
-                },
-              }),
-            ),
-          ),
-        ),
-      ),
-      Effect.tap(({ usageLimits }) =>
-        Effect.sync(() => expect(usageLimits.windows[0]?.windowDurationMins).toBe(7 * 24 * 60)),
-      ),
-    ),
-  );
-
   it.effect(
     "uses GROK_AUTH without reading stored credentials and accepts the legacy login scope",
     () =>

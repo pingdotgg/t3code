@@ -49,7 +49,6 @@ describe("Cursor usage limits", () => {
         { billingCycleStart, billingCycleEnd, planUsage },
         checkedAt,
       ).windows.map((window) => window.windowDurationMins);
-    // A 30-day cycle and a 31-day cycle, from real start and end timestamps.
     expect(durations("1794045847072", "1796637847072")).toEqual([43_200, 43_200, 43_200]);
     expect(durations(1_796_637_847_072, "1799316247072")).toEqual([44_640, 44_640, 44_640]);
   });

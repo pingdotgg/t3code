@@ -37,7 +37,6 @@ export function cursorUsageResponseToLimits(
     Number(response.billingCycleEnd) > 0 && Option.isSome(reset)
       ? DateTime.formatIso(reset.value)
       : undefined;
-  // The pace badge and even-spend marker need the cycle length, which is end - start.
   const cycleStart = Number(response.billingCycleStart);
   const windowDurationMins =
     resetsAt && cycleStart > 0
