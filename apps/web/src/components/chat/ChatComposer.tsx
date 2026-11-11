@@ -2136,12 +2136,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submissionTarget,
       event,
       onSend: (sendEvent) => {
-        // The thread's send guards are for provider turns, so an answer skips them.
-        if (submissionTarget === "pending-user-input") {
-          sendEvent?.preventDefault();
-          onAdvanceActivePendingUserInput();
-          return;
-        }
         providerInputRejectedRef.current = false;
         onSend(
           sendEvent,
