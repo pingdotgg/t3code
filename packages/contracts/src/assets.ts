@@ -17,6 +17,14 @@ const ASSET_PATH_MAX_LENGTH = 1024;
  */
 export const SOURCE_CONTROL_MEDIA_ASSET = "github-media" as const;
 
+export const NativeAppIconReference = Schema.Union([
+  ToolActivityNativeAppReference,
+  Schema.TaggedStruct("app-path", {
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+  }),
+]);
+export type NativeAppIconReference = typeof NativeAppIconReference.Type;
+
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
@@ -50,7 +58,7 @@ export const AssetResource = Schema.Union([
     path: Schema.optional(ProjectFaviconPath),
   }),
   Schema.TaggedStruct("native-app-icon", {
-    app: ToolActivityNativeAppReference,
+    app: NativeAppIconReference,
   }),
   // Media a change request points at on its host, fetched with the credential the host's driver
   // holds because the client has none. `repository` names the change request's repository.
