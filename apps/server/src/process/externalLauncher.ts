@@ -477,13 +477,14 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
-    const { command, baseArgs } = Option.getOrElse(
-      yield* resolveEditorCommand(editorDef, env),
-      () => ({
+    const resolved = yield* resolveEditorCommand(editorDef, env);
+    if (Option.isNone(resolved)) {
+      return yield* new ExternalLauncherCommandNotFoundError({
+        editor: editorDef.id,
         command: editorDef.commands[0],
-        baseArgs: "baseArgs" in editorDef ? editorDef.baseArgs : [],
-      }),
-    );
+      });
+    }
+    const { command, baseArgs } = resolved.value;
     return {
       editor: editorDef.id,
       target: input.cwd,
