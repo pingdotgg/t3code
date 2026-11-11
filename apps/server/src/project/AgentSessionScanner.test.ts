@@ -2874,36 +2874,6 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
-  it("imports a Codex request after the files-mentioned prefix", () => {
-    const prompt = [
-      "# Files mentioned by the user:",
-      "",
-      "## screenshot.png: /tmp/attachments/screenshot.png",
-      "Image attachment: true",
-      "",
-      '<in-app-browser-context source="ambient-ui-state">\nTab\n</in-app-browser-context>',
-      "",
-      "## My request for Codex:",
-      "Hey, what's up?",
-    ].join("\n");
-    const thread = AgentSessionScanner.parseAgentSessionTranscript({
-      contents: [
-        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
-        encodeTranscriptRecord({
-          type: "event_msg",
-          payload: { type: "user_message", message: prompt },
-        }),
-      ].join("\n"),
-      source: "codex",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      fallbackSessionId: "fallback",
-      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
-    });
-
-    expect(thread?.title).toBe("Hey, what's up?");
-    expect(thread?.messages.map((message) => message.text)).toEqual(["Hey, what's up?"]);
-  });
-
   it("imports Claude slash commands as typed and drops their local output", () => {
     const user = (content: string) =>
       JSON.stringify({
@@ -3057,6 +3027,21 @@ describe("parseAgentSessionTranscript", () => {
         "Please fix this parser",
       ].join("\n"),
       expected: "Please fix this parser",
+    },
+    {
+      name: "takes the request after the files-mentioned prefix",
+      prompt: [
+        "# Files mentioned by the user:",
+        "",
+        "## screenshot.png: /tmp/attachments/screenshot.png",
+        "Image attachment: true",
+        "",
+        '<in-app-browser-context source="ambient-ui-state">\nTab\n</in-app-browser-context>',
+        "",
+        "## My request for Codex:",
+        "Hey, what's up?",
+      ].join("\n"),
+      expected: "Hey, what's up?",
     },
     {
       name: "takes the request after referenced Codex chats",
