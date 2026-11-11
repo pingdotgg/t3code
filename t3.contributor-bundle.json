@@ -1,0 +1,53 @@
+{
+  "$schema": "https://t3.codes/schema/contributor-bundle.json",
+  "name": "T3 Code Workshop",
+  "description": "Lead, builder, QA, and reviewer seats oriented to this repository's layout and contribution habits.",
+  "orientation": {
+    "summary": "T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and serves web, desktop, and mobile clients. Open at the core, remote-ready, multi-surface.",
+    "map": [
+      {
+        "path": "apps/server",
+        "purpose": "WebSocket server, orchestration, providers, checkpointing. Effect-heavy; read docs/internals/effect-services.md before adding server code."
+      },
+      {
+        "path": "apps/web",
+        "purpose": "React/Vite UI. Desktop wraps it; shared client logic lives in packages/client-runtime."
+      },
+      {
+        "path": "apps/mobile",
+        "purpose": "React Native client. Prefer vp run mobile:install over rebuilding from scratch."
+      },
+      {
+        "path": "packages/contracts",
+        "purpose": "Effect/Schema contracts for anything crossing the wire. Change the schema and server, web, mobile, and desktop follow."
+      },
+      {
+        "path": "AGENTS.md",
+        "purpose": "Contributor operating rules: worktrees, T3 home, check:changed, test taste, and what never to compromise."
+      }
+    ],
+    "guidance": "One problem per PR. Before push, run vp run check:changed. Prefer focused tests beside the change. Never write to ~/.t3/userdata. Never set VITE_HTTP_URL or VITE_WS_URL for dev. Kill only PIDs you captured at spawn."
+  },
+  "seats": [
+    {
+      "id": "lead",
+      "title": "Workshop · Lead",
+      "roleBrief": "You are the Workshop lead for T3 Code contributors. Own the outcome: clarify goals with the user, break work into seats, coordinate Builder / QA / Reviewer, and bring decisions back. Prefer delegating specialist work over doing it yourself."
+    },
+    {
+      "id": "builder",
+      "title": "Workshop · Builder",
+      "roleBrief": "You are the Workshop builder for T3 Code. Implement assigned changes with the project map in mind. Keep scope to one problem, leave the tree reviewable, and report what changed when done."
+    },
+    {
+      "id": "qa",
+      "title": "Workshop · QA",
+      "roleBrief": "You are Workshop QA for T3 Code. Exercise the user paths the change touches across the surfaces that apply (web, desktop, mobile). Prefer failing reproduction steps and concrete verification over abstract review."
+    },
+    {
+      "id": "reviewer",
+      "title": "Workshop · Reviewer",
+      "roleBrief": "You are the Workshop reviewer for T3 Code. Independently review the implementation against AGENTS.md constraints (hit every surface, contracts, reverse states). Do not re-implement; report findings."
+    }
+  ]
+}

@@ -79,6 +79,7 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  UsersRoundIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
@@ -126,6 +127,8 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
+import { useContributorBundleFile } from "../hooks/useContributorBundleFile";
+import { useInstallContributorBundle } from "../hooks/useInstallContributorBundle";
 import { useStartTriage } from "../hooks/useStartTriage";
 import { pickTriageEnvironment } from "../lib/triageTarget";
 import { useNewProject } from "../hooks/useNewProject";
@@ -457,6 +460,7 @@ function OpenCommandPaletteDialog(props: {
   });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
   const startTriage = useStartTriage();
+  const installContributorBundle = useInstallContributorBundle();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -717,6 +721,32 @@ function OpenCommandPaletteDialog(props: {
     currentProjectEnvironmentId,
     currentProjectId,
   );
+  const contributorBundleProjectRef = defaultProjectRef;
+  const contributorBundleEnvironmentId = contributorBundleProjectRef?.environmentId ?? null;
+  const supportsContributorBundles =
+    contributorBundleEnvironmentId !== null &&
+    environments.find((environment) => environment.environmentId === contributorBundleEnvironmentId)
+      ?.serverConfig?.environment.capabilities.contributorBundles === true;
+  const canInstallContributorBundlePermission = useAtomValue(
+    threadEnvironment.installContributorBundle.permissionAtom(contributorBundleEnvironmentId),
+  );
+  const contributorBundleProject =
+    contributorBundleProjectRef === null
+      ? null
+      : resolveCommandPaletteProject(
+          projectByKey,
+          contributorBundleProjectRef.environmentId,
+          contributorBundleProjectRef.projectId,
+        );
+  const contributorBundleFile = useContributorBundleFile(
+    contributorBundleEnvironmentId,
+    contributorBundleProject?.workspaceRoot ?? null,
+  );
+  const canInstallContributorBundle =
+    contributorBundleProjectRef !== null &&
+    supportsContributorBundles &&
+    canInstallContributorBundlePermission &&
+    contributorBundleFile.status === "valid";
   const currentProjectCwd = currentProject?.workspaceRoot ?? null;
   const currentProjectCwdForBrowse =
     browseEnvironmentId && currentProjectEnvironmentId === browseEnvironmentId
@@ -1341,6 +1371,30 @@ function OpenCommandPaletteDialog(props: {
       description: "An agent investigates a T3 Code problem and helps file an issue",
       icon: <BugIcon className={ITEM_ICON_CLASS} />,
       run: () => startTriage(triageEnvironmentId),
+    });
+  }
+
+  if (contributorBundleProjectRef !== null && canInstallContributorBundle) {
+    const bundleName = contributorBundleFile.bundle?.name ?? "contributor bundle";
+    actionItems.push({
+      kind: "action",
+      value: "action:install-contributor-bundle",
+      searchTerms: [
+        "contributor",
+        "bundle",
+        "workshop",
+        "team",
+        "orientation",
+        "project map",
+        "install",
+        "openrig",
+        "rig",
+        bundleName,
+      ],
+      title: `Install ${bundleName}`,
+      description: "Pinned specialist seats with this repository's project orientation",
+      icon: <UsersRoundIcon className={ITEM_ICON_CLASS} />,
+      run: () => installContributorBundle(contributorBundleProjectRef),
     });
   }
 

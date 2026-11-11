@@ -234,6 +234,7 @@ import {
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
+import { OrchestrationV2InstallContributorBundleError } from "./contributorBundle.ts";
 import {
   ProjectCreateNewInput,
   ProjectCreateNewResult,
@@ -1911,6 +1912,18 @@ const WsOrchestrationV2LaunchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.la
   error: Schema.Union([OrchestrationV2ThreadLaunchError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2InstallContributorBundleRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.installContributorBundle,
+  {
+    payload: OrchestrationV2RpcSchemas.installContributorBundle.input,
+    success: OrchestrationV2RpcSchemas.installContributorBundle.output,
+    error: Schema.Union([
+      OrchestrationV2InstallContributorBundleError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+
 const WsOrchestrationV2SubscribeShellRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeShell, {
   payload: OrchestrationV2RpcSchemas.subscribeShell.input,
   success: OrchestrationV2RpcSchemas.subscribeShell.output,
@@ -2279,6 +2292,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetOlderSettledThreadsRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,
+  WsOrchestrationV2InstallContributorBundleRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,

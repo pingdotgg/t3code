@@ -85,6 +85,10 @@ import {
   ToolActivitySource,
 } from "./providerRuntime.ts";
 import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
+import {
+  OrchestrationV2InstallContributorBundleInput,
+  OrchestrationV2InstallContributorBundleResult,
+} from "./contributorBundle.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -3656,6 +3660,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
+  installContributorBundle: "orchestration.installContributorBundle",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
@@ -4365,6 +4370,10 @@ export const OrchestrationV2RpcSchemas = {
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,
     output: OrchestrationV2ThreadLaunchResult,
+  },
+  installContributorBundle: {
+    input: OrchestrationV2InstallContributorBundleInput,
+    output: OrchestrationV2InstallContributorBundleResult,
   },
   subscribeShell: {
     input: OrchestrationV2SubscribeShellInput,

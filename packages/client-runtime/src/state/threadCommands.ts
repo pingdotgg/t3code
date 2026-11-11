@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import {
+  ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
@@ -270,6 +271,14 @@ export function createThreadEnvironmentAtoms<R, E>(
       execute: startThreadTurn,
       scheduler,
       concurrency,
+    }),
+    installContributorBundle: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:install-contributor-bundle",
+      tag: ORCHESTRATION_V2_WS_METHODS.installContributorBundle,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.projectId]),
+      },
     }),
     interruptTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:interrupt-turn",

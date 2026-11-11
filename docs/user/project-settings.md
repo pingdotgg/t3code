@@ -187,6 +187,14 @@ resolve in one order: a project override, then the environment setting, then `t3
 built-in default. Leave a setting on **Inherit** to let the next tier decide.
 Browser access changes apply when an agent session next starts.
 
+## Contributor bundles
+
+Maintainers can ship a specialist team plus a project map in
+`t3.contributor-bundle.json` at the repository root. Open the project in T3 Code and run
+**Install …** from the command palette. That creates pinned seat threads and opens the lead with
+a draft that includes the orientation map. Use this when contributors need repo-specific
+competence, not a generic starter team.
+
 New worktrees initialize git submodules recursively. If that step is slow because the repository
 declares many nested submodules, set **Submodules** in **Settings → Worktrees** under Advanced (with the project
 selected to override it there) to **Top level only** to stop at the ones the repository declares
