@@ -115,6 +115,13 @@ export class EnvironmentRegistry extends Context.Service<
     readonly assertKnownAddress: (
       route: ConnectionRoute,
     ) => Effect.Effect<void, ConnectionBlockedError>;
+    /**
+     * Fails when `register` would be refused for lack of writable storage. Platform-managed
+     * environments pass, since `register` saves nothing for them.
+     */
+    readonly assertCanRegister: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
     ) => Effect.Effect<void>;
@@ -556,6 +563,13 @@ export const make = Effect.gen(function* () {
         detail: `That address claims to be ${saved.target.label}, which is already saved. Add it as a route from that environment's settings instead.`,
       });
     }
+  });
+
+  const assertCanRegister = Effect.fn("EnvironmentRegistry.assertCanRegister")(function* (
+    environmentId: EnvironmentId,
+  ) {
+    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) return;
+    yield* registrations.assertWritable;
   });
 
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
@@ -1189,6 +1203,7 @@ export const make = Effect.gen(function* () {
     start,
     register,
     assertKnownAddress,
+    assertCanRegister,
     reconcilePlatform,
     remove,
     removeRoute,
