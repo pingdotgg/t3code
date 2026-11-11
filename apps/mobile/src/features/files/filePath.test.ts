@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   fileRoutePathSegments,
+  needsWorkspaceFileContents,
   resolveFileLinkPath,
   resolveWorkspaceRelativeFilePath,
 } from "./filePath";
@@ -47,5 +48,13 @@ describe("resolveWorkspaceRelativeFilePath", () => {
     expect(resolveWorkspaceRelativeFilePath("/repo", "../other/main.ts")).toBeNull();
     expect(resolveWorkspaceRelativeFilePath("/repo", "/repo/../outside.txt")).toBeNull();
     expect(resolveWorkspaceRelativeFilePath(null, "/repo/main.ts")).toBeNull();
+  });
+});
+
+describe("needsWorkspaceFileContents", () => {
+  it("reads a text file while its metadata is still pending, but not a directory", () => {
+    const input = { relativePath: "package.json", activeMode: "source" } as const;
+    expect(needsWorkspaceFileContents({ ...input, metadataKind: undefined })).toBe(true);
+    expect(needsWorkspaceFileContents({ ...input, metadataKind: "directory" })).toBe(false);
   });
 });
