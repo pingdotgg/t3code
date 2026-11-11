@@ -495,7 +495,7 @@ export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
 }
 
-function attachAssistantInsights(this: Processor) {
+export function remarkAssistantInsights(this: Processor) {
   return (tree: Root, file: { value: unknown }) => {
     const source = String(file.value);
     if (!source.includes("★ Insight")) return;
@@ -572,8 +572,6 @@ function attachAssistantInsights(this: Processor) {
     tree.children = parsed.children;
   };
 }
-
-export const remarkAssistantInsights = attachAssistantInsights;
 
 const imageSourceProcessor = unified()
   .use(remarkParse)

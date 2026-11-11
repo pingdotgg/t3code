@@ -1797,7 +1797,9 @@ function ChatMarkdown({
   const remarkPlugins = incrementalParsing
     ? [...sharedRemarkPlugins, ...extraRemarkPlugins, createIncrementalMarkdownPlugin()]
     : withExtraPlugins(
-        hasInsights ? withExtraPlugins(INSIGHT_REMARK_PLUGINS, sharedRemarkPlugins) : sharedRemarkPlugins,
+        hasInsights
+          ? withExtraPlugins(INSIGHT_REMARK_PLUGINS, sharedRemarkPlugins)
+          : sharedRemarkPlugins,
         extraRemarkPlugins,
       );
   const blocks = streamingBlocks ?? [text];
