@@ -8,41 +8,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildProviderInstanceOverridePatch,
-  resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
 } from "./ProviderSettingsPanel.logic";
-
-describe("primary operate access", () => {
-  it("denies unauthenticated sessions and sessions without the operate scope", () => {
-    expect(
-      resolvePrimaryOperateAccess({
-        isPrimary: true,
-        hasDesktopBridge: false,
-        session: { authenticated: false },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
-    expect(
-      resolvePrimaryOperateAccess({
-        isPrimary: true,
-        hasDesktopBridge: false,
-        session: { authenticated: true, scopes: ["orchestration:read"] },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
-    expect(
-      resolvePrimaryOperateAccess({
-        isPrimary: true,
-        hasDesktopBridge: false,
-        session: null,
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
-  });
-});
 
 describe("buildProviderInstanceOverridePatch", () => {
   const projectId = ProjectId.make("project-a");

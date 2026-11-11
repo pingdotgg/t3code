@@ -62,6 +62,16 @@ const JsonRpcErrorResponse = Schema.Struct({
 });
 const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encoder = new TextEncoder();
+const MIB = 1024 * 1024;
+const decodeIndex = Schema.decodeUnknownSync(Schema.Struct({ index: Schema.Number }));
+const largeNotification = (index: number, textLength: number) =>
+  encoder.encode(
+    `${encodeUnknownJsonString({
+      jsonrpc: "2.0",
+      method: "x/large",
+      params: { index, text: "x".repeat(textLength) },
+    })}\n`,
+  );
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/acp-mock-peer.ts"),
 );
@@ -108,42 +118,211 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           },
         });
 
-        yield* Queue.offer(
-          input,
-          yield* encodeJsonl(SessionUpdateNotification, {
-            jsonrpc: "2.0",
-            method: "session/update",
-            params: {
-              sessionId: "session-1",
-              update: {
-                sessionUpdate: "plan",
-                entries: [
-                  {
-                    content: "Inspect repository",
-                    priority: "high",
-                    status: "in_progress",
-                  },
-                ],
-              },
+        const updateFrame = yield* encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: {
+              sessionUpdate: "plan",
+              entries: [
+                {
+                  content: "Inspect repository",
+                  priority: "high",
+                  status: "in_progress",
+                },
+              ],
             },
-          }),
-        );
+          },
+        });
+        const completionFrame = yield* encodeJsonl(ElicitationCompleteNotification, {
+          jsonrpc: "2.0",
+          method: "elicitation/complete",
+          params: {
+            elicitationId: "elicitation-1",
+          },
+        });
 
-        yield* Queue.offer(
-          input,
-          yield* encodeJsonl(ElicitationCompleteNotification, {
-            jsonrpc: "2.0",
-            method: "elicitation/complete",
-            params: {
-              elicitationId: "elicitation-1",
-            },
-          }),
-        );
+        // Frames split across reads, with one read ending one frame and starting the next.
+        const wire = new Uint8Array([...updateFrame, ...completionFrame]);
+        const splits = [10, updateFrame.length + 10, wire.length];
+        let start = 0;
+        for (const end of splits) {
+          yield* Queue.offer(input, wire.subarray(start, end));
+          start = end;
+        }
 
         const [update, completion] = yield* Deferred.await(notifications);
         assert.equal(update?._tag, "SessionUpdate");
         assert.equal(completion?._tag, "ElicitationComplete");
       }),
+  );
+
+  it.effect("keeps only recent raw notifications after their callbacks run", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const handled = yield* Deferred.make<void>();
+      let handledCount = 0;
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onNotification: () =>
+          Effect.sync(() => ++handledCount).pipe(
+            Effect.flatMap((count) =>
+              count === 64 ? Deferred.succeed(handled, undefined).pipe(Effect.asVoid) : Effect.void,
+            ),
+          ),
+      });
+
+      const messages = Array.from({ length: 64 }, (_, index) =>
+        encodeUnknownJsonString({
+          jsonrpc: "2.0",
+          method: "x/performance",
+          params: { index },
+        }),
+      );
+      yield* Queue.offer(input, encoder.encode(`${messages.join("\n")}\n`));
+      yield* Deferred.await(handled);
+
+      const retained = yield* transport.incoming.pipe(Stream.take(32), Stream.runCollect);
+
+      assert.equal(handledCount, 64);
+      assert.equal(retained.length, 32);
+      assert.deepEqual(retained[0]?.params, { index: 32 });
+      assert.deepEqual(retained[31]?.params, { index: 63 });
+    }),
+  );
+
+  it.effect("keeps the newest unread raw notifications whose JSON fits in 16Mi characters", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const handled = yield* Queue.unbounded<number>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onNotification: (notification) =>
+          Queue.offer(handled, decodeIndex(notification.params).index).pipe(Effect.asVoid),
+      });
+
+      // Ten 3 MiB notifications: only the newest five fit in the budget.
+      for (let index = 0; index < 10; index++) {
+        yield* Queue.offer(input, largeNotification(index, 3 * MIB));
+        assert.equal(yield* Queue.take(handled), index);
+      }
+
+      const retained = yield* transport.incoming.pipe(Stream.take(5), Stream.runCollect);
+      assert.deepEqual(
+        retained.map((notification) => decodeIndex(notification.params).index),
+        [5, 6, 7, 8, 9],
+      );
+    }),
+  );
+
+  it.effect("keeps a single unread raw notification that alone exceeds the budget", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const handled = yield* Queue.unbounded<number>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onNotification: (notification) =>
+          Queue.offer(handled, decodeIndex(notification.params).index).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.offer(input, largeNotification(0, 1));
+      yield* Queue.take(handled);
+      yield* Queue.offer(input, largeNotification(1, 17 * MIB));
+      yield* Queue.take(handled);
+
+      const [retained] = yield* transport.incoming.pipe(Stream.take(1), Stream.runCollect);
+      assert.equal(decodeIndex(retained?.params).index, 1);
+    }),
+  );
+
+  it.effect("delivers every raw notification to a reader that keeps up, then ends", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+      const received = yield* Queue.unbounded<number>();
+      const reader = yield* transport.incoming.pipe(
+        Stream.map((notification) => decodeIndex(notification.params).index),
+        Stream.tap((index) => Queue.offer(received, index)),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      // 30 MiB in total, well past the unread budget.
+      for (let index = 0; index < 10; index++) {
+        yield* Queue.offer(input, largeNotification(index, 3 * MIB));
+        assert.equal(yield* Queue.take(received), index);
+      }
+      yield* Queue.end(input);
+
+      assert.deepEqual(yield* Fiber.join(reader), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }),
+  );
+
+  it.effect("ends the raw notification stream when the connection scope closes", () =>
+    Effect.gen(function* () {
+      const { stdio } = yield* makeInMemoryStdio();
+      const connection = yield* Scope.make();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      }).pipe(Scope.provide(connection));
+      const reader = yield* transport.incoming.pipe(Stream.runCollect, Effect.forkScoped);
+
+      yield* Scope.close(connection, Exit.void);
+
+      assert.deepEqual(yield* Fiber.join(reader), []);
+    }),
+  );
+
+  it.effect("keeps the ended raw backlog intact when notifications arrive after termination", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const handled = yield* Queue.unbounded<number>();
+      const terminated = yield* Deferred.make<void>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio: Stdio.make({
+          args: stdio.args,
+          stdin: stdio.stdin,
+          stdout: () => Sink.forEach(() => Effect.die("stdout failed")),
+          stderr: () => Sink.drain,
+        }),
+        serverRequestMethods: new Set(),
+        onNotification: (notification) =>
+          Queue.offer(handled, decodeIndex(notification.params).index).pipe(Effect.asVoid),
+        onTermination: () => Deferred.succeed(terminated, undefined).pipe(Effect.asVoid),
+      });
+      const deliver = (index: number) =>
+        Queue.offer(
+          input,
+          encoder.encode(
+            `${encodeUnknownJsonString({ jsonrpc: "2.0", method: "x/late", params: { index } })}\n`,
+          ),
+        ).pipe(Effect.andThen(Queue.take(handled)));
+
+      for (let index = 0; index < 32; index++) {
+        assert.equal(yield* deliver(index), index);
+      }
+      // A failed write terminates the connection while the reader keeps running.
+      yield* transport.notify("x/fail", {}).pipe(Effect.exit);
+      yield* Deferred.await(terminated);
+      assert.equal(yield* deliver(32), 32);
+
+      const retained = yield* transport.incoming.pipe(
+        Stream.map((notification) => decodeIndex(notification.params).index),
+        Stream.runCollect,
+      );
+      assert.deepEqual(
+        retained,
+        Array.from({ length: 32 }, (_, index) => index),
+      );
+    }),
   );
 
   // clanka once sent a usage_update without `used` and `size`. One bad update
@@ -496,10 +675,11 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           headers: [],
         }),
       );
-
-      const response = yield* Schema.decodeUnknownEffect(
+      const decodeJsonRpcErrorResponse = Schema.decodeEffect(
         Schema.fromJsonString(JsonRpcErrorResponse),
-      )(yield* Queue.take(output));
+      );
+
+      const response = yield* decodeJsonRpcErrorResponse(yield* Queue.take(output));
       assert.equal(response.id, 9);
       assert.equal(response.error.code, -32603);
     }),
@@ -814,105 +994,6 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
-  // regression: #18799 a sliding queue capped by count pinned 32 unread
-  // notifications, 256 MiB when each one carried 8 MiB.
-  it.effect("bounds the bytes held for unread notifications without dropping live ones", () =>
-    Effect.gen(function* () {
-      const MIB = 1024 * 1024;
-      const { stdio, input } = yield* makeInMemoryStdio();
-      const handled = yield* Queue.unbounded<void>();
-      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
-        stdio,
-        serverRequestMethods: new Set(),
-        onNotification: () => Queue.offer(handled, undefined).pipe(Effect.asVoid),
-      });
-      const send = (index: number, text: string) =>
-        Queue.offer(
-          input,
-          encoder.encode(
-            `${encodeUnknownJsonString({ jsonrpc: "2.0", method: "x/large", params: { index, text } })}\n`,
-          ),
-        ).pipe(Effect.andThen(Queue.take(handled)));
-      const indexOf = (notification: AcpProtocol.AcpIncomingNotification) =>
-        (notification.params as { readonly index: number }).index;
-
-      for (let index = 1; index <= 32; index++) {
-        yield* send(index, "x".repeat(MIB));
-      }
-
-      const received = yield* Queue.unbounded<AcpProtocol.AcpIncomingNotification>();
-      yield* transport.incoming.pipe(
-        Stream.runForEach((notification) => Queue.offer(received, notification)),
-        Effect.forkScoped,
-      );
-      const backlog: Array<AcpProtocol.AcpIncomingNotification> = [];
-      while (backlog.at(-1) === undefined || indexOf(backlog.at(-1)!) !== 32) {
-        backlog.push(yield* Queue.take(received));
-      }
-      const backlogBytes = backlog.reduce(
-        (total, notification) => total + encodeUnknownJsonString(notification.params).length,
-        0,
-      );
-      assert.isAtMost(backlogBytes, 16 * MIB, `${backlog.length} unread notifications held`);
-
-      yield* send(33, "live");
-      const live = yield* Queue.take(received);
-      assert.deepEqual(live.params, { index: 33, text: "live" });
-    }),
-  );
-
-  it.effect("keeps the unread notification budget while a reader is slow", () =>
-    Effect.gen(function* () {
-      const MIB = 1024 * 1024;
-      const { stdio, input } = yield* makeInMemoryStdio();
-      const handled = yield* Queue.unbounded<void>();
-      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
-        stdio,
-        serverRequestMethods: new Set(),
-        onNotification: () => Queue.offer(handled, undefined).pipe(Effect.asVoid),
-      });
-      const send = (index: number, text: string) =>
-        Queue.offer(
-          input,
-          encoder.encode(
-            `${encodeUnknownJsonString({ jsonrpc: "2.0", method: "x/large", params: { index, text } })}\n`,
-          ),
-        ).pipe(Effect.andThen(Queue.take(handled)));
-
-      yield* send(1, "x".repeat(6 * MIB));
-      yield* send(2, "x".repeat(6 * MIB));
-
-      const entered = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const done = yield* Deferred.make<void>();
-      const seen: Array<number> = [];
-      yield* transport.incoming.pipe(
-        Stream.runForEach((notification) =>
-          Effect.gen(function* () {
-            const index = (notification.params as { readonly index: number }).index;
-            seen.push(index);
-            if (index === 1) {
-              yield* Deferred.succeed(entered, undefined);
-              yield* Deferred.await(release);
-            }
-            if (index === 5) yield* Deferred.succeed(done, undefined);
-          }),
-        ),
-        Effect.forkScoped,
-      );
-      yield* Deferred.await(entered);
-
-      // Notification 2 is still unread here, so the 16 MiB budget must evict it.
-      yield* send(3, "x".repeat(6 * MIB));
-      yield* send(4, "x".repeat(6 * MIB));
-      yield* send(5, "sentinel");
-      yield* Deferred.succeed(release, undefined);
-      yield* Deferred.await(done);
-
-      assert.deepEqual(seen, [1, 3, 4, 5]);
-    }),
-  );
-
   it.effect("cleans up interrupted extension requests before a late response arrives", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
@@ -963,6 +1044,58 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           },
         },
       });
+    }),
+  );
+
+  it.effect("fails pending and later requests when input ends before the process exits", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        terminationError: Effect.never,
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+      const pending = yield* transport
+        .request("x/test", { hello: "world" })
+        .pipe(Effect.flip, Effect.orDie, Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.offer(input, encoder.encode('{"jsonrpc":"2.0","id":1,"result":'));
+      yield* Queue.end(input);
+
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, AcpError.AcpInputStreamEndedError);
+      assert.strictEqual(yield* Fiber.join(pending), error);
+      assert.strictEqual(
+        yield* transport.request("x/test", { hello: "later" }).pipe(Effect.flip, Effect.orDie),
+        error,
+      );
+      assert.strictEqual(
+        yield* transport.notify("session/cancel", { sessionId: "session-1" }).pipe(Effect.flip),
+        error,
+      );
+    }),
+  );
+
+  it.effect("answers a pending request from a final response without a trailing newline", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+      const pending = yield* transport
+        .request("x/test", { hello: "world" })
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.offer(
+        input,
+        encoder.encode(encodeUnknownJsonString({ jsonrpc: "2.0", id: 1, result: { ok: true } })),
+      );
+      yield* Queue.end(input);
+
+      assert.deepEqual(yield* Fiber.join(pending), { ok: true });
     }),
   );
 
