@@ -155,7 +155,7 @@ export function WorkLogDetails({
   followLive = false,
 }: {
   children: ReactNode;
-  kind?: "text" | "panel" | "media";
+  kind?: "text" | "panel";
 
   followLive?: boolean;
 }) {
@@ -168,7 +168,7 @@ export function WorkLogDetails({
       scroller.scrollTop = scroller.scrollHeight;
     }
   });
-  // Text, panel edges and media start on the row's label line.
+  // Text and panel edges start on the row's label line.
   return (
     <div
       ref={scrollerRef}
@@ -180,9 +180,7 @@ export function WorkLogDetails({
         "ms-7.5 cursor-auto",
         kind === "text"
           ? "flex max-h-96 flex-col gap-3 overflow-auto pe-0.5 py-1 select-text"
-          : kind === "panel"
-            ? "mt-0.5 mb-1.5 pb-2"
-            : "mt-1",
+          : "mt-0.5 mb-1.5 pb-2",
       )}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
