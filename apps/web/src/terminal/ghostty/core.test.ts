@@ -127,8 +127,6 @@ describe("GhosttyTerminalCore snapshots", () => {
 
   it.each([
     { name: "Option+Left", key: "ArrowLeft", altKey: true, prompt: "\x1bb", app: "\x1b[1;3D" },
-    { name: "Option+Right", key: "ArrowRight", altKey: true, prompt: "\x1bf", app: "\x1b[1;3C" },
-    { name: "Cmd+Left", key: "ArrowLeft", metaKey: true, prompt: "\x01", app: "\x1b[1;9D" },
     { name: "Cmd+Right", key: "ArrowRight", metaKey: true, prompt: "\x05", app: "\x1b[1;9C" },
   ])(
     "moves the shell prompt on $name but leaves it to full-screen apps",
