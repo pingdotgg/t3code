@@ -490,15 +490,11 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
   const bridge = window.desktopBridge;
   if (bridge !== undefined) {
     // The pairing failure toast clamps descriptions of 180+ characters, which would hide the fix.
+    const unsavedReason = navigator.platform.startsWith("Linux")
+      ? "No unlocked keyring. Unlock GNOME Keyring or KWallet, then restart T3 Code."
+      : "Secure storage is unavailable. Unlock your keychain, then restart T3 Code.";
     const failUnlessSaved = (saved: boolean) =>
-      saved
-        ? Effect.void
-        : Effect.fail(
-            catalogError(
-              "save",
-              "No unlocked keyring. Unlock GNOME Keyring or KWallet, then restart T3 Code.",
-            ),
-          );
+      saved ? Effect.void : Effect.fail(catalogError("save", unsavedReason));
     return {
       read: Effect.tryPromise({
         try: () => bridge.getConnectionCatalog(),

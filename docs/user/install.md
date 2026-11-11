@@ -105,8 +105,8 @@ The AUR packages currently support x86_64 only; on ARM64, use the AppImage.
 Update AUR installs with your AUR helper, such as `yay -Syu`, instead of the
 in-app updater.
 
-On Linux, the desktop app needs an unlocked Secret Service keyring, such as
-GNOME Keyring or KWallet, to save connections to other machines.
+The desktop app needs an unlocked Secret Service keyring, such as GNOME
+Keyring or KWallet, to save connections to other machines.
 
 ### Nix (nixpkgs)
 
