@@ -84,7 +84,8 @@ import {
   startDescriptionSave,
   type DescriptionDraft,
 } from "@t3tools/client-runtime/pull-request-editing";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked, sourceTaskMarkerOffset } from "@t3tools/shared/markdownTaskList";
+import { pullRequestMarkdownPreview } from "./pullRequestMarkdown.logic";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
@@ -212,7 +213,7 @@ function CommentBody({
       <PullRequestCommentBody
         key={comment.id}
         className="min-w-0 flex-1"
-        text={comment.body}
+        text={comment.displayBody ?? comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
         threadRef={editing.threadRef}
@@ -314,14 +315,16 @@ function CollapsedComment({
               className="mt-2 block w-full truncate text-left text-xs text-muted-foreground hover:text-foreground"
               onClick={() => statusTriggerRef.current?.focus({ preventScroll: true })}
             >
-              {body
-                .replace(/<!--[\s\S]*?-->/gu, "")
-                .replace(/^\s*>?\s*\[!\w+\]\s*$/gmu, "")
-                .replace(/!?(\[([^\]]+)\])\([^)]*\)/gu, "$2")
-                .replace(/^[\s>#*-]+/gmu, "")
-                .replace(/[*`]/gu, "")
-                .replace(/\s+/g, " ")
-                .trim()}
+              {comment.displayBody === undefined
+                ? body
+                    .replace(/<!--[\s\S]*?-->/gu, "")
+                    .replace(/^\s*>?\s*\[!\w+\]\s*$/gmu, "")
+                    .replace(/!?(\[([^\]]+)\])\([^)]*\)/gu, "$2")
+                    .replace(/^[\s>#*-]+/gmu, "")
+                    .replace(/[*`]/gu, "")
+                    .replace(/\s+/g, " ")
+                    .trim()
+                : pullRequestMarkdownPreview(comment.displayBody)}
             </CollapsibleTrigger>
           ) : null}
         </div>
@@ -580,6 +583,8 @@ export function PullRequestSummaryTab({
   );
   if (descriptionDraftKept !== descriptionDraft) setDescriptionDraft(descriptionDraftKept);
   const description = descriptionDraftKept?.body ?? detail.body;
+  // A local draft is newer than the host's rendered mention names.
+  const shownDescription = descriptionDraftKept ? description : (detail.displayBody ?? description);
   const descriptionSaving = (descriptionDraftKept?.saves ?? 0) > 0;
   const descriptionSavesRunning = useRef(0);
   // Hosts can reuse comment ids across pull requests.
@@ -662,7 +667,12 @@ export function PullRequestSummaryTab({
     if (await saveDescription(body)) setBodyScope(null);
   };
   const toggleTask = ({ markerOffset, checked }: { markerOffset: number; checked: boolean }) => {
-    const body = setMarkdownTaskChecked(description, markerOffset, checked);
+    const offset =
+      shownDescription === description
+        ? markerOffset
+        : sourceTaskMarkerOffset(shownDescription, description, markerOffset);
+    if (offset === null) return;
+    const body = setMarkdownTaskChecked(description, offset, checked);
     if (body !== description) void saveDescription(body);
   };
 
@@ -966,7 +976,9 @@ export function PullRequestSummaryTab({
             <div className="flex items-start gap-1" data-pr-description>
               <PullRequestMarkdown
                 className="min-w-0 flex-1"
-                text={description.trim().length > 0 ? description : "_No description provided._"}
+                text={
+                  description.trim().length > 0 ? shownDescription : "_No description provided._"
+                }
                 cwd={detail.workspaceRoot}
                 environmentId={environmentId}
                 threadRef={threadRef}

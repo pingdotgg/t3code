@@ -1,7 +1,10 @@
+import { PullRequestComment, PullRequestReviewThread } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildReviewThreads,
   decodeCommentsJson,
   decodeCommitsJson,
   decodePullRequestJson,
@@ -306,5 +309,102 @@ describe("repository permission decoding", () => {
 
   it("grants write where Bitbucket named no permission at all", () => {
     expect(expectSuccess(decodeRepositoryPermissionJson(page([])))).toBe(true);
+  });
+});
+
+describe("mention display bodies", () => {
+  it("decodes same-object mention names for descriptions and discussions without changing their source", () => {
+    const token = "@{712020:11111111-2222-4333-8444-555555555555}";
+    const html =
+      '<span class="ap-mention" data-atlassian-id="712020:11111111-2222-4333-8444-555555555555">@Alex_Smith &amp; Co</span>';
+    const literals = [
+      `\`${token}\``,
+      `\`\`\`text\n${token}\n\`\`\``,
+      `    ${token}`,
+      `\\${token}`,
+      "\\_literal\\_",
+      `[${token}](https://example.com/${token})`,
+      `<span title="${token}">${token}</span>`,
+    ].join("\n\n");
+    const body = `## Review\n\n**Thanks ${token}**\n\n${literals}\n\n> ${token}, ask @{unknown}.\n\n${token} <br> <span><em>${token}</em></span> ${token}`;
+    const displayBody = `## Review\n\n**Thanks @Alex\\_Smith \\& Co**\n\n${literals}\n\n> @Alex\\_Smith \\& Co, ask @{unknown}.\n\n@Alex\\_Smith \\& Co <br> <span><em>${token}</em></span> @Alex\\_Smith \\& Co`;
+    const displayText = `## Review\n\n**Thanks @Alex_Smith & Co**\n\n${literals}\n\n> @Alex_Smith & Co, ask @{unknown}.\n\n@Alex_Smith & Co <br> <span><em>${token}</em></span> @Alex_Smith & Co`;
+    const genericBody = `Returns Promise<void> now. Use <T> generics.\n\n${token}`;
+    expect(
+      expectSuccess(
+        decodePullRequestJson(
+          JSON.stringify(
+            pullRequest({ description: genericBody, rendered: { description: { html } } }),
+          ),
+        ),
+      ),
+    ).toMatchObject({
+      body: genericBody,
+      displayBody: "Returns Promise<void> now. Use <T> generics.\n\n@Alex\\_Smith \\& Co",
+    });
+    const pr = expectSuccess(
+      decodePullRequestJson(
+        JSON.stringify(pullRequest({ description: body, rendered: { description: { html } } })),
+      ),
+    );
+    expect(pr).toMatchObject({ body, displayBody });
+
+    const decoded = expectSuccess(
+      decodeCommentsJson(
+        page([
+          { id: 1, content: { raw: body, html }, created_on: "2026-10-02T00:00:00Z" },
+          {
+            id: 2,
+            content: { raw: body, html },
+            created_on: "2026-10-02T00:00:00Z",
+            inline: { path: "src/search.ts", to: 1 },
+          },
+          { id: 3, content: { raw: token }, created_on: "2026-10-02T00:00:00Z" },
+          {
+            id: 4,
+            content: { raw: token, html: html + html.replace("Alex_Smith", "Someone Else") },
+            created_on: "2026-10-02T00:00:00Z",
+          },
+          {
+            id: 5,
+            content: { raw: token, html: 42 },
+            created_on: "2026-10-02T00:00:00Z",
+            inline: { path: "src/search.ts", to: 2 },
+          },
+        ]),
+      ),
+    );
+    const commentsCodec = Schema.toCodecJson(Schema.Array(PullRequestComment));
+    const comments = Schema.decodeSync(commentsCodec)(
+      Schema.encodeSync(commentsCodec)(decoded.comments),
+    );
+    expect(comments.map(({ body, displayBody }) => ({ body, displayBody }))).toEqual([
+      { body, displayBody },
+      { body, displayBody },
+      { body: token, displayBody: undefined },
+      { body: token, displayBody: undefined },
+      { body: token, displayBody: undefined },
+    ]);
+    const threadsCodec = Schema.toCodecJson(Schema.Array(PullRequestReviewThread));
+    const threads = Schema.decodeSync(threadsCodec)(
+      Schema.encodeSync(threadsCodec)(buildReviewThreads(decoded.entries)),
+    );
+    expect(threads.flatMap((thread) => thread.comments)).toMatchObject([
+      { body, displayBody, displayText },
+      { body: token },
+    ]);
+    expect(threads[1]?.comments[0]?.displayBody).toBeUndefined();
+    expect(threads[1]?.comments[0]?.displayText).toBeUndefined();
+
+    const missingDescription = expectSuccess(
+      decodePullRequestJson(JSON.stringify(pullRequest({ description: token }))),
+    );
+    expect(missingDescription.body).toBe(token);
+    expect(missingDescription.displayBody).toBeUndefined();
+    const malformed = pullRequest({ description: token, rendered: { description: { html: 42 } } });
+    const fallback = expectSuccess(decodePullRequestJson(JSON.stringify(malformed)));
+    expect(fallback.body).toBe(token);
+    expect(fallback.displayBody).toBeUndefined();
+    expect(expectSuccess(decodePullRequestPageJson(page([malformed]))).items).toHaveLength(1);
   });
 });

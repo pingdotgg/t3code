@@ -2154,6 +2154,18 @@ importers:
       effect:
         specifier: 4.1.2
         version: 4.1.2
+      parse5:
+        specifier: ^8.0.1
+        version: 8.0.1
+      remark-gfm:
+        specifier: 'catalog:'
+        version: 4.0.1(supports-color@8.1.1)
+      remark-parse:
+        specifier: 'catalog:'
+        version: 11.0.0(supports-color@8.1.1)
+      unified:
+        specifier: 'catalog:'
+        version: 11.0.5
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2

@@ -7,7 +7,7 @@ import {
 } from "@t3tools/client-runtime/pull-request-editing";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail } from "@t3tools/contracts";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked, sourceTaskMarkerOffset } from "@t3tools/shared/markdownTaskList";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
 import * as Dialog from "../../components/ui/Dialog";
@@ -30,6 +30,8 @@ export function usePullRequestDescription(
   const kept = descriptionDraftInForce(draft, pr?.url ?? "", reading);
   if (kept !== draft) setDraft(kept);
   const body = kept?.body ?? pr?.body ?? "";
+  // A local draft is newer than the host's rendered mention names.
+  const shown = kept ? body : (pr?.displayBody ?? body);
   const save = async (detail: PullRequestDetail, next: string) => {
     setDraft((current) =>
       startDescriptionSave(current, { url: detail.url, observedAt: reading }, next),
@@ -49,13 +51,16 @@ export function usePullRequestDescription(
     if (savesRunning.current === 0) refreshDetail();
   };
   return {
-    body,
+    body: shown,
     /** The edit screen starts from the host's copy, so it waits for a reading with the ticks. */
     pending: kept !== null,
     toggleTask:
       canEdit && pr !== null
         ? ({ markerOffset, checked }: { markerOffset: number; checked: boolean }) => {
-            const next = setMarkdownTaskChecked(body, markerOffset, checked);
+            const offset =
+              shown === body ? markerOffset : sourceTaskMarkerOffset(shown, body, markerOffset);
+            if (offset === null) return false;
+            const next = setMarkdownTaskChecked(body, offset, checked);
             if (next === body) return false;
             void save(pr, next);
             return true;

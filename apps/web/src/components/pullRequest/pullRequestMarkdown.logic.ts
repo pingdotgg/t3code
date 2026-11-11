@@ -1,3 +1,7 @@
+import remarkParse from "remark-parse";
+import { unified, type Plugin } from "unified";
+
+import { remarkGithubAlerts } from "@t3tools/shared/markdownGithubAlerts";
 import {
   changeRequestReferenceAutolinker,
   resolveChangeRequestMediaUrl,
@@ -7,6 +11,28 @@ import {
   type ReferenceAutolink,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { PluggableList } from "unified";
+
+const previewParser = unified()
+  .use(remarkParse)
+  .use(remarkGithubAlerts as Plugin)
+  .freeze();
+
+/** A single-line preview that preserves literal characters in resolved mention names. */
+export function pullRequestMarkdownPreview(body: string) {
+  const text = (node: MarkdownNode & { alt?: string | null }): string => {
+    if (node.type === "break") return " ";
+    if (node.type === "html") {
+      return /^<br(?:\s|\/?>)/iu.test(node.value ?? "") ? " " : "";
+    }
+    if (node.type === "image" || node.type === "imageReference") return node.alt ?? "";
+    if (node.value !== undefined) return node.value;
+    const separator = ["root", "list", "listItem", "blockquote"].includes(node.type) ? " " : "";
+    return node.children?.map(text).join(separator) ?? "";
+  };
+  return text(previewParser.runSync(previewParser.parse(body)))
+    .replace(/\s+/gu, " ")
+    .trim();
+}
 
 export {
   splitPullRequestBody,

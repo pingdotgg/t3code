@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { markdownTaskMarkerOffset, setMarkdownTaskChecked } from "./markdownTaskList.ts";
+import {
+  markdownTaskMarkerOffset,
+  setMarkdownTaskChecked,
+  sourceTaskMarkerOffset,
+} from "./markdownTaskList.ts";
 
 describe("setMarkdownTaskChecked", () => {
   const markdown = "- [ ] First\n- [x] Second\n";
@@ -68,5 +72,16 @@ describe("markdownTaskMarkerOffset", () => {
       const attachment = similar.replace("Similar<br>different", label);
       expect(markdownTaskMarkerOffset(attachment, 0, "Similar \uFFFC", true)).toBeNull();
     }
+  });
+});
+
+describe("sourceTaskMarkerOffset", () => {
+  it("maps a checkbox in display text back to the same task in the source", () => {
+    const source = "Ping @{abc-123}\n\n- [ ] Review @{abc-123}\n- [x] Ship\n";
+    const display = "Ping @Alex\\_Smith\n\n- [ ] Review @Alex\\_Smith\n- [x] Ship\n";
+    const shipInDisplay = display.indexOf("[x]");
+    expect(sourceTaskMarkerOffset(display, source, shipInDisplay)).toBe(source.indexOf("[x]"));
+    expect(sourceTaskMarkerOffset(display, source, shipInDisplay - 1)).toBeNull();
+    expect(sourceTaskMarkerOffset(display, "- [x] Ship\n", shipInDisplay)).toBeNull();
   });
 });

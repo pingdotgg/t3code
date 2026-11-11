@@ -34,6 +34,33 @@ export function setMarkdownTaskChecked(
   return `${markdown.slice(0, markerOffset + 1)}${checked ? "x" : " "}${markdown.slice(markerOffset + 2)}`;
 }
 
+function taskMarkerOffsets(markdown: string): number[] {
+  const offsets: number[] = [];
+  const collect = (node: Nodes) => {
+    const start = node.position?.start.offset;
+    if (node.type === "listItem" && typeof node.checked === "boolean" && start !== undefined) {
+      offsets.push(taskListMarkerOffset(markdown, start) ?? -1);
+    }
+    if ("children" in node) node.children.forEach(collect);
+  };
+  collect(parser.parse(markdown));
+  return offsets;
+}
+
+/** The marker in `source` of the task at `displayOffset` in `display`, a copy with rewritten text. */
+export function sourceTaskMarkerOffset(
+  display: string,
+  source: string,
+  displayOffset: number,
+): number | null {
+  const shown = taskMarkerOffsets(display);
+  const raw = taskMarkerOffsets(source);
+  const index = shown.indexOf(displayOffset);
+  if (index === -1 || shown.length !== raw.length) return null;
+  const offset = raw[index] ?? -1;
+  return offset === -1 ? null : offset;
+}
+
 /** Hard breaks as U+2028, as iOS draws them; soft breaks stay "\n". */
 function plainText(node: Nodes): string {
   if (node.type === "text" || node.type === "inlineCode") return node.value;

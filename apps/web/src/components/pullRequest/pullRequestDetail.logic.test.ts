@@ -50,10 +50,12 @@ import {
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
   buildPullRequestTimeline,
+  editPullRequestThreadComment,
   pullRequestLinkSubject,
   writePullRequestDetailSnapshot,
   readableFailure,
 } from "./pullRequestDetail.logic";
+import { pullRequestMarkdownPreview } from "./pullRequestMarkdown.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 describe("pull request checkout commands", () => {
@@ -1878,6 +1880,32 @@ describe("single-PR merge compatibility during stack discovery", () => {
       ).toBe(allowed);
     },
   );
+});
+
+describe("mention display text", () => {
+  it("shows resolved names, falls back to the source, and drops stale names after an edit", () => {
+    const comment = {
+      ...TIMELINE_SOURCE.comments[0]!,
+      body: "> [!NOTE]\n> @{account-id}  \n> please review\n\n`[!NOTE]`<br>done",
+      displayBody: "> [!NOTE]\n> @Alex\\_Smith \\& Co  \n> please review\n\n`[!NOTE]`<br>done",
+    };
+    const unresolved = { ...comment, id: "unresolved", displayBody: undefined };
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      comments: [comment, unresolved],
+    });
+    expect(events.find((event) => event.id === comment.id)?.body).toBe(comment.displayBody);
+    expect(events.find((event) => event.id === unresolved.id)?.body).toBe(comment.body);
+    expect(pullRequestMarkdownPreview(comment.displayBody)).toBe(
+      "@Alex_Smith & Co please review [!NOTE] done",
+    );
+
+    const threadComment = { ...comment, displayText: "@Alex Smith" };
+    const [edited] = editPullRequestThreadComment([threadComment], comment.id, "@{account-id} hi");
+    expect(edited).toMatchObject({ body: "@{account-id} hi" });
+    expect(edited?.displayBody).toBeUndefined();
+    expect(edited?.displayText).toBeUndefined();
+  });
 });
 
 describe("readableFailure", () => {

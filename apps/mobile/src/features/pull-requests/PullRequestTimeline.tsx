@@ -87,10 +87,11 @@ function TimelineComment({
     target?.kind === "timeline" && pullRequestAnchorMatchesUrl(target.anchor, comment.url);
   const [expanded, setExpanded] = useState(linked);
   const { themeVariables: colors } = useAppearancePreferences();
-  const long = comment.body.length > 450 || comment.body.split("\n").length > 8;
+  const displayBody = comment.displayBody ?? comment.body;
+  const long = displayBody.length > 450 || displayBody.split("\n").length > 8;
   const content = useMemo(
-    () => pullRequestDescriptionContent(parseMarkdownDocument(comment.body)),
-    [comment.body],
+    () => pullRequestDescriptionContent(parseMarkdownDocument(displayBody)),
+    [displayBody],
   );
   const preview = content.preview;
   const state = normalizedReviewState(comment.reviewState);
@@ -128,8 +129,8 @@ function TimelineComment({
         >
           <View style={long && !expanded ? { maxHeight: 240, overflow: "hidden" } : undefined}>
             <PullRequestMarkdown
-              markdown={long && !expanded ? comment.body.slice(0, 1200) : comment.body}
-              imageGroupMarkdown={comment.body}
+              markdown={long && !expanded ? displayBody.slice(0, 1200) : displayBody}
+              imageGroupMarkdown={displayBody}
             />
           </View>
           {long && !expanded ? (
