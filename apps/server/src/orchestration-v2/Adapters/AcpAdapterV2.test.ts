@@ -2620,11 +2620,30 @@ describe("AcpAdapterV2", () => {
           content: { type: "text", text: "after plan" },
         },
       });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "weighing it" },
+        },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "agent_thought",
+          messageId: "whole-thought",
+          content: [{ type: "text", text: "settled on it" }],
+        },
+      });
 
       const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
       assert.deepEqual(
         snapshot.messages.map((message) => message.text),
-        ["before plan", "after plan"],
+        ["before plan", "after plan", "weighing it", "settled on it"],
+      );
+      assert.deepEqual(
+        snapshot.reasoningMessageIds,
+        snapshot.messages.slice(2).map((message) => message.id),
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
@@ -5451,6 +5470,67 @@ describe("AcpAdapterV2", () => {
         "completed",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("closes the ACP runtime when the agent never answers session/close", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const makeRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        protocolEvents,
+        environment: { T3_ACP_HANG_CLOSE_SESSION: "1" },
+      });
+      let runtimeClosed = false;
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: (runtimeInput) =>
+            Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                runtimeClosed = true;
+              }),
+            ).pipe(Effect.andThen(makeRuntime(runtimeInput))),
+        },
+        selfInvocation,
+      });
+      const sessionScope = yield* Scope.make();
+      yield* adapter
+        .openSession({
+          threadId: ThreadId.make("thread-acp-unanswered-close"),
+          providerSessionId: ProviderSessionId.make("provider-session-acp-unanswered-close"),
+          modelSelection: { instanceId, model: "default" },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          }),
+        })
+        .pipe(Effect.provideService(Scope.Scope, sessionScope));
+      const closing = yield* Scope.close(sessionScope, Exit.void).pipe(Effect.forkDetach);
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "session/close",
+        ),
+        Stream.runHead,
+      );
+      yield* TestClock.adjust("10 seconds");
+      const closed = yield* Fiber.await(closing).pipe(
+        Effect.timeoutOption("5 seconds"),
+        TestClock.withLive,
+      );
+      assert.isTrue(Option.isSome(closed));
+      assert.isTrue(runtimeClosed);
+    }).pipe(Effect.provide(layerTest)),
   );
 
   // Oracle: Grok incident frames. Command completion must release the turn even
