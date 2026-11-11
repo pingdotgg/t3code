@@ -9722,6 +9722,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     );
                     if (!ownedLiveQuery) return;
                     liveQuery.stopping = true;
+                    yield* liveQuery.query.close.pipe(
+                      Effect.timeoutOption("10 seconds"),
+                      Effect.ignore,
+                    );
                     yield* finalizeActiveTurnAfterQueryExit(liveQuery);
                     yield* endSubagentCallsOfClosedQuery(liveQuery.nativeThreadId, "interrupted");
                     yield* Deferred.succeed(liveQuery.closed, undefined);
