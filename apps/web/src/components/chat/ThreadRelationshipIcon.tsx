@@ -6,12 +6,14 @@ import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 
 export function threadRelationshipStatusLabel(status: string | null): string {
   switch (status) {
+    case "needs_you":
+      return "Needs you";
     case "preparing":
     case "starting":
       return "Starting";
     case "running":
     case "in_progress":
-      return "Running";
+      return "Working";
     case "pending":
     case "queued":
       return "Queued";
@@ -82,16 +84,18 @@ export function ThreadRelationshipIcon({
         className={cn(
           "absolute size-2 rounded-full border-2 border-card",
           showInstanceBadge ? "-left-1 -top-1" : "-bottom-1 -right-1",
-          status === "running" ||
-            status === "in_progress" ||
-            status === "pending" ||
-            status === "waiting"
-            ? "bg-info"
-            : status === "failed" || status === "error"
-              ? "bg-destructive"
-              : status === "completed"
-                ? "bg-success"
-                : "bg-muted-foreground/45",
+          status === "needs_you"
+            ? "bg-warning"
+            : status === "running" ||
+                status === "in_progress" ||
+                status === "pending" ||
+                status === "waiting"
+              ? "bg-info"
+              : status === "failed" || status === "error"
+                ? "bg-destructive"
+                : status === "completed"
+                  ? "bg-success"
+                  : "bg-muted-foreground/45",
         )}
         aria-hidden="true"
       />
