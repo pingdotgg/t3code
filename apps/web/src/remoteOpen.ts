@@ -52,6 +52,16 @@ function parseHostname(url: string): string | null {
   }
 }
 
+function firstSshTarget(routes: ReadonlyArray<ConnectionRoute>) {
+  for (const route of routes) {
+    const profile = Option.getOrNull(route.profile);
+    if (profile?._tag === "SshConnectionProfile" && profile.target.alias.length > 0) {
+      return profile.target;
+    }
+  }
+  return null;
+}
+
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
   /** The environment's saved routes, preferred route first. */
@@ -76,13 +86,8 @@ export function resolveRemoteOpenState(input: {
     return LOCAL_EXEC;
   }
 
-  const sshTarget = input.routes.flatMap((route) => {
-    const profile = Option.getOrNull(route.profile);
-    return profile?._tag === "SshConnectionProfile" && profile.target.alias.length > 0
-      ? [profile.target]
-      : [];
-  })[0];
-  if (sshTarget !== undefined) {
+  const sshTarget = firstSshTarget(input.routes);
+  if (sshTarget !== null) {
     const { alias } = sshTarget;
     const userSeparator = alias.lastIndexOf("@");
     const host = userSeparator === -1 ? alias : alias.slice(userSeparator + 1);
