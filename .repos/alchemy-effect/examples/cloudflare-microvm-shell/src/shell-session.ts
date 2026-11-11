@@ -1,10 +1,10 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Stream from "effect/Stream";
 
 const EXIT_MARKER = "__EXIT__:";
 
@@ -60,9 +60,7 @@ export default class ShellSession extends Cloudflare.DurableObject<ShellSession>
           }
           const { endpoint, headers } = current;
           const client = yield* HttpClient.HttpClient;
-          const request = HttpClientRequest.post(
-            `https://${endpoint}/exec`,
-          ).pipe(
+          const request = HttpClientRequest.post(`https://${endpoint}/exec`).pipe(
             HttpClientRequest.setHeaders(headers),
             HttpClientRequest.bodyJsonUnsafe({ command }),
           );
@@ -116,20 +114,14 @@ export default class ShellSession extends Cloudflare.DurableObject<ShellSession>
           }),
         fetch: Effect.gen(function* () {
           const [response, socket] = yield* Cloudflare.upgrade();
-          yield* send(
-            socket,
-            "connected to microvm — type a command and press enter\n",
-          );
+          yield* send(socket, "connected to microvm — type a command and press enter\n");
           return response;
         }),
         webSocketMessage: Effect.fn(function* (
           socket: Cloudflare.WebSocket,
           message: string | ArrayBuffer,
         ) {
-          const command =
-            typeof message === "string"
-              ? message
-              : new TextDecoder().decode(message);
+          const command = typeof message === "string" ? message : new TextDecoder().decode(message);
           if (!command.trim()) return;
           yield* runCommand(socket, command.trim());
         }),
