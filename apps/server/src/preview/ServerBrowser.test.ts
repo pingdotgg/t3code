@@ -235,11 +235,20 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     // Set to hold the page open after `beforeunload` until resolved, as Playwright's
     // `runBeforeUnload` close resolves before the page actually closes.
     unloadGate: null as PromiseWithResolvers<void> | null,
+    removed: false,
+    pagehideBinding: null as (() => void) | null,
+    pagehideWatched: Promise.withResolvers<void>(),
+    exposeFunction: vi.fn(async (_name: string, callback: () => void) => {
+      page.pagehideBinding = callback;
+      page.pagehideWatched.resolve();
+    }),
     close: vi.fn(async (options?: { runBeforeUnload?: boolean }) => {
       if (closed) return;
       const finish = () => {
-        if (closed) return;
-        page.unloadEvents.push("pagehide", "visibilitychange");
+        if (closed || page.removed) return;
+        page.unloadEvents.push("pagehide");
+        page.pagehideBinding?.();
+        page.unloadEvents.push("visibilitychange");
         closed = true;
         events.emit("close");
       };
@@ -1150,10 +1159,11 @@ it.live("closing a tab force-closes a page that never finishes unloading", () =>
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("closing a desktop tab unloads its page before the desktop removes it", () =>
+it.live("closing a desktop tab waits for its page to unload before the desktop removes it", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
       desktopRendersNext = true;
       const opened = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
@@ -1163,15 +1173,28 @@ it.live("closing a desktop tab unloads its page before the desktop removes it", 
       const tabId = PreviewTabId.make(opened.tabId!);
       const { context, browser } = desktopConnections[0]!;
       const page = context.page;
+      // The desktop removes the webview once the session closes, dropping an unload in progress.
+      const events = yield* manager.subscribeEvents;
+      const sessionClosed = Promise.withResolvers<void>();
+      yield* Effect.gen(function* () {
+        while ((yield* PubSub.take(events)).type !== "closed");
+        page.removed = true;
+        sessionClosed.resolve();
+      }).pipe(Effect.forkScoped);
       page.beforeUnload = "listen";
       page.unloadGate = Promise.withResolvers<void>();
-      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
-      expect(page.unloadEvents).toEqual(["beforeunload"]);
+      const closing = yield* broker
+        .invoke({ scope, tabId, operation: "close", input: {} })
+        .pipe(Effect.forkScoped);
+      // The page finishes unloading once the server listens for it, or too late if it never does.
+      yield* Effect.promise(() =>
+        Promise.race([page.pagehideWatched.promise, sessionClosed.promise]),
+      );
       expect(browser.close).not.toHaveBeenCalled();
       page.unloadGate.resolve();
-      yield* Effect.promise(() => desktopReleased.promise);
-      expect(browser.close).toHaveBeenCalledTimes(1);
+      yield* Fiber.join(closing);
       expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
+      expect(browser.close).toHaveBeenCalledTimes(1);
     }),
   ).pipe(Effect.provide(layer)),
 );
