@@ -60,7 +60,8 @@ is frozen. Projects deployed by older Alchemy versions (which used a
 `neon_migrations` table) are upgraded in place.
 
 On each deploy, files whose names already appear in the table are
-skipped. Use `migrations: { dir, table }` to put the bookkeeping in
+skipped, and their content hashes must still match. Use
+`migrations: { dir, table }` to put the bookkeeping in
 a differently-named table:
 
 ```typescript
