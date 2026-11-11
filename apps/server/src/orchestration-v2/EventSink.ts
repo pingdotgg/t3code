@@ -359,13 +359,14 @@ const layerBase: Layer.Layer<
         });
       });
 
-    // Run finalization cancels approvals it read as pending. One answered since then keeps
-    // its decision, and the tool it unblocked is not marked as never started.
+    // Run finalization cancels approvals it read as pending. One closed since then keeps
+    // its outcome; if it let the tool run, the tool is not marked as never started.
     const guardApprovalCancellations =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
         const staleRequests = new Set<RuntimeRequestId>();
         const staleNodes = new Set<NodeId>();
+        const startedToolParents = new Set<NodeId>();
         for (const event of events) {
           if (
             event.type !== "runtime-request.updated" ||
@@ -377,16 +378,23 @@ const layerBase: Layer.Layer<
             event.threadId,
             event.payload.id,
           );
-          if (current?.status !== "pending") {
-            staleRequests.add(event.payload.id);
-            staleNodes.add(event.payload.nodeId);
+          if (current?.status === "pending") continue;
+          staleRequests.add(event.payload.id);
+          staleNodes.add(event.payload.nodeId);
+          // Accepted, or withdrawn by Claude after a hook allowed it. A server-closed
+          // (not_resumable) approval still proves the tool never started.
+          if (
+            current?.status === "resolved" ||
+            (current?.status === "cancelled" && current.responseCapability.type === "live")
+          ) {
+            startedToolParents.add(event.payload.nodeId);
           }
         }
         if (staleRequests.size === 0) return events;
         for (const event of events) {
           if (
             event.type === "node.updated" &&
-            staleNodes.has(event.payload.id) &&
+            startedToolParents.has(event.payload.id) &&
             event.payload.parentNodeId !== null
           ) {
             staleNodes.add(event.payload.parentNodeId);

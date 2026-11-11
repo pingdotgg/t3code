@@ -49,6 +49,7 @@ it.effect.each([
   "approval",
   "dynamic approval",
   "accepted approval",
+  "released approval",
   "withdrawn approval",
   "pending",
   "unlinked running",
@@ -318,18 +319,14 @@ it.effect.each([
           (item) => item.id === commandItem.id,
         );
         assert.ok(before);
-        if (check === "accepted approval") {
+        if (check === "accepted approval" || check === "released approval") {
+          const eventSink = yield* EventSink.EventSinkV2;
           const stale = yield* orchestrator.getThreadProjection(threadId);
-          yield* orchestrator.dispatch({
-            type: "runtime-request.respond",
-            commandId: CommandId.make("approve"),
-            threadId,
-            requestId,
-            decision: "accept",
-          });
-          yield* worker.drain();
-          // Finalization that read the approval before it was answered must not erase it.
           const request = stale.runtimeRequests.find((candidate) => candidate.id === requestId)!;
+          const approvalNode = stale.nodes.find((node) => node.id === request.nodeId)!;
+          const approvalItem = stale.turnItems.find(
+            (item) => item.id === TurnItemId.make("item:approval"),
+          )!;
           const cancelledAt = { status: "cancelled" as const, completedAt: now };
           const staleEvent = (id: string) => ({
             id: EventId.make(`stale-${id}`),
@@ -337,7 +334,43 @@ it.effect.each([
             runId: first.runId,
             occurredAt: now,
           });
-          yield* (yield* EventSink.EventSinkV2).writeWithEffects({
+          if (check === "accepted approval") {
+            yield* orchestrator.dispatch({
+              type: "runtime-request.respond",
+              commandId: CommandId.make("approve"),
+              threadId,
+              requestId,
+              decision: "accept",
+            });
+            yield* worker.drain();
+          } else {
+            yield* eventSink.write({
+              events: [
+                {
+                  ...staleEvent("release-request"),
+                  type: "runtime-request.updated",
+                  payload: {
+                    ...request,
+                    status: "cancelled",
+                    responseCapability: { type: "not_resumable", reason: "Session closed." },
+                    resolvedAt: now,
+                  },
+                },
+                {
+                  ...staleEvent("release-node"),
+                  type: "node.updated",
+                  payload: { ...approvalNode, ...cancelledAt },
+                },
+                {
+                  ...staleEvent("release-item"),
+                  type: "turn-item.updated",
+                  payload: { ...approvalItem, ...cancelledAt },
+                },
+              ],
+            });
+          }
+          // Finalization read the approval as pending before it was answered or released.
+          yield* eventSink.writeWithEffects({
             guardPendingApprovalCancellations: true,
             effects: [],
             events: [
@@ -362,21 +395,27 @@ it.effect.each([
               {
                 ...staleEvent("approval-node"),
                 type: "node.updated",
-                payload: {
-                  ...stale.nodes.find((node) => node.id === request.nodeId)!,
-                  ...cancelledAt,
-                },
+                payload: { ...approvalNode, ...cancelledAt },
               },
               {
                 ...staleEvent("approval-item"),
                 type: "turn-item.updated",
-                payload: {
-                  ...stale.turnItems.find((item) => item.id === TurnItemId.make("item:approval"))!,
-                  ...cancelledAt,
-                },
+                payload: { ...approvalItem, ...cancelledAt },
               },
             ],
           });
+          if (check === "released approval") {
+            const released = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(
+              released.turnItems.find((item) => item.id === commandItem.id)?.status,
+              "cancelled",
+            );
+            assert.deepEqual(
+              released.runtimeRequests.find((candidate) => candidate.id === requestId)
+                ?.responseCapability,
+              { type: "not_resumable", reason: "Session closed." },
+            );
+          }
         }
         if (check === "withdrawn approval") {
           // Claude withdraws the prompt when a PermissionRequest hook allows the tool, which then runs.
