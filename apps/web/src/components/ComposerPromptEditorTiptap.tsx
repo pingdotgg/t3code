@@ -112,7 +112,9 @@ import {
 } from "~/composer-undo-grouping";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
+import { isRichTextFormattingShortcut } from "~/keybindings";
 import { cn, isMacPlatform } from "~/lib/utils";
+import { hasCommandForKeyDown } from "~/shortcuts/dispatcher";
 import { basenameOfPath } from "~/pierre-icons";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
@@ -1109,6 +1111,11 @@ function ComposerPromptEditorTiptapInner(
       editable: !disabled,
       editorProps: {
         attributes: editorAttributes,
+        handleDOMEvents: {
+          // True skips the editor's keymaps without preventDefault, so the app command still runs.
+          keydown: (_view, event) =>
+            isRichTextFormattingShortcut(event) && hasCommandForKeyDown(event),
+        },
         handleKeyDown: (view, event) => {
           // In a right-to-left line the start is on the right.
           const backArrow = caretLineDirection(view.state) === "rtl" ? "ArrowRight" : "ArrowLeft";
