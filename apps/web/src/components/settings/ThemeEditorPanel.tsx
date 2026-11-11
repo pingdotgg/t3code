@@ -6,8 +6,10 @@ import {
   PlusIcon,
   SearchIcon,
   XIcon,
+  Maximize2Icon,
+  Minimize2Icon,
 } from "lucide-react";
-import { Maximize2, Minimize2 } from "lucide";
+
 import {
   useEffect,
   useLayoutEffect,
@@ -40,7 +42,6 @@ import { useViewportSize } from "../../hooks/useViewportSize";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Switch } from "../ui/switch";
@@ -1328,7 +1329,7 @@ export function ThemeEditorPanel({
             variant="ghost"
             onClick={() => setIsMinimized(!isMinimized)}
           >
-            <MorphIcon icon={isMinimized ? Maximize2 : Minimize2} />
+            {isMinimized ? <Maximize2Icon /> : <Minimize2Icon />}
           </Button>
           <Button
             aria-label="Close the theme editor"
