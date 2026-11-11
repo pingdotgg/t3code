@@ -1,0 +1,127 @@
+---
+title: Federated identity
+description: How a Cloud Run service reaches AWS, and a Lambda reaches GCP, through workload identity federation instead of long-lived keys.
+---
+
+A runtime on one cloud often needs a resource on the other: a Cloud Run
+service sending to an SQS queue, or a Lambda publishing to a Pub/Sub
+topic. When the runtime already runs as an identity of its own cloud,
+Alchemy lets the other cloud trust that identity. There is no access
+key or service account key to create, store, or rotate.
+
+You write the binding the same way as on a native runtime. Federation is
+what Alchemy picks for you.
+
+## Call AWS from Cloud Run
+
+A Cloud Run service runs as a Google service account. Bind an SQS queue
+to it like you would on a Lambda:
+
+```typescript
+// src/api.ts
+import * as AWS from "@alchemy.run/aws";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export const Jobs = AWS.SQS.Queue("Jobs");
+
+export default class Api extends GCP.Run.Service<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const send = yield* AWS.SQS.SendMessage(Jobs);
+    return {
+      fetch: send({ MessageBody: "hello" }).pipe(
+        Effect.as(HttpServerResponse.text("sent")),
+        Effect.orDie,
+      ),
+    };
+  }).pipe(Effect.provide(AWS.SQS.SendMessageHttp)),
+) {}
+```
+
+The binding creates an IAM role that trusts Google's ID tokens for that
+one service account, and puts `sqs:SendMessage` on the role. The trust
+policy matches the account's unique ID, which the service exposes as
+`serviceAccountUniqueId`:
+
+```json
+{
+  "Effect": "Allow",
+  "Principal": { "Federated": "accounts.google.com" },
+  "Action": "sts:AssumeRoleWithWebIdentity",
+  "Condition": {
+    "StringEquals": {
+      "accounts.google.com:sub": "104729384756102938475",
+      "accounts.google.com:aud": "104729384756102938475",
+      "accounts.google.com:oaud": "sts.amazonaws.com"
+    }
+  }
+}
+```
+
+At runtime the service asks its metadata server for an ID token and
+trades it for the role's credentials with `AssumeRoleWithWebIdentity`.
+The credentials last an hour and are assumed again, with a fresh token,
+shortly before they expire.
+
+## Call GCP from a Lambda
+
+A Lambda runs as an IAM role. Bind a Pub/Sub topic to it:
+
+```typescript
+// src/worker.ts
+import * as AWS from "@alchemy.run/aws";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export const Events = GCP.PubSub.Topic("Events", {});
+
+export default class Worker extends AWS.Lambda.Function<Worker>()(
+  "Worker",
+  { main: import.meta.url, functionUrl: true },
+  Effect.gen(function* () {
+    const publish = yield* GCP.PubSub.Publish(yield* Events);
+    return {
+      fetch: publish({ body: { messages: [{ data: btoa("hello") }] } }).pipe(
+        Effect.as(HttpServerResponse.text("published")),
+        Effect.orDie,
+      ),
+    };
+  }).pipe(Effect.provide(GCP.PubSub.PublishHttp)),
+) {}
+```
+
+The binding creates a service account that holds the publisher role,
+and lets the Lambda's role impersonate it. The trust goes through a
+workload identity pool with an AWS provider for your account. The stack
+shares one pool, so every AWS runtime in the stack uses it.
+
+At runtime the Lambda signs an STS `GetCallerIdentity` request with its
+own role credentials and sends it to Google STS. Google replays the
+request against AWS to learn which role is calling, and returns a token
+for the service account. The token lasts an hour and is exchanged again
+before it expires.
+
+## Which runtimes federate
+
+Lambda functions, ECS tasks and services, EC2 instances and launch
+templates, and App Runner services reach GCP this way. Cloud Run
+services, jobs, and worker pools and Cloud Functions reach AWS this
+way.
+
+Runtimes without an identity the other cloud can trust still get a key:
+a Cloudflare Worker, an EKS or GKE pod, and an AWS Batch job. The
+binding code is the same either way.
+
+## New grants take a few minutes
+
+A freshly created role or federated grant is not usable right away. AWS
+usually accepts a new role's trust within seconds. A GCP grant to a
+federated principal can take a few minutes. Until it lands, calls fail
+with a permission error, so retry the first call after a deploy.
+
+See [IAM & bindings](/gcp/security/iam) for the roles each GCP binding
+grants.
