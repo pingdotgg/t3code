@@ -8,6 +8,8 @@ export interface KvNamespaceProps {
    * persisted on disk.
    */
   readonly id?: string;
+  /** Emulate Instant metadata and listing semantics; defaults to classic KV. */
+  readonly mode?: "instant";
 }
 
 /**
@@ -17,6 +19,7 @@ export interface KvNamespaceProps {
  */
 export interface KvServiceProps {
   readonly namespaceId: string;
+  readonly mode?: "instant";
 }
 
 export const SERVICE_KV = "kv";
@@ -39,3 +42,6 @@ export const HEADER_KV_NAMESPACE = "CF-Runtime-KV-Namespace";
  * control endpoints are enabled; used by tests.
  */
 export const HEADER_KV_CONTROL_OP = "CF-Runtime-KV-Control-Op";
+
+/** Internal namespace mode forwarded to the storage object. */
+export const HEADER_KV_MODE = "CF-Runtime-KV-Mode";

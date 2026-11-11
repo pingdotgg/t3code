@@ -39,7 +39,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const canRespond = props.approval.responseCapability === "live";
   const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
   const [explanationOpen, setExplanationOpen] = useState(false);
-  const maxHeight = props.maxHeight;
+  const { maxHeight } = props;
   const maxHeightStyle = useAnimatedStyle(() => ({ maxHeight: maxHeight.value }));
   return (
     <Animated.View
@@ -48,11 +48,10 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
     >
       <ScrollView
         bounces={false}
-        className="min-h-0"
+        className="min-h-0 shrink"
         contentContainerClassName="gap-2.5"
+        keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
-        showsVerticalScrollIndicator
-        style={{ flexShrink: 1 }}
       >
         <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
           Approval needed
@@ -96,7 +95,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       {warning ? (
         <Text className="font-sans text-xs leading-normal text-warning-foreground">{warning}</Text>
       ) : null}
-      <View className="flex-row flex-wrap gap-2.5">
+      <View className="gap-2">
         {options.map((option) => (
           <Button
             key={option.decision}
@@ -110,6 +109,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
             }
             disabled={disabled || !props.canOperateThread}
             onPress={() => void props.onRespond(props.approval.requestId, option.decision)}
+            fullWidth
           />
         ))}
       </View>
