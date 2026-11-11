@@ -406,9 +406,7 @@ export function ThreadDetailsPrRow({
             type="button"
             variant="ghost"
             size="sm"
-            part={part}
-            multiline={wrap}
-            className={wrap ? "items-start [&>svg]:mt-px" : undefined}
+            className={grow ? "flex-1" : undefined}
             aria-label={openAriaLabel}
             onClick={onOpen}
             onAuxClick={onOpen}

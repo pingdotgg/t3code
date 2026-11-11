@@ -1024,7 +1024,7 @@ function SpeechModelBrowser(props: {
                   <Button
                     type="submit"
                     size="sm"
-                    variant="outline"
+                    variant="secondary"
                     disabled={controlsDisabled || !existingPath.trim()}
                   >
                     Use existing
@@ -1474,7 +1474,7 @@ export function VoiceSettingsPanel() {
             </div>
           </div>
           {destination.environmentId && chosenUnsupported ? (
-            <p className="mt-2 text-xs text-destructive">
+            <p className="mt-2 text-meta text-destructive">
               {chosenEnvironment.label} can’t transcribe audio locally. Choose a different
               destination.
             </p>

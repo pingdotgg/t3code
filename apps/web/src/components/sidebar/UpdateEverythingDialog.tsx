@@ -139,14 +139,12 @@ function UpdateEverythingDialogContent({
             {version !== null ? (
               <span>
                 T3 Code <span className="font-mono text-meta">{version}</span>
-                {checking ? <span>Checking for more…</span> : null}
-          </span>
+              </span>
             ) : null}
             {providerCount > 0 ? (
               <span>
                 {providerCount} provider {providerCount === 1 ? "update" : "updates"}
-                {checking ? <span>Checking for more…</span> : null}
-          </span>
+              </span>
             ) : null}
             {checking ? <span>Checking for more…</span> : null}
           </span>

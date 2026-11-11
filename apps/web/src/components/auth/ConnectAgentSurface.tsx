@@ -277,19 +277,21 @@ export function McpConsent({
         <dd className="min-w-0 break-words text-label">
           {details.redirectHost}
           {redirectsToThisComputer(details.redirectHost) ? (
-            <span className="font-normal text-muted-foreground">
+            <span className="text-body text-muted-foreground">
               {" "}
               on the computer that opened this page
             </span>
           ) : (
-            <span className="font-normal text-muted-foreground">
+            <span className="text-body text-muted-foreground">
               {" "}
               (whoever runs it gets this access)
             </span>
           )}
         </dd>
       </dl>
-      <p className="mt-2 text-meta text-muted-foreground">Only approve a sign-in you just started.</p>
+      <p className="mt-2 text-meta text-muted-foreground">
+        Only approve a sign-in you just started.
+      </p>
 
       <form
         className="mt-6 space-y-5"
