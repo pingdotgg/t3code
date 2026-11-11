@@ -4,6 +4,7 @@ import {
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
+  EnvironmentVoiceBodyLimit,
   type AuthBrowserSessionRequest,
   type AuthBrowserSessionResult,
   type AuthCreatePairingCredentialInput,
@@ -72,6 +73,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
     HttpApiTest.groups(EnvironmentHttpApi, ["metadata", "auth"]).pipe(
       Effect.provide([
         NodeHttpServer.layerHttpServices,
+        Layer.succeed(EnvironmentVoiceBodyLimit, () => unexpectedEndpoint("voice")),
         HttpApiBuilder.group(EnvironmentHttpApi, "metadata", (handlers) =>
           handlers.handle(
             "descriptor",
@@ -112,9 +114,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
                 );
               }),
             )
-            .handle("pairingLinks", () => unexpectedEndpoint("auth.pairingLinks"))
             .handle("revokePairingLink", () => unexpectedEndpoint("auth.revokePairingLink"))
-            .handle("clients", () => unexpectedEndpoint("auth.clients"))
             .handle("revokeClient", () => unexpectedEndpoint("auth.revokeClient"))
             .handle("revokeOtherClients", () => unexpectedEndpoint("auth.revokeOtherClients")),
         ),

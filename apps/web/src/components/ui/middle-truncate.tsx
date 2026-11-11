@@ -19,6 +19,7 @@ export function MiddleTruncate({
   const split = splitForMiddleTruncate(value, tail);
   const headRef = useRef<HTMLSpanElement>(null);
   const head = split?.head;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fits the head span's DOM text and refits it through a ResizeObserver
   useLayoutEffect(() => {
     const element = headRef.current;
     // A new head can keep the same box size, so refit here, not only on resize.
@@ -47,7 +48,10 @@ export function MiddleTruncate({
           <span className="shrink-0 peer-data-overflow:before:content-['…']">{split.tail}</span>
         </>
       ) : (
-        <span className="min-w-0 truncate">{value}</span>
+        // Keyed so React does not reuse the head node and its imperative clip.
+        <span key="whole" className="min-w-0 truncate">
+          {value}
+        </span>
       )}
     </span>
   );

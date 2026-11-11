@@ -49,13 +49,16 @@ export const layer = Layer.effect(
     const injectedSecrets = yield* InjectedSecrets;
     return {
       // Redact while the producing session still registers its values; the worker may run after it closes.
-      offer: (request: ProviderContinuationRequest) =>
-        Queue.offer(
+      offer: Effect.fn("ProviderContinuationRequests.offer")(function (
+        request: ProviderContinuationRequest,
+      ) {
+        return Queue.offer(
           queue,
           request.detail === null
             ? request
             : { ...request, detail: injectedSecrets.redactText(request.detail) },
-        ).pipe(Effect.asVoid),
+        ).pipe(Effect.asVoid);
+      }),
       take: Queue.take(queue),
     };
   }),
