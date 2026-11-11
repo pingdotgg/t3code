@@ -759,8 +759,20 @@ function deriveSubprocessInspectResult(
   if (childPid === undefined) {
     return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
   }
-  const processIds = new Set<number>([terminalPid]);
-  const pending = [terminalPid];
+  const normalized = commandName(childPid);
+  return {
+    hasRunningSubprocess: true,
+    childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
+    processIds: [terminalPid, ...descendantProcessIds(snapshot, terminalPid)],
+  };
+}
+
+function descendantProcessIds(
+  snapshot: TerminalProcessTableSnapshot,
+  rootPid: number,
+): ReadonlyArray<number> {
+  const processIds = new Set<number>([rootPid]);
+  const pending = [rootPid];
   while (pending.length > 0) {
     const parentPid = pending.pop();
     if (parentPid === undefined) continue;
@@ -770,12 +782,16 @@ function deriveSubprocessInspectResult(
       pending.push(pid);
     }
   }
-  const normalized = commandName(childPid);
-  return {
-    hasRunningSubprocess: true,
-    childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
-    processIds: [...processIds],
-  };
+  processIds.delete(rootPid);
+  return [...processIds];
+}
+
+function signalHostProcess(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // The process exited between the snapshot and the signal.
+  }
 }
 
 const POSIX_PS_ABSOLUTE_PATHS = ["/bin/ps", "/usr/bin/ps"] as const;
@@ -1417,6 +1433,7 @@ interface TerminalManagerOptions {
   >;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
+  signalProcess?: (pid: number, signal: "SIGTERM" | "SIGKILL") => void;
   maxRetainedInactiveSessions?: number;
   registerTerminalProcesses?: (input: {
     readonly threadId: string;
@@ -1621,6 +1638,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const subprocessPollIntervalMs =
     options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
   const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
+  const signalProcess = options.signalProcess ?? signalHostProcess;
   const maxRetainedInactiveSessions =
     options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
   const registerTerminalProcesses = options.registerTerminalProcesses ?? (() => Effect.void);
@@ -1834,10 +1852,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
   });
 
+  // Background jobs sit in their own process groups, so the shell's hangup never reaches them.
+  // Windows needs no walk: node-pty already kills the whole tree there.
+  const terminalDescendantPids = Effect.fn("terminal.descendantPids")(function* (
+    terminalPid: number,
+  ) {
+    if (platform === "win32") return [];
+    const { snapshot } = yield* fetchProcessTableSnapshot(CLOSE_IDLE_QUERY_TIMEOUT.posix);
+    if (Result.isFailure(snapshot)) {
+      yield* Effect.logWarning("failed to snapshot terminal descendants before stopping", {
+        terminalPid,
+        reason: snapshot.failure,
+      });
+      return [];
+    }
+    return descendantProcessIds(snapshot.success, terminalPid);
+  });
+
   const runKillEscalation = Effect.fn("terminal.runKillEscalation")(function* (
     process: PtyAdapter.PtyProcess,
     threadId: string,
     terminalId: string,
+    findDescendantPids: Effect.Effect<ReadonlyArray<number>> = Effect.succeed([]),
   ) {
     // Subscribe before SIGTERM to catch immediate exits; Effect.ensuring releases even on interruption, unlike JS finally.
     const exited = Deferred.makeUnsafe<void>();
@@ -1867,6 +1903,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       if (!terminated) {
         return;
       }
+      // Interactive shells ignore SIGTERM, so the tree is still intact here.
+      const descendantPids = yield* findDescendantPids;
+      for (const pid of descendantPids) signalProcess(pid, "SIGTERM");
 
       const exitedBeforeGrace = yield* Deferred.await(exited).pipe(
         Effect.as(true),
@@ -1879,6 +1918,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return;
       }
 
+      for (const pid of descendantPids) signalProcess(pid, "SIGKILL");
       yield* Effect.try({
         try: () => process.kill("SIGKILL"),
         catch: (cause) =>
@@ -1905,7 +1945,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
   ) {
-    const fiber = yield* runKillEscalation(process, threadId, terminalId).pipe(
+    const fiber = yield* runKillEscalation(
+      process,
+      threadId,
+      terminalId,
+      terminalDescendantPids(process.pid),
+    ).pipe(
       Effect.ensuring(
         modifyManagerState((state) => {
           if (!state.killFibers.has(process)) {

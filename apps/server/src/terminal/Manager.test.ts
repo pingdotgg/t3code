@@ -249,6 +249,7 @@ interface ManagerFixture {
   readonly baseDir: string;
   readonly logsDir: string;
   readonly ptyAdapter: FakePtyAdapter;
+  readonly signals: ReadonlyArray<{ readonly pid: number; readonly signal: string }>;
   readonly manager: TerminalManager.TerminalManager["Service"];
   readonly getEvents: Effect.Effect<ReadonlyArray<TerminalEvent>>;
 }
@@ -267,6 +268,8 @@ const createManager = (
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-terminal-" });
       const logsDir = join(baseDir, "userdata", "logs", "terminals");
       const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
+      // Fake PIDs can match real host processes, so tests never signal the host.
+      const signals: Array<{ pid: number; signal: string }> = [];
 
       const manager = yield* TerminalManager.makeWithOptions({
         logsDir,
@@ -285,6 +288,7 @@ const createManager = (
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
         processKillGraceMs: options.processKillGraceMs ?? 1,
+        signalProcess: (pid, signal) => signals.push({ pid, signal }),
         ...(options.registerTerminalProcesses !== undefined
           ? { registerTerminalProcesses: options.registerTerminalProcesses }
           : {}),
@@ -312,6 +316,7 @@ const createManager = (
         logsDir,
         join,
         ptyAdapter,
+        signals,
         manager,
         getEvents: Ref.get(eventsRef),
       };
@@ -786,6 +791,42 @@ it.layer(
           true,
         ]);
       }),
+  );
+
+  it.effect.each([
+    ["linux", [300, 301, 302]],
+    ["win32", []],
+  ] as const)(
+    "closing a %s terminal also stops the shell's background jobs",
+    ([platform, descendants]) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter, signals } = yield* createManager(5, {
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "zsh" },
+            { pid: 300, ppid: 9000, name: "sleep" },
+            { pid: 301, ppid: 9000, name: "ssh" },
+            { pid: 302, ppid: 301, name: "ssh" },
+            { pid: 500, ppid: 1, name: "node" },
+          ]),
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput());
+        const shell = ptyAdapter.processes[0]!;
+        const terminated = yield* Deferred.make<void>();
+        const killed = yield* Deferred.make<void>();
+        shell.onKill = (signal) =>
+          Deferred.doneUnsafe(signal === "SIGKILL" ? killed : terminated, Effect.void);
+
+        yield* manager.close({ threadId: "thread-1" });
+        yield* Deferred.await(terminated);
+        expect(signals).toEqual(descendants.map((pid) => ({ pid, signal: "SIGTERM" })));
+
+        yield* TestClock.adjust("1 millis");
+        yield* Deferred.await(killed);
+        expect(signals).toEqual([
+          ...descendants.map((pid) => ({ pid, signal: "SIGTERM" })),
+          ...descendants.map((pid) => ({ pid, signal: "SIGKILL" })),
+        ]);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("labels a running command by its whole process name, spaces included", () =>
