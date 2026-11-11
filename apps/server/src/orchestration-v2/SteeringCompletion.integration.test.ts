@@ -29,6 +29,10 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -2177,6 +2181,147 @@ it.effect("starts a goal that names no model on the thread's model ahead of a qu
         });
         assert.deepEqual(started[1]?.modelSelection, runSelection);
       }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("restarts by stopping the running turn when the provider cannot interrupt-restart", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn, send, read } = yield* goalHarness(
+        "restart-without-interrupt-restart",
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        yield* send("queued", "queued", "queue");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("restart"),
+          threadId,
+          messageId: MessageId.make("message:restart"),
+          text: "do this instead",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "restart_active", targetRunId: started[0]!.runId },
+          createdBy: "agent",
+          creationSource: "server",
+        });
+        yield* worker.drain();
+
+        assert.deepEqual(steered, []);
+        assert.deepEqual(yield* read(threadId), {
+          queue: ["queued"],
+          started: ["first", "do this instead"],
+          stopRequested: true,
+        });
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("starts a restart that stops the running turn ahead of an older held queue", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn, send, read } =
+        yield* goalHarness("restart-past-held-queue");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        yield* send("queued", "queued", "queue");
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop"),
+          threadId,
+        });
+        yield* worker.drain();
+        const secondRunning = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("second"),
+          threadId,
+          messageId: MessageId.make("message:second"),
+          text: "second",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(secondRunning);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("restart"),
+          threadId,
+          messageId: MessageId.make("message:restart"),
+          text: "do this instead",
+          attachments: [],
+          dispatchMode: { type: "restart_active", targetRunId: started[1]!.runId },
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* worker.drain();
+
+        const { queue, started: startedTexts } = yield* read(threadId);
+        assert.deepEqual(
+          { queue, started: startedTexts },
+          { queue: ["queued"], started: ["first", "second", "do this instead"] },
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("reports a restart that stops the running turn as restarted", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn } = yield* goalHarness("restart-send-delivery");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+        const threadId = yield* startFirstTurn;
+        const input = {
+          projectId: ProjectId.make("project:restart-send-delivery"),
+          commandId: CommandId.make("restart"),
+          threadId,
+          messageId: MessageId.make("message:restart"),
+          text: "do this instead",
+          attachments: [],
+          mode: "restart",
+          createdBy: "agent",
+          creationSource: "mcp",
+        } as const;
+        const sent = yield* threadManagement.sendToThread(input);
+        // Stop holds the replacement before it starts; a replay must still report the restart.
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-after-restart"),
+          threadId,
+        });
+        const replayed = yield* threadManagement.sendToThread(input);
+
+        assert.equal(started.length, 1);
+        assert.deepEqual([sent.delivery, replayed.delivery], ["restarted", "restarted"]);
+      }).pipe(
+        Effect.provide(
+          ThreadManagementService.layer.pipe(
+            Layer.provideMerge(layer),
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(
+              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+            ),
+          ),
+        ),
+      );
     }),
   ),
 );
