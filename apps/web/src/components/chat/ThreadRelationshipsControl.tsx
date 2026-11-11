@@ -209,7 +209,12 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
           </span>
         ) : null}
       </MenuTrigger>
-      <MenuPopup side="right" align="start" className="w-75">
+      <MenuPopup
+        side="right"
+        align="start"
+        collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "end" }}
+        className="w-75"
+      >
         <div className="thread-details-stack">{rows}</div>
       </MenuPopup>
     </Menu>
