@@ -7,8 +7,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
-  appAccessChange,
   appAccessLevel,
+  appControls,
   canForgetOther,
   type DeviceNetworkGroup,
   type DeviceNetworkMachine,
@@ -16,13 +16,16 @@ import {
   hostsListing,
   type MachineEntry,
   machineControls,
+  networkFailureMessage,
+  openAccessHint,
 } from "@t3tools/client-runtime/tailnet-devices";
 import {
   AuthMcpClientAccess,
   AuthSettingsWriteScope,
   type EnvironmentId,
+  NETWORK_ACCESS_CEILING,
   type NetworkApp,
-  NetworkAppAccess,
+  type NetworkAppAccess,
   type PeerLinkSummary,
   type TailnetDeviceAccess,
   type TailnetDeviceStatus,
@@ -35,8 +38,11 @@ import { requestConfirmDialog } from "~/confirmDialog";
 import { networkMembers } from "~/state/networkMembers";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
+import { authEnvironment } from "~/state/auth";
+import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { deviceNetwork, tailnetDevices } from "~/state/tailnetDevices";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
@@ -51,15 +57,16 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { QRCodeSvg } from "../ui/qr-code";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import { LinkAccessPicker } from "./LinkAccessPicker";
-import { scrollToSettingsTarget } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 
 type CommandResult = AtomCommandResult<unknown, unknown>;
 
@@ -68,7 +75,7 @@ const failureToast = (title: string, result: Parameters<typeof squashAtomCommand
     stackedThreadToast({
       type: "error",
       title,
-      description: String(squashAtomCommandFailure(result)),
+      description: networkFailureMessage(squashAtomCommandFailure(result)),
     }),
   );
 
@@ -85,9 +92,6 @@ const settle = (result: CommandResult, failureTitle: string, onChanged: () => vo
 const confirmDestructive = async (message: string) =>
   (await (requestConfirmDialog(message, { variant: "destructive" }) ?? Promise.resolve(false))) ===
   true;
-const confirm = async (message: string) =>
-  (await (requestConfirmDialog(message) ?? Promise.resolve(false))) === true;
-
 const STATUS_DOT: Record<TailnetDeviceStatus, string> = {
   online: "bg-success",
   offline: "bg-muted-foreground/30",
@@ -204,17 +208,24 @@ function linkStatus(link: PeerLinkSummary, now: DateTime.Utc): string {
 }
 
 const NEEDS_READD = "Needs re-adding after the update";
+const LEFT = "Left the network";
+/** Where the joining switch lives on this platform. */
+const ALLOW_JOINING_PATH = "Settings → Environments → Device network";
 
 function machineDetails(
   group: DeviceNetworkGroup,
   machine: DeviceNetworkMachine,
   showAccess: boolean,
   now: DateTime.Utc,
-  needsReadd: boolean,
+  readd: "unbound" | "left" | null,
+  openHint: ReturnType<typeof openAccessHint>,
 ): ReadonlyArray<string | null> {
   const { entry } = machine;
-  if (needsReadd) {
-    return [`${NEEDS_READD}: allow joining on it, then add it again`, entry.tailnetName];
+  if (readd !== null) {
+    return [
+      `${readd === "left" ? LEFT : NEEDS_READD}: allow joining on it, then add it again`,
+      entry.tailnetName,
+    ];
   }
   const access = entry.member?.access ?? null;
   const live = access !== null && access !== "revoked";
@@ -240,8 +251,12 @@ function machineDetails(
     ...localOnly,
     ...links,
     entry.savedInApp ? "In this app" : null,
-    !entry.savedInApp && !entry.isHost && live && access !== "full-access"
-      ? "Opens read-only"
+    !entry.savedInApp && !entry.isHost && live
+      ? openHint === "read-only"
+        ? "Opens read-only"
+        : openHint === "unknown"
+          ? "May open read-only"
+          : null
       : null,
     entry.tailnetName,
   ];
@@ -254,16 +269,15 @@ function machineDetails(
 export function DeviceMachineRow({
   group,
   machine,
-  canOpen,
   onChanged,
 }: {
   readonly group: DeviceNetworkGroup;
   readonly machine: DeviceNetworkMachine;
-  readonly canOpen: boolean;
   readonly onChanged: () => void;
 }) {
   const { entry } = machine;
-  const controls = machineControls(machine, group, { canOpen });
+  const controls = machineControls(machine, group);
+  const readdReason = controls.needsReadd ? "unbound" : controls.left ? "left" : null;
   const setAccess = useAtomCommand(tailnetDevices.setAccess, { reportFailure: false });
   const forget = useAtomCommand(deviceNetwork.forget, { reportFailure: false });
   const openMember = useAtomCommand(networkMembers.open, { reportFailure: false });
@@ -335,11 +349,18 @@ export function DeviceMachineRow({
     <RowLayout
       title={entry.label}
       status={
-        controls.needsReadd
-          ? { label: NEEDS_READD, dot: "bg-warning" }
+        readdReason !== null
+          ? { label: readdReason === "left" ? LEFT : NEEDS_READD, dot: "bg-warning" }
           : { label: STATUS_LABEL[entry.status], dot: STATUS_DOT[entry.status] }
       }
-      details={machineDetails(group, machine, !controls.changeAccess, now, controls.needsReadd)}
+      details={machineDetails(
+        group,
+        machine,
+        !controls.changeAccess,
+        now,
+        readdReason,
+        openAccessHint(machine, group),
+      )}
       actions={
         <>
           {controls.open ? (
@@ -378,7 +399,12 @@ export function DeviceMachineRow({
             </Button>
           ) : null}
           {controls.readd ? (
-            <Button size="xs" variant="outline" disabled={busy} onClick={() => setAdding("readd")}>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setAdding(readdReason ?? "unbound")}
+            >
               Add again
             </Button>
           ) : null}
@@ -468,7 +494,7 @@ export function DeviceMachineRow({
   );
 }
 
-type AddMode = "found" | "promote" | "readd";
+type AddMode = "found" | "promote" | "unbound" | "left";
 
 /**
  * Adds a found machine to the network or to the authority only, promotes a linked one, or adds
@@ -494,7 +520,7 @@ function AddMachineDialog({
   const previous = entry.member?.access;
   // Re-adding keeps the access it had before the update unless the user picks another.
   const [access, setAccess] = useState<AuthMcpClientAccess>(
-    mode === "readd" && previous !== undefined && previous !== "revoked"
+    mode === "unbound" && previous !== undefined && previous !== "revoked"
       ? previous
       : "approval-required",
   );
@@ -528,18 +554,22 @@ function AddMachineDialog({
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {mode === "readd" ? `Add ${entry.label} again` : `Add ${entry.label}`}
+            {mode === "unbound" || mode === "left"
+              ? `Add ${entry.label} again`
+              : `Add ${entry.label}`}
           </DialogTitle>
           <DialogDescription>
-            {mode === "readd"
-              ? `${entry.label} was in your network before the update, which now proves each machine's Tailscale identity. Until it is added again, the other machines refuse it. First, on ${entry.label}, open Settings → Environments → Device network and choose `
-              : `Being on your Tailscale account is not permission. ${entry.label} gets only the access you pick now. A machine in no network must allow joining first: on it, choose `}
+            {mode === "left"
+              ? `${entry.label} left your network. To bring it back, first open ${ALLOW_JOINING_PATH} for ${entry.label} and choose `
+              : mode === "unbound"
+                ? `${entry.label} was in your network before the update, which now proves each machine's Tailscale identity. Until it is added again, the other machines refuse it. First open ${ALLOW_JOINING_PATH} for ${entry.label} and choose `
+                : `Being on your Tailscale account is not permission. ${entry.label} gets only the access you pick now. A machine in no network must allow joining first: on it, choose `}
             <em>Let a machine in your network add this one</em>.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="space-y-4">
-            {mode === "readd" ? null : mode === "promote" ? (
+            {mode === "unbound" || mode === "left" ? null : mode === "promote" ? (
               <p className="text-xs text-muted-foreground">
                 It is linked to one machine only today. Adding it to your network gives it this
                 access on every machine in the network.
@@ -596,7 +626,7 @@ function AddMachineDialog({
           <Button disabled={busy} onClick={() => void add()}>
             {busy
               ? "Adding…"
-              : mode === "readd"
+              : mode === "unbound" || mode === "left"
                 ? "Add again"
                 : scope === "network"
                   ? "Add to network"
@@ -692,21 +722,9 @@ function LimitDialog({
   );
 }
 
-const pairAgainToast = (label: string) =>
-  toastManager.add({
-    type: "info",
-    title: `${label} must pair again`,
-    description:
-      "Its current sessions keep their old access. Create a pairing link with Works on all your network's machines and open it on that device.",
-    actionProps: {
-      children: "Create pairing link",
-      onClick: () => scrollToSettingsTarget(searchableSetting("connections-environment").id),
-    },
-  });
-
 /**
- * A phone or browser paired with the whole network. Apps are full access or read-only: less
- * signs the app out everywhere, more needs it to pair again.
+ * A phone or browser paired with the whole network. Apps are full access or read-only: narrowing
+ * signs the app out everywhere; more access comes only from pairing again, which replaces it.
  */
 export function NetworkAppRow({
   group,
@@ -720,39 +738,33 @@ export function NetworkAppRow({
   const setAppAccess = useAtomCommand(tailnetDevices.setAppAccess, { reportFailure: false });
   const forgetApp = useAtomCommand(deviceNetwork.forgetApp, { reportFailure: false });
   const [busy, setBusy] = useState(false);
+  const [pairing, setPairing] = useState(false);
   const level = appAccessLevel(app.access);
-  const revoked = level === "revoked";
   const authority = group.authority;
-  const changeAccess = async (next: NetworkAppAccess) => {
-    if (authority === null) return;
-    const change = appAccessChange(app.access, next);
-    if (change === "none") return;
-    const confirmed =
-      change === "signsOut"
-        ? await confirmDestructive(
-            next === "revoked"
-              ? `Revoke ${app.label}? It is signed out on every machine in your network and must pair again to come back.`
-              : `Make ${app.label} read-only? It is signed out on every machine in your network and must pair again.`,
-          )
-        : await confirm(
-            `${next === "full-access" ? "Give" : "Restore"} ${app.label} ${APP_ACCESS_LABEL[next].toLowerCase()}? It takes effect once ${app.label} pairs again with a new pairing link.`,
-          );
-    if (!confirmed) return;
+  const controls = appControls(app, authority);
+  const narrow = async (next: NetworkAppAccess) => {
+    if (
+      authority === null ||
+      !(await confirmDestructive(
+        next === "revoked"
+          ? `Revoke ${app.label}? It is signed out on every machine in your network. Pair it again to bring it back.`
+          : `Make ${app.label} read-only? It is signed out on every machine in your network and must pair again.`,
+      ))
+    )
+      return;
     setBusy(true);
     const result = await setAppAccess({
       environmentId: authority,
       input: { appId: app.appId, access: next },
     });
     setBusy(false);
-    if (settle(result, `Could not change ${app.label}'s access`, onChanged)) {
-      if (change === "pairsAgain") pairAgainToast(app.label);
-    }
+    settle(result, `Could not change ${app.label}'s access`, onChanged);
   };
   const forget = async () => {
     if (
       authority === null ||
       !(await confirmDestructive(
-        `Forget ${app.label}? It is revoked on every machine in your network, then removed from this list. To use it again, pair it with a new link.`,
+        `Forget ${app.label}? It is removed from this list. To use it again, pair it with a new link.`,
       ))
     )
       return;
@@ -766,43 +778,160 @@ export function NetworkAppRow({
       title={app.label}
       status={null}
       details={[
-        revoked ? "Revoked app" : "App paired with your network",
-        authority === null ? APP_ACCESS_LABEL[level] : null,
+        level === "revoked" ? "Revoked app" : "App paired with your network",
+        APP_ACCESS_LABEL[level],
       ]}
       actions={
-        authority === null ? null : (
-          <>
-            <AccessSelect
-              label={app.label}
-              value={level}
-              options={NetworkAppAccess.literals.filter((option) => option !== "revoked")}
-              optionLabel={(option) => APP_ACCESS_LABEL[option]}
+        <>
+          {controls.narrowTo.includes("read-only") ? (
+            <Button
+              size="xs"
+              variant="outline"
               disabled={busy}
-              onChange={(next) => void changeAccess(next)}
+              onClick={() => void narrow("read-only")}
+            >
+              Make read-only
+            </Button>
+          ) : null}
+          {controls.pairAgain ? (
+            <Button size="xs" variant="outline" disabled={busy} onClick={() => setPairing(true)}>
+              Pair again…
+            </Button>
+          ) : null}
+          {controls.narrowTo.includes("revoked") ? (
+            <Button
+              size="xs"
+              variant="destructive-outline"
+              disabled={busy}
+              onClick={() => void narrow("revoked")}
+            >
+              Revoke
+            </Button>
+          ) : null}
+          {controls.forget ? (
+            <Button
+              size="xs"
+              variant="destructive-outline"
+              disabled={busy}
+              onClick={() => void forget()}
+            >
+              Forget
+            </Button>
+          ) : null}
+          {pairing && authority !== null ? (
+            <PairAgainDialog
+              app={app}
+              authority={authority}
+              authorityLabel={hostLabel(group, authority)}
+              onClose={() => setPairing(false)}
             />
-            {revoked ? (
-              <Button
-                size="xs"
-                variant="destructive-outline"
-                disabled={busy}
-                onClick={() => void forget()}
-              >
-                Forget
-              </Button>
-            ) : (
-              <Button
-                size="xs"
-                variant="destructive-outline"
-                disabled={busy}
-                onClick={() => void changeAccess("revoked")}
-              >
-                Revoke
-              </Button>
-            )}
-          </>
-        )
+          ) : null}
+        </>
       }
     />
+  );
+}
+
+/**
+ * Makes a network pairing link that replaces `app` everywhere once redeemed, at the level picked.
+ * The only way to give an app more access: its sessions keep the scopes they were minted with.
+ */
+function PairAgainDialog({
+  app,
+  authority,
+  authorityLabel,
+  onClose,
+}: {
+  readonly app: NetworkApp;
+  readonly authority: EnvironmentId;
+  readonly authorityLabel: string;
+  readonly onClose: () => void;
+}) {
+  const createPairingCredential = useAtomCommand(authEnvironment.createPairingCredential, {
+    reportFailure: false,
+  });
+  const baseUrl = useEnvironmentHttpBaseUrl(authority);
+  const { copyToClipboard, isCopied } = useCopyToClipboard<void>({ target: "pairing link" });
+  const [level, setLevel] = useState<"full-access" | "read-only">("full-access");
+  const [busy, setBusy] = useState(false);
+  const [url, setUrl] = useState<string | null>(null);
+  const create = async () => {
+    setBusy(true);
+    const input = {
+      label: app.label,
+      scopes: NETWORK_ACCESS_CEILING[level].app,
+      network: true,
+      // Redeeming removes the old app everywhere and adds this one in its place.
+      replacesAppId: app.appId,
+    };
+    const result = await createPairingCredential({ environmentId: authority, input });
+    setBusy(false);
+    if (result._tag === "Success") {
+      const credential = result.value.credential;
+      setUrl(
+        baseUrl === null
+          ? credential
+          : (resolveHostedPairingUrl(baseUrl, credential) ??
+              resolveDesktopPairingUrl(baseUrl, credential)),
+      );
+    } else if (!isAtomCommandInterrupted(result)) {
+      failureToast(`Could not create a link for ${app.label}`, result);
+    }
+  };
+  return (
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next && !busy) onClose();
+      }}
+    >
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Pair {app.label} again</DialogTitle>
+          <DialogDescription>
+            Open this link on {app.label}. Once it pairs, it replaces the old {app.label} on every
+            machine in your network, at the access you pick. The link comes from {authorityLabel}.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          {url === null ? (
+            <RadioGroup
+              value={level}
+              onValueChange={(next) => setLevel(next as "full-access" | "read-only")}
+              disabled={busy}
+            >
+              <label className="flex items-start gap-2 text-xs">
+                <Radio value="full-access" />
+                <span className="font-medium text-foreground">Full access</span>
+              </label>
+              <label className="flex items-start gap-2 text-xs">
+                <Radio value="read-only" />
+                <span className="font-medium text-foreground">Read-only</span>
+              </label>
+            </RadioGroup>
+          ) : (
+            <div className="flex flex-col items-center gap-3">
+              {url.startsWith("http") ? (
+                <QRCodeSvg value={url} size={168} level="M" marginSize={2} />
+              ) : null}
+              <Input value={url} readOnly nativeInput aria-label="Pairing link" />
+            </div>
+          )}
+        </DialogPanel>
+        <DialogFooter variant="bare">
+          <DialogClose disabled={busy} render={<Button variant="outline" type="button" />}>
+            {url === null ? "Cancel" : "Done"}
+          </DialogClose>
+          {url === null ? (
+            <Button disabled={busy} onClick={() => void create()}>
+              {busy ? "Creating…" : "Create link"}
+            </Button>
+          ) : (
+            <Button onClick={() => copyToClipboard(url)}>{isCopied ? "Copied" : "Copy"}</Button>
+          )}
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
   );
 }
 

@@ -27,6 +27,8 @@ export interface DeviceNetworkHost {
   readonly links: ReadonlyArray<PeerLinkSummary>;
   /** This client's session there may change access (`access:write`). */
   readonly mayWrite: boolean;
+  /** This client's session there holds `orchestration:read`, enough to open as an app. */
+  readonly mayOpen: boolean;
 }
 
 /** One environment of a machine, merged from what every host in the group says about it. */
@@ -75,6 +77,19 @@ export interface DeviceNetworkGroup {
 
 const isLiveMember = (member: NetworkMember | null | undefined): member is NetworkMember =>
   member != null && member.access !== "revoked";
+
+/** A member that revoked itself: it left, and comes back only by being added again. */
+const hasLeft = (member: NetworkMember | null): boolean =>
+  member !== null && member.access === "revoked" && member.updatedAt.node === member.environmentId;
+
+/**
+ * The server opens members for an app of the network on `orchestration:read`, and for any other
+ * session only with `access:write`.
+ */
+const opensThrough = (host: DeviceNetworkHost) =>
+  host.enabled &&
+  inNetwork(host) &&
+  (host.snapshot?.callerAppId == null ? host.mayWrite : host.mayOpen);
 
 /** A member from before the update that this host has not bound to a Tailscale node. */
 // The roster entry decides: the scan fills `device.nodeId` even while the server still refuses it.
@@ -359,7 +374,9 @@ export interface MachineControls {
   readonly promote: boolean;
   /** A member from before the update that a host has not bound to a Tailscale node yet. */
   readonly needsReadd: boolean;
-  /** Add it again through the authority, once joining is allowed on it; nothing else applies. */
+  /** It left the network itself. */
+  readonly left: boolean;
+  /** Unbound or left: add it again through the authority, once it allows joining. */
   readonly readd: boolean;
   /** Hosts that forget it, the authority first. A member is revoked everywhere first. */
   readonly forgetHosts: ReadonlyArray<EnvironmentId>;
@@ -389,7 +406,6 @@ export function hostsListing(
 export function machineControls(
   machine: DeviceNetworkMachine,
   group: DeviceNetworkGroup,
-  options: { readonly canOpen: boolean },
 ): MachineControls {
   const { entry } = machine;
   const { authority } = group;
@@ -397,6 +413,7 @@ export function machineControls(
   // The server refuses a member it holds no node for until it is added again.
   const needsReadd =
     member && isLiveMember(entry.member) && entry.views.some((view) => isUnbound(view.device));
+  const left = member && hasLeft(entry.member);
   const live = member && isLiveMember(entry.member) && !needsReadd;
   const manages = authority !== null && authority !== entry.environmentId;
   const forgetHosts = member
@@ -405,15 +422,16 @@ export function machineControls(
       : []
     : hostsListing(group, entry, authority);
   return {
-    open: live && !entry.isHost && !entry.savedInApp && options.canOpen,
+    open: live && !entry.isHost && !entry.savedInApp && group.hosts.some(opensThrough),
     changeAccess: live && manages,
     revoke: live && manages,
-    restore: member && !live && !needsReadd && manages,
+    restore: member && !live && !needsReadd && !left && manages,
     add: machine.kind === "found" && authority !== null,
     linkHere: machine.kind === "found" && authority !== null,
     promote: machine.kind === "linked" && authority !== null,
     needsReadd,
-    readd: needsReadd && manages,
+    left,
+    readd: (needsReadd || left) && manages,
     forgetHosts,
     limitHosts: live
       ? group.hosts
@@ -424,6 +442,42 @@ export function machineControls(
           .map((host) => host.environmentId)
       : [],
   };
+}
+
+const narrowsToReadOnly = (access: TailnetDeviceAccess | null | undefined) =>
+  access != null && access !== "full-access";
+
+/**
+ * What opening a member gives this app: the narrowest of the app's level, the relaying machine's
+ * roster level, and the target's own limit for that machine, which is known only while this app
+ * is connected to the target. Unknown never reads as full.
+ */
+export function openAccessHint(
+  machine: DeviceNetworkMachine,
+  group: DeviceNetworkGroup,
+): "full" | "read-only" | "unknown" | null {
+  const relays = group.hosts.filter(opensThrough);
+  if (relays.length === 0) return null;
+  const hints = relays.map((relay) => {
+    const appId = relay.snapshot?.callerAppId ?? null;
+    const appAccess =
+      appId === null ? null : group.apps.find((candidate) => candidate.appId === appId)?.access;
+    const limit = machine.entry.isHost
+      ? undefined
+      : group.hosts
+          .find((host) => host.environmentId === machine.entry.environmentId)
+          ?.snapshot?.devices.find((device) => device.environmentId === relay.environmentId)
+          ?.localLimit;
+    if (
+      narrowsToReadOnly(appAccess) ||
+      narrowsToReadOnly(relay.snapshot?.selfMember?.access) ||
+      narrowsToReadOnly(limit)
+    ) {
+      return "read-only" as const;
+    }
+    return limit === undefined ? ("unknown" as const) : ("full" as const);
+  });
+  return hints.every((hint) => hint === hints[0]) ? (hints[0] ?? null) : "unknown";
 }
 
 /** Another environment on the same node can be forgotten unless it is a connected host. */
@@ -465,23 +519,51 @@ export function hostControls(host: DeviceNetworkHost, now: DateTime.Utc): HostCo
   };
 }
 
+export interface AppControls {
+  /** Levels below its own: each signs it out everywhere. */
+  readonly narrowTo: ReadonlyArray<NetworkAppAccess>;
+  /** More access only comes from pairing again, which replaces this app everywhere. */
+  readonly pairAgain: boolean;
+  readonly forget: boolean;
+}
+
+const NARROWER: Record<NetworkAppAccess, ReadonlyArray<NetworkAppAccess>> = {
+  "full-access": ["read-only", "revoked"],
+  "read-only": ["revoked"],
+  revoked: [],
+};
+
+/** The server refuses widening an app in place, so only narrowing is a level change. */
+export function appControls(app: NetworkApp, authority: EnvironmentId | null): AppControls {
+  const level = appAccessLevel(app.access);
+  return {
+    narrowTo: authority === null ? [] : NARROWER[level],
+    pairAgain: authority !== null && level !== "full-access",
+    forget: authority !== null && level === "revoked",
+  };
+}
+
+/** The machine's own reason for refusing a Device network change, which says what to do. */
+export function networkFailureMessage(failure: unknown): string {
+  if (typeof failure === "object" && failure !== null && "_tag" in failure) {
+    if (
+      failure._tag === "TailnetDevicesError" &&
+      "message" in failure &&
+      typeof failure.message === "string" &&
+      failure.message.trim() !== ""
+    ) {
+      return failure.message;
+    }
+    if (failure._tag === "EnvironmentAuthorizationError") {
+      return "This app may not make that change on that machine.";
+    }
+  }
+  return "Check that the machines are online, then try again.";
+}
+
 /** Apps are full access or read-only: below full access, an app's sessions are read-only. */
 export const appAccessLevel = (access: TailnetDeviceAccess): NetworkAppAccess =>
   access === "revoked" || access === "full-access" ? access : "read-only";
-
-const APP_RANK: Record<NetworkAppAccess, number> = { revoked: 0, "read-only": 1, "full-access": 2 };
-
-/**
- * What moving an app does: less access signs it out everywhere; more takes effect only once it
- * pairs again, since its sessions keep the scopes they were minted with.
- */
-export function appAccessChange(
-  from: TailnetDeviceAccess,
-  to: NetworkAppAccess,
-): "none" | "signsOut" | "pairsAgain" {
-  const delta = APP_RANK[to] - APP_RANK[appAccessLevel(from)];
-  return delta === 0 ? "none" : delta < 0 ? "signsOut" : "pairsAgain";
-}
 
 /**
  * Whether listing failed because this session may not see devices, which hides

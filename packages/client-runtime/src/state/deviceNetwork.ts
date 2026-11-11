@@ -55,8 +55,6 @@ export interface DeviceNetworkHostInput {
 export interface DeviceNetworkHostState extends DeviceNetworkHost {
   /** Unavailable: the host cannot list devices yet (an older server). */
   readonly list: "loading" | "ready" | "unavailable" | "forbidden";
-  /** This client may open members through it. */
-  readonly mayOpen: boolean;
 }
 
 /**

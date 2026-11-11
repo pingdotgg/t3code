@@ -150,7 +150,6 @@ function NetworkGroupRows({
   readonly onChanged: () => void;
 }) {
   const takingPart = hostStates.some((host) => host.enabled);
-  const canOpen = hostStates.some((host) => host.mayOpen);
   const unavailable = hostStates.every((host) => host.list === "unavailable");
   return (
     <>
@@ -179,7 +178,6 @@ function NetworkGroupRows({
               key={machine.key}
               group={group}
               machine={machine}
-              canOpen={canOpen}
               onChanged={onChanged}
             />
           ))}

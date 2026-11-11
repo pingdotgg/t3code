@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  type NetworkApp,
   type NetworkMember,
   type PeerLinkSummary,
   type TailnetDevice,
@@ -10,7 +11,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  appAccessChange,
+  appControls,
   canForgetOther,
   canManageNetwork,
   type DeviceNetworkHost,
@@ -18,6 +19,8 @@ import {
   hostControls,
   isTailnetDevicesForbidden,
   machineControls,
+  networkFailureMessage,
+  openAccessHint,
 } from "./tailnetDevices.ts";
 
 const studio = EnvironmentId.make("env-studio");
@@ -55,6 +58,17 @@ const device = (
   lastSeenAt: null,
   ...overrides,
 });
+/** Revoked by `by`; a member that revoked itself has left. */
+const revokedBy = (environmentId: EnvironmentId, by: EnvironmentId): NetworkMember => ({
+  ...member(environmentId, "revoked"),
+  updatedAt: { wallMs: 2, counter: 0, node: by },
+});
+const app = (access: NetworkApp["access"]): NetworkApp => ({
+  appId: "app-phone",
+  label: "Phone",
+  access,
+  updatedAt: { wallMs: 1, counter: 0, node: studio },
+});
 const found = (environmentId: EnvironmentId, overrides: Partial<TailnetDevice> = {}) =>
   device(environmentId, { access: null, member: null, outgoing: null, ...overrides });
 const link = (environmentId: EnvironmentId): PeerLinkSummary => ({
@@ -78,6 +92,8 @@ const host = (
     readonly callerAppId?: string | null;
     readonly joinOpenUntil?: DateTime.Utc | null;
     readonly mayWrite?: boolean;
+    readonly mayOpen?: boolean;
+    readonly apps?: ReadonlyArray<NetworkApp>;
     readonly enabled?: boolean;
     readonly loaded?: boolean;
   } = {},
@@ -86,6 +102,7 @@ const host = (
   label: environmentId,
   enabled: options.enabled ?? true,
   mayWrite: options.mayWrite ?? true,
+  mayOpen: options.mayOpen ?? true,
   links: options.links ?? [],
   snapshot:
     options.loaded === false
@@ -94,7 +111,7 @@ const host = (
           self: { environmentId, label: environmentId, urls: [] },
           selfMember: options.self === undefined ? member(environmentId) : options.self,
           devices: options.devices ?? [],
-          apps: [],
+          apps: options.apps ?? [],
           enabled: options.enabled ?? true,
           callerAppId: options.callerAppId ?? null,
           joinOpenUntil: options.joinOpenUntil ?? null,
@@ -213,6 +230,7 @@ describe("deviceNetworkView", () => {
           label: snapshot.self.label,
           enabled: true,
           mayWrite: true,
+          mayOpen: true,
           snapshot,
           links: [link(vps), link(studio)],
         },
@@ -271,18 +289,18 @@ describe("machineControls", () => {
     host(studio, {
       devices: [
         device(box),
-        device(laptop, { member: member(laptop, "revoked") }),
+        device(laptop, { member: revokedBy(laptop, studio) }),
         found(vps),
         device(studioOld, { member: null, access: "auto", outgoing: "paired" }),
       ],
     }),
-    host(box, { devices: [device(studio), device(laptop, { member: member(laptop, "revoked") })] }),
+    host(box, { devices: [device(studio), device(laptop, { member: revokedBy(laptop, studio) })] }),
   ];
   const controls = (environmentId: EnvironmentId, preferred: EnvironmentId | null = studio) => {
     const [group] = view(hosts, preferred);
     const machine = group?.machines.find((row) => row.entry.environmentId === environmentId);
     if (group === undefined || machine === undefined) throw new Error("missing row");
-    return machineControls(machine, group, { canOpen: true });
+    return machineControls(machine, group);
   };
 
   it("offers a live member's changes through the authority, and limits on the other hosts", () => {
@@ -296,6 +314,7 @@ describe("machineControls", () => {
       promote: false,
       readd: false,
       needsReadd: false,
+      left: false,
       forgetHosts: [studio],
       limitHosts: [studio],
     });
@@ -328,7 +347,7 @@ describe("machineControls", () => {
     const [group] = view(unbound, studio);
     const machine = group?.machines.find((row) => row.entry.environmentId === box);
     if (group === undefined || machine === undefined) throw new Error("missing row");
-    expect(machineControls(machine, group, { canOpen: true })).toEqual({
+    expect(machineControls(machine, group)).toEqual({
       open: false,
       changeAccess: false,
       revoke: false,
@@ -338,6 +357,7 @@ describe("machineControls", () => {
       promote: false,
       readd: true,
       needsReadd: true,
+      left: false,
       forgetHosts: [studio],
       limitHosts: [],
     });
@@ -347,17 +367,55 @@ describe("machineControls", () => {
       studio,
     )[0]?.machines.find((row) => row.entry.environmentId === box);
     expect(
-      readOnly && group
-        ? machineControls(readOnly, { ...group, authority: null }, { canOpen: true })
-        : null,
+      readOnly && group ? machineControls(readOnly, { ...group, authority: null }) : null,
     ).toMatchObject({ readd: false, needsReadd: true });
+  });
+
+  it("offers adding a machine that left again, not restoring it", () => {
+    const left = [
+      host(studio, {
+        devices: [device(box), device(laptop, { member: member(laptop, "revoked") })],
+      }),
+    ];
+    const [group] = view(left, studio);
+    const machine = group?.machines.find((row) => row.entry.environmentId === laptop);
+    if (group === undefined || machine === undefined) throw new Error("missing row");
+    expect(machineControls(machine, group)).toMatchObject({
+      left: true,
+      readd: true,
+      restore: false,
+      changeAccess: false,
+      forgetHosts: [studio],
+    });
+  });
+
+  it("opens members only through a host the server lets this session open from", () => {
+    const target = device(laptop);
+    const opened = (options: Parameters<typeof host>[1]) => {
+      const [group] = view([host(studio, { devices: [target], ...options })], studio);
+      const machine = group?.machines.find((row) => row.entry.environmentId === laptop);
+      if (group === undefined || machine === undefined) throw new Error("missing row");
+      return [machineControls(machine, group).open, openAccessHint(machine, group)] as const;
+    };
+    // Not an app of the network: the server asks for access:write.
+    expect(opened({ mayWrite: false, mayOpen: true })).toEqual([false, null]);
+    // An app of the network needs only orchestration:read, and is capped by its own level.
+    expect(opened({ mayWrite: false, callerAppId: "app-phone", apps: [app("read-only")] })).toEqual(
+      [true, "read-only"],
+    );
+    // Full everywhere this client can see, but the target's own limit is unknown.
+    expect(
+      opened({ mayWrite: false, callerAppId: "app-phone", apps: [app("full-access")] }),
+    ).toEqual([true, "unknown"]);
+    // The relaying machine's roster level caps it too.
+    expect(opened({ self: member(studio, "auto") })).toEqual([true, "read-only"]);
   });
 
   it("offers no network writes without an authority", () => {
     const readOnly = hosts.map((candidate) => ({ ...candidate, mayWrite: false }));
     for (const group of view(readOnly, studio)) {
       for (const machine of group.machines) {
-        expect(machineControls(machine, group, { canOpen: true })).toMatchObject({
+        expect(machineControls(machine, group)).toMatchObject({
           changeAccess: false,
           revoke: false,
           restore: false,
@@ -417,15 +475,49 @@ describe("hostControls", () => {
   });
 });
 
-describe("appAccessChange", () => {
-  it("signs an app out for less access, and needs pairing again for more", () => {
-    expect(appAccessChange("full-access", "read-only")).toBe("signsOut");
-    expect(appAccessChange("read-only", "revoked")).toBe("signsOut");
-    expect(appAccessChange("revoked", "read-only")).toBe("pairsAgain");
-    expect(appAccessChange("read-only", "full-access")).toBe("pairsAgain");
+describe("appControls", () => {
+  it("offers only narrowing; more access is pairing again under the same app", () => {
+    expect(appControls(app("full-access"), studio)).toEqual({
+      narrowTo: ["read-only", "revoked"],
+      pairAgain: false,
+      forget: false,
+    });
+    expect(appControls(app("read-only"), studio)).toEqual({
+      narrowTo: ["revoked"],
+      pairAgain: true,
+      forget: false,
+    });
     // Stored levels below full access are read-only for an app.
-    expect(appAccessChange("auto", "read-only")).toBe("none");
-    expect(appAccessChange("auto", "full-access")).toBe("pairsAgain");
+    expect(appControls(app("auto"), studio)).toMatchObject({ narrowTo: ["revoked"] });
+    expect(appControls(app("revoked"), studio)).toEqual({
+      narrowTo: [],
+      pairAgain: true,
+      forget: true,
+    });
+    expect(appControls(app("full-access"), null)).toEqual({
+      narrowTo: [],
+      pairAgain: false,
+      forget: false,
+    });
+  });
+});
+
+describe("networkFailureMessage", () => {
+  it("shows the machine's own reason, and a plain one otherwise", () => {
+    expect(
+      networkFailureMessage({
+        _tag: "TailnetDevicesError",
+        reason: "forbidden",
+        message:
+          "That machine is in no network and has not allowed joining. Allow joining on it first.",
+      }),
+    ).toBe("That machine is in no network and has not allowed joining. Allow joining on it first.");
+    expect(networkFailureMessage({ _tag: "EnvironmentAuthorizationError" })).toBe(
+      "This app may not make that change on that machine.",
+    );
+    expect(networkFailureMessage(new Error(""))).toBe(
+      "Check that the machines are online, then try again.",
+    );
   });
 });
 

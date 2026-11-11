@@ -333,11 +333,13 @@ machine in the network picks them up.
   pick. **Only on …: limit** narrows it on one machine alone; choose **No
   limit** to clear it.
 - **Forget** removes a machine from the list. A member is revoked everywhere
-  first, so it cannot rejoin by itself.
+  first, so it cannot rejoin by itself. If it is still on your tailnet, it
+  shows up again as a machine you can add.
 - **Leave network** takes a machine out of the network. The others see it as
   revoked. The only full-access machine cannot leave while other members
-  remain: give another machine full access first. To come back, allow joining
-  on it and add it again.
+  remain: give another machine full access first. The others then show it as
+  **Left the network**; to bring it back, allow joining on it and choose **Add
+  again** on its row.
 - After updating from a version before machines were tied to their Tailscale
   identity, existing members show **Needs re-adding after the update**, and the
   other machines refuse them until then. On that machine, choose **Let a
@@ -348,9 +350,10 @@ machine in the network picks them up.
 - When you create a pairing link on a full-access member, **Works on all your
   network's machines** pairs the phone or browser with the whole network at
   once. It is listed in Device network once it pairs. Apps are full access or
-  read-only. Making one read-only or revoking it signs it out everywhere.
-  Giving it more access, or restoring it, takes effect once it pairs again with
-  a new link.
+  read-only. **Make read-only** or **Revoke** signs it out everywhere. To give
+  it more access or bring it back, choose **Pair again** on web or desktop and
+  open the new link on that device; it replaces the old entry on every
+  machine.
 - Other people's machines, and anything off your tailnet, still link with a
   pairing code as described below.
 

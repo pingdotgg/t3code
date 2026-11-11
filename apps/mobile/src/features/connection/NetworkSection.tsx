@@ -6,8 +6,8 @@ import {
 } from "@t3tools/client-runtime/state/deviceNetwork";
 import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
 import {
-  appAccessChange,
   appAccessLevel,
+  appControls,
   canForgetOther,
   type DeviceNetworkGroup,
   type DeviceNetworkMachine,
@@ -16,7 +16,13 @@ import {
   hostsListing,
   type MachineEntry,
   machineControls,
+  networkFailureMessage,
+  openAccessHint,
 } from "@t3tools/client-runtime/tailnet-devices";
+import {
+  type AtomCommandResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import {
   AuthAccessReadScope,
   AuthSettingsWriteScope,
@@ -69,16 +75,19 @@ const formatTime = (time: DateTime.Utc) => timeFormat.format(DateTime.toDate(tim
 const hostLabel = (group: DeviceNetworkGroup, environmentId: EnvironmentId) =>
   group.hosts.find((host) => host.environmentId === environmentId)?.label ?? environmentId;
 
-type Settled = { readonly _tag: string };
-/** Alerts on a failed write and refreshes every host's links after one that worked. */
+type Settled = AtomCommandResult<unknown, unknown>;
+/** Alerts with the machine's own reason on a failed write; refreshes every host after one that worked. */
 const settle = (result: Settled, failureTitle: string, onChanged: () => void) => {
   if (result._tag === "Success") {
     onChanged();
     return true;
   }
-  Dialog.alert(failureTitle, "Check that the machines are online, then try again.");
+  Dialog.alert(failureTitle, networkFailureMessage(squashAtomCommandFailure(result)));
   return false;
 };
+
+/** Where the joining switch lives in this app. */
+const ALLOW_JOINING_PATH = "Settings → Environments, under Taking part";
 
 /**
  * The one Device network view: every connected environment's roster merged, grouped by network,
@@ -178,7 +187,6 @@ function GroupSection(props: {
 }) {
   const { group } = props;
   const takingPart = props.hostStates.some((host) => host.enabled);
-  const canOpen = props.hostStates.some((host) => host.mayOpen);
   return (
     <>
       <SettingsSection title={`${props.title} · Taking part`} footer={groupFooter(group)}>
@@ -198,7 +206,6 @@ function GroupSection(props: {
               key={machine.key}
               group={group}
               machine={machine}
-              canOpen={canOpen}
               onChanged={props.onChanged}
             />
           ))}
@@ -379,6 +386,11 @@ function machineDetail(
       return `Paired with ${hostLabel(group, host)}${health.kind === "expired" ? ", expired" : health.kind === "reachable" ? "" : ", not answering"}`;
     }),
     entry.savedInApp ? "In this app" : null,
+    !entry.savedInApp && !entry.isHost && live
+      ? { "read-only": "Opens read-only", unknown: "May open read-only", full: null }[
+          openAccessHint(machine, group) ?? "full"
+        ]
+      : null,
     ...machine.others.map((other) => `Also seen as ${other.label} from an earlier install`),
   ]
     .filter((part): part is string => part !== null)
@@ -388,12 +400,16 @@ function machineDetail(
 function MachineRow(props: {
   readonly group: DeviceNetworkGroup;
   readonly machine: DeviceNetworkMachine;
-  readonly canOpen: boolean;
   readonly onChanged: () => void;
 }) {
   const { group, machine } = props;
   const { entry } = machine;
-  const controls = machineControls(machine, group, { canOpen: props.canOpen });
+  const controls = machineControls(machine, group);
+  const readdState = controls.needsReadd
+    ? "Needs re-adding after the update"
+    : controls.left
+      ? "Left the network"
+      : null;
   const setAccess = useAtomCommand(tailnetDevices.setAccess, { reportFailure: false });
   const admit = useAtomCommand(tailnetDevices.admit, { reportFailure: false });
   const setLimit = useAtomCommand(deviceNetwork.setLimit, { reportFailure: false });
@@ -487,13 +503,13 @@ function MachineRow(props: {
     <ExpandableRow
       label={entry.label}
       detail={
-        controls.needsReadd
-          ? "Needs re-adding after the update: allow joining on it, then add it again"
+        readdState !== null
+          ? `${readdState}: allow joining on it, then add it again`
           : machineDetail(group, machine, now)
       }
-      danger={entry.status === "revoked" || controls.needsReadd}
+      danger={entry.status === "revoked" || readdState !== null}
       value={
-        controls.needsReadd
+        readdState !== null
           ? "Add again"
           : machine.kind === "member"
             ? accessLabel(access)
@@ -533,7 +549,7 @@ function MachineRow(props: {
           {controls.readd ? (
             <ListActionRow
               label="Add again"
-              description={`First, on ${entry.label}, open Settings → Environments → Device network and choose Let a machine in your network add this one.`}
+              description={`First open ${ALLOW_JOINING_PATH} for ${entry.label} and choose Let a machine in your network add this one.`}
               onPress={() => setPanel({ kind: "add", scope: "network" })}
             />
           ) : null}
@@ -664,52 +680,42 @@ function AppRow(props: {
   const [saving, setSaving] = useState(false);
   const level = appAccessLevel(app.access);
   const authority = group.authority;
-  const run = (work: Promise<Settled>, failureTitle: string, after?: () => void) => {
+  const run = (work: Promise<Settled>, failureTitle: string) => {
     setSaving(true);
     void work.then((result) => {
       setSaving(false);
       if (settle(result, failureTitle, props.onChanged)) {
         setExpanded(false);
-        after?.();
       }
     });
   };
-  const choose = (next: NetworkAppAccess) => {
+  const controls = appControls(app, authority);
+  const narrow = (next: NetworkAppAccess) => {
     if (authority === null) return;
-    const change = appAccessChange(app.access, next);
-    if (change === "none") return;
-    const save = () =>
-      run(
-        setAppAccess({ environmentId: authority, input: { appId: app.appId, access: next } }),
-        `Could not change ${app.label}'s access`,
-        change === "pairsAgain"
-          ? () =>
-              Dialog.alert(
-                `${app.label} must pair again`,
-                "Create a pairing link with Works on all your network's machines on a full-access machine's Connections settings, and open it on that device.",
-              )
-          : undefined,
-      );
     Dialog.confirm({
-      title:
-        next === "revoked"
-          ? `Revoke ${app.label}?`
-          : `Change ${app.label} to ${APP_ACCESS_LABEL[next]}?`,
+      title: next === "revoked" ? `Revoke ${app.label}?` : `Make ${app.label} read-only?`,
       message:
-        change === "signsOut"
-          ? "It is signed out on every machine in your network and must pair again with a new link."
-          : "It takes effect once the app pairs again with a new pairing link.",
-      confirmText: next === "revoked" ? "Revoke" : "Change",
-      destructive: change === "signsOut",
-      onConfirm: save,
+        "It is signed out on every machine in your network and must pair again with a new link.",
+      confirmText: next === "revoked" ? "Revoke" : "Make read-only",
+      destructive: true,
+      onConfirm: () =>
+        run(
+          setAppAccess({ environmentId: authority, input: { appId: app.appId, access: next } }),
+          `Could not change ${app.label}'s access`,
+        ),
     });
   };
+  // This app cannot create pairing links, so it says where to make one.
+  const pairAgain = () =>
+    Dialog.alert(
+      `Pair ${app.label} again`,
+      `On web or desktop, open Settings → Environments → Device network and choose Pair again on ${app.label}. Open that link on ${app.label}: it replaces the old one on every machine, at the access you pick.`,
+    );
   const forget = () => {
     if (authority === null) return;
     Dialog.confirm({
       title: `Forget ${app.label}?`,
-      message:
-        "It is revoked on every machine in your network, then removed from this list. To use it again, pair it with a new link.",
+      message: "It is removed from this list. To use it again, pair it with a new link.",
       confirmText: "Forget",
       destructive: true,
       onConfirm: () =>
@@ -729,29 +735,25 @@ function AppRow(props: {
       expanded={expanded}
       onToggle={() => setExpanded((open) => !open)}
     >
-      {(["full-access", "read-only"] as const).map((option) => (
-        <ListChoiceRow
-          key={option}
-          label={
-            level === "revoked"
-              ? `Restore as ${APP_ACCESS_LABEL[option]}`
-              : APP_ACCESS_LABEL[option]
-          }
-          selected={level === option}
-          disabled={saving}
-          onPress={() => choose(option)}
+      {controls.narrowTo.map((next) => (
+        <ListActionRow
+          key={next}
+          label={next === "revoked" ? "Revoke everywhere" : "Make read-only"}
+          tone={next === "revoked" ? "danger" : "default"}
+          loading={saving}
+          onPress={() => narrow(next)}
         />
       ))}
-      {level === "revoked" ? (
-        <ListActionRow label="Forget" tone="danger" loading={saving} onPress={forget} />
-      ) : (
+      {controls.pairAgain ? (
         <ListActionRow
-          label="Revoke everywhere"
-          tone="danger"
-          loading={saving}
-          onPress={() => choose("revoked")}
+          label="Pair again"
+          description="More access, or coming back after a revoke, takes a new pairing link."
+          onPress={pairAgain}
         />
-      )}
+      ) : null}
+      {controls.forget ? (
+        <ListActionRow label="Forget" tone="danger" loading={saving} onPress={forget} />
+      ) : null}
     </ExpandableRow>
   );
 }
