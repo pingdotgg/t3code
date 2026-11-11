@@ -1,22 +1,28 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
+import * as NodeTls from "node:tls";
 
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import {
   DesktopHostTelemetryMessage,
   type DesktopHostTelemetryMessage as DesktopHostTelemetryMessageValue,
   type DesktopHostTelemetrySnapshot,
+  type DesktopShellEnvironmentSnapshot,
   DesktopTelemetryControlMessage,
   type DesktopUpdateChannel,
   type DesktopUpdateStatusReport,
   type ResourceTelemetrySourceStatus,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { applyShellEnvironment } from "@t3tools/shared/shell";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -202,6 +208,70 @@ export class DesktopTelemetryReceiver extends Context.Service<
   }
 >()("t3/resourceTelemetry/DesktopTelemetryReceiver") {}
 
+class DesktopShellCertificatesUpdateFailed extends Schema.TaggedError<DesktopShellCertificatesUpdateFailed>()(
+  "DesktopShellCertificatesUpdateFailed",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to update desktop shell TLS certificates.";
+  }
+}
+
+export function makeApplyDesktopShellEnvironmentSnapshot(
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+) {
+  let baseCertificates: Array<string> | undefined;
+  return Effect.fn("resourceTelemetry.desktopTelemetryReceiver.applyShellEnvironment")(function* (
+    message: DesktopShellEnvironmentSnapshot,
+  ) {
+    if (message.platform !== platform) return;
+    // Node's first default-CA enumeration consults process.env, so capture it before the patch.
+    if (message.environment.NODE_EXTRA_CA_CERTS !== undefined && baseCertificates === undefined) {
+      // Remove only the startup extras, preserving duplicates from bundled or system trust.
+      const extras = [...NodeTls.getCACertificates("extra")];
+      baseCertificates = NodeTls.getCACertificates("default").filter((certificate) => {
+        const index = extras.indexOf(certificate);
+        if (index === -1) return true;
+        extras.splice(index, 1);
+        return false;
+      });
+    }
+    applyShellEnvironment(environment, message.environment, platform);
+    if (message.environment.NODE_EXTRA_CA_CERTS !== undefined) {
+      yield* Effect.gen(function* () {
+        const certificates = baseCertificates;
+        // --use-openssl-ca roots are not enumerable; replacing the list would discard them.
+        if (certificates === undefined || certificates.length === 0) {
+          yield* Effect.logWarning(
+            "Preserving non-enumerable TLS trust. Restart to apply updated desktop shell certificates.",
+          );
+          return;
+        }
+        const fs = yield* FileSystem.FileSystem;
+        const file = message.environment.NODE_EXTRA_CA_CERTS;
+        const bundle = file ? yield* fs.readFileString(file) : undefined;
+        yield* Effect.try({
+          try: () => {
+            const extras =
+              bundle?.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+            if (bundle?.trim() && extras.length === 0) {
+              throw new Error("No PEM certificates found.");
+            }
+            NodeTls.setDefaultCACertificates([...certificates, ...extras]);
+          },
+          catch: (cause) => new DesktopShellCertificatesUpdateFailed({ cause }),
+        });
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to update desktop shell TLS certificates.", Cause.fail(cause)),
+        ),
+      );
+    }
+    if (message.discovered) delete environment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
+  });
+}
+
 const decodeMessage = Schema.decodeUnknownEffect(DesktopHostTelemetryMessage);
 const encodeControlMessage = Schema.encodeEffect(
   Schema.fromJsonString(DesktopTelemetryControlMessage),
@@ -328,6 +398,9 @@ export function requireDesktopTelemetryWriteProgress(
 /** @public */
 export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")(function* () {
   const config = yield* ServerConfig.ServerConfig;
+  const environment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
+  const applyShellSnapshot = makeApplyDesktopShellEnvironmentSnapshot(environment, platform);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const receiverStartedAt = yield* DateTime.now;
@@ -521,6 +594,10 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
               })),
             ),
           );
+        }
+
+        if (message.type === "shellEnvironment") {
+          return recordContact.pipe(Effect.andThen(applyShellSnapshot(message)));
         }
 
         if (message.type === "desktopUpdateStatus") {

@@ -1,13 +1,16 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
+// oxlint-disable-next-line effecttsgo/extends-native-error -- vendored workers-sdk Workflows code; the error `name` is part of the protocol surfaced to user code across RPC
 export class WorkflowTimeoutError extends Error {
 	name = "WorkflowTimeoutError";
 }
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- vendored workers-sdk Workflows code; the error `name` is part of the protocol surfaced to user code across RPC
 export class WorkflowInternalError extends Error {
 	name = "WorkflowInternalError";
 }
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- vendored workers-sdk Workflows code; the error `name` is part of the protocol surfaced to user code across RPC
 export class WorkflowFatalError extends Error {
 	name = "WorkflowFatalError";
 
@@ -39,22 +42,27 @@ export class PreservedNonRetryableError extends WorkflowFatalError {
 	}
 }
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- vendored workers-sdk Workflows code; the error `name` is part of the protocol surfaced to user code across RPC
 export class WorkflowError extends Error {
 	name = "WorkflowError";
 }
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- vendored workers-sdk Workflows code; the error `name` is part of the protocol surfaced to user code across RPC
 export class InvalidStepReadableStreamError extends Error {
 	name = "InvalidStepReadableStreamError";
 }
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- vendored workers-sdk Workflows code; the error `name` is part of the protocol surfaced to user code across RPC
 export class OversizedStreamChunkError extends Error {
 	name = "OversizedStreamChunkError";
 }
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- vendored workers-sdk Workflows code; the error `name` is part of the protocol surfaced to user code across RPC
 export class UnsupportedStreamChunkError extends Error {
 	name = "UnsupportedStreamChunkError";
 }
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- vendored workers-sdk Workflows code; the error `name` is part of the protocol surfaced to user code across RPC
 export class StreamOutputStorageLimitError extends Error {
 	name = "StreamOutputStorageLimitError";
 }
@@ -131,5 +139,12 @@ export function stepNotFoundError(name: string): WorkflowError {
 	return createWorkflowError(
 		`Step "${name}" not found in execution history`,
 		"instance.cannot_restart"
+	);
+}
+
+export function duplicateInstanceError(id: string): WorkflowError {
+	return createWorkflowError(
+		`Workflow instance with id "${id}" already exists`,
+		"instance.already_exists"
 	);
 }
