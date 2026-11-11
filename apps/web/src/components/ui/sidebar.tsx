@@ -501,10 +501,8 @@ function Sidebar({
           {/* Children stay mounted while closed so their window shortcuts, like thread jumps, keep working. */}
           <SheetPopup
             keepMounted
-            // The sheet paints the popover surface. In light, black chrome it is
-            // chrome like the desktop sidebar, so it takes the black, grain and keycaps.
             className={cn(
-              "w-(--sidebar-width) max-w-none p-0 text-sidebar-foreground [.black-chrome_&]:bg-(--app-chrome-background) [.black-chrome_&]:surface-grain [.black-chrome_&]:[--kbd-background:initial]",
+              "w-(--sidebar-width) max-w-none bg-(--app-chrome-background) bg-(image:--surface-grain) p-0 surface-grain text-sidebar-foreground [.black-chrome_&]:[--kbd-background:initial]",
               className,
             )}
             data-mobile="true"
