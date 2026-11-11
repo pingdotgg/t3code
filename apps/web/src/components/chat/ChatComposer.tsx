@@ -9,7 +9,7 @@ import {
   resolveRuntimeModeOptions,
 } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentIdentities, usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
 import {
@@ -44,6 +44,8 @@ import {
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { matchComposerInlineSuggestion } from "@t3tools/client-runtime/composerInlineSuggestion";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
@@ -154,6 +156,7 @@ import {
   type ComposerCitationCommentRequest,
   type ComposerPromptEditorHandle,
   ComposerPromptEditorTiptap as ComposerPromptEditor,
+  type ComposerEditorInlineSuggestion,
 } from "../ComposerPromptEditorTiptap";
 import {
   ComposerContextActionsContext,
@@ -185,7 +188,7 @@ import {
 import { rememberCopiedComposerAttachments } from "~/lib/copiedComposerAttachments";
 import { useThreadContextDrop, threadContextDropTargetProps } from "./threadContextDrag";
 import { readThreadShell } from "~/state/entities";
-import { useLinkedEnvironments } from "~/state/peerLinks";
+import { offersLinkedEnvironmentsAtom, useLinkedEnvironments } from "~/state/peerLinks";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import type {
   ComposerContextRecord,
@@ -1093,6 +1096,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0;
   const linkedEnvironments = useLinkedEnvironments(environmentId);
+  const environmentIdentities = useEnvironmentIdentities();
+  const offersMachines = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
   const {
     items: composerMenuItems,
     isLoading: isComposerMenuLoading,
@@ -2049,6 +2054,69 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   };
   const onSelectComposerItemStable = useStableCallback(onSelectComposerItem);
+
+  const matchInlineSuggestion = (textBeforeCaret: string) =>
+    isLiteralPendingAnswer || questionAttachmentTarget !== null
+      ? null
+      : matchComposerInlineSuggestion(textBeforeCaret, [
+          ...(offersMachines
+            ? environmentIdentities.map(({ environmentId: mentionedId, label }) => ({
+                kind: "environment" as const,
+                environmentId: mentionedId,
+                label,
+              }))
+            : []),
+          // The thread's own provider wins when two offer a model of the same name.
+          ...[...modelOptionsByInstance]
+            .toSorted(([left], [right]) =>
+              left === selectedInstanceId ? -1 : right === selectedInstanceId ? 1 : 0,
+            )
+            .flatMap(([instanceId, options]) =>
+              options
+                // "Default" and "Auto" are ordinary words first, and name no particular model.
+                .filter(
+                  (option) =>
+                    option.isUnavailable !== true && !/^(?:default|auto)$/iu.test(option.name),
+                )
+                .map((option) => ({
+                  kind: "model" as const,
+                  instanceId,
+                  model: option.slug,
+                  label: option.name,
+                })),
+            ),
+        ]);
+  const matchInlineSuggestionStable = useStableCallback(matchInlineSuggestion);
+
+  const onAcceptInlineSuggestion = (accepted: ComposerEditorInlineSuggestion) => {
+    const { candidate } = accepted;
+    const snapshot = readComposerSnapshot();
+    const rangeStart = snapshot.expandedCursor - accepted.typed.length;
+    // A model becomes the same mention the @ menu inserts; a machine becomes a context record.
+    let record: EnvironmentContextRecord | null = null;
+    let reference: string;
+    if (candidate.kind === "model") {
+      reference = formatComposerModelMention(candidate.instanceId, candidate.model);
+    } else {
+      record = environmentContextRecord(candidate.environmentId, candidate.label);
+      reference = formatInlineContextReference(environmentContextReference(record));
+    }
+    const replacement = `${reference} `;
+    const rangeEnd = extendReplacementRangeForTrailingSpace(
+      snapshot.value,
+      snapshot.expandedCursor,
+      replacement,
+    );
+    const applied = applyPromptReplacement(rangeStart, rangeEnd, replacement, {
+      expectedText: snapshot.value.slice(rangeStart, rangeEnd),
+    });
+    if (applied && record) {
+      addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
+        appendReference: false,
+      });
+    }
+  };
+  const onAcceptInlineSuggestionStable = useStableCallback(onAcceptInlineSuggestion);
 
   const onComposerMenuItemHighlighted = (itemId: string | null) => {
     setComposerHighlightedItemId(itemId);
@@ -3474,6 +3542,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
                     onChange={onPromptChangeStable}
                     onCommandKeyDown={onComposerCommandKeyStable}
+                    matchInlineSuggestion={matchInlineSuggestionStable}
+                    onAcceptInlineSuggestion={onAcceptInlineSuggestionStable}
                     onPageScrollKeyDown={onPageScrollKeyDown}
                     onPageScrollKeyUp={onPageScrollKeyUp}
                     onPageScrollRelease={onPageScrollRelease}
