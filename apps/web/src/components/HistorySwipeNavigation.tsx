@@ -1,7 +1,7 @@
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { cn } from "../lib/utils";
+import { cn, isMacPlatform } from "../lib/utils";
 import { canNavigateHistory, navigateHistory, type HistoryDirection } from "../navigationHistory";
 
 const SWIPE_TRIGGER_DISTANCE = 120;
@@ -88,12 +88,16 @@ export function isMomentumTail(deltas: readonly number[]): boolean {
   );
 }
 
-/** Two-finger horizontal trackpad swipes go back and forward, like a browser. */
+/**
+ * Two-finger horizontal trackpad swipes go back and forward, like a browser.
+ * macOS only: on Windows and Linux a mouse tilt wheel is indistinguishable from a trackpad swipe.
+ */
 export function HistorySwipeNavigation() {
   const [swipe, setSwipe] = useState<SwipeIndicatorState | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window wheel and desktop gesture listeners track trackpad swipes
   useEffect(() => {
+    if (!isMacPlatform(navigator.platform)) return;
     let gesture: SwipeGesture | null = null;
     const hideIndicator = () =>
       setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
