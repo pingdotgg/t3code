@@ -173,6 +173,17 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
   return { command: withArgs(`${call} ${subcommand}`), launcher: true };
 });
 
+/** A hint's command, run against the caller's `--base-dir` when one was given. */
+export const resolveHostCliHint = (
+  subcommand: string,
+  baseDir: Option.Option<string>,
+  args: ReadonlyArray<string> = [],
+) =>
+  resolveHostCliCommand(subcommand, [
+    ...Option.match(baseDir, { onNone: () => [], onSome: (dir) => ["--base-dir", dir] }),
+    ...args,
+  ]).pipe(Effect.map(({ command }) => command));
+
 /**
  * `sudo` resets PATH on most distributions, which drops a user-installed Node
  * (nvm, fnm, a tarball) and with it `npx` or a global `t3`, so the command
