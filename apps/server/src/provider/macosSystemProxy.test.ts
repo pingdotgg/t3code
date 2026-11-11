@@ -27,24 +27,28 @@ describe("parseScutilProxy", () => {
     assert.deepStrictEqual(parseScutilProxy(""), {});
   });
 
-  it.each(["192.168.0.0/16", "10.*"])(
-    "keeps the direct connection when the exceptions include %s, which npm cannot match",
-    (exception) => {
-      assert.deepStrictEqual(
-        parseScutilProxy(
-          dictionary(
-            "ExceptionsList : <array> {",
-            `  0 : ${exception}`,
-            "}",
-            "HTTPEnable : 1",
-            "HTTPPort : 3128",
-            "HTTPProxy : 10.0.0.1",
-          ),
-        ),
-        {},
-      );
+  it.each([
+    {
+      name: "an IP range exception",
+      lines: ["ExceptionsList : <array> {", "  0 : 192.168.0.0/16", "}"],
+      noProxy: "",
     },
-  );
+    {
+      name: "a wildcard IP exception",
+      lines: ["ExceptionsList : <array> {", "  0 : 10.*", "}"],
+      noProxy: "",
+    },
+    { name: "an IP range in NO_PROXY", lines: [], noProxy: "registry.corp,127.0.0.0/8" },
+    { name: "simple hostnames excluded", lines: ["ExcludeSimpleHostnames : 1"], noProxy: "" },
+  ])("keeps the direct connection with $name, which npm cannot match", ({ lines, noProxy }) => {
+    assert.deepStrictEqual(
+      parseScutilProxy(
+        dictionary(...lines, "HTTPEnable : 1", "HTTPPort : 3128", "HTTPProxy : 10.0.0.1"),
+        noProxy,
+      ),
+      {},
+    );
+  });
 
   it("reads only the top-level settings and merges exceptions into NO_PROXY", () => {
     assert.deepStrictEqual(

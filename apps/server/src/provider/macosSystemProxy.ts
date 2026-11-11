@@ -25,7 +25,7 @@ function toNoProxyEntry(exception: string): string {
 
 /**
  * npm matches NO_PROXY by hostname suffix and ignores IP ranges, so a bypassed
- * private registry would go through the proxy. Such lists keep main's direct connection.
+ * private registry would go through the proxy. Such bypass lists keep the direct connection.
  */
 function hasUnrepresentableException(exception: string): boolean {
   if (LINK_LOCAL_RANGE.test(exception)) return false;
@@ -62,14 +62,16 @@ export function parseScutilProxy(output: string, inheritedNoProxy = ""): Record<
 
   const http = proxyUrl(fields, "HTTP");
   const https = proxyUrl(fields, "HTTPS");
-  if ((!http && !https) || exceptions.some(hasUnrepresentableException)) {
+  const inherited = inheritedNoProxy.split(",").flatMap((entry) => entry.trim() || []);
+  if (
+    (!http && !https) ||
+    // npm cannot match dotless hosts either, so honouring this needs a direct connection.
+    fields.get("ExcludeSimpleHostnames") === "1" ||
+    [...inherited, ...exceptions].some(hasUnrepresentableException)
+  ) {
     return {};
   }
-  const noProxy = [
-    ...inheritedNoProxy.split(",").flatMap((entry) => entry.trim() || []),
-    ...LOOPBACK_NO_PROXY,
-    ...exceptions.map(toNoProxyEntry),
-  ].join(",");
+  const noProxy = [...inherited, ...LOOPBACK_NO_PROXY, ...exceptions.map(toNoProxyEntry)].join(",");
   return {
     ...(http ? { HTTP_PROXY: http, http_proxy: http } : {}),
     ...(https ? { HTTPS_PROXY: https, https_proxy: https } : {}),
