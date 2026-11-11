@@ -3388,7 +3388,7 @@ it.layer(
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
-            () => Effect.fail(new Cause.UnknownError("probe failed")),
+            () => Effect.fail(new Cause.TimeoutError("probe timed out")),
             { ANTHROPIC_BASE_URL: baseUrl },
           );
           assert.strictEqual(status.status, "warning");
