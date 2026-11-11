@@ -199,7 +199,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                       />
                     ) : null}
                     {show.branch || show.git ? (
-                      <div className="flex min-w-0 items-center">
+                      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center">
                         {show.branch ? (
                           <div className="min-w-0 flex-1">
                             <BranchToolbar
@@ -213,7 +213,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         {show.git && props.gitCwd ? (
                           <GitActionsControl
                             keybindings={props.keybindings}
-                            compact
                             displayMode="panel"
                             showActions={visible.gitActions}
                             showChanges={visible.changes}
