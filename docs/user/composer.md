@@ -18,8 +18,8 @@ The composer writes Markdown and shows it styled as you type. When your cursor
 is on styled text, its Markdown shows instead, such as `**bold**`, and the
 markers edit like any other text: delete them to remove the style, or change
 `**` to `*` for italic. The style updates when your cursor leaves. To write
-plain Markdown with no styling, turn off **Settings → Chat → Rich text
-composer**. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---`
+plain Markdown with no styling, list continuation, list nesting, or wrapping of
+selected text, turn off **Settings → Chat → Rich text composer**. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---`
 become lists, task lists, quotes, headings and rules; ` ``` ` followed by Enter
 opens a code block. What you typed is what the agent receives, markers and
 numbering included, and `#1234` without a space still looks up a pull request.
@@ -27,11 +27,6 @@ numbering included, and `#1234` without a space still looks up a pull request.
 Some styled text containing or touching literal Markdown characters, such as a
 bold `path\` or `2*3`, keeps its styling without showing markers. Use formatting
 shortcuts or turn off rich text to edit the formatting of those ranges.
-
-Turn off **Settings → Chat → Rich text composer** to write plain text without
-automatic formatting, list continuation or nesting, or wrapping selected text
-in formatting markers. Your **Send shortcut** still controls when Enter sends
-or starts a new line.
 
 Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
 on an empty line moves out one level, then leaves it; **Tab** nests a list item

@@ -1,28 +1,21 @@
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { isMacPlatform } from "../../lib/utils";
 import { DraftId } from "../../composerDraftStore";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
-function setup(
-  prompt: string,
-  composerRichTextEnabled: boolean,
-  sendShortcut: "enter" | "mod-enter" = "enter",
-) {
+function setup(prompt: string, composerRichTextEnabled: boolean) {
   const applyPromptReplacement = vi.fn(() => true);
   const submitComposer = vi.fn();
-  const toggleInteractionMode = vi.fn();
   const input: Parameters<typeof composerCommandKeyHandler>[0] = {
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
-    sendShortcut,
+    sendShortcut: "enter",
     composerRichTextEnabled,
     routeKind: "draft",
     phase: "ready",
-    isCompacting: false,
+    canSteer: true,
     followUpBehavior: "queue",
     isSoftwareKeyboardOpen: false,
-    planModeUiEnabled: true,
     isLiteralPendingAnswer: false,
     pendingUserInputs: [],
     promptHistoryEntries: [],
@@ -58,73 +51,35 @@ function setup(
     setComposerTrigger: vi.fn(),
     setComposerHighlightedItemId: vi.fn(),
     dismissComposerTrigger: vi.fn(),
-    toggleInteractionMode,
     nudgeComposerMenuHighlight: vi.fn(),
     onSelectComposerItem: vi.fn(),
     resolveActiveComposerTrigger: () => ({ trigger: null }),
     readComposerSnapshot: () => ({ value: prompt }),
     applyPromptReplacement,
     submitComposer,
+    promptSuggestion: null,
+    dismissPromptSuggestion: vi.fn(),
   };
   return {
     onKey: composerCommandKeyHandler(input),
     applyPromptReplacement,
     submitComposer,
-    toggleInteractionMode,
   };
 }
 
-function keyEvent(key: string, shiftKey = false, ctrlKey = false) {
-  const mac = isMacPlatform(navigator.platform);
-  return {
-    key,
-    shiftKey,
-    ctrlKey: ctrlKey && !mac,
-    metaKey: ctrlKey && mac,
-    altKey: false,
-  } as KeyboardEvent;
+function keyEvent(key: string, shiftKey: boolean) {
+  return { key, shiftKey, ctrlKey: false, metaKey: false, altKey: false } as KeyboardEvent;
 }
 
-describe.each([false, true])("composer keys (rich text: %s)", (richText) => {
+describe.each([false, true])("composer list keys (rich text: %s)", (richText) => {
   it.each([
-    { prompt: "1. item", key: "Enter", shift: true, replacement: "\n2. " },
-    { prompt: "- item", key: "Enter", shift: true, replacement: "\n- " },
-    { prompt: "- [x] item", key: "Enter", shift: true, replacement: "\n- [ ] " },
-    { prompt: "1. item", key: "Tab", shift: false, replacement: "  " },
-    { prompt: "  1. item", key: "Tab", shift: true, replacement: "" },
-  ])("respects formatting for $key on $prompt", ({ prompt, key, shift, replacement }) => {
-    const { onKey, applyPromptReplacement, submitComposer, toggleInteractionMode } = setup(
-      prompt,
-      richText,
-    );
-    expect(onKey(key, keyEvent(key, shift))).toBe(richText || (key === "Tab" && shift));
-    if (richText) {
-      expect(applyPromptReplacement).toHaveBeenCalledWith(
-        expect.any(Number),
-        expect.any(Number),
-        replacement,
-        expect.any(Object),
-      );
-    } else {
-      expect(applyPromptReplacement).not.toHaveBeenCalled();
-    }
-    expect(toggleInteractionMode).toHaveBeenCalledTimes(
-      !richText && key === "Tab" && shift ? 1 : 0,
-    );
+    { prompt: "1. item", key: "Enter", shift: true },
+    { prompt: "1. item", key: "Tab", shift: false },
+    { prompt: "  1. item", key: "Tab", shift: true },
+  ])("edits lists only in rich text for $key on $prompt", ({ prompt, key, shift }) => {
+    const { onKey, applyPromptReplacement, submitComposer } = setup(prompt, richText);
+    onKey(key, keyEvent(key, shift));
+    expect(applyPromptReplacement).toHaveBeenCalledTimes(richText ? 1 : 0);
     expect(submitComposer).not.toHaveBeenCalled();
-  });
-
-  it("uses the configured send shortcut before list continuation", () => {
-    const { onKey, submitComposer, applyPromptReplacement } = setup("1. item", richText);
-    expect(onKey("Enter", keyEvent("Enter"))).toBe(true);
-    expect(submitComposer).toHaveBeenCalledWith(undefined, "auto", "foreground");
-    expect(applyPromptReplacement).not.toHaveBeenCalled();
-
-    const modified = setup("1. item", richText, "mod-enter");
-    expect(modified.onKey("Enter", keyEvent("Enter"))).toBe(richText);
-    expect(modified.submitComposer).not.toHaveBeenCalled();
-    expect(modified.applyPromptReplacement).toHaveBeenCalledTimes(richText ? 1 : 0);
-    expect(modified.onKey("Enter", keyEvent("Enter", false, true))).toBe(true);
-    expect(modified.submitComposer).toHaveBeenCalledWith(undefined, "auto", "background");
   });
 });

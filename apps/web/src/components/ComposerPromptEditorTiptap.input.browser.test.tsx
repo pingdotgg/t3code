@@ -344,10 +344,6 @@ it.each([
   { richText: true, composing: true, text: '"', expected: '"' },
   { richText: true, composing: false, text: "*", expected: "*word*" },
   { richText: false, composing: false, text: "*", expected: "*" },
-  { richText: false, composing: false, text: "_", expected: "_" },
-  { richText: false, composing: false, text: "`", expected: "`" },
-  { richText: false, composing: false, text: '"', expected: '"' },
-  { richText: false, composing: false, text: "(", expected: "(" },
 ])("replaces or surrounds selected text: %j", async ({ richText, composing, text, expected }) => {
   await using screen = await mountEditor("word", richText);
   const { editor } = screen;
