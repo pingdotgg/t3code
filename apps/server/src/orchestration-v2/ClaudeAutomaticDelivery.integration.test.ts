@@ -580,13 +580,15 @@ it.effect("applies an effort change to the running Claude query without waiting 
 
         yield* orchestrator.dispatch({
           type: "thread.model-selection.set",
-          commandId: CommandId.make("xhigh"),
+          commandId: CommandId.make("medium"),
           threadId,
-          modelSelection: { ...modelSelection, options: [{ id: "effort", value: "xhigh" }] },
+          modelSelection: { ...modelSelection, options: [{ id: "effort", value: "medium" }] },
         });
         yield* worker.drain();
 
-        assert.deepEqual(flagSettings, [{ effortLevel: "xhigh", fastMode: null, ultracode: null }]);
+        assert.deepEqual(flagSettings, [
+          { effortLevel: "medium", fastMode: null, ultracode: null },
+        ]);
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(

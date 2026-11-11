@@ -4540,6 +4540,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
+    if (
+      command.type === "thread.model-selection.set" &&
+      providerSwitchPlan !== null &&
+      !providerSwitchPlan.instanceChanged &&
+      providerSwitchPlan.releaseProviderSessionIds.length === 0
+    ) {
+      const { providerThread, providerTurn } = yield* projectionStore
+        .getRunningTurnContext(command.threadId)
+        .pipe(mapDispatchError(command));
+      const providerSessionId = providerThread?.providerSessionId;
+      if (providerThread !== undefined && providerTurn !== undefined && providerSessionId) {
+        const session = yield* providerSessions.get(providerSessionId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+          ),
+        );
+        if (Option.isSome(session) && session.value.applyModelSelection !== undefined) {
+          yield* Ref.update(effects, (existing) => [
+            ...existing,
+            {
+              id: `effect:${command.commandId}:provider-session.apply-model-selection`,
+              commandId: command.commandId,
+              threadId: command.threadId,
+              request: {
+                type: "provider-session.apply-model-selection",
+                providerSessionId,
+                providerThreadId: providerThread.id,
+                modelSelection: command.modelSelection,
+              },
+            } satisfies PendingOrchestrationEffectV2,
+          ]);
+        }
+      }
+    }
+
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
         ...existing,
