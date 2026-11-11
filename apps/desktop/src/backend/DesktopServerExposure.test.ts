@@ -412,7 +412,11 @@ describe("DesktopServerExposure", () => {
   );
 
   describe("WSL primary", () => {
+    // Windows lists the Hyper-V switch WSL uses ahead of the physical adapter.
     const hostInterfaces = {
+      "vEthernet (Default Switch)": [
+        { address: "172.22.176.1", family: "IPv4" as const, internal: false },
+      ],
       ...lanNetworkInterfaces,
       tailscale0: [{ address: "100.90.1.2", family: "IPv4" as const, internal: false }],
     };
