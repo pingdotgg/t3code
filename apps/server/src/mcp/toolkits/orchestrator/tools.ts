@@ -323,7 +323,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   description:
-    "List linked environments (the user's other machines) and whether each answers now. Pass one's `environmentId` to a tool to act there; `delegate_task` takes `target.environmentId`. Expired: link it again with `t3_environment_link`. `devices` lists the user's own machines on their tailnet, linked or not, with what each may do (`revoked`: cut off everywhere).",
+    "List linked environments (the user's other machines) and whether each answers now. Pass one's `environmentId` to a tool to act there; `delegate_task` takes `target.environmentId`. Expired: link it again with `t3_environment_link`. `devices` lists the user's own machines on their tailnet, with what each may do in their network (`revoked`: cut off everywhere; null: found but not in the network, which only the user can add).",
   success: OrchestratorMcpEnvironmentLinksResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -365,7 +365,7 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
 
 const EnvironmentDeviceAccessTool = Tool.make("t3_environment_device_access", {
   description:
-    "Set what one of the user's own machines may do on all of their machines. `revoked` cuts it off everywhere: ends its sessions and refuses its handshakes. Any other level restores it.",
+    "Narrow what a machine in the user's network may do on all of their machines. `revoked` cuts it off everywhere: ends its sessions and refuses its handshakes. Only the user can widen or restore access, in Settings.",
   parameters: OrchestratorMcpEnvironmentDeviceAccessInput,
   success: OrchestratorMcpEnvironmentDeviceAccessResult,
   failure: OrchestratorMcpFailure,

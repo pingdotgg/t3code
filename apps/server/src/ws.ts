@@ -2810,7 +2810,7 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.tailnetDevicesList]: () => tailnetDevices.list,
         [WS_METHODS.tailnetDevicesSetAccess]: (input) =>
-          tailnetDevices.setAccess(input.environmentId, input.access),
+          tailnetDevices.setAccess(input.environmentId, input.access, "user"),
         [WS_METHODS.tailnetDevicesAdmit]: (input) =>
           tailnetDevices.admit(input.environmentId, input.access),
         [WS_METHODS.tailnetDevicesOpenDevice]: (input) =>

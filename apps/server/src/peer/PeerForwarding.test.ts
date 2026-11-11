@@ -279,9 +279,9 @@ const mcpClient = McpSchema.McpServerClient.of({
  */
 const makeLaptop = Effect.gen(function* () {
   const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
-  const accessSet = yield* Ref.make<ReadonlyArray<readonly [EnvironmentId, TailnetDeviceAccess]>>(
-    [],
-  );
+  const accessSet = yield* Ref.make<
+    ReadonlyArray<readonly [EnvironmentId, TailnetDeviceAccess, "user" | "agent"]>
+  >([]);
   const layerDevices = Layer.mock(TailnetDevices.TailnetDevices)({
     list: Effect.succeed({
       self: { environmentId: laptop.environmentId, label: laptop.label, urls: [] },
@@ -291,8 +291,8 @@ const makeLaptop = Effect.gen(function* () {
           environmentId: desk,
           label: "Desk",
           urls: [],
-          status: "revoked",
-          access: "revoked",
+          status: "online",
+          access: "full-access",
           member: null,
           localLimit: null,
           outgoing: null,
@@ -302,8 +302,8 @@ const makeLaptop = Effect.gen(function* () {
         },
       ],
     }),
-    setAccess: (environmentId, access) =>
-      Ref.update(accessSet, (seen) => [...seen, [environmentId, access] as const]).pipe(
+    setAccess: (environmentId, access, actor) =>
+      Ref.update(accessSet, (seen) => [...seen, [environmentId, access, actor] as const]).pipe(
         Effect.as({
           environmentId,
           label: "Desk",
@@ -441,21 +441,21 @@ it.effect("an agent here works on a linked environment's threads within its own 
           {
             environmentId: desk,
             label: "Desk",
-            status: "revoked",
-            access: "revoked",
+            status: "online",
+            access: "full-access",
             outgoing: null,
             incoming: false,
           },
         ],
       });
 
-      // A full-access agent here may restore one of the user's machines everywhere.
-      const restored = yield* a.call("thread:laptop-full", "t3_environment_device_access", {
+      // A full-access agent here may narrow one of the user's machines everywhere, as an agent.
+      const narrowed = yield* a.call("thread:laptop-full", "t3_environment_device_access", {
         environmentId: desk,
         access: "auto",
       });
-      expect(restored.structuredContent).toEqual({ environmentId: desk, access: "auto" });
-      expect(yield* Ref.get(a.accessSet)).toEqual([[desk, "auto"]]);
+      expect(narrowed.structuredContent).toEqual({ environmentId: desk, access: "auto" });
+      expect(yield* Ref.get(a.accessSet)).toEqual([[desk, "auto", "agent"]]);
 
       const threads = yield* a.call("thread:laptop-full", "t3_thread_list", {
         environmentId: box.environmentId,

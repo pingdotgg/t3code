@@ -242,7 +242,7 @@ export const layer = McpToolAccess.toLayer(
       t3_environment_device_access: McpToolAccess.writesEnvironment(({ environmentId, access }) =>
         Effect.gen(function* () {
           const devices = yield* TailnetDevices.TailnetDevices;
-          const entry = yield* devices.setAccess(environmentId, access).pipe(
+          const entry = yield* devices.setAccess(environmentId, access, "agent").pipe(
             Effect.mapError(
               (error) =>
                 new OrchestratorMcpFailure({

@@ -149,6 +149,17 @@ const clientScopesFor = (access: AuthMcpClientAccess): ReadonlyArray<AuthGrantSc
 
 const isGrantScope = Schema.is(AuthGrantScope);
 
+const ACCESS_RANK: ReadonlyArray<TailnetDeviceAccess> = [
+  "revoked",
+  "read-only",
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+];
+const widens = (from: TailnetDeviceAccess, to: TailnetDeviceAccess) =>
+  ACCESS_RANK.indexOf(to) > ACCESS_RANK.indexOf(from);
+
 /** A zero stamp loses to every real write, so a seed only fills a gap. */
 const seedStamp = (node: EnvironmentId) => ({ wallMs: 0, counter: 0, node });
 
@@ -182,11 +193,13 @@ export class TailnetDevices extends Context.Service<
     ) => Effect.Effect<NetworkMember, TailnetDevicesError>;
     /**
      * Sets what a member may do on every machine in the network. `revoked` ends its sessions and
-     * refuses its handshakes; any other level restores it. Only a full-access member may.
+     * refuses its handshakes; any other level restores it. Only a full-access member may, and an
+     * agent may only narrow: widening or restoring is the user's call.
      */
     readonly setAccess: (
       environmentId: EnvironmentId,
       access: TailnetDeviceAccess,
+      actor: "user" | "agent",
     ) => Effect.Effect<NetworkMember, TailnetDevicesError>;
     /**
      * Links a member directly, from its id or an address. Nothing for a machine that is not a
@@ -276,7 +289,7 @@ const make = Effect.gen(function* () {
   });
 
   const setAccess: TailnetDevices["Service"]["setAccess"] = Effect.fn("TailnetDevices.setAccess")(
-    function* (environmentId, access) {
+    function* (environmentId, access, actor) {
       if (environmentId === (yield* environment.getEnvironmentId)) {
         return yield* new TailnetDevicesError({
           reason: "self",
@@ -289,6 +302,12 @@ const make = Effect.gen(function* () {
         return yield* new TailnetDevicesError({
           reason: "unknown_device",
           message: "That machine is not in the network. Add it first.",
+        });
+      }
+      if (actor === "agent" && widens(existing.value.access, access)) {
+        return yield* new TailnetDevicesError({
+          reason: "forbidden",
+          message: `Only the user can widen ${existing.value.label}'s access. Ask them to change it in Settings, Connections.`,
         });
       }
       const entry = yield* membership.put({ ...existing.value, access });

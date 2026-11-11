@@ -630,7 +630,7 @@ describe("tailnet scan", () => {
       expect(yield* Ref.get(b.descriptorReads)).toBe(1);
 
       yield* Ref.set(b.descriptorReads, 0);
-      yield* a.devices.setAccess(studio.environmentId, "auto");
+      yield* a.devices.setAccess(studio.environmentId, "auto", "user");
       expect(yield* Ref.get(b.descriptorReads)).toBe(1);
     }),
   );
@@ -693,7 +693,7 @@ describe("tailnet device access", () => {
       const { token } = yield* b.links.resolve(laptop.environmentId);
       expect((yield* a.authenticate(token)).access).toBe("full-access");
 
-      yield* a.devices.setAccess(studio.environmentId, "read-only");
+      yield* a.devices.setAccess(studio.environmentId, "read-only", "user");
 
       expect((yield* a.authenticate(token)).access).toBe("read-only");
     }),
@@ -704,7 +704,7 @@ describe("tailnet device access", () => {
       const { a, b, c } = yield* threeDevices;
       const { token } = yield* c.links.resolve(studio.environmentId);
 
-      yield* a.devices.setAccess(box.environmentId, "revoked");
+      yield* a.devices.setAccess(box.environmentId, "revoked", "user");
 
       for (const device of [a, b]) {
         expect(yield* device.membership.accessOf(box.environmentId)).toEqual(
@@ -734,7 +734,7 @@ describe("tailnet device access", () => {
     Effect.gen(function* () {
       const { a, b, c } = yield* threeDevices;
       const { token } = yield* c.links.resolve(studio.environmentId);
-      yield* a.devices.setAccess(box.environmentId, "revoked");
+      yield* a.devices.setAccess(box.environmentId, "revoked", "user");
       const selfRestore = {
         environmentId: box.environmentId,
         label: "Box",
@@ -749,7 +749,7 @@ describe("tailnet device access", () => {
         members: [selfRestore],
       }).pipe(Effect.flip);
       expect(
-        yield* b.devices.setAccess(studio.environmentId, "full-access").pipe(Effect.flip),
+        yield* b.devices.setAccess(studio.environmentId, "full-access", "user").pipe(Effect.flip),
       ).toMatchObject({ reason: "self" });
 
       expect(refused._tag).toBe("TailnetDevicesUnauthorizedError");
@@ -760,11 +760,11 @@ describe("tailnet device access", () => {
   it.live("a machine below full access can neither change the roster nor be followed", () =>
     Effect.gen(function* () {
       const { a, b } = yield* threeDevices;
-      yield* b.devices.setAccess(laptop.environmentId, "read-only");
+      yield* b.devices.setAccess(laptop.environmentId, "read-only", "user");
 
       // The laptop learned it was narrowed, so it refuses to change anything itself.
       expect(
-        yield* a.devices.setAccess(box.environmentId, "revoked").pipe(Effect.flip),
+        yield* a.devices.setAccess(box.environmentId, "revoked", "user").pipe(Effect.flip),
       ).toMatchObject({ reason: "forbidden" });
       // And a write it relays anyway is ignored.
       const { token } = yield* a.links.resolve(studio.environmentId);
@@ -789,9 +789,13 @@ describe("tailnet device access", () => {
   it.live("restoring a revoked device lets it link again", () =>
     Effect.gen(function* () {
       const { a, b, c } = yield* threeDevices;
-      yield* a.devices.setAccess(box.environmentId, "revoked");
+      yield* a.devices.setAccess(box.environmentId, "revoked", "user");
+      // Restoring is the user's call; an agent may only narrow.
+      expect(
+        yield* b.devices.setAccess(box.environmentId, "read-only", "agent").pipe(Effect.flip),
+      ).toMatchObject({ reason: "forbidden" });
 
-      yield* b.devices.setAccess(box.environmentId, "full-access");
+      yield* b.devices.setAccess(box.environmentId, "full-access", "user");
 
       expect(yield* a.membership.accessOf(box.environmentId)).toEqual(Option.some("full-access"));
       const linked = yield* c.devices.linkIfMine({ url: a.url });
@@ -878,8 +882,8 @@ describe("opening a device from the app", () => {
 
       const full = yield* a.devices.openDevice(studio.environmentId, app);
       expect([full.environmentId, full.urls]).toEqual([studio.environmentId, [b.url]]);
-      yield* a.devices.setAccess(laptop.environmentId, "read-only").pipe(Effect.ignore);
-      yield* b.devices.setAccess(laptop.environmentId, "read-only");
+      yield* a.devices.setAccess(laptop.environmentId, "read-only", "user").pipe(Effect.ignore);
+      yield* b.devices.setAccess(laptop.environmentId, "read-only", "user");
       yield* a.devices.openDevice(studio.environmentId, app);
 
       expect((yield* b.pairingLinks).map((link) => link.permissions?.toSorted())).toEqual([
@@ -921,7 +925,7 @@ describe("opening a device from the app", () => {
       yield* tailnet.join(b.url);
       yield* admit(tailnet, a, b);
       const paired = yield* b.issueLinkSession(laptop.environmentId, "full-access");
-      yield* b.devices.setAccess(laptop.environmentId, "revoked");
+      yield* b.devices.setAccess(laptop.environmentId, "revoked", "user");
 
       const refused = yield* a.devices
         .openDevice(studio.environmentId, { scopes: AuthStandardClientScopes })
