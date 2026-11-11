@@ -753,8 +753,8 @@ describe("desktop-local startup bearer exchange", () => {
                         yield* Deferred.succeed(freshAttempt, credential.token);
                         return yield* Effect.never;
                       }),
-                    checkRoute: () => Effect.succeed("unchecked"),
-                    preflight: () => Effect.succeed(false),
+                    preflight: () => Effect.succeed("unchecked"),
+                    checkHost: () => Effect.succeed("unchecked"),
                   });
                 }),
               ),

@@ -714,7 +714,7 @@ export const layerPlatformConnectionSource = Layer.effect(
                   cached.registration.target.connectionId,
                   cached.registration.credential,
                 )
-                .pipe(Effect.orElseSucceed(() => undefined)) ?? Effect.succeed(undefined)
+                .pipe(Effect.orElseSucceed(() => undefined)) ?? Effect.undefined
             );
             if (invalidated) {
               cached = { ...cached, stale: true };
