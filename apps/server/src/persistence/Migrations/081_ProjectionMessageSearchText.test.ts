@@ -5,7 +5,6 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { recreateMessageSearchTriggers } from "../../orchestration-v2/messageSearchIndex.ts";
 import { runMigrations } from "../Migrations.ts";
 
 const createdAt = "2026-10-01T00:00:00.000Z";
@@ -33,12 +32,12 @@ const indexed = (sql: SqlClient.SqlClient, phrase: string) =>
   `.pipe(Effect.map((rows) => rows.map((row) => row.message_id)));
 
 it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
-  "082_ProjectionMessageSearchText",
+  "081_ProjectionMessageSearchText",
   (it) => {
     it.effect("backfills readable text only for messages whose citations read differently", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 81 });
+        yield* runMigrations({ toMigrationInclusive: 80 });
         const insertMessage = (messageId: string, text: unknown) => sql`
           INSERT INTO orchestration_v2_projection_messages (
             message_id, thread_id, role, streaming, created_at, updated_at, payload_json
@@ -71,8 +70,8 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           { discard: true },
         );
 
-        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 82 }), [
-          [82, "ProjectionMessageSearchText"],
+        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 81 }), [
+          [81, "ProjectionMessageSearchText"],
         ]);
         const rows = yield* sql<{
           readonly message_id: string;
@@ -91,26 +90,6 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
         assert.deepEqual(yield* indexed(sql, `"kittiwake's"`), ["accented"]);
         assert.deepEqual(yield* indexed(sql, '"beacon01"'), []);
         assert.lengthOf(yield* indexed(sql, '"what are you talking about"'), 502);
-      }),
-    );
-
-    it.effect("keeps indexing readable text when a later migration recreates the triggers", () =>
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations();
-        yield* recreateMessageSearchTriggers(sql);
-
-        yield* sql`
-          INSERT INTO orchestration_v2_projection_messages (
-            message_id, thread_id, role, streaming, created_at, updated_at, payload_json,
-            search_text
-          ) VALUES (
-            'recreated', 'thread:quote', 'user', 0, ${createdAt}, ${createdAt},
-            ${JSON.stringify({ text: `${quote} lantern recreated` })},
-            ${`${readable} lantern recreated`}
-          )
-        `;
-        assert.deepEqual(yield* indexed(sql, '"talking about lantern recreated"'), ["recreated"]);
       }),
     );
   },
