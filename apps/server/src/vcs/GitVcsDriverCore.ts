@@ -3162,7 +3162,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return stdout.trim();
   });
 
-  // `unavailable` says why the untracked files could not be indexed.
   const prepareUntrackedReviewIndexOrReason = Effect.fn("prepareUntrackedReviewIndex")(function* (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
@@ -3285,8 +3284,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       roots.length <= 128 && roots.reduce((length, root) => length + root.length + 16, 0) < 8_000
         ? roots.map((root) => `:(top,literal)${root}`)
         : [];
-    // Until the retry time, the same untracked roots get the remembered failure without a scan;
-    // different roots (files added or removed at status level) scan again at once.
+    // Changed untracked roots skip the backoff and scan again.
     const rootsKey = roots.join("\0");
     const remembered = untrackedTotalsFailures.get(cwd);
     if (
@@ -3305,7 +3303,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const untracked = yield* prepareUntrackedReviewIndexOrReason(cwd, pathspecs);
     if ("unavailable" in untracked) {
       const count = remembered?.roots === rootsKey ? remembered.count + 1 : 1;
-      // Bounded like the remote refresh failures: the oldest folder is forgotten first.
       untrackedTotalsFailures.delete(cwd);
       untrackedTotalsFailures.set(cwd, {
         roots: rootsKey,
