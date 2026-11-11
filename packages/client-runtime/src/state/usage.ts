@@ -36,15 +36,15 @@ export function threadUsageSummaryInput(input: {
   readonly now?: DateTime.Utc;
 }): UsageSummaryInput | null {
   if (input.capabilities?.usageThreadFilter !== true) return null;
-  const { untilDay, timeZone } = makeWindow(
+  const { untilDay: today, timeZone } = makeWindow(
     1,
     input.now === undefined ? undefined : DateTime.toDateUtc(input.now),
   );
   const createdDay = makeWindow(1, DateTime.toDateUtc(input.createdAt)).untilDay;
   return {
+    sinceDay: createdDay,
     // A viewer whose clock trails the server's can see a thread created "tomorrow".
-    sinceDay: createdDay < untilDay ? createdDay : untilDay,
-    untilDay,
+    untilDay: createdDay < today ? today : createdDay,
     timeZone,
     threadId: input.threadId,
   };

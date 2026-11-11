@@ -234,14 +234,15 @@ describe("threadUsageSummaryInput", () => {
     ).toBeNull();
   });
 
-  it("never opens a window that starts after it ends", () => {
-    const input = threadUsageSummaryInput({
-      threadId,
-      createdAt,
-      capabilities,
-      now: DateTime.makeUnsafe("2026-09-01T12:00:00Z"),
-    });
-    expect(input).toMatchObject({ sinceDay: input?.untilDay });
+  it("keeps the creation day in the window when the viewer's clock trails the server's", () => {
+    expect(
+      threadUsageSummaryInput({
+        threadId,
+        createdAt,
+        capabilities,
+        now: DateTime.makeUnsafe("2026-09-01T12:00:00Z"),
+      }),
+    ).toMatchObject({ sinceDay: "2026-09-03", untilDay: "2026-09-03" });
   });
 });
 
