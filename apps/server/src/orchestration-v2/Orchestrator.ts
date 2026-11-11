@@ -4260,7 +4260,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     Date.parse(thread.limitRecovery.resetAt)
                 ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
                 : {}),
-            ...(command.branch === undefined ? {} : { branch: command.branch }),
+            ...(command.branch === undefined || command.branch === thread.branch
+              ? {}
+              : { branch: command.branch, branchPullRequest: null }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
             ...(command.linkedPullRequest === undefined
               ? {}

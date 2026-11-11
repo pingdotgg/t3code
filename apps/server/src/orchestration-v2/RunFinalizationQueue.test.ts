@@ -1,9 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import { CheckpointScopeId, CommandId, GitCommandError, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as ProjectService from "../project/ProjectService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -48,6 +50,8 @@ it.effect.each([
     Layer.provide(
       Layer.mergeAll(
         projections,
+        Layer.mock(ProjectService.ProjectService)({}),
+        FileSystem.layerNoop({}),
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
         Layer.mock(PullRequestService.PullRequestService)({ refreshAfterTurn: () => Effect.void }),
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
@@ -70,6 +74,7 @@ it.effect.each([
       Layer.mergeAll(
         projections,
         observer,
+        Layer.mock(ThreadManagement.ThreadManagementService)({}),
         Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
           execute: () =>
             Effect.gen(function* () {
