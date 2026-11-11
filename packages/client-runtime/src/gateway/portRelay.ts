@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   type GatewayScope,
   NETWORK_ACCESS_CEILING,
+  type TailnetDevicesSnapshot,
   toMcpGatewayRelayJson,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -11,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { EnvironmentRegistry } from "../connection/registry.ts";
-import { request, subscribeDynamicWithSession } from "../rpc/client.ts";
+import { request, subscribe, subscribeDynamicWithSession } from "../rpc/client.ts";
 import { GATEWAY_PORT_METHODS, type GatewayGrants } from "./bridgeClient.ts";
 import type { GatewayEnvironmentSummary, GatewayRuntimePort } from "./port.ts";
 import { type ModeLimit, withinModes } from "./portModes.ts";
@@ -86,74 +87,78 @@ export function serveGatewayPortRelays<R>(
   onFailure: (error: unknown) => void,
 ) {
   const abort = new AbortController();
+  const rosters = new Map<string, TailnetDevicesSnapshot>();
   for (const id of Object.keys(grants)) {
     const serve = Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry;
       const runResponse = Effect.runPromiseWith(yield* Effect.context<never>());
-      // The target's roster is read per call, so a revoke there applies even while the calling
-      // machine's own copy is stale. A target in a network that cannot say lets it do nothing.
-      const rosterCap = (target: string) =>
-        target === id
-          ? Promise.resolve(undefined)
-          : runResponse(
-              registry
-                .run(EnvironmentId.make(target), request(WS_METHODS.tailnetDevicesList, {}))
-                .pipe(
-                  Effect.map((snapshot): ReadonlyArray<GatewayScope> | undefined => {
-                    const access = snapshot.devices.find(
-                      (device) => device.environmentId === id,
-                    )?.access;
-                    return access
-                      ? NETWORK_ACCESS_CEILING[access].gateway
-                      : snapshot.selfMember === null
-                        ? undefined
-                        : [];
-                  }),
-                  Effect.orElseSucceed(() => []),
-                ),
-            );
-      yield* registry
-        .followStream(
-          EnvironmentId.make(id),
-          subscribeDynamicWithSession(WS_METHODS.mcpGatewayConnect, () =>
-            Effect.succeed({ grants }),
-          ),
-        )
-        .pipe(
-          Stream.runForEach(([session, event]) =>
-            Effect.sync(() => {
-              // Calls run concurrently; a slow handoff must not hold up a listing.
-              void answerGatewayPortCall(
-                port,
-                grants,
-                event.method,
-                event.args,
-                event.modeCeiling,
-                rosterCap,
-              )
-                .then((result) => {
-                  const json = toMcpGatewayRelayJson(result);
-                  return json === undefined ? {} : { result: json };
-                })
-                .catch((error: unknown) => ({
-                  error: error instanceof Error ? error.message : String(error),
-                }))
-                .then((outcome) =>
-                  runResponse(
-                    session.client[WS_METHODS.mcpGatewayRespond]({
-                      connectionId: event.connectionId,
-                      invocationId: event.invocationId,
-                      ...outcome,
-                    }),
-                  ),
-                )
-                .catch((error) => {
-                  if (!abort.signal.aborted) onFailure(error);
-                });
+      // The target's own roster, pushed by it, caps each call, so a narrowing or revoke there
+      // applies even while the calling machine's copy is stale. A caller it does not list keeps
+      // the grant; a roster that cannot be read lets it do nothing.
+      const rosterCap = (target: string) => {
+        if (target === id) return Promise.resolve(undefined);
+        const held = rosters.get(target);
+        return runResponse(
+          (held === undefined
+            ? registry.run(EnvironmentId.make(target), request(WS_METHODS.tailnetDevicesList, {}))
+            : Effect.succeed(held)
+          ).pipe(
+            Effect.map((snapshot): ReadonlyArray<GatewayScope> | undefined => {
+              const access = snapshot.devices.find((device) => device.environmentId === id)?.access;
+              return access ? NETWORK_ACCESS_CEILING[access].gateway : undefined;
             }),
+            Effect.orElseSucceed(() => []),
           ),
         );
-    });
+      };
+      const relays = registry.followStream(
+        EnvironmentId.make(id),
+        subscribeDynamicWithSession(WS_METHODS.mcpGatewayConnect, () => Effect.succeed({ grants })),
+      );
+      // A target that cannot push its roster is read on each call instead.
+      yield* registry
+        .followStream(EnvironmentId.make(id), subscribe(WS_METHODS.subscribeTailnetDevices, {}))
+        .pipe(
+          Stream.runForEach((snapshot) => Effect.sync(() => rosters.set(id, snapshot))),
+          Effect.ensuring(Effect.sync(() => rosters.delete(id))),
+          Effect.ignore,
+          Effect.forkScoped,
+        );
+      yield* relays.pipe(
+        Stream.runForEach(([session, event]) =>
+          Effect.sync(() => {
+            // Calls run concurrently; a slow handoff must not hold up a listing.
+            void answerGatewayPortCall(
+              port,
+              grants,
+              event.method,
+              event.args,
+              event.modeCeiling,
+              rosterCap,
+            )
+              .then((result) => {
+                const json = toMcpGatewayRelayJson(result);
+                return json === undefined ? {} : { result: json };
+              })
+              .catch((error: unknown) => ({
+                error: error instanceof Error ? error.message : String(error),
+              }))
+              .then((outcome) =>
+                runResponse(
+                  session.client[WS_METHODS.mcpGatewayRespond]({
+                    connectionId: event.connectionId,
+                    invocationId: event.invocationId,
+                    ...outcome,
+                  }),
+                ),
+              )
+              .catch((error) => {
+                if (!abort.signal.aborted) onFailure(error);
+              });
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped);
     // A failed subscription is reported and replaced; otherwise this environment's agents lose
     // every other granted environment until the gateway is restarted.
     const supervised = Effect.sandbox(serve).pipe(
