@@ -10,7 +10,7 @@ import {
   sessionGrantsScope,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { Check, Copy } from "lucide";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { Atom } from "effect/reactivity";
 import * as Result from "effect/Result";
 import { type ReactNode, useState } from "react";
@@ -26,7 +26,6 @@ import { peerLinkEnvironment } from "~/state/peerLinks";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope, useEnvironmentSessionState } from "~/state/session";
 import { CommandBlock } from "../CommandBlock";
-import { MorphIcon } from "../MorphIcon";
 import { AccessOption, accessConfig } from "../auth/ConnectAgentSurface";
 import { useAccessEnvironment } from "../settings/useAccessEnvironment";
 import { Button } from "../ui/button";
@@ -488,7 +487,7 @@ function CopyRow({ label, value }: { readonly label: string; readonly value: str
         aria-label={`Copy ${label}`}
         onClick={() => copyToClipboard(value, undefined)}
       >
-        <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+        {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       </Button>
     </div>
   );

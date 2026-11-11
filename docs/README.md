@@ -63,6 +63,7 @@ source alone does not explain. Most code changes do not need an internal documen
 ### Runbooks
 
 - [Development and local builds](./operations/development.md)
+- [Scenarios: real-app proof for a fix](./operations/scenarios.md)
 - [Release](./operations/release.md)
 - [Headless Linux host for the fork](./operations/headless-linux.md)
 - [Observability](./operations/observability.md)
