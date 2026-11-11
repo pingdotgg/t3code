@@ -16,7 +16,7 @@ export function usePullRequestFileFilter(
   parsed: ReviewParsedDiff,
   viewed: ReturnType<typeof usePullRequestFilesViewed>,
   includePath?: string,
-  draftPaths: readonly string[] = [],
+  keptPaths: readonly string[] = [],
 ) {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -31,7 +31,7 @@ export function usePullRequestFileFilter(
     withoutTests,
     (path) => viewed.supported && viewed.isViewed(path),
     // Files marked here stay until the screen closes, so marking one never pulls it out from under you.
-    (path) => path === includePath || draftPaths.includes(path) || viewed.toggledHere(path),
+    (path) => path === includePath || keptPaths.includes(path) || viewed.toggledHere(path),
   );
   const hiddenViewedPaths = hideViewedFiles ? hidden : [];
   // A string key keeps the same diff object while the hidden set holds, so native rows aren't rebuilt.

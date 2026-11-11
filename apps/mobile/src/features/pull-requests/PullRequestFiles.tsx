@@ -30,6 +30,7 @@ import {
 } from "./usePullRequestDiff";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
+import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { pullRequestFileJumpScope, requestPullRequestFileJump } from "./pullRequestFileJump";
 
 const BREAKDOWN_LABELS = {
@@ -54,7 +55,13 @@ function useChangedFiles(params: PullRequestDiffParams) {
   ).changeRequest;
   const diff = usePullRequestDiff(params, terminology);
   const viewed = usePullRequestFilesViewed(params, pr);
-  const filter = usePullRequestFileFilter(diff.parsed, viewed);
+  const reviewDraft = usePullRequestReviewDraft(params);
+  const filter = usePullRequestFileFilter(
+    diff.parsed,
+    viewed,
+    undefined,
+    reviewDraft.draft.comments.map((comment) => comment.path),
+  );
   const parsed = filter.parsed;
   return {
     diff,

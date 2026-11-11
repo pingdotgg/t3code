@@ -986,11 +986,15 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       : undefined;
   const viewed = usePullRequestFilesViewed(route.params, commit ? null : detail.data);
   const reviewDraft = usePullRequestReviewDraft(route.params);
+  const [pickedPath, setJumpPath] = useState<string | null>(null);
   const filter = usePullRequestFileFilter(
     result.parsed,
     viewed,
     linkPath ?? (route.params.path || undefined),
-    reviewDraft.draft.comments.map((comment) => comment.path),
+    [
+      ...reviewDraft.draft.comments.map((comment) => comment.path),
+      ...(pickedPath ? [pickedPath] : []),
+    ],
   );
   const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
@@ -1060,7 +1064,6 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       code: row.content ?? "",
     });
   };
-  const [pickedPath, setJumpPath] = useState<string | null>(null);
   const jumpPath = pickedPath ?? linkPath ?? route.params.path;
   const requestedFile =
     result.parsed.kind === "files"

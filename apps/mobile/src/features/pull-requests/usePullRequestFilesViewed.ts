@@ -25,6 +25,9 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
   const refresh = useAtomRefresh(composerPullRequests.filesViewed(target));
   const write = useAtomCommand(composerPullRequests.setFilesViewed, { reportFailure: false });
   const [state, setState] = useState<ViewedState>({ key: scopeKey, presses: {}, error: null });
+  // Kept apart from `presses`, which a failed write clears, so a file marked here stays listed.
+  const [marked, setMarked] = useState({ key: scopeKey, paths: new Set<string>() });
+  const markedPaths = marked.key === scopeKey ? marked.paths : null;
   const presses = state.key === scopeKey ? state.presses : {};
   const error = state.key === scopeKey ? state.error : null;
   const overlay = viewedOverlay(presses, query.data);
@@ -39,6 +42,10 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
     if (!supported || !allowed || !query.data) return;
     const viewed = !isViewed(path);
     const version = (presses[path]?.version ?? 0) + 1;
+    setMarked((current) => ({
+      key: scopeKey,
+      paths: new Set(current.key === scopeKey ? current.paths : []).add(path),
+    }));
     update((current) => ({
       ...current,
       error: null,
@@ -78,7 +85,7 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
     supported,
     canToggle: supported && allowed && Boolean(query.data),
     isViewed,
-    toggledHere: (path: string) => Object.hasOwn(presses, path),
+    toggledHere: (path: string) => markedPaths?.has(path) === true,
     toggle,
     error: error ?? query.error,
     truncated: query.data?.truncated,
