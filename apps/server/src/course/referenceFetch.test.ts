@@ -2,6 +2,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeFSP from "node:fs/promises";
+import { EventEmitter } from "node:events";
 import {
   checkedDispatcher,
   encodeGrayscalePng,
@@ -50,6 +51,13 @@ describe("course reference fetch", () => {
       });
       assert.strictEqual(connected, "93.184.216.34");
       assert.strictEqual(calls, 1);
+      const optionsSymbol = Object.getOwnPropertySymbols(checked.dispatcher!).find(
+        (symbol) => symbol.description === "options",
+      );
+      const options = Reflect.get(checked.dispatcher!, optionsSymbol!) as {
+        connect: { lookup: unknown };
+      };
+      assert.strictEqual(options.connect.lookup, checked.connectLookup);
       await checked.dispatcher?.close();
     }),
   );
@@ -215,5 +223,67 @@ describe("course reference fetch", () => {
       result.pages.reduce((sum, page) => sum + page.text.length, 0),
       20_000,
     );
+  });
+
+  it("processes only the requested PDF pages", async () => {
+    const pdf = Buffer.from(
+      "%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n" +
+        "2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj\n" +
+        "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 5 0 R >> endobj\n" +
+        "4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 6 0 R >> endobj\n" +
+        "5 0 obj << /Length 22 >> stream\nBT (page one) Tj ET\nendstream endobj\n" +
+        "6 0 obj << /Length 22 >> stream\nBT (page two) Tj ET\nendstream endobj\n" +
+        "trailer << /Root 1 0 R /Size 7 >>\n%%EOF",
+    );
+    const result = await extractPdf(pdf, [1]);
+    assert.deepStrictEqual(
+      result.pages.map((page) => page.page),
+      [1],
+    );
+  });
+
+  it("kills an over-sized PDF worker", async () => {
+    const child = new EventEmitter() as any;
+    child.pid = 42;
+    child.exitCode = null;
+    child.killed = false;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = { end: () => undefined };
+    child.kill = () => {
+      child.killed = true;
+      child.exitCode = null;
+      queueMicrotask(() => child.emit("close", null));
+      return true;
+    };
+    const spawn = (() => child) as never;
+    const failure = await extractPdf(new Uint8Array(), [1], spawn, {
+      rssLimitBytes: 1,
+      readRss: async () => 2,
+      pollMs: 1,
+      timeoutMs: 10_000,
+    }).catch((error) => error);
+    assert.include(String(failure), "PDF too large or slow to read");
+  });
+
+  it("kills a PDF worker after the timeout", async () => {
+    const child = new EventEmitter() as any;
+    child.pid = 43;
+    child.exitCode = null;
+    child.killed = false;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = { end: () => undefined };
+    child.kill = () => {
+      child.killed = true;
+      queueMicrotask(() => child.emit("close", null));
+      return true;
+    };
+    const failure = await extractPdf(new Uint8Array(), [1], (() => child) as never, {
+      timeoutMs: 1,
+      pollMs: 1000,
+      readRss: async () => undefined,
+    }).catch((error) => error);
+    assert.include(String(failure), "PDF too large or slow to read");
   });
 });

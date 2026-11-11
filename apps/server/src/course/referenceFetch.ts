@@ -155,6 +155,12 @@ const runPdfWorker = async (
   bytes: Uint8Array,
   requested: ReadonlyArray<number>,
   spawnImpl: typeof nodeSpawn = nodeSpawn,
+  limits: {
+    readonly timeoutMs?: number;
+    readonly rssLimitBytes?: number;
+    readonly pollMs?: number;
+    readonly readRss?: (pid: number) => Promise<number | undefined>;
+  } = {},
 ) => {
   const args = import.meta.url.endsWith(".ts")
     ? ["--experimental-strip-types", workerScript()]
@@ -172,12 +178,12 @@ const runPdfWorker = async (
       child.kill("SIGKILL");
     }
   };
-  const timer = setTimeout(kill, PDF_TIMEOUT_MS);
+  const timer = setTimeout(kill, limits.timeoutMs ?? PDF_TIMEOUT_MS);
   const rssTimer = setInterval(() => {
-    void childRssBytes(child.pid ?? 0).then((rss) => {
-      if (rss !== undefined && rss > 1.5 * 1024 * 1024 * 1024) kill();
+    void (limits.readRss?.(child.pid ?? 0) ?? childRssBytes(child.pid ?? 0)).then((rss) => {
+      if (rss !== undefined && rss > (limits.rssLimitBytes ?? 1.5 * 1024 * 1024 * 1024)) kill();
     });
-  }, 200);
+  }, limits.pollMs ?? 200);
   try {
     const code = await new Promise<number | null>((resolve, reject) => {
       child.once("error", reject);
