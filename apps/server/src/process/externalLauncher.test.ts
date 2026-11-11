@@ -200,6 +200,7 @@ it.effect.skipIf(windowsHost)(
             onSpawn: (command) => spawned.push(command),
           }),
         ),
+        Effect.provideService(HostProcess.Environment, { PATH: binDir, DISPLAY: ":0" }),
       );
 
       assert.deepEqual(
