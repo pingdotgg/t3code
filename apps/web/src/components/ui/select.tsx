@@ -128,7 +128,8 @@ function SelectPopup({
         sideOffset={sideOffset}
       >
         <SelectPrimitive.Popup
-          className="origin-(--transform-origin) rounded-lg text-foreground outline-none"
+          // Electron drag hit-testing ignores z-index; items over a drag region would swallow clicks.
+          className="origin-(--transform-origin) rounded-lg text-foreground outline-none [-webkit-app-region:no-drag]"
           data-slot="select-popup"
           {...props}
         >
