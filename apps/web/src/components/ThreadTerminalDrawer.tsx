@@ -97,6 +97,7 @@ import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import {
   consumePendingTerminalFocus,
   focusTerminal,
@@ -590,6 +591,10 @@ function TerminalSessionViewport({
   const selectionActionRequestIdRef = useRef(0);
   const openSelectionMenuRequestIdRef = useRef<number | null>(null);
   const readKeybindings = useEffectEvent(() => keybindings);
+  const readPreviewOpen = useEffectEvent(
+    () =>
+      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, threadRef) === "preview",
+  );
   const handleSessionExited = useEffectEvent(() => {
     if (hasTerminalWriteAccess()) onSessionExited();
   });
@@ -1012,7 +1017,13 @@ function TerminalSessionViewport({
           isTerminalSplitVerticalShortcut(event, currentKeybindings, options) ||
           isTerminalNewShortcut(event, currentKeybindings, options) ||
           isDiffToggleShortcut(event, currentKeybindings, options) ||
-          isThreadNavigationShortcut(event, currentKeybindings, options)
+          // Match Sidebar's context, or a key it will reject skips the shell.
+          isThreadNavigationShortcut(event, currentKeybindings, {
+            context: {
+              ...options.context,
+              previewOpen: readPreviewOpen(),
+            },
+          })
         ) {
           return false;
         }

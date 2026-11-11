@@ -4,11 +4,13 @@ import {
   ThreadId,
   type ScopedThreadRef,
   type FilesystemEntryMetadata,
+  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { compileResolvedKeybindingsConfig, DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { Atom, AsyncResult } from "effect/reactivity";
 import type { GhosttyTerminalSurfaceOptions } from "~/terminal/ghostty/surface";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
+import { useRightPanelStore } from "../rightPanelStore";
 import { extractTerminalLinks } from "../terminal-links";
 import { expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../test/render";
@@ -111,7 +113,7 @@ function Drawer(props: {
   threadRef: ScopedThreadRef;
   cwd?: string;
   onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
-  keybindings?: typeof DEFAULT_RESOLVED_KEYBINDINGS;
+  keybindings?: ResolvedKeybindingsConfig;
 }) {
   return (
     <ThreadTerminalDrawer
@@ -151,6 +153,7 @@ function setup() {
   fixture.pendingSurfaces = [];
   fixture.surfaceOptions = [];
   fixture.metadata.clear();
+  useRightPanelStore.setState(useRightPanelStore.getInitialState());
   return { original, other };
 }
 
@@ -176,26 +179,32 @@ it("closes an exited terminal on its own thread after navigating to one reusing 
 it("hands thread navigation shortcuts from a focused terminal back to the app", async () => {
   const { other: threadRef } = setup();
   using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  useRightPanelStore.getState().openBrowser(threadRef, null);
   await using _screen = await render(
     <Drawer
       threadRef={threadRef}
       onCloseTerminal={() => {}}
-      keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+      keybindings={compileResolvedKeybindingsConfig([
+        ...DEFAULT_KEYBINDINGS,
+        { key: "ctrl+r", command: "thread.next", when: "!previewOpen" },
+      ])}
     />,
   );
   await act(async () => {
     fixture.pendingSurfaces.shift()?.();
   });
-  const terminalHandles = (key: string, code: string) =>
+  const terminalHandles = (key: string, code: string, shiftKey = true) =>
     fixture.surfaceOptions
       .at(-1)!
-      .beforeKey(new KeyboardEvent("keydown", { key, code, ctrlKey: true, shiftKey: true }));
+      .beforeKey(new KeyboardEvent("keydown", { key, code, ctrlKey: true, shiftKey }));
 
   expect([terminalHandles("{", "BracketLeft"), terminalHandles("}", "BracketRight")]).toEqual([
     false,
     false,
   ]);
   expect(terminalHandles("C", "KeyC")).toBe(true);
+  // Sidebar sees the open preview and rejects this binding, so the shell keeps the key.
+  expect(terminalHandles("r", "KeyR", false)).toBe(true);
 });
 
 it("only activates terminal paths confirmed to exist on their environment", async () => {
