@@ -6,13 +6,14 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
-import type {
-  EnvironmentId,
-  PullRequestComment,
-  PullRequestDetailView,
-  PullRequestRef,
-  PullRequestReviewThread,
-  ScopedThreadRef,
+import {
+  type EnvironmentId,
+  type PullRequestComment,
+  type PullRequestDetailView,
+  type PullRequestRef,
+  type PullRequestConversationThread,
+  type ScopedThreadRef,
+  pullRequestConversationThreads,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -148,7 +149,7 @@ function CommentLocation({
   thread,
 }: {
   comment: PullRequestComment;
-  thread: PullRequestReviewThread | undefined;
+  thread: PullRequestConversationThread | undefined;
 }) {
   const path = thread?.path ?? comment.path;
   if (!path) return null;
@@ -229,7 +230,7 @@ function CommentBody({
  */
 function chatSubject(
   comment: PullRequestComment,
-  thread: PullRequestReviewThread | undefined,
+  thread: PullRequestConversationThread | undefined,
 ): PullRequestChatSubject | null {
   if (thread !== undefined) {
     return thread.comments.some((entry) => visibleBody(entry.body) !== null)
@@ -272,7 +273,7 @@ function CollapsedComment({
   reactionBar: ReactNode;
   resolveButton: ReactNode;
   detail: PullRequestDetailView;
-  thread: PullRequestReviewThread | undefined;
+  thread: PullRequestConversationThread | undefined;
   replyCount?: number;
   replies?: ReactNode;
   moreReplies?: ReactNode;
@@ -486,7 +487,10 @@ export function PullRequestSummaryTab({
     DEFAULT_COMMENT_FILTER,
     CommentFilterSchema,
   );
-  const items = pullRequestConversationItems(detail.comments, detail.reviewThreads);
+  const items = pullRequestConversationItems(
+    detail.comments,
+    pullRequestConversationThreads(detail),
+  );
   const filteredItems = filterPullRequestConversationItems(items, commentFilter);
   const commentCount = items.reduce(
     (count, item) => count + pullRequestConversationItemComments(item).length,
@@ -701,7 +705,7 @@ export function PullRequestSummaryTab({
     />
   );
 
-  const resolveButtonFor = (thread: PullRequestReviewThread | undefined) =>
+  const resolveButtonFor = (thread: PullRequestConversationThread | undefined) =>
     thread === undefined ? null : (
       <PullRequestResolveThreadButton
         environmentId={environmentId}
@@ -714,7 +718,7 @@ export function PullRequestSummaryTab({
 
   const renderCommentCard = (
     comment: PullRequestComment,
-    thread: PullRequestReviewThread | undefined,
+    thread: PullRequestConversationThread | undefined,
     { reply = false }: { reply?: boolean } = {},
   ) => {
     const body = visibleBody(comment.body);

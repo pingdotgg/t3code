@@ -1915,6 +1915,9 @@ export const make = Effect.gen(function* () {
                 ? {}
                 : { reviewThreadsTruncated: activity.reviewThreadsTruncated }),
               reviewThreads: activity.reviewThreads,
+              ...(activity.overviewThreads === undefined
+                ? {}
+                : { overviewThreads: activity.overviewThreads }),
               commits: activity.commits,
               ...(activity.reactions === undefined ? {} : { reactions: activity.reactions }),
             })),

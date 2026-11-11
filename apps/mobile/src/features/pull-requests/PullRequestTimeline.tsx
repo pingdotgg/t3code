@@ -6,7 +6,11 @@ import { PullRequestEntryRow } from "./PullRequestEntryRow";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
-import type { PullRequestActivity, PullRequestComment } from "@t3tools/contracts";
+import {
+  pullRequestConversationThreads,
+  type PullRequestActivity,
+  type PullRequestComment,
+} from "@t3tools/contracts";
 import { StackActions, type NavigationProp } from "@react-navigation/native";
 import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
@@ -216,8 +220,9 @@ export function pullRequestTimelineRows(
   actions: CommentActions,
 ) {
   const linkTarget = parsePullRequestAnchor(params.navigationUrl);
+  const threads = pullRequestConversationThreads(activity);
   const discussionIds = new Set(
-    activity.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
+    threads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
   );
   const events = [
     ...activity.comments
@@ -239,7 +244,7 @@ export function pullRequestTimelineRows(
           />
         ),
       })),
-    ...activity.reviewThreads.map((thread) => ({
+    ...threads.map((thread) => ({
       key: `discussion:${thread.id}`,
       date: thread.comments[0]?.createdAt ?? "",
       content: (

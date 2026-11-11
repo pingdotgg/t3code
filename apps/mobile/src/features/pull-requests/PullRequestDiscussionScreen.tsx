@@ -11,7 +11,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
-import type { PullRequestThreadComment } from "@t3tools/contracts";
+import { pullRequestConversationThreads, type PullRequestThreadComment } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { ScrollView, View, type ScrollViewInstance } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
@@ -60,7 +60,11 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     reportFailure: false,
   });
   const loadMore = useAtomCommand(composerPullRequests.threadComments, { reportFailure: false });
-  const thread = activity.data?.reviewThreads.find((thread) => thread.id === params.discussionId);
+  const thread =
+    activity.data &&
+    pullRequestConversationThreads(activity.data).find(
+      (thread) => thread.id === params.discussionId,
+    );
   const filePath = thread?.path ?? null;
   const [body, setBody] = useState("");
   const completions = usePullRequestCompletions({

@@ -2,7 +2,7 @@ import type {
   EnvironmentId,
   PullRequestDetailView,
   PullRequestRef,
-  PullRequestReviewThread,
+  PullRequestConversationThread,
 } from "@t3tools/contracts";
 import { canResolvePullRequestThread } from "@t3tools/client-runtime/pull-request-editing";
 import { useState } from "react";
@@ -27,7 +27,7 @@ export function PullRequestResolveThreadButton({
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
-  thread: Pick<PullRequestReviewThread, "id" | "isResolved" | "canResolve">;
+  thread: Pick<PullRequestConversationThread, "id" | "isResolved" | "canResolve">;
   onRefresh: () => void;
 }) {
   const [pending, setPending] = useState(false);

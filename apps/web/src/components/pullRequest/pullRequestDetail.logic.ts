@@ -32,7 +32,7 @@ import {
   type PullRequestMergeMethod,
   type PullRequestRef,
   type RepositoryIdentity,
-  type PullRequestReviewThread,
+  type PullRequestConversationThread,
   type PullRequestState,
   type PullRequestUpdateMethod,
   SourceControlProviderKind,
@@ -488,7 +488,7 @@ export interface PullRequestReplyAvailability {
 export interface PullRequestTimelineThread
   extends
     Pick<
-      PullRequestReviewThread,
+      PullRequestConversationThread,
       "id" | "path" | "line" | "isResolved" | "isOutdated" | "canResolve"
     >,
     PullRequestReplyAvailability {
@@ -560,12 +560,12 @@ export type PullRequestConversationItem =
       readonly createdAt: string;
       readonly root: PullRequestComment;
       readonly replies: ReadonlyArray<PullRequestComment>;
-      readonly thread: PullRequestReviewThread;
+      readonly thread: PullRequestConversationThread;
     } & PullRequestReplyAvailability);
 
 export function pullRequestConversationItems(
   comments: ReadonlyArray<PullRequestComment>,
-  reviewThreads: ReadonlyArray<PullRequestReviewThread>,
+  reviewThreads: ReadonlyArray<PullRequestConversationThread>,
 ): ReadonlyArray<PullRequestConversationItem> {
   const byId = new Map(comments.map((comment) => [comment.id, comment]));
   const claimed = new Set<string>();
@@ -626,7 +626,7 @@ export function pullRequestConversationItemComments(
 
 export function isPullRequestCommentFinished(
   comment: PullRequestComment,
-  thread?: PullRequestReviewThread,
+  thread?: PullRequestConversationThread,
 ): boolean {
   return (
     thread?.isResolved === true || pullRequestReviewOutcome(comment.reviewState) === "dismissed"
@@ -783,7 +783,7 @@ export function buildPullRequestTimeline(
     PullRequestDetailView,
     "provider" | "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
   > &
-    Partial<Pick<PullRequestDetailView, "reviewThreads">>,
+    Partial<Pick<PullRequestDetailView, "reviewThreads" | "overviewThreads">>,
 ): ReadonlyArray<PullRequestTimelineEvent> {
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   return [
@@ -819,7 +819,10 @@ export function buildPullRequestTimeline(
       reviewState: null,
       reactions: [],
     })),
-    ...pullRequestConversationItems(detail.comments, detail.reviewThreads ?? []).map((item) => {
+    ...pullRequestConversationItems(detail.comments, [
+      ...(detail.reviewThreads ?? []),
+      ...(detail.overviewThreads ?? []),
+    ]).map((item) => {
       if (item.kind === "comment") return commentTimelineEvent(item.comment);
       return {
         ...commentTimelineEvent(item.root),
@@ -907,7 +910,7 @@ function terminologyForUrl(url: string): ChangeRequestTerminology {
 }
 
 function reviewThreadContext(
-  thread: PullRequestReviewThread,
+  thread: PullRequestConversationThread,
   pullRequestNumber: number,
 ): ReviewCommentContext {
   const lineIndex = Math.max(0, (thread.line ?? 1) - 1);
@@ -1005,7 +1008,7 @@ export function buildFixFindingsHandoff(input: {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
-  readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+  readonly reviewThreads: ReadonlyArray<PullRequestConversationThread>;
   readonly comments: ReadonlyArray<PullRequestComment>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly commentsTruncated: boolean;
@@ -1091,7 +1094,7 @@ export function buildFixFindingsHandoff(input: {
 }
 
 export type PullRequestFinding =
-  | { readonly kind: "thread"; readonly thread: PullRequestReviewThread }
+  | { readonly kind: "thread"; readonly thread: PullRequestConversationThread }
   | { readonly kind: "check"; readonly check: PullRequestCheck }
   | { readonly kind: "comment"; readonly comment: PullRequestComment };
 

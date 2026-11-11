@@ -18,7 +18,7 @@ import type {
   PullRequestReactionContent,
   PullRequestReferenceCandidate,
   PullRequestReviewDecision,
-  PullRequestReviewThread,
+  PullRequestConversationThread,
   PullRequestReviewerCandidate,
   PullRequestState,
 } from "@t3tools/contracts";
@@ -780,7 +780,7 @@ export interface GitLabDiffRefs {
 }
 
 export interface GitLabDiscussions {
-  readonly threads: ReadonlyArray<PullRequestReviewThread>;
+  readonly threads: ReadonlyArray<PullRequestConversationThread>;
   /** GitLab moves a thread onto each new diff that still has its line; this is the last one. */
   readonly diffRefsByThreadId: ReadonlyMap<string, GitLabDiffRefs>;
   /** First notes of unresolved discussions on the MR itself rather than a diff line. */
@@ -799,7 +799,7 @@ export function decodeDiscussionsJson(
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
-  const threads: PullRequestReviewThread[] = [];
+  const threads: PullRequestConversationThread[] = [];
   const diffRefsByThreadId = new Map<string, GitLabDiffRefs>();
   const overviewFindingIds: string[] = [];
   for (const entry of decoded.success) {
