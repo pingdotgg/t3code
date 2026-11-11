@@ -11148,6 +11148,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return false;
         });
 
+        const applySelectionLive = Effect.fnUntraced(function* (
+          live: ClaudeLiveQueryContext,
+          selection: CompiledClaudeModelSelection,
+        ) {
+          // Preserve launcher-selected models unless the model changed or a failed update left it unknown.
+          yield* (
+            live.selection.queryIdentity === "" ||
+            live.selection.apiModelId !== selection.apiModelId
+              ? live.query.setModel(selection.apiModelId)
+              : Effect.void
+          ).pipe(
+            Effect.andThen(
+              live.query.applyFlagSettings(claudeLiveSelectionFlagSettings(selection)),
+            ),
+            Effect.tapError(() =>
+              Effect.sync(() => {
+                live.selection = { ...live.selection, queryIdentity: "" };
+              }),
+            ),
+          );
+          live.selection = selection;
+        });
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
@@ -11188,24 +11211,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (existing.selection.apiModelId === compiledSelection.apiModelId ||
               existing.openedPermissionMode === queryPolicy.permissionMode)
           ) {
-            const live = existing;
-            // Preserve launcher-selected models unless the model changed or a failed update left it unknown.
-            yield* (
-              live.selection.queryIdentity === "" ||
-              live.selection.apiModelId !== compiledSelection.apiModelId
-                ? live.query.setModel(compiledSelection.apiModelId)
-                : Effect.void
-            ).pipe(
-              Effect.andThen(
-                live.query.applyFlagSettings(claudeLiveSelectionFlagSettings(compiledSelection)),
-              ),
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  live.selection = { ...live.selection, queryIdentity: "" };
-                }),
-              ),
-            );
-            live.selection = compiledSelection;
+            yield* applySelectionLive(existing, compiledSelection);
           }
           if (
             existing !== null &&
@@ -12403,6 +12409,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 );
             }),
           },
+          applyModelSelection: Effect.fn("ClaudeAdapterV2.applyModelSelection")(function* ({
+            providerThread,
+            modelSelection,
+          }) {
+            const live = yield* Ref.get(queryContext);
+            const selection = compileClaudeModelSelection(modelSelection, modelCatalog);
+            // A model change still waits for the next turn, which checks it against the turn's permission mode.
+            if (
+              live === null ||
+              live.stopping ||
+              live.nativeThreadId !== providerThread.nativeThreadRef?.nativeId ||
+              live.selection.queryIdentity === selection.queryIdentity ||
+              live.selection.apiModelId !== selection.apiModelId ||
+              !canApplyClaudeSelectionLive(live.selection, selection)
+            ) {
+              return;
+            }
+            // A failed update clears the live identity, so the next turn applies the selection again.
+            yield* applySelectionLive(live, selection).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("orchestration-v2.claude-live-selection-failed", { cause }),
+              ),
+            );
+          }),
           stopTask: Effect.fn("ClaudeAdapterV2.stopTask")(function* ({ providerThread, taskId }) {
             const liveQuery = yield* Ref.get(queryContext);
             const task = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
