@@ -34,7 +34,7 @@ export type NetworkRoster = Pick<TailnetDevicesSnapshot, "selfMember" | "devices
  * reports revoked is dropped; one only `host` brought is dropped when `host` stops listing it or
  * stops offering the network. Returns `records` itself when nothing changed.
  */
-export function followRoster(
+function followRoster(
   records: ReadonlyArray<NetworkMemberRecord>,
   input: {
     readonly host: EnvironmentId;
@@ -104,7 +104,13 @@ export const makeNetworkMembers = Effect.fn("makeNetworkMembers")(function* (sto
     records: ReadonlyArray<NetworkMemberRecord>,
   ) => Effect.Effect<void, ConnectionAttemptError>;
 }) {
-  const state = yield* SubscriptionRef.make(yield* storage.read);
+  // Only managed records live here and the next roster follow rebuilds them, so an unreadable
+  // catalog must not stop the connection layer from starting.
+  const initial = yield* storage.read.pipe(
+    Effect.tapError((cause) => Effect.logWarning("Could not read network members", { cause })),
+    Effect.orElseSucceed((): ReadonlyArray<NetworkMemberRecord> => []),
+  );
+  const state = yield* SubscriptionRef.make(initial);
   const lock = yield* Semaphore.make(1);
   return NetworkMembers.of({
     read: SubscriptionRef.get(state),
