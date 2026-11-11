@@ -103,6 +103,8 @@ const store = Layer.succeed(
     installedPath: (model) =>
       Effect.sync(() => (readyModels.has(model.id) ? "test.gguf" : undefined)),
     download,
+    link: () => Effect.succeed([]),
+    linkedFrom: () => Effect.undefined,
     remove: (model) =>
       Effect.sync(() => {
         readyModels.delete(model.id);
