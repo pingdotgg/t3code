@@ -258,6 +258,80 @@ it("covers the run range of a very long delta", () => {
   );
 });
 
+it("frames a runtime seat switch with durable identity and place", () => {
+  const threadId = ThreadId.make("thread:seat-switch");
+  const coverage = ContextHandoffService.makeRuntimeSeatSwitchCoverage({
+    threadId,
+    coveredRunOrdinals: { from: 1, to: 3 },
+    items: [importedItem({ role: "user", id: "seat-user", text: "Keep going", ordinal: 1 })],
+    seat: ContextHandoffService.runtimeSeatSwitchContext({
+      thread: {
+        title: "Ship the handoff",
+        worktreePath: "/repo/worktrees/seat",
+        branch: "agent/seat-switch",
+      },
+      fromProviderInstanceId: ProviderInstanceId.make("codex"),
+      toProviderInstanceId: ProviderInstanceId.make("claude"),
+      runs: [{ status: "queued" }, { status: "completed" }, { status: "queued" }],
+      reason: "Codex usage window",
+    }),
+  });
+
+  assert.include(coverage, "Runtime seat switch.");
+  assert.include(coverage, `Seat thread: ${threadId}.`);
+  assert.include(coverage, "Title: Ship the handoff.");
+  assert.include(coverage, "Place: /repo/worktrees/seat (branch agent/seat-switch).");
+  assert.include(coverage, "Harness: codex → claude.");
+  assert.include(coverage, "Open queued runs on this seat: 2.");
+  assert.include(coverage, "Switch reason: Codex usage window.");
+  assert.include(coverage, "Native conversation starts fresh");
+  assert.include(coverage, "Provider context handoff.");
+});
+
+it.layer(layerTest)("ContextHandoffService provider seat handoff", (it) => {
+  it.effect("embeds seat framing in the provider handoff summary", () =>
+    Effect.gen(function* () {
+      const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+      const handoff = yield* service.prepareProviderHandoff({
+        threadId: ThreadId.make("thread:seat-handoff"),
+        targetRunId: RunId.make("run:seat-handoff"),
+        transferId: ContextTransferId.make("transfer:seat-handoff"),
+        fromProviderThreadIds: [ProviderThreadId.make("provider-thread:codex")],
+        toProviderThreadId: ProviderThreadId.make("provider-thread:claude"),
+        fromProviderInstanceId: ProviderInstanceId.make("codex"),
+        toProviderInstanceId: ProviderInstanceId.make("claude"),
+        coveredRunOrdinals: { from: 1, to: 1 },
+        strategy: "full_thread_summary",
+        items: [
+          importedItem({
+            role: "user",
+            id: "seat-handoff-user",
+            text: "Switch harnesses without losing the seat",
+            ordinal: 1,
+          }),
+        ],
+        seat: ContextHandoffService.runtimeSeatSwitchContext({
+          thread: {
+            title: "Seat handoff",
+            worktreePath: "/repo",
+            branch: "main",
+          },
+          fromProviderInstanceId: ProviderInstanceId.make("codex"),
+          toProviderInstanceId: ProviderInstanceId.make("claude"),
+        }),
+        createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+      });
+
+      assert.equal(handoff.strategy, "full_thread_summary");
+      assert.include(handoff.summaryText, "Runtime seat switch.");
+      assert.include(handoff.summaryText, "Title: Seat handoff.");
+      assert.include(handoff.summaryText, "Place: /repo (branch main).");
+      assert.include(handoff.summaryText, "Switch harnesses without losing the seat");
+      assert.include(handoff.history?.coverage ?? "", "Harness: codex → claude.");
+    }),
+  );
+});
+
 it.effect("inherited history stops at a missing fork ancestor", () =>
   Effect.gen(function* () {
     const now = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");

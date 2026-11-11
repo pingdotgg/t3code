@@ -116,6 +116,7 @@ import {
   ContextHandoffServiceV2,
   readForkHistoryItems,
   readInheritedHandoffItems,
+  runtimeSeatSwitchContext,
   visibleConversationItems,
   visibleDeltaRunOrdinals,
 } from "./ContextHandoffService.ts";
@@ -2398,6 +2399,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     coveredRuns.map((run) => run.id),
                   )),
                 ],
+                seat: runtimeSeatSwitchContext({
+                  thread: projection.thread,
+                  fromProviderInstanceId: latestHandoffRun.providerInstanceId,
+                  toProviderInstanceId: queuedRun.providerInstanceId,
+                  runs: projection.runs,
+                }),
                 createdAt: now,
               })
               .pipe(
@@ -3970,6 +3977,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 turnItemTypes: [],
               });
               if (projection.runs.some(isActiveRun)) {
+                // OpenRig set-runtime: stage a cross-harness seat switch without cutting the
+                // live occupant. Selection moves now; session detach waits for the handoff turn.
+                if (plan.transition.type === "create_with_handoff") {
+                  return { ...plan, releaseProviderSessionIds: [] };
+                }
                 return yield* new OrchestratorProviderSelectionBusyError({
                   commandId: command.commandId,
                   threadId: command.threadId,
@@ -5800,6 +5812,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   .map((run) => run.id),
           ),
           runs: input.projection.runs,
+          seat: runtimeSeatSwitchContext({
+            thread: input.projection.thread,
+            fromProviderInstanceId: targetRun.providerInstanceId,
+            toProviderInstanceId: input.modelSelection.instanceId,
+            runs: input.projection.runs,
+          }),
           createdAt: now,
         })
         .pipe(mapDispatchError(input.command));
@@ -7822,6 +7840,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   : "delta_since_target_last_seen",
               items: providerSwitchItems,
               runs: projection.runs,
+              seat: runtimeSeatSwitchContext({
+                thread: projection.thread,
+                fromProviderInstanceId: latestHandoffRun.providerInstanceId,
+                toProviderInstanceId: modelSelection.instanceId,
+                runs: projection.runs,
+              }),
               createdAt: now,
             })
             .pipe(

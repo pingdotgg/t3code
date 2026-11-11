@@ -1706,8 +1706,8 @@ describe("orchestration v2 provider switching", () => {
             modelSelection: CODEX_MODEL_SELECTION,
             runtimeMode: "full-access",
             interactionMode: "default",
-            branch: null,
-            worktreePath: null,
+            branch: "agent/runtime-seat-switch",
+            worktreePath: cwd,
           });
           if (returning) {
             yield* dispatch("initial", "Earlier successful request.", CODEX_MODEL_SELECTION);
@@ -1729,6 +1729,10 @@ describe("orchestration v2 provider switching", () => {
           }
           yield* waitForRun(sourceOrdinal + 1, "completed");
           const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(projection.thread.id, threadId);
+          assert.equal(projection.thread.title, "Interrupted provider handoff");
+          assert.equal(projection.thread.worktreePath, cwd);
+          assert.equal(projection.thread.branch, "agent/runtime-seat-switch");
           const targetRun = projection.runs.at(-1)!;
           const handoff = projection.contextHandoffs.find(
             (candidate) => candidate.id === targetRun.contextHandoffId,
@@ -1742,12 +1746,19 @@ describe("orchestration v2 provider switching", () => {
             from: sourceOrdinal,
             to: sourceOrdinal,
           });
+          assert.include(handoff?.summaryText ?? "", "Runtime seat switch.");
+          assert.include(handoff?.summaryText ?? "", "Title: Interrupted provider handoff.");
+          assert.include(
+            handoff?.summaryText ?? "",
+            `Place: ${cwd} (branch agent/runtime-seat-switch).`,
+          );
           const delivered = (yield* Ref.get(capturedTurns)).at(-1)!;
           const history = yield* Ref.get(injectedHistory);
           const deliveredHistory = native ? yield* encodeJson(history) : delivered.text;
           assert.include(deliveredHistory, originalPrompt);
           assert.include(deliveredHistory, partialResponse);
           assert.include(deliveredHistory, `run-status=${status}`);
+          assert.include(deliveredHistory, "Runtime seat switch.");
           if (native) {
             assert.equal(delivered.text, "Continue");
             assert.notInclude(deliveredHistory, '"text":"Continue"');

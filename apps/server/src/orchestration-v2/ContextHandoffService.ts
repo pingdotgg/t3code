@@ -82,6 +82,7 @@ export interface ContextHandoffServiceV2Shape {
       "delta_since_target_last_seen" | "full_thread_summary"
     >;
     readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly seat?: RuntimeSeatSwitchContext;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   /** Parent activity after the fork point, prepended to a side chat's first provider turn. */
@@ -112,6 +113,76 @@ function compactText(text: string, maxLength = 240): string {
   const end = maxLength - 3;
   const last = compacted.charCodeAt(end - 1);
   return `${compacted.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end)}...`;
+}
+
+/** Durable seat fields carried across Claude↔Codex (and other) harness switches. */
+export type RuntimeSeatSwitchContext = {
+  readonly title: string | null;
+  readonly worktreePath: string | null;
+  readonly branch: string | null;
+  readonly fromProviderInstanceId: ProviderInstanceId;
+  readonly toProviderInstanceId: ProviderInstanceId;
+  readonly openQueuedRunCount?: number;
+  readonly reason?: string | null;
+};
+
+export function runtimeSeatSwitchContext(input: {
+  readonly thread: Pick<OrchestrationV2AppThread, "title" | "worktreePath" | "branch">;
+  readonly fromProviderInstanceId: ProviderInstanceId;
+  readonly toProviderInstanceId: ProviderInstanceId;
+  readonly runs?: ReadonlyArray<Pick<OrchestrationV2Run, "status">>;
+  readonly reason?: string | null;
+}): RuntimeSeatSwitchContext {
+  return {
+    title: input.thread.title,
+    worktreePath: input.thread.worktreePath,
+    branch: input.thread.branch,
+    fromProviderInstanceId: input.fromProviderInstanceId,
+    toProviderInstanceId: input.toProviderInstanceId,
+    openQueuedRunCount: input.runs?.filter((run) => run.status === "queued").length ?? 0,
+    ...(input.reason === undefined ? {} : { reason: input.reason }),
+  };
+}
+
+/**
+ * OpenRig `rig seat set-runtime` framing: same seat address/place/open work; fresh native
+ * conversation; only the handover carries prior context.
+ */
+export function makeRuntimeSeatSwitchCoverage(input: {
+  readonly threadId: ThreadId;
+  readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
+  readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly seat: RuntimeSeatSwitchContext;
+}): string {
+  const place =
+    input.seat.worktreePath === null
+      ? "unresolved workspace"
+      : input.seat.branch === null || input.seat.branch === ""
+        ? input.seat.worktreePath
+        : `${input.seat.worktreePath} (branch ${input.seat.branch})`;
+  const queued =
+    input.seat.openQueuedRunCount !== undefined && input.seat.openQueuedRunCount > 0
+      ? `Open queued runs on this seat: ${input.seat.openQueuedRunCount}.`
+      : "No open queued runs on this seat.";
+  const reason =
+    input.seat.reason !== undefined && input.seat.reason !== null && input.seat.reason !== ""
+      ? `Switch reason: ${compactText(input.seat.reason)}.`
+      : null;
+  return [
+    "Runtime seat switch. You are taking over the same durable seat; keep its name, place, and open work.",
+    `Seat thread: ${input.threadId}.`,
+    `Title: ${input.seat.title ?? "(untitled)"}.`,
+    `Place: ${place}.`,
+    `Harness: ${input.seat.fromProviderInstanceId} → ${input.seat.toProviderInstanceId}.`,
+    queued,
+    ...(reason === null ? [] : [reason]),
+    "Native conversation starts fresh; only this handover carries prior context. The predecessor's recent activity is summarized below.",
+    handoffCoverage({
+      threadId: input.threadId,
+      coveredRunOrdinals: input.coveredRunOrdinals,
+      items: input.items,
+    }),
+  ].join("\n");
 }
 
 export function visibleDeltaRunOrdinals(
@@ -500,6 +571,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         "delta_since_target_last_seen" | "full_thread_summary"
       >;
       readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+      readonly seat?: RuntimeSeatSwitchContext;
       readonly createdAt: DateTime.Utc;
     }) {
       const handoffId = yield* idAllocator.allocate
@@ -521,7 +593,15 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage(input);
+      const coverage =
+        input.seat === undefined
+          ? handoffCoverage(input)
+          : makeRuntimeSeatSwitchCoverage({
+              threadId: input.threadId,
+              coveredRunOrdinals: input.coveredRunOrdinals,
+              items: input.items,
+              seat: input.seat,
+            });
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
           const message = historicalMessage(item);
