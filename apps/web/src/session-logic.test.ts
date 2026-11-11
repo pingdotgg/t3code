@@ -226,7 +226,7 @@ describe("V2 session presentation", () => {
 
     const targets = deriveRevertTurnCountByUserMessageId({
       timelineEntries,
-      threadStartCheckpointReady: true,
+      threadStartCheckpointAvailable: true,
       checkpoints: [
         {
           runId,
@@ -266,7 +266,7 @@ describe("V2 session presentation", () => {
           },
         };
       });
-    const checkpoint = (ordinal: number, status: "ready" | "stale" = "ready") => ({
+    const checkpoint = (ordinal: number, status: "ready" | "missing" | "stale" = "ready") => ({
       runId: runId(ordinal),
       checkpointTurnCount: ordinal,
       checkpointRef: `checkpoint-${ordinal}` as never,
@@ -278,13 +278,13 @@ describe("V2 session presentation", () => {
     const targets = (
       ordinals: ReadonlyArray<number>,
       checkpoints: ReadonlyArray<ReturnType<typeof checkpoint>>,
-      options: { threadStartCheckpointReady?: boolean; unsettledRunId?: RunId } = {},
+      options: { threadStartCheckpointAvailable?: boolean; unsettledRunId?: RunId } = {},
     ) =>
       Object.fromEntries(
         deriveRevertTurnCountByUserMessageId({
           timelineEntries: ordinals.flatMap(turn),
           checkpoints,
-          threadStartCheckpointReady: options.threadStartCheckpointReady ?? true,
+          threadStartCheckpointAvailable: options.threadStartCheckpointAvailable ?? true,
           unsettledRunId: options.unsettledRunId ?? null,
         }),
       );
@@ -297,6 +297,11 @@ describe("V2 session presentation", () => {
         "user-5": 4,
       });
       expect(targets([2], [checkpoint(1, "stale")])).toEqual({ "user-2": 0 });
+      // Without file snapshots, missing checkpoints still pin the conversation.
+      expect(targets([1, 2], [checkpoint(1, "missing"), checkpoint(2, "missing")])).toEqual({
+        "user-1": 0,
+        "user-2": 1,
+      });
     });
 
     it("preserves a notification-only wake run while ignoring inherited and unrelated work", () => {
@@ -360,7 +365,7 @@ describe("V2 session presentation", () => {
               checkpoint(7),
               checkpoint(8),
             ],
-            threadStartCheckpointReady: true,
+            threadStartCheckpointAvailable: true,
           }),
         ),
       ).toEqual({ "user-1": 0, "user-3": 2 });
@@ -371,7 +376,7 @@ describe("V2 session presentation", () => {
       expect(targets([1, 2], [checkpoint(1, "stale"), checkpoint(2)])).toEqual({ "user-1": 0 });
       // Earlier history is paged out, so the first loaded run's predecessor is unknown.
       expect(
-        targets([4, 5], [checkpoint(4), checkpoint(5)], { threadStartCheckpointReady: false }),
+        targets([4, 5], [checkpoint(4), checkpoint(5)], { threadStartCheckpointAvailable: false }),
       ).toEqual({ "user-5": 4 });
       expect(targets([1, 2], [checkpoint(1), checkpoint(2)], { unsettledRunId: runId(2) })).toEqual(
         { "user-1": 0 },
@@ -384,7 +389,7 @@ describe("V2 session presentation", () => {
           deriveRevertTurnCountByUserMessageId({
             timelineEntries: [1, 2, 3].flatMap(turn),
             checkpoints: [checkpoint(1), checkpoint(2), checkpoint(3)],
-            threadStartCheckpointReady: true,
+            threadStartCheckpointAvailable: true,
             availableRevertTurnCounts: new Set([0, 1]),
           }),
         ),
@@ -404,7 +409,7 @@ describe("V2 session presentation", () => {
           deriveRevertTurnCountByUserMessageId({
             timelineEntries: [...inheritedEntries, ...turn(2)],
             checkpoints: [{ ...checkpoint(7), runId: fixture.historyRunId }, checkpoint(2)],
-            threadStartCheckpointReady: true,
+            threadStartCheckpointAvailable: true,
           }),
         ),
       ).toEqual({ "user-2": 0 });
