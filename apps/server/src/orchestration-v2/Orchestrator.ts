@@ -617,6 +617,9 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "owned-work.claim":
     case "owned-work.progress":
     case "owned-work.handoff":
+    case "owned-work.hold":
+    case "owned-work.resume":
+    case "owned-work.attention":
     case "owned-work.complete":
     case "owned-work.cancel":
     case "thread.visit":
@@ -13924,6 +13927,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "owned-work.claim":
       case "owned-work.progress":
       case "owned-work.handoff":
+      case "owned-work.hold":
+      case "owned-work.resume":
+      case "owned-work.attention":
       case "owned-work.complete":
       case "owned-work.cancel":
         yield* dispatchOwnedWork(command, events);

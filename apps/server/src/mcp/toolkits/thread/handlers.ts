@@ -412,12 +412,48 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               actorThreadId,
             }));
           }
+          case "hold": {
+            const itemId = yield* required(input.itemId, "itemId");
+            const reason = yield* required(input.reason, "reason");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "owned-work.hold",
+              itemId,
+              reason,
+              actorThreadId,
+            }));
+          }
+          case "resume": {
+            const itemId = yield* required(input.itemId, "itemId");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "owned-work.resume",
+              itemId,
+              note: input.note,
+              actorThreadId,
+            }));
+          }
+          case "attention": {
+            const itemId = yield* required(input.itemId, "itemId");
+            const reason = yield* required(input.reason, "reason");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "owned-work.attention",
+              itemId,
+              reason,
+              actorThreadId,
+            }));
+          }
           case "complete": {
             const itemId = yield* required(input.itemId, "itemId");
+            const closureReason = yield* required(input.closureReason, "closureReason");
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
               type: "owned-work.complete",
               itemId,
+              closureReason,
+              closureTarget: input.closureTarget,
+              closureNote: input.note,
               actorThreadId,
             }));
           }
@@ -427,6 +463,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               ...common,
               type: "owned-work.cancel",
               itemId,
+              closureNote: input.note,
               actorThreadId,
             }));
           }

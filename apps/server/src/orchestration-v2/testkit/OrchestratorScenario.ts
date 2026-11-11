@@ -156,6 +156,9 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "owned-work.claim":
     case "owned-work.progress":
     case "owned-work.handoff":
+    case "owned-work.hold":
+    case "owned-work.resume":
+    case "owned-work.attention":
     case "owned-work.complete":
     case "owned-work.cancel":
     case "thread.visit":

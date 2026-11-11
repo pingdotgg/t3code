@@ -21,6 +21,7 @@ import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
+import { ThreadOwnedWorkPanel } from "./ThreadOwnedWorkPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
 import {
@@ -238,6 +239,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     ) : null}
                   </div>
                 </ThreadDetailsSection>
+              ) : null}
+
+              {!props.draftId && visible.work ? (
+                <ThreadOwnedWorkPanel
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                  density={density}
+                />
               ) : null}
 
               {density === "full" && !props.draftId && visible.servers ? (

@@ -45,7 +45,7 @@ import {
 import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
-import { OwnedWorkItem } from "./ownedWork.ts";
+import { OwnedWorkClosureReason, OwnedWorkItem } from "./ownedWork.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import {
   OrchestrationSearchThreadsInput,
@@ -2162,7 +2162,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   /** Guest messages waiting for the owner to send or dismiss. Absent from older servers. */
   pendingGuestMessageCount: Schema.optional(NonNegativeInt),
-  /** Open owned-work items (assigned/claimed/in progress/handed off). Absent from older servers. */
+  /** Open owned-work items (including hold/attention). Absent from older servers. */
   openOwnedWorkCount: Schema.optional(NonNegativeInt),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -3118,10 +3118,39 @@ export const OrchestrationV2Command = Schema.Union([
     actorThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({
+    type: Schema.Literal("owned-work.hold"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    reason: Schema.String,
+    actorThreadId: Schema.optional(ThreadId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("owned-work.resume"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    note: Schema.optional(Schema.String),
+    actorThreadId: Schema.optional(ThreadId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("owned-work.attention"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    reason: Schema.String,
+    actorThreadId: Schema.optional(ThreadId),
+  }),
+  Schema.Struct({
     type: Schema.Literal("owned-work.complete"),
     commandId: CommandId,
     threadId: ThreadId,
     itemId: OwnedWorkItemId,
+    /** Where the work went; required. Not acceptance of the next stage. */
+    closureReason: OwnedWorkClosureReason,
+    /** Required for `handed_off` and `escalation`. */
+    closureTarget: Schema.optional(TrimmedNonEmptyString),
+    closureNote: Schema.optional(Schema.String),
     actorThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({
@@ -3129,6 +3158,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     itemId: OwnedWorkItemId,
+    /** Always recorded as `canceled`; optional note only. */
+    closureNote: Schema.optional(Schema.String),
     actorThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({

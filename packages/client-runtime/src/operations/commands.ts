@@ -27,6 +27,8 @@ import {
   type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
+  type OwnedWorkClosureReason,
+  type OwnedWorkItemId,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -1145,3 +1147,182 @@ export const unlinkThreadPullRequest = Effect.fn("EnvironmentCommands.unlinkThre
     });
   },
 );
+
+export interface AssignOwnedWorkInput extends ThreadCommandInput {
+  readonly itemId: OwnedWorkItemId;
+  readonly title: string;
+  readonly description?: string;
+  readonly assigneeThreadId?: ThreadId | null;
+  readonly createdByThreadId: ThreadId;
+}
+
+export const assignOwnedWork = Effect.fn("EnvironmentCommands.assignOwnedWork")(function* (
+  input: AssignOwnedWorkInput,
+) {
+  return yield* dispatch({
+    type: "owned-work.assign",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    itemId: input.itemId,
+    title: input.title,
+    description: input.description ?? "",
+    ...(input.assigneeThreadId === undefined ? {} : { assigneeThreadId: input.assigneeThreadId }),
+    createdByThreadId: input.createdByThreadId,
+  });
+});
+
+export interface ClaimOwnedWorkInput extends ThreadCommandInput {
+  readonly itemId: OwnedWorkItemId;
+  readonly claimedByThreadId: ThreadId;
+}
+
+export const claimOwnedWork = Effect.fn("EnvironmentCommands.claimOwnedWork")(function* (
+  input: ClaimOwnedWorkInput,
+) {
+  return yield* dispatch({
+    type: "owned-work.claim",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    itemId: input.itemId,
+    claimedByThreadId: input.claimedByThreadId,
+  });
+});
+
+export interface ProgressOwnedWorkInput extends ThreadCommandInput {
+  readonly itemId: OwnedWorkItemId;
+  readonly progress: string;
+  readonly actorThreadId?: ThreadId;
+}
+
+export const progressOwnedWork = Effect.fn("EnvironmentCommands.progressOwnedWork")(function* (
+  input: ProgressOwnedWorkInput,
+) {
+  return yield* dispatch({
+    type: "owned-work.progress",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    itemId: input.itemId,
+    progress: input.progress,
+    ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),
+  });
+});
+
+export interface HandoffOwnedWorkInput extends ThreadCommandInput {
+  readonly itemId: OwnedWorkItemId;
+  readonly toThreadId: ThreadId;
+  readonly note?: string;
+  readonly actorThreadId?: ThreadId;
+}
+
+export const handoffOwnedWork = Effect.fn("EnvironmentCommands.handoffOwnedWork")(function* (
+  input: HandoffOwnedWorkInput,
+) {
+  return yield* dispatch({
+    type: "owned-work.handoff",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    itemId: input.itemId,
+    toThreadId: input.toThreadId,
+    ...(input.note === undefined ? {} : { note: input.note }),
+    ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),
+  });
+});
+
+export interface HoldOwnedWorkInput extends ThreadCommandInput {
+  readonly itemId: OwnedWorkItemId;
+  readonly reason: string;
+  readonly actorThreadId?: ThreadId;
+}
+
+export const holdOwnedWork = Effect.fn("EnvironmentCommands.holdOwnedWork")(function* (
+  input: HoldOwnedWorkInput,
+) {
+  return yield* dispatch({
+    type: "owned-work.hold",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    itemId: input.itemId,
+    reason: input.reason,
+    ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),
+  });
+});
+
+export interface ResumeOwnedWorkInput extends ThreadCommandInput {
+  readonly itemId: OwnedWorkItemId;
+  readonly note?: string;
+  readonly actorThreadId?: ThreadId;
+}
+
+export const resumeOwnedWork = Effect.fn("EnvironmentCommands.resumeOwnedWork")(function* (
+  input: ResumeOwnedWorkInput,
+) {
+  return yield* dispatch({
+    type: "owned-work.resume",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    itemId: input.itemId,
+    ...(input.note === undefined ? {} : { note: input.note }),
+    ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),
+  });
+});
+
+export interface AttentionOwnedWorkInput extends ThreadCommandInput {
+  readonly itemId: OwnedWorkItemId;
+  readonly reason: string;
+  readonly actorThreadId?: ThreadId;
+}
+
+export const attentionOwnedWork = Effect.fn("EnvironmentCommands.attentionOwnedWork")(function* (
+  input: AttentionOwnedWorkInput,
+) {
+  return yield* dispatch({
+    type: "owned-work.attention",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    itemId: input.itemId,
+    reason: input.reason,
+    ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),
+  });
+});
+
+export interface CompleteOwnedWorkInput extends ThreadCommandInput {
+  readonly itemId: OwnedWorkItemId;
+  readonly closureReason: OwnedWorkClosureReason;
+  readonly closureTarget?: string;
+  readonly closureNote?: string;
+  readonly actorThreadId?: ThreadId;
+}
+
+export const completeOwnedWork = Effect.fn("EnvironmentCommands.completeOwnedWork")(function* (
+  input: CompleteOwnedWorkInput,
+) {
+  return yield* dispatch({
+    type: "owned-work.complete",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    itemId: input.itemId,
+    closureReason: input.closureReason,
+    ...(input.closureTarget === undefined ? {} : { closureTarget: input.closureTarget }),
+    ...(input.closureNote === undefined ? {} : { closureNote: input.closureNote }),
+    ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),
+  });
+});
+
+export interface CancelOwnedWorkInput extends ThreadCommandInput {
+  readonly itemId: OwnedWorkItemId;
+  readonly closureNote?: string;
+  readonly actorThreadId?: ThreadId;
+}
+
+export const cancelOwnedWork = Effect.fn("EnvironmentCommands.cancelOwnedWork")(function* (
+  input: CancelOwnedWorkInput,
+) {
+  return yield* dispatch({
+    type: "owned-work.cancel",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    itemId: input.itemId,
+    ...(input.closureNote === undefined ? {} : { closureNote: input.closureNote }),
+    ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),
+  });
+});
