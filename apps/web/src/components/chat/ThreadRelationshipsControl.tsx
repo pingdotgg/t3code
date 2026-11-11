@@ -60,7 +60,8 @@ import {
   SquareIcon,
   UnplugIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 
 import { cn } from "../../lib/utils";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
@@ -105,8 +106,7 @@ import {
   THREAD_DETAILS_PANEL_META_CLASS,
 } from "./threadDetailsPanelStyles";
 
-// Page both inline relationships and the previous-agent menu so long histories
-// stay bounded inside the card and popup.
+// Page inline relationships and previous agents so long histories stay bounded inside the card.
 const THREAD_LINEAGE_INITIAL_COUNT = 6;
 const THREAD_LINEAGE_PAGE_COUNT = 12;
 // Two lines fill the 40px row; the multiline variant's padding on top would space the rows apart.
@@ -121,26 +121,39 @@ function resolveThreadLineageWindow<Row>(
 }
 
 function ThreadLineageRowList(props: {
+  readonly id?: string;
+  /** False lets the list grow by page and leaves scrolling to the details panel. */
+  readonly scroll?: boolean;
   readonly hiddenCount: number;
   readonly onShowMore: () => void;
-  readonly menu?: boolean;
   readonly children: ReactNode;
 }) {
+  const listRef = useRef<HTMLUListElement>(null);
+  const showMore = () => {
+    const firstNewRow = listRef.current?.children.length ?? 0;
+    flushSync(props.onShowMore);
+    // The button can leave with the last page, so focus continues on the first revealed row.
+    listRef.current?.children[firstNewRow]?.querySelector<HTMLElement>("button")?.focus();
+  };
   return (
     <>
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
       <ul
+        ref={listRef}
+        id={props.id}
         aria-label="Related threads"
-        className="m-0 flex max-h-64 flex-col gap-0.5 list-none overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
+        className={cn(
+          "m-0 flex flex-col gap-0.5 list-none p-0",
+          // A scrolling axis turns the other one into auto, so the sideways axis is shut explicitly.
+          props.scroll === false
+            ? "overflow-x-clip"
+            : "max-h-64 overflow-x-hidden overflow-y-auto overscroll-contain has-data-workflow-expanded:max-h-[min(28rem,55dvh)]",
+        )}
       >
         {props.children}
       </ul>
       {props.hiddenCount > 0 ? (
-        <ThreadDetailsControl
-          onClick={props.onShowMore}
-          tone="muted"
-          render={props.menu ? <MenuItem closeOnClick={false} /> : undefined}
-        >
+        <ThreadDetailsControl onClick={showMore} tone="muted">
           <PlusIcon aria-hidden className="size-4 shrink-0" />
           Show {Math.min(props.hiddenCount, THREAD_LINEAGE_PAGE_COUNT)} more
         </ThreadDetailsControl>
@@ -165,10 +178,10 @@ const isFinishedAgentStatus = (status: string | null | undefined) =>
 function ThreadLineageGroup<Row extends LineageRow>(props: {
   readonly label: string | null;
   readonly rows: ReadonlyArray<Row>;
-  readonly expanded: boolean;
   readonly children: (rows: ReadonlyArray<Row>) => ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(props.expanded);
+  const listId = useId();
+  const [expanded, setExpanded] = useState(false);
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
   const { visibleRows, hiddenCount } = resolveThreadLineageWindow(props.rows, visibleCount);
   const failedCount = props.rows.filter((row) => {
@@ -178,7 +191,8 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
   if (props.rows.length === 0) return null;
   const rows = (
     <ThreadLineageRowList
-      menu={props.label !== null}
+      id={listId}
+      scroll={props.label === null}
       hiddenCount={hiddenCount}
       onShowMore={() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
     >
@@ -187,16 +201,15 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
   );
   if (!props.label) return rows;
   return (
-    <Menu open={expanded} onOpenChange={setExpanded}>
-      <MenuTrigger
-        render={
-          <ThreadDetailsControl
-            part="choice"
-            chevronAlign="icon"
-            className="h-8 min-h-8 sm:min-h-8"
-            aria-label="Previous agents"
-          />
-        }
+    <>
+      <ThreadDetailsControl
+        part="choice"
+        chevronAlign="icon"
+        className="h-8 min-h-8 sm:min-h-8 aria-expanded:[&>svg:last-child]:rotate-90"
+        aria-label="Previous agents"
+        aria-expanded={expanded}
+        aria-controls={expanded ? listId : undefined}
+        onClick={() => setExpanded((open) => !open)}
       >
         <HistoryIcon />
         <MenuItemLabel className="min-w-0 flex-1">
@@ -210,16 +223,9 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
             {failedCount} failed
           </span>
         ) : null}
-      </MenuTrigger>
-      <MenuPopup
-        side="right"
-        align="start"
-        collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "end" }}
-        className="w-75"
-      >
-        <div className="thread-details-stack">{rows}</div>
-      </MenuPopup>
-    </Menu>
+      </ThreadDetailsControl>
+      {expanded ? rows : null}
+    </>
   );
 }
 
@@ -287,7 +293,6 @@ function currentSubagent<Agent extends RuntimeSubagent>(
 function RemoteSubagentRow(props: {
   readonly agent: RemoteSubagent;
   readonly provider: ServerProvider | undefined;
-  readonly inMenu?: boolean;
 }) {
   const navigate = useNavigate();
   const environment = useEnvironment(props.agent.remoteChild.environmentId);
@@ -332,7 +337,6 @@ function RemoteSubagentRow(props: {
               part="row"
               className={THREAD_LINEAGE_ROW_CLASS}
               aria-disabled={environment === null || undefined}
-              render={props.inMenu ? <MenuItem /> : undefined}
               onClick={() => {
                 if (environment === null) return;
                 void navigate({
@@ -637,16 +641,10 @@ function useThreadLineage(props: {
     id: string;
     label: string | null;
     rows: ReadonlyArray<LineageRow>;
-    expanded: boolean;
   }> = [
-    { id: "related", label: null, rows: related, expanded: true },
-    { id: "active", label: null, rows: [...active, ...remoteActive], expanded: true },
-    {
-      id: "previous",
-      label: "Previous agents",
-      rows: [...previous, ...remotePrevious],
-      expanded: false,
-    },
+    { id: "related", label: null, rows: related },
+    { id: "active", label: null, rows: [...active, ...remoteActive] },
+    { id: "previous", label: "Previous agents", rows: [...previous, ...remotePrevious] },
   ];
   const unlinkedRunningCount =
     projection?.subagents.filter(
@@ -1024,13 +1022,6 @@ export function ThreadRelationshipsPanel(props: {
               part="row"
               className={THREAD_LINEAGE_ROW_CLASS}
               aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus)}`}
-              render={
-                groups
-                  .find((group) => group.id === "previous")
-                  ?.rows.some((row) => !("remote" in row) && row.threadId === threadId) ? (
-                  <MenuItem />
-                ) : undefined
-              }
               onClick={() => openThread(threadId)}
             />
           }
@@ -1146,7 +1137,7 @@ export function ThreadRelationshipsPanel(props: {
       </li>
     );
   };
-  const renderLineageRow = (row: LineageRow, inMenu = false) =>
+  const renderLineageRow = (row: LineageRow) =>
     "remote" in row ? (
       <RemoteSubagentRow
         key={row.remote.id}
@@ -1155,7 +1146,6 @@ export function ThreadRelationshipsPanel(props: {
         provider={providersByEnvironment
           .get(row.remote.remoteChild.environmentId)
           ?.find((entry) => entry.instanceId === row.remote.providerInstanceId)}
-        inMenu={inMenu}
       />
     ) : (
       renderRelationshipRow(row)
@@ -1215,7 +1205,7 @@ export function ThreadRelationshipsPanel(props: {
                 .map((group) => (
                   <div key={`${scopedThreadKey(ref)}:${group.id}`} className="not-first:mt-1.5">
                     <ThreadLineageGroup {...group}>
-                      {(visibleRows) => visibleRows.map((row) => renderLineageRow(row, true))}
+                      {(visibleRows) => visibleRows.map((row) => renderLineageRow(row))}
                     </ThreadLineageGroup>
                   </div>
                 ))}
@@ -1241,7 +1231,6 @@ export function ThreadRelationshipsPanel(props: {
             key={`${scopedThreadKey(ref)}:side-chats`}
             label={null}
             rows={sideChats}
-            expanded
           >
             {(visibleRows) => visibleRows.map(renderRelationshipRow)}
           </ThreadLineageGroup>
