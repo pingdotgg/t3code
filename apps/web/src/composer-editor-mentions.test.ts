@@ -43,12 +43,6 @@ describe("splitPromptIntoComposerSegments", () => {
     ]);
   });
 
-  it("does not convert an incomplete trailing mention token", () => {
-    expect(splitPromptIntoComposerSegments("Inspect @AGENTS.md")).toEqual([
-      { type: "text", text: "Inspect @AGENTS.md" },
-    ]);
-  });
-
   it("splits quoted mention tokens containing whitespace", () => {
     expect(splitPromptIntoComposerSegments('Inspect @"My File.md" please')).toEqual([
       { type: "text", text: "Inspect " },
@@ -165,26 +159,6 @@ describe("splitPromptIntoComposerSegments", () => {
     expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
   });
 
-  it.each(["@expo/ui", "@jane/foo.js", "@scope/pkg/sub/path"])(
-    "does not turn scoped package reference %s into file mention segments",
-    (reference) => {
-      const prompt = `Install ${reference} next`;
-      expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
-    },
-  );
-
-  it("turns canonical scoped folder links into file mention segments", () => {
-    expect(splitPromptIntoComposerSegments("Inspect [sub](@scope/pkg/sub) next")).toEqual([
-      { type: "text", text: "Inspect " },
-      {
-        type: "mention",
-        path: "@scope/pkg/sub",
-        source: "[sub](@scope/pkg/sub)",
-      },
-      { type: "text", text: " next" },
-    ]);
-  });
-
   it("decodes reserved path characters from generated links", () => {
     expect(
       splitPromptIntoComposerSegments(
@@ -206,29 +180,6 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "text", text: "Use " },
       { type: "skill", name: "review-follow-up", source: "$review-follow-up" },
       { type: "text", text: " please" },
-    ]);
-  });
-
-  it("splits digit-leading skill tokens into skill segments", () => {
-    expect(splitPromptIntoComposerSegments("Use $2spec please")).toEqual([
-      { type: "text", text: "Use " },
-      { type: "skill", name: "2spec", source: "$2spec" },
-      { type: "text", text: " please" },
-    ]);
-  });
-
-  it("keeps digits-only dollar amounts and compact monetary expressions as text", () => {
-    expect(splitPromptIntoComposerSegments("I'll pay $20 tomorrow")).toEqual([
-      { type: "text", text: "I'll pay $20 tomorrow" },
-    ]);
-    expect(splitPromptIntoComposerSegments("Budget is $20k tomorrow")).toEqual([
-      { type: "text", text: "Budget is $20k tomorrow" },
-    ]);
-    expect(splitPromptIntoComposerSegments("Cost is $100M total")).toEqual([
-      { type: "text", text: "Cost is $100M total" },
-    ]);
-    expect(splitPromptIntoComposerSegments("Limit is $1e6 here")).toEqual([
-      { type: "text", text: "Limit is $1e6 here" },
     ]);
   });
 

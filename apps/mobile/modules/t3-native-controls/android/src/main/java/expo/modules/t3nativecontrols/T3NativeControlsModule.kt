@@ -10,7 +10,9 @@ import android.provider.MediaStore
 import android.text.format.DateFormat
 import androidx.annotation.RequiresApi
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
 import expo.modules.kotlin.Promise
+import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
@@ -23,10 +25,27 @@ class T3NativeControlsModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("T3NativeControls")
 
+    // React Native sets this once, at launch, from the system theme rather than the app's.
+    AsyncFunction("setNavigationBarStyle") { light: Boolean ->
+      // Below Android 10, React Native paints the navigation bar color itself.
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@AsyncFunction
+      val window = appContext.currentActivity?.window ?: return@AsyncFunction
+      val controller = WindowCompat.getInsetsController(window, window.decorView)
+      controller.isAppearanceLightNavigationBars = light
+    }.runOnQueue(Queues.MAIN)
+
     Function("is24HourFormat") {
       val context = appContext.reactContext ?: error("The app is not active.")
       DateFormat.is24HourFormat(context)
     }
+
+    AsyncFunction("generateDpopKey") { T3DpopKeys.generate() }
+
+    AsyncFunction("dpopKeyMatches") { privateKey: ByteArray, publicKey: ByteArray ->
+      T3DpopKeys.matches(privateKey, publicKey)
+    }
+
+    AsyncFunction("signDpop") { key: ByteArray, input: ByteArray -> T3DpopKeys.sign(key, input) }
 
     AsyncFunction("openFile") { uri: String, mimeType: String, promise: Promise ->
       check(filePreviewPromise == null) { "A document viewer is already open." }
