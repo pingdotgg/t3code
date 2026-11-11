@@ -23,10 +23,9 @@ import * as Effect from "effect/Effect";
  * irreplaceable (e.g. `GitHub.Repository`, `Cloudflare.Zone`); those opt into
  * deletion with `destroy()`.
  */
-export class RemovalPolicy extends Context.Service<
-  RemovalPolicy,
-  "retain" | "destroy"
->()("RemovalPolicy") {}
+export class RemovalPolicy extends Context.Service<RemovalPolicy, "retain" | "destroy">()(
+  "RemovalPolicy",
+) {}
 
 /**
  * Retain the physical cloud resource when the resource is deleted: the
@@ -55,14 +54,10 @@ export class RemovalPolicy extends Context.Service<
 export const retain: {
   (
     enabled?: boolean,
-  ): <R, Req = never>(
-    enabled: Effect.Effect<R, never, Req>,
-  ) => Effect.Effect<R, never, Req>;
+  ): <R, Req = never>(enabled: Effect.Effect<R, never, Req>) => Effect.Effect<R, never, Req>;
   <Req = never>(
     enabled: Effect.Effect<boolean, never, Req>,
-  ): <R, Req2 = never>(
-    a: Effect.Effect<R, never, Req2>,
-  ) => Effect.Effect<R, never, Req | Req2>;
+  ): <R, Req2 = never>(a: Effect.Effect<R, never, Req2>) => Effect.Effect<R, never, Req | Req2>;
 } = ((enabled: boolean | Effect.Effect<boolean, never, any> = true) =>
   (eff: Effect.Effect<any, never, any>) =>
     eff.pipe(
@@ -93,14 +88,10 @@ export const retain: {
 export const destroy: {
   (
     enabled?: boolean,
-  ): <R, Req = never>(
-    enabled: Effect.Effect<R, never, Req>,
-  ) => Effect.Effect<R, never, Req>;
+  ): <R, Req = never>(enabled: Effect.Effect<R, never, Req>) => Effect.Effect<R, never, Req>;
   <Req = never>(
     enabled: Effect.Effect<boolean, never, Req>,
-  ): <R, Req2 = never>(
-    a: Effect.Effect<R, never, Req2>,
-  ) => Effect.Effect<R, never, Req | Req2>;
+  ): <R, Req2 = never>(a: Effect.Effect<R, never, Req2>) => Effect.Effect<R, never, Req | Req2>;
 } = ((enabled: boolean | Effect.Effect<boolean, never, any> = true) =>
   (eff: Effect.Effect<any, never, any>) =>
     eff.pipe(
