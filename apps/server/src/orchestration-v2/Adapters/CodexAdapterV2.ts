@@ -83,6 +83,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -96,6 +97,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -716,6 +718,57 @@ type CodexTurnStartParamsWithCollaborationMode =
 const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
   CodexTurnStartParamsWithCollaborationMode,
 );
+const CODEX_LUNA_RESERVE_MODEL = "gpt-reserve";
+const CODEX_LUNA_MODEL = "gpt-6-luna";
+const CODEX_LUNA_RESERVE_READ_BACKOFF_MS = 30_000;
+const decodeCodexLunaReserveBanner = Schema.decodeUnknownOption(
+  Schema.Struct({
+    banner_type: Schema.Literal("luna_reserve"),
+    blocked_model_slug: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  }),
+);
+
+interface CodexLunaReserve {
+  readonly normalModel: string;
+  readonly blockedModel: string | null;
+}
+
+function codexLunaReserveFromRead(
+  response: CodexSchema.V2GetAccountRateLimitsResponse,
+): CodexLunaReserve | null | undefined {
+  const credits = response.rateLimits.credits;
+  // Partial notifications, percentages, and reset times cannot confirm recovery.
+  if (
+    response.ordinaryUsageAllowed != null &&
+    (response.ordinaryUsageAllowed ||
+      credits?.unlimited === true ||
+      credits?.hasCredits === true) &&
+    response.rateLimitUpsell == null &&
+    response.rateLimits.spendControlReached !== true &&
+    response.rateLimits.rateLimitReachedType == null
+  ) {
+    return null;
+  }
+  const banner = decodeCodexLunaReserveBanner(response.rateLimitUpsell);
+  if (Option.isNone(banner)) return undefined;
+  const reserveSnapshot = [
+    response.rateLimits,
+    ...Object.values(response.rateLimitsByLimitId ?? {}),
+  ].find((snapshot) => snapshot.limitName === CODEX_LUNA_RESERVE_MODEL);
+  return {
+    normalModel: reserveSnapshot?.normalModelSlug ?? CODEX_LUNA_MODEL,
+    blockedModel: banner.value.blocked_model_slug ?? null,
+  };
+}
+
+function codexLunaReserveApplies(reserve: CodexLunaReserve | null, selectedModel: string) {
+  return (
+    reserve !== null &&
+    reserve.normalModel === selectedModel &&
+    (reserve.blockedModel === null || reserve.blockedModel === selectedModel)
+  );
+}
+
 const isProviderAdapterRuntimeRequestResponseError = Schema.is(
   ProviderAdapter.ProviderAdapterRuntimeRequestResponseError,
 );
@@ -767,6 +820,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly modelSelection: ModelSelection;
+    readonly wireModel?: string;
     readonly hasT3Mcp?: boolean;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
@@ -774,6 +828,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
   }) {
+    const wireModel = input.wireModel ?? input.modelSelection.model;
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
       input.runtimePolicy.approvalPolicy === undefined
@@ -818,7 +873,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       input: input.codexInput,
       ...(additionalContext ? { additionalContext } : {}),
       cwd: input.runtimePolicy.cwd,
-      model: input.modelSelection.model,
+      model: wireModel,
       // Catalogues can default summaries to "none"; request them explicitly on every turn.
       summary: "detailed",
       // Omitting the reviewer on resume preserves the previous Auto reviewer.
@@ -831,7 +886,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       collaborationMode: {
         mode: input.runtimePolicy.interactionMode,
         settings: {
-          model: input.modelSelection.model,
+          model: wireModel,
           ...(effort === undefined ? {} : { reasoning_effort: effort }),
         },
       },
@@ -1729,6 +1784,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  // Sessions share one account; idle session release must not discard Reserve.
+  const reserveState = yield* Ref.make({
+    reserve: null as CodexLunaReserve | null,
+    usageLimitVersion: 0,
+    checkedUsageLimitVersion: 0,
+    retryAfter: 0,
+  });
+  const reserveReadPermit = yield* Semaphore.make(1);
+  const armReserveRead = Ref.update(reserveState, (state) => ({
+    ...state,
+    usageLimitVersion: state.usageLimitVersion + 1,
+  }));
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -1877,6 +1944,52 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.forkScoped,
         );
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
+        const refreshLunaReserve = Effect.gen(function* () {
+          const state = yield* Ref.get(reserveState);
+          if (
+            (state.reserve === null &&
+              state.usageLimitVersion === state.checkedUsageLimitVersion) ||
+            (yield* Clock.currentTimeMillis) < state.retryAfter
+          ) {
+            return;
+          }
+          const response = yield* client
+            .request("account/rateLimits/read", {
+              supportsLunaReserve: true,
+              excludeResetCreditDetails: true,
+            })
+            .pipe(Effect.timeout("3 seconds"), Effect.result);
+          if (Result.isFailure(response)) {
+            const failure = response.failure;
+            const unsupported =
+              failure._tag === "CodexAppServerRequestError" &&
+              failure.code === -32600 &&
+              failure.errorMessage.includes("authentication required");
+            const retryAfter =
+              (yield* Clock.currentTimeMillis) + CODEX_LUNA_RESERVE_READ_BACKOFF_MS;
+            yield* Ref.update(reserveState, (current) => ({
+              ...current,
+              retryAfter,
+              ...(unsupported
+                ? { reserve: null, checkedUsageLimitVersion: state.usageLimitVersion }
+                : {}),
+            }));
+            return yield* Effect.logDebug("Codex Reserve usage read unavailable.", {
+              reason: unsupported
+                ? "unsupported_auth"
+                : failure._tag === "TimeoutError"
+                  ? "timeout"
+                  : "request_failed",
+            });
+          }
+          const reserve = codexLunaReserveFromRead(response.success);
+          yield* Ref.update(reserveState, (current) => ({
+            ...current,
+            // A quota error arriving during the read still needs a fresh check.
+            checkedUsageLimitVersion: state.usageLimitVersion,
+            ...(reserve === undefined ? {} : { reserve }),
+          }));
+        }).pipe(reserveReadPermit.withPermit);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
@@ -6048,6 +6161,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   },
                 }
               : event;
+          if (current.status === "failed" && current.failure.class === "usage_limit") {
+            yield* armReserveRead;
+          }
           yield* emitProviderEvent(current);
           if (current.status === "failed" && current.failure.class === "usage_limit") {
             const item = makeProviderFailureTurnItem({
@@ -6551,6 +6667,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ...(holdsForGoal ? { goalHoldTurn: completedTurn } : {}),
                 });
               }
+              if (
+                input.context.subagent !== null &&
+                input.status === "failed" &&
+                (codexUsageLimitError(
+                  codexErrorInfoCode(input.failureErrorInfo),
+                  input.failureErrorInfo,
+                ) ||
+                  (input.context.latestProviderFailure ?? providerRetry)?.failure.class ===
+                    "usage_limit")
+              ) {
+                yield* armReserveRead;
+              }
               const waiter = (yield* Ref.get(turnWaiters)).get(input.nativeTurnId);
               if (waiter !== undefined) {
                 yield* Deferred.succeed(waiter, undefined);
@@ -6993,11 +7121,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            yield* refreshLunaReserve;
+            const { reserve } = yield* Ref.get(reserveState);
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
+              ...(codexLunaReserveApplies(reserve, turnInput.modelSelection.model)
+                ? { wireModel: CODEX_LUNA_RESERVE_MODEL }
+                : {}),
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,

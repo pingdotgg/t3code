@@ -1239,6 +1239,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
     onUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"],
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
+    laterTranscripts: ReadonlyArray<CodexReplay.CodexAppServerReplayTranscript> = [],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1253,9 +1254,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         transcript,
         beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
       );
+      // Later opens fall back to the first driver, which continues its transcript.
+      const sessionDrivers = [
+        driver,
+        ...(yield* Effect.forEach(laterTranscripts, (later) =>
+          CodexReplay.makeReplayDriver(later),
+        )),
+      ];
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
-        open: (openInput) =>
-          Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
+        open: (openInput) => {
+          const sessionDriver = sessionDrivers.shift() ?? driver;
+          return Layer.build(CodexReplay.layerReplayWithDriver(sessionDriver)).pipe(
             Effect.mapError(
               (cause) =>
                 new ProviderAdapter.ProviderAdapterOpenSessionError({
@@ -1267,7 +1276,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             Effect.flatMap((context) =>
               Effect.service(CodexClient.CodexAppServerClient).pipe(
                 Effect.map((client) =>
-                  withCodexReplayChildMetadata(client, transcript, readChildMetadata),
+                  withCodexReplayChildMetadata(client, sessionDriver.transcript, readChildMetadata),
                 ),
                 Effect.map(
                   (client) =>
@@ -1289,7 +1298,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 Effect.provide(context),
               ),
             ),
-          ),
+          );
+        },
       };
       const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
@@ -1366,6 +1376,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         serverConfig,
         events,
         continuationRequests,
+        openSession: adapter.openSession,
         terminalEvents,
         subagentUpdates,
         hasPendingBackgroundWork,
@@ -8085,6 +8096,397 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  const reserveLayer = Layer.mergeAll(
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
+  );
+  const reserveSelection = { ...CODEX_TEST_MODEL_SELECTION, model: "gpt-6-luna" };
+  const reserveUsage = {
+    ordinaryUsageAllowed: false,
+    rateLimits: { limitId: "codex", primary: { usedPercent: 100 } },
+    rateLimitsByLimitId: {
+      base_model_inference: {
+        limitId: "base_model_inference",
+        limitName: "gpt-reserve",
+        normalModelSlug: "gpt-6-luna",
+        primary: { usedPercent: 48 },
+      },
+    },
+    rateLimitUpsell: { banner_type: "luna_reserve", blocked_model_slug: "gpt-6-luna" },
+  };
+  const recoveredUsage = {
+    ordinaryUsageAllowed: true,
+    rateLimits: { limitId: "codex", primary: { usedPercent: 0 } },
+    rateLimitUpsell: null,
+  };
+  const reserveRead = (
+    id: number,
+    response?: { result: unknown } | { error: { code: number; message: string } },
+  ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+    {
+      type: "expect_outbound",
+      label: `usage-${id}`,
+      frame: {
+        id,
+        method: "account/rateLimits/read",
+        params: { supportsLunaReserve: true, excludeResetCreditDetails: true },
+      },
+    },
+    ...(response
+      ? [{ type: "emit_inbound" as const, label: `usage-${id}`, frame: { id, ...response } }]
+      : []),
+  ];
+  const reserveTurn = (
+    id: number,
+    model: string,
+    threadId = "reserve-thread",
+    failed = false,
+    params?: Effect.Success<ReturnType<typeof CodexAdapterV2.buildCodexTurnStartParams>>,
+  ): Array<CodexReplay.CodexAppServerReplayEntry> => {
+    const turn = makeCodexReplayTurn({ id: `turn-${id}`, status: "inProgress" });
+    return [
+      {
+        type: "expect_outbound",
+        label: `start-${id}`,
+        frame: {
+          id,
+          method: "turn/start",
+          params: {
+            threadId,
+            input: [{ type: "text", text: `turn-${id}` }],
+            cwd: "/workspace",
+            approvalPolicy: "never",
+            approvalsReviewer: "user",
+            sandboxPolicy: { type: "dangerFullAccess" },
+            summary: "detailed",
+            ...params,
+            model,
+            collaborationMode: {
+              mode: "default",
+              ...params?.collaborationMode,
+              settings: { ...params?.collaborationMode?.settings, model },
+            },
+          },
+        },
+      },
+      { type: "emit_inbound", label: `start-${id}`, frame: { id, result: { turn } } },
+      {
+        type: "emit_inbound",
+        label: `started-${id}`,
+        frame: { method: "turn/started", params: { threadId, turn } },
+      },
+      // A known reset skips the terminal's own reset read.
+      ...(failed
+        ? [
+            {
+              type: "emit_inbound" as const,
+              label: `limits-${id}`,
+              frame: {
+                method: "account/rateLimits/updated",
+                params: {
+                  rateLimits: {
+                    limitId: "codex",
+                    primary: { usedPercent: 100, resetsAt: 2000100000, windowDurationMins: 300 },
+                  },
+                },
+              },
+            },
+          ]
+        : []),
+      {
+        type: "emit_inbound",
+        label: `completed-${id}`,
+        frame: {
+          method: "turn/completed",
+          params: {
+            threadId,
+            turn: {
+              ...turn,
+              status: failed ? "failed" : "completed",
+              error: failed
+                ? { message: "Usage limit reached", codexErrorInfo: "usageLimitExceeded" }
+                : null,
+            },
+          },
+        },
+      },
+    ];
+  };
+  const reserveSession = (
+    entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
+    nativeThreadId = "reserve-thread",
+  ) =>
+    makeCodexReplayTranscript({
+      scenario: `luna-${nativeThreadId}`,
+      entries: [
+        ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "", prompt: "" }).slice(0, 5),
+        ...entries,
+      ],
+    });
+  const openReserveReplay = Effect.fnUntraced(function* (
+    entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
+    onRequest: (method: string) => Effect.Effect<void> = () => Effect.void,
+    laterTranscripts: ReadonlyArray<CodexReplay.CodexAppServerReplayTranscript> = [],
+  ) {
+    const terminals =
+      yield* Queue.unbounded<
+        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
+      >();
+    const harness = yield* makeCodexReplayHarness(
+      reserveSession(entries),
+      (event) => (event.type === "turn.terminal" ? Queue.offer(terminals, event) : Effect.void),
+      onRequest,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      laterTranscripts,
+    );
+    const turnInput = (
+      id: number,
+      ordinal: number,
+      threadId = harness.threadId,
+      providerThread = harness.providerThread,
+    ) => {
+      const input = makeCodexTestTurnInput({
+        threadId,
+        providerThread,
+        now: DateTime.makeUnsafe(0),
+        attemptId: RunAttemptId.make(`reserve-${threadId}-${ordinal}`),
+        text: `turn-${id}`,
+      });
+      return {
+        ...input,
+        appThread: { ...input.appThread, modelSelection: reserveSelection },
+        modelSelection: reserveSelection,
+        runOrdinal: ordinal,
+        providerTurnOrdinal: ordinal,
+      };
+    };
+    const run = (id: number, ordinal: number) =>
+      harness.runtime.startTurn(turnInput(id, ordinal)).pipe(Effect.andThen(Queue.take(terminals)));
+    return { ...harness, turnInput, run, nextTerminal: Queue.take(terminals) };
+  });
+
+  it.effect("routes Luna Reserve in collaboration mode and requires confirmed recovery", () =>
+    Effect.gen(function* () {
+      const entries: Array<CodexReplay.CodexAppServerReplayEntry> = [];
+      const turns = [
+        { id: 3, model: "gpt-6-luna", failed: true },
+        { id: 5, model: "gpt-reserve", usage: reserveUsage },
+        { id: 7, model: "gpt-reserve", usage: { ...recoveredUsage, ordinaryUsageAllowed: null } },
+        {
+          id: 9,
+          model: "gpt-6-luna",
+          usage: {
+            ...reserveUsage,
+            rateLimitUpsell: { banner_type: "luna_reserve", blocked_model_slug: "gpt-6-sol" },
+          },
+        },
+        { id: 11, model: "gpt-6-luna", usage: recoveredUsage },
+        { id: 12, model: "gpt-6-luna" },
+      ];
+      for (const turn of turns) {
+        if (turn.usage) entries.push(...reserveRead(turn.id - 1, { result: turn.usage }));
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "reserve-thread",
+          codexInput: [{ type: "text", text: `turn-${turn.id}` }],
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          modelSelection: reserveSelection,
+          hasT3Mcp: true,
+        });
+        entries.push(...reserveTurn(turn.id, turn.model, "reserve-thread", turn.failed, params));
+      }
+      const harness = yield* openReserveReplay(entries);
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("test"),
+        threadId: harness.threadId,
+        providerSessionId: "reserve-session",
+        providerInstanceId: reserveSelection.instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer test",
+        browserToolsAvailable: true,
+      });
+      for (const [ordinal, turn] of turns.entries()) {
+        const terminal = yield* harness.run(turn.id, ordinal + 1);
+        assert.equal(terminal.status, turn.failed ? "failed" : "completed");
+      }
+    }).pipe(Effect.scoped, Effect.provide(reserveLayer)),
+  );
+
+  it.effect.each(["timeout", "backend failure", "API-key auth"] as const)(
+    "Luna Reserve usage reads tolerate %s without delaying every turn",
+    (failure) =>
+      Effect.gen(function* () {
+        const readRequested = yield* Deferred.make<void>();
+        const retryable = failure !== "API-key auth";
+        const harness = yield* openReserveReplay(
+          [
+            ...reserveTurn(3, "gpt-6-luna", "reserve-thread", true),
+            ...reserveRead(
+              4,
+              failure === "timeout"
+                ? undefined
+                : {
+                    error: {
+                      code: retryable ? -32603 : -32600,
+                      message: retryable
+                        ? "failed to fetch codex rate limits: 502"
+                        : "chatgpt authentication required to read rate limits",
+                    },
+                  },
+            ),
+            ...reserveTurn(5, "gpt-6-luna"),
+            ...reserveTurn(6, "gpt-6-luna"),
+            ...(retryable ? reserveRead(7, { result: reserveUsage }) : []),
+            ...reserveTurn(retryable ? 8 : 7, retryable ? "gpt-reserve" : "gpt-6-luna"),
+            ...(retryable
+              ? []
+              : [
+                  ...reserveTurn(8, "gpt-6-luna", "reserve-thread", true),
+                  ...reserveRead(9, { result: reserveUsage }),
+                  ...reserveTurn(10, "gpt-reserve"),
+                ]),
+          ],
+          (method) =>
+            method === "account/rateLimits/read"
+              ? Deferred.succeed(readRequested, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        assert.equal((yield* harness.run(3, 1)).status, "failed");
+        const starting = yield* harness.runtime
+          .startTurn(harness.turnInput(5, 2))
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(Deferred.await(readRequested), Fiber.join(starting));
+        if (failure === "timeout") yield* TestClock.adjust("3 seconds");
+        yield* Fiber.join(starting);
+        assert.equal((yield* harness.nextTerminal).status, "completed");
+        assert.equal((yield* harness.run(6, 3)).status, "completed");
+        yield* TestClock.adjust("30 seconds");
+        assert.equal((yield* harness.run(retryable ? 8 : 7, 4)).status, "completed");
+        if (!retryable) {
+          assert.equal((yield* harness.run(8, 5)).status, "failed");
+          assert.equal((yield* harness.run(10, 6)).status, "completed");
+        }
+      }).pipe(Effect.scoped, Effect.provide(reserveLayer)),
+  );
+
+  it.effect("shares Luna Reserve and recovery with a newly opened session", () =>
+    Effect.gen(function* () {
+      const laterThreadId = ThreadId.make("reserve-later-session");
+      const harness = yield* openReserveReplay(
+        [
+          ...reserveTurn(3, "gpt-6-luna", "reserve-thread", true),
+          ...reserveRead(4, { result: reserveUsage }),
+          ...reserveTurn(5, "gpt-reserve"),
+          ...reserveTurn(6, "gpt-6-luna"),
+        ],
+        undefined,
+        [
+          reserveSession(
+            [
+              ...reserveRead(3, { result: reserveUsage }),
+              ...reserveTurn(4, "gpt-reserve", "reserve-later"),
+              ...reserveRead(5, { result: recoveredUsage }),
+              ...reserveTurn(6, "gpt-6-luna", "reserve-later"),
+            ],
+            "reserve-later",
+          ),
+        ],
+      );
+      yield* harness.run(3, 1);
+      yield* harness.run(5, 2);
+      const later = yield* harness.openSession({
+        threadId: laterThreadId,
+        providerSessionId: ProviderSessionId.make("reserve-later-session"),
+        modelSelection: reserveSelection,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      const terminals = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* later.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runForEach((event) => Queue.offer(terminals, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* later.ensureThread({
+        threadId: laterThreadId,
+        modelSelection: reserveSelection,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      for (const [ordinal, id] of [4, 6].entries()) {
+        yield* later.startTurn(harness.turnInput(id, ordinal + 1, laterThreadId, providerThread));
+        yield* Queue.take(terminals);
+      }
+      assert.equal((yield* harness.run(6, 3)).status, "completed");
+    }).pipe(Effect.scoped, Effect.provide(reserveLayer)),
+  );
+
+  it.effect("arms Luna Reserve after a child quota failure while its root completes", () =>
+    Effect.gen(function* () {
+      const terminals =
+        yield* Queue.unbounded<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
+        >();
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "reserve-child-quota",
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId: RESUME_NATIVE_THREAD,
+              nativeTurnId: RESUME_NATIVE_TURN,
+              prompt: RESUME_PROMPT,
+            }),
+            resumeSubagentTranscript.entries.find(
+              (entry) =>
+                entry.type === "emit_inbound" &&
+                entry.label === "item/completed/subAgentActivity-started",
+            )!,
+            childTurnStarted(RESUME_CHILD_TURN_1),
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: RESUME_CHILD_THREAD,
+                  turn: {
+                    ...makeCodexReplayTurn({ id: RESUME_CHILD_TURN_1, status: "failed" }),
+                    error: { message: "Usage limit reached", codexErrorInfo: "usageLimitExceeded" },
+                  },
+                },
+              },
+            },
+            resumeSubagentTranscript.entries.find(
+              (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/root",
+            )!,
+            ...reserveRead(4, { result: reserveUsage }),
+            ...reserveTurn(5, "gpt-reserve", RESUME_NATIVE_THREAD),
+          ],
+        }),
+        (event) => (event.type === "turn.terminal" ? Queue.offer(terminals, event) : Effect.void),
+      );
+      const input = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("reserve-child-quota"),
+        text: RESUME_PROMPT,
+      });
+      yield* harness.runtime.startTurn(input);
+      assert.equal((yield* Queue.take(terminals)).status, "completed");
+      yield* harness.runtime.startTurn({
+        ...input,
+        attemptId: RunAttemptId.make("reserve-after-child-quota"),
+        runOrdinal: 2,
+        providerTurnOrdinal: 2,
+        modelSelection: reserveSelection,
+        message: { ...input.message, text: "turn-5" },
+      });
+      assert.equal((yield* Queue.take(terminals)).status, "completed");
+    }).pipe(Effect.scoped, Effect.provide(reserveLayer)),
   );
 
   it.effect("preserves a subagent result across a trailing empty final and resume", () =>
