@@ -1,28 +1,21 @@
 import { useNavigation } from "@react-navigation/native";
 import { isListedThreadLineage } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
-import { useMemo, useRef, useState } from "react";
-import { FlatList, Platform, type TextInputInstance, View } from "react-native";
+import { useMemo, useState } from "react";
+import { FlatList, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { SearchField } from "../../components/ui/SearchField";
 import { SelectionRow } from "../../components/ui/SelectionRow";
-import { Toolbar } from "../../components/ui/Toolbar";
+import { useSearchToolbarInset } from "../../components/ui/useBarInset";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import {
   useEnvironmentServerConfig,
   useProjects,
   useVisibleThreadShells,
 } from "../../state/entities";
 import { useDebouncedValue, usePaginatedBranches, useThreadSearch } from "../../state/queries";
-import {
-  createNativeMailSearchToolbarItem,
-  NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
-} from "../layout/native-mail-search-toolbar";
 import { BranchPickerScreen } from "../threads/NewTaskContextPickerScreens";
 import { ThreadSettingsPickerScreen } from "../threads/ThreadSettingsSheet";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -191,8 +184,6 @@ const THREAD_SEARCH_PLACEHOLDER = "Search threads, including older ones";
 export function ScheduledTaskThreadPickerRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
-  const searchRef = useRef<TextInputInstance>(null);
   const { editor, setEditor } = useScheduledTaskEditor();
   const environmentId = editor?.environmentId ?? null;
   const projectId = editor?.draft.projectId ?? null;
@@ -200,6 +191,16 @@ export function ScheduledTaskThreadPickerRouteScreen() {
   const currentLabel = useScheduledTaskDestinationLabel(environmentId, threadId);
   const shells = useVisibleThreadShells();
   const [query, setQuery] = useState("");
+  const search = {
+    value: query,
+    onChangeText: setQuery,
+    placeholder: THREAD_SEARCH_PLACEHOLDER,
+    accessibilityLabel: "Search threads",
+    clearAccessibilityLabel: "Clear thread search",
+    mode: "inline" as const,
+    compactToolbar: true,
+  };
+  const searchToolbarInset = useSearchToolbarInset(search);
   // Mounts older settled threads matching the query, which shells may leave out.
   useThreadSearch(
     environmentId !== null && projectId !== null ? [environmentId] : [],
@@ -209,10 +210,10 @@ export function ScheduledTaskThreadPickerRouteScreen() {
 
   if (!editor) return <MissingTaskDraft />;
 
-  const search = query.trim().toLocaleLowerCase();
+  const needle = query.trim().toLocaleLowerCase();
   const rows = [
-    ...(search ? [] : [{ key: "new-thread", title: NEW_THREAD_DESTINATION_LABEL, thread: null }]),
-    ...(threadId !== null && currentLabel.toLocaleLowerCase().includes(search)
+    ...(needle ? [] : [{ key: "new-thread", title: NEW_THREAD_DESTINATION_LABEL, thread: null }]),
+    ...(threadId !== null && currentLabel.toLocaleLowerCase().includes(needle)
       ? [{ key: threadId, title: currentLabel, thread: null }]
       : []),
     ...shells
@@ -223,7 +224,7 @@ export function ScheduledTaskThreadPickerRouteScreen() {
           thread.id !== threadId &&
           thread.archivedAt === null &&
           isListedThreadLineage(thread.lineage) &&
-          thread.title.toLocaleLowerCase().includes(search),
+          thread.title.toLocaleLowerCase().includes(needle),
       )
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .map((thread) => ({
@@ -235,40 +236,7 @@ export function ScheduledTaskThreadPickerRouteScreen() {
   const selectedKey = threadId ?? (editor.draft.threadMode === "new_thread" ? "new-thread" : null);
 
   return (
-    <SettingsScreen title="Destination">
-      {Platform.OS === "ios" ? (
-        <NativeStackScreenOptions
-          options={{
-            unstable_headerToolbarItems: usesNativeMailSearchToolbar
-              ? () => [
-                  createNativeMailSearchToolbarItem({
-                    onSearchTextChange: setQuery,
-                    placeholder: THREAD_SEARCH_PLACEHOLDER,
-                    searchTextChangeId: "scheduled-task-thread-search-text",
-                    showsSearchDismissButton: true,
-                  }),
-                ]
-              : undefined,
-            headerSearchBarOptions: usesNativeMailSearchToolbar
-              ? undefined
-              : {
-                  allowToolbarIntegration: true,
-                  autoCapitalize: "none",
-                  hideNavigationBar: false,
-                  hideWhenScrolling: false,
-                  obscureBackground: false,
-                  onCancelButtonPress: () => setQuery(""),
-                  onChangeText: (event) => setQuery(event.nativeEvent.text),
-                  placeholder: THREAD_SEARCH_PLACEHOLDER,
-                },
-          }}
-        />
-      ) : null}
-      {Platform.OS === "ios" && !usesNativeMailSearchToolbar ? (
-        <Toolbar placement="bottom">
-          <Toolbar.SearchBarSlot />
-        </Toolbar>
-      ) : null}
+    <SettingsScreen title="Destination" search={search}>
       <FlatList
         data={rows}
         keyExtractor={(row) => row.key}
@@ -281,25 +249,10 @@ export function ScheduledTaskThreadPickerRouteScreen() {
         contentContainerStyle={{
           paddingHorizontal: 16,
           paddingTop: 16,
-          paddingBottom: usesNativeMailSearchToolbar
-            ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET + 16
+          paddingBottom: searchToolbarInset
+            ? searchToolbarInset + 16
             : Math.max(insets.bottom, 16) + 16,
         }}
-        ListHeaderComponent={
-          Platform.OS === "ios" ? undefined : (
-            <View className="pb-4">
-              <SearchField
-                inputRef={searchRef}
-                autoFocus={false}
-                accessibilityLabel="Search threads"
-                clearAccessibilityLabel="Clear thread search"
-                onChangeText={setQuery}
-                placeholder={THREAD_SEARCH_PLACEHOLDER}
-                value={query}
-              />
-            </View>
-          )
-        }
         ListEmptyComponent={
           <Text className="p-5 text-center text-sm text-foreground-muted">No matching threads</Text>
         }
