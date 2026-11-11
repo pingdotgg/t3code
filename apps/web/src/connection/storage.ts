@@ -42,6 +42,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
+import { toastManager } from "../components/ui/toast";
 
 const DATABASE_NAME = "t3code:connection-runtime";
 const DATABASE_VERSION = 5;
@@ -207,7 +208,15 @@ const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")
             if (openFailure !== null) return yield* openFailure;
             const opened = yield* openDatabase().pipe(
               Effect.tapError((error) =>
-                Effect.sync(() => (openFailure = error)).pipe(
+                Effect.sync(() => {
+                  openFailure = error;
+                  toastManager.add({
+                    type: "warning",
+                    title: "Browser storage is unavailable",
+                    description:
+                      "Connections you add on this page will be forgotten when it reloads.",
+                  });
+                }).pipe(
                   Effect.andThen(
                     Effect.logWarning(
                       "Browser storage is unavailable, so connections and caches will not be saved until the page is reloaded.",
