@@ -159,7 +159,7 @@ jobs:
       # med's MacBook runs jobs over SSH with no GUI session; the hosted install tests still launch the app.
       launch_check: ${{ !(github.event_name == 'workflow_run' && vars.T3_LEARN_MAC_RUNNER == 't3-learn-macbook') }}
 
-  # Cross-built on Apple silicon, as upstream does.
+  # Built natively on hosted Intel: the Apple silicon pool starves for hours (REL-70).
   desktop_mac_x64:
     if: needs.preflight.outputs.skip != 'true'
     name: Desktop macOS x64
@@ -175,7 +175,7 @@ jobs:
       clerk_cli_oauth_client_id: ""
       relay_url: ""
       label: macOS x64
-      runner: ${{ github.event_name == 'workflow_run' && vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}
+      runner: ${{ github.event_name == 'workflow_run' && vars.T3_LEARN_MAC_RUNNER || 'macos-15-intel' }}
       platform: mac
       target: dmg
       arch: x64
