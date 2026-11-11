@@ -5,6 +5,11 @@ runs:
   steps:
     - shell: bash
       run: |
+        # Fork: GitHub runner DNS stopped resolving *.ubuntu.com on 2026-11-11 (REL-68/69).
+        sudo resolvectl dns "$(ip -o route show default | awk '{print $5; exit}')" 1.1.1.1 8.8.8.8
+        getent hosts archive.ubuntu.com > /dev/null \
+          || { echo "::error::Runner DNS cannot resolve archive.ubuntu.com; apt would fail."; exit 1; }
+
         # Replace the existing Blacksmith mirror list as well as direct sources.
         printf '%s\tpriority:%s\n' \
           https://archive.ubuntu.com/ubuntu 1 \
