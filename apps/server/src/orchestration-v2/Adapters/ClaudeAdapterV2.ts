@@ -5367,17 +5367,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // mode change; replacing the process cancels it, and that clears this record too.
         const scheduleWakeupCalls = new Set<string>();
         const scheduledWakeupsByNativeThread = new Map<string, number>();
+        const notifiedWhileIdleNativeThreads = new Set<string>();
         const trackClaudeScheduledWakeup = Effect.fnUntraced(function* (
           nativeThreadId: string,
           message: SDKMessage,
         ) {
+          if (message.type === "system" && message.subtype === "task_notification") {
+            if ((yield* Ref.get(activeTurn)) === null) {
+              notifiedWhileIdleNativeThreads.add(nativeThreadId);
+            }
+            return;
+          }
           if (isClaudeTurnStartMessage(message)) {
+            const wokenByNotification = notifiedWhileIdleNativeThreads.delete(nativeThreadId);
             const scheduledFor = scheduledWakeupsByNativeThread.get(nativeThreadId);
             if (scheduledFor === undefined) return;
-            // A turn Claude starts by itself near scheduledFor is the wake; a task notification
-            // also starts one, so an idle turn well before scheduledFor leaves the wakeup pending.
+            // Only a turn Claude starts by itself, with no task notification before it, can be
+            // the early-jittered wake; anything else leaves the wakeup pending until scheduledFor.
             const earliestWake =
-              (yield* Ref.get(activeTurn)) === null
+              (yield* Ref.get(activeTurn)) === null && !wokenByNotification
                 ? scheduledFor - CLAUDE_SCHEDULED_WAKEUP_EARLY_FIRE_MARGIN_MS
                 : scheduledFor;
             if (DateTime.toEpochMillis(yield* DateTime.now) >= earliestWake) {
@@ -6005,6 +6013,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             bufferedTaskNotificationIds.has(taskId),
           );
           scheduledWakeupsByNativeThread.delete(nativeThreadId);
+          notifiedWhileIdleNativeThreads.delete(nativeThreadId);
           yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
           yield* clearNativeThreadTaskIdSet(
             wakeEligibleBackgroundTasksByNativeThread,

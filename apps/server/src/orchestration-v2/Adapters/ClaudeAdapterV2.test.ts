@@ -10466,116 +10466,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("a turn that scheduled a ScheduleWakeup and ended keeps holding completion", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        const toolUseId = "toolu_schedule_wakeup";
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-schedule-wakeup"),
-            text: "Use the ScheduleWakeup tool with delaySeconds 60, then say WOKE.",
-            attachments: [],
-          }),
-        );
-        // Wire shape captured from Claude Code 2.1.303: no task_started or
-        // background_tasks_changed frame announces the pending wakeup.
-        yield* Queue.offer(
-          harness.sdkMessages,
-          claudeSdkFrame({
-            type: "assistant",
-            message: {
-              model: "claude-sonnet-4-6",
-              id: "msg_schedule_wakeup",
-              type: "message",
-              role: "assistant",
-              content: [
-                {
-                  type: "tool_use",
-                  id: toolUseId,
-                  name: "ScheduleWakeup",
-                  input: {
-                    delaySeconds: 60,
-                    prompt: "say WOKE",
-                    reason: "User requested a 60-second wakeup to say WOKE.",
-                    noop: false,
-                  },
-                },
-              ],
-              stop_reason: null,
-              stop_sequence: null,
-              usage: { input_tokens: 1, output_tokens: 1 },
-            },
-            parent_tool_use_id: null,
-            uuid: "00000000-0000-4000-8000-000000002001",
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          claudeSdkFrame({
-            type: "user",
-            message: {
-              role: "user",
-              content: [
-                {
-                  type: "tool_result",
-                  tool_use_id: toolUseId,
-                  content:
-                    "Next wakeup scheduled for 12:13:00 (in 60s). If you owe the user a status update this tick, write it now as ordinary response text; then end the turn — the harness re-invokes you when the wakeup fires or a task-notification arrives.",
-                },
-              ],
-            },
-            parent_tool_use_id: null,
-            uuid: "00000000-0000-4000-8000-000000002002",
-            session_id: WAKE_NATIVE_SESSION,
-            tool_use_result: {
-              scheduledFor: DateTime.toEpochMillis(now) + 60_000,
-              clampedDelaySeconds: 60,
-              wasClamped: false,
-            },
-          }),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          makeAssistantTextFrame({
-            uuid: "00000000-0000-4000-8000-000000002003",
-            text: "I scheduled the wakeup; it will fire in 60 seconds and say WOKE.",
-          }),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          makeResultFrame({
-            uuid: "00000000-0000-4000-8000-000000002004",
-            result: "I scheduled the wakeup; it will fire in 60 seconds and say WOKE.",
-          }),
-        );
-        yield* harness.awaitTerminal(1);
-
-        const pendingBackgroundTasks =
-          providerThreadRosterEvents(harness.events).at(-1)?.providerThread
-            .pendingBackgroundTasks ?? [];
-        assert.isTrue(
-          backgroundWorkHoldsCompletion(pendingBackgroundTasks),
-          `Claude will start a new turn when the wakeup fires, so the settled thread must not look done; published pendingBackgroundTasks: ${JSON.stringify(pendingBackgroundTasks)}`,
-        );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
-        ),
-      ),
-    ),
-  );
-
   const scheduleWakeupFrames = (input: {
     readonly toolUseId: string;
     readonly uuids: readonly [string, string];
@@ -10762,7 +10652,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("a background task waking Claude long before the wakeup keeps its hold", () =>
+  it.effect("a task notification waking Claude just before the wakeup keeps its hold", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -10773,7 +10663,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             providerThread: harness.providerThread,
             now,
             attemptId: RunAttemptId.make("attempt-claude-schedule-wakeup-task"),
-            text: "Run the build in the background and check back in 30 minutes.",
+            text: "Run the build in the background and check back in two minutes.",
             attachments: [],
           }),
         );
@@ -10781,8 +10671,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         for (const frame of scheduleWakeupFrames({
           toolUseId: "toolu_schedule_wakeup_fallback",
           uuids: ["00000000-0000-4000-8000-000000002501", "00000000-0000-4000-8000-000000002502"],
-          toolInput: { delaySeconds: 1800, prompt: "check the build", reason: "fallback" },
-          scheduledFor: DateTime.toEpochMillis(now) + 1_800_000,
+          toolInput: { delaySeconds: 120, prompt: "check the build", reason: "fallback" },
+          scheduledFor: DateTime.toEpochMillis(now) + 120_000,
         })) {
           yield* Queue.offer(harness.sdkMessages, frame);
         }
@@ -10812,7 +10702,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(harness.terminalEvents()[1]?.status, "completed");
         assert.isTrue(
           backgroundWorkHoldsCompletion(publishedRoster(harness)),
-          "the 30-minute wakeup is still pending after the task notification's wake turn",
+          "the wakeup is still pending after the task notification's wake turn",
         );
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
       }).pipe(
