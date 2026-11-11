@@ -94,7 +94,7 @@ it.effect("sets the requested thinking level before prompting", () =>
       pi.received
         .filter((record) => record["type"] !== "get_last_assistant_text")
         .map(({ type, level }) => (level === undefined ? type : `${type}:${level}`)),
-      ["set_model", "set_thinking_level:low", "prompt"],
+      ["get_available_models", "set_model", "set_thinking_level:low", "prompt"],
     );
   }),
 );
