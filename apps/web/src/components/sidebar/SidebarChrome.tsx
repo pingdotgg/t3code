@@ -299,8 +299,20 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 });
 
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+  const searchInTitleBar = useClientSettings((settings) => settings.sidebarSearchInTitleBar);
+  const identificationMode = useEnvironmentIdentificationMode();
+  const stageLabel = useEnvironmentStageLabel();
+  const pillLabel =
+    identificationMode === "pill" ? resolveEnvironmentIdentificationPillLabel(stageLabel) : null;
   return (
     <SidebarFooter>
+      {searchInTitleBar && pillLabel ? (
+        <div>
+          <Badge data-environment-identification="pill" size="sm" variant="secondary">
+            {pillLabel}
+          </Badge>
+        </div>
+      ) : null}
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
       <SidebarUtilityMenu />

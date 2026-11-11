@@ -387,7 +387,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
           : "left-[var(--workspace-controls-left)] ml-px",
         mobileSidebarSheetMounted && "hidden",
         isSidebarVisible &&
-          "[[data-slot=sidebar-wrapper]:has([data-sidebar-search-expanded])_&]:hidden",
+          "[[data-slot=sidebar-wrapper]:has([data-sidebar-search-expanded])_&]:opacity-0 [[data-slot=sidebar-wrapper]:has([data-sidebar-search-expanded])_&_button]:pointer-events-none",
       )}
       data-sidebar-control=""
     >
