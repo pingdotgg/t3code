@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 
 import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
+import { cn } from "~/lib/utils";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
