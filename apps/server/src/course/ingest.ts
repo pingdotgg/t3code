@@ -223,8 +223,49 @@ export const parseOcwZipEntries = (
       if (uid && !galleryOrder.has(uid)) galleryOrder.set(uid, galleryOrder.size);
     }
   }
-  const order = (record: Record<string, unknown>) =>
-    galleryOrder.get(stringValue(record.uid) ?? "") ?? Number.MAX_SAFE_INTEGER;
+  const index = [...entries.entries()]
+    .filter(([name]) => /(?:^|\/)index\.html$/i.test(name))
+    .toSorted(([a], [b]) => a.split("/").length - b.split("/").length)[0];
+  const html = index
+    ? typeof index[1] === "string"
+      ? index[1]
+      : Buffer.from(index[1]).toString("utf8")
+    : "";
+  const sections = [
+    ...new Set(
+      [...html.matchAll(/href\s*=\s*["'][^"']*?pages\/([^/"']+)\//gi)].map((match) => match[1]!),
+    ),
+  ];
+  const pages = new Map(
+    records.flatMap(({ name, record }) => {
+      const page = name.match(/(?:^|\/)pages\/(.+)\/data\.json$/i)?.[1];
+      return page ? [[page, record] as const] : [];
+    }),
+  );
+  const pageOrder = new Map<string, number>();
+  for (const section of sections) {
+    const page = pages.get(section);
+    const children = [
+      ...new Set(
+        [
+          ...(stringValue(page?.content) ?? "").matchAll(
+            /href\s*=\s*["'][^"']*?pages\/(.+?)\/index\.html["']/gi,
+          ),
+        ]
+          .map((match) => match[1]!)
+          .filter((child) => child.startsWith(`${section}/`)),
+      ),
+    ];
+    for (const slug of [section, ...children]) {
+      const title = stringValue(pages.get(slug)?.title);
+      if (title && !pageOrder.has(title)) pageOrder.set(title, pageOrder.size);
+    }
+  }
+  const order = (record: Record<string, unknown>) => {
+    const gallery = galleryOrder.get(stringValue(record.uid) ?? "");
+    const page = pageOrder.get(stringValue(record.parent_title) ?? "");
+    return gallery ?? (page === undefined ? Number.MAX_SAFE_INTEGER : galleryOrder.size + page);
+  };
   const videos = records
     .filter(({ name }) => /(?:^|\/)resources\/[^/]+\/data\.json$/i.test(name))
     .filter(({ record }) => stringValue(record.resourcetype)?.toLowerCase() === "video")
@@ -283,9 +324,16 @@ export const parseOcwZip = (zipPath: string, source: string) =>
       );
       const entries = new Map<string, Uint8Array>();
       let totalUncompressed = 0;
+      let indexEntry: Parameters<typeof archive.streamEntry>[0] | undefined;
       while (true) {
         const entry = yield* archive.next;
         if (!entry) break;
+        if (
+          /(?:^|\/)index\.html$/i.test(entry.fileName) &&
+          (!indexEntry || entry.fileName.split("/").length < indexEntry.fileName.split("/").length)
+        )
+          indexEntry = entry;
+        if (/(?:^|\/)index\.html$/i.test(entry.fileName)) continue;
         if (!/(?:^|\/)data\.json$|\.(?:vtt|srt)$/i.test(entry.fileName)) continue;
         if (entry.uncompressedSize > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES) continue;
         totalUncompressed += entry.uncompressedSize;
@@ -296,6 +344,18 @@ export const parseOcwZip = (zipPath: string, source: string) =>
         const stream = yield* archive.streamEntry(entry);
         const bytes = yield* tryIo("Could not read the OCW zip", () => readStream(stream));
         entries.set(entry.fileName, bytes);
+      }
+      if (indexEntry && indexEntry.uncompressedSize <= MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES) {
+        totalUncompressed += indexEntry.uncompressedSize;
+        if (totalUncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES)
+          return yield* new CourseIngestError({
+            message: "The OCW archive contains too much uncompressed course data.",
+          });
+        const stream = yield* archive.streamEntry(indexEntry);
+        entries.set(
+          indexEntry.fileName,
+          yield* tryIo("Could not read the OCW zip", () => readStream(stream)),
+        );
       }
       return parseOcwZipEntries(entries, source);
     }),

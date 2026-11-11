@@ -114,8 +114,26 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
       .withPermit(effect)
       .pipe(Effect.mapError((error) => (isCourseError(error) ? error : failure(error.message))));
 
+  // The staged metadata marks a complete repair; a read finishes an interrupted directory swap.
+  const finishRepair = Effect.fn("CourseService.finishRepair")(function* (id: string) {
+    const directory = path.join(root, id);
+    const staged = path.join(directory, ".reorder");
+    const metadata = path.join(staged, "course.json");
+    if (!(yield* fs.exists(metadata))) return;
+    const units = path.join(directory, "units");
+    const oldUnits = path.join(staged, "old-units");
+    if (yield* fs.exists(path.join(staged, "units"))) {
+      if (!(yield* fs.exists(oldUnits)) && (yield* fs.exists(units)))
+        yield* fs.rename(units, oldUnits);
+      yield* fs.rename(path.join(staged, "units"), units);
+    }
+    yield* fs.rename(metadata, path.join(directory, "course.json"));
+    yield* fs.remove(staged, { recursive: true });
+  });
+
   const read = Effect.fn("CourseService.read")(function* (id: string) {
     if (!isCourseId(id)) return yield* failure("Invalid course id.");
+    yield* finishRepair(id);
     const file = path.join(root, id, "course.json");
     if (!(yield* fs.exists(file))) return yield* failure(`Course '${id}' was not found.`);
     return yield* fs.readFileString(file).pipe(
@@ -147,6 +165,54 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
     yield* fs.rename(`${file}.tmp`, file);
   });
 
+  const repair = Effect.fn("CourseService.repair")(function* (
+    course: Course,
+    source: IngestedCourse,
+  ) {
+    const available = new Set(course.units.map((_, index) => index));
+    const matches = source.units.map(() => -1);
+    for (const key of ["youtubeId", "title"] as const) {
+      source.units.forEach((incoming, position) => {
+        if (matches[position] !== -1 || !incoming[key]) return;
+        const index = course.units.findIndex(
+          (unit, index) => available.has(index) && unit[key] === incoming[key]?.trim(),
+        );
+        if (index < 0) return;
+        available.delete(index);
+        matches[position] = index;
+      });
+    }
+    const matched = [...matches.filter((index) => index >= 0), ...available];
+    if (matched.every((index, position) => index === position)) return course;
+    const reordered = matched.map((index) => course.units[index]!);
+    const positionIndex = course.position ? matched.indexOf(course.position.unit - 1) : -1;
+    const position =
+      course.position && positionIndex >= 0
+        ? { ...course.position, unit: positionIndex + 1 }
+        : course.position;
+    const next = { ...course, units: reordered, ...(position ? { position } : {}) };
+    const staged = path.join(root, course.id, ".reorder");
+    yield* fs.remove(staged, { recursive: true, force: true });
+    yield* fs.makeDirectory(path.join(staged, "units"), { recursive: true });
+    for (const [newIndex, oldIndex] of matched.entries()) {
+      for (const ext of ["txt", "plan.md", "quiz.md"]) {
+        const from = unitFile(course.id, oldIndex + 1, ext);
+        if (yield* fs.exists(from))
+          yield* fs.copyFile(
+            from,
+            path.join(staged, "units", `${String(newIndex + 1).padStart(2, "0")}.${ext}`),
+          );
+      }
+    }
+    const json = yield* encodeCourse(next).pipe(
+      Effect.mapError(() => failure("The reordered course is invalid and was not saved.")),
+    );
+    yield* fs.writeFileString(path.join(staged, "course.json.tmp"), `${json}\n`);
+    yield* fs.rename(path.join(staged, "course.json.tmp"), path.join(staged, "course.json"));
+    yield* finishRepair(course.id);
+    return next;
+  });
+
   const add = Effect.fn("CourseService.add")(function* (input: CourseAddInput) {
     const source: IngestedCourse =
       "ingested" in input
@@ -163,6 +229,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
         const { taken, courses } = yield* readAll;
         const linked = courses.filter((course) => course.lessonThreadId === input.lessonThreadId);
         const same = linked.find((course) => course.title === title);
+        if (same && "ingested" in input) return yield* repair(same, source);
         if (same) return same;
         const base = slug(title);
         let id = base;

@@ -69,6 +69,80 @@ describe("CourseService", () => {
     ),
   );
 
+  it.effect("repairs an existing course's order while keeping unit files and progress", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const ingested = {
+          kind: "ocw" as const,
+          title: "Mechanics",
+          source: "https://ocw.mit.edu/courses/mechanics/",
+          license: "CC BY-NC-SA 4.0",
+          attribution: "MIT OpenCourseWare",
+          units: [
+            { title: "Lecture 21", youtubeId: "video21", text: "[00:00] Work" },
+            { title: "Lecture 1", youtubeId: "video1", text: "[00:00] Vectors" },
+            { title: "Title only", text: "Extra" },
+            { title: "Unmatched A", text: "Keep A" },
+            { title: "Unmatched B", text: "Keep B" },
+          ],
+        };
+        const course = yield* service.add({ lessonThreadId: threadId, ingested });
+        yield* service.update({
+          courseId: course.id,
+          unit: 1,
+          plan: "Work plan",
+          quiz: "Work quiz",
+          position: { unit: 1, at: 90 },
+        });
+        yield* service.update({ courseId: course.id, unit: 2, plan: "Vector plan" });
+        yield* service.recordPrepThread(course.id, ThreadId.make("prep-1"));
+        const before = yield* service.get({ id: course.id });
+        const repaired = yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            ...ingested,
+            units: [
+              { title: "Renamed lecture 1", youtubeId: "video1" },
+              { title: "Title only" },
+              { title: "Lecture 21", youtubeId: "video21" },
+              { title: "New lecture" },
+            ],
+          },
+        });
+        assert.deepStrictEqual(repaired, {
+          ...before,
+          units: [
+            before.units[1]!,
+            before.units[2]!,
+            before.units[0]!,
+            before.units[3]!,
+            before.units[4]!,
+          ],
+          position: { unit: 3, at: 90 },
+        });
+        const work = yield* service.readUnit({ courseId: course.id, unit: 3 });
+        assert.strictEqual(work.plan, "Work plan");
+        assert.strictEqual(work.quiz, "Work quiz");
+        assert.strictEqual(work.text, "[00:00] Work");
+        const vectors = yield* service.readUnit({ courseId: course.id, unit: 1 });
+        assert.strictEqual(vectors.plan, "Vector plan");
+        assert.strictEqual(vectors.text, "[00:00] Vectors");
+        assert.isUndefined((yield* service.readUnit({ courseId: course.id, unit: 2 })).plan);
+        assert.deepStrictEqual(yield* service.get({ id: course.id }), repaired);
+        assert.deepStrictEqual(
+          yield* service.add({
+            lessonThreadId: threadId,
+            ingested: {
+              ...ingested,
+              units: [ingested.units[1]!, ingested.units[2]!, ingested.units[0]!],
+            },
+          }),
+          repaired,
+        );
+      }),
+    ),
+  );
+
   it.effect("rejects traversal ids without deleting outside courses", () =>
     withService((service, dir) =>
       Effect.gen(function* () {
