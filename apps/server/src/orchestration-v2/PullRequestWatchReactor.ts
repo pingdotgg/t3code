@@ -298,6 +298,9 @@ export const make = Effect.gen(function* () {
       ...identityOf(target.link),
       startedAt: target.watch.startedAt,
       watch: next,
+      ...(target.watch.checksPending === undefined
+        ? {}
+        : { checksPendingBefore: target.watch.checksPending }),
       ...(endedWatch === undefined ? {} : { endedWatch }),
       ...(wake === undefined
         ? {}

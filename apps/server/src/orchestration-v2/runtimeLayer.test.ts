@@ -3533,109 +3533,147 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("records when a watched PR's last checks finish, even with no news to wake for", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-pull-request-watch-quiet");
-      const projectId = ProjectId.make("pr-watch-quiet-project");
-      yield* seedProject({
-        projectId,
-        title: "Watch quiet",
-        workspaceRoot: "/workspace/watch-quiet",
-        defaultModelSelection: null,
-        createdAt: "2026-10-01T00:00:00.000Z",
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("pr-watch-quiet-create"),
-        threadId,
-        projectId,
-        title: "Watch quiet",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request.watch",
-        commandId: CommandId.make("pr-watch-quiet-start"),
-        threadId,
-        host: "github.com",
-        repository: "pingdotgg/t3code",
-        number: 17,
-        watching: true,
-        link: { url: "https://github.com/pingdotgg/t3code/pull/17", source: "agent" },
-      });
+  it.effect(
+    "records when a watched PR's checks finish, unless a push cleared that during the read",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make("runtime-pull-request-watch-quiet");
+        const projectId = ProjectId.make("pr-watch-quiet-project");
+        yield* seedProject({
+          projectId,
+          title: "Watch quiet",
+          workspaceRoot: "/workspace/watch-quiet",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("pr-watch-quiet-create"),
+          threadId,
+          projectId,
+          title: "Watch quiet",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("pr-watch-quiet-start"),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 17,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/17", source: "agent" },
+        });
 
-      let e2e: PullRequestCheck["status"] = "pending";
-      const host = Layer.mergeAll(
-        NodeServices.layer,
-        NodeCrypto.layer,
-        Layer.mock(PullRequestService.PullRequestService)({
-          detail: () =>
-            Effect.sync(() => ({
-              ...watchedPullRequestDetail({
-                projectId,
-                number: 17,
-                at: "2026-10-02T12:00:00.000Z",
+        let e2e: PullRequestCheck["status"] = "pending";
+        let comments: ReadonlyArray<PullRequestComment> = [];
+        let gate: {
+          readonly started: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        } | null = null;
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            detail: () =>
+              Effect.gen(function* () {
+                if (gate !== null) {
+                  yield* Deferred.succeed(gate.started, undefined);
+                  yield* Deferred.await(gate.release);
+                }
+                return {
+                  ...watchedPullRequestDetail({
+                    projectId,
+                    number: 17,
+                    at: "2026-10-02T12:00:00.000Z",
+                  }),
+                  checks: [
+                    { name: "test", status: "failure" as const, description: null, url: null },
+                    { name: "e2e", status: e2e, description: null, url: null },
+                  ],
+                };
               }),
-              checks: [
-                { name: "test", status: "failure" as const, description: null, url: null },
-                { name: "e2e", status: e2e, description: null, url: null },
-              ],
-            })),
-          activity: () =>
-            Effect.succeed({
-              comments: [],
-              commentCount: 0,
-              commentsTruncated: false,
-              reviewThreads: [],
-              commits: [],
-            }),
-        }),
-      );
-      const summaries = Effect.map(
-        orchestrator.getThreadRecords(threadId, ["messages"]),
-        ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
-      );
-      const checksPending = Effect.map(
-        orchestrator.getThreadShell(threadId),
-        (thread) => thread?.pullRequests?.[0]?.watch?.checksPending,
-      );
+            activity: () =>
+              Effect.sync(() => ({
+                comments,
+                commentCount: comments.length,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              })),
+          }),
+        );
+        const summaries = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
+        );
+        const checksPending = Effect.map(
+          orchestrator.getThreadShell(threadId),
+          (thread) => thread?.pullRequests?.[0]?.watch?.checksPending,
+        );
 
-      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
-      yield* reactor.sweep;
-      assert.deepEqual(yield* summaries, ["#17: checks failed"]);
-      assert.isTrue(yield* checksPending);
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        yield* reactor.sweep;
+        assert.deepEqual(yield* summaries, ["#17: checks failed"]);
+        assert.isTrue(yield* checksPending);
 
-      e2e = "success";
-      yield* TestClock.adjust("10 minutes");
-      yield* reactor.sweep;
-      assert.deepEqual(yield* summaries, ["#17: checks failed"]);
-      assert.isFalse(yield* checksPending);
+        e2e = "success";
+        yield* TestClock.adjust("10 minutes");
+        yield* reactor.sweep;
+        assert.deepEqual(yield* summaries, ["#17: checks failed"]);
+        assert.isFalse(yield* checksPending);
 
-      // A push clears the answer, and the next sweep reads again though nothing else changed.
-      const watched = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
-      assert.isDefined(watched);
-      const { checksPending: _answer, ...cleared } = watched!;
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request-watch.sync",
-        commandId: CommandId.make("pr-watch-quiet-push"),
-        threadId,
-        host: "github.com",
-        repository: "pingdotgg/t3code",
-        number: 17,
-        startedAt: cleared.startedAt,
-        watch: cleared,
-      });
-      assert.isUndefined(yield* checksPending);
-      yield* TestClock.adjust("2 minutes");
-      yield* reactor.sweep;
-      assert.isFalse(yield* checksPending);
-    }),
+        // A push clears the answer while a read with news is in flight. That read's answer is the
+        // old head's, so the answer stays cleared while its news still wakes the agent.
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        gate = { started, release };
+        comments = [
+          {
+            id: "comment-1",
+            kind: "issue-comment",
+            author: { login: "reviewer", name: null, avatarUrl: null },
+            body: "Looks good once CI passes.",
+            createdAt: "2999-01-01T00:00:00.000Z",
+            url: null,
+            path: null,
+            reviewState: null,
+          },
+        ];
+        yield* TestClock.adjust("10 minutes");
+        const inFlight = yield* reactor.sweep.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        const watched = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+        assert.isDefined(watched);
+        const { checksPending: _answer, ...cleared } = watched!;
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make("pr-watch-quiet-push"),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 17,
+          startedAt: cleared.startedAt,
+          watch: cleared,
+        });
+        gate = null;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(inFlight);
+        assert.deepEqual(yield* summaries, ["#17: checks failed", "#17: new comments"]);
+        assert.isUndefined(yield* checksPending);
+
+        // The next sweep reads it again though nothing on the host changed.
+        yield* TestClock.adjust("2 minutes");
+        yield* reactor.sweep;
+        assert.isFalse(yield* checksPending);
+      }),
   );
 
   it.effect.each(["pending", "action-required"] as const)("recovers %s watches", (initialStatus) =>
