@@ -487,6 +487,25 @@ describe("MessagesTimeline messages", () => {
     expect(maxNestedCommits).toBeLessThan(20);
   });
 
+  it("folds a user message only when the fold hides at least as much as it shows", async () => {
+    setup();
+    const lines = (count: number) =>
+      Array.from({ length: count }, (_, index) => `Line ${index}`).join("\n");
+    await using screen = await renderTimeline([
+      message(lines(12), {}, "medium"),
+      message(lines(60), {}, "long"),
+    ]);
+    await vi.waitFor(() => expect(screen.buttons("Show full message")).toHaveLength(1));
+    const [medium, long] = [
+      ...screen.container.querySelectorAll<HTMLElement>("[data-user-message-body]"),
+    ];
+    expect(medium!.dataset.userMessageCollapsible).toBe("false");
+    expect(medium!.textContent).toContain("Line 11");
+    const foldedHeight = long!.offsetHeight;
+    await click(screen.button("Show full message"));
+    expect(long!.offsetHeight).toBeGreaterThanOrEqual(foldedHeight * 2);
+  });
+
   it("keeps the first and last message headings reachable from either end", async () => {
     setup();
     const props = baseProps();
