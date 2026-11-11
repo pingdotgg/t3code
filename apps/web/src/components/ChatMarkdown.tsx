@@ -904,18 +904,18 @@ function useChatMarkdownState({
                   throw new Error("Could not open the file in VS Code.");
                 return AsyncResult.success(undefined);
               }
-          : canOpenApp
-            ? async () =>
-                openInEditor({
-                  environmentId,
-                  input: { cwd: (await resolveHostPath()).absolutePath, editor: "file-manager" },
-                })
-            : canUseShellActions
+            : canOpenApp
               ? async () =>
-                  openInPreferredEditor(
-                    markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
-                  )
-              : undefined
+                  openInEditor({
+                    environmentId,
+                    input: { cwd: (await resolveHostPath()).absolutePath, editor: "file-manager" },
+                  })
+              : canUseShellActions
+                ? async () =>
+                    openInPreferredEditor(
+                      markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
+                    )
+                : undefined
         }
         resolveCopyPaths={async () =>
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
