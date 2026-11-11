@@ -797,7 +797,6 @@ export default defineConfig({
         "apps/web/src/components/settings/ConnectionsSettings.tsx": 7,
         "apps/web/src/components/settings/AddEnvironmentDialog.tsx": 13,
         "apps/web/src/components/settings/AuthorizedClientsSettings.tsx": 26,
-        "apps/web/src/components/onboarding/WelcomeWizard.tsx": 41,
         "apps/web/src/components/usage/UsagePage.tsx": 38,
         "apps/web/src/components/GitActionsControl.tsx": 33,
         "apps/web/src/components/Sidebar.tsx": 3,

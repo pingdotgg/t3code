@@ -124,7 +124,9 @@ function PendingLinkRequest(props: {
             ? "Link a machine to this environment"
             : `Link ${target} to this environment`}
         </p>
-        {item.reason.trim() ? <p className="text-body text-muted-foreground">{item.reason}</p> : null}
+        {item.reason.trim() ? (
+          <p className="text-body text-muted-foreground">{item.reason}</p>
+        ) : null}
       </div>
       <div className="flex min-w-0 flex-col gap-2 rounded-lg bg-card p-2.5">
         {error !== null ? (

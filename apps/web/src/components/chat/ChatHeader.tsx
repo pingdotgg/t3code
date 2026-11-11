@@ -13,7 +13,6 @@ import {
 import { PlusIcon, SquarePenIcon } from "lucide-react";
 import {
   memo,
-  useEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
