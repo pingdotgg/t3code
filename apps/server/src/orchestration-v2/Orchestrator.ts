@@ -6069,7 +6069,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.deliveryIntent,
       {
         hasAttachments: command.attachments.length > 0,
-        switchesProvider: modelSelection.instanceId !== projection.thread.providerInstanceId,
+        providerInstanceId: modelSelection.instanceId,
       },
     );
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {

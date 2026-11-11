@@ -9,6 +9,7 @@ import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import type * as AcpSchema from "effect-acp/compat";
 import * as AcpErrors from "effect-acp/errors";
@@ -44,6 +45,8 @@ import {
   type CopilotSdkCommandResult,
   type CopilotSdkSession,
 } from "./copilotSdkRuntime.ts";
+
+const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 
 const event = (type: string, data: unknown = {}, agentId?: string) =>
   ({ type, data, ...(agentId === undefined ? {} : { agentId }) }) as unknown as SessionEvent;
@@ -688,8 +691,7 @@ it.effect("fails an Autopilot turn when session.autopilot_stopped reports error"
     const prompt = yield* startPrompt(runtime);
     fakes.emit(event("session.autopilot_stopped", { reason: "error", requestId: "message:go" }));
     const failure = yield* Fiber.join(prompt).pipe(Effect.flip);
-    assert.isTrue(failure instanceof AcpErrors.AcpRequestError);
-    assert.strictEqual(failure.code, -32603);
+    assert.isTrue(isAcpRequestError(failure) && failure.code === -32603);
   }).pipe(Effect.scoped),
 );
 

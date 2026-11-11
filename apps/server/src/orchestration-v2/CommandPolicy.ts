@@ -93,7 +93,10 @@ export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
   deliveryIntent?: "auto" | "steer" | "restart",
-  message?: { readonly hasAttachments: boolean; readonly switchesProvider: boolean },
+  message?: {
+    readonly hasAttachments: boolean;
+    readonly providerInstanceId: OrchestrationV2Run["providerInstanceId"];
+  },
 ): MessageDispatchMode {
   const mode = resolveDeliveryIntent(projection, requestedMode, deliveryIntent);
   if (mode.type !== "steer_active") return mode;
@@ -110,7 +113,7 @@ export function resolveMessageDispatchIntent(
       : providerTurnCapabilities(projection, target);
   const canSteerMessage =
     turns?.supportsActiveSteering === true &&
-    message?.switchesProvider !== true &&
+    (message === undefined || message.providerInstanceId === target?.providerInstanceId) &&
     !(message?.hasAttachments === true && turns.activeSteeringAcceptsAttachments === false);
   return turns !== undefined &&
     !canSteerMessage &&

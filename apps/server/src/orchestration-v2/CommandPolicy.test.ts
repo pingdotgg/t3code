@@ -44,6 +44,7 @@ function dispatchProjection(
             {
               id: activeRunId,
               status: "running",
+              providerInstanceId: ProviderInstanceId.make("codex"),
               providerThreadId,
               activeAttemptId,
               userMessageId,
@@ -132,22 +133,20 @@ it("queues a message a provider can neither steer nor restart for", () => {
       },
     })),
   );
-  const dispatch = (message: { hasAttachments: boolean; switchesProvider: boolean }) =>
-    CommandPolicy.resolveMessageDispatchIntent(
-      projection,
-      { type: "start_immediately" },
-      "auto",
-      message,
-    );
+  const dispatch = (message: { hasAttachments: boolean; providerInstanceId: string }) =>
+    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto", {
+      hasAttachments: message.hasAttachments,
+      providerInstanceId: ProviderInstanceId.make(message.providerInstanceId),
+    });
 
-  assert.deepEqual(dispatch({ hasAttachments: false, switchesProvider: false }), {
+  assert.deepEqual(dispatch({ hasAttachments: false, providerInstanceId: "codex" }), {
     type: "steer_active",
     targetRunId: activeRunId,
   });
-  assert.deepEqual(dispatch({ hasAttachments: true, switchesProvider: false }), {
+  assert.deepEqual(dispatch({ hasAttachments: true, providerInstanceId: "codex" }), {
     type: "queue_after_active",
   });
-  assert.deepEqual(dispatch({ hasAttachments: false, switchesProvider: true }), {
+  assert.deepEqual(dispatch({ hasAttachments: false, providerInstanceId: "claudeAgent" }), {
     type: "queue_after_active",
   });
 });
