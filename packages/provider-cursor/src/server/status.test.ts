@@ -1,7 +1,9 @@
 import type { SDKModel } from "@cursor/sdk";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import type { CursorSettings } from "../settings.ts";
 import { CursorSettings as CursorSettingsSchema } from "../settings.ts";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -351,6 +353,36 @@ describe("checkCursorProviderStatus", () => {
       }).pipe(Effect.provideService(CursorSdkCatalog.CursorSdkCatalog, catalog));
 
       expect(provider).toMatchObject(expected);
+    }),
+  );
+
+  it.effect("does not report a single slow catalog read as a provider error", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const fiber = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      }).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() => {
+            reads += 1;
+            return reads === 1
+              ? Effect.never
+              : Effect.succeed({
+                  user: {
+                    apiKeyName: "test-key",
+                    userEmail: "cursor@example.com",
+                    createdAt: "2026-01-01T00:00:00.000Z",
+                  },
+                  models: [sdkParameterizedModel],
+                });
+          }),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 minute");
+      const provider = yield* Fiber.join(fiber);
+
+      expect(provider.status).not.toBe("error");
     }),
   );
 
