@@ -256,7 +256,7 @@ function ThemeLibraryCard({
       <TooltipTrigger
         render={
           <div
-            className="cursor-pointer overflow-hidden rounded-card border border-transparent surface-card-settings-rim transition-colors hover:surface-ghost-hover"
+            className="cursor-pointer overflow-hidden rounded-card border border-transparent surface-card-settings-rim transition-colors hover:surface-ghost-hover max-sm:flex max-sm:flex-col"
             data-theme-library-card={theme.id}
             onClick={onUse}
             style={
@@ -428,13 +428,13 @@ function ThemeLibraryCard({
                 />
               )}
             </div>
-            <div className="flex items-center gap-1 py-2 ps-2.5 pe-1.5">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1 py-2 ps-2.5 pe-1.5 max-sm:flex-1 max-sm:content-between sm:flex-nowrap">
+              <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
+                <div className="flex flex-wrap items-center gap-1.5 sm:flex-nowrap">
                   <button
                     aria-label={`Use ${collectionNavigation ? `${collectionNavigation.collectionLabel}, ${theme.label} variant` : `${theme.label} theme`}${isActive ? ", currently active" : ""}`}
                     aria-pressed={isActive}
-                    className="min-w-0 cursor-pointer truncate rounded-sm text-left text-label text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+                    className="min-w-0 cursor-pointer rounded-sm text-left text-label text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card max-sm:wrap-anywhere sm:truncate"
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -452,7 +452,7 @@ function ThemeLibraryCard({
               </div>
               {onEdit || onDuplicate || onDownload || onRemove ? (
                 // The footer keeps the design's 10px name inset and 6px action inset.
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 items-center gap-1 max-sm:ms-auto">
                   {onDuplicate && !onEdit ? (
                     <Tooltip>
                       <TooltipTrigger

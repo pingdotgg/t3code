@@ -367,13 +367,13 @@ export function UsagePage() {
       ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12)} – ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12)}`
       : `${formatDayShort(shownWindow.sinceDay)} – ${formatDayShort(shownWindow.untilDay)}`;
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
-      <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
+    <div className="grid w-full min-w-0 grid-cols-1 items-center gap-x-3 gap-y-2 py-2 sm:grid-cols-[minmax(0,1fr)_auto] @4xl/usage-header:flex">
+      <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0 max-sm:[&>ol]:flex-wrap">
         <WorkspaceBreadcrumbItem>
           <h1>Usage</h1>
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator />
-        <WorkspaceBreadcrumbItem className="min-w-10 shrink">
+        <WorkspaceBreadcrumbItem className="min-w-10 shrink max-sm:shrink-0">
           <UsageEnvironmentFilter
             environments={environments}
             selectedEnvironments={selectedEnvironments}
