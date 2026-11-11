@@ -129,7 +129,7 @@ describe("tailClaudeTaskOutput", () => {
     ),
   );
 
-  it.effect("reads nothing when the session id leaves the Claude task directory", () =>
+  it.effect("reads nothing when a session or task id leaves the Claude task directory", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -145,13 +145,17 @@ describe("tailClaudeTaskOutput", () => {
         const chunks: Array<string> = [];
         const stop = yield* Deferred.make<void>();
         yield* Deferred.succeed(stop, undefined);
-        yield* tailClaudeTaskOutput({
-          root,
-          sessionId: "../../outside",
-          taskId: TASK_ID,
-          stop,
-          onChunk: (chunk) => Effect.sync(() => chunks.push(chunk)),
-        });
+        for (const ids of [
+          { sessionId: "../../outside", taskId: TASK_ID },
+          { sessionId: SESSION_ID, taskId: `../../../../outside/tasks/${TASK_ID}` },
+        ]) {
+          yield* tailClaudeTaskOutput({
+            root,
+            ...ids,
+            stop,
+            onChunk: (chunk) => Effect.sync(() => chunks.push(chunk)),
+          });
+        }
         assert.deepEqual(chunks, []);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
