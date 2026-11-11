@@ -216,6 +216,40 @@ describe("DesktopLocalEnvironmentAuth", () => {
       return { auth, requestCount };
     });
 
+  it.effect("reports a backend that never became ready without sending a request", () =>
+    Effect.gen(function* () {
+      const requestCount = yield* Ref.make(0);
+      const layerNotReadyPool = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+        list: Effect.succeed([
+          {
+            id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+            label: Effect.succeed("Windows"),
+            currentConfig: Effect.succeedSome(config),
+            waitForReady: () => Effect.succeed(false),
+          },
+        ]),
+      } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Ref.update(requestCount, (count) => count + 1).pipe(Effect.as(tokenResponse(request))),
+        ),
+      );
+      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(Layer.mergeAll(layerNotReadyPool, layerHttpClient, NodeCrypto.layerMac)),
+          ),
+        ),
+      );
+
+      const error = yield* Effect.flip(auth.getBearerToken);
+
+      assert.strictEqual(error._tag, "DesktopLocalEnvironmentAuthBackendNotReadyError");
+      assert.strictEqual(yield* Ref.get(requestCount), 0);
+    }),
+  );
+
   it.effect("does not retry a rejected bootstrap credential", () =>
     Effect.gen(function* () {
       const { auth, requestCount } = yield* makeExchange(1, () =>

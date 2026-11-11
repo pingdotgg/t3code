@@ -599,6 +599,27 @@ describe("DesktopWindow", () => {
       }),
   );
 
+  it.effect("keeps a window closed after readiness closed when the backend restarts", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.equal(yield* Ref.get(createCount), 1);
+        fake.isDestroyed.mockReturnValue(true);
+        fake.windowListeners.get("closed")?.();
+        yield* windows.handleBackendNotReady;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.equal(yield* Ref.get(createCount), 1);
+        fake.isDestroyed.mockReturnValue(false);
+        yield* windows.activate;
+        assert.equal(yield* Ref.get(createCount), 2);
+      }).pipe(Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })));
+    }),
+  );
+
   it.effect.each(["renderer", "backend"] as const)(
     "reveals the painted boot shell when %s becomes ready first",
     (first) =>

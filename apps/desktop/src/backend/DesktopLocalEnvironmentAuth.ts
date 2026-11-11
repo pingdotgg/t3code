@@ -19,6 +19,7 @@ import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 
 const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(15);
 const BOOTSTRAP_TRANSIENT_RETRY_INTERVAL = Duration.millis(500);
+const BACKEND_START_TIMEOUT = Duration.minutes(2);
 const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
 
 const isTransientBearerBootstrapError = (error: RemoteEnvironmentRequestError): boolean => {
@@ -42,6 +43,15 @@ export class DesktopLocalEnvironmentAuthBackendNotConfiguredError extends Schema
   }
 }
 
+export class DesktopLocalEnvironmentAuthBackendNotReadyError extends Schema.TaggedError<DesktopLocalEnvironmentAuthBackendNotReadyError>()(
+  "DesktopLocalEnvironmentAuthBackendNotReadyError",
+  {},
+) {
+  override get message(): string {
+    return "Local backend did not become ready.";
+  }
+}
+
 export class DesktopLocalEnvironmentAuthSessionBootstrapError extends Schema.TaggedError<DesktopLocalEnvironmentAuthSessionBootstrapError>()(
   "DesktopLocalEnvironmentAuthSessionBootstrapError",
   { cause: Schema.Defect() },
@@ -53,6 +63,7 @@ export class DesktopLocalEnvironmentAuthSessionBootstrapError extends Schema.Tag
 
 export const DesktopLocalEnvironmentAuthError = Schema.Union([
   DesktopLocalEnvironmentAuthBackendNotConfiguredError,
+  DesktopLocalEnvironmentAuthBackendNotReadyError,
   DesktopLocalEnvironmentAuthSessionBootstrapError,
 ]);
 export type DesktopLocalEnvironmentAuthError = typeof DesktopLocalEnvironmentAuthError.Type;
@@ -82,8 +93,12 @@ export const make = Effect.gen(function* () {
 
         const instances = yield* pool.list;
         const primary = instances.find((instance) => instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
-        if (primary === undefined || !(yield* primary.waitForReady(Duration.infinity))) {
+        if (primary === undefined) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
+        }
+        // Holding the mutex on an unbounded wait would hang every renderer request with no error.
+        if (!(yield* primary.waitForReady(BACKEND_START_TIMEOUT))) {
+          return yield* new DesktopLocalEnvironmentAuthBackendNotReadyError();
         }
         const configOption = yield* primary.currentConfig;
         if (Option.isNone(configOption)) {
