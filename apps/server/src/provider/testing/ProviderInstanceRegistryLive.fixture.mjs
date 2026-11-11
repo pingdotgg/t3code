@@ -89,9 +89,7 @@ lines.on("line", (line) => {
     }) + "\n",
   );
 });
-// Stay alive for follow-up control requests, but never outlive the
-// parent: the probe aborts the SDK without awaiting the child, so an
-// unconditional interval would strand this process until reboot.
+// Stay alive for control requests only while the parent lives; SDK abort does not await child exit.
 const keepAlive = setInterval(() => {}, 1_000);
 lines.on("close", () => {
   clearInterval(keepAlive);
