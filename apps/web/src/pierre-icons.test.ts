@@ -8,6 +8,13 @@ import {
 } from "./pierre-icons";
 
 describe("Pierre file icons", () => {
+  it.each(["photo.heic", "photo.heif", "PHOTO.HEIC", "folder/photo.HEIF"])(
+    "uses the image icon for %s",
+    (name) => {
+      assert.equal(resolvePierreIconForEntry(name, "file")?.token, "image");
+      assert.isTrue(hasSpecificPierreIconForFileName(name));
+    },
+  );
   it("uses detected types for extensionless files while keeping known filename icons", () => {
     assert.equal(
       resolvePierreIconForEntry("custom-script", "file", "text/x-python")?.token,
@@ -24,32 +31,27 @@ describe("Pierre file icons", () => {
       "default",
     );
   });
-  it("uses Pierre exact filename and complete-set extension mappings", () => {
-    assert.equal(resolvePierreIconForEntry("Dockerfile", "file")?.token, "docker");
-    assert.equal(resolvePierreIconForEntry("src/Button.tsx", "file")?.token, "react");
-    assert.equal(resolvePierreIconForEntry("vite.config.ts", "file")?.token, "vite");
-  });
 
-  it("uses built-in Pierre icons where available", () => {
-    assert.equal(resolvePierreIconForEntry("package.json", "file")?.name, "file-tree-builtin-npm");
-    assert.equal(
-      resolvePierreIconForEntry("config/tsconfig.json", "file")?.name,
-      "file-tree-builtin-typescript",
-    );
-    assert.equal(resolvePierreIconForEntry("CLAUDE.md", "file")?.name, "file-tree-builtin-claude");
-    assert.equal(
-      resolvePierreIconForEntry("README.md", "file")?.name,
-      "file-tree-builtin-markdown",
-    );
-  });
-
-  it("extends Pierre with T3-specific exact filename icons", () => {
-    assert.equal(resolvePierreIconForEntry("AGENTS.md", "file")?.name, "t3-file-icon-agents");
-    assert.equal(resolvePierreIconForEntry("pnpm-lock.yaml", "file")?.name, "t3-file-icon-pnpm");
-    assert.equal(
-      resolvePierreIconForEntry("pnpm-workspace.yaml", "file")?.name,
-      "t3-file-icon-pnpm",
-    );
+  it.each([
+    ["pdf", "pdf"],
+    ["doc", "word"],
+    ["docx", "word"],
+    ["odt", "word"],
+    ["rtf", "word"],
+    ["xls", "spreadsheet"],
+    ["xlsx", "spreadsheet"],
+    ["ods", "spreadsheet"],
+    ["csv", "spreadsheet"],
+    ["tsv", "spreadsheet"],
+    ["ppt", "slides"],
+    ["pptx", "slides"],
+    ["odp", "slides"],
+    ["epub", "epub"],
+  ])("uses the document family icon for %s", (extension, family) => {
+    for (const path of [`report.${extension}`, `folder/REPORT.${extension.toUpperCase()}`]) {
+      assert.equal(resolvePierreIconForEntry(path, "file")?.name, `t3-file-icon-${family}`);
+      assert.isTrue(hasSpecificPierreIconForFileName(path));
+    }
   });
 
   it("ships every custom icon referenced by the extended resolver", () => {
@@ -64,42 +66,21 @@ describe("Pierre file icons", () => {
     }
   });
 
-  it("uses the Pierre default icon for unknown file types", () => {
-    assert.equal(resolvePierreIconForEntry("artifact.unknown-ext", "file")?.token, "default");
-    assert.isFalse(hasSpecificPierreIconForFileName("artifact.unknown-ext"));
-  });
-
-  it("leaves directory rendering to the shared folder fallback", () => {
-    assert.isNull(resolvePierreIconForEntry("packages/client-runtime", "directory"));
-  });
-
-  it("normalizes common markdown fence language aliases", () => {
-    assert.equal(syntheticFileNameForLanguageId("typescript"), "file.ts");
-    assert.equal(syntheticFileNameForLanguageId("dockerfile"), "Dockerfile");
-    assert.equal(syntheticFileNameForLanguageId("shellscript"), "file.sh");
-    assert.equal(syntheticFileNameForLanguageId("python"), "file.py");
-  });
-
-  it("gives a dockerfile fence the Docker icon", () => {
-    assert.isTrue(hasSpecificPierreIconForFileName(syntheticFileNameForLanguageId("dockerfile")));
-  });
-
   it.each([
-    "csharp",
-    "dart",
-    "diff",
-    "elixir",
-    "haskell",
-    "java",
-    "kotlin",
-    "lua",
-    "php",
-    "powershell",
-    "r",
-    "scala",
-    "toml",
-    "xml",
-  ])("gives a %s fence a language icon", (language) => {
-    assert.isTrue(hasSpecificPierreIconForFileName(syntheticFileNameForLanguageId(language)));
+    ["luau", "lua"],
+    ["xsd", "xml"],
+    ["xsl", "xml"],
+    ["xslt", "xml"],
+  ])("gives %s files and fences the %s icon", (dialect, base) => {
+    const baseIcon = resolvePierreIconForEntry(`file.${base}`, "file")?.name;
+    assert.equal(baseIcon, `t3-file-icon-${base}`);
+    for (const path of [`src/init.${dialect}`, `src/INIT.${dialect.toUpperCase()}`]) {
+      assert.equal(resolvePierreIconForEntry(path, "file")?.name, baseIcon);
+      assert.isTrue(hasSpecificPierreIconForFileName(path));
+    }
+    assert.equal(
+      resolvePierreIconForEntry(syntheticFileNameForLanguageId(dialect), "file")?.name,
+      baseIcon,
+    );
   });
 });

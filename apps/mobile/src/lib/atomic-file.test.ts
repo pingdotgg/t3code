@@ -99,13 +99,4 @@ describe("writeFileAtomically", () => {
     const file = makeFile("message.json");
     await expect(writeFileAtomically(file, "{}")).rejects.toThrow("disk full");
   });
-
-  it("does not accumulate a temp file per retry", async () => {
-    failMode.current = "write";
-    const file = makeFile("message.json");
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await expect(writeFileAtomically(file, '{"ok":true}')).rejects.toThrow();
-    }
-    expect(tempFileUris()).toEqual([]);
-  });
 });

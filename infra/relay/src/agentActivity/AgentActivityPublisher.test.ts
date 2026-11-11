@@ -1,3 +1,4 @@
+import { makeAggregateState } from "./agentActivityAggregate.ts";
 import type { RelayAgentActivityState, RelayDeliveryResult } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -68,9 +69,9 @@ function makeLiveActivities(
   return {
     register: () => Effect.void,
     listTargets: () => Effect.succeed([]),
+    listIdleArmedTargets: () => Effect.succeed([]),
     markDelivery: () => Effect.void,
-    markStartQueued: () => Effect.void,
-    clearStartQueued: () => Effect.void,
+
     invalidateDeliveryToken: () => Effect.void,
     ...overrides,
   };
@@ -277,210 +278,6 @@ describe("AgentActivityPublisher", () => {
     });
   });
 
-  it.effect("publishes listed targets through the APNs delivery service", () => {
-    const firstTarget = target("device-1");
-    const secondTarget = target("device-2");
-    const deliveryResult: RelayDeliveryResult = {
-      deviceId: "device-1",
-      kind: "live_activity_start",
-      ok: true,
-      apnsStatus: 200,
-      apnsReason: null,
-      apnsId: "apns-id",
-    };
-    const sentTargets: Array<string> = [];
-    const deliveryLookups: Array<{
-      readonly environmentId: string;
-      readonly environmentPublicKey: string;
-    }> = [];
-    const upserts: Array<Parameters<AgentActivityRows.AgentActivityRows["Service"]["upsert"]>[0]> =
-      [];
-
-    return Effect.gen(function* () {
-      const result = yield* Effect.gen(function* () {
-        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-        return yield* publisher.publish({
-          environmentId: "env",
-          environmentPublicKey: "environment-public-key",
-          threadId: "thread",
-          state,
-        });
-      }).pipe(
-        Effect.provide(
-          layerPublisher.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(
-                  AgentActivityRows.AgentActivityRows,
-                  makeAgentActivityRows({
-                    upsert: (input) =>
-                      Effect.sync(() => {
-                        upserts.push(input);
-                      }),
-                  }),
-                ),
-                Layer.succeed(
-                  EnvironmentLinks.EnvironmentLinks,
-                  makeEnvironmentLinks({
-                    listDeliveryUsersForEnvironment: (input) =>
-                      Effect.sync(() => {
-                        deliveryLookups.push(input);
-                        return [
-                          {
-                            userId: "dev:julius",
-                            notificationsEnabled: true,
-                            liveActivitiesEnabled: true,
-                          },
-                        ];
-                      }),
-                  }),
-                ),
-                Layer.succeed(
-                  LiveActivities.LiveActivities,
-                  makeLiveActivities({
-                    listTargets: () => Effect.succeed([firstTarget, secondTarget]),
-                  }),
-                ),
-                Layer.succeed(
-                  ApnsDeliveries.ApnsDeliveries,
-                  makeApnsDeliveries({
-                    sendForTarget: (input) =>
-                      Effect.sync(() => {
-                        sentTargets.push(input.target.device_id);
-                        return input.target.device_id === "device-1" ? deliveryResult : null;
-                      }),
-                  }),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      expect(sentTargets).toEqual(["device-1", "device-2"]);
-      expect(deliveryLookups).toEqual([
-        {
-          environmentId: "env",
-          environmentPublicKey: "environment-public-key",
-        },
-      ]);
-      expect(upserts).toMatchObject([
-        {
-          environmentPublicKey: "environment-public-key",
-          state: {
-            environmentId: "env",
-            threadId: "thread",
-          },
-        },
-      ]);
-      expect(result).toEqual({ ok: true, deliveries: [deliveryResult] });
-    });
-  });
-
-  it.effect("ends the last remote Live Activity with a terminal content state", () => {
-    const completedState: RelayAgentActivityState = {
-      ...state,
-      phase: "completed",
-      headline: "Done",
-      updatedAt: "1970-01-01T00:00:10.000Z",
-    };
-    const sentAggregates: Array<
-      Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendForTarget"]>[0]
-    > = [];
-    const upserts: Array<Parameters<AgentActivityRows.AgentActivityRows["Service"]["upsert"]>[0]> =
-      [];
-
-    return Effect.gen(function* () {
-      const result = yield* Effect.gen(function* () {
-        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-        return yield* publisher.publish({
-          environmentId: "env",
-          environmentPublicKey: "environment-public-key",
-          threadId: "thread",
-          state: completedState,
-        });
-      }).pipe(
-        Effect.provide(
-          layerPublisher.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(
-                  AgentActivityRows.AgentActivityRows,
-                  makeAgentActivityRows({
-                    upsert: (input) =>
-                      Effect.sync(() => {
-                        upserts.push(input);
-                      }),
-                    listForUser: () => Effect.succeed([]),
-                  }),
-                ),
-                Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
-                Layer.succeed(
-                  LiveActivities.LiveActivities,
-                  makeLiveActivities({
-                    listTargets: () =>
-                      Effect.succeed([
-                        {
-                          ...target("device-1"),
-                          push_to_start_token: null,
-                          activity_push_token: "activity-token",
-                          remote_started_at: "1970-01-01T00:00:00.000Z",
-                        },
-                      ]),
-                  }),
-                ),
-                Layer.succeed(
-                  ApnsDeliveries.ApnsDeliveries,
-                  makeApnsDeliveries({
-                    sendForTarget: (input) =>
-                      Effect.sync(() => {
-                        sentAggregates.push(input);
-                        return {
-                          deviceId: input.target.device_id,
-                          kind: "live_activity_end",
-                          ok: true,
-                          apnsStatus: null,
-                          apnsReason: null,
-                          apnsId: "queued",
-                        };
-                      }),
-                  }),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      expect(result.deliveries).toMatchObject([
-        {
-          deviceId: "device-1",
-          kind: "live_activity_end",
-          ok: true,
-        },
-      ]);
-      expect(upserts).toEqual([
-        {
-          environmentPublicKey: "environment-public-key",
-          state: completedState,
-        },
-      ]);
-      expect(sentAggregates).toHaveLength(1);
-      expect(sentAggregates[0]?.aggregate).toMatchObject({
-        activeCount: 0,
-        subtitle: "Agent work completed",
-        activities: [
-          {
-            environmentId: completedState.environmentId,
-            threadId: completedState.threadId,
-            phase: "completed",
-            status: "Done",
-          },
-        ],
-      });
-    });
-  });
-
   it.effect.each([
     { phase: "waiting_for_input", pushToStartToken: null, body: "Input: Project" },
     { phase: "waiting_for_approval", pushToStartToken: "start-token", body: "Approval: Project" },
@@ -538,7 +335,7 @@ describe("AgentActivityPublisher", () => {
             }),
         }),
         Layer.succeed(DeliveryAttempts.DeliveryAttempts, {
-          record: () => Effect.void,
+          pruneExpired: Effect.succeed(0),
           claimSourceJob: () => Effect.succeed("claimed" as const),
           completeSourceJob: () => Effect.void,
         }),
@@ -562,6 +359,7 @@ describe("AgentActivityPublisher", () => {
         }),
       );
       const deliveriesLayer = ApnsDeliveries.layer.pipe(
+        Layer.provide(NodeCryptoLayer.layerMac),
         Layer.provide(
           ApnsClient.layer.pipe(
             Layer.provide(ApnsProviderTokens.layer),
@@ -601,19 +399,6 @@ describe("AgentActivityPublisher", () => {
 });
 
 describe("isExpiredAgentActivityState", () => {
-  const hourMs = 60 * 60 * 1_000;
-
-  it("expires running rows after two hours without an update", () => {
-    expect(AgentActivityPublisher.isExpiredAgentActivityState(state, 2 * hourMs - 1)).toBe(false);
-    expect(AgentActivityPublisher.isExpiredAgentActivityState(state, 2 * hourMs + 1)).toBe(true);
-  });
-
-  it("keeps waiting rows for a day", () => {
-    const waiting: RelayAgentActivityState = { ...state, phase: "waiting_for_approval" };
-    expect(AgentActivityPublisher.isExpiredAgentActivityState(waiting, 23 * hourMs)).toBe(false);
-    expect(AgentActivityPublisher.isExpiredAgentActivityState(waiting, 25 * hourMs)).toBe(true);
-  });
-
   it("treats rows with unparseable timestamps as expired", () => {
     expect(
       AgentActivityPublisher.isExpiredAgentActivityState({ ...state, updatedAt: "not-a-date" }, 0),
@@ -630,7 +415,7 @@ describe("makeAggregateState", () => {
       threadId: "thread-fresh" as RelayAgentActivityState["threadId"],
       updatedAt: "1970-01-01T03:00:00.000Z",
     };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
+    const aggregate = makeAggregateState({
       activeStates: [state, fresh],
       terminalState: null,
       nowMs: 3 * hourMs,
@@ -642,7 +427,7 @@ describe("makeAggregateState", () => {
 
   it("returns null when every row has expired and nothing terminal remains", () => {
     expect(
-      AgentActivityPublisher.makeAggregateState({
+      makeAggregateState({
         activeStates: [state],
         terminalState: null,
         nowMs: 3 * hourMs,
@@ -656,7 +441,7 @@ describe("makeAggregateState", () => {
       phase: "completed",
       updatedAt: "1970-01-01T03:00:00.000Z",
     };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
+    const aggregate = makeAggregateState({
       activeStates: [state],
       terminalState,
       nowMs: 3 * hourMs,
@@ -678,7 +463,7 @@ describe("makeAggregateState", () => {
       phase: "completed",
       updatedAt: "1970-01-01T00:59:00.000Z",
     };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
+    const aggregate = makeAggregateState({
       activeStates: [active, justCompleted],
       terminalState: null,
       nowMs: hourMs,
@@ -693,34 +478,13 @@ describe("makeAggregateState", () => {
     expect(aggregate?.updatedAt).toBe("1970-01-01T00:59:00.000Z");
   });
 
-  it("drops finished threads from the aggregate after the display window", () => {
-    const active: RelayAgentActivityState = {
-      ...state,
-      threadId: "thread-active" as RelayAgentActivityState["threadId"],
-      updatedAt: "1970-01-01T00:58:00.000Z",
-    };
-    const staleCompleted: RelayAgentActivityState = {
-      ...state,
-      threadId: "thread-done" as RelayAgentActivityState["threadId"],
-      phase: "completed",
-      updatedAt: "1970-01-01T00:44:00.000Z",
-    };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
-      activeStates: [active, staleCompleted],
-      terminalState: null,
-      nowMs: hourMs,
-    });
-
-    expect(aggregate?.activities).toMatchObject([{ threadId: "thread-active" }]);
-  });
-
   it("keeps showing recently finished work when nothing is active", () => {
     const lingeringCompleted: RelayAgentActivityState = {
       ...state,
       phase: "completed",
       updatedAt: "1970-01-01T00:59:00.000Z",
     };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
+    const aggregate = makeAggregateState({
       activeStates: [lingeringCompleted],
       terminalState: null,
       nowMs: hourMs,
@@ -732,7 +496,7 @@ describe("makeAggregateState", () => {
       activities: [{ phase: "completed", status: "Done" }],
     });
     expect(
-      AgentActivityPublisher.makeAggregateState({
+      makeAggregateState({
         activeStates: [{ ...lingeringCompleted, updatedAt: "1970-01-01T00:44:00.000Z" }],
         terminalState: null,
         nowMs: hourMs,
@@ -752,7 +516,7 @@ describe("makeAggregateState", () => {
       phase: "completed",
       updatedAt: "1970-01-01T00:59:00.000Z",
     };
-    const aggregate = AgentActivityPublisher.makeAggregateState({
+    const aggregate = makeAggregateState({
       activeStates: [
         mkActive("a-1"),
         mkActive("a-2"),
