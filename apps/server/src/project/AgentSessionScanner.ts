@@ -1,5 +1,8 @@
 import * as NodeOS from "node:os";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeZlib from "node:zlib";
+
+import * as NodeStream from "@effect/platform-node/NodeStream";
 
 import {
   AgentSessionScanError,
@@ -14,6 +17,7 @@ import {
   type AgentSessionScanResult,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -22,6 +26,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Pull from "effect/Pull";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -170,7 +175,7 @@ const decodeCodexHistoryBase = Schema.decodeUnknownOption(
 );
 // Original rollouts end in their thread ID, rewound ones in `<thread ID>_<rollout ID>`.
 const CODEX_ROLLOUT_ID_PATTERN =
-  /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?\.jsonl$/i;
+  /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?\.jsonl(?:\.zst)?$/i;
 // Codex records a chat's project only here; moving a chat leaves its rollout cwd unchanged.
 const CODEX_STATE_DATABASE = "state_5.sqlite";
 const decodeCodexSessionIndexEntry = Schema.decodeUnknownOption(
@@ -248,6 +253,10 @@ interface TranscriptCandidate {
   readonly homePath: string;
   readonly size: number;
   readonly projectRoots?: ReadonlyArray<string> | undefined;
+}
+
+interface ImportByteBudget {
+  bytesRemaining: number;
 }
 
 interface MetadataReadBudget {
@@ -786,6 +795,39 @@ type TranscriptIdentity = Pick<
 
 const fileIdKey = (inode: TranscriptIdentity["inode"]) => (inode === null ? null : String(inode));
 
+const isCompressedTranscript = (filePath: string) => filePath.endsWith(".zst");
+
+/**
+ * Reads a transcript in chunks of at most `size` bytes. Codex may store rollouts
+ * as `.jsonl.zst`; those yield decompressed bytes so every budget counts what is
+ * actually parsed. The decompressor honors backpressure, so memory stays bounded.
+ */
+const openTranscriptChunks = Effect.fnUntraced(function* (file: FileSystem.File, filePath: string) {
+  if (!isCompressedTranscript(filePath)) return (size: number) => file.readAlloc(size);
+  const pull = yield* Stream.fromEffectRepeat(
+    file
+      .readAlloc(TRANSCRIPT_PREFIX_BYTES)
+      .pipe(Effect.flatMap(Option.match({ onNone: () => Cause.done(), onSome: Effect.succeed }))),
+  ).pipe(
+    NodeStream.pipeThroughDuplex({ evaluate: () => NodeZlib.createZstdDecompress() }),
+    Stream.toPull,
+  );
+  const pending: Array<Uint8Array> = [];
+  return (size: number) =>
+    Effect.gen(function* () {
+      while (pending.length === 0) {
+        for (const chunk of yield* pull) if (chunk.byteLength > 0) pending.push(chunk);
+      }
+      const chunk = pending[0]!;
+      if (chunk.byteLength <= size) {
+        pending.shift();
+        return Option.some(chunk);
+      }
+      pending[0] = chunk.subarray(size);
+      return Option.some(chunk.subarray(0, size));
+    }).pipe(Pull.catchDone(() => Effect.succeedNone));
+});
+
 function sameTranscriptIdentity(left: TranscriptIdentity, right: TranscriptIdentity): boolean {
   // Unsafe legacy numbers may already have lost file ID precision.
   if (
@@ -1001,11 +1043,16 @@ export const make = Effect.gen(function* () {
       fileSystem.open(transcript.filePath, { flag: "r" }).pipe(
         Effect.flatMap((file) =>
           Effect.gen(function* () {
+            const compressed = isCompressedTranscript(transcript.filePath);
+            const readChunk = yield* openTranscriptChunks(file, transcript.filePath);
             const decoder = new TextDecoder();
             let remaining = "";
             let bytesRead = 0;
             let recordsRead = 0;
-            const maxBytes = Math.min(MAX_TRANSCRIPT_SCAN_BYTES, transcript.size);
+            // The decompressed size of a compressed rollout is unknown until its end.
+            const maxBytes = compressed
+              ? MAX_TRANSCRIPT_SCAN_BYTES
+              : Math.min(MAX_TRANSCRIPT_SCAN_BYTES, transcript.size);
             const reserveRecord = () => {
               if (
                 recordsRead === MAX_METADATA_RECORDS_PER_TRANSCRIPT ||
@@ -1037,7 +1084,7 @@ export const make = Effect.gen(function* () {
               );
               budget.operationsRemaining -= 1;
               budget.bytesRemaining -= readSize;
-              const next = yield* file.readAlloc(readSize);
+              const next = yield* readChunk(readSize);
               if (Option.isNone(next)) {
                 return readLastRecord();
               }
@@ -1054,7 +1101,7 @@ export const make = Effect.gen(function* () {
               }
             }
 
-            if (bytesRead < transcript.size) {
+            if (compressed || bytesRead < transcript.size) {
               budget.truncated = true;
               return null;
             }
@@ -1069,10 +1116,19 @@ export const make = Effect.gen(function* () {
     filePath: string,
     expected: ReturnType<typeof transcriptIdentity>,
     source: AgentSessionSource,
+    budget: ImportByteBudget,
     prefix?: { readonly endByteOffset: number; readonly historyBytes: number },
   ) {
-    const readBytes = prefix?.endByteOffset ?? expected.size;
-    if (readBytes > expected.size || readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
+    const compressed = isCompressedTranscript(filePath);
+    // A full read of a compressed rollout has no known length, so it is charged as it
+    // decompresses; callers charge every other read up front.
+    const chargeAsRead = compressed && prefix === undefined;
+    const readBytes = chargeAsRead
+      ? Math.min(MAX_IMPORTED_TRANSCRIPT_BYTES, budget.bytesRemaining)
+      : (prefix?.endByteOffset ?? expected.size);
+    if ((!compressed && readBytes > expected.size) || readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES) {
+      return null;
+    }
 
     return yield* Effect.scoped(
       fileSystem.open(filePath, { flag: "r" }).pipe(
@@ -1081,6 +1137,7 @@ export const make = Effect.gen(function* () {
             if (!sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))) {
               return null;
             }
+            const readChunk = yield* openTranscriptChunks(file, filePath);
             const records: Array<DecodedTranscriptRecord> = [];
             const claudeHistory = createClaudeHistoryWindow();
             let cwd = Option.none<string>();
@@ -1141,14 +1198,16 @@ export const make = Effect.gen(function* () {
             };
 
             while (bytesRead < readBytes) {
-              const next = yield* file.readAlloc(
+              const next = yield* readChunk(
                 Math.min(TRANSCRIPT_PREFIX_BYTES, readBytes - bytesRead),
               );
               if (Option.isNone(next)) {
+                if (chargeAsRead) break;
                 return null;
               }
 
               bytesRead += next.value.byteLength;
+              if (chargeAsRead) budget.bytesRemaining -= next.value.byteLength;
               const withinBudget = yield* Effect.try({
                 try: () => {
                   let start = 0;
@@ -1166,6 +1225,9 @@ export const make = Effect.gen(function* () {
                 catch: (cause) => new TranscriptParseError({ filePath, cause }),
               });
               if (!withinBudget) return null;
+            }
+            if (chargeAsRead && bytesRead === readBytes && Option.isSome(yield* readChunk(1))) {
+              return null;
             }
 
             if (
@@ -1362,7 +1424,12 @@ export const make = Effect.gen(function* () {
             }
             const directory = path.join(sessionsDir, year, month, day);
             for (const entry of (yield* readDirectory(directory)).toSorted().toReversed()) {
-              if (!entry.startsWith("rollout-") || !entry.endsWith(".jsonl")) continue;
+              if (
+                !entry.startsWith("rollout-") ||
+                !(entry.endsWith(".jsonl") || entry.endsWith(".jsonl.zst"))
+              ) {
+                continue;
+              }
               if (operationsRemaining <= 0) {
                 truncated = true;
                 break;
@@ -1809,7 +1876,7 @@ export const make = Effect.gen(function* () {
     );
     const importedSessions = new Set<string>();
     const codexThreadNamesByHome = new Map<string, ReadonlyMap<string, string>>();
-    let bytesRemaining = MAX_IMPORT_BYTES;
+    const byteBudget: ImportByteBudget = { bytesRemaining: MAX_IMPORT_BYTES };
     let transcriptsRemaining = MAX_IMPORT_TRANSCRIPTS;
     const codexRolloutPaths = new Map<ProviderInstanceId, ReadonlyMap<string, string>>();
     const codexRolloutPath = (providerInstanceId: ProviderInstanceId, rolloutId: string) => {
@@ -1843,15 +1910,18 @@ export const make = Effect.gen(function* () {
         const filePath = visited.has(base.thread_id)
           ? undefined
           : codexRolloutPath(providerInstanceId, base.thread_id);
-        if (filePath === undefined || base.end_byte_offset > bytesRemaining) return null;
+        if (filePath === undefined || base.end_byte_offset > byteBudget.bytesRemaining) {
+          return null;
+        }
         visited.add(base.thread_id);
         const stats = yield* statOption(filePath);
         if (Option.isNone(stats) || stats.value.type !== "File") return null;
-        bytesRemaining -= base.end_byte_offset;
+        byteBudget.bytesRemaining -= base.end_byte_offset;
         const inherited = yield* readTranscript(
           filePath,
           transcriptIdentity(filePath, stats.value),
           "codex",
+          byteBudget,
           { endByteOffset: base.end_byte_offset, historyBytes },
         );
         if (inherited === null) return null;
@@ -1868,7 +1938,10 @@ export const make = Effect.gen(function* () {
           const completed = completedByFile.get(
             `${candidate.providerInstanceId}\0${transcript.filePath}`,
           );
-          if (completed === undefined && (transcriptsRemaining === 0 || bytesRemaining === 0)) {
+          if (
+            completed === undefined &&
+            (transcriptsRemaining === 0 || byteBudget.bytesRemaining === 0)
+          ) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           const stats = yield* statOption(transcript.filePath);
@@ -1892,13 +1965,20 @@ export const make = Effect.gen(function* () {
           if (
             transcriptsRemaining === 0 ||
             identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES ||
-            identity.size > bytesRemaining
+            identity.size > byteBudget.bytesRemaining
           ) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           transcriptsRemaining -= 1;
-          bytesRemaining -= identity.size;
-          const snapshot = yield* readTranscript(transcript.filePath, identity, candidate.source);
+          if (!isCompressedTranscript(transcript.filePath)) {
+            byteBudget.bytesRemaining -= identity.size;
+          }
+          const snapshot = yield* readTranscript(
+            transcript.filePath,
+            identity,
+            candidate.source,
+            byteBudget,
+          );
           if (snapshot === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
@@ -1929,7 +2009,10 @@ export const make = Effect.gen(function* () {
             {
               source: candidate.source,
               providerInstanceId: candidate.providerInstanceId,
-              fallbackSessionId: path.basename(transcript.filePath, ".jsonl"),
+              fallbackSessionId: path.basename(
+                path.basename(transcript.filePath, ".zst"),
+                ".jsonl",
+              ),
               lastActiveAtMs: transcript.mtimeMs,
             },
             inheritedRecords === null
