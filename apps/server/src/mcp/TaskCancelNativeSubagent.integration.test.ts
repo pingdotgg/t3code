@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -41,6 +42,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -168,17 +170,16 @@ const makeHarness = Effect.fn(function* (name: string) {
         }),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         ServerSettings.layerTest(),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         NodeServices.layer,
+        NodeCrypto.layer,
       ),
     ),
   );
   return { cwd, turns, layerTest };
 });
-
-// A delegated Claude child ends its turn while a background native subagent it
-// started keeps running (#17154).
 
 it.effect("task_cancel ends a delegated child's background native subagent", () =>
   Effect.scoped(
