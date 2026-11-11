@@ -63,7 +63,6 @@ import {
 import { useId, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 
-import { cn } from "../../lib/utils";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -122,8 +121,6 @@ function resolveThreadLineageWindow<Row>(
 
 function ThreadLineageRowList(props: {
   readonly id?: string;
-  /** False lets the list grow by page and leaves scrolling to the details panel. */
-  readonly scroll?: boolean;
   readonly hiddenCount: number;
   readonly onShowMore: () => void;
   readonly children: ReactNode;
@@ -137,18 +134,12 @@ function ThreadLineageRowList(props: {
   };
   return (
     <>
-      {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
+      {/* The list grows by page and the details panel scrolls it; a nested scroller would trap the wheel. */}
       <ul
         ref={listRef}
         id={props.id}
         aria-label="Related threads"
-        className={cn(
-          "m-0 flex flex-col gap-0.5 list-none p-0",
-          // A scrolling axis turns the other one into auto, so the sideways axis is shut explicitly.
-          props.scroll === false
-            ? "overflow-x-clip"
-            : "max-h-64 overflow-x-hidden overflow-y-auto overscroll-contain has-data-workflow-expanded:max-h-[min(28rem,55dvh)]",
-        )}
+        className="m-0 flex flex-col gap-0.5 list-none overflow-x-clip p-0"
       >
         {props.children}
       </ul>
@@ -192,7 +183,6 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
   const rows = (
     <ThreadLineageRowList
       id={listId}
-      scroll={props.label === null}
       hiddenCount={hiddenCount}
       onShowMore={() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
     >
