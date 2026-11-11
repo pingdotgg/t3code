@@ -15,6 +15,7 @@ import { Button } from "../ui/button";
 import {
   Dialog,
   DialogDescription,
+  DialogAction,
   DialogFooter,
   DialogHeader,
   DialogPanel,
@@ -175,9 +176,12 @@ export function RelayClientInstallDialog() {
             >
               Cancel
             </Button>
-            <Button size="standard" onClick={() => respondToRelayClientInstallConfirmation(true)}>
+            <DialogAction
+              size="standard"
+              onClick={() => respondToRelayClientInstallConfirmation(true)}
+            >
               Download and install
-            </Button>
+            </DialogAction>
           </DialogFooter>
         ) : installingView ? (
           <DialogFooter className="sm:items-center sm:justify-between">

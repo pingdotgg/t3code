@@ -232,7 +232,11 @@ import {
   type ExpandedImagePreview,
 } from "./ExpandedImagePreview";
 import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
-import { getComposerSubmissionValidationMessage, submitComposerDraft } from "./composerSubmission";
+import {
+  getComposerSubmissionValidationMessage,
+  isComposerSubmissionBlocked,
+  submitComposerDraft,
+} from "./composerSubmission";
 import { composerPromptLengthBannerItem } from "./ComposerPromptLengthValidation";
 import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
@@ -378,7 +382,7 @@ export interface ChatComposerProps {
   isRevertingCheckpoint?: boolean;
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
-  isCompacting: boolean;
+  canSteer: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
   resumeCompactionTokens: number | null;
   keepFullHistory: boolean;
@@ -536,7 +540,7 @@ export function ChatComposer(props: ChatComposerProps) {
     isRevertingCheckpoint = false,
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
-    isCompacting,
+    canSteer,
     environmentUnavailable,
     activePendingApproval: incomingPendingApproval,
     pendingApprovals,
@@ -1889,8 +1893,21 @@ export function ChatComposer(props: ChatComposerProps) {
     },
   });
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
-  const voiceSendDisabledReason =
-    sendDisabledReason ?? (speechInput.preparing ? "Preparing voice input" : null);
+  const submissionTarget = activePendingProgress ? "pending-user-input" : "provider-turn";
+  const submissionBlocked = isComposerSubmissionBlocked({
+    submissionTarget,
+    noProviderAvailable,
+    sendDisabledReason,
+    attachmentBlockReason,
+    environmentUnavailable: environmentUnavailable !== null,
+  });
+  // The pending Submit button follows the answer's own blockers, matching submitComposer.
+  const primaryActionSendDisabledReason =
+    (activePendingProgress ? attachmentBlockReason : sendDisabledReason) ??
+    (speechInput.preparing ? "Preparing voice input" : null);
+  const primaryActionEnvironmentUnavailable =
+    environmentUnavailable !== null ||
+    (!activePendingProgress && (noProviderAvailable || projectSelectionRequired));
   const dictationShortcutLabel = useDictationShortcut({
     keybindings,
     speech: speechInput,
@@ -2143,13 +2160,7 @@ export function ChatComposer(props: ChatComposerProps) {
 
   const shouldBlurMobileComposerOnSubmit = () => {
     if (!isSoftwareKeyboardOpen) return false;
-    if (
-      isSendBusy ||
-      isSendDisabled ||
-      noProviderAvailable ||
-      environmentUnavailable !== null ||
-      phase === "running"
-    ) {
+    if (isSendBusy || submissionBlocked || environmentUnavailable !== null || phase === "running") {
       return false;
     }
     if (activePendingProgress) {
@@ -2171,11 +2182,7 @@ export function ChatComposer(props: ChatComposerProps) {
       submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
       return false;
     }
-    if (
-      noProviderAvailable ||
-      isSendDisabled ||
-      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-    ) {
+    if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
       event?.preventDefault();
       return false;
     }
@@ -2203,7 +2210,7 @@ export function ChatComposer(props: ChatComposerProps) {
     const submission = submitComposerDraft({
       isSendBusy,
       prompt: promptRef.current,
-      submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+      submissionTarget,
       event,
       onSend: (sendEvent) => {
         providerInputRejectedRef.current = false;
@@ -2214,7 +2221,7 @@ export function ChatComposer(props: ChatComposerProps) {
               running: phase === "running",
               alternateModifier: false,
               activeTurnDefault: followUpBehavior,
-              canSteer: !isCompacting,
+              canSteer,
             }),
           submissionIntent,
         );
@@ -2255,7 +2262,7 @@ export function ChatComposer(props: ChatComposerProps) {
         resolveComposerDispatchMode({
           running: phase === "running",
           alternateModifier: intent === "alternate",
-          canSteer: !isCompacting,
+          canSteer,
           activeTurnDefault: followUpBehavior,
         }),
         intent,
@@ -2270,7 +2277,7 @@ export function ChatComposer(props: ChatComposerProps) {
         running: phase === "running",
         alternateModifier: event.metaKey || event.ctrlKey,
         activeTurnDefault: followUpBehavior,
-        canSteer: !isCompacting,
+        canSteer,
       }),
     );
   };
@@ -2282,7 +2289,7 @@ export function ChatComposer(props: ChatComposerProps) {
         running: phase === "running",
         alternateModifier: false,
         activeTurnDefault: followUpBehavior,
-        canSteer: !isCompacting,
+        canSteer,
       }),
     );
   };
@@ -2386,7 +2393,7 @@ export function ChatComposer(props: ChatComposerProps) {
       sendShortcut: settings.sendShortcut,
       routeKind,
       phase,
-      isCompacting,
+      canSteer,
       followUpBehavior,
       isSoftwareKeyboardOpen,
       isLiteralPendingAnswer,
@@ -3713,8 +3720,9 @@ export function ChatComposer(props: ChatComposerProps) {
                   pendingAction={requestCard && requestCardHost ? null : pendingPrimaryAction}
                   isRunning={phase === "running"}
                   canInterrupt={canInterrupt}
+                  runId={activeThread?.runtime?.activeRunId ?? null}
                   followUpBehavior={followUpBehavior}
-                  canSteer={!isCompacting}
+                  canSteer={canSteer}
                   alternateShortcutLabel={shortcutLabelForCommand(
                     keybindings,
                     "composer.sendAlternate",
@@ -3732,12 +3740,8 @@ export function ChatComposer(props: ChatComposerProps) {
                   )}
                   voiceInputActive={voiceInputActive}
                   isSendBusy={isSendBusy}
-                  sendDisabledReason={voiceSendDisabledReason}
-                  isEnvironmentUnavailable={
-                    environmentUnavailable !== null ||
-                    noProviderAvailable ||
-                    projectSelectionRequired
-                  }
+                  sendDisabledReason={primaryActionSendDisabledReason}
+                  isEnvironmentUnavailable={primaryActionEnvironmentUnavailable}
                   isPreparingWorktree={isPreparingWorktree}
                   hasSendableContent={composerSendState.hasSendableContent || voiceInputActive}
                   canResume={showResumeAction}
