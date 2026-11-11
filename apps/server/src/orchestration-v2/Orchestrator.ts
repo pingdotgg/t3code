@@ -106,6 +106,7 @@ import {
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import {
   CommandPolicyV2,
+  followUpOwnerRun,
   goalCommandStopsActiveRun,
   isActiveRun,
   isNativeMaintenanceCommand,
@@ -711,15 +712,6 @@ function mayStartSubagentFollowup(
     command.createdBy === "user" ||
     command.creationSource === "mcp" ||
     command.usageLimitContinuationOfRunId !== undefined
-  );
-}
-
-/** The run a follow-up to a finished child binds to: the latest active one, else the last that ran. */
-export function followUpOwnerRun(
-  runs: ReadonlyArray<OrchestrationV2Run>,
-): OrchestrationV2Run | null {
-  return (
-    runs.filter(isActiveRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ?? latestExecutedRun(runs)
   );
 }
 
@@ -8648,7 +8640,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
     const parentProjection = yield* projectionStore
-      .getThreadRecords(command.parentThreadId, ["runs", "providerTurns", "attempts"])
+      .getThreadRecords(command.parentThreadId, ["runs", "providerTurns", "attempts", "subagents"])
       .pipe(
         Effect.mapError(
           (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),

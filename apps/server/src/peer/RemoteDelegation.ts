@@ -37,7 +37,7 @@ import {
   resolveRuntimeMode,
   taskPrompt,
 } from "../mcp/delegatedTaskModes.ts";
-import { followUpOwnerRun } from "../orchestration-v2/Orchestrator.ts";
+import { followUpOwnerRun } from "../orchestration-v2/CommandPolicy.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -734,9 +734,10 @@ const make = Effect.gen(function* () {
       return yield* settled(parentThreadId, taskId);
     }
     if (!isTerminal(waited.status)) return false;
-    // A later run's answer there may be a follow-up's recorded here since, or its restart, which
-    // no run id here names. Then this task's is its own run's latest restart, the one waited on.
-    const laterFollowUp =
+    // A later run's answer there may be another open follow-up's, or its restart, which no run id
+    // here names; concurrent sends may record here out of their order there. Then this task's
+    // answer is its own run's latest restart, the one waited on.
+    const sharedThread =
       waited.resultRun !== undefined &&
       waited.resultRun.runId !== waited.runId &&
       (yield* threads.getThreadRecords(parentThreadId, ["subagents"]).pipe(
@@ -747,15 +748,15 @@ const make = Effect.gen(function* () {
               other.id !== taskId &&
               other.remoteChild?.environmentId === remote.environmentId &&
               other.remoteChild.threadId === remote.threadId &&
-              // One recorded in the same instant may be later too.
+              // One that settled before this was recorded ran before it there.
               (recordedAt === null ||
-                other.startedAt === null ||
-                !DateTime.isLessThan(other.startedAt, recordedAt)),
+                other.completedAt === null ||
+                DateTime.isGreaterThan(other.completedAt, recordedAt)),
           );
         }),
       ));
     const resultRun =
-      waited.resultRun !== undefined && !laterFollowUp
+      waited.resultRun !== undefined && !sharedThread
         ? waited.resultRun
         : { runId: waited.runId, status: waited.status };
     const result = yield* lastReply(scope, remote, resultRun.runId, resultRun.status === "failed");
