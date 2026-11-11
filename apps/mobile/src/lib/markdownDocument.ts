@@ -1,4 +1,4 @@
-import type { Root, RootContent } from "mdast";
+import type { Code, List, ListItem, Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
@@ -461,7 +461,128 @@ export function parseMarkdownDocument(markdown: string): Root {
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
+  return transformNativeMarkdown(
+    markdownWithTopLevelCodeBlocks(markdownForNativeParsing(markdown)),
+    fileLink,
+    true,
+  );
+}
+
+function columnAt(markdown: string, offset: number): number {
+  let column = 0;
+  for (let index = markdown.lastIndexOf("\n", offset - 1) + 1; index < offset; index += 1)
+    column = markdown[index] === "\t" ? column + 4 - (column % 4) : column + 1;
+  return column;
+}
+
+function dedentLine(line: string, columns: number): string {
+  let column = 0;
+  let index = 0;
+  while (column < columns && (line[index] === " " || line[index] === "\t")) {
+    const next = line[index] === "\t" ? column + 4 - (column % 4) : column + 1;
+    if (next > columns) return " ".repeat(next - columns) + line.slice(index + 1);
+    column = next;
+    index += 1;
+  }
+  return line.slice(index);
+}
+
+type ListPath = ReadonlyArray<{ readonly list: List; readonly item: ListItem }>;
+
+function firstListFence(
+  markdown: string,
+  node: Root | List,
+  path: ListPath,
+): { code: Code; path: ListPath } | undefined {
+  for (const child of node.children) {
+    if (child.type === "list") {
+      const found = firstListFence(markdown, child, path);
+      if (found) return found;
+    } else if (child.type === "listItem" && node.type === "list") {
+      const itemPath = [...path, { list: node, item: child }];
+      for (const block of child.children) {
+        const start = block.position?.start.offset;
+        if (
+          block.type === "code" &&
+          start !== undefined &&
+          /^(?:`{3}|~{3})/.test(markdown.slice(start))
+        )
+          return { code: block, path: itemPath };
+        if (block.type === "list") {
+          const found = firstListFence(markdown, block, itemPath);
+          if (found) return found;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+function hoistListFence(markdown: string, code: Code, path: ListPath): string {
+  const lines = markdown.split(/(?<=\n)/);
+  const lineOf = (offset: number) => markdown.slice(0, offset).split("\n").length - 1;
+  const contentColumn = (item: ListItem) =>
+    Math.min(...item.children.map((child) => columnAt(markdown, child.position!.start.offset!)));
+  const codeStart = code.position!.start.offset!;
+  const codeLine = lineOf(codeStart);
+  const codeEnd = lineOf(code.position!.end.offset!);
+  const lineStart = markdown.lastIndexOf("\n", codeStart - 1) + 1;
+  // A fence on its item's marker line (`- ```sh`) leaves the marker behind as an empty item.
+  const marker = markdown.slice(lineStart, codeStart).trimEnd();
+  const output = [...lines.slice(0, codeLine), ...(marker ? [`${marker}\n`] : []), "\n"];
+  const fence =
+    " ".repeat(columnAt(markdown, codeStart)) + lines[codeLine]!.slice(codeStart - lineStart);
+  const fenceColumn = contentColumn(path.at(-1)!.item);
+  output.push(dedentLine(fence, fenceColumn));
+  for (let index = codeLine + 1; index <= codeEnd; index += 1)
+    output.push(dedentLine(lines[index]!, fenceColumn));
+  if (!output.at(-1)!.endsWith("\n")) output[output.length - 1] += "\n";
+  output.push("\n");
+  // The rest of each enclosing item, then its later siblings, continue at the top level.
+  let next = codeEnd + 1;
+  for (const { list, item } of [...path].reverse()) {
+    const itemEnd = lineOf(item.position!.end.offset!);
+    for (const column = contentColumn(item); next <= itemEnd; next += 1)
+      output.push(dedentLine(lines[next]!, column));
+    const siblingIndex = list.children.indexOf(item) + 1;
+    const sibling = list.children[siblingIndex];
+    if (!sibling) continue;
+    const markerColumn = columnAt(markdown, item.position!.start.offset!);
+    const siblingLine = lineOf(sibling.position!.start.offset!);
+    // A list numbered past 1 cannot interrupt a paragraph.
+    if (list.ordered && output.at(-1)!.trim()) output.push("\n");
+    for (const listEnd = lineOf(list.position!.end.offset!); next <= listEnd; next += 1) {
+      const text = dedentLine(lines[next]!, markerColumn);
+      // An ordered list restarts at its first item's number, so keep the count going.
+      output.push(
+        list.ordered && next === siblingLine
+          ? text.replace(/^\d+/, String((list.start ?? 1) + siblingIndex))
+          : text,
+      );
+    }
+  }
+  return [...output, ...lines.slice(next)].join("");
+}
+
+// An indented fence, or one after a list marker: top-level fences need no rewrite.
+const NESTED_FENCE = /^(?:[ \t]+|[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)+)(?:`{3}|~{3})/m;
+
+/**
+ * enriched-markdown gives only top-level code blocks a header with copy and wrap buttons; a fence in
+ * a list item is drawn as plain text (software-mansion/enriched-markdown#925). Move such fences to
+ * the top level, splitting the list around them.
+ */
+export function markdownWithTopLevelCodeBlocks(markdown: string): string {
+  // Lone `\r` line endings would throw off the line arithmetic.
+  if (!NESTED_FENCE.test(markdown) || /\r(?!\n)/.test(markdown)) return markdown;
+  let current = markdown;
+  // Each pass lifts one fence, so a document has fewer passes than lines.
+  for (let pass = markdown.split("\n").length; pass > 0; pass -= 1) {
+    const found = firstListFence(current, parser.parse(current), []);
+    if (!found) break;
+    current = hoistListFence(current, found.code, found.path);
+  }
+  return current;
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */
