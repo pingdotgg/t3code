@@ -57,7 +57,8 @@ on the host. Skill changes may take up to five minutes to appear as you type in
 the composer. See [Commands and skills](./composer.md#commands-and-skills) for
 restarting an active agent after changes. When a message mentions several skills,
 T3 Code invokes the first one available in the Muse session with the full message.
-Follow-up steering messages stay as text.
+A thread's first message and follow-up steering messages send skill mentions as
+text, which Muse loads only for skills the model may invoke.
 
 Forking a Muse conversation starts a new session with a copy of the conversation
 context. Conversation rewind is unavailable.

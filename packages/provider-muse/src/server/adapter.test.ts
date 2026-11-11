@@ -386,23 +386,30 @@ const approval = (turnId: string) => ({
 vi.mock("node:fs/promises", { spy: true });
 
 describe("MuseAdapterV2", () => {
+  const afterFirstTurn = Effect.fnUntraced(function* (
+    fake: Effect.Success<ReturnType<typeof makeFakeMuse>>,
+    text: string,
+  ) {
+    const harness = yield* makeHarness(fake);
+    const first = yield* startConversation(harness, fake);
+    yield* fake.emit("turn/completed", { turnId: first.nativeId, terminal: "completed" });
+    yield* harness.takeEvent("turn.terminal");
+    const base = yield* turnInput(harness.providerThread, 2);
+    const input = { ...base, message: { ...base.message, text } };
+    yield* harness.runtime.startTurn(input);
+    return { input, call: yield* fake.takeCall("turn/start") };
+  });
+
   it.effect("invokes only the first live skill with the unchanged request as arguments", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       fake.queueResponse("skill/list", {
         skills: [{ selector: "architect" }, { selector: "ai-ugc:ugc-mode" }],
       });
-      const harness = yield* makeHarness(fake);
-      const base = yield* turnInput(harness.providerThread);
-      const input = {
-        ...base,
-        message: {
-          ...base.message,
-          text: "Please $nope then $ai-ugc:ugc-mode tidy $architect $ai-ugc:ugc-mode",
-        },
-      };
-      yield* harness.runtime.startTurn(input);
-      const call = yield* fake.takeCall("turn/start");
+      const { input, call } = yield* afterFirstTurn(
+        fake,
+        "Please $nope then $ai-ugc:ugc-mode tidy $architect $ai-ugc:ugc-mode",
+      );
       const parts = call.params.input as Array<{
         type: string;
         selector?: string;
@@ -420,26 +427,29 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("keeps plain and unavailable skill requests as text", () =>
+  it.effect("keeps first-turn, plain and unavailable skill requests as text", () =>
     Effect.gen(function* () {
-      for (const [text, response] of [
-        ["Tidy the changes", { skills: [{ selector: "git" }] }],
-        ["$git tidy $nope", { skills: [{ selector: "architect" }] }],
-        ["$git tidy $nope", new Error("listing failed")],
+      for (const [text, response, firstTurn] of [
+        ["$git tidy", { skills: [{ selector: "git" }] }, true],
+        ["Tidy the changes", { skills: [{ selector: "git" }] }, false],
+        ["$git tidy $nope", { skills: [{ selector: "architect" }] }, false],
+        ["$git tidy $nope", new Error("listing failed"), false],
       ] as const) {
         const fake = yield* makeFakeMuse();
         fake.queueResponse("skill/list", response);
-        const harness = yield* makeHarness(fake);
-        const base = yield* turnInput(harness.providerThread);
-        const input = { ...base, message: { ...base.message, text } };
-        yield* harness.runtime.startTurn(input);
-        const call = yield* fake.takeCall("turn/start");
+        let call;
+        if (firstTurn) {
+          const harness = yield* makeHarness(fake);
+          const base = yield* turnInput(harness.providerThread);
+          yield* harness.runtime.startTurn({ ...base, message: { ...base.message, text } });
+          call = yield* fake.takeCall("turn/start");
+        } else call = (yield* afterFirstTurn(fake, text)).call;
         const parts = call.params.input as Array<{ type: string; text?: string }>;
         assert.isTrue(parts.every((part) => part.type === "text"));
-        assert.strictEqual(parts.at(-1)?.text, input.message.text);
+        assert.strictEqual(parts.at(-1)?.text, text);
         assert.strictEqual(
           fake.calls.filter((call) => call.method === "skill/list").length,
-          text.startsWith("$") ? 1 : 0,
+          text.startsWith("$") && !firstTurn ? 1 : 0,
         );
       }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
