@@ -1,4 +1,6 @@
 import {
+  CodexSettings,
+  ProviderInstanceId,
   CloudSpeechApiKey,
   CloudSpeechError,
   CloudSpeechModel,
@@ -14,6 +16,12 @@ import {
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import { cloudSpeechLanguages, effectiveSpeechLanguage } from "@t3tools/shared/speech";
+import * as Stream from "effect/Stream";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -27,6 +35,18 @@ import { applySpeechAliases } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
 
+const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
+const decodeNativeLogin = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      auth_mode: Schema.optionalKey(Schema.String),
+      tokens: Schema.Struct({ access_token: CloudSpeechApiKey, account_id: CloudSpeechApiKey }),
+    }),
+  ),
+);
+const decodeTranscript = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(EnvironmentSpeechTranscriptionResult),
+);
 const endpoints = {
   openai: { url: "https://api.openai.com/v1/audio/transcriptions", model: "gpt-transcribe" },
   xai: { url: "https://api.x.ai/v1/stt", model: "grok-voice-transcribe-2.0" },
@@ -129,12 +149,60 @@ export const layer = Layer.effect(
     const credentials = settings.getSettings.pipe(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseEnv = yield* HostProcess.Environment;
+    const home = yield* HostProcess.HomeDirectory;
+    const nativeLogin = Effect.fn("CloudSpeech.nativeLogin")(function* () {
+      const instance = (yield* settings.getSettings).providerInstances[
+        ProviderInstanceId.make("codex")
+      ];
+      if (instance && instance.driver !== "codex")
+        return yield* new CloudSpeechError({ provider: "chatgpt", reason: "missing-key" });
+      const config = yield* decodeCodexSettings(instance?.config ?? {}).pipe(
+        Effect.mapError(
+          () => new CloudSpeechError({ provider: "chatgpt", reason: "unreadable-key" }),
+        ),
+      );
+      if (config.setupMode === "managed")
+        return yield* new CloudSpeechError({ provider: "chatgpt", reason: "missing-key" });
+      const env = yield* mergeProviderInstanceEnvironment(instance?.environment, baseEnv);
+      const directory = expandHomePath(
+        config.shadowHomePath || config.homePath || env.CODEX_HOME || path.join(home, ".codex"),
+        home,
+      );
+      const raw = yield* fs
+        .readFileString(path.join(directory, "auth.json"))
+        .pipe(
+          Effect.mapError(
+            () => new CloudSpeechError({ provider: "chatgpt", reason: "missing-key" }),
+          ),
+        );
+      const login = yield* decodeNativeLogin(raw).pipe(
+        Effect.mapError(
+          () => new CloudSpeechError({ provider: "chatgpt", reason: "unreadable-key" }),
+        ),
+      );
+      if (login.auth_mode && login.auth_mode !== "chatgpt")
+        return yield* new CloudSpeechError({ provider: "chatgpt", reason: "missing-key" });
+      return {
+        directory,
+        token: Redacted.make(login.tokens.access_token),
+        account: Redacted.make(login.tokens.account_id),
+      };
+    });
     const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
-        openai: Boolean(openai),
-        xai: Boolean(xai),
-        openrouter: Boolean(openrouter),
-      })),
+      Effect.flatMap(({ openai, xai, openrouter }) =>
+        nativeLogin().pipe(
+          Effect.isSuccess,
+          Effect.map((chatgpt) => ({
+            chatgpt,
+            openai: Boolean(openai),
+            xai: Boolean(xai),
+            openrouter: Boolean(openrouter),
+          })),
+        ),
+      ),
     );
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
       http
@@ -172,6 +240,7 @@ export const layer = Layer.effect(
       provider: CloudSpeechProvider,
       key: Redacted.Redacted<string> | SecretReference | null,
     ) {
+      if (provider === "chatgpt") return;
       yield* settings.updateSettings({
         cloudSpeechCredentials: {
           [provider]: Redacted.isRedacted(key) ? Redacted.value(key) : (key ?? ""),
@@ -185,8 +254,10 @@ export const layer = Layer.effect(
         options: SpeechTranscriptionOptions,
         model?: string,
       ) {
-        const source = (yield* credentials)[provider];
-        if (!source) return yield* new CloudSpeechError({ provider, reason: "missing-key" });
+        const login = provider === "chatgpt" ? yield* nativeLogin() : undefined;
+        const source = provider === "chatgpt" ? undefined : (yield* credentials)[provider];
+        if (!login && !source)
+          return yield* new CloudSpeechError({ provider, reason: "missing-key" });
         if (provider === "openrouter" && (!model || !isModelId(model)))
           return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
         const samples = yield* Effect.try({
@@ -201,28 +272,54 @@ export const layer = Layer.effect(
         if (provider === "openrouter" && !(yield* models).some((entry) => entry.id === model))
           return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
         // A vault that locked since the last recording must not authorize a new upload.
-        if (isSecretReference(source)) yield* resolver.invalidate([source]);
+        if (source && isSecretReference(source)) yield* resolver.invalidate([source]);
         const unreadable = () => new CloudSpeechError({ provider, reason: "unreadable-key" });
-        const key = yield* requireSettingsSecret(resolver, source).pipe(
-          Effect.mapError(unreadable),
-        );
+        const key = login
+          ? Redacted.value(login.token)
+          : yield* requireSettingsSecret(resolver, source!).pipe(Effect.mapError(unreadable));
         if (!isApiKey(key)) return yield* unreadable();
         const audio = wave(samples);
-        const request = HttpClientRequest.post(endpoints[provider].url).pipe(
+        const subscriptionForm = new FormData();
+        subscriptionForm.set("file", new Blob([audio], { type: "audio/wav" }), "dictation.wav");
+        if (language !== "auto") subscriptionForm.set("language", language);
+        const request = HttpClientRequest.post(
+          provider === "chatgpt"
+            ? "https://chatgpt.com/backend-api/transcribe"
+            : endpoints[provider].url,
+        ).pipe(
           HttpClientRequest.bearerToken(Redacted.make(key)),
-          provider === "openrouter"
-            ? openRouterBody(model!, audio, language)
-            : audioBody(provider, audio, language, options),
+          provider === "chatgpt"
+            ? HttpClientRequest.bodyFormData(subscriptionForm)
+            : provider === "openrouter"
+              ? openRouterBody(model!, audio, language)
+              : audioBody(provider, audio, language, options),
         );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
         // A catalog fetch or vault lookup may have outlived the credential it started with.
-        const current = (yield* credentials)[provider];
-        if (!current || !sameCredential(source, current))
+        if (login) {
+          const current = yield* nativeLogin();
+          if (
+            current.directory !== login.directory ||
+            Redacted.value(current.token) !== key ||
+            Redacted.value(current.account) !== Redacted.value(login.account)
+          )
+            return yield* new CloudSpeechError({ provider, reason: "key-changed" });
+        }
+        const current = provider === "chatgpt" ? undefined : (yield* credentials)[provider];
+        if (!login && (!current || !sameCredential(source!, current)))
           return yield* new CloudSpeechError({
             provider,
             reason: current ? "key-changed" : "missing-key",
           });
-        const response = yield* execute(request).pipe(Effect.mapError(unavailable));
+        const response = yield* execute(
+          login
+            ? HttpClientRequest.setHeader(
+                request,
+                "ChatGPT-Account-Id",
+                Redacted.value(login.account),
+              )
+            : request,
+        ).pipe(Effect.mapError(unavailable));
         if (response.status < 200 || response.status >= 300)
           return yield* new CloudSpeechError({
             provider,
@@ -235,9 +332,35 @@ export const layer = Layer.effect(
                     ? "model-unavailable"
                     : "unavailable",
           });
-        const { text } = yield* HttpClientResponse.schemaBodyJson(
-          EnvironmentSpeechTranscriptionResult,
-        )(response).pipe(Effect.mapError(unavailable));
+        const result =
+          provider === "chatgpt"
+            ? yield* response.stream.pipe(
+                Stream.runFold(
+                  () => new Uint8Array(),
+                  (body, chunk) => {
+                    if (body.byteLength + chunk.byteLength > 1024 * 1024) throw unavailable();
+                    const next = new Uint8Array(body.byteLength + chunk.byteLength);
+                    next.set(body);
+                    next.set(chunk, body.byteLength);
+                    return next;
+                  },
+                ),
+                Effect.flatMap((body) => decodeTranscript(new TextDecoder().decode(body))),
+                Effect.catchCause(() => Effect.fail(unavailable())),
+              )
+            : yield* HttpClientResponse.schemaBodyJson(EnvironmentSpeechTranscriptionResult)(
+                response,
+              ).pipe(Effect.mapError(unavailable));
+        if (login) {
+          const current = yield* nativeLogin();
+          if (
+            current.directory !== login.directory ||
+            Redacted.value(current.token) !== key ||
+            Redacted.value(current.account) !== Redacted.value(login.account)
+          )
+            return yield* new CloudSpeechError({ provider, reason: "key-changed" });
+        }
+        const { text } = result;
         const corrected = applySpeechAliases(text, options.speechCustomWords);
         return (
           options.speechRemoveFillerWords

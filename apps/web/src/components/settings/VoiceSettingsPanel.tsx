@@ -130,7 +130,9 @@ function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
     return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
   return (
     <ProviderInstanceIcon
-      driverKind={ProviderDriverKind.make(provider === "openai" ? "codex" : "grok")}
+      driverKind={ProviderDriverKind.make(
+        provider === "openai" || provider === "chatgpt" ? "codex" : "grok",
+      )}
       displayName={CLOUD_SPEECH_LABELS[provider]}
       iconClassName="size-4"
     />
@@ -1447,7 +1449,8 @@ export function VoiceSettingsPanel() {
               </Select>
               {destination.cloudProvider &&
                 chosenEnvironment &&
-                (canManageKey || destination.cloudProvider === "openrouter") && (
+                (canManageKey || destination.cloudProvider === "openrouter") &&
+                destination.cloudProvider !== "chatgpt" && (
                   <Tooltip>
                     <TooltipTrigger
                       render={

@@ -212,7 +212,10 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     }
   };
   const edit = (provider: CloudSpeechProvider, enable: boolean) => {
-    const stored = environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
+    const stored =
+      provider === "chatgpt"
+        ? undefined
+        : environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
     const ref =
       isSecretReference(stored) && sources.some((candidate) => candidate.id === stored.provider)
         ? stored
@@ -274,7 +277,9 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     const saved = keys.value;
     if (!editing)
       return (
-        <ListSection footer={`Audio is sent through ${environment.label} using its API key.`}>
+        <ListSection
+          footer={`Audio is sent through ${environment.label} using its selected provider login.`}
+        >
           {CloudSpeechProvider.literals.map((provider, index) => {
             const label = CLOUD_SPEECH_LABELS[provider];
             const routed = provider === "openrouter";
@@ -287,34 +292,46 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                 leading={
                   <ProviderIcon
                     provider={
-                      provider === "openai" ? "codex" : provider === "xai" ? "grok" : provider
+                      provider === "openai" || provider === "chatgpt"
+                        ? "codex"
+                        : provider === "xai"
+                          ? "grok"
+                          : provider
                     }
                     size={20}
                   />
                 }
                 selected={isActive}
                 separated={index > 0}
-                disabled={key === undefined || (!key && !canManage) || saving}
+                disabled={
+                  key === undefined ||
+                  (provider === "chatgpt" ? !key : !key && !canManage) ||
+                  saving
+                }
                 description={
-                  key === undefined
-                    ? "Update the environment to use this provider"
-                    : isActive && routed
-                      ? `${activeModel} · Tap to change model${canManage ? " or key" : ""}`
-                      : isActive && key && canManage
-                        ? "Tap to manage key"
-                        : key
-                          ? routed
-                            ? "API key saved · choose a model to use it"
-                            : "API key saved"
-                          : canManage
-                            ? "Add an API key to use this provider"
-                            : "Ask an environment administrator to add an API key"
+                  provider === "chatgpt"
+                    ? key
+                      ? "Native Codex login"
+                      : "Sign in with the native Codex CLI on this environment"
+                    : key === undefined
+                      ? "Update the environment to use this provider"
+                      : isActive && routed
+                        ? `${activeModel} · Tap to change model${canManage ? " or key" : ""}`
+                        : isActive && key && canManage
+                          ? "Tap to manage key"
+                          : key
+                            ? routed
+                              ? "API key saved · choose a model to use it"
+                              : "API key saved"
+                            : canManage
+                              ? "Add an API key to use this provider"
+                              : "Ask an environment administrator to add an API key"
                 }
                 onPress={() => {
                   if (routed) return edit(provider, !isActive);
                   if (!key) return edit(provider, true);
                   if (isActive) {
-                    if (canManage) edit(provider, false);
+                    if (canManage && provider !== "chatgpt") edit(provider, false);
                     return;
                   }
                   Dialog.confirm({
@@ -339,7 +356,10 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     const isActive = active?.provider === provider;
     const modelChosen = isModelId(model) && (catalog?.some((entry) => entry.id === model) ?? false);
     const modelChanged = model !== (activeModel ?? "");
-    const original = environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
+    const original =
+      provider === "chatgpt"
+        ? undefined
+        : environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
     const keyChanged =
       credential !== undefined &&
       !(

@@ -36,6 +36,16 @@ subscription is needed. Switch back to **This device** on mobile or **Off** on
 web and desktop to stop sharing. Removing the key stops that provider for everyone
 on the environment.
 
+For subscription dictation, choose **ChatGPT subscription**
+via the environment you want to use. Sign in with ChatGPT in the native Codex CLI
+on that environment first. T3 uses the default Codex instance's configured home,
+or `CODEX_HOME` and then `~/.codex`. Managed T3 token-sharing profiles and
+keychain-only logins are not supported. Audio goes to ChatGPT after you stop;
+no API key is used and there is no paid API fallback. If the login expires,
+sign in again with the native CLI. T3 reads refreshed credentials on the next
+request but does not refresh them itself. Account and workspace restrictions
+can prevent transcription. Vocabulary aliases are applied after transcription.
+
 **OpenRouter** works the same way but has no default model: pick one from its live
 speech-to-text catalog when you enable it, or later under **Manage OpenRouter**.
 The model choice is yours alone and needs no settings access, so anyone with

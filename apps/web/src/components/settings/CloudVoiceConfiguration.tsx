@@ -163,6 +163,7 @@ export function CloudVoiceConfiguration({
   const name = CLOUD_SPEECH_LABELS[provider];
   const company = CLOUD_SPEECH_PROVIDER_NAMES[provider];
   const routed = provider === "openrouter";
+  const subscription = provider === "chatgpt";
   const formId = useId();
   const prepared = Option.getOrNull(usePreparedConnection(id));
   const canUse = useEnvironmentScope(id, AuthOrchestrationOperateScope);
@@ -183,7 +184,9 @@ export function CloudVoiceConfiguration({
   const [error, setError] = useState("");
   const [model, setModel] = useState(currentModel ?? "");
   const saved = AsyncResult.isSuccess(presence) ? presence.value?.[provider] : undefined;
-  const existing = environment.serverConfig?.settings?.cloudSpeechCredentials?.[provider];
+  const existing = subscription
+    ? undefined
+    : environment.serverConfig?.settings?.cloudSpeechCredentials?.[provider];
   const sources =
     isSecretsFeatureEnabled && environment.serverConfig?.secretReferences
       ? configuredSecretSources(environment.serverConfig.settings?.secretProviders ?? {})
@@ -210,7 +213,8 @@ export function CloudVoiceConfiguration({
     );
   const connected = canUse && prepared !== null;
   // Fixed providers edit the key only when nothing is saved or the device already uses them.
-  const editingKey = canManage && saved !== undefined && (routed || active || !saved);
+  const editingKey =
+    !subscription && canManage && saved !== undefined && (routed || active || !saved);
   const listedModels = AsyncResult.isSuccess(models) ? (models.value?.models ?? null) : null;
   const modelChosen = isModelId(model) && (listedModels?.some((m) => m.id === model) ?? false);
   const keyReady = draft.trim() ? credential !== undefined : Boolean(saved);
@@ -218,7 +222,7 @@ export function CloudVoiceConfiguration({
   const destination = (): CloudDestination =>
     routed && isModelId(model)
       ? { kind: "cloud", provider: "openrouter", environmentId: id, model }
-      : { kind: "cloud", provider: provider as "openai" | "xai", environmentId: id };
+      : { kind: "cloud", provider: provider as "openai" | "xai" | "chatgpt", environmentId: id };
   const enable = () => chooseAudioDestination(destination());
   const canSubmit = routed
     ? modelChosen && keyReady && (!active || modelChanged || keyChanged)
@@ -330,7 +334,7 @@ export function CloudVoiceConfiguration({
           <DialogDescription>
             {remove
               ? `Everyone using ${name} for dictation on ${environment.label} will lose access.`
-              : active && !routed
+              : active && !routed && !subscription
                 ? `Anyone with dictation access to ${environment.label} can use this API key.`
                 : cloudSpeechDisclosure(provider, environment.label)}
           </DialogDescription>
@@ -339,6 +343,19 @@ export function CloudVoiceConfiguration({
           <DialogPanel>
             {!connected ? (
               <p>Connect to {environment.label} with dictation access to continue.</p>
+            ) : subscription ? (
+              <div className="grid gap-3">
+                <p className="text-sm text-muted-foreground">
+                  {saved
+                    ? "Uses the default Codex instance's native ChatGPT login on this environment."
+                    : "Sign in with ChatGPT using the native Codex CLI on this environment, then retry."}
+                </p>
+                {!saved && (
+                  <Button size="sm" variant="outline" onClick={refresh}>
+                    Check login
+                  </Button>
+                )}
+              </div>
             ) : AsyncResult.isFailure(presence) && saved === undefined ? (
               <Button size="sm" variant="outline" onClick={refresh}>
                 Retry loading API key

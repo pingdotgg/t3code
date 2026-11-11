@@ -8,20 +8,23 @@ export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
   Schema.isPattern(/^(?![a-z][a-z\d+.-]*:\/\/)[!-~]+$/i),
 );
 
-export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter"]);
+export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter", "chatgpt"]);
 export type CloudSpeechProvider = typeof CloudSpeechProvider.Type;
 export const CLOUD_SPEECH_LABELS = {
+  chatgpt: "ChatGPT subscription",
   openai: "OpenAI",
   xai: "Grok Voice Transcribe",
   openrouter: "OpenRouter",
 } as const;
 export const CLOUD_SPEECH_PROVIDER_NAMES = {
+  chatgpt: "ChatGPT",
   openai: "OpenAI",
   xai: "xAI",
   openrouter: "OpenRouter",
 } as const;
 /** Servers that predate OpenRouter report only the first two providers. */
 export const CloudSpeechKeys = Schema.Struct({
+  chatgpt: Schema.optionalKey(Schema.Boolean),
   openai: Schema.Boolean,
   xai: Schema.Boolean,
   openrouter: Schema.optionalKey(Schema.Boolean),
@@ -58,6 +61,21 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
 ) {
   override get message() {
     const name = CLOUD_SPEECH_PROVIDER_NAMES[this.provider];
+    if (this.provider === "chatgpt") {
+      switch (this.reason) {
+        case "missing-key":
+        case "unreadable-key":
+          return "Sign in with ChatGPT in the native Codex CLI on the selected environment. Managed T3 logins are not supported for dictation.";
+        case "key-changed":
+          return "The native Codex account changed during dictation. Try again.";
+        case "rejected-key":
+          return "ChatGPT rejected this login or account. Sign in again with the native Codex CLI on the selected environment.";
+        case "rate-limit":
+          return "ChatGPT reached a usage limit. Try again later.";
+        default:
+          return "ChatGPT couldn’t transcribe this recording. Try again later.";
+      }
+    }
     switch (this.reason) {
       case "missing-key":
         return `Add your ${name} API key in Settings → Voice.`;

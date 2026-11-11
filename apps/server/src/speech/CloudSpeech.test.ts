@@ -1,7 +1,10 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, SecretProviderId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -23,6 +26,10 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(
         CloudSpeech.layer.pipe(
+          Layer.provide(
+            Layer.succeed(HostProcess.Environment, { CODEX_HOME: "/missing-test-codex-home" }),
+          ),
+          Layer.provide(NodeServices.layer),
           Layer.provide(FetchHttpClient.layer),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(
@@ -49,7 +56,12 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
     expect((yield* Effect.flip(transcribe()))._tag).toBe("CloudSpeechError");
     yield* service.setKey(provider, Redacted.make("chosen"));
-    expect(yield* service.configured).toEqual({ openai: true, xai: true, openrouter: false });
+    expect(yield* service.configured).toEqual({
+      openai: true,
+      xai: true,
+      openrouter: false,
+      chatgpt: false,
+    });
     yield* Effect.flip(transcribe(new Uint8Array(3)));
     expect(upstream).not.toHaveBeenCalled();
     expect(yield* transcribe()).toBe("hello");
@@ -106,6 +118,10 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(
         CloudSpeech.layer.pipe(
+          Layer.provide(
+            Layer.succeed(HostProcess.Environment, { CODEX_HOME: "/missing-test-codex-home" }),
+          ),
+          Layer.provide(NodeServices.layer),
           Layer.provide(FetchHttpClient.layer),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
@@ -164,6 +180,10 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(
         CloudSpeech.layer.pipe(
+          Layer.provide(
+            Layer.succeed(HostProcess.Environment, { CODEX_HOME: "/missing-test-codex-home" }),
+          ),
+          Layer.provide(NodeServices.layer),
           Layer.provide(FetchHttpClient.layer),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
@@ -197,4 +217,143 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
     expect(uploads).toEqual([]);
     expect(exit._tag).toBe("Failure");
   }),
+);
+
+it.effect("transcribes WAV with the native subscription and rejects stale or invalid logins", () =>
+  Effect.gen(function* () {
+    let raw = JSON.stringify({
+      tokens: { access_token: "native-token", account_id: "native-account" },
+    });
+    let reads = 0;
+    let switchBeforeSend = false;
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "hello" }));
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(
+            FileSystem.layerNoop({
+              readFileString: (file) =>
+                Effect.sync(() => {
+                  expect(String(file)).toBe("/native-codex/auth.json");
+                  reads++;
+                  return switchBeforeSend && reads % 2 === 0
+                    ? JSON.stringify({ tokens: { access_token: "switched", account_id: "other" } })
+                    : raw;
+                }),
+            }),
+          ),
+          Layer.provide(NodeServices.layer),
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+          Layer.provide(Layer.succeed(HostProcess.Environment, { CODEX_HOME: "/native-codex" })),
+        ),
+      ),
+    );
+    const transcribe = () =>
+      service
+        .transcribe("chatgpt", new Uint8Array(new Float32Array([0, 0.5]).buffer), {
+          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          speechLanguage: "en",
+        })
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+    expect((yield* service.configured).chatgpt).toBe(true);
+    expect(yield* transcribe()).toBe("hello");
+    const [url, init] = upstream.mock.calls[0]!;
+    expect(String(url)).toBe("https://chatgpt.com/backend-api/transcribe");
+    expect(init?.redirect).toBe("error");
+    const headers = new Headers(init?.headers);
+    expect(headers.get("authorization")).toBe("Bearer native-token");
+    expect(headers.get("chatgpt-account-id")).toBe("native-account");
+    expect(headers.get("traceparent")).toBeNull();
+    const form = init?.body as FormData;
+    expect([...form.keys()]).toEqual(["file", "language"]);
+    expect(form.get("language")).toBe("en");
+    const wav = new DataView(yield* Effect.promise(() => (form.get("file") as Blob).arrayBuffer()));
+    expect(wav.getUint32(24, true)).toBe(16000);
+    expect(wav.getInt16(46, true)).toBe(16384);
+    for (const status of [401, 403, 429]) {
+      upstream.mockResolvedValueOnce(new Response("private diagnostic", { status }));
+      expect(yield* Effect.flip(transcribe())).toMatchObject({
+        reason: status === 429 ? "rate-limit" : "rejected-key",
+      });
+    }
+    upstream.mockResolvedValueOnce(Response.json({ text: "x".repeat(1024 * 1024) }));
+    expect(yield* Effect.flip(transcribe())).toMatchObject({ reason: "unavailable" });
+    const sent = upstream.mock.calls.length;
+    reads = 0;
+    switchBeforeSend = true;
+    expect(yield* Effect.flip(transcribe())).toMatchObject({ reason: "key-changed" });
+    switchBeforeSend = false;
+    for (const invalid of [
+      "{}",
+      "invalid json",
+      JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "paid" }),
+    ]) {
+      raw = invalid;
+      yield* Effect.flip(transcribe());
+    }
+    expect(upstream).toHaveBeenCalledTimes(sent);
+  }),
+);
+
+it.effect(
+  "cancels subscription uploads and discards responses after the native account changes",
+  () =>
+    Effect.gen(function* () {
+      let token = "first";
+      let cancel = false;
+      const started = Promise.withResolvers<void>();
+      const startedAgain = Promise.withResolvers<void>();
+      let aborted = false;
+      const response = Promise.withResolvers<Response>();
+      const service = yield* CloudSpeech.CloudSpeech.pipe(
+        Effect.provide(
+          CloudSpeech.layer.pipe(
+            Layer.provide(
+              FileSystem.layerNoop({
+                readFileString: () =>
+                  Effect.sync(() =>
+                    JSON.stringify({ tokens: { access_token: token, account_id: "account" } }),
+                  ),
+              }),
+            ),
+            Layer.provide(NodeServices.layer),
+            Layer.provide(FetchHttpClient.layer),
+            Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+            Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+          ),
+        ),
+      );
+      const upstream = vi.fn<typeof fetch>(async (_input, init) => {
+        (cancel ? startedAgain : started).resolve();
+        if (cancel)
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => {
+                aborted = true;
+                reject(new DOMException("Aborted", "AbortError"));
+              },
+              { once: true },
+            );
+          });
+        return response.promise;
+      });
+      const upload = () =>
+        service
+          .transcribe("chatgpt", new Uint8Array(4), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream), Effect.forkChild);
+      const job = yield* upload();
+      yield* Effect.promise(() => started.promise);
+      token = "second";
+      response.resolve(Response.json({ text: "discard" }));
+      expect((yield* Fiber.await(job))._tag).toBe("Failure");
+      cancel = true;
+      // The fetch signal owns cancellation even when no response arrives.
+      const next = yield* upload();
+      yield* Effect.promise(() => startedAgain.promise);
+      yield* Fiber.interrupt(next);
+      expect(aborted).toBe(true);
+    }),
 );

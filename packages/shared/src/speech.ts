@@ -11,6 +11,8 @@ const decodeOptions = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechTrans
 const encodeOptions = Schema.encodeSync(Schema.fromJsonString(SpeechTranscriptionOptions));
 
 export function cloudSpeechDisclosure(provider: CloudSpeechProvider, environment: string) {
+  if (provider === "chatgpt")
+    return `After you stop, ${environment} sends your recording to ChatGPT using its native Codex login. Managed T3 logins are not supported.`;
   return provider === "openrouter"
     ? `After you stop, ${environment} sends the recording to OpenRouter. OpenRouter chooses who runs your model. T3 requests zero data retention; your OpenRouter account may allow safety retention.`
     : `After you stop, ${environment} sends your recording and vocabulary hints, including project names, to ${CLOUD_SPEECH_PROVIDER_NAMES[provider]}.`;
