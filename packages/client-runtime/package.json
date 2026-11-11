@@ -247,6 +247,10 @@
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"
     },
+    "./state/network-members": {
+      "types": "./src/state/networkMembers.ts",
+      "default": "./src/state/networkMembers.ts"
+    },
     "./state/tailnetDevices": {
       "types": "./src/state/tailnetDevices.ts",
       "default": "./src/state/tailnetDevices.ts"

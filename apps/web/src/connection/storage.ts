@@ -22,9 +22,11 @@ import {
   ConnectionTransientError,
   ConnectionBlockedError,
   CredentialStore,
+  NetworkMembers,
   ProfileStore,
   PullRequestRoutingPermissions,
   StoredPullRequestRoutingPermission,
+  makeNetworkMembers,
   pullRequestRoutingConnectionKey,
   pullRequestRoutingPermissionFor,
 } from "@t3tools/client-runtime/connection";
@@ -725,6 +727,10 @@ export const layer = Layer.effectContext(
     );
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
     const pullRequestRoutingPermissions = makeBrowserPullRequestRoutingPermissions();
+    const networkMembers = yield* makeNetworkMembers({
+      read: catalog.read.pipe(Effect.map((document) => document.networkMembers ?? [])),
+      write: (networkMembers) => catalog.update((document) => ({ ...document, networkMembers })),
+    });
     // Remembers each thread row's encoding, so a save only encodes rows that changed.
     const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder({
       yieldToHost: yieldToBrowserTask,
@@ -1101,6 +1107,7 @@ export const layer = Layer.effectContext(
 
     return Context.make(Persistence.ConnectionTargetStore, targetStore).pipe(
       Context.add(PullRequestRoutingPermissions, pullRequestRoutingPermissions),
+      Context.add(NetworkMembers, networkMembers),
       Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),

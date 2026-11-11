@@ -9,6 +9,7 @@ import {
   ConnectionProfile,
 } from "../connection/catalog.ts";
 import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
+import { NetworkMemberRecord } from "../connection/networkMembers.ts";
 import { StoredPullRequestRoutingPermission } from "../connection/pullRequestRoutingPermissions.ts";
 
 export const StoredConnectionCredential = Schema.Struct({
@@ -35,6 +36,8 @@ const catalogDocumentFields = {
   ),
   /** Shown once as a "pair again directly" notice, then cleared by the client. */
   connectOnlyEnvironments: Schema.optionalKey(Schema.Array(ConnectOnlyEnvironment)),
+  /** Members followed from the user's network; absent in documents written before it. */
+  networkMembers: Schema.optionalKey(Schema.Array(NetworkMemberRecord)),
 };
 
 const CurrentConnectionCatalogDocument = Schema.Struct({

@@ -36,6 +36,7 @@ const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCat
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const decodeCatalogDocument = Schema.decodeUnknownSync(ConnectionCatalogDocument);
+const encodeCatalogDocument = Schema.encodeSync(ConnectionCatalogDocument);
 
 const BEARER_TARGET = new BearerConnectionTarget({
   environmentId: ENVIRONMENT_ID,
@@ -210,6 +211,19 @@ describe("ConnectionCatalogDocument", () => {
     });
 
     expect(decoded.disabledEnvironmentIds).toEqual([]);
+    expect(decoded.networkMembers).toBeUndefined();
+  });
+
+  it("keeps followed network members across a save", () => {
+    const networkMembers = [
+      { environmentId: ENVIRONMENT_ID, label: "Laptop", via: EnvironmentId.make("host") },
+    ];
+    const encoded = encodeCatalogDocument({
+      ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      networkMembers,
+    });
+
+    expect(decodeCatalogDocument(encoded).networkMembers).toEqual(networkMembers);
   });
 
   it("switches a saved environment off and back on without touching its records", () => {

@@ -27,6 +27,7 @@ import {
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import { mapRemoteEnvironmentError } from "./errors.ts";
+import { NetworkMembers, releaseNetworkMember } from "./networkMembers.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
@@ -172,6 +173,8 @@ const registerPairingConnection = Effect.fn(
   if (!(yield* registry.register(registration, { knownAddressOnly }))) {
     return registration.target.environmentId;
   }
+  // Paired by the user with a code, so the network no longer owns it.
+  if (knownAddressOnly) yield* releaseNetworkMember(registration.target.environmentId);
   yield* registry.setCompatibility(registration.target.environmentId, null);
   yield* registry
     .setEnabled(registration.target.environmentId, true)
@@ -322,6 +325,7 @@ const registerSshConnection = Effect.fn(
   }
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   yield* registry.register(registration);
+  yield* releaseNetworkMember(registration.target.environmentId);
   return registration.target.environmentId;
 });
 
@@ -332,6 +336,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const networkMembers = yield* NetworkMembers;
 
   // Provisioning retains the delegated onboarding operation spans.
   return ConnectionOnboarding.of({
@@ -339,6 +344,7 @@ export const make = Effect.gen(function* () {
       function* (input) {
         return yield* registerPairingConnection(input);
       },
+      Effect.provideService(NetworkMembers, networkMembers),
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
       Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -347,6 +353,7 @@ export const make = Effect.gen(function* () {
       function* (device) {
         return yield* registerDeviceConnection(device);
       },
+      Effect.provideService(NetworkMembers, networkMembers),
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
       Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -355,6 +362,7 @@ export const make = Effect.gen(function* () {
       function* (input) {
         return yield* registerSshConnection(input);
       },
+      Effect.provideService(NetworkMembers, networkMembers),
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ClientCapabilities.SshEnvironmentGateway, ssh),
     ),

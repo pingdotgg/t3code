@@ -1,4 +1,5 @@
 import { AgentLibrarySync } from "./state/AgentLibrarySync";
+import { NetworkMembersSync } from "./state/NetworkMembersSync";
 import { installPermissionUpdateNotice } from "./features/connection/permissionUpdateNotice";
 import { installComposerAttachmentUploads } from "./state/composer-attachment-uploads";
 import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
@@ -237,6 +238,7 @@ function AppContent() {
       <SubscriptionUsageCoordinator />
       <ConnectOnlyNoticeCoordinator />
       <AgentLibrarySync />
+      <NetworkMembersSync />
       <GestureHandlerRootView className="flex-1">
         <KeyboardProvider statusBarTranslucent>
           <SafeAreaProvider>

@@ -1,4 +1,5 @@
 import { AgentLibrarySync } from "../hooks/useAgentLibrary";
+import { NetworkMembersSync } from "../state/NetworkMembersSync";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -180,6 +181,7 @@ function RootRouteBranch() {
   const appShell = (
     <CommandPalette>
       <AgentLibrarySync />
+      <NetworkMembersSync />
       {/* Setup starts with an empty workspace, so the Welcome page has no thread list. */}
       <AppSidebarLayout showSidebar={!isWelcome}>
         <Outlet />
