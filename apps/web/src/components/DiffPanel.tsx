@@ -22,8 +22,9 @@ import {
   FolderGit2Icon,
   HistoryIcon,
   TriangleAlertIcon,
+  ChevronRightIcon,
 } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
+
 import * as Schema from "effect/Schema";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
@@ -78,7 +79,6 @@ import { FileExplorerPane } from "./files/FileExplorerPane";
 import { DiffViewControls } from "./diffs/DiffViewControls";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { Button, InlineButton } from "./ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Switch } from "./ui/switch";
 import {
   Combobox,
@@ -190,10 +190,11 @@ function DiffFileCollapseToggle({
           />
         }
       >
-        <MorphIcon
-          className={cn("size-4", iconClassName)}
-          icon={collapsed ? ChevronRight : ChevronDown}
-        />
+        {collapsed ? (
+          <ChevronRightIcon className={cn("size-4", iconClassName)} />
+        ) : (
+          <ChevronDownIcon className={cn("size-4", iconClassName)} />
+        )}
       </TooltipTrigger>
       <TooltipPopup side="top">{collapsed ? "Expand diff" : "Collapse diff"}</TooltipPopup>
     </Tooltip>
