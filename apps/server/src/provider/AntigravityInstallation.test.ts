@@ -414,6 +414,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "refuses a 16 KiB-page linux-arm64 kernel before downloading the runtime",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) && command.command === "getconf"
+            ? realSpawner.spawn(ChildProcess.make("sh", ["-c", "echo 16384"], command.options))
+            : realSpawner.spawn(command),
+        );
+        const { installation, requests } = yield* makeHarness({ arch: "arm64", spawner });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).toMatch(/4 KiB/);
+        expect(requests).toEqual([]);
+      }),
+  );
+
   it.effect.each(["download", "extract", "active pointer"] as const)(
     "preserves the old runtime after an ENOSPC error during %s",
     (stage) =>
