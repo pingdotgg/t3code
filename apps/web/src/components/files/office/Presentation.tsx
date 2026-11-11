@@ -83,7 +83,7 @@ export default function Presentation(props: {
         if (slides.length === 0 || slides.length > 500)
           throw new Error("Preview limited to presentations with 1 to 500 slides.");
         setOpened({ slides, paint });
-        onDetails(`${slides.length} slides`);
+        onDetails(`${slides.length} slide${slides.length === 1 ? "" : "s"}`);
       })
       .catch(fail);
     return () => {
