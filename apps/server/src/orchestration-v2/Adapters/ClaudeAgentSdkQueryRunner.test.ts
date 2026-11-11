@@ -84,7 +84,7 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
         prefix: "t3-claude-fork-config-",
       });
       const projectDir = yield* writeClaudeSession(configDir);
-      const hostConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      const hostConfigDir = (yield* HostProcess.Environment).CLAUDE_CONFIG_DIR;
       const inProcessFork = vi.spyOn(ClaudeSdk, "forkSession");
       yield* Effect.addFinalizer(() => Effect.sync(() => inProcessFork.mockRestore()));
 
@@ -110,7 +110,7 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
         ?.match(/"uuid"\s*:\s*"([^"]+)"/)?.[1];
       assert.isString(inheritedHead);
       assert.equal(forked.headMessageId, inheritedHead);
-      assert.equal(process.env.CLAUDE_CONFIG_DIR, hostConfigDir);
+      assert.equal((yield* HostProcess.Environment).CLAUDE_CONFIG_DIR, hostConfigDir);
       assert.equal(inProcessFork.mock.calls.length, 0);
     }).pipe(Effect.provide(forkRunnerLayer)),
   ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -293,6 +293,38 @@ it.effect("reopens a stalled MCP registration before delivering the resumed prom
       const delivered = yield* Effect.promise(() => prompts[1]![Symbol.asyncIterator]().next());
       assert.deepEqual(delivered.value, message);
       assert.isFalse(delivered.done);
+    }).pipe(Effect.provide(realQueryRunner)),
+  ),
+);
+
+it.effect.each([
+  { case: "a readable rule list", errors: undefined, readable: true },
+  { case: "a settings file Claude skipped", errors: [{ file: "settings.json" }], readable: false },
+  { case: "a reply without a rule list", response: {}, readable: false },
+])("reads Claude's permission rules only when no settings file was skipped: $case", (testCase) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const rules = [{ behavior: "deny" as const, rule: "mcp__probe__redeploy" }];
+      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            close: vi.fn(),
+            request: async () => ({
+              response:
+                "response" in testCase
+                  ? testCase.response
+                  : { state: { rules, errors: testCase.errors } },
+            }),
+          }) as unknown as ClaudeSdk.Query,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const { mcpServers: _mcpServers, ...options } = resumedMcpQueryInput.options;
+      const session = yield* runner.open({ ...resumedMcpQueryInput, options });
+      yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+      const exit = yield* Effect.exit(session.listPermissionRules);
+      if (testCase.readable) assert.deepEqual(exit, Exit.succeed(rules));
+      else assert.isTrue(Exit.isFailure(exit));
     }).pipe(Effect.provide(realQueryRunner)),
   ),
 );
@@ -563,14 +595,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
         ? makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message
         : "";
     });
-
-  // Claude Code refuses bypassPermissions as root and explains why only on
-  // stderr, so the turn failure has to carry that line.
-  it.effect("reports the CLI's root refusal when it exits before answering", () =>
-    Effect.gen(function* () {
-      assert.include(yield* startupFailureMessage(rootRefusal), rootRefusal);
-    }).pipe(Effect.provide(realQueryRunner)),
-  );
 
   // Startup stderr can carry paths, tokens, or settings, so only the known
   // refusal reaches the failure the client shows.

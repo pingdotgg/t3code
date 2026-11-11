@@ -197,11 +197,13 @@ function makeHarness(options: HarnessOptions = {}) {
               : Option.none(),
         ),
       getByWorkspaceRoot: () => Effect.succeedSome(project),
+      workspaceScanDirectory: () => Effect.die("unused"),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
       listShells: () => Effect.die("unused"),
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
+      repositoryRoot: () => Effect.succeed(project.workspaceRoot),
       createWorktree,
       renameBranch,
       fetchWorktreeBaseCommit:
@@ -412,7 +414,11 @@ it.effect(
     );
     return Effect.gen(function* () {
       const tasks = yield* ScheduledTasks.ScheduledTaskService;
-      const threadId = ThreadId.make("thread:missing");
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const { threadId } = yield* launches.launch(
+        launchInput({ command: "command:missing", thread: "thread:missing" }),
+      );
       const { task } = yield* tasks.upsert({
         title: "Daily audit",
         prompt: "Audit performance and crashes.",
@@ -426,6 +432,11 @@ it.effect(
         interactionMode: "default",
         createdBy: "user",
         creationSource: "web",
+      });
+      yield* threads.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("command:missing:delete"),
+        threadId,
       });
       const result = yield* tasks.runNow({ id: task.id });
       assert.equal(result.task.lastRunStatus, "failed");
@@ -521,6 +532,21 @@ it.effect("retains automation and sender attribution while a message waits in th
     assert.equal(message?.scheduledTaskId, scheduledTaskId);
     assert.equal(message?.senderThreadId, senderThreadId);
     assert.equal(message?.text, "Run the audit");
+    // A fresh send queues instead of steering, so it needs no steerable run.
+    const fresh = yield* threads.sendToThread({
+      projectId,
+      commandId: CommandId.make("command:automation:queued-fresh"),
+      threadId: launched.threadId,
+      messageId: MessageId.make("message:automation:queued-fresh"),
+      text: "Start over",
+      attachments: [],
+      mode: "steer",
+      freshContext: true,
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    assert.equal(fresh.delivery, "queued");
+    assert.isTrue(fresh.run.freshContext);
   }).pipe(Effect.provide(harness.layer));
 });
 
@@ -886,6 +912,7 @@ function scratchHarness() {
           return Option.some(`/scratch/folder-${claimed.length}`);
         }),
     }),
+    git: { repositoryRoot: (cwd) => Effect.succeed(cwd === scratchRoot ? null : cwd) },
     remoteExists: (input) =>
       input.cwd === scratchRoot
         ? Effect.fail(notARepository("GitWorkflowService.remoteExists", input.cwd))
@@ -957,6 +984,7 @@ it.effect("launches a worktree request for Scratch at the root, in its own folde
   const harness = scratchHarness();
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
+    yield* launches.checkWorktreeBase({ projectId, workspaceStrategy: worktreeStrategy });
     const launched = yield* launches.launch(
       launchInput({
         command: "command:launch:scratch-worktree",
@@ -2378,6 +2406,64 @@ it.effect.each([0, 1])("releases an async setup before its completion with exit 
         "starting",
       );
     }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect.each(["origin/master", ":/initial"])(
+  "refuses a worktree in a non-Git project before checking base %s",
+  (baseRef) =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        git: { repositoryRoot: () => Effect.succeed(null) },
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const result = yield* launches
+          .checkWorktreeBase({
+            projectId,
+            workspaceStrategy: { type: "worktree", baseRef, startFromOrigin: true },
+          })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.instanceOf(result.failure, ThreadLaunch.ThreadLaunchNotRepositoryError);
+          assert.deepInclude(result.failure, {
+            projectId,
+            projectTitle: project.title,
+            workspaceRoot: project.workspaceRoot,
+          });
+        }
+        yield* launches.checkWorktreeBase({ projectId, workspaceStrategy: { type: "root" } });
+        yield* launches.checkWorktreeBase({
+          projectId,
+          workspaceStrategy: { type: "existing_worktree", worktreePath: "/existing-worktree" },
+        });
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect("leaves uncertain Git detection failures to workspace preparation", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      git: {
+        repositoryRoot: () =>
+          Effect.fail(
+            new GitCommandError({
+              operation: "detect-repository",
+              command: "git",
+              cwd: project.workspaceRoot,
+              detail: "Detection failed.",
+            }),
+          ),
+      },
+      hasCommit: () => Effect.succeed(true),
+    });
+    yield* ThreadLaunch.ThreadLaunchService.pipe(
+      Effect.flatMap((launches) =>
+        launches.checkWorktreeBase({ projectId, workspaceStrategy: worktreeStrategy }),
+      ),
+      Effect.provide(harness.layer),
+    );
   }),
 );
 

@@ -5,9 +5,19 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
-const { refresh, assetUrlState } = vi.hoisted(() => ({
-  refresh: vi.fn<() => Promise<string | null>>(),
-  assetUrlState: vi.fn<() => import("~/assets/assetUrls").AssetUrlState>(),
+// Prepare the real worker before tests; Vite's worker transform adds a large inline source map.
+const { refresh, assetUrlState, pdfOpens, pdfWorkerUrl } = await vi.hoisted(async () => {
+  const { default: source } = await import("pdfjs-dist/build/pdf.worker.min.mjs?raw");
+  return {
+    refresh: vi.fn<() => Promise<string | null>>(),
+    assetUrlState: vi.fn<() => import("~/assets/assetUrls").AssetUrlState>(),
+    pdfOpens: [] as Array<(task: import("pdfjs-dist").PDFDocumentLoadingTask) => void>,
+    pdfWorkerUrl: URL.createObjectURL(new Blob([source], { type: "text/javascript" })),
+  };
+});
+
+vi.mock(import("pdfjs-dist/build/pdf.worker.min.mjs?url"), () => ({
+  default: pdfWorkerUrl,
 }));
 
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
@@ -15,6 +25,18 @@ vi.mock(import("~/assets/assetUrls"), async (original) => ({
   useAssetUrlRefresh: () => refresh,
   useAssetUrlState: assetUrlState,
 }));
+// Hands each document pdf.js opens to the PDF test, which awaits its load instead of a poll window.
+vi.mock(import("./pdfDocument"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    openPdf: (bytes) => {
+      const task = actual.openPdf(bytes);
+      pdfOpens.shift()?.(task);
+      return task;
+    },
+  };
+});
 // The real source view highlights through a worker pool; the text it receives is what matters here.
 // Never load the original: its highlighter graph can outlast waitFor on a cold CI browser.
 vi.mock(import("./ReadOnlySourcePreview"), () => ({
@@ -55,6 +77,7 @@ import BinaryViewer from "./BinaryViewer";
 import { decodeImagePreview } from "./decodeImagePreview";
 import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
 import type { TextPreviewResult } from "./largeTextProtocol";
+import type { ReactElement } from "react";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
 // when the full browser project runs concurrently on CI.
@@ -459,6 +482,7 @@ describe("bounded binary previews", () => {
   });
 });
 import { OFFICE_PREVIEW_MAX_COLUMNS, type OfficeWorkerResult } from "./officePreviewProtocol";
+import { WORD_LIMITS } from "./officeArchive";
 
 describe("large text preview recovery", () => {
   it("retains the workspace viewer across URL renewals and reloads revisions and manual refreshes", async () => {
@@ -1015,71 +1039,90 @@ it.each(["utf-16le", "utf-16be", "windows-1252"])(
 );
 
 it.each([
-  ["", "worksheets/./sheet1.xml", false],
-  ["x:", "../xl/worksheets/sheet1.xml", false],
-  ["", "/xl/worksheets/sheet1.xml", true],
-])("preserves %sworksheet metadata with relationship target %s", async (prefix, target, empty) => {
-  const { default: JSZip } = await import("jszip");
-  const archive = new JSZip();
-  const ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-  archive.file(
-    "xl/workbook.xml",
-    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet" sheetId="1" r:id="s"/></sheets></workbook>',
-  );
-  archive.file(
-    "xl/_rels/workbook.xml.rels",
-    `<Relationships><Relationship Id="s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${target}"/></Relationships>`,
-  );
-  archive.file(
-    "xl/worksheets/sheet1.xml",
-    `<${prefix}worksheet xmlns${prefix ? ":x" : ""}="${ns}"><${prefix}dimension ref="XFD1048576"/><${prefix}cols><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS - 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 10}" width="20"/><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS + 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 30}" hidden="1"/></${prefix}cols><${prefix}sheetData><${prefix}row ht="42" customHeight="1" hidden="1"><${prefix}c r="A50" t="inlineStr"><${prefix}is><${prefix}t>${"value".repeat(1000)}</${prefix}t></${prefix}is></${prefix}c></${prefix}row></${prefix}sheetData><${prefix}mergeCells><${prefix}mergeCell ref="XFD1048576"/></${prefix}mergeCells></${prefix}worksheet>`
-      .replace(/<((?:x:)?(?:col|dimension|mergeCell))\b([^>]*)\/>/g, prefix ? "<$1$2></$1>" : "$&")
-      .replace(/<sheetData>[\s\S]*?<\/sheetData>/, (data) => (empty ? "<sheetData/>" : data))
-      .replace(/="([^"]*)"/g, (attribute, value: string) =>
-        prefix || empty
-          ? ` = '${value.replace(/\d/g, (digit) => `&#${digit.charCodeAt(0)};`)}'`
-          : attribute,
-      ),
-  );
-  const bytes = await archive.generateAsync({ type: "arraybuffer" });
-  const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
-    type: "module",
-  });
-  try {
-    const result = await new Promise<OfficeWorkerResult>((resolve) => {
-      worker.addEventListener(
-        "message",
-        (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
-        { once: true },
-      );
-      worker.postMessage({ type: "open", kind: "xlsx", bytes }, [bytes]);
-    });
-    expect(result.type).toBe("xlsx");
-    if (result.type !== "xlsx") throw new Error("Expected bounded workbook");
-    const bounded = await JSZip.loadAsync(result.bytes);
-    const sheet = new DOMParser().parseFromString(
-      await bounded.file("xl/worksheets/sheet1.xml")!.async("string"),
-      "application/xml",
+  ["", "worksheets/./sheet1.xml", false, false],
+  ["x:", "../xl/worksheets/sheet1.xml", false, false],
+  ["", "/xl/worksheets/sheet1.xml", true, false],
+  ["", "worksheets/sheet1.xml", false, true],
+  ["", "worksheets/sheet1.xml", true, true],
+])(
+  "preserves %sworksheet metadata with relationship target %s",
+  async (prefix, target, empty, localPrefix) => {
+    const { default: JSZip } = await import("jszip");
+    const archive = new JSZip();
+    const ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    archive.file(
+      "xl/workbook.xml",
+      '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Chart" sheetId="2" r:id="c"/><sheet name="Sheet" sheetId="1" r:id="s"/></sheets></workbook>',
     );
-    expect(sheet.querySelector("parsererror")).toBeNull();
-    const row = sheet.getElementsByTagNameNS(ns, "row")[0];
-    if (empty) expect(row).toBeUndefined();
-    else {
-      expect(row!.getAttribute("ht")).toBe("42");
-      expect(row!.getAttribute("hidden")).toBe("1");
-      expect(row!.getElementsByTagNameNS(ns, "c")[0]!.getAttribute("r")).toBe("A50");
-      expect(row!.getElementsByTagNameNS(ns, "t")[0]!.textContent).toHaveLength(4096);
+    archive.file(
+      "xl/_rels/workbook.xml.rels",
+      `<Relationships><Relationship Id="s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${target}"/><Relationship Id="c" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet" Target="chartsheets/sheet1.xml"/></Relationships>`,
+    );
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      `<${prefix}worksheet xmlns${prefix ? ":x" : ""}="${ns}"><${prefix}dimension ref="XFD1048576"/><${prefix}sheetViews><${prefix}sheetView showGridLines="0"/></${prefix}sheetViews><${prefix}sheetFormatPr defaultColWidth="30"/><${prefix}cols><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS - 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 10}" width="20"/><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS + 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 30}" hidden="1"/></${prefix}cols><${prefix}sheetData><${prefix}row ht="42" customHeight="1" hidden="1"><${prefix}c r="A50" t="inlineStr"><${prefix}is><${prefix}t>${"value".repeat(1000)}</${prefix}t></${prefix}is></${prefix}c></${prefix}row></${prefix}sheetData><${prefix}mergeCells><${prefix}mergeCell ref="XFD1048576"/></${prefix}mergeCells></${prefix}worksheet>`
+        .replace(
+          /<((?:x:)?(?:col|dimension|mergeCell))\b([^>]*)\/>/g,
+          prefix ? "<$1$2></$1>" : "$&",
+        )
+        .replace(/<sheetData>[\s\S]*?<\/sheetData>/, (data) => (empty ? "<sheetData/>" : data))
+        .replace(/<(\/?)sheetData\b/g, (tag, closing: string) =>
+          localPrefix ? `<${closing}x:sheetData${closing ? "" : ` xmlns:x="${ns}"`}` : tag,
+        )
+        .replace(/="([^"]*)"/g, (attribute, value: string) =>
+          prefix || empty
+            ? ` = '${value.replace(/\d/g, (digit) => `&#${digit.charCodeAt(0)};`)}'`
+            : attribute,
+        ),
+    );
+    const bytes = await archive.generateAsync({ type: "arraybuffer" });
+    const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    try {
+      const result = await new Promise<OfficeWorkerResult>((resolve) => {
+        worker.addEventListener(
+          "message",
+          (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
+          { once: true },
+        );
+        worker.postMessage({ type: "open", kind: "xlsx", bytes }, [bytes]);
+      });
+      expect(result.type).toBe("xlsx");
+      if (result.type !== "xlsx") throw new Error("Expected bounded workbook");
+      // The engine counts the chart sheet before it.
+      expect(result.view?.hiddenGridlines).toEqual([1]);
+      const bounded = await JSZip.loadAsync(result.bytes);
+      const sheet = new DOMParser().parseFromString(
+        await bounded.file("xl/worksheets/sheet1.xml")!.async("string"),
+        "application/xml",
+      );
+      expect(sheet.querySelector("parsererror")).toBeNull();
+      const row = sheet.getElementsByTagNameNS(ns, "row")[0];
+      if (empty) expect(row).toBeUndefined();
+      else {
+        expect(row!.getAttribute("ht")).toBe("42");
+        expect(row!.getAttribute("hidden")).toBe("1");
+        expect(row!.getElementsByTagNameNS(ns, "c")[0]!.getAttribute("r")).toBe("A50");
+        expect(row!.getElementsByTagNameNS(ns, "t")[0]!.textContent).toHaveLength(4096);
+      }
+      expect(sheet.getElementsByTagNameNS(ns, "dimension")).toHaveLength(0);
+      expect(sheet.getElementsByTagNameNS(ns, "mergeCell")).toHaveLength(0);
+      const columns = [...sheet.getElementsByTagNameNS(ns, "col")].map((column) =>
+        ["min", "max", "width"].map((name) => column.getAttribute(name)),
+      );
+      // The engine ignores `defaultColWidth`, so the columns it sizes are spelled out.
+      expect(columns).toEqual([
+        [String(OFFICE_PREVIEW_MAX_COLUMNS - 1), String(OFFICE_PREVIEW_MAX_COLUMNS), "20"],
+        // Hidden columns keep their span past the limit, so they stay hidden.
+        [String(OFFICE_PREVIEW_MAX_COLUMNS + 1), String(OFFICE_PREVIEW_MAX_COLUMNS + 30), null],
+        ["1", String(OFFICE_PREVIEW_MAX_COLUMNS - 2), "30"],
+      ]);
+    } finally {
+      worker.terminate();
     }
-    expect(sheet.getElementsByTagNameNS(ns, "dimension")).toHaveLength(0);
-    expect(sheet.getElementsByTagNameNS(ns, "mergeCell")).toHaveLength(0);
-    const columns = sheet.getElementsByTagNameNS(ns, "col");
-    expect(columns).toHaveLength(1);
-    expect(columns[0]!.getAttribute("min")).toBe(String(OFFICE_PREVIEW_MAX_COLUMNS - 1));
-    expect(columns[0]!.getAttribute("max")).toBe(String(OFFICE_PREVIEW_MAX_COLUMNS));
-  } finally {
-    worker.terminate();
-  }
-});
+  },
+);
 
 it("reports the final slide at maximum scroll after page visibility changes", async () => {
   const { OfficePages } = await import("./office/OfficePages");
@@ -1167,7 +1210,7 @@ it.each([
     : scenario === "runs"
       ? `<w:p>${"<w:r><w:t>x</w:t></w:r>".repeat(50_001)}</w:p>`
       : scenario === "tables"
-        ? "<w:tbl/>".repeat(50_001)
+        ? "<w:tbl/>".repeat(2 * WORD_LIMITS.bodyElements)
         : scenario === "XML bytes"
           ? `<w:p><w:r><w:t>${"x".repeat(2 * 1024 * 1024)}</w:t></w:r></w:p>`
           : "<w:p/>";
@@ -1180,7 +1223,7 @@ it.each([
   if (scenario === "auxiliary XML" || scenario === "renamed XML")
     archive.file(
       scenario === "renamed XML" ? "word/footnotes.dat" : "word/footnotes.xml",
-      `<w:footnotes>${"<w:p/>".repeat(50_001)}</w:footnotes>`,
+      `<w:footnotes>${"<w:p/>".repeat(WORD_LIMITS.auxiliaryMarkup + 1)}</w:footnotes>`,
     );
   const file = await archive.generateAsync({ type: "blob", compression: "DEFLATE" });
   const src = URL.createObjectURL(file);
@@ -1231,8 +1274,8 @@ it.each([
           );
         }
         expect(markup.length).toBeLessThan(body.length);
-        expect(markup.length).toBeLessThanOrEqual(3 * 1024 * 1024);
-        expect(markup.match(/<(?![!?/])/g)!.length).toBeLessThanOrEqual(100_000);
+        expect(markup.length).toBeLessThanOrEqual(WORD_LIMITS.bodyBytes);
+        expect(markup.match(/<(?![!?/])/g)!.length).toBeLessThanOrEqual(WORD_LIMITS.bodyTags);
       }
     } finally {
       worker.terminate();
@@ -1263,15 +1306,15 @@ it.each([
   );
   archive.file(
     "word/_rels/document.xml.rels",
-    `<Relationships>${scenario === "content type" ? "" : `<Relationship Id="style" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="${path.slice(5)}"/>`}${scenario === "metadata type" ? "<unused/>".repeat(50_001) : ""}</Relationships>`,
+    `<Relationships>${scenario === "content type" ? "" : `<Relationship Id="style" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="${path.slice(5)}"/>`}${scenario === "metadata type" ? "<unused/>".repeat(WORD_LIMITS.auxiliaryMarkup + 1) : ""}</Relationships>`,
   );
   archive.file(
     path,
     scenario === "relationship bytes"
-      ? `<styles>${"x".repeat(1024 * 1024)}</styles>`
+      ? `<styles>${"x".repeat(WORD_LIMITS.auxiliaryPartBytes)}</styles>`
       : scenario === "deep XML"
         ? `${"<styles>".repeat(65)}${"</styles>".repeat(65)}`
-        : `<styles>${"<style/>".repeat(50_001)}</styles>`,
+        : `<styles>${"<style/>".repeat(WORD_LIMITS.auxiliaryMarkup + 1)}</styles>`,
   );
   const bytes = await archive.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
   const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
@@ -1325,11 +1368,12 @@ async function expandedWordFixture(role: (typeof EXPANDED_WORD_ROLES)[number]) {
     '<Relationships><Relationship Id="doc" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
   );
   const text = (value: string) => `<w:p><w:r><w:t>${value}</w:t></w:r></w:p>`;
-  // Each copy of the 2,000-paragraph payload costs 8,000 markup units, so 20
-  // references (or pages) exceed the 100,000-unit expansion budget.
+  // Each copy of the 2,000-paragraph payload costs 6,000 markup units, so enough
+  // references (or pages) exceed the expansion budget.
+  const copies = Math.ceil(WORD_LIMITS.expandedMarkup / 6_000) + 1;
   archive.file(
     "word/document.xml",
-    `<w:document xmlns:w="${ns}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${text("body retained")}${Array.from({ length: 20 }, () => `<w:p><w:r><w:footnoteReference w:id="1"/><w:endnoteReference w:id="1"/><w:commentReference w:id="1"/><w:br w:type="page"/></w:r></w:p>`).join("")}<w:sectPr><w:headerReference w:type="default" r:id="aux"/><w:footerReference w:type="default" r:id="aux"/></w:sectPr></w:body></w:document>`,
+    `<w:document xmlns:w="${ns}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${text("body retained")}${Array.from({ length: copies }, () => `<w:p><w:r><w:footnoteReference w:id="1"/><w:endnoteReference w:id="1"/><w:commentReference w:id="1"/><w:br w:type="page"/></w:r></w:p>`).join("")}<w:sectPr><w:headerReference w:type="default" r:id="aux"/><w:footerReference w:type="default" r:id="aux"/></w:sectPr></w:body></w:document>`,
   );
   archive.file(
     "word/_rels/document.xml.rels",
@@ -1337,23 +1381,25 @@ async function expandedWordFixture(role: (typeof EXPANDED_WORD_ROLES)[number]) {
   );
   const xml =
     role === "style chain" || role === "style count" || role === "style visits"
-      ? `<w:styles xmlns:w="${ns}">${Array.from({ length: role === "style count" ? 3_000 : 1_000 }, (_, i) => `<w:style w:styleId="s${i}" w:type="paragraph">${i ? `<w:basedOn w:val="s${role === "style visits" && i >= 30 ? 29 : i - 1}"/>` : ""}<w:pPr><w:spacing w:after="120"/></w:pPr></w:style>`).join("")}</w:styles>`
+      ? `<w:styles xmlns:w="${ns}">${Array.from({ length: role === "style count" ? WORD_LIMITS.styles + 1 : role === "style visits" ? Math.ceil(WORD_LIMITS.styleVisits / 30) + 1 : 1_000 }, (_, i) => `<w:style w:styleId="s${i}" w:type="paragraph">${i ? `<w:basedOn w:val="s${role === "style visits" && i >= 30 ? 29 : i - 1}"/>` : ""}<w:pPr><w:spacing w:after="120"/></w:pPr></w:style>`).join("")}</w:styles>`
       : role === "styles"
         ? `<w:styles xmlns:w="${ns}">${Array.from({ length: 100 }, (_, i) => `<w:style w:styleId="${"s".repeat(2_000)}${i}" w:type="paragraph"><w:basedOn w:val="s0"/><w:pPr><w:spacing w:after="120"/></w:pPr></w:style>`).join("")}</w:styles>`
         : role.includes("numbering")
-          ? `<w:numbering xmlns:w="${ns}">${role === "picture numbering" ? '<w:numPicBullet w:numPicBulletId="1"/>' : ""}<w:abstractNum w:abstractNumId="1">${Array.from({ length: 9 }, (_, i) => `<w:lvl w:ilvl="${i}"><w:lvlText w:val="%1."/></w:lvl>`).join("")}</w:abstractNum>${Array.from({ length: 100 }, (_, i) => `<w:num w:numId="${i}"><w:abstractNumId w:val="1"/></w:num>`).join("")}</w:numbering>`
+          ? `<w:numbering xmlns:w="${ns}">${role === "picture numbering" ? '<w:numPicBullet w:numPicBulletId="1"/>' : ""}<w:abstractNum w:abstractNumId="1">${Array.from({ length: 9 }, (_, i) => `<w:lvl w:ilvl="${i}"><w:lvlText w:val="%1."/></w:lvl>`).join("")}</w:abstractNum>${Array.from({ length: WORD_LIMITS.numberingReferences + 1 }, (_, i) => `<w:num w:numId="${i}"><w:abstractNumId w:val="1"/></w:num>`).join("")}</w:numbering>`
           : role === "header" || role === "footer"
             ? `<w:${role === "header" ? "hdr" : "ftr"} xmlns:w="${ns}">${text("omitted payload").repeat(2_000)}</w:${role === "header" ? "hdr" : "ftr"}>`
             : `<w:${role} xmlns:w="${ns}"><w:${role.slice(0, -1)} w:id="1">${text("omitted payload").repeat(2_000)}</w:${role.slice(0, -1)}></w:${role}>`;
   archive.file("word/media/aux.xml", xml);
   if (role === "note roots") {
+    // Each note's XML repeats the 32 KB root, which the expansion budget charges twice.
+    const notes = Math.ceil(WORD_LIMITS.expandedBytes / 64_000) + 1;
     archive.file(
       "word/document.xml",
-      `<w:document xmlns:w="${ns}"><w:body>${text("body retained")}${Array.from({ length: 200 }, (_, id) => `<w:p><w:r><w:footnoteReference w:id="${id}"/></w:r></w:p>`).join("")}</w:body></w:document>`,
+      `<w:document xmlns:w="${ns}"><w:body>${text("body retained")}${Array.from({ length: notes }, (_, id) => `<w:p><w:r><w:footnoteReference w:id="${id}"/></w:r></w:p>`).join("")}</w:body></w:document>`,
     );
     archive.file(
       "word/media/aux.xml",
-      `<w:footnotes xmlns:w="${ns}" padding="${"x".repeat(32_000)}">${Array.from({ length: 200 }, (_, id) => `<w:footnote w:id="${id}">${text("omitted payload")}</w:footnote>`).join("")}</w:footnotes>`,
+      `<w:footnotes xmlns:w="${ns}" padding="${"x".repeat(32_000)}">${Array.from({ length: notes }, (_, id) => `<w:footnote w:id="${id}">${text("omitted payload")}</w:footnote>`).join("")}</w:footnotes>`,
     );
   }
   return archive.generateAsync({ type: "blob", compression: "DEFLATE" });
@@ -1378,7 +1424,7 @@ it.each(EXPANDED_WORD_ROLES)(
             (sum, [chunk]) => sum + (typeof chunk === "string" ? chunk.length : 0),
             0,
           ),
-        ).toBeLessThan(4 * 1024 * 1024);
+        ).toBeLessThan(WORD_LIMITS.expandedBytes + 4 * 1024 * 1024);
       const bounded = await JSZip.loadAsync(prepared.bytes);
       const markup = await bounded.file("word/document.xml")!.async("string");
       expect(markup).toContain("body retained");
@@ -1599,7 +1645,8 @@ it.each([false, true])(
   },
 );
 
-it.each([1, 145])(
+// A body just over the read limit once each paragraph repeats its text this often.
+it.each([1, Math.ceil(WORD_LIMITS.bodyBytes / 5_000 / 4)])(
   "counts shared Word settings once with %s text repetitions",
   async (repetitions) => {
     const { default: JSZip } = await import("jszip");
@@ -1635,7 +1682,8 @@ it.each([1, 145])(
       const document = await bounded.file("word/document.xml")!.async("string");
       const retainedSettings = await bounded.file("word/settings.xml")!.async("string");
       expect(document.match(/<w:p>/g)!.length).toBeGreaterThan(100);
-      expect(document.length + retainedSettings.length).toBeLessThanOrEqual(3 * 1024 * 1024);
+      expect(document.length).toBeLessThanOrEqual(WORD_LIMITS.bodyBytes);
+      expect(retainedSettings).toBe(settings);
     } finally {
       worker.terminate();
     }
@@ -1688,7 +1736,7 @@ it.each(["repeated binary", "XML relationship alias", "duplicate relationship ID
   },
 );
 
-it.each(["XFD200", "XFD1048576", "AX500", "AZ9999999"])(
+it.each(["XFD200", "XFD300", "XFD1048576", "AX500", "AZ9999999"])(
   "bounds spreadsheet cells at %s before padding",
   async (ref) => {
     const { default: JSZip } = await import("jszip");
@@ -1704,7 +1752,7 @@ it.each(["XFD200", "XFD1048576", "AX500", "AZ9999999"])(
     );
     archive.file(
       "xl/custom.xml",
-      `<worksheet><dimension ref="A1:${ref}"/><sheetData><row r="1"><c r="A1"><v>7</v></c></row><row r="${ref.replace(/\D/g, "")}"><c r="${ref}"><v>9</v></c></row></sheetData></worksheet>`,
+      `<worksheet><dimension ref="A1:${ref}"/><sheetData><row r="1"><c r="A1"><v>7</v></c></row><row r="${ref.replace(/\D/g, "")}">${ref === "XFD300" ? `<c r="${ref}" s="1"/>` : `<c r="${ref}"><v>9</v></c>`}</row></sheetData></worksheet>`,
     );
     const bytes = await archive.generateAsync({ type: "arraybuffer" });
     const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
@@ -1734,13 +1782,69 @@ it.each(["XFD200", "XFD1048576", "AX500", "AZ9999999"])(
         );
         expect(sheet.querySelector('c[r="A1"] v')?.textContent).toBe("7");
         expect(sheet.querySelectorAll("row").length).toBeLessThanOrEqual(500);
-        expect(result.truncated).toBe(ref !== "AX500");
+        expect(result.truncated).toBe(ref === "XFD200" || ref === "XFD300");
         if (ref === "AX500") expect(sheet.querySelector('c[r="AX500"] v')?.textContent).toBe("9");
         else expect(sheet.querySelector('c[r="' + ref + '"]')).toBeNull();
       }
     } finally {
       worker.terminate();
     }
+  },
+);
+
+it.each(['<u val="double"/>', '<u val="double"></u>'])(
+  "shows workbook formats and underline %s",
+  async (underline) => {
+    const { default: JSZip } = await import("jszip");
+    const archive = new JSZip();
+    archive.file(
+      "xl/workbook.xml",
+      '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Styles" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    );
+    archive.file(
+      "xl/_rels/workbook.xml.rels",
+      '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+    );
+    archive.file(
+      "xl/styles.xml",
+      `<styleSheet><numFmts count="4"><numFmt numFmtId="164" formatCode="0.000"/><numFmt numFmtId="65535" formatCode="0.0000"/><numFmt numFmtId="007" formatCode="&quot;￥&quot;#,##0.00"/><numFmt numFmtId="82" formatCode="[$-010409]dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/></font><font>${underline}<sz val="11"/></font></fonts><cellXfs count="4"><xf numFmtId="0" fontId="0"/><xf numFmtId="7" fontId="0"/><xf numFmtId="82" fontId="0"/><xf numFmtId="0" fontId="1"/></cellXfs></styleSheet>`,
+    );
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      '<worksheet><sheetData><row r="1"><c r="A1" s="1"><v>100</v></c><c r="B1" s="2"><v>44986</v></c><c r="C1" s="3" t="inlineStr"><is><t>Total</t></is></c></row></sheetData></worksheet>',
+    );
+    const { prepareOffice } = await import("./officeArchive");
+    const prepared = await prepareOffice(
+      await archive.generateAsync({ type: "arraybuffer" }),
+      "xlsx",
+    );
+    const styles = await (
+      await JSZip.loadAsync(prepared.bytes)
+    )
+      .file("xl/styles.xml")!
+      .async("string");
+    expect(styles).toContain("<font><u/>");
+    const worker = new Worker(new URL("./office/spreadsheet.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    try {
+      const { createWorkerClient } = await import("./office/worker-rpc");
+      const client = createWorkerClient<import("./office/sheet-protocol").SheetMethods>(worker);
+      const bytes = prepared.bytes;
+      await client.call("open", { bytes, view: prepared.view! }, { transfer: [bytes] });
+      const cells = await client.call("cells", {
+        sheet: 0,
+        range: { top: 0, bottom: 0, left: 0, right: 1 },
+      });
+      // Ids under 164 that a workbook defines keep its formats, not Excel's built-in ones.
+      expect(cells[0]).toEqual(["￥100.00", "01-Mar-2023"]);
+    } finally {
+      worker.terminate();
+    }
+    archive.file("xl/styles.xml", "<styleSheet><numFmts/><numFmts/></styleSheet>");
+    await expect(
+      prepareOffice(await archive.generateAsync({ type: "arraybuffer" }), "xlsx"),
+    ).rejects.toThrow("duplicate stylesheet blocks");
   },
 );
 
@@ -1802,7 +1906,14 @@ it("keeps spreadsheet dates on their calendar day west of UTC", async () => {
     });
     const { createWorkerClient } = await import("./office/worker-rpc");
     const client = createWorkerClient<import("./office/sheet-protocol").SheetMethods>(worker);
-    await client.call("open", { bytes }, { transfer: [bytes] });
+    await client.call(
+      "open",
+      {
+        bytes,
+        view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+      },
+      { transfer: [bytes] },
+    );
     const cells = await client.call("cells", {
       sheet: 0,
       range: { top: 0, bottom: 0, left: 0, right: 0 },
@@ -2444,31 +2555,28 @@ function planningPdf(
   return new Blob([source], { type: "application/pdf" });
 }
 
-async function workspacePdfPreview() {
+// Resolves once pdf.js has parsed the next document and every page size the viewer reads.
+function nextPdfLoad() {
+  return new Promise<import("pdfjs-dist").PDFDocumentLoadingTask>((resolve) =>
+    pdfOpens.push(resolve),
+  ).then(async (task) => {
+    const document = await task.promise;
+    await Promise.all(
+      Array.from({ length: document.numPages }, (_, index) => document.getPage(index + 1)),
+    );
+  });
+}
+
+it("keeps a workspace PDF's page, offset and zoom when a new revision reloads it", async () => {
   assetUrlState.mockReset();
+  pdfOpens.length = 0;
   const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
-  const native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(false);
-  const urls = (() => {
-    const original = URL.createObjectURL(planningPdf());
-    const updated = URL.createObjectURL(
-      planningPdf(["Quarterly outlook", "Delivery milestones", "Updated budget"], 500),
-    );
-    const shorter = URL.createObjectURL(planningPdf(["Quarterly outlook", "Updated milestones"]));
-    const shrunk = URL.createObjectURL(
-      planningPdf(["Quarterly outlook", "Small page", "Budget and risks"], 500, 200),
-    );
-    const single = URL.createObjectURL(planningPdf(["Quarterly outlook"]));
-    return {
-      original,
-      updated,
-      shorter,
-      shrunk,
-      single,
-      [Symbol.dispose]: () =>
-        [original, updated, shorter, shrunk, single].forEach(URL.revokeObjectURL),
-    };
-  })();
-  const threadId = ThreadId.make(urls.original);
+  using _native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(false);
+  const original = URL.createObjectURL(planningPdf());
+  // A taller first page moves page 2, so only a page-relative restore lands on the same spot.
+  const updated = URL.createObjectURL(
+    planningPdf(["Quarterly outlook", "Delivery milestones", "Updated budget"], 500),
+  );
   const preview = (src: string, mutation: string, path = "/repo/planning.pdf") => {
     assetUrlState.mockReturnValue({
       _tag: "Success",
@@ -2479,7 +2587,10 @@ async function workspacePdfPreview() {
       <div className="flex h-[600px] w-[320px]">
         <WorkspaceBrowserPreview
           environmentId={EnvironmentId.make("test")}
-          threadRef={{ environmentId: EnvironmentId.make("test"), threadId }}
+          threadRef={{
+            environmentId: EnvironmentId.make("test"),
+            threadId: ThreadId.make(original),
+          }}
           draft={false}
           absolutePath={path}
           workspaceRoot="/repo"
@@ -2489,131 +2600,50 @@ async function workspacePdfPreview() {
       </div>
     );
   };
-  return {
-    preview,
-    urls,
-    [Symbol.dispose]() {
-      native.mockRestore();
-      urls[Symbol.dispose]();
-    },
+  const reload = async (screen: Screen, element: ReactElement) => {
+    const loaded = nextPdfLoad();
+    await screen.rerender(element);
+    await loaded;
   };
-}
-
-function pdfScroll(screen: Screen) {
-  const region = () => screen.container.querySelector<HTMLElement>('[role="region"]')!;
-  const canvas = (page: number) =>
-    region().querySelector<HTMLCanvasElement>(`canvas[aria-label="Page ${page}"]`)!;
-  const offset = (page: number) =>
-    region().getBoundingClientRect().top - canvas(page).getBoundingClientRect().top;
-  const scrollTo = (options: ScrollToOptions) =>
-    act(async () => {
-      const node = region();
-      const scrolled = new Promise<void>((resolve) =>
-        node.addEventListener("scroll", () => resolve(), { once: true }),
+  try {
+    const loaded = nextPdfLoad();
+    await using screen = await render(preview(original, "one"));
+    await loaded;
+    await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
+    using workers = vi.spyOn(window, "Worker");
+    const region = () => screen.getByRole("region", { name: "Planning PDF" }).element();
+    const offset = () =>
+      region().getBoundingClientRect().top -
+      region().querySelector('canvas[aria-label="Page 2"]')!.getBoundingClientRect().top;
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await screen.getByRole("button", { name: "Next page", exact: true }).click();
+    await expect.element(screen.getByText("2 / 3 pages", { exact: true })).toBeVisible();
+    const zoom = screen.container.textContent!.match(/\d+%/)![0];
+    const top = region().scrollTop + 100;
+    await act(async () => {
+      const scrolled = new Promise((resolve) =>
+        region().addEventListener("scroll", resolve, { once: true }),
       );
-      node.scrollTo(options);
+      region().scrollTo({ top, left: 80 });
       await scrolled;
     });
-  return { region, canvas, offset, scrollTo };
-}
+    const savedOffset = offset();
 
-it("keeps workspace PDF scroll and zoom after reloads", async () => {
-  using fixture = await workspacePdfPreview();
-  const { preview, urls } = fixture;
-  await using screen = await render(preview(urls.original, "one"));
-  await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
-  using workers = vi.spyOn(window, "Worker");
-  await screen.getByRole("button", { name: "Next page", exact: true }).click();
-  await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
-  await screen.getByRole("button", { name: "Next page", exact: true }).click();
-  await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"));
-  for (let index = 0; index < 4; index++) {
-    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
-  }
-  const { region, offset, scrollTo } = pdfScroll(screen);
-  const zoom = screen.container.textContent!.match(/\d+%/)![0];
-  const top = region().scrollTop;
-  await scrollTo({ top: top + 100, left: 80 });
-  await vi.waitFor(() => {
-    expect(region().scrollTop).toBeCloseTo(top + 100, 0);
-    expect(region().scrollLeft).toBe(80);
-  });
-  const savedOffset = offset(3);
-  await screen.rerender(preview(urls.updated, "two"));
-  await expect.element(screen.getByText("3 / 3 pages", { exact: true })).toBeVisible();
-  await vi.waitFor(() => {
-    expect(screen.container.querySelector('[role="region"]')?.textContent).toContain(
-      "Updated budget",
-    );
+    await reload(screen, preview(updated, "two"));
+    await expect.element(screen.getByText("2 / 3 pages", { exact: true })).toBeVisible();
     expect(screen.container.textContent).toContain(zoom);
     expect(region().scrollLeft).toBe(80);
-    expect(offset(3)).toBeCloseTo(savedOffset, 0);
-  });
-  await screen.getByRole("button", { name: "Previous page", exact: true }).click();
-  await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
-  await screen.getByRole("button", { name: "Fit width", exact: true }).click();
-  await scrollTo({ top: region().scrollTop + 30 });
-  const fitOffset = offset(2);
-  await screen.rerender(preview(urls.original, "fit-width"));
-  await expect.element(screen.getByText("2 / 3 pages", { exact: true })).toBeVisible();
-  await vi.waitFor(() => {
-    expect(screen.container.textContent).toContain("Fit width");
-    expect(region().scrollLeft).toBe(0);
-    expect(offset(2)).toBeCloseTo(fitOffset, 0);
-  });
-  await screen.getByRole("button", { name: "Previous page", exact: true }).click();
-  await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"));
-  await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
-  const firstPageZoom = screen.container.textContent!.match(/\d+%/)![0];
-  await screen.rerender(preview(urls.original, "first-page"));
-  await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
-  await vi.waitFor(() => expect(screen.container.textContent).toContain(firstPageZoom));
-  await screen.getByRole("button", { name: "Next page", exact: true }).click();
-  await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
-  await screen.rerender(preview(urls.original, "one", "/repo/another.pdf"));
-  await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
-  await vi.waitFor(() => {
+    expect(offset()).toBeCloseTo(savedOffset, 0);
+    expect(workers).not.toHaveBeenCalled();
+
+    await reload(screen, preview(updated, "two", "/repo/another.pdf"));
+    await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
     expect(screen.container.textContent).toContain("Fit width");
     expect(region().scrollTop).toBe(0);
-    expect(region().scrollLeft).toBe(0);
-  });
-  expect(workers).not.toHaveBeenCalled();
-});
-
-it("clamps workspace PDF scroll when pages shrink or disappear", async () => {
-  using fixture = await workspacePdfPreview();
-  const { preview, urls } = fixture;
-  await using screen = await render(preview(urls.original, "one"));
-  await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
-  await screen.getByRole("button", { name: "Next page", exact: true }).click();
-  await expect.element(screen.getByText("2 / 3 pages", { exact: true })).toBeVisible();
-  for (let index = 0; index < 4; index++) {
-    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+  } finally {
+    URL.revokeObjectURL(original);
+    URL.revokeObjectURL(updated);
   }
-  const { region, canvas, offset, scrollTo } = pdfScroll(screen);
-  const zoom = screen.container.textContent!.match(/\d+%/)![0];
-  const secondPageTop = region().scrollTop;
-  await scrollTo({ top: secondPageTop + 600, left: 80 });
-  await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(secondPageTop + 600, 0));
-  await screen.rerender(preview(urls.shrunk, "smaller-page"));
-  await expect.element(screen.getByText("2 / 3 pages", { exact: true })).toBeVisible();
-  await vi.waitFor(() => {
-    expect(screen.container.textContent).toContain(zoom);
-    expect(region().scrollLeft).toBe(80);
-    expect(offset(2)).toBeGreaterThan(0);
-    expect(offset(2)).toBeLessThan(canvas(2).getBoundingClientRect().height);
-  });
-  await screen.rerender(preview(urls.shorter, "three"));
-  await expect.element(screen.getByText("2 / 2 pages", { exact: true })).toBeVisible();
-  await vi.waitFor(() => {
-    expect(screen.container.querySelector('[role="region"]')?.textContent).toContain(
-      "Updated milestones",
-    );
-  });
-  await screen.rerender(preview(urls.single, "four"));
-  await expect.element(screen.getByText("1 / 1 pages", { exact: true })).toBeVisible();
-  await screen.rerender(preview(urls.original, "five"));
-  await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
 });
 
 it("unwraps one text attachment without turning off the word wrap setting", async () => {
@@ -2820,7 +2850,7 @@ it.each(["rtf", "epub", "ods"] as const)(
           expect(screen.container.textContent).toContain("North");
           expect(screen.container.textContent).toContain("150");
           expect(screen.container.textContent).not.toContain("private note");
-          expect(screen.container.textContent).toContain("1 rows · 2 columns");
+          expect(screen.container.textContent).toContain("1 row · 2 columns");
           expect(screen.container.textContent).not.toContain("Limited to 500");
         } else {
           const frame = screen.container.querySelector("iframe");
