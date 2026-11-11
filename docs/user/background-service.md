@@ -66,6 +66,7 @@ and updates. For example:
 ```dotenv
 T3CODE_PORT=3773
 T3CODE_HOST=127.0.0.1
+T3CODE_ENVIRONMENT_LABEL="Build server"
 ```
 
 Use `KEY=VALUE` entries, quoting values that contain spaces or `#`. Values are
@@ -80,6 +81,21 @@ with an up-to-date CLI.
 A missing file is ignored; other read failures stop service startup.
 If the file contains credentials, restrict access to that file with `chmod 600`
 (for the default T3 home, `chmod 600 ~/.t3/service.env`).
+
+### Name an environment
+
+Set `T3CODE_ENVIRONMENT_LABEL` in the server's environment to distinguish multiple
+T3 servers on one machine. The server trims surrounding whitespace. An unset or
+blank value keeps the automatically detected label.
+
+This changes the server's display label, not its environment ID, OS hostname, or
+network address. Existing client-side aliases are unchanged. For a background
+service, put the variable in `service.env` and restart the service after running
+agent work has finished. For a server in a terminal:
+
+```sh
+T3CODE_ENVIRONMENT_LABEL="Build server" t3 serve
+```
 
 ## Platform support
 
