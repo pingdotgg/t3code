@@ -141,6 +141,25 @@ supported event fetches current full PR state and assesses cumulative changes; u
 not wired and there is no periodic sweep. This guide does not announce a deployed automation or change
 existing review settings. Neither triage nor a Macroscope review authorizes merging.
 
+<a id="open-pr-limit"></a>
+
+## Open PR limit and conflict window
+
+Two rules run without triage, in [pr-limits.yml](.github/workflows/pr-limits.yml). Both apply only
+to authors labeled `vouch:unvouched`, and neither applies to a PR labeled `triage:keep-open`. They do
+not assess eligibility.
+
+A contributor who is not vouched can have 8 open PRs. A further PR is closed when it is opened. Get
+one of the open PRs merged or closed, then open it again. A maintainer who reopens a PR overrides the
+limit for that PR.
+
+<a id="conflict-window"></a>
+
+A PR that conflicts with `main` gets the `needs-rebase` label and a request to rebase. A push removes
+the label. A PR that still conflicts 7 days after the request, with no push since, is closed. The
+conflict window does not start, and stops, once someone in
+[TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td) has commented or submitted a review.
+
 <a id="closure-and-reconsideration"></a>
 
 ## Closure and reconsideration
@@ -149,6 +168,10 @@ Automated triage leaves a PR open for maintainer decision if someone in the trus
 [TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td) list has commented or submitted a review,
 including on an earlier head, or if `triage:keep-open` is present. This protection does not imply
 eligibility or review approval.
+
+A policy-based closure starts with a notice. Triage posts the explanation and applies
+`triage:closing`, and the PR closes 72 hours later. A reply or a push from the author within that time
+removes the label and sends the PR back to triage, which reassesses it with the new evidence.
 
 PRs that violate these requirements can be closed before deeper review. Multiple independent fixes
 require splitting. Missing approval requires maintainer discussion or issue triage, as applicable.
