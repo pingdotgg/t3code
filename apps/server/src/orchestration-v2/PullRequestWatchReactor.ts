@@ -434,6 +434,7 @@ export const make = Effect.gen(function* () {
       },
     }).pipe(
       Effect.tap(() => woke(target)),
+      Effect.catch(() => record(target, null)),
       Effect.tap(() => ended(target, "merged")),
     );
 
