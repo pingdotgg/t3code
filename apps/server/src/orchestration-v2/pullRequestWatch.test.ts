@@ -252,6 +252,25 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(watch(), plain, noRemarks).changes, []);
   });
 
+  // regression: #34212 a same-head rerun that started and passed between reads never woke
+  it("reports passed for a new run of the same head that finishes between reads", () => {
+    for (const required of [true, false]) {
+      const validate = (id: number) => ({
+        ...check("validate", "success"),
+        url: `${run(id)}/job/1`,
+        required,
+      });
+      const first = evaluatePullRequestWatch(watch(), detail({ checks: [validate(1)] }), noRemarks);
+      assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required }]);
+      const reread = detail({ checks: [validate(1)] });
+      assert.deepEqual(evaluatePullRequestWatch(first.next, reread, noRemarks).changes, []);
+      const rerun = detail({ checks: [validate(2)] });
+      assert.deepEqual(evaluatePullRequestWatch(first.next, rerun, noRemarks).changes, [
+        { kind: "checks-passed", count: 1, required },
+      ]);
+    }
+  });
+
   it("reports passed again when a required check shows up already passed", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
       ...check(name, status),
