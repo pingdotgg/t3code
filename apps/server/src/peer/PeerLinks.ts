@@ -94,15 +94,6 @@ export class PeerLinks extends Context.Service<
     /** Whether the Linked environments beta (Settings → Labs) is on here. */
     readonly enabled: Effect.Effect<boolean>;
     readonly link: (input: PeerLinkCreateInput) => Effect.Effect<PeerLink, PeerLinkError>;
-    /**
-     * The environment answering at `url`, or nothing when it is not a usable
-     * address or does not answer as T3 Code. Sends no credential.
-     */
-    readonly describe: (
-      url: string,
-    ) => Effect.Effect<
-      Option.Option<{ readonly environmentId: EnvironmentId; readonly label: string }>
-    >;
     readonly list: Effect.Effect<ReadonlyArray<PeerLinkSummary>, PeerLinkError>;
     /** The stored link, without asking the peer whether it answers. */
     readonly get: (
@@ -184,6 +175,12 @@ const peerOrigin = (url: string) => {
   return Effect.succeed(parsed.origin);
 };
 
+/** Whether a host is this machine's own loopback. Tests serve their peers there, so they narrow it. */
+export const LoopbackHost = Context.Reference<(host: string) => boolean>(
+  "t3/peer/PeerLinks/LoopbackHost",
+  { defaultValue: () => isLocalLoopbackHost },
+);
+
 /** Whether a peer holds a linked agent to its limits and keeps its work within its link. */
 const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapabilities }) =>
   peer.capabilities.mcpModeLimitHeader === true && peer.capabilities.linkFence === true;
@@ -196,6 +193,7 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const isOwnLoopback = yield* LoopbackHost;
   // Prefer a recently working fallback, without caching its identity or credentials.
   // Retry the configured order after a minute so a recovered direct route wins again.
   let preferredRoutes:
@@ -319,6 +317,7 @@ const make = Effect.gen(function* () {
       const resource = `${origin}/mcp`;
       const decided = yield* client.mcpOAuth
         .decision({
+          headers: {},
           payload: {
             authorization: {
               response_type: "code",
@@ -418,6 +417,13 @@ const make = Effect.gen(function* () {
       (url) =>
         Effect.gen(function* () {
           const origin = yield* peerOrigin(url);
+          // Loopback is this machine, where anything may answer as the one picked.
+          if (isOwnLoopback(new URL(origin).hostname)) {
+            return yield* new PeerLinkError({
+              reason: "unreachable",
+              message: `${origin} is this machine, not ${name}.`,
+            });
+          }
           return { origin, descriptor: yield* describe(origin) };
         }).pipe(Effect.result),
       { concurrency: "unbounded" },
@@ -466,8 +472,8 @@ const make = Effect.gen(function* () {
       return yield* new PeerLinkError({ reason: "disabled", message: LINKED_ENVIRONMENTS_OFF });
     }
     const urls = [input.url, ...(input.alternateUrls ?? [])];
-    // The user picked a machine: link through the addresses that prove to
-    // be it, so a reused LAN address never receives the pairing code.
+    // The user picked a machine: link through the addresses that answer as
+    // it, so one that now answers as another never receives the pairing code.
     const { primary, peer, origins } =
       input.expectedEnvironmentId === undefined
         ? yield* answeringAt(urls)
@@ -476,6 +482,22 @@ const make = Effect.gen(function* () {
             input.expectedEnvironmentId,
             input.expectedLabel ?? input.expectedEnvironmentId,
           );
+    // Anything can answer as a linked machine, so an address alone renews its
+    // link only where the link already reaches it, and never moves it.
+    if (input.expectedEnvironmentId === undefined) {
+      const row = yield* readRow(peer.environmentId);
+      const existing = Option.isSome(row) ? yield* toLink(row.value) : undefined;
+      if (
+        existing !== undefined &&
+        DateTime.isGreaterThan(existing.expiresAt, yield* DateTime.now) &&
+        !existing.urls.includes(primary)
+      ) {
+        return yield* new PeerLinkError({
+          reason: "pairing_rejected",
+          message: `${primary} answers as ${existing.label}, which is already linked at another address. If ${existing.label} moved, forget that link first.`,
+        });
+      }
+    }
     const self = yield* environment.getDescriptor;
     if (peer.environmentId === self.environmentId) {
       return yield* new PeerLinkError({
@@ -541,13 +563,6 @@ const make = Effect.gen(function* () {
     preferredRoutes?.delete(peer.environmentId);
     return linked;
   });
-
-  const describeUrl: PeerLinks["Service"]["describe"] = (url) =>
-    peerOrigin(url).pipe(
-      Effect.flatMap(describe),
-      Effect.map(Option.map((peer) => ({ environmentId: peer.environmentId, label: peer.label }))),
-      Effect.orElseSucceed(() => Option.none()),
-    );
 
   /** A peer's label follows its machine name, so the link takes the one its own address answers with. */
   const withLabel = (link: PeerLink, label: string) =>
@@ -679,8 +694,8 @@ const make = Effect.gen(function* () {
           message: `The link to ${link.label} lost its credential. Link it again.`,
         });
       }
-      // The token goes only to an address that proves it is this peer, so a
-      // reused LAN address or a moved hostname never receives it.
+      // The token goes only to an address that still answers as this peer,
+      // so one that now answers as another machine never receives it.
       const preferred = link.urls.length > 1 ? preferredRoutes?.get(environmentId) : undefined;
       const reuse =
         preferred !== undefined &&
@@ -763,7 +778,6 @@ const make = Effect.gen(function* () {
   return PeerLinks.of({
     enabled,
     link,
-    describe: describeUrl,
     list,
     get,
     unlink,
