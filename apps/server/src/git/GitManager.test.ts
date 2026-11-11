@@ -1148,8 +1148,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(gitCommands.map((args) => args.split(" ", 1)[0]).toSorted()).toEqual([
         "config",
         "config",
-        "config",
-        "config",
         "for-each-ref",
         "for-each-ref",
       ]);
@@ -1187,27 +1185,31 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     () =>
       Effect.gen(function* () {
         const repoDir = yield* initForkCheckout();
-        yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
         yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
         yield* runGit(repoDir, ["checkout", "-b", "review-main", "--track", "origin/main"]);
 
-        const { manager } = yield* makeManager({
-          providerScenario: {
-            prListSequence: [
-              [
-                {
-                  number: 223,
-                  title: "Fork default branch alias",
-                  url: "https://github.com/pingdotgg/codething-mvp/pull/223",
-                  baseRefName: "main",
-                  headRefName: "main",
-                  state: "open",
-                  isCrossRepository: true,
-                  headRepositoryNameWithOwner: "contributor/codething-mvp",
-                  headRepositoryOwnerLogin: "contributor",
-                },
-              ],
+        const { service } = createFakeSourceControlProvider({
+          prListSequence: [
+            [
+              {
+                number: 223,
+                title: "Fork default branch alias",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/223",
+                baseRefName: "main",
+                headRefName: "main",
+                state: "open",
+                isCrossRepository: true,
+                headRepositoryNameWithOwner: "contributor/codething-mvp",
+                headRepositoryOwnerLogin: "contributor",
+              },
             ],
+          ],
+        });
+        const { manager } = yield* makeManager({
+          sourceControlProvider: {
+            ...service,
+            createsChangeRequestsIn: ({ repository }) =>
+              Effect.succeed(repository === "pingdotgg/codething-mvp"),
           },
         });
 
@@ -3440,38 +3442,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect("creates a fork PR when GitHub resolves a separate base remote", () =>
+  it.effect("creates a fork PR in the remote the provider targets, not origin", () =>
     Effect.gen(function* () {
       const repoDir = yield* initForkCheckout();
-      yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/fork-pr"]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "fork-pr.txt"), "fork PR\n");
-      yield* runGit(repoDir, ["add", "fork-pr.txt"]);
-      yield* runGit(repoDir, ["commit", "-m", "Fork PR"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/fork-pr"]);
-
-      const { manager, providerCalls } = yield* makeManager({
-        providerScenario: { prListSequence: [[], []] },
-      });
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "create_pr",
-      });
-
-      expect(result.pr.status).toBe("created");
-      expect(
-        created(providerCalls).some(
-          (call) =>
-            call.baseRefName === "main" && call.headSelector === "contributor:feature/fork-pr",
-        ),
-      ).toBe(true);
-    }),
-  );
-
-  it.effect("uses the Provider-selected target remote over a stale GitHub mark", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* initForkCheckout();
-      yield* runGit(repoDir, ["config", "remote.origin.gh-resolved", "base"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/provider-target"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "provider-target.txt"), "provider target\n");
       yield* runGit(repoDir, ["add", "provider-target.txt"]);

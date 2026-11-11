@@ -1542,26 +1542,6 @@ export const make = Effect.gen(function* () {
     return handle?.context?.provider ?? provider;
   });
 
-  const resolveGhBaseRemoteName = Effect.fn("resolveGhBaseRemoteName")(function* (cwd: string) {
-    const result = yield* gitCore
-      .execute({
-        operation: "GitManager.resolveGhBaseRemoteName",
-        cwd,
-        args: ["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"],
-        allowNonZeroExit: true,
-        timeoutMs: 5_000,
-        maxOutputBytes: 4 * 1024,
-      })
-      .pipe(Effect.orElseSucceed(() => null));
-    if (result === null || result.exitCode !== 0) return null;
-
-    const matches = result.stdout.split(/\r?\n/).flatMap((line) => {
-      const match = /^remote\.(.+)\.gh-resolved\s+base$/.exec(line);
-      return match?.[1] ? [match[1]] : [];
-    });
-    return matches.length === 1 ? matches[0]! : null;
-  });
-
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
     cwd: string,
     remoteName: string | null,
@@ -1602,41 +1582,33 @@ export const make = Effect.gen(function* () {
   const resolveChangeRequestTargetRemoteName = Effect.fn("resolveChangeRequestTargetRemoteName")(
     function* (cwd: string) {
       const provider = yield* sourceControlProvider(cwd).pipe(Effect.orElseSucceed(() => null));
-      if (provider === null) return "origin";
-      if (provider.createsChangeRequestsIn === undefined && provider.kind !== "github") {
-        return "origin";
-      }
-
-      if (provider.createsChangeRequestsIn !== undefined) {
-        const result = yield* gitCore
-          .execute({
-            operation: "GitManager.resolveChangeRequestTargetRemoteName.remotes",
-            cwd,
-            args: ["remote"],
-            allowNonZeroExit: true,
-            timeoutMs: 5_000,
-          })
-          .pipe(Effect.orElseSucceed(() => null));
-        const remoteNames =
-          result === null || result.exitCode !== 0
-            ? []
-            : result.stdout
-                .split("\n")
-                .map((name) => name.trim())
-                .filter((name) => name.length > 0);
-        const matches = yield* Effect.filter(
-          remoteNames,
-          (remoteName) =>
-            Effect.gen(function* () {
-              const remote = yield* resolveRemoteRepositoryContext(cwd, remoteName);
-              return yield* targetsOnlyRemote(cwd, remoteName, remote, false);
-            }).pipe(Effect.orElseSucceed(() => false)),
-          { concurrency: "unbounded" },
-        );
-        if (matches.length === 1) return matches[0]!;
-      }
-
-      return (yield* resolveGhBaseRemoteName(cwd)) ?? "origin";
+      if (provider?.createsChangeRequestsIn === undefined) return "origin";
+      const result = yield* gitCore
+        .execute({
+          operation: "GitManager.resolveChangeRequestTargetRemoteName.remotes",
+          cwd,
+          args: ["remote"],
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+        })
+        .pipe(Effect.orElseSucceed(() => null));
+      const remoteNames =
+        result === null || result.exitCode !== 0
+          ? []
+          : result.stdout
+              .split("\n")
+              .map((name) => name.trim())
+              .filter((name) => name.length > 0);
+      const matches = yield* Effect.filter(
+        remoteNames,
+        (remoteName) =>
+          Effect.gen(function* () {
+            const remote = yield* resolveRemoteRepositoryContext(cwd, remoteName);
+            return yield* targetsOnlyRemote(cwd, remoteName, remote, false);
+          }).pipe(Effect.orElseSucceed(() => false)),
+        { concurrency: "unbounded" },
+      );
+      return matches.length === 1 ? matches[0]! : "origin";
     },
   );
 
