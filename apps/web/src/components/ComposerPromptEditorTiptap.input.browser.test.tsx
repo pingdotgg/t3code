@@ -175,6 +175,23 @@ it.each([
 });
 
 it.each([
+  { key: "i", expected: "ship it **n*X*ow** done" },
+  { key: "e", expected: "ship it **n`X`ow** done" },
+])("Mod+$key inside a bold word styles the next typed text", async ({ key, expected }) => {
+  await using screen = await mountEditor("ship it **now** done");
+  const { editor } = screen;
+  const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+  await act(async () => {
+    editor.commands.focus();
+    editor.commands.setTextSelection(10);
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  await userEvent.keyboard(`{${mod}>}${key}{/${mod}}`);
+  await userEvent.keyboard("X");
+  await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(expected));
+});
+
+it.each([
   { word: "ship", prefix: "", source: ["**ship**"] },
   { word: "path\\", prefix: "", source: [] },
   { word: "2*3", prefix: "", source: [] },

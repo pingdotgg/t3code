@@ -550,9 +550,16 @@ export const ComposerMarkdownSourceExtension = TiptapMark.create({
     // in another style. Parse the source first and toggle the result.
     const toggle = (name: RichTextMark) => () => {
       const { state } = this.editor;
-      const touched = sourceRegions(state.doc, this.type).some((region) =>
-        touches(state.selection, region),
-      );
+      const { selection } = state;
+      const touched = sourceRegions(state.doc, this.type).some((region) => {
+        if (!touches(selection, region)) return false;
+        if (!selection.empty) return true;
+        // Typing next to a marker would land in the markers. Elsewhere Tiptap's own
+        // toggle nests the style inside the source correctly.
+        const { units } = regionUnits(state.doc, region);
+        const offset = selection.from - region.from;
+        return units[offset - 1] === null || units[offset] === null;
+      });
       if (!touched) return false;
       return this.editor.chain().command(collapseShownMarkdownSource).toggleMark(name).run();
     };
