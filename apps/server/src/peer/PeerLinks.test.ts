@@ -603,10 +603,35 @@ it.effect(
           expectedEnvironmentId: box.environmentId,
         });
         expect(linked).toMatchObject({ environmentId: box.environmentId, urls: [b.url] });
+        // A picked machine is never linked at this machine's own loopback.
+        const own = yield* a.links
+          .link({
+            url: b.url.replace("127.0.0.1", "localhost"),
+            pairingCode: pairing.credential,
+            access: "auto",
+            expectedEnvironmentId: box.environmentId,
+          })
+          .pipe(Effect.flip);
+        expect(own.message).toContain("is this machine");
         yield* probe(a);
         expect(yield* linkedSessions(impostor)).toEqual([]);
         expect(yield* Ref.get(impostor.bearers)).toEqual([]);
         expect((yield* linkedSessions(b)).length).toBe(1);
+
+        // An address alone that answers as the linked box never takes over its link.
+        yield* Ref.set(impostor.descriptor, box);
+        const second = yield* impostor.auth.issuePairingCredential();
+        const taken = yield* a.links
+          .link({ url: impostor.url, pairingCode: second.credential, access: "auto" })
+          .pipe(Effect.flip);
+        expect(taken.message).toContain("already linked");
+        expect(yield* linkedSessions(impostor)).toEqual([]);
+        expect(Option.getOrUndefined(yield* a.links.get(box.environmentId))?.urls).toEqual([b.url]);
+        // The address the link already has still renews it.
+        const renewal = yield* b.auth.issuePairingCredential();
+        expect(
+          yield* a.links.link({ url: b.url, pairingCode: renewal.credential, access: "auto" }),
+        ).toMatchObject({ urls: [b.url] });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
