@@ -13,7 +13,6 @@ import {
 } from "@opencode-ai/sdk/v2";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -102,14 +101,18 @@ export interface OpenCodeServerConnection {
 }
 
 const OPENCODE_RUNTIME_ERROR_TAG = "OpenCodeRuntimeError";
-export class OpenCodeRuntimeError extends Data.TaggedError(OPENCODE_RUNTIME_ERROR_TAG)<{
-  readonly operation: string;
-  readonly cause?: unknown;
-  readonly detail: string;
-  readonly reason?: OpenCodeStartupFailureReason;
-}> {}
+const OpenCodeStartupFailureReason = Schema.Literal("databaseLocked");
+export type OpenCodeStartupFailureReason = typeof OpenCodeStartupFailureReason.Type;
 
-export type OpenCodeStartupFailureReason = "databaseLocked";
+export class OpenCodeRuntimeError extends Schema.TaggedError<OpenCodeRuntimeError>()(
+  OPENCODE_RUNTIME_ERROR_TAG,
+  {
+    operation: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    detail: Schema.String,
+    reason: Schema.optional(OpenCodeStartupFailureReason),
+  },
+) {}
 
 // Classify stderr database locks at exit so callers need not parse diagnostics.
 function classifyStartupExit(stderr: string): OpenCodeStartupFailureReason | undefined {
