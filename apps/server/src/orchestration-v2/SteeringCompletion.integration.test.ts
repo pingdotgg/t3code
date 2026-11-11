@@ -29,6 +29,10 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -1830,6 +1834,57 @@ it.effect("refuses a steer but starts a restart sent into a run that Stop reache
           ["first", "restart"],
         );
       }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+// regression: #34158 an MCP auto send into a run that Stop reached fails
+it.effect("starts an MCP auto send into a run that Stop reached as the next turn", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("mcp-auto-after-stop");
+      const layerThreads = ThreadManagementService.layer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            layer,
+            ServerSettings.layerTest(),
+            CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const threadId = yield* startFirstTurn;
+        const first = started[0]!;
+        // The worker has not delivered the interrupt yet, so the run still reads as running.
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("stop"),
+          threadId,
+          runId: first.runId,
+        });
+        yield* threads.sendToThread({
+          projectId: ProjectId.make("project:mcp-auto-after-stop"),
+          commandId: CommandId.make("mcp-auto"),
+          threadId,
+          messageId: MessageId.make("message:mcp-auto"),
+          text: "auto",
+          attachments: [],
+          mode: "auto",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* worker.drain();
+
+        assert.deepEqual(steered, []);
+        assert.deepEqual(
+          started.map((turn) => turn.message.text),
+          ["first", "auto"],
+        );
+      }).pipe(Effect.provide(layerThreads));
     }),
   ),
 );
