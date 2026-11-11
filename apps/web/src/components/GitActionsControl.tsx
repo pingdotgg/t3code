@@ -42,6 +42,7 @@ import {
   buildSyncMenuItems,
   formatGitActionElapsed,
   GIT_ACTION_SUCCESS_VISIBLE_MS,
+  hasUsableGitMenuContent,
   gitStackedActionTitle,
   type GitActionProgressPresentation,
   type GitActionMenuItem,
@@ -928,6 +929,27 @@ export default function GitActionsControl({
   const canPublishRepository =
     canWriteSourceControl && isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
 
+  const isDetachedHead = gitStatusForActions?.refName === null;
+  const isCleanAndBehind =
+    gitStatusForActions !== null &&
+    gitStatusForActions.refName !== null &&
+    !gitStatusForActions.hasWorkingTreeChanges &&
+    gitStatusForActions.behindCount > 0 &&
+    gitStatusForActions.aheadCount === 0;
+  const hasGitMenuContent =
+    hasUsableGitMenuContent({
+      menuItems: gitActionMenuItems,
+      canWriteSourceControl,
+      canPublishRepository,
+      hasNotice: isDetachedHead || isCleanAndBehind || Boolean(gitStatusError),
+    }) ||
+    (canWriteSourceControl &&
+      Object.values(syncMenuItems).some((item) => item !== null && !item.disabled));
+
+  // A disabled menu cannot refresh on open, and terminal edits or commits publish no status.
+  const refreshStatusForEmptyMenu = () =>
+    requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+
   const initializeGit = () => {
     void (async () => {
       const result = await initAction.run();
@@ -1048,10 +1070,15 @@ export default function GitActionsControl({
             })
           : null}
       </MenuGroup>
-      {gitStatusForActions?.refName === null && (
+      {isDetachedHead && (
         <p className="px-2 py-1.5 text-meta text-warning-foreground">
           Detached HEAD: create and check out a branch to enable push and{" "}
           {changeRequestTerminology.singular} actions.
+        </p>
+      )}
+      {isCleanAndBehind && (
+        <p className="px-2 py-1.5 text-meta text-warning-foreground">
+          Behind upstream. Pull/rebase first.
         </p>
       )}
       {gitStatusError && (
@@ -1205,7 +1232,12 @@ export default function GitActionsControl({
           </ThreadDetailsControl>
         ) : null
       ) : !showActions && (!showChanges || quietEmptyDraft) ? null : (
-        <div role="group" aria-label="Git actions">
+        <div
+          role="group"
+          aria-label="Git actions"
+          onPointerEnter={hasGitMenuContent ? undefined : refreshStatusForEmptyMenu}
+          onFocus={hasGitMenuContent ? undefined : refreshStatusForEmptyMenu}
+        >
           {!showActions || quietEmptyDraft ? null : gitActionProgress ? (
             <div className="flex items-start">
               <ThreadDetailsControl
@@ -1258,7 +1290,7 @@ export default function GitActionsControl({
               }}
             >
               <MenuTrigger
-                disabled={isGitActionRunning}
+                disabled={isGitActionRunning || !hasGitMenuContent}
                 render={<ThreadDetailsControl part="choice" aria-label="Git action options" />}
               >
                 <SourceControlIcon />
