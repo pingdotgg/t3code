@@ -113,6 +113,8 @@ export const offersBetaGateway = (
   userId: string,
 ) => config.betaGatewayDomain !== undefined && config.betaGatewayTesters?.has(userId) === true;
 
+const cancellationKey = (userId: string, environmentId: string) =>
+  JSON.stringify(["cancel-beta-enrollment", userId, environmentId]);
 const activeBetaLink = and(
   eq(linksTable.endpointProviderKind, "t3_relay"),
   eq(linksTable.managedTunnelsEnabled, true),
@@ -127,17 +129,21 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const digest = yield* Digest.Digest;
   const inbox = yield* HookInbox.HookInbox;
-  const hash = (value: string) =>
-    digest.digest(Digest.sha256, new TextEncoder().encode(value)).pipe(
-      Effect.map(Hex.encode),
-      Effect.mapError(
-        (cause) => new BetaGatewayPersistenceError({ operation: "hash-token", cause }),
-      ),
-    );
-  const cancellationScope = (userId: string, environmentId: string) =>
-    hash(JSON.stringify(["cancel-beta-enrollment", userId, environmentId])).pipe(
-      Effect.map((value) => `beta:${value}`),
-    );
+  // Untraced: both run inside the span of the operation that calls them.
+  const hash = Effect.fnUntraced(function* (value: string) {
+    const bytes = yield* digest
+      .digest(Digest.sha256, new TextEncoder().encode(value))
+      .pipe(
+        Effect.mapError(
+          (cause) => new BetaGatewayPersistenceError({ operation: "hash-token", cause }),
+        ),
+      );
+    return Hex.encode(bytes);
+  });
+  const cancellationScope = Effect.fnUntraced(function* (userId: string, environmentId: string) {
+    const scope = yield* hash(cancellationKey(userId, environmentId));
+    return `beta:${scope}`;
+  });
 
   const finishBetaRetirement: BetaGatewayLinks["Service"]["finishBetaRetirement"] = Effect.fn(
     "relay.beta_links.finish_retirement",

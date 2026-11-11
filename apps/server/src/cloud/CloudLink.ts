@@ -121,6 +121,8 @@ import {
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
 
+const BETA_ALREADY_ATTEMPTED =
+  "A beta enrollment was already sent. Run `t3 connect unlink` and then `t3 connect link --beta` to enroll again.";
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
 const CLOUD_HEALTH_NONCE_PREFIX = "cloud-health-nonce-";
@@ -889,14 +891,11 @@ const make = Effect.gen(function* () {
       );
       const mode = yield* readCliDesiredLinkMode.pipe(withSecrets);
       const managedTunnelsEnabled = mode !== "publish_only";
-      const betaAlreadyAttempted = () =>
-        new RelayRequestError({
-          rejection: "rejected",
-          description:
-            "A beta enrollment was already sent. Run `t3 connect unlink` and then `t3 connect link --beta` to enroll again.",
-        });
       if (mode === "beta" && Option.isSome(yield* secrets.get(CLOUD_CLI_BETA_ENROLLMENT_RELAY))) {
-        return yield* betaAlreadyAttempted();
+        return yield* new RelayRequestError({
+          rejection: "rejected",
+          description: BETA_ALREADY_ATTEMPTED,
+        });
       }
       const relayUrl = yield* requireRelayUrl;
       const challenge = yield* relayClientRequest({
@@ -940,7 +939,10 @@ const make = Effect.gen(function* () {
           ),
         });
         if (!claimed || (yield* readCliDesiredLinkMode.pipe(withSecrets)) !== "beta")
-          return yield* betaAlreadyAttempted();
+          return yield* new RelayRequestError({
+            rejection: "rejected",
+            description: BETA_ALREADY_ATTEMPTED,
+          });
       }
       const link = yield* relayClientRequest({
         url: `${relayUrl}/v1/client/environment-links${mode === "beta" ? "/beta" : ""}`,

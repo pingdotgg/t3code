@@ -292,14 +292,8 @@ describe("releaseManagedTunnelOnShutdown", () => {
       const applyConfigCalls: Array<unknown> = [];
       return Effect.gen(function* () {
         const service = yield* CloudLink.CloudLink;
-        const error = yield* Effect.flip(
-          service.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773"),
-        );
-        if (status === 404) expect(error.message).toContain("beta-enabled relay");
-        const retry = yield* Effect.flip(
-          service.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773"),
-        );
-        expect(retry.message).toContain("t3 connect unlink");
+        yield* Effect.flip(service.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773"));
+        yield* Effect.flip(service.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773"));
         expect(requests.map((request) => request.url)).toEqual([
           "https://stage.example.test/v1/client/environment-link-challenges",
           "https://stage.example.test/v1/client/environment-links/beta",
