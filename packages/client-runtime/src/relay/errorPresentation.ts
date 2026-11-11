@@ -1,5 +1,9 @@
 import type { DpopFailureReason } from "@t3tools/contracts";
-import type { RelayEnvironmentStatusResponse, RelayProtectedError } from "@t3tools/contracts/relay";
+import {
+  T3CHAT_PLAN_TUNNEL_LIMITS,
+  type RelayEnvironmentStatusResponse,
+  type RelayProtectedError,
+} from "@t3tools/contracts/relay";
 
 export const DPOP_CLOCK_HINT =
   "Hint: Check that automatic date and time is enabled on both devices, then try again.";
@@ -63,7 +67,9 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
         error.provisioningStage ? ` Failed stage: ${error.provisioningStage}.` : ""
       }`;
     case "RelayEnvironmentLinkLimitExceededError":
-      return `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment to free one up.`;
+      return error.maxTunnels < T3CHAT_PLAN_TUNNEL_LIMITS.premier
+        ? `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment, or link a paid T3 Chat account in your T3 Connect account settings on web or desktop. Pro raises the default limit to ${T3CHAT_PLAN_TUNNEL_LIMITS.pro} and Premier to ${T3CHAT_PLAN_TUNNEL_LIMITS.premier}.`
+        : `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment to free one up.`;
     case "RelayAgentActivityPublishProofExpiredError":
       return "Relay rejected an expired agent activity publish proof.";
     case "RelayAgentActivityPublishProofInvalidError":

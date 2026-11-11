@@ -1,3 +1,4 @@
+import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -265,7 +266,7 @@ describe("runProcess", () => {
 describe("isWindowsCommandNotFound", () => {
   it.effect("matches the localized German cmd.exe error text", () =>
     Effect.gen(function* () {
-      const isCommandNotFound = yield* ProcessRunner.isWindowsCommandNotFound(
+      const isCommandNotFound = yield* isWindowsCommandNotFound(
         1,
         "wird nicht als interner oder externer Befehl, betriebsfahiges Programm oder Batch-Datei erkannt",
       ).pipe(Effect.provideService(HostProcess.Platform, "win32"));

@@ -49,6 +49,7 @@ const configuredDesktopUpdateRepository =
   process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
   process.env.GITHUB_REPOSITORY?.trim() ||
   "";
+const configuredFeatureSecrets = process.env.T3CODE_FEATURE_SECRETS?.trim() || "";
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
@@ -256,9 +257,9 @@ export default defineConfig(() => {
   return {
     run: {
       tasks: {
-        // tsc (tsc-rs) rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+        // A local tsbuildinfo is leftover build state, not a typecheck input.
         typecheck: {
-          command: "tsc --noEmit",
+          command: "effect-tsgo tsrs --noEmit",
           cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
         },
       },
@@ -316,6 +317,7 @@ export default defineConfig(() => {
       "import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY": JSON.stringify(
         configuredDesktopUpdateRepository,
       ),
+      "import.meta.env.T3CODE_FEATURE_SECRETS": JSON.stringify(configuredFeatureSecrets),
       "import.meta.env.VITE_RELEASE_CHANNEL": JSON.stringify(configuredReleaseChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
     },

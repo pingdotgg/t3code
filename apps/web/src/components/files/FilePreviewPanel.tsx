@@ -1,10 +1,11 @@
-import { DownloadIcon, CopyIcon, CheckIcon } from "lucide-react";
+import { DownloadIcon, CopyIcon, CheckIcon, Code2Icon, EyeIcon, Table2Icon } from "lucide-react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
 import {
   AuthPreviewOperateScope,
   type EditorId,
   type EnvironmentId,
+  type ProjectId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -45,7 +46,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
-import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
@@ -54,9 +54,8 @@ import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
-import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
-import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
+import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
@@ -72,6 +71,7 @@ import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
+import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { previewEnvironment } from "~/state/preview";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
@@ -84,6 +84,7 @@ import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import { PreviewImage } from "./PreviewImage";
 import FileBrowserPanel from "./FileBrowserPanel";
+import { FileExplorerPane } from "./FileExplorerPane";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
@@ -113,10 +114,10 @@ import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
-  setMarkdownTaskChecked,
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import {
@@ -133,6 +134,7 @@ interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
+  projectId?: ProjectId | undefined;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
   threadRef: ScopedThreadRef;
@@ -221,7 +223,7 @@ function WorkspaceImagePreview(props: {
   );
 }
 
-function WorkspaceBrowserPreview(props: {
+export function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
@@ -230,18 +232,25 @@ function WorkspaceBrowserPreview(props: {
   readonly title: string;
   readonly workspaceMutationId: string | null;
 }) {
+  const pdf = isPdfPreviewFile(props.absolutePath);
   const resource = workspaceAssetResource({
-    kind: "workspace-file",
+    kind: pdf ? "media-file" : "workspace-file",
     threadRef: props.threadRef,
     draft: props.draft,
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    resource,
+    pdf ? props.workspaceMutationId : undefined,
+  );
+  const fileRevision = pdf && assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
+  const revision = fileRevision ?? props.workspaceMutationId;
   const revisionSuffix =
-    props.workspaceMutationId === null
+    revision === null
       ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
 
   if (assetUrl._tag === "Failure") {
     return (
@@ -250,7 +259,10 @@ function WorkspaceBrowserPreview(props: {
       </div>
     );
   }
-  if (assetUrl._tag !== "Success") {
+  if (
+    assetUrl._tag !== "Success" ||
+    (pdf && assetUrl.fileRevision === undefined && assetUrl.waiting)
+  ) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
         <Spinner size="lg" />
@@ -260,9 +272,10 @@ function WorkspaceBrowserPreview(props: {
   return (
     <BrowserDocumentFrame
       src={`${assetUrl.url}${revisionSuffix}`}
-      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${props.workspaceMutationId}`}
+      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${revision}`}
+      documentId={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`}
       title={props.title}
-      pdf={isPdfPreviewFile(props.absolutePath)}
+      pdf={pdf}
     />
   );
 }
@@ -310,6 +323,7 @@ function WorkspaceVideoPreview(props: {
         revision={revision}
         preload="metadata"
         className="flex h-full min-h-0 w-full max-w-5xl items-center justify-center"
+        videoClassName="aspect-auto max-h-full w-auto max-w-full"
         onRetry={refreshAssetUrl}
         actionsSource={{
           kind: "video",
@@ -620,6 +634,7 @@ function useEditableAfterHighlight(file: FileContents) {
   const needsHighlight = needsWorkerHighlight(workerPool, file);
   const ready = !needsHighlight || highlightedFile === file;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- primes the worker pool's highlight cache for this file and falls back to plain text if it fails
   useEffect(() => {
     if (ready || workerPool === undefined) return;
     workerPool.primeFileHighlightCache(file).catch(() => setHighlightedFile(file));
@@ -636,6 +651,7 @@ function useEditableAfterHighlight(file: FileContents) {
 
 interface EditableFileSurfaceProps {
   environmentId: EnvironmentId;
+  projectId?: ProjectId | undefined;
   cwd: string;
   relativePath: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -654,6 +670,7 @@ interface FileSelectionOverride {
 
 function EditableFileSurface({
   environmentId,
+  projectId,
   cwd,
   relativePath,
   composerDraftTarget,
@@ -812,6 +829,7 @@ function EditableFileSurface({
   const hasOpenCommentForm = lineAnnotations.some((annotation) =>
     annotation.metadata.entries.some((entry) => entry.kind === "draft"),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs selection dismissal listeners on the editor surface DOM node
   useEffect(() => {
     const root = surfaceRef.current;
     if (!root) return;
@@ -882,6 +900,14 @@ function EditableFileSurface({
                 {annotation.metadata.entries.map((entry) => (
                   <DiffCommentAnnotation
                     key={entry.id}
+                    environmentId={environmentId}
+                    projectId={projectId}
+                    ownerKey={JSON.stringify([
+                      environmentId,
+                      composerDraftTarget,
+                      relativePath,
+                      entry.id,
+                    ])}
                     kind={entry.kind}
                     rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
                     text={entry.text}
@@ -974,6 +1000,7 @@ export default function FilePreviewPanel({
   environmentId,
   cwd,
   projectName,
+  projectId,
   relativePath: requestedPath,
   attachment,
   threadRef,
@@ -994,9 +1021,12 @@ export default function FilePreviewPanel({
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
   const { resolvedTheme } = useTheme();
-  const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
+  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
+  const wordWrap = wordWrapOverride ?? defaultWordWrap;
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const hostEnvironmentId = useAtomValue(hostEnvironmentIdAtom);
   const remoteOpenState = useRemoteOpenState(environmentId);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
@@ -1163,6 +1193,7 @@ export default function FilePreviewPanel({
       : NO_FILE_REVISION_ATOM,
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the breadcrumb DOM so the deepest and current crumbs are in view after commit
   useEffect(() => {
     const crumbs = breadcrumbRef.current?.querySelectorAll<HTMLElement>("[data-file-crumb]");
     // Show the deepest crumb when it fits, but never at the cost of the current one.
@@ -1252,7 +1283,9 @@ export default function FilePreviewPanel({
             </div>
           </ScrollArea>
           {absolutePath &&
-          (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
+          (environmentId === primaryEnvironmentId ||
+            environmentId === hostEnvironmentId ||
+            remoteOpenState.mode !== "local-exec") ? (
             <OpenInPicker
               environmentId={environmentId}
               keybindings={keybindings}
@@ -1278,17 +1311,20 @@ export default function FilePreviewPanel({
                 );
               }}
             >
-              <MorphIcon
-                className="size-3.5"
-                icon={rendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
-              />
+              {rendered ? (
+                <Code2Icon className="size-3.5" />
+              ) : renderedMode === "table" ? (
+                <Table2Icon className="size-3.5" />
+              ) : (
+                <EyeIcon className="size-3.5" />
+              )}
             </FileSurfaceAction>
           ) : null}
           {showsRawText ? (
             <FileSurfaceAction
               label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
               pressed={wordWrap}
-              onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+              onPress={() => setWordWrapOverride(!wordWrap)}
             >
               <WrapTextIcon className="size-3.5" />
             </FileSurfaceAction>
@@ -1400,6 +1436,7 @@ export default function FilePreviewPanel({
               workspaceMutationId={workspaceMutationId}
               revealLine={revealLine}
               revealRequestId={revealRequestId}
+              wordWrap={wordWrap}
             />
           ) : relativePath &&
             absolutePath &&
@@ -1469,7 +1506,7 @@ export default function FilePreviewPanel({
                 threadRef={threadRef}
                 contents={file.data.contents}
                 workspaceMutationId={workspaceMutationId}
-                readOnly={isHostFile || !canWriteFiles}
+                readOnly={file.data.truncated || isHostFile || !canWriteFiles}
                 onPendingChange={onPendingChange}
               />
             ) : tableDelimiter && renderTable ? (
@@ -1485,12 +1522,14 @@ export default function FilePreviewPanel({
                 text={file.data.contents}
                 cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
                 onPostRender={onFilePostRender}
+                wordWrap={wordWrap}
               />
             ) : (
               <DiffWorkerPoolProvider>
                 <EditableFileSurface
                   key={`${relativePath}:${resolvedTheme}`}
                   environmentId={environmentId}
+                  projectId={projectId}
                   cwd={cwd}
                   relativePath={relativePath}
                   composerDraftTarget={composerDraftTarget}
@@ -1506,14 +1545,7 @@ export default function FilePreviewPanel({
           ) : null}
         </div>
         {showExplorer ? (
-          <aside
-            className={cn(
-              "flex min-h-0 shrink-0 bg-background",
-              previewPath
-                ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
-                : "min-w-0 flex-1",
-            )}
-          >
+          <FileExplorerPane resizable={Boolean(previewPath)}>
             <FileBrowserPanel
               key={`${environmentId}:${hostFolderPath ?? cwd}`}
               environmentId={environmentId}
@@ -1537,7 +1569,7 @@ export default function FilePreviewPanel({
                   }
                 : {})}
             />
-          </aside>
+          </FileExplorerPane>
         ) : null}
       </div>
     </div>
@@ -1554,6 +1586,7 @@ export function WorkspaceLargeTextPreview(props: {
   workspaceMutationId: string | null;
   revealLine: number | null;
   revealRequestId: number;
+  wordWrap: boolean;
 }) {
   const resource = {
     _tag: "media-file",
@@ -1656,6 +1689,7 @@ export function WorkspaceLargeTextPreview(props: {
           delimiter={props.delimiter}
           revealLine={props.revealLine}
           revealRequestId={props.revealRequestId}
+          wordWrap={props.wordWrap}
         />
       </Suspense>
     </>

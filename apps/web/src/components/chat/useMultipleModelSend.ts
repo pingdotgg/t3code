@@ -21,10 +21,10 @@ import type { ComposerHandleRef } from "../../composerHandleContext";
 import { releaseDraftAttachments } from "../../lib/attachmentUploadQueue";
 import type { buildMessageContext } from "../../lib/composerContextRecords";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { DEFAULT_INTERACTION_MODE } from "../../types";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   boundAttachmentIds,
@@ -159,9 +159,6 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
             model: target.selection.model,
             uncertainSubmissions: uncertainSubmissionsRef.current,
             start: (targetThreadId) => {
-              const supportsInlineMessageContext =
-                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                  .capabilities.inlineMessageContext === true;
               return startThreadTurn({
                 environmentId,
                 input: {
@@ -173,20 +170,19 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                     ...withMessageContext({
                       text: target.text,
                       context,
-                      supportsInlineMessageContext,
                     }),
                   },
                   modelSelection: target.selection,
                   titleSeed: title,
                   runtimeMode,
-                  interactionMode: target.interactionMode,
+                  interactionMode: DEFAULT_INTERACTION_MODE,
                   bootstrap: {
                     createThread: {
                       projectId: project.id,
                       title,
                       modelSelection: target.selection,
                       runtimeMode,
-                      interactionMode: target.interactionMode,
+                      interactionMode: DEFAULT_INTERACTION_MODE,
                       branch,
                       worktreePath: null,
                       createdAt: createdAt,

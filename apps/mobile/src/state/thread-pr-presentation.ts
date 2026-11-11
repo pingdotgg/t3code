@@ -1,6 +1,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
-  ExecutionEnvironmentCapabilities,
+  PullRequestSummary,
+  ThreadPullRequestKey,
   ThreadPullRequestLink,
   VcsStatusResult,
 } from "@t3tools/contracts";
@@ -10,8 +11,10 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 
 import {
+  legacyThreadPullRequestKey,
   resolveThreadCurrentPullRequestLink,
   resolveThreadPullRequestBadge,
+  threadPullRequestKeyOf,
 } from "@t3tools/client-runtime/thread-pull-requests";
 
 export type ThreadPr = NonNullable<VcsStatusResult["pr"]>;
@@ -109,11 +112,9 @@ export function presentThreadLinkedPullRequests(
 
 export function resolveThreadPrSource(
   thread: Pick<EnvironmentThreadShell, "pullRequests" | "linkedPullRequest" | "branchPullRequest">,
-  capabilities:
-    | Pick<ExecutionEnvironmentCapabilities, "threadPullRequests" | "threadPullRequestLinking">
-    | undefined,
+  /** False until the server config loads; the stored references serve until then. */
+  supportsSnapshots: boolean,
 ) {
-  const supportsSnapshots = capabilities?.threadPullRequests === true;
   const linkedPresentation = supportsSnapshots
     ? presentThreadLinkedPullRequests(thread.pullRequests)
     : null;
@@ -147,4 +148,54 @@ export function rememberBounded<V>(
     next.delete(oldest);
   }
   return next;
+}
+
+/** The newest summary held for `pullRequest`, matched strictly by host, repository and number. */
+export function knownPullRequestSummary(
+  pullRequest: ThreadPullRequestKey,
+  threads: Iterable<Pick<EnvironmentThreadShell, "projectId" | "pullRequests">>,
+  summaries: Iterable<PullRequestSummary>,
+): PullRequestSummary | undefined {
+  const key = threadPullRequestKeyOf(pullRequest);
+  let newest:
+    | { readonly summary: PullRequestSummary; readonly updatedAt: number; readonly readAt: number }
+    | undefined;
+  // Checks and reviews change without moving `updatedAt`, so equal versions prefer the later read.
+  const consider = (summary: PullRequestSummary, readAt = Number.NEGATIVE_INFINITY) => {
+    const updatedAt = Date.parse(summary.updatedAt);
+    if (
+      newest === undefined ||
+      updatedAt > newest.updatedAt ||
+      (updatedAt === newest.updatedAt && readAt > newest.readAt)
+    ) {
+      newest = { summary, updatedAt, readAt };
+    }
+  };
+  for (const summary of summaries) {
+    if (threadPullRequestKeyOf(legacyThreadPullRequestKey(summary)) === key) {
+      consider(summary, summary.observedAt);
+    }
+  }
+  for (const thread of threads) {
+    for (const link of thread.pullRequests) {
+      const snapshot = link.snapshot;
+      if (snapshot?.updatedAt == null || threadPullRequestKeyOf(link) !== key) continue;
+      consider(
+        {
+          ...snapshot,
+          updatedAt: snapshot.updatedAt,
+          provider: (
+            sourceControlClients.findByChangeRequestUrl(link.url) ??
+            sourceControlClients.get(undefined)
+          ).kind,
+          projectId: thread.projectId,
+          repository: link.repository,
+          number: link.number,
+          url: link.url,
+        },
+        Date.parse(snapshot.syncedAt),
+      );
+    }
+  }
+  return newest?.summary;
 }

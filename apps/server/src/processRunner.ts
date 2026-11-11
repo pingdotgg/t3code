@@ -147,8 +147,6 @@ const DEFAULT_TIMEOUT = "60 seconds";
 const FORCE_KILL_AFTER = "1 second";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
-export { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
-
 const collectText = Effect.fnUntraced(function* (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;

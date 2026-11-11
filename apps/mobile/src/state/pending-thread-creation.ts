@@ -4,6 +4,8 @@ import {
 } from "@t3tools/client-runtime/state/shell";
 import type { LocalThreadMessage } from "../lib/threadActivity";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { Atom } from "effect/reactivity";
 import * as DateTime from "effect/DateTime";
 
@@ -56,9 +58,7 @@ export function resolvePendingThreadCreation(input: {
   readonly previous: PendingThreadCreation | null;
   readonly detail: {
     readonly messages: ReadonlyArray<{ readonly id: string }>;
-    readonly runs?: ReadonlyArray<{ readonly status: string }>;
-    readonly latestTurn?: { readonly turnId: string } | null;
-    readonly session?: { readonly status: string } | null;
+    readonly runs: ReadonlyArray<{ readonly status: string }>;
   } | null;
 }): PendingThreadCreation | null {
   const creation = input.pending ?? input.previous;
@@ -70,20 +70,18 @@ export function resolvePendingThreadCreation(input: {
   }
   if (creation.outcome?.kind === "failed") return creation;
   const detail = input.detail;
-  const latestRun = detail?.runs?.at(-1);
-  const terminalStatus = latestRun?.status ?? detail?.session?.status;
+  const latestRun = detail?.runs.at(-1);
+  const terminalStatus = latestRun?.status;
   if (
     terminalStatus === "failed" ||
-    terminalStatus === "error" ||
     terminalStatus === "cancelled" ||
-    terminalStatus === "stopped" ||
     terminalStatus === "interrupted"
   )
     return null;
   // Message delivery can precede startup; wait for turn timing before replacing the preparing pill.
   if (
     detail !== null &&
-    (latestRun !== undefined || detail.latestTurn != null) &&
+    latestRun !== undefined &&
     !isPendingThreadCreationVisible({
       creationMessageId: creation.message.messageId,
       loadedMessageIds: detail.messages.map((message) => message.id),
@@ -117,7 +115,7 @@ export function clearPendingThreadCreationOutcome(threadKey: string): void {
 }
 
 /** Thread shell and empty detail precede the prompt: worktree setup runs between creation and turn start. */
-export function isPendingThreadCreationVisible(input: {
+function isPendingThreadCreationVisible(input: {
   readonly creationMessageId: string;
   readonly loadedMessageIds: ReadonlyArray<string> | null;
 }): boolean {
@@ -135,6 +133,33 @@ export function pendingThreadCreationMessage(message: QueuedThreadMessage): Loca
     createdAt: message.createdAt,
     updatedAt: message.createdAt,
   };
+}
+
+/** Launches show as preparing from Send, before the server's shell exists, until their first run. */
+export function withLaunchingThreads(input: {
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly launches: ReadonlyArray<QueuedThreadMessage>;
+  readonly hiddenThreadKeys: ReadonlySet<string>;
+}): ReadonlyArray<EnvironmentThreadShell> {
+  if (input.launches.length === 0) return input.threads;
+  const launchByKey = new Map<string, QueuedThreadMessage>();
+  for (const message of input.launches) {
+    if (!message.creation || input.hiddenThreadKeys.has(threadKey(message))) continue;
+    launchByKey.set(scopedThreadKey(message.environmentId, message.threadId), message);
+  }
+  if (launchByKey.size === 0) return input.threads;
+  const threads = input.threads.map((thread) => {
+    const key = scopedThreadKey(thread.environmentId, thread.id);
+    const launch = launchByKey.get(key);
+    if (!launch) return thread;
+    launchByKey.delete(key);
+    return asLaunchingThread(thread);
+  });
+  for (const launch of launchByKey.values()) {
+    const shell = pendingThreadCreationShell(launch);
+    if (shell) threads.push(asLaunchingThread(shell));
+  }
+  return threads;
 }
 
 export function pendingThreadCreationShell(

@@ -1,3 +1,4 @@
+import * as NodePath from "node:path";
 /**
  * AWS Lambda adapter for waku, forked from waku's own aws-lambda adapter
  * (upstream `packages/waku/src/adapters/aws-lambda.ts` @ waku 1.0.0-beta.7).
@@ -30,7 +31,6 @@
 import type { Context, MiddlewareHandler, Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { Hono } from "hono/tiny";
-import * as NodePath from "node:path";
 import { unstable_createServerEntryAdapter as createServerEntryAdapter } from "waku/adapter-builders";
 import {
   unstable_constants as constants,
@@ -79,8 +79,9 @@ const MIME_TYPES: Record<string, string> = {
  * the SSG pass (`isBuild`), which runs in Node — the dynamic `node:fs`
  * import keeps the module loadable on any runtime.
  */
-const makeBuildStaticMiddleware = (root: string): MiddlewareHandler => {
-  return async (c: Context, next: Next) => {
+const makeBuildStaticMiddleware =
+  (root: string): MiddlewareHandler =>
+  async (c: Context, next: Next) => {
     if (c.req.method !== "GET" && c.req.method !== "HEAD") {
       return next();
     }
@@ -107,11 +108,9 @@ const makeBuildStaticMiddleware = (root: string): MiddlewareHandler => {
       return next();
     }
     const contentType =
-      MIME_TYPES[NodePath.extname(filePath).toLowerCase()] ??
-      "application/octet-stream";
+      MIME_TYPES[NodePath.extname(filePath).toLowerCase()] ?? "application/octet-stream";
     return c.body(data as never, 200, { "content-type": contentType });
   };
-};
 
 /** Options accepted by the adapter (superset of upstream's). */
 export interface AwsLambdaAdapterOptions {
@@ -156,14 +155,10 @@ const awsLambdaAdapter: ReturnType<
       // SSG pass only (runs in Node during `waku build`): serve the already
       // emitted static files so prerender requests resolve assets. Never on
       // Lambda — there the CDN serves `dist/public`.
-      app.use(
-        makeBuildStaticMiddleware(NodePath.join(config.distDir, DIST_PUBLIC)),
-      );
+      app.use(makeBuildStaticMiddleware(NodePath.join(config.distDir, DIST_PUBLIC)));
     }
     if (bodyLimitOptions !== false) {
-      app.use(
-        bodyLimit(bodyLimitOptions ?? { maxSize: DEFAULT_BODY_LIMIT_MAX_SIZE }),
-      );
+      app.use(bodyLimit(bodyLimitOptions ?? { maxSize: DEFAULT_BODY_LIMIT_MAX_SIZE }));
     }
     for (const middlewareFn of middlewareFns) {
       app.use(middlewareFn({ app }));

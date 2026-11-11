@@ -29,6 +29,7 @@ export function ChatCanvas({
   const [timelineElement, registerTimeline] = useState<HTMLElement | null>(null);
   const measurements = useStore(store, (state) => state.measurements);
   const detailsCardMeasurement = useStore(store, (state) => state.detailsCardMeasurement);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes canvas, find bar and timeline resizes and writes the measurements to the canvas store
   useLayoutEffect(() => {
     const element = elementRef.current;
     const probe = widthProbeRef.current;
