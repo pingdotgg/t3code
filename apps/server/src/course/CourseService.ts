@@ -39,7 +39,6 @@ export interface CourseReadUnit {
 }
 
 export interface CourseProblems {
-  readonly course: Course;
   readonly attribution?: string;
   readonly problemSets: ReadonlyArray<{
     readonly number: number;
@@ -547,10 +546,12 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
         const attribution = course.attribution ? { attribution: course.attribution } : {};
         if (!course.problemSets)
           return {
-            course,
             ...attribution,
             problemSets: [],
-            note: "This OCW course has no problem sets. Call course_add with the course source again.",
+            note:
+              course.kind === "ocw"
+                ? "No problem sets saved for this course. Call course_add with the course source again to fetch them."
+                : "This course has no problem sets.",
           };
         const selected =
           input.pset !== undefined
@@ -606,7 +607,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
             }),
           { discard: false },
         );
-        return { course, ...attribution, problemSets: result };
+        return { ...attribution, problemSets: result };
       }),
     );
   });

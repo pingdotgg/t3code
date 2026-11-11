@@ -379,7 +379,12 @@ export const parseOcwZipEntries = (
       [...row[0].matchAll(/href=["'][^"']*?pages\/(.+?)\/index\.html/gi)].map((match) => match[1]!),
     );
   }
-  const titleToUnit = new Map(units.map((unit, index) => [unit.title, index + 1]));
+  // A worked-example page can hold several videos with their own titles.
+  const pageUnits = new Map<string, number[]>();
+  videos.forEach(({ record }, index) => {
+    const parent = stringValue(record.parent_title);
+    if (parent) pageUnits.set(parent, [...(pageUnits.get(parent) ?? []), index + 1]);
+  });
   const problemSets = psetRecords
     .toSorted((a, b) => {
       const number = (record: Record<string, unknown>) =>
@@ -396,10 +401,7 @@ export const parseOcwZipEntries = (
       const number = title.match(/(?:problem\s*set|pset)\s*(\d+)/i)?.[1];
       const workedExampleUnits = (workedPages.get(folder ?? "") ?? [])
         .map((page) => stringValue(pages.get(page)?.title))
-        .flatMap((workedTitle) => {
-          const unit = workedTitle ? titleToUnit.get(workedTitle) : undefined;
-          return unit === undefined ? [] : [unit];
-        });
+        .flatMap((workedTitle) => (workedTitle ? (pageUnits.get(workedTitle) ?? []) : []));
       return [
         {
           title,
@@ -523,8 +525,10 @@ export const parseOcwZip = (zipPath: string, source: string) =>
       const pdfTexts = new Map<string, string>();
       for (const [name, bytes] of entries) {
         if (!/\.pdf$/i.test(name)) continue;
-        const extracted = yield* extractPdfPages(bytes);
-        pdfTexts.set(NodePath.basename(name), extracted.pages.join("\n\n"));
+        // One unreadable problem-set PDF must not fail the whole course.
+        const extracted = yield* Effect.option(extractPdfPages(bytes));
+        if (extracted._tag === "Some")
+          pdfTexts.set(NodePath.basename(name), extracted.value.pages.join("\n\n"));
       }
       return parseOcwZipEntries(entries, source, pdfTexts);
     }),

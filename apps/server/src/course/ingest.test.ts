@@ -321,6 +321,24 @@ describe("course ingestion parsers", () => {
     }),
   );
 
+  it.effect("keeps the course when a problem-set PDF can't be read", () =>
+    Effect.gen(function* () {
+      const directory = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ocw-")),
+      );
+      const zipPath = NodePath.join(directory, "broken.zip");
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          zipPath,
+          oneEntryZip("static_resources/x_pset1.pdf", Buffer.from("not a pdf")),
+        ),
+      );
+      const course = yield* parseOcwZip(zipPath, "https://ocw.mit.edu/courses/broken/");
+      expect(course.problemSets).toBeUndefined();
+      yield* Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true }));
+    }),
+  );
+
   it.effect("refuses an OCW download page that points the zip off OCW", () =>
     Effect.gen(function* () {
       using _fetch = vi
