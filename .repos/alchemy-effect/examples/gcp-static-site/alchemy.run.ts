@@ -1,8 +1,8 @@
+import { fileURLToPath } from "node:url";
+import * as GCP from "@alchemy.run/gcp";
 import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
-import { fileURLToPath } from "node:url";
 
 export default Alchemy.Stack(
   "GcpStaticSiteExample",
@@ -29,8 +29,7 @@ export default Alchemy.Stack(
       bucketName: bucket.bucketName,
       path: fileURLToPath(new URL("./site", import.meta.url)),
       // HTML revalidates on every load so deploys show up immediately.
-      cacheControl: (key) =>
-        key.endsWith(".html") ? "no-cache" : "public, max-age=300",
+      cacheControl: (key) => (key.endsWith(".html") ? "no-cache" : "public, max-age=300"),
     });
 
     return {

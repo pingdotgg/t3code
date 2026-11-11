@@ -1,0 +1,176 @@
+---
+title: Static sites
+description: Deploy Hugo, Zola, or any static build to Google Cloud — on Cloud Run with GCP.Website.StaticSite, or from a public Cloud Storage bucket.
+sidebar:
+  order: 30
+---
+
+You can host a static site on Google Cloud two ways. `StaticSite` runs
+your build command and serves the output from Cloud Run. A public
+Cloud Storage bucket serves files with no server at all.
+
+## On Cloud Run
+
+`GCP.Website.StaticSite` runs any build command that writes a
+directory, then serves that directory from a small file server:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+
+export const Blog = GCP.Website.StaticSite("Blog", {
+  build: { command: "hugo --minify", output: "public" },
+});
+
+export default Alchemy.Stack(
+  "MyBlog",
+  { providers: GCP.providers(), state: GCP.state() },
+  Effect.gen(function* () {
+    const site = yield* Blog;
+    return { url: site.url };
+  }),
+);
+```
+
+Install `@alchemy.run/frontend-frameworks` as a dev dependency and
+keep Docker running when you deploy. An unchanged site skips both the
+build and the image push.
+
+### Single-page apps
+
+Answer unknown paths with `index.html`:
+
+```typescript
+export const App = GCP.Website.StaticSite("App", {
+  build: { command: "npm run build", output: "dist" },
+  assets: { notFoundHandling: "single-page-application" },
+});
+```
+
+### Build in a subdirectory
+
+```typescript
+export const Web = GCP.Website.StaticSite("Web", {
+  path: "apps/web",
+  build: { command: "npm run build", output: "dist" },
+});
+```
+
+### Use your dev server
+
+Under `alchemy dev`, run your own dev command instead of the build:
+
+```typescript
+export const App = GCP.Website.StaticSite("App", {
+  build: { command: "npm run build", output: "dist" },
+  dev: { command: "npm run dev" },
+});
+```
+
+## From a Cloud Storage bucket
+
+A bucket serves files directly. There's no container and no Docker.
+
+### Create the bucket
+
+```typescript
+const bucket = yield* GCP.Storage.Bucket("Site", {
+  uniformBucketLevelAccess: true,
+  website: { mainPageSuffix: "index.html", notFoundPage: "404.html" },
+  forceDestroy: true,
+});
+```
+
+### Let anyone read it
+
+```typescript
+yield* GCP.IAM.Member("PublicRead", {
+  kind: "storage.bucket",
+  name: bucket.bucketName,
+  role: "roles/storage.objectViewer",
+  member: "allUsers",
+});
+```
+
+Your organization may block `allUsers` grants with the
+`storage.publicAccessPrevention` or `iam.allowedPolicyMemberDomains`
+policies.
+
+### Upload the files
+
+`Storage.Files` uploads a directory, one object per file:
+
+```typescript
+const files = yield* GCP.Storage.Files("SiteFiles", {
+  bucketName: bucket.bucketName,
+  path: fileURLToPath(new URL("./site", import.meta.url)),
+  cacheControl: (key) =>
+    key.endsWith(".html") ? "no-cache" : "public, max-age=300",
+});
+```
+
+A redeploy uploads only changed files and deletes objects for files
+you removed. `Content-Type` comes from each file's extension.
+
+### Put it together
+
+```typescript
+// alchemy.run.ts
+import { fileURLToPath } from "node:url";
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Output from "alchemy/Output";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MySite",
+  { providers: GCP.providers(), state: GCP.state() },
+  Effect.gen(function* () {
+    const bucket = yield* GCP.Storage.Bucket("Site", {
+      uniformBucketLevelAccess: true,
+      website: { mainPageSuffix: "index.html", notFoundPage: "404.html" },
+      forceDestroy: true,
+    });
+
+    yield* GCP.IAM.Member("PublicRead", {
+      kind: "storage.bucket",
+      name: bucket.bucketName,
+      role: "roles/storage.objectViewer",
+      member: "allUsers",
+    });
+
+    yield* GCP.Storage.Files("SiteFiles", {
+      bucketName: bucket.bucketName,
+      path: fileURLToPath(new URL("./site", import.meta.url)),
+      cacheControl: (key) =>
+        key.endsWith(".html") ? "no-cache" : "public, max-age=300",
+    });
+
+    return {
+      url: Output.interpolate`https://storage.googleapis.com/${bucket.bucketName}/index.html`,
+    };
+  }),
+);
+```
+
+On `storage.googleapis.com` the bucket name is part of the path, so
+link pages to each other with relative URLs. `mainPageSuffix` and
+`notFoundPage` only apply once the bucket is served from your own
+domain through a load balancer.
+
+[`examples/gcp-static-site`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-static-site)
+is the complete bucket version with a live test.
+
+## Which one?
+
+Use `StaticSite` when you want an `https://….run.app` URL, SPA
+routing, and 404 pages with no extra setup. Use a bucket when you want
+no server at all and will put a load balancer in front for your
+domain.
+
+## Where next
+
+- [Websites](/gcp/frontend/websites) — framework sites on Cloud Run.
+- [Cloud Storage](/gcp/data/storage) — buckets and their bindings.

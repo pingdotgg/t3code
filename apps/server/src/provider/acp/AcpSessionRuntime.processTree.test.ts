@@ -3,6 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -10,6 +11,7 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
@@ -112,7 +114,7 @@ describe("AcpSessionRuntime child environment", () => {
         XDG_DATA_DIRS: "/usr/share",
         T3_TEST_PROVIDER_VALUE: "configured",
       });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
 
@@ -126,12 +128,12 @@ describe("terminatePosixOwnedProcessTree", () => {
     expect(AcpSessionRuntime.isSafeCgroupPath("/user.slice/../escape")).toBe(false);
     expect(AcpSessionRuntime.isSafeCgroupPath("/user.slice/app.scope (deleted)")).toBe(false);
     expect(
-      AcpSessionRuntime.parseCgroup2Mount(
+      AcpSessionRuntime.parseCgroup2Mounts(
         "42 31 0:37 /user.slice /sys/fs/cgroup/user\\040mount rw - cgroup2 cgroup2 rw\n",
-      ),
+      )[0],
     ).toEqual({ mountPoint: "/sys/fs/cgroup/user mount", root: "/user.slice" });
     expect(
-      AcpSessionRuntime.parseCgroup2Mount("42 31 0:37 / /sys/fs/cgroup rw - tmpfs tmpfs rw\n"),
+      AcpSessionRuntime.parseCgroup2Mounts("42 31 0:37 / /sys/fs/cgroup rw - tmpfs tmpfs rw\n")[0],
     ).toBeUndefined();
     expect(
       AcpSessionRuntime.parseCgroup2Mounts(
