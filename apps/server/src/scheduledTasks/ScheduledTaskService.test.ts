@@ -611,6 +611,7 @@ const makeTurnHarness = (
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: () => Effect.succeed(threadShell(ProjectId.make("project:test"))),
             sendToThread: (input) =>
               Ref.update(firstMessage, (first) => first ?? input.messageId).pipe(
                 Effect.andThen(Queue.offer(dispatched, input.messageId)),
