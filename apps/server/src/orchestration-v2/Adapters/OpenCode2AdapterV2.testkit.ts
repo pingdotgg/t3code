@@ -54,6 +54,10 @@ const operationOf = (
   query: Record<string, unknown>,
   body: unknown,
 ) => {
+  if (method === "GET" && path === "/api/experimental/job")
+    return { type: "imageJobs", input: query };
+  if (method === "GET" && path.startsWith("/api/fs/read/"))
+    return { type: "image.read", input: { path, ...query } };
   const rpc = /^\/api\/rpc\/([^/]+)\/([^/]+)$/.exec(path);
   if (method === "POST" && rpc !== null)
     return {
@@ -176,6 +180,11 @@ const replayHttpClient = (
         }
         // Recorded responses are the raw HTTP bodies; `null` is an empty 204.
         const body = await controller.response(operation.type);
+        if (typeof body === "object" && body !== null && "imageBase64" in body) {
+          return new Response(Buffer.from(String(body.imageBase64), "base64"), {
+            headers: { "content-type": "image/png" },
+          });
+        }
         if (body === "<hang>") return new Promise<Response>(() => {});
         if (typeof body === "object" && body !== null && "status" in body && "body" in body) {
           return new Response(encodeJson(body.body), {
