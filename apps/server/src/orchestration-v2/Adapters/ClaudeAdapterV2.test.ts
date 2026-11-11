@@ -6474,14 +6474,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       changes: ["bypassPermissions", "plan"],
       asks: true,
     },
+    {
+      runtimeMode: "full-access",
+      modelHasAuto: true,
+      changes: ["default", "default"],
+      asks: true,
+      launchArgs: "--permission-mode default",
+      openedMode: "default",
+    },
     // Like the CLI at launch, a model without Auto runs in default, which asks.
     { runtimeMode: "auto", modelHasAuto: false, changes: ["auto", "default", "plan"], asks: true },
   ] as const)(
     "switches $runtimeMode Plan in and out on a process running a background shell (Auto: $modelHasAuto)",
-    ({ runtimeMode, modelHasAuto, changes, asks }) =>
-      Effect.scoped(
+    (scenario) => {
+      const { runtimeMode, modelHasAuto, changes, asks } = scenario;
+      const launchArgs = "launchArgs" in scenario ? scenario.launchArgs : "";
+      return Effect.scoped(
         Effect.gen(function* () {
           const harness = yield* makeWakeHarnessWithOptions({
+            settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
             setPermissionMode: (mode) =>
               mode === "auto" && !modelHasAuto
                 ? Effect.fail(
@@ -6516,7 +6527,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           });
           yield* harness.runtime.startTurn(turn(1, "plan"));
           const originalOptions = harness.getOpenedOptions();
-          assert.equal(originalOptions?.permissionMode, "plan");
+          assert.equal(
+            originalOptions?.permissionMode,
+            "openedMode" in scenario ? scenario.openedMode : "plan",
+          );
           // Leaving Plan for Full access needs the bypass allowance from launch.
           assert.equal(
             originalOptions?.allowDangerouslySkipPermissions,
@@ -6570,7 +6584,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
           ),
         ),
-      ),
+      );
+    },
   );
 
   it.effect("asks for approvals after restoring Claude's own Plan falls back to default", () =>

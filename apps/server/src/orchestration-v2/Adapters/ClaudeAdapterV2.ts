@@ -1710,6 +1710,19 @@ function claudeLiveSelectionFlagSettings(
   };
 }
 
+function claudePermissionModeWithLaunchArgs(
+  permissionMode: PermissionMode,
+  flags: ReturnType<typeof parseCliArgs>["flags"],
+): PermissionMode {
+  return (
+    (flags["permission-mode"] as PermissionMode | null | undefined) ??
+    (flags["dangerously-skip-permissions"] === null ||
+    flags["dangerously-skip-permissions"] === "true"
+      ? "bypassPermissions"
+      : permissionMode)
+  );
+}
+
 // Policy can refuse bypass and some models lack Auto; like the CLI at launch, fall back to
 // default, which asks for every approval and which every process accepts.
 function setClaudeLivePermissionMode(live: ClaudeLiveQueryContext, mode: PermissionMode) {
@@ -1831,17 +1844,19 @@ export function makeClaudeQueryOptions(input: {
   readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
+  const launchFlags =
+    input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
   const {
     // claudeLaunchArgDirectories reads every --add-dir into additionalDirectories.
     "add-dir": _launchArgAddDir,
-    "permission-mode": launchArgPermissionMode,
-    "dangerously-skip-permissions": launchArgSkipPermissions,
+    "permission-mode": _launchArgPermissionMode,
+    "dangerously-skip-permissions": _launchArgSkipPermissions,
     "append-system-prompt": launchArgAppendSystemPrompt,
     "append-system-prompt-file": _launchArgAppendSystemPromptFile,
     // The SDK replaces this flag with options.settings, so it arrives read as sdkSettings.
     settings: _launchArgSettings,
     ...extraArgs
-  } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
+  } = launchFlags;
   // Claude Code overwrites its CLI append text with the SDK's initialize
   // appendSystemPrompt, so launch-argument text has to travel in that value.
   // The CLI puts file text before inline text and trims one trailing newline.
@@ -1890,11 +1905,10 @@ export function makeClaudeQueryOptions(input: {
     // T3 names threads; a supplied title skips Claude's redundant naming request.
     ...(input.title === undefined ? {} : { title: input.title }),
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
-    permissionMode:
-      (launchArgPermissionMode as PermissionMode | null | undefined) ??
-      (launchArgSkipPermissions === null || launchArgSkipPermissions === "true"
-        ? "bypassPermissions"
-        : (input.permissionMode ?? "default")),
+    permissionMode: claudePermissionModeWithLaunchArgs(
+      input.permissionMode ?? "default",
+      launchFlags,
+    ),
     includePartialMessages: true,
     promptSuggestions: input.promptSuggestions === true,
     ...(compiledSelection.effort === undefined
@@ -11306,7 +11320,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (existing.queryPolicy.permissionMode !== queryPolicy.permissionMode) {
               existing.permissionMode = yield* setClaudeLivePermissionMode(
                 existing,
-                queryPolicy.permissionMode,
+                claudePermissionModeWithLaunchArgs(
+                  queryPolicy.permissionMode,
+                  adapterOptions.settings === undefined
+                    ? {}
+                    : parseCliArgs(adapterOptions.settings.launchArgs).flags,
+                ),
               );
               existing.openedPermissionMode = existing.permissionMode;
             }
