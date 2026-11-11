@@ -1,12 +1,17 @@
-import { WorkflowQuestion, type WorkflowRunsSnapshot } from "@t3tools/contracts";
+import { type WorkflowHook, WorkflowQuestion, type WorkflowRunsSnapshot } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import type { WebhookRequest } from "./triggers.ts";
 import type * as WorkflowStore from "./WorkflowStore.ts";
+
+/** Hook ids of workflows start with this; a scheduled task's hook id never does. */
+export const HOOK_PREFIX = "wf-";
 
 export class WorkflowNotRegisteredError extends Schema.TaggedError<WorkflowNotRegisteredError>()(
   "WorkflowNotRegisteredError",
@@ -80,6 +85,18 @@ export class Workflows extends Context.Service<
     ) => Effect.Effect<WorkflowStore.WorkflowRun>;
     /** The questions runs are waiting on a person to answer, oldest first. */
     readonly questions: Effect.Effect<ReadonlyArray<WorkflowQuestion>>;
+    /** The hook URLs of the registered workflows. */
+    readonly hooks: Effect.Effect<ReadonlyArray<WorkflowHook>>;
+    /**
+     * Start the run a request to a hook asks for. Nothing, for a hook or token that is not known.
+     * `deliveryId` names the delivery when its carrier vouches for one, so its retry is one run.
+     */
+    readonly deliver: (delivery: {
+      readonly hookId: string;
+      readonly token: string;
+      readonly request: WebhookRequest;
+      readonly deliveryId?: string;
+    }) => Effect.Effect<Option.Option<{ readonly runId: string }>, WorkflowError>;
     /** Recent runs and open questions, now and again after every change. */
     readonly watch: Stream.Stream<WorkflowRunsSnapshot>;
     /**
@@ -114,6 +131,10 @@ export const layerDisabled = Layer.succeed(
       return yield* Effect.never;
     }),
     questions: Effect.succeed([]),
+    hooks: Effect.succeed([]),
+    deliver: Effect.fn("Workflows.deliver")(function* () {
+      return yield* Effect.succeed(Option.none<{ readonly runId: string }>());
+    }),
     watch: Stream.concat(Stream.make({ runs: [], questions: [] }), Stream.never),
     sweep: Effect.void,
   }),

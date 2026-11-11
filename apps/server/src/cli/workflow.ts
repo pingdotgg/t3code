@@ -1,3 +1,4 @@
+import { WorkflowHook } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -19,6 +20,7 @@ import {
 const RunResult = Schema.Struct({ run: WorkflowRun, steps: Schema.Array(WorkflowStep) });
 const RunsResult = Schema.Struct({ runs: Schema.Array(WorkflowRun) });
 const QuestionsResult = Schema.Struct({ questions: Schema.Array(Workflows.WorkflowQuestion) });
+const HooksResult = Schema.Struct({ hooks: Schema.Array(WorkflowHook) });
 const SignalResult = Schema.Struct({ delivery: Schema.Literals(["delivered", "buffered"]) });
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json));
@@ -204,6 +206,27 @@ const questionsCommand = Command.make("questions", {
   ),
 );
 
+const hooksCommand = Command.make("hooks", {
+  ...projectLocationFlags,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "List the URL paths that start runs. Each holds its hook's secret; add the server's origin.",
+  ),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.workflow.hooks")(function* (tools) {
+        const { hooks } = yield* tools.call("t3_workflow", { action: "hooks" }, HooksResult);
+        if (flags.json) return yield* printJson(hooks);
+        for (const hook of hooks) {
+          yield* Console.log(`${hook.workflow}  ${hook.name}  ${hook.path}`);
+        }
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
 export const workflowCommand = Command.make("workflow").pipe(
   Command.withDescription("Start, inspect and steer durable workflow runs on the running server."),
   Command.withSubcommands([
@@ -214,5 +237,6 @@ export const workflowCommand = Command.make("workflow").pipe(
     runCommand("cancel", "cancel", "Cancel a run."),
     signalCommand,
     questionsCommand,
+    hooksCommand,
   ]),
 );

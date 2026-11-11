@@ -14,9 +14,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { sleep, step, stop, title, wait, workflow } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import Migration0092 from "../persistence/Migrations/092_Workflows.ts";
+import Migration0093 from "../persistence/Migrations/093_WorkflowTriggers.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
@@ -169,17 +171,40 @@ const fakeAgents = () => {
   };
 };
 
+const triggered = [
+  workflow(
+    "nightly",
+    { version: 1, payload: Tick, returns: Schema.String, triggers: [every("1 hour")] },
+    (tick) => Effect.succeed(tick.scheduledAt),
+  ),
+  workflow(
+    "morning",
+    { version: 1, payload: Tick, triggers: [daily("09:00", { weekdays: [1, 2, 3, 4, 5] })] },
+    () => Effect.void,
+  ),
+  workflow(
+    "inbound",
+    {
+      version: 1,
+      payload: WebhookRequest,
+      returns: Schema.String,
+      triggers: [webhook("push", { key: (request) => request.headers["x-delivery"] })],
+    },
+    (request) => (request.body === "ping" ? stop("only a ping") : Effect.succeed(request.body)),
+  ),
+];
+
 const harness = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflows-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-  yield* Effect.provide(Migration0092, database);
+  yield* Effect.provide(Effect.andThen(Migration0092, Migration0093), database);
   const counts = yield* Ref.make<Record<string, number>>({});
   const failures = yield* Ref.make(0);
   // One database file, so a second engine built from it is the server after a restart.
   const agents = fakeAgents();
-  const engine = WorkflowEngine.layer([...definitions(counts, failures), fix]).pipe(
+  const engine = WorkflowEngine.layer([...definitions(counts, failures), fix, ...triggered]).pipe(
     Layer.provide(Layer.succeed(WorkflowAgents, agents.service)),
     Layer.provide(database),
     Layer.provide(NodeCrypto.layer),
@@ -573,6 +598,84 @@ it.effect("a watcher is sent the runs again when one changes", () =>
           Option.getOrThrow(seen).runs.map((run) => run.runId),
           [runId],
         );
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "a schedule starts one run when it is due, and one for all the times a restart missed",
+  () =>
+    Effect.gen(function* () {
+      const { boot } = yield* harness;
+      const nightly = (workflows: Workflows.Workflows["Service"]) =>
+        Effect.map(workflows.list(), (runs) => runs.filter((run) => run.workflow === "nightly"));
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          // The first look only notes when it is next due.
+          yield* workflows.sweep;
+          assert.deepStrictEqual(yield* nightly(workflows), []);
+          yield* TestClock.adjust("61 minutes");
+          yield* workflows.sweep;
+          yield* workflows.sweep;
+          const [run] = yield* nightly(workflows);
+          assert.equal((yield* nightly(workflows)).length, 1);
+          const done = yield* workflows.waitFor(run!.runId, status("completed"));
+          assert.match(String(done.result), /^1970-01-01T01:/);
+        }),
+      );
+      yield* TestClock.adjust("3 hours");
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          yield* workflows.sweep;
+          yield* workflows.sweep;
+          assert.equal((yield* nightly(workflows)).length, 2);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a request to a hook starts a run, its retry is the same run, and a bad token none", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness;
+    const request = (body: string, delivery: string) => ({
+      method: "POST",
+      headers: { "x-delivery": delivery },
+      query: "",
+      body,
+    });
+    const token = yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const [hook] = yield* workflows.hooks;
+        assert.equal(hook?.workflow, "inbound");
+        const [hookId, token] = hook!.path.split("/").slice(-2).map(decodeURIComponent);
+        const deliver = (body: string, delivery: string, withToken = token!) =>
+          workflows.deliver({
+            hookId: hookId!,
+            token: withToken,
+            request: request(body, delivery),
+          });
+
+        assert.isTrue(Option.isNone(yield* deliver("hello", "d1", "not the token")));
+        const first = Option.getOrThrow(yield* deliver("hello", "d1"));
+        assert.deepStrictEqual(Option.getOrThrow(yield* deliver("hello", "d1")), first);
+        const done = yield* workflows.waitFor(first.runId, status("completed"));
+        assert.equal(done.result, "hello");
+
+        const ping = Option.getOrThrow(yield* deliver("ping", "d2"));
+        const stopped = yield* workflows.waitFor(ping.runId, status("stopped"));
+        assert.equal(stopped.detail, "only a ping");
+        return token;
+      }),
+    );
+    // The URL a sender was given still works after a restart.
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        assert.isTrue((yield* workflows.hooks)[0]?.path.endsWith(`/${token}`));
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

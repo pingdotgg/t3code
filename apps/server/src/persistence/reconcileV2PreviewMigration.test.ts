@@ -72,6 +72,7 @@ describe("V2 preview upgrade", () => {
         [90, "AuthConnectDevices"],
         [91, "AuthConnectDeniedRequests"],
         [92, "Workflows"],
+        [93, "WorkflowTriggers"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -187,6 +188,7 @@ describe("V2 preview upgrade", () => {
         [90, "AuthConnectDevices"],
         [91, "AuthConnectDeniedRequests"],
         [92, "Workflows"],
+        [93, "WorkflowTriggers"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

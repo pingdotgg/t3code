@@ -13,6 +13,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Activity, DurableClock, DurableDeferred, Workflow, WorkflowEngine } from "effect/workflow";
 
 import { checkOutput } from "../orchestration-v2/runOutput.ts";
+import type { ScheduleTrigger, Trigger, WebhookTrigger } from "./triggers.ts";
 import type { WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
@@ -289,6 +290,7 @@ export interface WorkflowDefinition {
   readonly returns: Schema.Codec<unknown, unknown>;
   /** How long a paused run rests before it is resumed by itself, per pause in a row. */
   readonly resumeAfter: ReadonlyArray<Duration.Input>;
+  readonly triggers: ReadonlyArray<ScheduleTrigger | WebhookTrigger>;
   // The registry holds workflows of every payload type; `workflow` is where the types are checked.
   readonly body: (
     payload: never,
@@ -316,6 +318,8 @@ export const workflow = <P, PI, A = void, AI = void>(
     readonly payload: Schema.Codec<P, PI>;
     readonly returns?: Schema.Codec<A, AI>;
     readonly resumeAfter?: ReadonlyArray<Duration.Input>;
+    /** What starts a run by itself. Each must give what `payload` takes. */
+    readonly triggers?: ReadonlyArray<Trigger<P>>;
   },
   body: (
     payload: P,
@@ -328,6 +332,7 @@ export const workflow = <P, PI, A = void, AI = void>(
   payload: options.payload as Schema.Codec<unknown, unknown>,
   returns: (options.returns ?? Schema.Void) as Schema.Codec<unknown, unknown>,
   resumeAfter: options.resumeAfter ?? DEFAULT_RESUME_AFTER,
+  triggers: options.triggers ?? [],
   body,
 });
 
