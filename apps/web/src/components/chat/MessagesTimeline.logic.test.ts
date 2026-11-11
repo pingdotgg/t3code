@@ -32,6 +32,7 @@ import {
   shouldCollapseUserMessage,
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
+  type TimelineLatestRun,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
 
@@ -4479,7 +4480,16 @@ describe("live subagents after their parent turn settles", () => {
     prompt: `Inspect ${id}`,
     result: null,
   });
-  const rowsFor = (children: ReadonlyArray<OrchestrationV2TurnItem>) =>
+  const rowsFor = (
+    children: ReadonlyArray<OrchestrationV2TurnItem>,
+    afterReply: ReadonlyArray<OrchestrationV2TurnItem> = [],
+    latestRun: TimelineLatestRun = {
+      runId,
+      status: "completed",
+      startedAt: DateTime.formatIso(at(0)),
+      completedAt: DateTime.formatIso(at(8)),
+    },
+  ) =>
     deriveMessagesTimelineRows({
       timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
         visibleTurnItems: (
@@ -4519,16 +4529,12 @@ describe("live subagents after their parent turn settles", () => {
               text: "Both children are running.",
               streaming: false,
             },
+            ...afterReply,
           ] satisfies OrchestrationV2TurnItem[]
         ).map(projected),
         optimisticMessages: [],
       }),
-      latestRun: {
-        runId,
-        status: "completed",
-        startedAt: DateTime.formatIso(at(0)),
-        completedAt: DateTime.formatIso(at(8)),
-      },
+      latestRun,
       isWorking: false,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
@@ -4546,6 +4552,19 @@ describe("live subagents after their parent turn settles", () => {
       ]);
     },
   );
+
+  it("keeps the turn's duration when a background child delegates after it settles", () => {
+    // The child's completion woke a later run, so this run's duration comes from its entries.
+    const rows = rowsFor([], [child("late", 50, "completed")], {
+      runId: RunId.make("wake-run"),
+      status: "completed",
+      startedAt: DateTime.formatIso(at(55)),
+      completedAt: DateTime.formatIso(at(58)),
+    });
+    expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({
+      label: "Worked for 8s",
+    });
+  });
 
   it("keeps a launch batch visible while any member is still running", () => {
     const rows = rowsFor([child("done", 3, "completed"), child("live", 4, "running")]);
