@@ -1,5 +1,4 @@
-// Production builds fold this condition to false before Metro collects
-// dependencies, so the counter module never enters a release bundle.
+// Metro folds this condition before collecting dependencies, excluding the counter from release bundles.
 if (__DEV__ && process.env.EXPO_PUBLIC_T3_RENDER_COUNTER === "1") {
   require("./render-counter");
 }

@@ -12,9 +12,10 @@
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { PlatformServices } from "../../Platform.ts";
 import * as Docker from "../Docker.ts";
 import * as Globals from "../globals/Globals.ts";
 import * as Internet from "../globals/Internet.ts";
@@ -26,11 +27,7 @@ import * as Runtime from "../Runtime.ts";
 import * as RuntimeServices from "../RuntimeServices.ts";
 import type { BindingHooks } from "../RuntimeWorker.ts";
 import * as Workerd from "../workerd/Workerd.ts";
-import { PlatformServices } from "../../Platform.ts";
-import type {
-  PlatformProxyInstance,
-  PlatformProxyOptions,
-} from "./PlatformProxy.ts";
+import type { PlatformProxyInstance, PlatformProxyOptions } from "./PlatformProxy.ts";
 import { open } from "./PlatformProxy.ts";
 
 export interface GetPlatformProxyOptions<
@@ -57,9 +54,7 @@ export interface GetPlatformProxyOptions<
   readonly services?: Context.Context<RuntimeServices.RuntimeServices>;
 }
 
-export interface PlatformProxy<
-  Env = Record<string, unknown>,
-> extends PlatformProxyInstance<Env> {
+export interface PlatformProxy<Env = Record<string, unknown>> extends PlatformProxyInstance<Env> {
   /** Tear down the workerd instance. Safe to call multiple times. */
   readonly dispose: () => Promise<void>;
 }
@@ -126,9 +121,11 @@ export const getPlatformProxy = async <
     // `open` consumes.
     const context: Context.Context<RuntimeServices.RuntimeServices> =
       options.services ??
-      ((await Effect.runPromise(
-        Layer.build(makeLayer(options.persist)).pipe(Scope.provide(scope)),
+      ((await Layer.build(makeLayer(options.persist)).pipe(
+        Scope.provide(scope),
+        Effect.runPromise,
       )) as Context.Context<RuntimeServices.RuntimeServices>);
+    // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- services context is built from the layer above
     const effect = open<B, Env>(options).pipe(
       Effect.provideContext(context),
       Scope.provide(scope),
@@ -146,7 +143,5 @@ export const getPlatformProxy = async <
 };
 
 const closeScope = async (scope: Scope.Closeable): Promise<void> => {
-  await Effect.runPromiseExit(
-    Scope.closeUnsafe(scope, Exit.void) ?? Effect.void,
-  );
+  await Effect.runPromiseExit(Scope.closeUnsafe(scope, Exit.void) ?? Effect.void);
 };

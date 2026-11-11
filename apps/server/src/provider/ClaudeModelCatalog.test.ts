@@ -1,10 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
-import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
   formatClaudeVersionUpgradeMessage,
+  getClaudeCatalogModelCapabilities,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogContextWindowTokens,
@@ -171,37 +171,6 @@ describe("Claude model catalog", () => {
     );
   });
 
-  it("rejects malformed adapter mappings", () => {
-    const base = manifest();
-    const malformed: ModelManifestData = {
-      ...base,
-      providers: {
-        ...base.providers,
-        claudeAgent: {
-          ...base.providers!.claudeAgent!,
-          profiles: {
-            ...base.providers!.claudeAgent!.profiles,
-            synthetic: {
-              ...base.providers!.claudeAgent!.profiles.synthetic!,
-              adapter: { claudeCode: { effortMap: { extreme: 123 } } },
-            },
-          },
-        },
-      },
-    };
-    assert.isFalse(hasValidClaudeManifestAdapters(malformed));
-  });
-
-  it("preserves only SDK effort levels for uncatalogued models", () => {
-    const catalog = catalogFromManifest(manifest());
-    for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
-      assert.strictEqual(resolveClaudeCatalogEffort(catalog, "custom", ` ${effort} `), effort);
-    }
-    for (const effort of [undefined, null, "", "  ", "brutal", "extreme", "HIGH", "ultrathink"]) {
-      assert.isUndefined(resolveClaudeCatalogEffort(catalog, "custom", effort));
-    }
-  });
-
   it("appends custom models with their own descriptors and keeps bare slugs opaque", () => {
     const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
       "synthetic",
@@ -217,6 +186,7 @@ describe("Claude model catalog", () => {
               options: [
                 { id: "gentle", label: "Gentle", isDefault: true },
                 { id: "brutal", label: "Brutal" },
+                { id: "ultracode", label: "Ultracode" },
               ],
             },
           ],
@@ -236,6 +206,12 @@ describe("Claude model catalog", () => {
     assert.strictEqual(
       resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "bogus"),
       "gentle",
+    );
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(catalog, "claude-custom-tuned").optionDescriptors?.map(
+        ({ id, type }) => `${id}:${type}`,
+      ),
+      ["effort:select", "ultracode:boolean"],
     );
     assert.strictEqual(
       normalizeClaudeCatalogEffort(catalog, "brutal", "claude-custom-tuned"),

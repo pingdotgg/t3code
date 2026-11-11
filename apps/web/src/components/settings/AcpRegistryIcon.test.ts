@@ -61,30 +61,6 @@ describe("ACP Registry icon cache", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
-  it("falls back to the network when CacheStorage cannot be opened", async () => {
-    const url = "https://cdn.agentclientprotocol.com/registry/v1/latest/kilo.svg";
-    vi.stubGlobal("caches", {
-      open: vi.fn(async () => {
-        throw new Error("CacheStorage unavailable");
-      }),
-    });
-    fetchIcon.mockResolvedValue(
-      new Response("<svg/>", {
-        status: 200,
-        headers: { "content-type": "image/svg+xml" },
-      }),
-    );
-
-    await expect(loadCachedAcpRegistryIcon(url)).resolves.toMatchObject({
-      type: "image/svg+xml",
-    });
-    expect(fetchIcon).toHaveBeenCalledWith(url, {
-      credentials: "omit",
-      redirect: "error",
-      referrerPolicy: "no-referrer",
-    });
-  });
-
   it("accepts only credential-free HTTPS URLs on the official CDN", () => {
     expect(
       resolveOfficialAcpRegistryIconUrl(

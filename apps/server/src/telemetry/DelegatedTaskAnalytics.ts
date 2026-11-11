@@ -1,14 +1,10 @@
 /**
- * Records one anonymous `mcp.delegated_task.finished` event when an app-owned
- * delegated task reaches a final status, so we can see whether delegation
- * between providers actually completes. The event carries the parent and child
- * provider and model, the final status, and the child's runtime in seconds.
+ * Record one anonymous `mcp.delegated_task.finished` event per app-owned task reaching final status.
  *
  * @module DelegatedTaskAnalytics
  */
 import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -28,11 +24,6 @@ const FINAL_STATUSES: ReadonlySet<string> = new Set([
   "interrupted",
 ]);
 
-export class DelegatedTaskAnalytics extends Context.Service<
-  DelegatedTaskAnalytics,
-  { readonly onSubagent: (event: SubagentEvent) => Effect.Effect<void> }
->()("t3/telemetry/DelegatedTaskAnalytics") {}
-
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const analytics = yield* AnalyticsService.AnalyticsService;
@@ -40,8 +31,9 @@ const make = Effect.gen(function* () {
   // A task can be re-reported with the same final status; count it once per process.
   const reported = new Set<string>();
 
-  const onSubagent = (event: SubagentEvent) =>
-    Effect.gen(function* () {
+  // Runs for every subagent update; most return early, so avoid a span per event.
+  const onSubagent = Effect.fnUntraced(
+    function* (event: SubagentEvent) {
       const task = event.payload;
       if (task.origin !== "app_owned" || !FINAL_STATUSES.has(task.status)) return;
       if (reported.has(task.id)) return;
@@ -79,15 +71,15 @@ const make = Effect.gen(function* () {
       });
       // Only after recording: a failed lookup leaves the next final update to report it.
       reported.add(task.id);
-    }).pipe(Effect.ignoreCause);
+    },
+    (effect) => effect.pipe(Effect.ignoreCause),
+  );
 
   yield* forkParked(
     Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
       event.type === "subagent.updated" ? onSubagent(event) : Effect.void,
     ),
   );
-
-  return DelegatedTaskAnalytics.of({ onSubagent });
 });
 
-export const layer = Layer.effect(DelegatedTaskAnalytics, make);
+export const layer = Layer.effectDiscard(make);

@@ -3,6 +3,8 @@ import type {
   UsageBucket,
   UsageCategoryCost,
   UsageDay,
+  UsageModelFilter,
+  UsageModelSelector,
   UsageResolution,
   UsageTokenTotals,
 } from "@t3tools/contracts";
@@ -10,10 +12,7 @@ import type {
 import { EMPTY_TOTALS, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
 
-/**
- * `en-CA` yields ISO-ordered parts, which is why it is used here rather than
- * assembling the day from `Date` getters (those are host-local only).
- */
+// en-CA gives ISO-ordered parts in the requested zone; Date getters are host-local.
 function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
   let format: Intl.DateTimeFormat;
   try {
@@ -31,10 +30,7 @@ function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
       day: "2-digit",
     });
   }
-  // Formatting once per quarter-hour slot keeps `Intl` (about 2µs a call) off
-  // the per-record path. Named zones put midnight on a quarter hour, so their
-  // slots never split; a fixed offset such as `+00:01` can, and records in a
-  // split slot are formatted exactly.
+  // Cache quarter-hour slots to avoid per-record Intl calls; fixed-offset midnight can split slots and needs exact formatting.
   const days = new Map<number, string | null>();
   return (timestampMs) => {
     const slot = Math.floor(timestampMs / QUARTER_HOUR_MS);
@@ -73,6 +69,7 @@ export interface AggregateOptions {
   readonly rates: RateTable;
   readonly priceOverrides?: RateTable;
   readonly modelAliases?: ReadonlyMap<string, string>;
+  readonly modelFilter?: UsageModelFilter;
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
@@ -94,6 +91,38 @@ export function resolveModelAliases(
   return resolved;
 }
 
+/** Matches original IDs, so an alias cannot pull excluded usage into a kept model. */
+function keepsUsageRecord(filter: UsageModelFilter | undefined, record: UsageRecord): boolean {
+  if (filter === undefined) return true;
+  const model = record.model.trim();
+  const matches = (selector: UsageModelSelector) =>
+    selector.model === model &&
+    (selector.provider === undefined || selector.provider === record.provider);
+  return (filter.include?.some(matches) ?? true) && !(filter.exclude?.some(matches) ?? false);
+}
+
+const selectorKey = (selector: UsageModelSelector) =>
+  JSON.stringify([selector.provider ?? null, selector.model]);
+
+const canonicalSelectors = (selectors: readonly UsageModelSelector[]) =>
+  [...new Map(selectors.map((selector) => [selectorKey(selector), selector]))]
+    // Code-unit order, so servers in different locales echo the same form.
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([, selector]) => selector);
+
+/** Equal filters get one form, so they share scans and clients can compare echoed filters. */
+export function canonicalModelFilter(
+  filter: UsageModelFilter | undefined,
+): UsageModelFilter | undefined {
+  if (filter === undefined) return undefined;
+  const exclude = filter.exclude?.length ? canonicalSelectors(filter.exclude) : undefined;
+  if (filter.include === undefined && exclude === undefined) return undefined;
+  return {
+    ...(filter.include === undefined ? {} : { include: canonicalSelectors(filter.include) }),
+    ...(exclude === undefined ? {} : { exclude }),
+  };
+}
+
 export interface AggregateResult {
   readonly buckets: readonly UsageBucket[];
   readonly duplicatesDropped: number;
@@ -101,9 +130,8 @@ export interface AggregateResult {
 }
 
 /**
- * Partial copies share a billed message's key. Keep each token channel's maximum
- * and the larger reported cost; retain the first copy's time, model, session
- * and speed so usage stays in its original bucket.
+ * Partial copies share a billed message's key: keep each token channel's maximum and the larger
+ * reported cost, and the first copy's time, model, session and speed so it stays in its bucket.
  */
 export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRecord {
   const a = held.totals;
@@ -141,10 +169,7 @@ interface Contribution {
   readonly bucket: MutableBucket | null;
 }
 
-/**
- * Claude Code copies messages across resumed and forked transcripts. Keep each
- * key across the whole scan so a richer copy updates the original contribution.
- */
+/** Deduplicates across the whole scan; Claude copies records into resumed/forked transcripts. */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
   readonly #seen = new Map<string, Contribution>();
@@ -179,6 +204,7 @@ export class UsageAggregator {
   }
 
   add(input: UsageRecord, sourcePath?: string): boolean {
+    if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
       const held = this.#seen.get(record.dedupeKey);
@@ -195,7 +221,7 @@ export class UsageAggregator {
       this.#outOfWindow += 1;
       return false;
     }
-    // Keyed usage is counted in finish(), once its copies are merged.
+    // Keyed usage is counted in finish(), once all its copies are merged.
     if (record.dedupeKey === null) this.#accumulate(bucket, record);
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     return true;
@@ -261,7 +287,7 @@ export class UsageAggregator {
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
   }
 
-  /** The target's own rate applies, so a provider-specific `rateModel` is dropped. */
+  // Aliases use the target's rate, replacing provider-specific rateModel.
   #mapModel(record: UsageRecord): UsageRecord {
     const model = this.#options.modelAliases?.get(record.model);
     if (model === undefined) return record;
@@ -269,11 +295,7 @@ export class UsageAggregator {
     return { ...rest, model };
   }
 
-  /**
-   * Records arrive file by file in time order, so most land in the bucket the
-   * previous record used. Checking that first skips building and hashing a
-   * key string per record.
-   */
+  // Time-ordered records usually reuse the previous bucket; avoid rebuilding its key.
   #bucketFor(
     day: string,
     hourIndex: number,
@@ -318,19 +340,12 @@ export class UsageAggregator {
   }
 
   finish(): AggregateResult {
-    // Accumulate into snapshots so repeated finish() calls do not count keys again.
-    const snapshots = new Map(
-      Array.from(this.#buckets.values(), (bucket) => [
-        bucket,
-        { ...bucket, totals: { ...bucket.totals } },
-      ]),
-    );
     for (const { record, bucket } of this.#seen.values()) {
-      if (bucket !== null) this.#accumulate(snapshots.get(bucket)!, record);
+      if (bucket !== null) this.#accumulate(bucket, record);
     }
+    this.#seen.clear();
     const buckets: UsageBucket[] = [];
-    for (const [key, original] of this.#buckets) {
-      const bucket = snapshots.get(original)!;
+    for (const [key, bucket] of this.#buckets) {
       const [day = "", hourStart = "", provider = "", model = "", sourcePath = ""] =
         key.split("\u0000");
       const category = bucket.categoryCostUsd;
