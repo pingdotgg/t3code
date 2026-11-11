@@ -1,12 +1,14 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -16,6 +18,7 @@ import { parseSshResolveOutput, remoteStateKey, runSshCommand } from "./command.
 import { SshCommandError } from "./errors.ts";
 
 const encoder = new TextEncoder();
+const isSshCommandError = Schema.is(SshCommandError);
 
 const makeFailedProcess = (input: { readonly stdout: string; readonly stderr?: string }) => {
   const stdoutStream = Stream.make(encoder.encode(input.stdout));
@@ -255,5 +258,62 @@ describe("ssh command", () => {
       yield* Fiber.join(fiber);
       assert.deepEqual(reported, expected);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer())));
+  });
+
+  const changedKeyStderr =
+    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n" +
+    "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\r\n" +
+    "  ssh-keygen -f '/home/me/.ssh/known_hosts' -R 'devbox'\r\n" +
+    "Host key verification failed.\r\n";
+
+  it.effect.each([
+    {
+      name: "quotes the terminal command for a POSIX shell",
+      target: { alias: "my host", username: "o'brien" },
+      platform: "linux",
+      stderr: "Host key verification failed.\r\n",
+      expected: ["`ssh 'o'\\''brien@my host'`"],
+    },
+    {
+      name: "quotes the terminal command for a Windows shell",
+      target: { alias: "my host", username: "me" },
+      platform: "win32",
+      stderr: "Host key verification failed.\r\n",
+      expected: ['`ssh "me@my host"`'],
+    },
+    {
+      name: "keeps an option-shaped alias out of the option list",
+      target: { alias: "-oProxyCommand=false", username: null },
+      platform: "linux",
+      stderr: "Host key verification failed.\r\n",
+      expected: ["`ssh -- -oProxyCommand=false`"],
+    },
+    {
+      name: "tells the user to remove a changed host key first",
+      target: { alias: "devbox", username: null },
+      platform: "linux",
+      stderr: changedKeyStderr,
+      expected: ["has changed", "`ssh-keygen -R`", "`ssh devbox`", "-R 'devbox'"],
+    },
+  ] as const)("$name", ({ target, platform, stderr, expected }) => {
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(makeFailedProcess({ stdout: "", stderr })),
+    );
+    return runSshCommand({ ...target, hostname: "devbox", port: null }).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        assert.isTrue(isSshCommandError(error));
+        for (const text of expected) assert.include(error.message, text);
+        if (isSshCommandError(error)) assert.equal(error.stderr, stderr);
+      }),
+      Effect.provideService(HostProcess.Platform, platform),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
   });
 });
