@@ -74,16 +74,21 @@ const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
   "running",
   "waiting",
 ]);
-const HOST_SUSPEND_GRACE_MS = 60 * 1000;
+const AWAKE_SLICE_MS = 60 * 1000;
+const SUSPEND_TOLERANCE_MS = 10 * 1000;
 
-// Where the timer clock counts host sleep, a timer fires on wake far past due. The monotonic clock is
-// that same clock, so an overshoot past the grace means the host slept and the wait restarts; where
-// both pause, it never restarts. Untraced: every provider event re-arms the idle timer.
+// Where the timer clock counts host sleep, a timer fires on wake far past due. Waiting in short slices
+// and dropping any slice that overran its tolerance keeps suspended time out of the count, whatever its
+// length. Where both clocks pause, no slice overruns. Untraced: every provider event re-arms the timer.
 const sleepWhileAwake = Effect.fnUntraced(function* (ms: number): Effect.fn.Return<void> {
-  const startedAtNanos = yield* Clock.monotonicTimeNanos;
-  yield* Effect.sleep(Duration.millis(ms));
-  const elapsedMs = Number((yield* Clock.monotonicTimeNanos) - startedAtNanos) / 1_000_000;
-  if (elapsedMs > ms + HOST_SUSPEND_GRACE_MS) return yield* sleepWhileAwake(ms);
+  let remainingMs = ms;
+  while (remainingMs > 0) {
+    const sliceMs = Math.min(remainingMs, AWAKE_SLICE_MS);
+    const startedAtNanos = yield* Clock.monotonicTimeNanos;
+    yield* Effect.sleep(Duration.millis(sliceMs));
+    const elapsedMs = Number((yield* Clock.monotonicTimeNanos) - startedAtNanos) / 1_000_000;
+    if (elapsedMs <= sliceMs + SUSPEND_TOLERANCE_MS) remainingMs -= sliceMs;
+  }
 });
 
 export const ProviderSessionReleaseReason = Schema.Literals([

@@ -3076,10 +3076,13 @@ it.effect(
     }),
 );
 
-// Models the idle timer's view of two hours of host sleep, five awake minutes after open.
-// Libuv's clock keeps counting while Windows and macOS sleep, so the timer fires on resume far past
-// its due time; Linux pauses the timer and the monotonic clock while only wall time jumps.
-const idleAcrossHostSleep = (input: { readonly timerCountsSleep: boolean }) =>
+// Models the idle timer's view of host sleep starting awakeMs after open. Where the timer clock counts
+// sleep, the timer fires on resume far past its due time; where it pauses, only wall time jumps.
+const idleAcrossHostSleep = (input: {
+  readonly timerCountsSleep: boolean;
+  readonly awakeMs: number;
+  readonly sleepMs: number;
+}) =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const testClock = yield* TestClock.testClockWith(Effect.succeed);
@@ -3112,10 +3115,11 @@ const idleAcrossHostSleep = (input: { readonly timerCountsSleep: boolean }) =>
       });
       yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
 
-      yield* TestClock.adjust("5 minutes");
-      // A counting timer spends 25 of the two hours reaching its due time, then fires on resume.
-      sleptMs = input.timerCountsSleep ? 2 * 60 * 60_000 - 25 * 60_000 : 2 * 60 * 60_000;
-      yield* TestClock.adjust("25 minutes");
+      const untilDeadlineMs = 30 * 60_000 - input.awakeMs;
+      yield* TestClock.adjust(input.awakeMs);
+      // A counting timer spends part of the sleep reaching its due time, then fires on resume.
+      sleptMs = input.timerCountsSleep ? input.sleepMs - untilDeadlineMs : input.sleepMs;
+      yield* TestClock.adjust(untilDeadlineMs);
       yield* Effect.yieldNow;
       const releasedAtFirstDeadline = !(yield* manager.isLive(providerSessionId));
       const closeCountAtFirstDeadline = (yield* Ref.get(state)).closeCount;
@@ -3139,14 +3143,20 @@ const idleAcrossHostSleep = (input: { readonly timerCountsSleep: boolean }) =>
 // regression: #11805 sessions were released right after the computer woke from sleep
 it.effect("ProviderSessionManagerV2 does not count host sleep toward the idle timeout", () =>
   Effect.gen(function* () {
-    const result = yield* idleAcrossHostSleep({ timerCountsSleep: true });
-    assert.isFalse(
-      result.releasedAtFirstDeadline,
-      "session was idle-released on resume after only 5 awake minutes of a 30 minute timeout",
-    );
-    assert.equal(result.closeCountAtFirstDeadline, 0);
-    assert.isTrue(result.releasedAtSecondDeadline);
-    assert.equal(result.closeCountAtSecondDeadline, 1);
+    for (const { awakeMs, sleepMs } of [
+      { awakeMs: 5 * 60_000, sleepMs: 2 * 60 * 60_000 },
+      // Overshoots the deadline by under a minute, so deadline lateness alone misses it.
+      { awakeMs: 1_000, sleepMs: 30 * 60_000 + 30_000 },
+    ]) {
+      const result = yield* idleAcrossHostSleep({ timerCountsSleep: true, awakeMs, sleepMs });
+      assert.isFalse(
+        result.releasedAtFirstDeadline,
+        `session was idle-released on resume after ${awakeMs} awake ms and ${sleepMs} ms asleep`,
+      );
+      assert.equal(result.closeCountAtFirstDeadline, 0);
+      assert.isTrue(result.releasedAtSecondDeadline);
+      assert.equal(result.closeCountAtSecondDeadline, 1);
+    }
   }),
 );
 
@@ -3154,7 +3164,11 @@ it.effect(
   "ProviderSessionManagerV2 releases on time when the idle timer already paused during host sleep",
   () =>
     Effect.gen(function* () {
-      const result = yield* idleAcrossHostSleep({ timerCountsSleep: false });
+      const result = yield* idleAcrossHostSleep({
+        timerCountsSleep: false,
+        awakeMs: 5 * 60_000,
+        sleepMs: 2 * 60 * 60_000,
+      });
       assert.isTrue(
         result.releasedAtFirstDeadline,
         "session outlived its 30 awake idle minutes because wall time jumped during sleep",
