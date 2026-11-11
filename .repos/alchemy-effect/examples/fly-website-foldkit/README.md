@@ -4,7 +4,7 @@ Deploys a [Foldkit](https://foldkit.dev) site to Fly with
 `Fly.Website.Foldkit` — no adapter setup in the project config.
 
 Hashed assets publish with a Fly Service that serves the SPA shell.
-Foldkit apps are client-only Vite projects, so the deploy is assets-only.
+This example is a client-only Foldkit app, so the deploy is assets-only.
 
 - `src/main.ts` holds the Elm-architecture model/update/view.
 - `src/components/Card.ts` is a view function styled with Tailwind utilities.
@@ -36,7 +36,7 @@ input files are content-hashed (scoped by `memo.include`).
 bun run dev
 ```
 
-`alchemy dev` runs the framework's own dev server (HMR included) and
+`alchemy dev` runs the framework's own dev server (Foldkit's live reload included) and
 no cloud resources are created.
 
 ## Destroy

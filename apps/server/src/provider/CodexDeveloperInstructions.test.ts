@@ -40,7 +40,7 @@ describe("Codex runtime context", () => {
       });
       NodeAssert.match(
         instructions,
-        /<runtime_info>.*embed images, video, and audio.*Markdown image syntax with absolute file paths.*Link any other file.*absolute path.*files viewer.*<\/runtime_info>/,
+        /<runtime_info>.*embed images, video, and audio.*Markdown image syntax with absolute file paths.*Link every other file you cite or produce by its absolute path.*files viewer.*<\/runtime_info>/,
       );
     }
   });
@@ -65,7 +65,10 @@ describe("Codex orchestration context", () => {
 
     NodeAssert.ok(orchestration.includes("use your native tool when the child uses your provider"));
     NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
-    NodeAssert.ok(orchestration.includes("A native type running another provider's model"));
+    NodeAssert.ok(orchestration.includes("A native type on another provider's model"));
+    NodeAssert.ok(
+      orchestration.includes("Background agent: `delegate_task`, never a background `Agent`."),
+    );
     NodeAssert.ok(
       orchestration.includes("Every new delegate review or re-check is a new `delegate_task`"),
     );

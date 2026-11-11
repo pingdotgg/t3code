@@ -2,6 +2,11 @@
   "name": "railway-website-solidstart",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/railway-website-solidstart"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -10,6 +15,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/railway": "workspace:*",
     "@solidjs/router": "catalog:",
     "@solidjs/start": "catalog:",
     "@solidjs/vite-plugin-nitro-2": "catalog:",
@@ -19,6 +25,7 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/railway": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@tailwindcss/vite": "catalog:",
@@ -28,10 +35,5 @@
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/railway-website-solidstart"
   }
 }
