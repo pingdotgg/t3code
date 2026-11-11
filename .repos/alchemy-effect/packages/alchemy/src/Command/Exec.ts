@@ -97,8 +97,7 @@ export const ExecProvider = () =>
           if (!output || !isResolved(news)) return undefined;
 
           // Always update if memoization is disabled or input hash is not available.
-          if (news.memo === false || !output.hash.input)
-            return { action: "update" };
+          if (news.memo === false || !output.hash.input) return { action: "update" };
 
           // Optimization: short-circuit if props have changed to avoid unnecessary file system operations.
           if (havePropsChanged(olds, news)) return { action: "update" };
