@@ -4290,9 +4290,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       if (isCachedHeadStale) {
         yield* invalidateListRefsSnapshot(input.cwd, cachedRepositoryPaths.gitCommonDir);
       }
-      const repositoryPaths = headBranch !== undefined
-        ? { ...cachedRepositoryPaths, currentBranch: headBranch }
-        : cachedRepositoryPaths;
+      const repositoryPaths =
+        headBranch !== undefined
+          ? { ...cachedRepositoryPaths, currentBranch: headBranch }
+          : cachedRepositoryPaths;
       const snapshot = isCachedHeadStale
         ? yield* resolveListRefsSnapshot(repositoryPaths.gitCommonDir, false)
         : cachedSnapshot;
