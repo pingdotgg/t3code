@@ -61,7 +61,8 @@ const CourseReadTool = Tool.make("course_read", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 const CourseUpdateTool = Tool.make("course_update", {
-  description: "Update course position, a unit's plan, quiz, or pasted transcript.",
+  description:
+    "Update course position, a unit's plan, quiz, or pasted transcript; save published problem-set references with pset and references.",
   parameters: Schema.Struct({
     position: Schema.optional(
       Schema.Struct({ unit: Schema.Int, at: Schema.optional(Schema.Number) }),
@@ -70,6 +71,12 @@ const CourseUpdateTool = Tool.make("course_update", {
     plan: Schema.optional(Schema.String),
     quiz: Schema.optional(Schema.String),
     transcript: Schema.optional(Schema.String),
+    pset: Schema.optional(Schema.Int),
+    references: Schema.optional(
+      Schema.Array(
+        Schema.Struct({ label: Schema.String, url: Schema.String, answers: Schema.String }),
+      ),
+    ),
     courseId: Schema.optional(CourseId),
   }),
   success: Course,
@@ -102,7 +109,7 @@ const CoursePrepareTool = Tool.make("course_prepare", {
 }).annotate(Tool.Title, "Prepare course");
 const CourseProblemsTool = Tool.make("course_problems", {
   description:
-    "Assign and grade a course problem set. With unit, list that unit's section problem sets; with pset, return its problem text. Without either, list all sets. Problem text is visible without reveal; never volunteer an answer before the learner gives a final one. A learner asking for the answer is a skip: reveal, show the full working, and mark it skipped, not graded. On request, give one smallest-next-step hint at a time and never the final value. Ask for a numeric final answer on a number card with a tolerance. With reveal and pset, return the official solution when present; otherwise say no official solution exists, use the listed worked examples, and say plainly: graded against my own worked solution, not MIT's. Include the course attribution in every result.",
+    "Assign and grade a course problem set. With unit, list that unit's section problem sets; with pset, return its problem text. Without either, list all sets. Problem text is visible without reveal; never volunteer an answer before the learner gives a final one. A learner asking for the answer is a skip: reveal, show the full working, and mark it skipped, not graded. On request, give one smallest-next-step hint at a time and never the final value. Ask for a numeric final answer on a number card with a tolerance. With reveal and pset, return the official solution when present; otherwise work it yourself and check any saved published solution references, naming their links and stating plainly where you disagree. If references are empty, say no published solution was found online; keep the wording graded against my own worked solution, not MIT's. Include the course attribution in every result.",
   parameters: Schema.Struct({
     unit: Schema.optional(Schema.Int),
     pset: Schema.optional(Schema.Int),

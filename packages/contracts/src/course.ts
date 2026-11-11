@@ -22,8 +22,18 @@ export const CourseProblemSet = Schema.Struct({
   section: Schema.optional(Schema.String),
   hasSolution: Schema.Boolean,
   workedExampleUnits: Schema.optional(Schema.Array(Schema.Int)),
+  references: Schema.optional(
+    Schema.Array(Schema.Struct({ label: Schema.String, url: Schema.String })),
+  ),
 });
 export type CourseProblemSet = typeof CourseProblemSet.Type;
+
+export const CourseProblemReference = Schema.Struct({
+  label: Schema.String,
+  url: Schema.String,
+  answers: Schema.String,
+});
+export type CourseProblemReference = typeof CourseProblemReference.Type;
 
 export const CoursePosition = Schema.Struct({
   unit: Schema.Int,

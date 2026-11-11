@@ -127,6 +127,11 @@ const handlers = {
           code: "invalid_request",
           message: "unit is required with plan, quiz or transcript",
         });
+      if (input.references !== undefined && input.pset === undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "pset is required with references",
+        });
       const service = yield* CourseService.CourseService;
       const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
       return yield* service
@@ -137,6 +142,8 @@ const handlers = {
           ...(input.plan === undefined ? {} : { plan: input.plan }),
           ...(input.quiz === undefined ? {} : { quiz: input.quiz }),
           ...(input.transcript === undefined ? {} : { transcript: input.transcript }),
+          ...(input.pset === undefined ? {} : { pset: input.pset }),
+          ...(input.references === undefined ? {} : { references: input.references }),
         })
         .pipe(Effect.mapError(fail));
     }),
