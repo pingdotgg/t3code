@@ -443,7 +443,11 @@ export function UsageLimitsSection({
                 </Text>
               </View>
               {pool.accounts
-                .filter((account) => account.limits.windows.length === 0)
+                .filter(
+                  (account) =>
+                    account.limits.windows.length === 0 ||
+                    account.limits.unavailable?.reason === "probeFailed",
+                )
                 .map((account) => (
                   <View
                     key={account.key}
@@ -457,7 +461,11 @@ export function UsageLimitsSection({
                     <Text className="min-w-0 flex-1 text-sm font-t3-medium text-foreground">
                       {accountName(account)}
                     </Text>
-                    <Text className="text-xs text-foreground-muted">Limits unavailable</Text>
+                    <Text className="text-xs text-foreground-muted">
+                      {account.limits.windows.length > 0
+                        ? "Last known limits"
+                        : "Limits unavailable"}
+                    </Text>
                   </View>
                 ))}
               {windows.map((window) => {

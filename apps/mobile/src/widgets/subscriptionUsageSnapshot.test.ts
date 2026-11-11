@@ -142,7 +142,8 @@ describe("subscription widget snapshots", () => {
       },
     ]);
     const partial = buildSubscriptionUsageSnapshot(failedInput([], true), deepLink);
-    expect(partial.providers[0]?.detail).toBe("Available subscription limits");
+    expect(partial.providers[0]?.detail).toBe("Partial limits");
+    expect(partial.providers[0]?.windows[0]?.label).toBe("Partial · 5 hours");
     expect(partial.providers[0]?.windows[0]?.remaining).toBe(60);
     expect(partial.checkedAt).toBe(now);
     expect(partial.providers[0]?.expiresAt).toBe(now + 10 * 60_000);

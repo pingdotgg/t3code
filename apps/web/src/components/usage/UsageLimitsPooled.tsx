@@ -588,7 +588,11 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
         {label}
       </h2>
       {pool.accounts
-        .filter((account) => account.limits.windows.length === 0)
+        .filter(
+          (account) =>
+            account.limits.windows.length === 0 ||
+            account.limits.unavailable?.reason === "probeFailed",
+        )
         .map((account) => (
           <div key={account.key} className="flex items-center gap-3 rounded-xl border p-4">
             <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -603,7 +607,9 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
                 />
               ) : null}
             </div>
-            <span className="text-xs text-muted-foreground">Limits unavailable</span>
+            <span className="text-xs text-muted-foreground">
+              {account.limits.windows.length > 0 ? "Last known limits" : "Limits unavailable"}
+            </span>
           </div>
         ))}
       {windows.map((window) => {
