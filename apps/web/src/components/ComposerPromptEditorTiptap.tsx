@@ -131,7 +131,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
-import { importPastedComposerText } from "./composerInlineTokenPaste";
+import { importPastedComposerText, readPastedComposerLink } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 
@@ -139,6 +139,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  pasteAtEnd: (clipboardData: DataTransfer) => boolean;
   readSelectionRange: () => { start: number; end: number };
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
@@ -1395,11 +1396,14 @@ function ComposerPromptEditorTiptapInner(
             return true;
           }
           const importFragment = readCallbacks().importContextFragment;
+          const pastedLink = literalText ? null : readPastedComposerLink(clipboardData);
           let text =
-            !literalText && importFragment
+            pastedLink ??
+            (!literalText && importFragment
               ? importPastedComposerText(clipboardData, importFragment)
-              : pastedText;
-          const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
+              : pastedText);
+          const tokens =
+            literalText || pastedLink ? [] : collectComposerPromptInlineTokens(`${text}\n`);
           const isChip = (token: (typeof tokens)[number] | undefined) =>
             token?.type === "mention" ||
             (token?.type === "skill" && skillLabelFor(token.value) !== null) ||
@@ -1415,9 +1419,11 @@ function ComposerPromptEditorTiptapInner(
           }
           const { $from } = view.state.selection;
           const lineBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, "\uFFFC");
-          const literalLength = literalText
-            ? 0
-            : pastedPathQueryLength(lineBefore, text, readCallbacks().isPathQueryActive?.());
+          const literalLength = pastedLink
+            ? text.length
+            : literalText
+              ? 0
+              : pastedPathQueryLength(lineBefore, text, readCallbacks().isPathQueryActive?.());
           const editorInstance = (view.dom as TiptapEditorHTMLElement).editor;
           if (editorInstance) {
             const $paste = view.state.selection.$from;
@@ -1706,6 +1712,16 @@ function ComposerPromptEditorTiptapInner(
                 snapshotRef.current.value.length,
               ),
         );
+      },
+      pasteAtEnd: (clipboardData) => {
+        if (!editor?.isEditable) return false;
+        editor.commands.setTextSelection(TextSelection.atEnd(editor.state.doc).from);
+        const pasted = editor.view.pasteText(
+          clipboardData.getData("text/plain"),
+          new ClipboardEvent("paste", { clipboardData }),
+        );
+        editor.commands.focus();
+        return pasted;
       },
       readSelectionRange: () => {
         readSnapshot();

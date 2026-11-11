@@ -11,7 +11,12 @@ import {
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
+import {
+  importPastedComposerText,
+  markPlainTextPaste,
+  readPastedComposerContext,
+  readPastedComposerLink,
+} from "../composerInlineTokenPaste";
 import {
   questionAttachmentDraftId,
   trackOpenQuestionAttachmentDraft,
@@ -2501,6 +2506,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return false;
     }
     if (options?.clipboardData) {
+      if (position === "end" && readPastedComposerLink(options.clipboardData)) {
+        return composerEditorRef.current?.pasteAtEnd(options.clipboardData) ?? false;
+      }
       text = importPastedComposerText(options.clipboardData, importContextFragment);
     }
     const prompt = promptRef.current;
@@ -2643,6 +2651,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const { files, folders } = splitTransferredFiles(event.clipboardData);
     const plainText = event.clipboardData.getData("text/plain");
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
+    if (bypassAutoAttachment) markPlainTextPaste(event.clipboardData);
     if (
       folders.length > 0 ||
       (activeThreadId &&

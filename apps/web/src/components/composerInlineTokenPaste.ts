@@ -20,6 +20,35 @@ import { readThreadShell } from "~/state/entities";
 
 const threadTitle = (ref: ScopedThreadRef) => readThreadShell(ref)?.title;
 
+const plainTextPastes = new WeakSet<object>();
+
+/** Paste as Text keeps the clipboard's plain text, so it skips titled link recovery. */
+export function markPlainTextPaste(clipboardData: object): void {
+  plainTextPastes.add(clipboardData);
+}
+
+export function readPastedComposerLink(
+  clipboardData: Pick<DataTransfer, "getData">,
+): string | null {
+  if (plainTextPastes.has(clipboardData)) return null;
+  const pastedText = clipboardData.getData("text/plain");
+  const text = pastedText.trim();
+  if (!text || /^[a-z][a-z\d+.-]*:\S+$/i.test(text)) return null;
+  if (clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) return null;
+  const html = clipboardData.getData("text/html");
+  if (!html || !/<a[\s>]/i.test(html)) return null;
+  const document = new DOMParser().parseFromString(html, "text/html");
+  if (document.querySelector("[data-t3-context-fragment]")) return null;
+  const links = document.querySelectorAll("a[href]");
+  if (links.length !== 1) return null;
+  const link = links[0]!;
+  const label = link.textContent?.trim();
+  if (label !== text || document.body.textContent?.trim() !== text) return null;
+  const href = link.getAttribute("href")?.trim();
+  if (!href || !/^https?:\/\/\S+$/i.test(href) || !URL.canParse(href)) return null;
+  return pastedText.replace(text, () => href);
+}
+
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
@@ -65,6 +94,8 @@ export function importPastedComposerText(
     fragment: ComposerContextClipboardFragment,
   ) => ReadonlyMap<string, string>,
 ): string {
+  const pastedLink = readPastedComposerLink(clipboardData);
+  if (pastedLink) return pastedLink;
   const pastedText = clipboardData.getData("text/plain");
   const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
   const rewrittenIds =
