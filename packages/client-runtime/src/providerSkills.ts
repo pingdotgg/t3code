@@ -56,7 +56,12 @@ export function formatProviderSkillMention(
   skill: Pick<ServerProviderSkill, "name" | "path">,
   skills: ReadonlyArray<ServerProviderSkill>,
 ): string {
-  return isProviderSkillNameShared(skill, skills)
+  // Discovery lists files in the provider's precedence order, so a plain mention already
+  // runs the first enabled copy natively; only later copies need the file link.
+  const winner = skills.find((other) => other.name === skill.name && other.enabled);
+  return isProviderSkillNameShared(skill, skills) &&
+    winner !== undefined &&
+    normalizePathSeparators(winner.path) !== normalizePathSeparators(skill.path)
     ? formatLinkedSkillMention(skill)
     : `$${skill.name}`;
 }

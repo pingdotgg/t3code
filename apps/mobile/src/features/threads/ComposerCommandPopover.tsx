@@ -220,7 +220,12 @@ const CommandRow = memo(function CommandRow(props: {
       {props.item.description ? (
         <Text
           className="min-w-0 flex-1 text-xs text-foreground-muted"
-          numberOfLines={props.item.type === "skill" ? undefined : 1}
+          numberOfLines={
+            // Only same-name skills lead with their path; it must stay readable to tell them apart.
+            props.item.type === "skill" && props.item.description.startsWith(props.item.skill.path)
+              ? undefined
+              : 1
+          }
         >
           {props.item.description}
         </Text>

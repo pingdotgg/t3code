@@ -2124,7 +2124,7 @@ export const layerWithOptions = (
                   ),
                   () =>
                     runtime
-                      .startTurn(spellOutLinkedSkillMentions(runtime.driver, input))
+                      .startTurn(spellOutLinkedSkillMentions(runtime.driver, input, false))
                       .pipe(turnMetrics("send", input.modelSelection.model)),
                   (_, exit) =>
                     Exit.isFailure(exit)
@@ -2140,7 +2140,7 @@ export const layerWithOptions = (
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(
                 runtime
-                  .steerTurn(spellOutLinkedSkillMentions(runtime.driver, input))
+                  .steerTurn(spellOutLinkedSkillMentions(runtime.driver, input, true))
                   .pipe(turnMetrics("steer")),
               ),
             ),

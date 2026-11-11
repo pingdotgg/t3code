@@ -266,7 +266,10 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <span
           className={cn(
             "min-w-0 flex-1 text-left text-secondary-label text-xs",
-            props.item.type === "skill" ? "whitespace-normal break-all" : "truncate",
+            // Only same-name skills lead with their path; it must stay readable to tell them apart.
+            props.item.type === "skill" && props.item.description.startsWith(props.item.skill.path)
+              ? "whitespace-normal break-all"
+              : "truncate",
           )}
         >
           {props.item.description}

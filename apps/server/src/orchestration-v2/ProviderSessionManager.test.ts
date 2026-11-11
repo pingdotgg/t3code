@@ -4721,28 +4721,28 @@ it.effect.each(["claudeAgent", "codex"] as const)(
         const steer = (yield* Ref.get(steers))[0];
         assert.isDefined(start);
         assert.isDefined(steer);
+        const spelledOut: Array<readonly [string, string, string]> = [
+          [
+            steer!.message.text,
+            "/home/me/skills/review/SKILL.md",
+            "/repo/my skills/100%/review/SKILL.md",
+          ],
+        ];
+        assert.include(steer!.message.text, "$lint then review.v2");
         if (driver === "codex") {
           assert.equal(start!.message.text, originalText);
-          assert.equal(steer!.message.text, `$lint then ${second}`);
         } else {
           assert.include(start!.message.text, "review.v2 then $lint and review.v2");
-          assert.include(steer!.message.text, "$lint then review.v2");
-          for (const [text, picked, other] of [
-            [
-              start!.message.text,
-              "/repo/my skills/100%/review/SKILL.md",
-              "/home/me/skills/review/SKILL.md",
-            ],
-            [
-              steer!.message.text,
-              "/home/me/skills/review/SKILL.md",
-              "/repo/my skills/100%/review/SKILL.md",
-            ],
-          ] as const) {
-            assert.equal(text.split(picked).length, 2, "bind the picked file once");
-            assert.notInclude(text, other);
-            assert.notInclude(text, "$review");
-          }
+          spelledOut.push([
+            start!.message.text,
+            "/repo/my skills/100%/review/SKILL.md",
+            "/home/me/skills/review/SKILL.md",
+          ]);
+        }
+        for (const [text, picked, other] of spelledOut) {
+          assert.equal(text.split(picked).length, 2, "bind the picked file once");
+          assert.notInclude(text, other);
+          assert.notInclude(text, "$review");
         }
         assert.equal(
           input.message.text,

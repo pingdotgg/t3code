@@ -48,8 +48,9 @@ function expandLinkedSkillMentions(text: string): string {
 
 export function spellOutLinkedSkillMentions<
   Input extends { readonly message: { readonly text: string } },
->(driver: ProviderDriverKind, input: Input): Input {
-  if (driver === CODEX_DRIVER) return input;
+>(driver: ProviderDriverKind, input: Input, steering: boolean): Input {
+  // Codex reads structured skill inputs at turn start but ignores them on turn/steer.
+  if (driver === CODEX_DRIVER && !steering) return input;
   const text = expandLinkedSkillMentions(input.message.text);
   return text === input.message.text ? input : { ...input, message: { ...input.message, text } };
 }
