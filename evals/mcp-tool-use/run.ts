@@ -1326,6 +1326,7 @@ const withProductFields = (name: string, value: unknown, child: boolean): unknow
     case "create_threads":
       return listed("threads");
     case "t3_thread_search":
+    case "t3_roster_find":
       return listed("matches");
     case "link_pull_request":
     case "link_pull_requests":

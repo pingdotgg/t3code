@@ -19,6 +19,8 @@ import {
   RunId,
   NonNegativeInt,
   ProjectId,
+  ProviderInstanceId,
+  THREAD_SEARCH_QUERY_MAX_LENGTH,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
@@ -216,6 +218,44 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 
+const RosterFindTool = Tool.make("t3_roster_find", {
+  ...commandTool,
+  description:
+    "Who already knows this topic? Ranked top-level threads matching title, branch, PR, project, or messages, so you ask the right peer. Skips subagents. Includes branch, provider, model, tags, and message hit strength. `projectId`: one project, else yours, else all outside a thread. Not exhaustive.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    topic: TrimmedNonEmptyString.check(
+      Schema.isMinLength(2),
+      Schema.isMaxLength(THREAD_SEARCH_QUERY_MAX_LENGTH),
+    ),
+    projectId: Schema.optional(ProjectId),
+    limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 }))),
+  }),
+  success: Schema.Struct({
+    matches: Schema.Array(
+      Schema.Struct({
+        threadId: ThreadId,
+        projectId: ProjectId,
+        title: Schema.String,
+        link: Schema.optional(Schema.String),
+        why: Schema.Literals(["title", "user", "assistant"]),
+        snippet: Schema.optional(OrchestrationThreadSearchMatch.fields.snippet),
+        messageCreatedAt: Schema.optional(OrchestrationThreadSearchMatch.fields.messageCreatedAt),
+        branch: Schema.NullOr(Schema.String),
+        providerInstanceId: ProviderInstanceId,
+        model: Schema.String,
+        tags: Schema.Array(Schema.String),
+        hitStrength: Schema.optional(Schema.Finite),
+        messageHits: Schema.optional(Schema.Int),
+        latestActivityAt: Schema.NullOr(IsoDateTime),
+      }),
+    ),
+  }),
+  dependencies: [...commandTool.dependencies, ThreadSearch.ThreadSearch],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
 const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
   description:
@@ -240,6 +280,7 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
 export const ThreadToolkit = Toolkit.make(
   ScheduledTaskRunTool,
   ThreadSearchTool,
+  RosterFindTool,
   ThreadConfigureTool,
   ThreadTransferTool,
   ThreadOrganizeTool,

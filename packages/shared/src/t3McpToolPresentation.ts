@@ -28,6 +28,7 @@ export type T3McpToolSummaryAction =
   | "thread-fork"
   | "thread-merge"
   | "thread-search"
+  | "roster-find"
   | "thread-transfers"
   | "thread-organize"
   | "thread-update"
@@ -328,6 +329,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "thread-merge",
   ),
   t3_thread_search: tool(["Search", "Searching", "Searched", "thread content"], "thread-search"),
+  t3_roster_find: tool(["Find", "Finding", "Found", "threads that know a topic"], "roster-find"),
   t3_thread_transfers: tool(["Read", "Reading", "Read", "thread transfers"], "thread-transfers"),
   t3_thread_organize: tool(["Organize", "Organizing", "Organized", "a thread"], "thread-organize"),
   t3_thread_update: tool(["Update", "Updating", "Updated", "T3 thread metadata"], "thread-update"),

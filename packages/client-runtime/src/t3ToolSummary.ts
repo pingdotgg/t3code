@@ -247,6 +247,9 @@ export function summarizeT3ToolCalls(
     case "thread-search":
       label = phrase("Searched", "search", `threads ${times}`);
       break;
+    case "roster-find":
+      label = phrase("Found", "find", `threads that know a topic ${times}`);
+      break;
     case "thread-transfers":
       label = phrase("Checked", "check", `thread transfers ${times}`);
       break;

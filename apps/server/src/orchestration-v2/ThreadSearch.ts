@@ -4,6 +4,7 @@ import {
   OrchestrationThreadSearchSource,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ThreadOpens,
+  ProviderInstanceId,
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
   type OrchestrationSearchThreadsInput,
@@ -13,6 +14,7 @@ import {
   type OrchestrationV2ThreadShellSnapshot,
   ProjectId,
   ThreadId,
+  THREAD_SEARCH_QUERY_MAX_LENGTH,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -275,6 +277,32 @@ export interface ThreadSearchHit {
   readonly messageCreatedAt?: string | null;
 }
 
+/** A top-level thread that already looks knowledgeable about a topic. */
+export interface RosterFindHit {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly title: string;
+  /** Why this thread matched: metadata (title/branch/PR) or a message. */
+  readonly why: "title" | OrchestrationThreadSearchSource;
+  readonly snippet?: string;
+  readonly messageCreatedAt?: string | null;
+  readonly branch: string | null;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly model: string;
+  readonly tags: ReadonlyArray<string>;
+  /** Message match quality when `why` is a message; omitted for title/branch/PR hits. */
+  readonly hitStrength?: number;
+  /** Matching messages at that strength when `why` is a message. */
+  readonly messageHits?: number;
+  readonly latestActivityAt: string | null;
+}
+
+export type RosterFindInput = {
+  readonly topic: string;
+  readonly limit?: number | undefined;
+  readonly projectId?: ProjectId | undefined;
+};
+
 export class ThreadSearch extends Context.Service<
   ThreadSearch,
   {
@@ -290,6 +318,14 @@ export class ThreadSearch extends Context.Service<
       input: OrchestrationSearchThreadsInput & { readonly projectId?: ProjectId | undefined },
     ) => Effect.Effect<{ readonly matches: ReadonlyArray<ThreadSearchHit> }, ThreadSearchError>;
     /**
+     * Topic → peer discovery: ranked top-level threads that already match in
+     * title, branch, PR, project, or message history, with shell metadata kept
+     * so an agent can ask the right peer instead of reinventing.
+     */
+    readonly findRoster: (
+      input: RosterFindInput,
+    ) => Effect.Effect<{ readonly matches: ReadonlyArray<RosterFindHit> }, ThreadSearchError>;
+    /**
      * The settled threads before `before` that clients omitting older settled threads should
      * receive for a query: the best title, branch, pull request and project matches, ranked as
      * the palette ranks them, then the older ones among `messageThreadIds`, in their order.
@@ -304,6 +340,9 @@ export class ThreadSearch extends Context.Service<
     }) => Effect.Effect<ReadonlyArray<ThreadId>, ThreadSearchError>;
   }
 >()("t3/orchestration-v2/ThreadSearch") {}
+
+const ROSTER_FIND_DEFAULT_LIMIT = 10;
+const ROSTER_FIND_MAX_LIMIT = 20;
 
 // Rows a client gets per search: enough for the shown results without sending every match.
 const OLDER_SETTLED_TITLE_ROWS = 15;
@@ -542,15 +581,27 @@ export const make = Effect.gen(function* () {
   const search: ThreadSearch["Service"]["search"] = (input) =>
     searchMessages({ ...input, projectId: null });
 
-  const searchThreads: ThreadSearch["Service"]["searchThreads"] = Effect.fn(
-    "ThreadSearch.searchThreads",
-  )(function* (input) {
-    const limit = input.limit ?? 50;
+  type RankedDiscoveryHit = {
+    readonly candidate: typeof TitleCandidateRow.Type;
+    readonly why: "title" | OrchestrationThreadSearchSource;
+    readonly snippet?: string;
+    readonly messageCreatedAt?: string | null;
+    readonly hitStrength?: number;
+    readonly messageHits?: number;
+  };
+
+  // Shared title-then-message ranking for searchThreads and roster find.
+  const rankDiscovery = Effect.fnUntraced(function* (input: {
+    readonly query: string;
+    readonly limit: number;
+    readonly projectId: ProjectId | null;
+  }) {
     const normalizedQuery = foldSearchQuery(input.query);
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     // Agents call this rarely, and a project has hundreds of threads, not
     // millions, so ranking every active thread in memory stays cheap.
-    const candidates = yield* read(titleCandidates({ projectId: input.projectId ?? null }));
+    const candidates = yield* read(titleCandidates({ projectId: input.projectId }));
+    const candidateById = new Map(candidates.map((row) => [row.thread.id, row]));
     const subjectById = new Map(
       candidates.map((row): [ThreadId, ThreadSearchSubject] => [
         row.thread.id,
@@ -568,41 +619,106 @@ export const make = Effect.gen(function* () {
         },
       ]),
     );
-    const titleHits: ThreadSearchHit[] = rankSearchItems(candidates, (row, options) =>
+    const titleHits: RankedDiscoveryHit[] = rankSearchItems(candidates, (row, options) =>
       // An agent's search has no use for the user's palette picks.
       scoreThreadSearch(normalizedQuery, subjectById.get(row.thread.id)!, now, {
         ...options,
         picks: false,
       }),
     )
-      .slice(0, limit)
+      .slice(0, input.limit)
       .map(({ item }) => ({
-        threadId: item.thread.id,
-        projectId: item.thread.projectId,
-        title: item.thread.title,
-        source: "title",
+        candidate: item,
+        why: "title" as const,
       }));
-    const shown = new Set(titleHits.map((hit) => hit.threadId));
+    const shown = new Set(titleHits.map((hit) => hit.candidate.thread.id));
     const { matches } = yield* searchMessages({
       query: input.query,
       limit: 50,
-      projectId: input.projectId ?? null,
+      projectId: input.projectId,
       excludedThreadIds: shown,
       picks: false,
     });
-    const messageHits = matches
-      .filter((match) => subjectById.has(match.threadId))
-      .map(({ quality: _quality, hits: _hits, messageId: _messageId, ...match }) => ({
-        ...match,
-        title: subjectById.get(match.threadId)!.title,
-      }));
+    const messageHits: RankedDiscoveryHit[] = matches.flatMap((match) => {
+      const candidate = candidateById.get(match.threadId);
+      if (candidate === undefined) return [];
+      return [
+        {
+          candidate,
+          why: match.source,
+          snippet: match.snippet,
+          messageCreatedAt: match.messageCreatedAt,
+          hitStrength: match.quality,
+          messageHits: match.hits,
+        },
+      ];
+    });
     // Titles come first, but a fifth of the slots stay for message matches,
     // as the palette keeps its "In messages" section.
-    const messageSlots = Math.min(messageHits.length, Math.floor(limit / 5));
+    const messageSlots = Math.min(messageHits.length, Math.floor(input.limit / 5));
+    return [...titleHits.slice(0, input.limit - messageSlots), ...messageHits].slice(
+      0,
+      input.limit,
+    );
+  });
+
+  const searchThreads: ThreadSearch["Service"]["searchThreads"] = Effect.fn(
+    "ThreadSearch.searchThreads",
+  )(function* (input) {
+    const ranked = yield* rankDiscovery({
+      query: input.query,
+      limit: input.limit ?? 50,
+      projectId: input.projectId ?? null,
+    });
     return {
-      matches: [...titleHits.slice(0, limit - messageSlots), ...messageHits].slice(0, limit),
+      matches: ranked.map((hit): ThreadSearchHit => ({
+        threadId: hit.candidate.thread.id,
+        projectId: hit.candidate.thread.projectId,
+        title: hit.candidate.thread.title,
+        source: hit.why,
+        ...(hit.snippet === undefined ? {} : { snippet: hit.snippet }),
+        ...(hit.messageCreatedAt === undefined ? {} : { messageCreatedAt: hit.messageCreatedAt }),
+      })),
     };
   });
+
+  const findRoster: ThreadSearch["Service"]["findRoster"] = Effect.fn("ThreadSearch.findRoster")(
+    function* (input) {
+      const topic = input.topic.trim().slice(0, THREAD_SEARCH_QUERY_MAX_LENGTH);
+      const limit = Math.min(
+        Math.max(1, input.limit ?? ROSTER_FIND_DEFAULT_LIMIT),
+        ROSTER_FIND_MAX_LIMIT,
+      );
+      if (topic.length < 2) return { matches: [] };
+      const ranked = yield* rankDiscovery({
+        query: topic,
+        limit,
+        projectId: input.projectId ?? null,
+      });
+      return {
+        matches: ranked.map((hit): RosterFindHit => {
+          const { thread, latestUserMessageAt } = hit.candidate;
+          return {
+            threadId: thread.id,
+            projectId: thread.projectId,
+            title: thread.title,
+            why: hit.why,
+            branch: thread.branch,
+            providerInstanceId: thread.providerInstanceId,
+            model: thread.modelSelection.model,
+            tags: thread.tags ?? [],
+            latestActivityAt: latestUserMessageAt ?? DateTime.formatIso(thread.createdAt),
+            ...(hit.snippet === undefined ? {} : { snippet: hit.snippet }),
+            ...(hit.messageCreatedAt === undefined
+              ? {}
+              : { messageCreatedAt: hit.messageCreatedAt }),
+            ...(hit.hitStrength === undefined ? {} : { hitStrength: hit.hitStrength }),
+            ...(hit.messageHits === undefined ? {} : { messageHits: hit.messageHits }),
+          };
+        }),
+      };
+    },
+  );
 
   const searchOlderSettled: ThreadSearch["Service"]["searchOlderSettled"] = Effect.fn(
     "ThreadSearch.searchOlderSettled",
@@ -653,7 +769,7 @@ export const make = Effect.gen(function* () {
     ];
   });
 
-  return ThreadSearch.of({ search, searchThreads, searchOlderSettled });
+  return ThreadSearch.of({ search, searchThreads, findRoster, searchOlderSettled });
 });
 
 export const layer = Layer.effect(ThreadSearch, make);
