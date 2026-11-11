@@ -10,7 +10,8 @@ export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITOR
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
-// Keep archive keys aligned with the Linux matrix, Windows ARM64 build, and cli_archive rows in release.yml.
+// Keep archive keys aligned with the Linux matrix, Windows ARM64 build, and cli_archive rows in release.yml,
+// and with the SSH runner's host check in packages/ssh/src/tunnel.ts.
 // Node single-executables do not support darwin-x64 and segfault at startup.
 const CLI_ARCHIVE_PLATFORM_KEYS = [
   "darwin-arm64",

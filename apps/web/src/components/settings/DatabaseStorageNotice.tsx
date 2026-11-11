@@ -164,7 +164,7 @@ function ReclaimRow({
       title={`${amount} on ${label}`}
       description={
         status.reclaimFailure === undefined
-          ? `Restarts ${APP_BASE_NAME} there. It is offline for about ${minutes} min.`
+          ? `Restarts ${APP_BASE_NAME} there. It will be offline for about ${minutes} min.`
           : `The last attempt failed: ${status.reclaimFailure}`
       }
       control={
@@ -185,8 +185,8 @@ function ReclaimRow({
                   Reclaim {amount} on {label}?
                 </AlertDialogTitle>
                 <AlertDialogDescription>
-                  {APP_BASE_NAME} on {label} stops, rebuilds its database, and starts again. It is
-                  offline for about {minutes} min. Running agents stop when it restarts.
+                  {APP_BASE_NAME} on {label} stops, rebuilds its database, and starts again. It will
+                  be offline for about {minutes} min. Running agents stop when it restarts.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

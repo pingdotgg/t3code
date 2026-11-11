@@ -452,6 +452,13 @@ const make = Effect.gen(function* () {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
     const definition = selectedModel(settings);
     const ready = yield* store.isReady(definition);
+    const gpuDevices = yield* discoverGpuDevices.pipe(Effect.orElseSucceed(() => []));
+    const autoUsesCpu =
+      gpuDevices.length === 0 ||
+      autoCpuModel === definition.id ||
+      (loadedModelId === definition.id &&
+        loadedAcceleration === "auto" &&
+        model?.backend.toLowerCase() === "cpu");
     return {
       supported: true,
       state: activeTranscriptions > 0 ? "transcribing" : ready ? "ready" : "missing-model",
@@ -464,8 +471,13 @@ const make = Effect.gen(function* () {
       languages: definition.languages,
       supportsLanguageDetection: definition.supportsLanguageDetection,
       acceleration: settings.speechAcceleration,
+      benchmarkTier:
+        settings.speechAcceleration === "cpu" ||
+        (settings.speechAcceleration === "auto" && autoUsesCpu)
+          ? "cpu"
+          : "accelerated",
       modelUnloadTimeout: settings.speechModelUnloadTimeout,
-      gpuDevices: yield* discoverGpuDevices.pipe(Effect.orElseSucceed(() => [])),
+      gpuDevices,
     };
   });
 
