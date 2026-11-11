@@ -1,6 +1,5 @@
 import {
   AuthFilesystemReadScope,
-  type AuthSessionState,
   type FilesystemBrowseEntry,
   WS_METHODS,
   sessionGrantsScope,
@@ -22,6 +21,8 @@ import {
   isFilesystemBrowseQuery,
 } from "./projects.ts";
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+
+const BROWSE_IDLE_TTL_MS = 5_000;
 
 export function resolveFilesystemReadAccess(input: {
   readonly isCatalogReady: boolean;
@@ -86,6 +87,33 @@ export function filterFilesystemBrowseEntries(
   return { visibleEntries, exactEntry };
 }
 
+/** Shell-style Tab: a single match enters the directory, several extend to their common prefix. */
+export function getFilesystemBrowseTabCompletion(
+  visibleEntries: ReadonlyArray<FilesystemBrowseEntry>,
+  filterQuery: string,
+): { readonly name: string; readonly isComplete: boolean } | null {
+  const [first, ...rest] = visibleEntries;
+  if (first === undefined) return null;
+  if (rest.length === 0) return { name: first.name, isComplete: true };
+  let prefix = Array.from(first.name);
+  for (const entry of rest) {
+    const characters = Array.from(entry.name);
+    let length = 0;
+    while (
+      length < prefix.length &&
+      prefix[length]?.toLowerCase() === characters[length]?.toLowerCase()
+    )
+      length += 1;
+    prefix = prefix.slice(0, length);
+  }
+  const name = prefix.join("");
+  const lowerName = name.toLowerCase();
+  return lowerName.length > filterQuery.toLowerCase().length &&
+    visibleEntries.every((entry) => entry.name.toLowerCase().startsWith(lowerName))
+    ? { name, isComplete: false }
+    : null;
+}
+
 export function createBrowseNavigationCoordinator() {
   let generation = 0;
 
@@ -115,9 +143,16 @@ export function createFilesystemEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    getMetadata: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:filesystem:get-metadata",
+      tag: WS_METHODS.filesystemGetMetadata,
+    }),
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,
+      // A listing kept alive while unread is never revalidated, so reopening the browser
+      // would show folders as they were. Keep it only long enough for a prefetch to land.
+      idleTtlMs: BROWSE_IDLE_TTL_MS,
     }),
   };
 }

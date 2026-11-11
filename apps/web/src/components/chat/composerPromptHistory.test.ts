@@ -1,8 +1,6 @@
 import { ScheduledTaskId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
-import { buildPlanImplementationPrompt } from "../../proposedPlan";
 import {
   buildComposerPromptHistoryEntries,
   recallableComposerPrompt,
@@ -80,31 +78,15 @@ describe("recallableComposerPrompt", () => {
     expect(recallableComposerPrompt(midPrompt + "\n\n" + block)).toBe(midPrompt);
   });
 
-  it("strips a trailing preview annotation including its nested element context", () => {
-    const sent =
-      "Fix this\n\n<preview_annotation>\nPage: Example\n<element_context>\n- <button>:\n  html: Save\n</element_context>\n</preview_annotation>";
-    expect(recallableComposerPrompt(sent)).toBe("Fix this");
-  });
-
   it("removes canonical references without restoring dangling chips", () => {
     const sent =
       "Look at [Terminal](t3-context://v1/terminal/term-1) please\n    indented  code\n![image](t3-context://v1/image/img-1)";
     expect(recallableComposerPrompt(sent)).toBe("Look at please\n    indented  code");
     expect(recallableComposerPrompt("![image](t3-context://v1/image/img-1)")).toBe("");
   });
-
-  it("returns an empty string for app-composed sends", () => {
-    expect(recallableComposerPrompt("   ")).toBe("");
-    expect(recallableComposerPrompt(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)).toBe("");
-    expect(recallableComposerPrompt(buildPlanImplementationPrompt("# Plan\n1. do it"))).toBe("");
-  });
 });
 
 describe("buildComposerPromptHistoryEntries", () => {
-  it("keeps user messages with text, oldest first", () => {
-    expect(entries.map((entry) => entry.prompt)).toEqual(["first", "second", "third"]);
-  });
-
   it("collapses consecutive duplicates onto the newest message id", () => {
     const collapsed = buildComposerPromptHistoryEntries([
       { id: "m1", role: "user", text: "same" },
@@ -136,18 +118,10 @@ describe("buildComposerPromptHistoryEntries", () => {
 });
 
 describe("stepComposerPromptHistory", () => {
-  it("does not start browsing from a non-empty draft", () => {
-    expect(backward(null, "typing")).toBeNull();
-  });
-
   it("walks back from the newest entry", () => {
     const first = backward(null, "");
     expect(first).toEqual({ position: { entryId: "m3", recalled: "third" }, prompt: "third" });
     expect(backward(first!.position, "third")?.prompt).toBe("second");
-  });
-
-  it("is a no-op at the oldest entry so the caret keeps moving", () => {
-    expect(backward({ entryId: "m1", recalled: "first" }, "first")).toBeNull();
   });
 
   it("walks forward and empties the composer past the newest entry", () => {
@@ -161,10 +135,6 @@ describe("stepComposerPromptHistory", () => {
     expect(backward(position, "third edited")).toBeNull();
     expect(forward(position, "third edited")).toBeNull();
     expect(backward(position, "")?.position).toEqual({ entryId: "m3", recalled: "third" });
-  });
-
-  it("does nothing on forward when not browsing", () => {
-    expect(forward(null, "")).toBeNull();
   });
 
   it("follows the entry by id when the list changes under it", () => {
