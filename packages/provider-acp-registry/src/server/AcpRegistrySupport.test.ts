@@ -839,7 +839,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "leaves the mode of a file outside the install root when the command links to it",
     () => {
       const downloadUrl = "https://registry.test/agent.tar.gz";
