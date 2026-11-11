@@ -8,15 +8,8 @@ export type WorkflowStepSelector = {
 export type WorkflowInstanceModifier = {
   disableSleeps(steps?: Array<WorkflowStepSelector>): Promise<void>;
   disableRetryDelays(steps?: Array<WorkflowStepSelector>): Promise<void>;
-  mockStepResult(
-    step: WorkflowStepSelector,
-    stepResult: unknown,
-  ): Promise<void>;
-  mockStepError(
-    step: WorkflowStepSelector,
-    error: Error,
-    times?: number,
-  ): Promise<void>;
+  mockStepResult(step: WorkflowStepSelector, stepResult: unknown): Promise<void>;
+  mockStepError(step: WorkflowStepSelector, error: Error, times?: number): Promise<void>;
   forceStepTimeout(step: WorkflowStepSelector, times?: number): Promise<void>;
   mockEvent(event: { type: string; payload: unknown }): Promise<void>;
   forceEventTimeout(step: WorkflowStepSelector): Promise<void>;
@@ -46,19 +39,10 @@ export type WorkflowIntrospectionOperation =
   | { type: "forceEventTimeout"; step: WorkflowStepSelector };
 
 export type WorkflowBinding = {
-  unsafeGetInstanceModifier(
-    instanceId: string,
-  ): Promise<WorkflowInstanceModifier>;
-  unsafeWaitForStepResult(
-    instanceId: string,
-    name: string,
-    index?: number,
-  ): Promise<unknown>;
+  unsafeGetInstanceModifier(instanceId: string): Promise<WorkflowInstanceModifier>;
+  unsafeWaitForStepResult(instanceId: string, name: string, index?: number): Promise<unknown>;
   unsafeWaitForStatus(instanceId: string, status: string): Promise<void>;
-  unsafeGetOutputOrError(
-    instanceId: string,
-    isOutput: boolean,
-  ): Promise<unknown>;
+  unsafeGetOutputOrError(instanceId: string, isOutput: boolean): Promise<unknown>;
   unsafeAbort(instanceId: string, reason?: string): Promise<void>;
   unsafeStartIntrospection(): Promise<string>;
   unsafeSetIntrospectionOperations(
@@ -69,9 +53,7 @@ export type WorkflowBinding = {
   unsafeGetIntrospectionInstances(sessionId: string): Promise<Array<string>>;
 };
 
-export type ModifierCallback = (
-  modifier: WorkflowInstanceModifier,
-) => Promise<void>;
+export type ModifierCallback = (modifier: WorkflowInstanceModifier) => Promise<void>;
 
 export interface WorkflowInstanceIntrospector {
   modify(fn: ModifierCallback): Promise<WorkflowInstanceIntrospector>;

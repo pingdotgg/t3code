@@ -197,6 +197,18 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
   });
 
+  it("preserves explicit ordered-list values and continues from resets when copying", () => {
+    const list = new FakeElement("OL", [], { start: "0" }).append(
+      new FakeElement("LI").append(new FakeText("A")),
+      new FakeElement("LI", [], { value: "5" }).append(new FakeText("B")),
+      new FakeElement("LI").append(new FakeText("C")),
+      new FakeElement("LI", [], { value: "0" }).append(new FakeText("D")),
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
+      "0. A\n5. B\n6. C\n0. D",
+    );
+  });
+
   it("keeps fences when a bare list item sits alongside the code block", () => {
     const container = new FakeElement("DIV").append(
       new FakeElement("UL").append(new FakeElement("LI")),
@@ -204,6 +216,32 @@ describe("serializeRenderedMarkdownFragment", () => {
     );
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\n```\npnpm test\n```");
+  });
+
+  it("keeps blank lines inside a code block in a list item, quote, or longer fence", () => {
+    const code = ["import os", "", "", "def main():"];
+    const list = new FakeElement("OL").append(
+      new FakeElement("LI").append(new FakeText("Create it:\n"), renderedCodeBlock(code)),
+    );
+    const quote = new FakeElement("BLOCKQUOTE").append(
+      new FakeElement("P").append(new FakeText("Note:")),
+      renderedCodeBlock(code),
+    );
+    const nestedFence = new FakeElement("DIV").append(
+      new FakeElement("P").append(new FakeText("Example:")),
+      renderedCodeBlock(["```js", "a()", "", "", "b()  ", "```"]),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(nestedFence))).toBe(
+      "Example:\n\n````\n```js\na()\n\n\nb()  \n```\n````",
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
+      "1. Create it:\n   ```\n   import os\n\n\n   def main():\n   ```",
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(quote)))).toBe(
+      "> Note:\n>\n> ```\n> import os\n>\n>\n> def main():\n> ```",
+    );
   });
 
   it("omits fences when a selection past the last line drags in the whole code block", () => {
