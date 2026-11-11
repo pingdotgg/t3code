@@ -12,6 +12,7 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -742,6 +743,57 @@ describe("ssh tunnel scripts", () => {
         // The next connect opens a new forward instead of reusing the released one.
         yield* manager.ensureEnvironment(target);
         assert.equal(tunnels, 2);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("kills a forward that is still starting, and its connect fails", () =>
+    Effect.gen(function* () {
+      const tunnelSpawned = yield* Deferred.make<void>();
+      let tunnelKills = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        commandArgs(command).includes("-N")
+          ? Effect.gen(function* () {
+              const handle = makeRunningProcess(() => {
+                tunnelKills += 1;
+              });
+              // As the real spawner does, the child dies with the scope it was spawned in.
+              yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+              yield* Deferred.succeed(tunnelSpawned, undefined);
+              return handle;
+            })
+          : Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n')),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, hangingHttpClient),
+        Layer.succeed(
+          NetService.NetService,
+          NetService.NetService.of({
+            ...testNetService,
+            hasListenerOnHost: () => Effect.succeed(false),
+          }),
+        ),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const ensure = yield* Effect.forkChild(
+          manager.ensureEnvironment({
+            alias: "devbox",
+            hostname: "devbox",
+            username: null,
+            port: null,
+          }),
+        );
+        yield* Deferred.await(tunnelSpawned);
+        yield* manager.releaseLocalTunnels;
+        assert.equal(tunnelKills, 1);
+        yield* TestClock.adjust(Duration.minutes(2));
+        assert.isTrue(Exit.isFailure(yield* Fiber.await(ensure)));
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );

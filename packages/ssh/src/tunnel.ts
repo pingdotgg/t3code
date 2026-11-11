@@ -1479,6 +1479,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 ): Effect.fn.Return<SshEnvironmentManagerShape, never, Scope.Scope> {
   const managerScope = yield* Scope.Scope;
   const tunnels = new Map<string, SshTunnelEntry>();
+  // Entry scopes of forwards still starting, so a release reaches them before they register.
+  const startingEntryScopes = new Set<Scope.Closeable>();
+  let releases = 0;
   const targetLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
 
@@ -1638,6 +1641,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     readonly resolvedTarget: DesktopSshEnvironmentTarget;
     readonly runner?: RemoteT3RunnerOptions;
   }): Effect.fn.Return<SshTunnelEntry, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
+    const releasesAtStart = releases;
     yield* Effect.logDebug("ssh.environment.tunnel.create.start", {
       ...sshTargetLogFields(input.resolvedTarget),
       ...sshRunnerLogFields(input.runner),
@@ -1666,6 +1670,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       remotePort,
     });
     const entryScope = yield* Scope.make("sequential");
+    startingEntryScopes.add(entryScope);
+    // A closed scope kills the forward as it spawns, so this connect fails instead of registering.
+    if (releases !== releasesAtStart) yield* Scope.close(entryScope, Exit.void);
     const tunnelEntry = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,
@@ -1683,7 +1690,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         }),
     }).pipe(
       Effect.onExit((exit) =>
-        Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
+        Effect.sync(() => startingEntryScopes.delete(entryScope)).pipe(
+          Effect.andThen(
+            Exit.isSuccess(exit)
+              ? Effect.void
+              : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
+          ),
+        ),
       ),
     );
     tunnels.set(input.key, tunnelEntry);
@@ -1909,10 +1922,21 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 
   // No target lock: a connect waiting on a password prompt must not hold up the quit.
   const releaseLocalTunnels = Effect.suspend(() => {
+    releases += 1;
     const entries = [...tunnels.values()];
+    const starting = [...startingEntryScopes];
     // Dropped from the map first, so each entry's finalizer only kills its local ssh process.
     tunnels.clear();
-    return Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded", discard: true });
+    return Effect.all(
+      [
+        Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded", discard: true }),
+        Effect.forEach(starting, (scope) => Scope.close(scope, Exit.void), {
+          concurrency: "unbounded",
+          discard: true,
+        }),
+      ],
+      { concurrency: "unbounded", discard: true },
+    );
   }).pipe(Effect.uninterruptible, Effect.withSpan("ssh/tunnel.releaseLocalTunnels"));
 
   return SshEnvironmentManager.of({
