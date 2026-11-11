@@ -368,12 +368,19 @@ export const PullRequestListCursors = Schema.Record(
 );
 export type PullRequestListCursors = typeof PullRequestListCursors.Type;
 
+const MAX_PULL_REQUEST_PROJECTS = 100;
+const PullRequestProjectIds = Schema.Array(ProjectId).check(
+  Schema.isMaxLength(MAX_PULL_REQUEST_PROJECTS, {
+    message: `An environment can list pull requests for at most ${MAX_PULL_REQUEST_PROJECTS} projects`,
+  }),
+);
+
 export const PullRequestListInput = Schema.Struct({
   state: PullRequestListState,
   involvement: Schema.optional(PullRequestInvolvement),
   filters: Schema.optional(PullRequestListFilters),
   projectId: Schema.optional(ProjectId),
-  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
+  projectIds: Schema.optional(PullRequestProjectIds),
   host: Schema.optional(TrimmedNonEmptyString),
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 }))),
   cursors: Schema.optional(PullRequestListCursors),
@@ -554,7 +561,7 @@ export type PullRequestFilterOptionKind = typeof PullRequestFilterOptionKind.Typ
 export const PullRequestFilterOptionsInput = Schema.Struct({
   kind: PullRequestFilterOptionKind,
   projectId: Schema.optional(ProjectId),
-  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
+  projectIds: Schema.optional(PullRequestProjectIds),
   host: Schema.optional(TrimmedNonEmptyString),
   query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
   /** For `references`, the sigil typed, so a host can search only what it links. */
