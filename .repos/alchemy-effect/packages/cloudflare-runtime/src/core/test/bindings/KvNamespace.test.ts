@@ -27,9 +27,9 @@ import { describe, expect, it, layer } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as KvNamespace from "../../bindings/kv-namespace/index.ts";
 import * as Docker from "../../Docker.ts";
 import * as Globals from "../../globals/Globals.ts";
@@ -41,11 +41,7 @@ import * as Runtime from "../../Runtime.ts";
 import * as RuntimeServices from "../../RuntimeServices.ts";
 import * as Workerd from "../../workerd/Workerd.ts";
 import type { TestWorker } from "../helpers/runtime.ts";
-import {
-  localRuntimeLayer,
-  makeTempDirectory,
-  startTestWorker,
-} from "../helpers/runtime.ts";
+import { localRuntimeLayer, makeTempDirectory, startTestWorker } from "../helpers/runtime.ts";
 
 // Time in seconds the fake `Date.now()` always returns
 const TIME_NOW = 1000;
@@ -173,12 +169,7 @@ type EncodedResult =
   | { kind: "arrayBuffer"; base64: string }
   | { kind: "stream"; base64: string };
 
-type PutValue =
-  | string
-  | ArrayBuffer
-  | ArrayBufferView
-  | ReadableStream
-  | EncodedValue;
+type PutValue = string | ArrayBuffer | ArrayBufferView | ReadableStream | EncodedValue;
 
 /** Stand-in for Miniflare's `createJunkStream`: a stream of `length` "x"s. */
 function createJunkStream(length: number): EncodedValue {
@@ -196,11 +187,7 @@ async function encodeValue(value: PutValue): Promise<EncodedValue> {
   if (ArrayBuffer.isView(value)) {
     return {
       kind: "arrayBuffer",
-      base64: Buffer.from(
-        value.buffer,
-        value.byteOffset,
-        value.byteLength,
-      ).toString("base64"),
+      base64: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("base64"),
     };
   }
   if (value instanceof ReadableStream) {
@@ -218,10 +205,7 @@ function decodeResult(result: EncodedResult): unknown {
       return new Map(result.entries);
     case "arrayBuffer": {
       const buffer = Buffer.from(result.base64, "base64");
-      return buffer.buffer.slice(
-        buffer.byteOffset,
-        buffer.byteOffset + buffer.byteLength,
-      );
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     }
     case "stream":
       return new Blob([Buffer.from(result.base64, "base64")]).stream();
@@ -263,39 +247,29 @@ class NamespacedKv {
     if (!body.ok) {
       // Rethrow with the original constructor so error type assertions hold
       // (e.g. key validation errors are `TypeError`s)
-      throw body.name === "TypeError"
-        ? new TypeError(body.message)
-        : new Error(body.message);
+      throw body.name === "TypeError" ? new TypeError(body.message) : new Error(body.message);
     }
     return decodeResult(body.result);
   }
 
   #keys(keys: string | Array<string>): string | Array<string> {
-    return typeof keys === "string"
-      ? this.ns + keys
-      : keys.map((key) => this.ns + key);
+    return typeof keys === "string" ? this.ns + keys : keys.map((key) => this.ns + key);
   }
 
   #stripNs(result: unknown): unknown {
     if (result instanceof Map) {
       const stripped = new Map<string, unknown>();
-      for (const [key, value] of result)
-        stripped.set(key.slice(this.ns.length), value);
+      for (const [key, value] of result) stripped.set(key.slice(this.ns.length), value);
       return stripped;
     }
     return result;
   }
 
   async get(key: string | Array<string>, options?: unknown): Promise<any> {
-    return this.#stripNs(
-      await this.#call({ method: "get", key: this.#keys(key), options }),
-    );
+    return this.#stripNs(await this.#call({ method: "get", key: this.#keys(key), options }));
   }
 
-  async getWithMetadata(
-    key: string | Array<string>,
-    options?: unknown,
-  ): Promise<any> {
+  async getWithMetadata(key: string | Array<string>, options?: unknown): Promise<any> {
     return this.#stripNs(
       await this.#call({
         method: "getWithMetadata",
@@ -336,10 +310,7 @@ class ControlStub {
       method: "POST",
       body: JSON.stringify({ name, args }),
     });
-    assert(
-      res.status === 200 || res.status === 404,
-      `Control op ${name} failed: ${res.status}`,
-    );
+    assert(res.status === 200 || res.status === 404, `Control op ${name} failed: ${res.status}`);
     return res;
   }
 
@@ -355,10 +326,7 @@ class ControlStub {
     await this.#op("waitForFakeTasks");
   }
 
-  async sqlQuery<Row>(
-    query: string,
-    ...params: Array<unknown>
-  ): Promise<Array<Row>> {
+  async sqlQuery<Row>(query: string, ...params: Array<unknown>): Promise<Array<Row>> {
     const res = await this.#op("sqlQuery", query, ...params);
     return (await res.json()) as Array<Row>;
   }
@@ -386,9 +354,7 @@ function sqlStmts(object: ControlStub) {
 // Shared test worker
 // -----------------------------------------------------------------------------
 
-class KvTestWorker extends Context.Service<KvTestWorker, TestWorker>()(
-  "test/KvTestWorker",
-) {}
+class KvTestWorker extends Context.Service<KvTestWorker, TestWorker>()("test/KvTestWorker") {}
 
 // Raw binding to the `kv` service for the test namespace, used to send
 // control operations (fake timers, storage inspection) to its Durable Object.
@@ -413,10 +379,7 @@ const KvTestWorkerLive = Layer.effect(
     compatibilityDate: "2026-03-10",
     compatibilityFlags: [],
     modules: [{ name: "main.js", type: "ESModule", content: TEST_SCRIPT }],
-    bindings: [
-      KvNamespace.local({ binding: "NAMESPACE", id: "namespace" }),
-      controlBinding,
-    ],
+    bindings: [KvNamespace.local({ binding: "NAMESPACE", id: "namespace" }), controlBinding],
   }),
 );
 
@@ -426,19 +389,15 @@ interface KvTestContext {
   object: ControlStub;
 }
 
-const setup: Effect.Effect<KvTestContext, never, KvTestWorker> = Effect.gen(
-  function* () {
-    const worker = yield* KvTestWorker;
-    // Namespace keys so tests accessing the same namespace don't have races
-    // from key collisions
-    const ns = `${Date.now()}_${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)}`;
-    const object = new ControlStub(worker.baseUrl);
-    yield* Effect.promise(() =>
-      object.enableFakeTimers(secondsToMillis(TIME_NOW)),
-    );
-    return { ns, kv: new NamespacedKv(worker.baseUrl, ns), object };
-  },
-);
+const setup: Effect.Effect<KvTestContext, never, KvTestWorker> = Effect.gen(function* () {
+  const worker = yield* KvTestWorker;
+  // Namespace keys so tests accessing the same namespace don't have races
+  // from key collisions
+  const ns = `${Date.now()}_${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)}`;
+  const object = new ControlStub(worker.baseUrl);
+  yield* Effect.promise(() => object.enableFakeTimers(secondsToMillis(TIME_NOW)));
+  return { ns, kv: new NamespacedKv(worker.baseUrl, ns), object };
+});
 
 // -----------------------------------------------------------------------------
 // Tests
@@ -453,9 +412,7 @@ const KvTestLayer = KvTestWorkerLive.pipe(
 
 layer(KvTestLayer)("KvNamespace binding", (it) => {
   const kvTest = (name: string, fn: (ctx: KvTestContext) => Promise<void>) =>
-    it.effect(name, () =>
-      setup.pipe(Effect.flatMap((ctx) => Effect.promise(() => fn(ctx)))),
-    );
+    it.effect(name, () => setup.pipe(Effect.flatMap((ctx) => Effect.promise(() => fn(ctx)))));
 
   async function testValidatesKey(
     ctx: KvTestContext,
@@ -463,15 +420,9 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
     f: (key: string) => Promise<unknown>,
   ) {
     ctx.kv.ns = "";
-    await expect(f("")).rejects.toThrow(
-      new TypeError("Key name cannot be empty."),
-    );
-    await expect(f(".")).rejects.toThrow(
-      new TypeError('"." is not allowed as a key name.'),
-    );
-    await expect(f("..")).rejects.toThrow(
-      new TypeError('".." is not allowed as a key name.'),
-    );
+    await expect(f("")).rejects.toThrow(new TypeError("Key name cannot be empty."));
+    await expect(f(".")).rejects.toThrow(new TypeError('"." is not allowed as a key name.'));
+    await expect(f("..")).rejects.toThrow(new TypeError('".." is not allowed as a key name.'));
     await expect(f("".padStart(513, "x"))).rejects.toThrow(
       new Error(
         `KV ${method.toUpperCase()} failed: 414 UTF-8 encoded length of 513 exceeds key length limit of 512.`,
@@ -503,9 +454,7 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
     await kv.put("stream-key", new Blob([bytes]).stream());
 
     const result = await kv.get("stream-key", "stream");
-    expect(new Uint8Array(await new Response(result).arrayBuffer())).toEqual(
-      bytes,
-    );
+    expect(new Uint8Array(await new Response(result).arrayBuffer())).toEqual(bytes);
   });
 
   kvTest("bulk get: returns value", async ({ kv }) => {
@@ -525,9 +474,7 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
       keyArray.push(`key${i}`);
     }
     await expect(kv.get(keyArray)).rejects.toThrow(
-      new Error(
-        "KV GET_BULK failed: 400 You can request a maximum of 100 keys",
-      ),
+      new Error("KV GET_BULK failed: 400 You can request a maximum of 100 keys"),
     );
   });
 
@@ -539,9 +486,7 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
 
   kvTest("bulk get: invalid type", async ({ kv }) => {
     await expect(kv.get(["key"], { type: "invalid" })).rejects.toThrow(
-      new Error(
-        'KV GET_BULK failed: 400 "invalid" is not a valid type. Use "json" or "text"',
-      ),
+      new Error('KV GET_BULK failed: 400 "invalid" is not a valid type. Use "json" or "text"'),
     );
   });
 
@@ -549,9 +494,7 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
     await kv.put("key1", '{"example": "ex"}');
     await kv.put("key2", "example");
     let result = await kv.get(["key1"]);
-    let expectedResult: Map<string, unknown> = new Map([
-      ["key1", '{"example": "ex"}'],
-    ]);
+    let expectedResult: Map<string, unknown> = new Map([["key1", '{"example": "ex"}']]);
     expect(result).toEqual(expectedResult);
 
     result = await kv.get(["key1"], "json");
@@ -585,9 +528,7 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
       metadata: 123,
     });
     const result = await kv.getWithMetadata(["key1"]);
-    const expectedResult = new Map([
-      ["key1", { value: "value1", metadata: 123 }],
-    ]);
+    const expectedResult = new Map([["key1", { value: "value1", metadata: 123 }]]);
     expect(result).toEqual(expectedResult);
   });
 
@@ -597,9 +538,7 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
       metadata: "example",
     });
     const result = await kv.getWithMetadata(["key1"]);
-    const expectedResult = new Map([
-      ["key1", { value: "value1", metadata: "example" }],
-    ]);
+    const expectedResult = new Map([["key1", { value: "value1", metadata: "example" }]]);
     expect(result).toEqual(expectedResult);
   });
 
@@ -610,7 +549,7 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
   });
 
   kvTest("bulk get: get over size limit", async ({ kv }) => {
-    const bigValue = new Array(1024).fill("x").join("");
+    const bigValue = Array.from({ length: 1024 }, () => "x").join("");
     await kv.put("key1", bigValue);
     await kv.put("key2", bigValue);
     await expect(kv.getWithMetadata(["key1", "key2"])).rejects.toThrow(
@@ -635,14 +574,10 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
   kvTest("get: validates but ignores cache ttl", async ({ kv }) => {
     await kv.put("key", "value");
     await expect(kv.get("key", { cacheTtl: "not a number" })).rejects.toThrow(
-      new Error(
-        "KV GET failed: 400 Invalid cache_ttl of 0. Cache TTL must be at least 30.",
-      ),
+      new Error("KV GET failed: 400 Invalid cache_ttl of 0. Cache TTL must be at least 30."),
     );
     await expect(kv.get("key", { cacheTtl: 10 })).rejects.toThrow(
-      new Error(
-        "KV GET failed: 400 Invalid cache_ttl of 10. Cache TTL must be at least 30.",
-      ),
+      new Error("KV GET failed: 400 Invalid cache_ttl of 10. Cache TTL must be at least 30."),
     );
     expect(await kv.get("key", { cacheTtl: 30 })).toBeDefined();
     expect(await kv.get("key", { cacheTtl: 60 })).toBeDefined();
@@ -705,9 +640,7 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
   });
 
   kvTest("put: validates expiration ttl", async ({ kv }) => {
-    await expect(
-      kv.put("key", "value", { expirationTtl: "nan" }),
-    ).rejects.toThrow(
+    await expect(kv.put("key", "value", { expirationTtl: "nan" })).rejects.toThrow(
       new Error(
         "KV PUT failed: 400 Invalid expiration_ttl of 0. Please specify integer greater than 0.",
       ),
@@ -730,16 +663,12 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
         "KV PUT failed: 400 Invalid expiration of 0. Please specify integer greater than the current number of seconds since the UNIX epoch.",
       ),
     );
-    await expect(
-      kv.put("key", "value", { expiration: TIME_NOW }),
-    ).rejects.toThrow(
+    await expect(kv.put("key", "value", { expiration: TIME_NOW })).rejects.toThrow(
       new Error(
         `KV PUT failed: 400 Invalid expiration of ${TIME_NOW}. Please specify integer greater than the current number of seconds since the UNIX epoch.`,
       ),
     );
-    await expect(
-      kv.put("key", "value", { expiration: TIME_NOW + 30 }),
-    ).rejects.toThrow(
+    await expect(kv.put("key", "value", { expiration: TIME_NOW + 30 })).rejects.toThrow(
       new Error(
         `KV PUT failed: 400 Invalid expiration of ${
           TIME_NOW + 30
@@ -796,10 +725,7 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
   async function testList(
     ctx: KvTestContext,
     opts: {
-      values: Record<
-        string,
-        { value: string; expiration?: number; metadata?: unknown }
-      >;
+      values: Record<string, { value: string; expiration?: number; metadata?: unknown }>;
       options?: { prefix?: string; limit?: number; cursor?: string };
       pages: Array<ListResult["keys"]>;
     },
@@ -883,9 +809,7 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
         ["key\\_%3"]: { value: "value3" },
       },
       options: { prefix: "key\\_%" },
-      pages: [
-        [{ name: "key\\_%1" }, { name: "key\\_%2" }, { name: "key\\_%3" }],
-      ],
+      pages: [[{ name: "key\\_%1" }, { name: "key\\_%2" }, { name: "key\\_%3" }]],
     });
   });
 
@@ -1000,10 +924,7 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
         section2key1: { value: "value21" },
       },
       options: { prefix: "section1", limit: 2 },
-      pages: [
-        [{ name: "section1key1" }, { name: "section1key2" }],
-        [{ name: "section1key3" }],
-      ],
+      pages: [[{ name: "section1key1" }, { name: "section1key2" }], [{ name: "section1key3" }]],
     });
   });
 
@@ -1032,29 +953,26 @@ layer(KvTestLayer)("KvNamespace binding", (it) => {
     assert(page.list_complete);
   });
 
-  kvTest(
-    "list: returns keys inserted whilst paginating",
-    async ({ kv, ns }) => {
-      await kv.put("key1", "value1");
-      await kv.put("key3", "value3");
-      await kv.put("key5", "value5");
+  kvTest("list: returns keys inserted whilst paginating", async ({ kv, ns }) => {
+    await kv.put("key1", "value1");
+    await kv.put("key3", "value3");
+    await kv.put("key5", "value5");
 
-      // Get first page
-      let page = await kv.list({ prefix: ns, limit: 2 });
-      expect(page.keys).toEqual([{ name: `${ns}key1` }, { name: `${ns}key3` }]);
-      assert(!page.list_complete);
-      expect(page.cursor).toBeDefined();
+    // Get first page
+    let page = await kv.list({ prefix: ns, limit: 2 });
+    expect(page.keys).toEqual([{ name: `${ns}key1` }, { name: `${ns}key3` }]);
+    assert(!page.list_complete);
+    expect(page.cursor).toBeDefined();
 
-      // Insert key2 and key4
-      await kv.put("key2", "value2");
-      await kv.put("key4", "value4");
+    // Insert key2 and key4
+    await kv.put("key2", "value2");
+    await kv.put("key4", "value4");
 
-      // Get second page, expecting to see key4 but not key2
-      page = await kv.list({ prefix: ns, limit: 2, cursor: page.cursor });
-      expect(page.keys).toEqual([{ name: `${ns}key4` }, { name: `${ns}key5` }]);
-      assert(page.list_complete);
-    },
-  );
+    // Get second page, expecting to see key4 but not key2
+    page = await kv.list({ prefix: ns, limit: 2, cursor: page.cursor });
+    expect(page.keys).toEqual([{ name: `${ns}key4` }, { name: `${ns}key5` }]);
+    assert(page.list_complete);
+  });
 
   kvTest("list: ignores expired keys", async ({ kv, ns, object }) => {
     for (let i = 1; i <= 3; i++) {
@@ -1112,9 +1030,7 @@ describe("KvNamespace binding persistence", () => {
           Layer.provide(Paths.PathsLive),
           Layer.provide(Docker.DockerLive),
           Layer.provide(Workerd.WorkerdLive),
-          Layer.provideMerge(
-            Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer),
-          ),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
         );
 
         const runAgainstStorage = Effect.fn(
@@ -1123,19 +1039,12 @@ describe("KvNamespace binding persistence", () => {
               name: "kv-persist-test",
               compatibilityDate: "2026-03-10",
               compatibilityFlags: [],
-              modules: [
-                { name: "main.js", type: "ESModule", content: TEST_SCRIPT },
-              ],
-              bindings: [
-                KvNamespace.local({ binding: "NAMESPACE", id: "namespace" }),
-              ],
+              modules: [{ name: "main.js", type: "ESModule", content: TEST_SCRIPT }],
+              bindings: [KvNamespace.local({ binding: "NAMESPACE", id: "namespace" })],
             });
-            yield* Effect.promise(() =>
-              run(new NamespacedKv(worker.baseUrl, "")),
-            );
+            yield* Effect.promise(() => run(new NamespacedKv(worker.baseUrl, "")));
           },
-          (self) =>
-            self.pipe(Effect.provide(runtimeLayerTempDir), Effect.scoped),
+          (self) => self.pipe(Effect.provide(runtimeLayerTempDir), Effect.scoped),
         );
 
         yield* runAgainstStorage(async (kv) => {
@@ -1157,3 +1066,37 @@ describe("KvNamespace binding persistence", () => {
     { timeout: 30_000 },
   );
 });
+
+it.effect(
+  "KV Instant accepts 300-byte keys and rejects oversized UTF-8 keys across operations",
+  () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "kv-instant-key-test",
+        compatibilityDate: "2026-03-10",
+        modules: [{ name: "main.js", type: "ESModule", content: TEST_SCRIPT }],
+        bindings: [KvNamespace.local({ binding: "NAMESPACE", id: "instant", mode: "instant" })],
+      });
+      const kv = new NamespacedKv(worker.baseUrl, "");
+      yield* Effect.promise(async () => {
+        for (const key of ["a".repeat(300), "é".repeat(150), "😀".repeat(75)]) {
+          await kv.put(key, "boundary");
+          expect(await kv.get(key)).toBe("boundary");
+          expect(await kv.get([key])).toEqual(new Map([[key, "boundary"]]));
+          await kv.delete(key);
+          expect(await kv.get(key)).toBeNull();
+        }
+        for (const key of ["a".repeat(301), "é".repeat(150) + "a", "😀".repeat(76)]) {
+          await expect(kv.put(key, "invalid")).rejects.toThrow("at most 300 bytes");
+          await expect(kv.get(key)).rejects.toThrow("at most 300 bytes");
+          await expect(kv.get([key])).rejects.toThrow("at most 300 bytes");
+          await expect(kv.delete(key)).rejects.toThrow("at most 300 bytes");
+        }
+      });
+    }).pipe(
+      // Stop the worker before the runtime layer removes its storage directory.
+      Effect.scoped,
+      Effect.provide(localRuntimeLayer),
+    ),
+  { timeout: 60_000 },
+);

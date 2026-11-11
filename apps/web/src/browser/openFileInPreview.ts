@@ -12,7 +12,7 @@ import {
   mapAtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
@@ -24,26 +24,32 @@ import {
   setActivePreviewTab,
   updatePreviewServerSnapshot,
 } from "~/previewStateStore";
-import { selectSelectedRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import {
+  rightPanelHostRef,
+  selectSelectedRightPanelSurface,
+  useRightPanelStore,
+} from "~/rightPanelStore";
 
 import { resolveBrowserDefaults } from "./browserDefaults";
 
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
-export class BrowserPreviewUnavailableError extends Data.TaggedError(
+export class BrowserPreviewUnavailableError extends Schema.TaggedError<BrowserPreviewUnavailableError>()(
   "BrowserPreviewUnavailableError",
-)<{
-  readonly message: string;
-}> {}
+  { message: Schema.String },
+) {}
 
-export class BrowserSettingsReadError extends Data.TaggedError("BrowserSettingsReadError")<{
-  readonly cause: unknown;
-}> {
+export class BrowserSettingsReadError extends Schema.TaggedError<BrowserSettingsReadError>()(
+  "BrowserSettingsReadError",
+  { cause: Schema.Defect() },
+) {
   override get message(): string {
     return "Saved browser settings could not be loaded.";
   }
 }
+
+export const isBrowserSettingsReadError = Schema.is(BrowserSettingsReadError);
 
 export type OpenPreviewMutation<E = unknown> = (input: {
   readonly environmentId: EnvironmentId;
@@ -57,23 +63,25 @@ export async function openUrlInPreview<E>(input: {
   readonly profileId?: PreviewOpenInput["profileId"];
   readonly background?: boolean;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
+  // Read before any await: a side chat pane that unmounts meanwhile drops its host mapping.
+  const threadRef = rightPanelHostRef(input.threadRef);
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
   );
-  if (defaults instanceof BrowserSettingsReadError) {
+  if (isBrowserSettingsReadError(defaults)) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
-  const runtime = previewRuntimeFor(input.threadRef.environmentId);
-  const previousActiveTabId = readThreadPreviewState(input.threadRef).activeTabId;
+  const runtime = previewRuntimeFor(threadRef.environmentId);
+  const previousActiveTabId = readThreadPreviewState(threadRef).activeTabId;
   // The server changes the active tab, not panel selection; selection changes come from the user.
   const selectedSurface = () =>
-    selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, input.threadRef)
-      ?.id ?? null;
+    selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef)?.id ??
+    null;
   const surfaceBeforeOpen = selectedSurface();
   const result = await input.openPreview({
-    environmentId: input.threadRef.environmentId,
+    environmentId: threadRef.environmentId,
     input: {
-      threadId: input.threadRef.threadId,
+      threadId: threadRef.threadId,
       url: input.url,
       viewport: defaults.viewport,
       profileId: input.profileId ?? defaults.profileId,
@@ -81,21 +89,21 @@ export async function openUrlInPreview<E>(input: {
     },
   });
   return mapAtomCommandResult(result, (snapshot) => {
-    rememberPreviewUrl(input.threadRef, input.url);
+    rememberPreviewUrl(threadRef, input.url);
     if (input.background) {
-      updatePreviewServerSnapshot(input.threadRef, snapshot);
+      updatePreviewServerSnapshot(threadRef, snapshot);
       // Restore focus unless the user picked a tab while opening this one.
       if (
         previousActiveTabId &&
-        readThreadPreviewState(input.threadRef).activeTabId === snapshot.tabId &&
+        readThreadPreviewState(threadRef).activeTabId === snapshot.tabId &&
         selectedSurface() === surfaceBeforeOpen
       ) {
-        setActivePreviewTab(input.threadRef, previousActiveTabId);
+        setActivePreviewTab(threadRef, previousActiveTabId);
       }
       return;
     }
-    applyPreviewServerSnapshot(input.threadRef, snapshot);
-    useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
+    applyPreviewServerSnapshot(threadRef, snapshot);
+    useRightPanelStore.getState().openBrowser(threadRef, snapshot.tabId);
   });
 }
 
@@ -124,6 +132,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
       ),
     );
   }
+  const hostRef = rightPanelHostRef(input.threadRef);
   const insideWorkspace =
     mediaFileReference(input.filePath, input.workspaceRoot).relativePath !== undefined;
   const assetResult = await input.createAssetUrl({
@@ -146,7 +155,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     );
   }
   return openUrlInPreview({
-    threadRef: input.threadRef,
+    threadRef: hostRef,
     url: assetUrl,
     openPreview: input.openPreview,
   });
