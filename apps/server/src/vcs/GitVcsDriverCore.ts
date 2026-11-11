@@ -2534,7 +2534,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             prefix: "t3code-commit-index-",
           });
           const tempIndexPath = path.join(directory, "index");
-          const env = { GIT_INDEX_FILE: tempIndexPath } satisfies NodeJS.ProcessEnv;
+          // Staging hashes file contents; keep those objects in the temporary directory, read
+          // beside the repository's own, so a message drafted without a commit leaves nothing.
+          const objectsValue = yield* runGitStdout(
+            "GitVcsDriver.prepareCommitContext.objectsPath",
+            cwd,
+            ["rev-parse", "--git-path", "objects"],
+          );
+          // Every object directory the repository reads, as Git resolved it (its own alternates,
+          // nested ones and the environment's), listed directly: one more level of nesting could
+          // pass Git's alternate depth limit.
+          const objectDirectories = yield* runGitStdout(
+            "GitVcsDriver.prepareCommitContext.alternates",
+            cwd,
+            ["count-objects", "-v"],
+          );
+          // Git prints an entry C-quoted when it needs quoting; quote the rest the same way, so a
+          // path holding the list separator stays one entry (Git 2.11.1+).
+          const quoted = (entry: string) =>
+            entry.startsWith('"') ? entry : `"${entry.replace(/[\\"]/g, "\\$&")}"`;
+          const alternates = [
+            path.resolve(cwd, objectsValue.trim()),
+            ...objectDirectories
+              .split("\n")
+              .flatMap((line) =>
+                line.startsWith("alternate: ") ? [line.slice("alternate: ".length)] : [],
+              ),
+          ];
+          const tempObjectsPath = path.join(directory, "objects");
+          yield* fileSystem.makeDirectory(tempObjectsPath);
+          const env = {
+            GIT_INDEX_FILE: tempIndexPath,
+            GIT_OBJECT_DIRECTORY: tempObjectsPath,
+            GIT_ALTERNATE_OBJECT_DIRECTORIES: alternates
+              .map(quoted)
+              .join(hostPlatform === "win32" ? ";" : ":"),
+          } satisfies NodeJS.ProcessEnv;
           const config = [
             "-c",
             "core.splitIndex=false",
