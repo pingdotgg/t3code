@@ -6,6 +6,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { shouldCompactBeforeSend } from "@t3tools/client-runtime/state/context-window";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
   deriveProviderSubagentStatus,
@@ -85,6 +86,7 @@ import {
 } from "./use-composer-drafts";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import {
+  compactionBlocksSteering,
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -323,7 +325,11 @@ export function useThreadComposerState(input: {
     ? deriveThreadActivityRun(selectedThreadProjection.projection)
     : (selectedThreadShell?.latestRun ?? null);
 
-  const isCompacting = (() => {
+  const activeRunId =
+    selectedThreadRuntime?.activeRunId && threadRuntimeIsActive(selectedThreadRuntime)
+      ? selectedThreadRuntime.activeRunId
+      : null;
+  const compactCommandIsActive = (() => {
     const queuedCompact = selectedThreadQueuedMessages.some(
       (message) =>
         message.messageId === dispatchingQueuedMessageId &&
@@ -331,16 +337,7 @@ export function useThreadComposerState(input: {
         message.attachments.length === 0,
     );
     if (queuedCompact) return true;
-    const activeRunId = selectedThreadRuntime?.activeRunId;
-    if (!activeRunId || !threadRuntimeIsActive(selectedThreadRuntime)) return false;
-    if (
-      selectedThreadVisibleTurnItems.some(
-        ({ item }) =>
-          item.runId === activeRunId && item.type === "compaction" && item.status === "running",
-      )
-    ) {
-      return true;
-    }
+    if (!activeRunId) return false;
     const compactMessage = selectedThreadVisibleTurnItems.findLast(
       ({ item }) =>
         item.runId === activeRunId &&
@@ -359,14 +356,29 @@ export function useThreadComposerState(input: {
           item.status === "cancelled"),
     );
   })();
+  const compactionRunning =
+    activeRunId !== null &&
+    selectedThreadVisibleTurnItems.some(
+      ({ item }) =>
+        item.runId === activeRunId && item.type === "compaction" && item.status === "running",
+    );
+  const isCompacting = compactCommandIsActive || compactionRunning;
+  const compactionBlocksSteer = compactionBlocksSteering({
+    compactCommandIsActive,
+    compactionRunning,
+    steersDuringCompaction: threadSteersDuringCompaction(selectedThreadProjection?.projection),
+    run: selectedThreadProjection?.projection.runs.find((run) => run.id === activeRunId),
+    messages: selectedThreadMessages,
+  });
   // Awaited commands/subagents park runtime at idle while the banner still says
   // Waiting; treat that like an active turn so follow-ups queue instead of starting.
   const isWaitingOnBackgroundWork = backgroundWorkHoldsCompletion(
     selectedThreadShell?.pendingBackgroundTasks ?? [],
   );
-  // Compaction and awaited background work cannot take steering input, so follow-ups queue.
   const canSteerActiveTurn =
-    queueWorkflow?.canPromoteToSteer === true && !isCompacting && !isWaitingOnBackgroundWork;
+    queueWorkflow?.canPromoteToSteer === true &&
+    !compactionBlocksSteer &&
+    !isWaitingOnBackgroundWork;
   // A stop or a restart holds the queue, completion wakes included, until it
   // is resumed; the queue sheet lists only the user's own messages.
   const queueHeld = queueWorkflow?.isHeld === true;

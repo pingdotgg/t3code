@@ -40,7 +40,11 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { projectEnvironment } from "../../state/projects";
 import type { AssetUrlFailureReason } from "../../state/asset-url-state";
-import { Inspector, useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import {
+  Inspector,
+  useAdaptiveWorkspaceLayout,
+  useWorkspacePaneState,
+} from "../layout/AdaptiveWorkspaceLayout";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
@@ -111,7 +115,8 @@ function FileHeader(props: {
     readonly onPress: () => unknown;
   }>;
 }) {
-  const { panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { panes } = useWorkspacePaneState();
   const modes = props.actions.filter(({ inline }) => inline);
   return (
     <AppBar
@@ -453,7 +458,7 @@ function FilesToolbarBottomFade() {
 
 export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const navigation = useNavigation();
-  const { fileInspector } = useAdaptiveWorkspaceLayout();
+  const { fileInspector } = useWorkspacePaneState();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
@@ -609,7 +614,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
 
 export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const navigation = useNavigation();
-  const { fileInspector } = useAdaptiveWorkspaceLayout();
+  const { fileInspector } = useWorkspacePaneState();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const params = props.route.params;
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));

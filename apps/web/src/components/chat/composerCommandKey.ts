@@ -40,6 +40,7 @@ export function composerCommandKeyHandler(input: {
   readonly phase: ChatComposerProps["phase"];
   readonly isCompacting: boolean;
   readonly isWaitingOnBackgroundWork?: boolean;
+  readonly canSteer: boolean;
   readonly followUpBehavior: ChatComposerProps["settings"]["followUpBehavior"];
   readonly isSoftwareKeyboardOpen: boolean;
   readonly isLiteralPendingAnswer: boolean;
@@ -94,6 +95,7 @@ export function composerCommandKeyHandler(input: {
     phase,
     isCompacting,
     isWaitingOnBackgroundWork = false,
+    canSteer,
     followUpBehavior,
     isSoftwareKeyboardOpen,
     isLiteralPendingAnswer,
@@ -269,7 +271,7 @@ export function composerCommandKeyHandler(input: {
           running: phase === "running" || isCompacting || isWaitingOnBackgroundWork,
           alternateModifier: submissionIntent === "alternate",
           activeTurnDefault: followUpBehavior,
-          canSteer: !isCompacting && !isWaitingOnBackgroundWork,
+          canSteer: canSteer && !isWaitingOnBackgroundWork,
         }),
         submissionIntent,
       );
