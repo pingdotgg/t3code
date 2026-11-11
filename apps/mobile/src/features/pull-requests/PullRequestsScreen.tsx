@@ -268,7 +268,10 @@ export function PullRequestsScreen(
     />
   );
   // First screenful on the open frame; the rest follows after interactions settle.
-  const shownEntries = useDeferredValue(entries, entries.slice(0, 24));
+  const shownEntries = useDeferredValue(
+    entries,
+    initialScrollOffset > 0 ? entries : entries.slice(0, 24),
+  );
   const list = (
     <View className={sidebar ? "flex-1 bg-drawer" : "flex-1 bg-screen"}>
       <LegendList

@@ -46,8 +46,6 @@ function createThreadScreenStore() {
         listeners.delete(listener);
       };
     },
-    // Binding renders before the outlet under the host; a silent write lets the
-    // outlet read content in the same pass without scheduling a second commit.
     publishBinding(
       props: ThreadDetailScreenProps,
       body: readonly unknown[],
@@ -144,8 +142,7 @@ function fingerprintsEqual(left: readonly unknown[], right: readonly unknown[]):
 }
 
 // Controllers can change from draft to live without replacing the native screen,
-// the keyboard host, or the editor. Publish during Binding render so the outlet
-// can paint detail in the same host pass.
+// the keyboard host, or the editor. Publish before paint to avoid an intermediate frame.
 export function ThreadScreenHost({ children }: { readonly children: ReactNode }) {
   const [store] = useState(createThreadScreenStore);
   return (
@@ -166,9 +163,9 @@ export function ThreadScreenBinding({
   readonly headerKey?: readonly unknown[];
 }) {
   const store = useContext(ThreadScreenContext)!;
-  store.publishBinding(props, threadDetailBodyFingerprint(props), headerKey ?? null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- wakes the outlet after Binding wrote the store during render
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed thread props before the outlet paints
   useLayoutEffect(() => {
+    store.publishBinding(props, threadDetailBodyFingerprint(props), headerKey ?? null);
     store.flushNotify();
   });
   return null;
@@ -185,9 +182,9 @@ export function ThreadScreenFallback({
   readonly headerKey?: readonly unknown[];
 }) {
   const store = useContext(ThreadScreenContext)!;
-  store.publishFallback(children, header, headerKey ?? null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- wakes the outlet after Fallback wrote the store during render
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed fallback content before the outlet paints
   useLayoutEffect(() => {
+    store.publishFallback(children, header, headerKey ?? null);
     store.flushNotify();
   });
   return null;

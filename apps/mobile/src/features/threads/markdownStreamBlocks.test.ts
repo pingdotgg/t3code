@@ -17,6 +17,8 @@ describe("splitMarkdownBlocks", () => {
 
   it("returns null for document-wide syntax", () => {
     expect(splitMarkdownBlocks("[id]: https://example.com\n\npara")).toBeNull();
+    expect(splitMarkdownBlocks("[foo]\n\n> [foo]: /url")).toBeNull();
+    expect(splitMarkdownBlocks("[foo]\n\n- [foo]: /url")).toBeNull();
     expect(splitMarkdownBlocks("$$\nx\n$$\n\npara")).toBeNull();
   });
 });

@@ -14,7 +14,12 @@ import {
 import { threadSelectionDeferral } from "./deferred-navigation";
 import { useStableEdgeInsetsOverride } from "../../lib/stable-edge-insets";
 import { uuidv4 } from "../../lib/uuid";
-import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+  type SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
 import {
@@ -56,6 +61,7 @@ import {
   nativeInspectorColumnWidth,
 } from "../../lib/layout";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { withKnownPullRequestSummary } from "../../state/use-thread-pr";
 import { mobilePreferencesAtom } from "../../state/preferences";
@@ -624,7 +630,7 @@ function AdaptiveWorkspaceLayoutContent(
     contentSafeAreaOverride,
   );
   // Prefer the open thread's project, else the remembered one; the draft screen opens the
-  // picker if a remembered id is gone. Skip the full projects scan so New chat can push now.
+  // picker if a remembered id is gone or archived. Read only the two candidate projects.
   const handleStartNewTask = useEffectEvent(() => {
     const state = rootStackState(navigation);
     const currentRoute = workspaceRoutesOf(
@@ -649,11 +655,23 @@ function AdaptiveWorkspaceLayoutContent(
         : undefined;
     const preferences = appAtomRegistry.get(mobilePreferencesAtom);
     const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
+    const currentProject = environmentId && projectId ? { environmentId, projectId } : undefined;
+    const projects = [currentProject, saved?.lastThreadProject].flatMap((ref) => {
+      if (!ref) return [];
+      const project = appAtomRegistry.get(
+        environmentProjects.projectAtom({
+          environmentId: EnvironmentId.make(ref.environmentId),
+          projectId: ProjectId.make(ref.projectId),
+        }),
+      );
+      return project ? [project] : [];
+    });
     handleSelectThreadRoute(
       newTaskDestination({
+        projects,
         requestId: uuidv4(),
         useLastProject: saved?.useLastProjectForNewThreads,
-        currentProject: environmentId && projectId ? { environmentId, projectId } : undefined,
+        currentProject,
         lastProject: saved?.lastThreadProject,
       }),
     );

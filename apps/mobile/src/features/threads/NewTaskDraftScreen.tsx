@@ -537,7 +537,7 @@ export function NewTaskDraftScreen(props: NewTaskDraftScreenProps) {
   const { loadBranches } = flow;
   // Stay on the light shell until the composer is focused — avoids a ThreadDetailScreen
   // mount cliff that kept open-settle above 1s even when the hero was already visible.
-  const [draftLive, setDraftLive] = useState(false);
+  const [draftLive, setDraftLive] = useState(Boolean(props.draftId || props.incomingShareId));
   const draftChromeReady = draftLive;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests the selected project's branch list from the server once per project
   useEffect(() => {

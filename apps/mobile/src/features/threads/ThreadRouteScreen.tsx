@@ -264,7 +264,6 @@ function ThreadOpenShell(props: {
   // Prefer empty shell chrome over hydrating title/subtitle churn during open settle.
   const title = shell?.title ?? "";
   const subtitle = "";
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasWorkspace = Boolean(project?.workspaceRoot);
   const statusCwd = shell?.worktreePath ?? project?.workspaceRoot ?? null;
   // Keep the open shell free of git/terminal queries — live chrome hydrates menus after first paint.
@@ -273,7 +272,7 @@ function ThreadOpenShell(props: {
     threadId: props.threadId ?? "",
     currentBranch: shell?.branch ?? null,
     hasWorkspace,
-    canOperateTerminal,
+    canOperateTerminal: false,
     canOpenFiles: hasWorkspace,
   });
   const menuKeyInput = {
@@ -431,8 +430,8 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     setErrorBeforeConnected(detailError);
   }
   const [bodyReadyIdentity, setBodyReadyIdentity] = useState<string | null>(null);
-  const bodyReady = bodyReadyIdentity === routeThreadKey && routeThreadKey !== null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers ThreadRouteContent until after the open shell paints; re-arms per thread
+  const bodyReady = bodyReadyIdentity !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers ThreadRouteContent until after the initial open shell paints
   useEffect(() => {
     if (routeThreadKey === null) return;
     let cancelled = false;

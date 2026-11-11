@@ -26,7 +26,7 @@ const NO_OLDER_SETTLED: Atom.Atom<OlderSettled | null> = Atom.make(null);
  */
 export function useOlderSettledShelf(input: {
   readonly scopes: ReadonlyArray<OlderSettledScope>;
-  /** A collapsed shelf mounts no pages, so a reconnect reads none; expanding restores them. */
+  /** Collapse hides rows but retains requested pages, which reconnect may refresh. */
   readonly expanded: boolean;
   /** Rows the shelf shows; pages are read until it lists that many. */
   readonly visibleCount: number;
@@ -46,7 +46,7 @@ export function useOlderSettledShelf(input: {
   const shelfKey = JSON.stringify(shelfScopes);
   const shelf = useAtomValue(olderSettledThreads.shelfAtom(shelfScopes));
   // Before paint so expanding Settled does not flash an empty shelf while pages remount.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older settled thread pages into the shared thread registry while the shelf shows them
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older settled thread pages into the shared thread registry until its scope changes
   useLayoutEffect(() => {
     const releases = (JSON.parse(shelfKey) as typeof shelfScopes).flatMap(({ scope, pages }) =>
       pages === 0

@@ -227,14 +227,19 @@ export function useThreadComposerState(input: {
   const selectedThreadKey = selectedThreadShell
     ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
     : null;
-  const selectedThreadQueuedMessages = selectedThreadKey
-    ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []).filter(
-        (message) => message.creation === undefined,
-      )
-    : [];
-  const feedbackSubmissions = selectedThreadKey
-    ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? [])
-    : [];
+  const selectedThreadQueuedMessages = useMemo(
+    () =>
+      selectedThreadKey
+        ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []).filter(
+            (message) => message.creation === undefined,
+          )
+        : [],
+    [queuedMessagesByThreadKey, selectedThreadKey],
+  );
+  const feedbackSubmissions = useMemo(
+    () => (selectedThreadKey ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? []) : []),
+    [feedbackSubmissionsByThreadKey, selectedThreadKey],
+  );
   const dismissFeedback = (id: MessageId) => {
     if (!selectedThreadKey) return;
     setFeedbackSubmissionsByThreadKey((current) => ({

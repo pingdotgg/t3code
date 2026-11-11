@@ -801,10 +801,7 @@ function PullRequestRouteBody(props: {
     stateAction:
       stateAction ??
       (actionsIdentity
-        ? summary?.state === "closed" ||
-          summary?.state === "merged" ||
-          pr?.state === "closed" ||
-          pr?.state === "merged"
+        ? (pr?.state ?? summary?.state) === "closed" || (pr?.state ?? summary?.state) === "merged"
           ? "reopen"
           : "close"
         : null),

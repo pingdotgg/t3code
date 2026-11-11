@@ -1,5 +1,5 @@
 // Definitions, footnotes, raw HTML, container directives and display math can tie blocks together.
-const DOCUMENT_WIDE_SYNTAX = /^ {0,3}(?:\[[^\]\n]+\]:|<[A-Za-z!?/]|:::|\$\$)|\[\^/m;
+const DOCUMENT_WIDE_SYNTAX = /\[[^\]\n]+\]:|^ {0,3}(?:<[A-Za-z!?/]|:::|\$\$)|\[\^/m;
 const FENCE_PATTERN = /^ {0,3}(`{3,}|~{3,})/;
 // After a blank line these still continue the previous block: a list item or indented content.
 const CONTINUATION_PATTERN = /^(?:[ \t]|(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$))/;
