@@ -8,12 +8,13 @@ import {
   type PullRequestDiffResult,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, firstPage, pagedDiffAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -47,6 +48,7 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     "page-2": { patch: filePatch("late.test.ts"), truncated: false, nextCursor: null },
   };
   return {
+    firstPage,
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
@@ -78,6 +80,12 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 
 import { render } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
+import { usePullRequestReviewStore } from "./pullRequestReviewStore";
+import {
+  buildFileDiffContentVersion,
+  buildFileDiffIdentityKey,
+  getRenderablePatch,
+} from "~/lib/diffRendering";
 
 const detail: PullRequestDetailView = {
   provider: SourceControlProviderKind.make("github"),
@@ -134,6 +142,7 @@ const detail: PullRequestDetailView = {
 function setup({ paged }: { paged: boolean }) {
   window.localStorage.removeItem("t3code.diffHideTestFiles");
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  usePullRequestReviewStore.setState(usePullRequestReviewStore.getInitialState(), true);
   mocks.paged = paged;
   mocks.diffCommits = [];
 }
@@ -146,6 +155,7 @@ const tab = (
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
+    codeViewKey="code-view"
     environmentId={EnvironmentId.make("environment")}
     reference={detail}
     detail={detail}
@@ -203,6 +213,86 @@ it("scrolls to a file asked for as the tab opens", async () => {
   await expectFileHeaderShown(screen, container, "early-39.ts");
 });
 
+it("keeps an unfinished inline comment when the panel unmounts and returns", async () => {
+  setup({ paged: false });
+  const parsed = getRenderablePatch(firstPage.patch, "draft", { compactPartialHunkOffsets: true });
+  if (parsed?.kind !== "files") throw new Error("fixture must parse as files");
+  const file = parsed.files[0]!;
+  usePullRequestReviewStore.getState().updateCodeView("code-view", (current) => ({
+    ...current,
+    foldOverride: "expanded",
+    draft: {
+      fileKey: buildFileDiffIdentityKey(file),
+      contentVersion: buildFileDiffContentVersion(file),
+      path: "a.ts",
+      oldPath: null,
+      position: { kind: "context", oldLine: 2, newLine: 2, side: "right" },
+      range: { start: 2, end: 2, side: "additions" },
+    },
+  }));
+  const element = () => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      codeViewKey="code-view"
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={detail}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+      onAddToAgentSelection={() => {}}
+    />
+  );
+  const container = pagedContainer();
+  {
+    await using screen = await render(element(), { container });
+    const composer = screen.getByRole("textbox", { name: "Comment on lines a.ts:2" });
+    await userEvent.type(composer, "Half a thought");
+  }
+  await using screen = await render(element(), { container });
+  await expect
+    .element(screen.getByRole("textbox", { name: "Comment on lines a.ts:2" }))
+    .toHaveValue("Half a thought");
+});
+
+it("keeps selected lines on a file whose page has not loaded again yet", async () => {
+  setup({ paged: true });
+  const parsed = getRenderablePatch(
+    [
+      "diff --git a/late.test.ts b/late.test.ts",
+      "index 1111111..2222222 100644",
+      "--- a/late.test.ts",
+      "+++ b/late.test.ts",
+      "@@ -1,6 +1,6 @@",
+      "-before()",
+      "+after()",
+      " one()",
+      " two()",
+      " three()",
+      " four()",
+      " five()",
+      "",
+    ].join("\n"),
+    "selection",
+    { compactPartialHunkOffsets: true },
+  );
+  if (parsed?.kind !== "files") throw new Error("fixture must parse as files");
+  const file = parsed.files[0]!;
+  const selectedLines = {
+    id: buildFileDiffIdentityKey(file),
+    contentVersion: buildFileDiffContentVersion(file),
+    range: { start: 2, end: 3, side: "additions" as const },
+  };
+  usePullRequestReviewStore
+    .getState()
+    .updateCodeView("code-view", (current) => ({ ...current, selectedLines }));
+  await using screen = await render(tab(0), { container: pagedContainer() });
+  await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
+  expect(usePullRequestReviewStore.getState().codeViews["code-view"]?.selectedLines).toEqual(
+    selectedLines,
+  );
+});
+
 it("pages forward to a file asked for that is not loaded yet, then scrolls to it", async () => {
   setup({ paged: true });
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
@@ -241,6 +331,7 @@ it("never requests the diff of a selected commit the pull request no longer has"
       scrollerRef={() => {}}
       environmentId={EnvironmentId.make("environment")}
       reference={detail}
+      codeViewKey="code-view"
       detail={{
         ...detail,
         commits: [
@@ -282,6 +373,7 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
       environmentId={EnvironmentId.make("environment")}
       reference={detail}
       detail={withCommit}
+      codeViewKey="code-view"
       selectedCommitOid={selectedCommitOid}
       onSelectedCommitChange={() => {}}
       onRefresh={() => {}}

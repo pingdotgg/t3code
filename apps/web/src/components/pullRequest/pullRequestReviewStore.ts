@@ -1,5 +1,11 @@
-import type { PullRequestRef, PullRequestReviewCommentDraft } from "@t3tools/contracts";
+import type { SelectedLineRange } from "@pierre/diffs";
+import type {
+  PullRequestRef,
+  PullRequestReviewCommentDraft,
+  PullRequestReviewPosition,
+} from "@t3tools/contracts";
 import { create } from "zustand";
+import type { DiffFoldOverride } from "./pullRequestDiff.logic";
 
 export type PendingReviewComment = PullRequestReviewCommentDraft & { readonly id: string };
 
@@ -20,7 +26,60 @@ export function pullRequestReviewKey(reference: PullRequestRef): string {
   ]);
 }
 
+export interface PullRequestDraftAnchor {
+  readonly fileKey: string;
+  readonly contentVersion: number;
+  readonly path: string;
+  readonly oldPath: string | null;
+  readonly position: PullRequestReviewPosition;
+  readonly startPosition?: PullRequestReviewPosition;
+  readonly range: SelectedLineRange;
+}
+
+export interface PullRequestSelectedLines {
+  readonly id: string;
+  readonly contentVersion: number;
+  readonly range: SelectedLineRange;
+}
+
+export interface PullRequestCodeViewState {
+  readonly selectedCommitOid: string | null;
+  readonly foldOverride: DiffFoldOverride;
+  readonly toggledFiles: ReadonlySet<string>;
+  readonly scrollTop: number;
+  readonly loadedPageCount: number;
+  readonly chromeCondensed: boolean;
+  readonly selectedLines: PullRequestSelectedLines | null;
+  readonly draft: PullRequestDraftAnchor | null;
+  readonly draftText: string;
+}
+
+export const EMPTY_CODE_VIEW: PullRequestCodeViewState = {
+  selectedCommitOid: null,
+  foldOverride: null,
+  toggledFiles: new Set(),
+  scrollTop: 0,
+  loadedPageCount: 1,
+  chromeCondensed: false,
+  selectedLines: null,
+  draft: null,
+  draftText: "",
+};
+
+export function pullRequestCodeViewKey(
+  environmentId: string,
+  threadId: string | null,
+  reference: PullRequestRef,
+) {
+  return JSON.stringify([environmentId, threadId, pullRequestReviewKey(reference)]);
+}
+
 interface PullRequestReviewStoreState {
+  readonly codeViews: Readonly<Record<string, PullRequestCodeViewState>>;
+  readonly updateCodeView: (
+    key: string,
+    update: (current: PullRequestCodeViewState) => PullRequestCodeViewState,
+  ) => void;
   readonly drafts: Readonly<Record<string, ReadonlyArray<PendingReviewComment>>>;
   readonly summaries: Readonly<Record<string, string>>;
   readonly addComment: (key: string, comment: PendingReviewComment) => void;
@@ -34,6 +93,24 @@ interface PullRequestReviewStoreState {
 const EMPTY: ReadonlyArray<PendingReviewComment> = [];
 
 export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((set) => ({
+  codeViews: {},
+  updateCodeView: (key, update) =>
+    set((state) => {
+      const current = state.codeViews[key] ?? EMPTY_CODE_VIEW;
+      const updated = update(current);
+      // A session can see an unbounded sequence of renamed or replaced files.
+      const next =
+        updated.toggledFiles.size <= 2048
+          ? updated
+          : { ...updated, toggledFiles: new Set([...updated.toggledFiles].slice(-2048)) };
+      if (next === current) return state;
+      const codeViews = { ...state.codeViews };
+      delete codeViews[key];
+      codeViews[key] = next;
+      // Review sessions outlive the active surface, without retaining every PR ever opened.
+      for (const oldest of Object.keys(codeViews).slice(0, -32)) delete codeViews[oldest];
+      return { codeViews };
+    }),
   drafts: {},
   summaries: {},
   addComment: (key, comment) =>
@@ -76,4 +153,8 @@ export function usePendingReviewComments(
   return usePullRequestReviewStore(
     (store) => store.drafts[pullRequestReviewKey(reference)] ?? EMPTY,
   );
+}
+
+export function readPullRequestCodeView(key: string) {
+  return usePullRequestReviewStore.getState().codeViews[key] ?? EMPTY_CODE_VIEW;
 }
