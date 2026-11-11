@@ -217,7 +217,7 @@ const makeProjectCliRuntimeLayer = (layerProjectService: typeof RuntimeLayer.lay
         Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layer)),
       ),
     ),
-    Layer.provideMerge(SqlitePersistence.layerConfig),
+    Layer.provideMerge(SqlitePersistence.layerCliConfig),
   );
 
 const PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT = Duration.seconds(1);
