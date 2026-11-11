@@ -9,7 +9,6 @@ import { CodexSettings } from "@t3tools/contracts";
 import {
   CodexShadowHomeEntryConflictError,
   CodexShadowHomePathConflictError,
-  CodexShadowHomePrivateEntrySymlinkError,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
@@ -218,7 +217,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
-      "rejects auth-like shadow symlinks that point outside the shared home, even dangling ones",
+      "removes auth-like shadow symlinks that point outside the shared home, even dangling ones",
       () =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -238,15 +237,10 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
           );
 
-          const result = yield* materializeCodexShadowHome(layout).pipe(Effect.result);
+          yield* materializeCodexShadowHome(layout);
 
-          expect(result).toMatchObject({
-            _tag: "Failure",
-            failure: { entryName: "auth-orphan.json", path: orphanLink },
-          });
-          expect(result._tag === "Failure" && result.failure).toBeInstanceOf(
-            CodexShadowHomePrivateEntrySymlinkError,
-          );
+          const orphanLinkResult = yield* fileSystem.readLink(orphanLink).pipe(Effect.result);
+          expect(orphanLinkResult._tag).toBe("Failure");
         }),
     );
 

@@ -354,12 +354,9 @@ const ensureShadowAuthIsPrivate = Effect.fn("CodexHomeLayout.ensureShadowAuthIsP
           linkPath: authPath,
         });
         if (state._tag !== "Symlink") return;
-        // Older versions linked auth-like backups to the shared copy; drop those, reject the rest.
-        const sharedEntryPath = path.join(input.sharedHomePath, entryName);
-        if (
-          entryName !== "auth.json" &&
-          path.resolve(path.dirname(authPath), state.target) === sharedEntryPath
-        ) {
+        // Older versions linked auth-like backups into shadow homes. A link holds no data,
+        // so drop it; only a linked auth.json means the shadow home has no credentials of its own.
+        if (entryName !== "auth.json") {
           return yield* input.fileSystem.remove(authPath).pipe(
             Effect.catchTags({
               PlatformError: (cause) =>
