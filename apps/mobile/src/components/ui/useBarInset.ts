@@ -38,9 +38,9 @@ export function useBarOverlap(): number {
 }
 
 /**
- * The content's top safe area under the AppBar: a translucent bar's height, zero under a solid
- * one or on Android, where the bar sits in flow. For scroll content insets, which must not
- * double-count a solid bar.
+ * The content's top safe area under the AppBar: the height of the iOS bar its column lays content
+ * under, glass or solid, and zero on Android, where the bar sits in flow. For manual scroll
+ * content insets.
  */
 export function useContentTopInset(): number {
   const insets = useSafeAreaInsets();

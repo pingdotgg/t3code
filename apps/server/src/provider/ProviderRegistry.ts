@@ -78,6 +78,8 @@ export class ProviderRegistry extends Context.Service<
     readonly refreshWorkspaceSnapshot: (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
+      /** Directory the driver scans; the snapshot stays keyed by `cwd`. Defaults to `cwd`. */
+      readonly scanCwd?: string;
       readonly fresh?: boolean;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
@@ -193,9 +195,12 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     );
   }
 
-  if (provider.driver === ProviderDriverKind.make("grok")) {
-    // Grok reports ready only after it discovers a model list; the pending,
-    // ACP-failed, empty-inventory, and logged-out probes are warning/error.
+  if (
+    provider.driver === ProviderDriverKind.make("grok") ||
+    provider.driver === ProviderDriverKind.make("cursor")
+  ) {
+    // Grok and Cursor report ready only after they discover a model list; the pending,
+    // failed, empty-inventory, and logged-out probes are warning/error.
     return !(provider.installed && provider.status === "ready");
   }
 
@@ -951,6 +956,7 @@ export const layer = Layer.effect(
     const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
+      readonly scanCwd?: string;
       readonly fresh?: boolean;
     }) {
       if (input.fresh) {
@@ -989,7 +995,7 @@ export const layer = Layer.effect(
           )
         : Effect.void;
       const runScan = refreshMachineSnapshot.pipe(
-        Effect.andThen(instance.snapshotForCwd(input.cwd)),
+        Effect.andThen(instance.snapshotForCwd(input.scanCwd ?? input.cwd)),
         // Scans fail on error; returned inventory remains valid even when provider health reports an error.
         Effect.flatMap((scopedSnapshot) =>
           instanceRegistry.getInstance(input.instanceId).pipe(
