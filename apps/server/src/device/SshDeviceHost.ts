@@ -54,9 +54,9 @@ export class SshConnectError extends Schema.TaggedError<SshConnectError>()("SshC
     const detail = this.detail.replace(/\.$/u, "");
     switch (this.reason) {
       case "host_key_unknown":
-        return `The host key of ${this.target} is not trusted on ${here}. Connect to it once with ssh from there and accept the key, or use a host name that is already in its known_hosts.`;
+        return `SSH encountered an untrusted host key while connecting to ${this.target} from ${here}. Connect once with ssh from there to identify the host and verify its key before accepting it.`;
       case "host_key_changed":
-        return `The host key of ${this.target} changed since ${here} trusted it. If you expected this, remove the old key with \`ssh-keygen -R\` there, then connect once with ssh to accept the new one.`;
+        return `SSH encountered a changed host key while connecting to ${this.target} from ${here}. Connect once with ssh from there to identify the affected host. If the change is expected, remove that host's old key with \`ssh-keygen -R\`, then verify and accept its new key.`;
       case "auth":
         return `SSH login failed while connecting to ${this.target}: ${detail}. SSH from ${here} must log in without a prompt.`;
       case "resolve":
