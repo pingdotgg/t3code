@@ -10,6 +10,7 @@ import {
   collectAssistantCitations,
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
+import { markdownMathRanges, parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
@@ -100,15 +101,16 @@ class FakeElement {
     return search(this);
   }
 
+  /** Supports the `:scope > a > b` child paths the table serializer queries. */
   querySelectorAll(selector: string): FakeElement[] {
     return selector.split(", ").flatMap((part) =>
       part
-        .slice(":scope > ".length)
+        .replace(/^:scope > /, "")
         .split(" > ")
         .reduce<FakeElement[]>(
-          (parents, tag) =>
-            parents.flatMap((parent) =>
-              parent.children.filter((child) => child.tagName === tag.toUpperCase()),
+          (level, tag) =>
+            level.flatMap((element) =>
+              element.children.filter((child) => child.tagName === tag.toUpperCase()),
             ),
           [this],
         ),
@@ -196,6 +198,18 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
   });
 
+  it("preserves explicit ordered-list values and continues from resets when copying", () => {
+    const list = new FakeElement("OL", [], { start: "0" }).append(
+      new FakeElement("LI").append(new FakeText("A")),
+      new FakeElement("LI", [], { value: "5" }).append(new FakeText("B")),
+      new FakeElement("LI").append(new FakeText("C")),
+      new FakeElement("LI", [], { value: "0" }).append(new FakeText("D")),
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
+      "0. A\n5. B\n6. C\n0. D",
+    );
+  });
+
   it("keeps a bare list item that sits alongside the code block", () => {
     const container = new FakeElement("DIV").append(
       new FakeElement("UL").append(new FakeElement("LI")),
@@ -229,6 +243,32 @@ describe("serializeRenderedMarkdownFragment", () => {
     );
   });
 
+  it("keeps blank lines inside a code block in a list item, quote, or longer fence", () => {
+    const code = ["import os", "", "", "def main():"];
+    const list = new FakeElement("OL").append(
+      new FakeElement("LI").append(new FakeText("Create it:\n"), renderedCodeBlock(code)),
+    );
+    const quote = new FakeElement("BLOCKQUOTE").append(
+      new FakeElement("P").append(new FakeText("Note:")),
+      renderedCodeBlock(code),
+    );
+    const nestedFence = new FakeElement("DIV").append(
+      new FakeElement("P").append(new FakeText("Example:")),
+      renderedCodeBlock(["```js", "a()", "", "", "b()  ", "```"]),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(nestedFence))).toBe(
+      "Example:\n\n```js\na()\n\n\nb()  \n```",
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
+      "1. Create it:\n   import os\n\n\n   def main():",
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(quote)))).toBe(
+      "> Note:\n>\n> import os\n>\n>\n> def main():",
+    );
+  });
+
   it("omits fences when a selection past the last line drags in the whole code block", () => {
     const container = new FakeElement("DIV").append(
       renderedCodeBlock(["printf '%s' 'TOKEN' | gh secret set CLOUDFLARE_API_TOKEN"]),
@@ -242,7 +282,25 @@ describe("serializeRenderedMarkdownFragment", () => {
   });
 });
 
-describe("serializeTableElementToMarkdown", () => {
+function renderedFormula(tex: string): FakeElement {
+  // MarkdownMath's wrapper; its children stand in for KaTeX's glyphs.
+  return new FakeElement("SPAN", [], {
+    "data-markdown-math": "inline",
+    "data-markdown-copy": `\\(${tex}\\)`,
+  }).append(new FakeText(tex));
+}
+
+function renderedTable(...rows: Array<Array<FakeElement | FakeText>>): FakeElement {
+  const row = (tag: string, cells: Array<FakeElement | FakeText>) =>
+    new FakeElement("TR").append(...cells.map((cell) => new FakeElement(tag).append(cell)));
+  const [head = [], ...body] = rows;
+  return new FakeElement("TABLE").append(
+    new FakeElement("THEAD").append(row("TH", head)),
+    new FakeElement("TBODY").append(...body.map((cells) => row("TD", cells))),
+  );
+}
+
+describe("copying rendered Markdown tables", () => {
   beforeEach(() => {
     vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
   });
@@ -251,22 +309,62 @@ describe("serializeTableElementToMarkdown", () => {
     vi.unstubAllGlobals();
   });
 
-  it("copies a raw HTML code block in a cell without its internal markers", () => {
-    const table = new FakeElement("TABLE").append(
-      new FakeElement("THEAD").append(
-        new FakeElement("TR").append(new FakeElement("TH").append(new FakeText("Command"))),
-      ),
-      new FakeElement("TBODY").append(
-        new FakeElement("TR").append(
-          new FakeElement("TD").append(
-            new FakeElement("PRE").append(new FakeElement("CODE").append(new FakeText("a  b"))),
-          ),
+  it("keeps formula pipes as authored while escaping prose pipes", () => {
+    const table = renderedTable(
+      [new FakeText("Formula"), new FakeText("Note")],
+      [renderedFormula("|x|"), new FakeText("a | b")],
+      [renderedFormula("\\|x\\|"), new FakeElement("CODE").append(new FakeText("\\(c|d\\)"))],
+      [
+        new FakeElement("A", [], { href: "https://example.com/?q=a|b" }).append(
+          new FakeText("norm "),
+          renderedFormula("|y|"),
         ),
-      ),
+        new FakeText("e"),
+      ],
+      [
+        new FakeElement("UL").append(
+          new FakeElement("LI").append(renderedFormula("|z|"), new FakeText(" a | b")),
+        ),
+        new FakeElement("BLOCKQUOTE").append(new FakeElement("P").append(new FakeText("c | d"))),
+      ],
     );
+    const markdown = serializeTableElementToMarkdown(table as unknown as Element);
 
-    expect(serializeTableElementToMarkdown(asNode(table) as Element)).toBe(
-      "| Command |\n| --- |\n| a  b |",
+    const tree = parseMarkdownWithMath(markdown);
+    const parsed = tree.children[0];
+    if (parsed?.type !== "table") throw new Error("Expected a table");
+    expect(parsed.children.map((row) => row.children.length)).toEqual([2, 2, 2, 2, 2]);
+    expect(markdownMathRanges(markdown, tree).map((formula) => formula.tex)).toEqual([
+      "|x|",
+      "\\|x\\|",
+      "|y|",
+      "|z|",
+    ]);
+    expect(parsed.children[1]?.children[1]?.children).toMatchObject([
+      { type: "text", value: "a | b" },
+    ]);
+    expect(parsed.children[4]?.children[1]?.children).toMatchObject([
+      { type: "text", value: "> c | d" },
+    ]);
+    const [, , codeRow, linkRow] = parsed.children;
+    expect(codeRow?.children[1]?.children[0]).toMatchObject({
+      type: "inlineCode",
+      value: "\\(c|d\\)",
+    });
+    expect(linkRow?.children[0]?.children[0]).toMatchObject({
+      type: "link",
+      url: "https://example.com/?q=a|b",
+    });
+  });
+
+  it("copies a code block in a cell without its internal markers", () => {
+    const code = new FakeElement("PRE").append(
+      new FakeElement("CODE").append(new FakeText("a  b")),
     );
+    expect(
+      serializeTableElementToMarkdown(
+        asNode(renderedTable([new FakeText("Command")], [code])) as Element,
+      ),
+    ).toBe("| Command |\n| --- |\n| a  b |");
   });
 });
