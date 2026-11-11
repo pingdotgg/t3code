@@ -653,14 +653,8 @@ export const make = Effect.gen(function* () {
             providerTurnId: null,
             nativeItemRef: null,
             parentItemId: null,
-            // EventSink places the item after the run's existing items.
-            ordinal:
-              Math.max(
-                0,
-                ...projection.turnItems
-                  .filter((item) => item.runId === run.id)
-                  .map((item) => item.ordinal),
-              ) + 1,
+            // EventSink allocates the real position, after the run's existing items.
+            ordinal: 0,
             status: "completed",
             title: trigger === "startup" ? "Server restarted" : "Server shut down",
             startedAt: now,
