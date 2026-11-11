@@ -102,7 +102,10 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
       Effect.sync(() => {
         input.projects.push(mutation);
         return {
-          id: mutation.projectId,
+          id:
+            mutation.type === "project.grouping"
+              ? ProjectId.make(mutation.identifier)
+              : mutation.projectId,
           title: mutation.type === "project.create" ? mutation.title : "Project",
           workspaceRoot:
             mutation.type === "project.create" ? mutation.workspaceRoot : "/workspace/project",

@@ -499,6 +499,24 @@ describe("requiredScopesForProjectMutation", () => {
     ).toEqual(["orchestration:operate"]);
     expect(
       requiredScopesForProjectMutation({
+        type: "project.register",
+        commandId,
+        projectId,
+        workspaceRoot: "/workspace",
+      }),
+    ).toEqual(["orchestration:operate"]);
+    expect(
+      requiredScopesForProjectMutation({
+        type: "project.grouping",
+        commandId,
+        identifier: projectId,
+        cwd: "/",
+        groupingIdentity: null,
+      }),
+    ).toEqual(["orchestration:operate"]);
+
+    expect(
+      requiredScopesForProjectMutation({
         type: "project.update",
         commandId,
         projectId,

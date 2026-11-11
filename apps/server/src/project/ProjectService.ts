@@ -15,6 +15,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -48,6 +51,21 @@ export interface ProjectCreateInput extends ProjectCreatePayload {
 export interface ProjectUpdateInput extends ProjectUpdatePayload {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
+}
+
+export interface ProjectRegisterInput {
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly workspaceRoot: string;
+  readonly title?: string | undefined;
+  readonly groupingIdentity?: NonNullable<ProjectCreatePayload["groupingIdentity"]> | undefined;
+}
+
+export interface ProjectGroupingInput {
+  readonly commandId: CommandId;
+  readonly identifier: string;
+  readonly cwd: string;
+  readonly groupingIdentity?: ProjectUpdatePayload["groupingIdentity"];
 }
 
 export interface ProjectBootstrapInput extends ProjectCreateInput {}
@@ -130,6 +148,8 @@ export type ProjectServiceError =
 export class ProjectService extends Context.Service<
   ProjectService,
   {
+    readonly register: (input: ProjectRegisterInput) => Effect.Effect<Project, ProjectServiceError>;
+    readonly grouping: (input: ProjectGroupingInput) => Effect.Effect<Project, ProjectServiceError>;
     readonly create: (input: ProjectCreateInput) => Effect.Effect<Project, ProjectServiceError>;
     readonly bootstrap: (
       input: ProjectBootstrapInput,
@@ -177,6 +197,8 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+  const path = yield* Path.Path;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   const threadProjections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -464,6 +486,85 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const register: ProjectService["Service"]["register"] = Effect.fn("ProjectService.register")(
+    function* (input) {
+      const workspaceRoot = yield* normalizeWorkspaceRoot({
+        projectId: input.projectId,
+        workspaceRoot: input.workspaceRoot,
+      });
+      const existing = yield* getByWorkspaceRoot(workspaceRoot);
+      if (Option.isSome(existing)) {
+        if (input.groupingIdentity === undefined) {
+          return yield* new ProjectConflictError({
+            projectId: input.projectId,
+            workspaceRoot,
+            conflictingProjectId: existing.value.id,
+          });
+        }
+        if (existing.value.groupingIdentity === input.groupingIdentity) return existing.value;
+        return yield* update({
+          commandId: input.commandId,
+          projectId: existing.value.id,
+          groupingIdentity: input.groupingIdentity,
+        });
+      }
+      const title =
+        input.title === undefined
+          ? path.basename(workspaceRoot).trim() || "project"
+          : input.title.trim();
+      if (title.length === 0) {
+        return yield* new ProjectInvalidError({
+          projectId: input.projectId,
+          detail: "Project title cannot be empty.",
+        });
+      }
+      return yield* create({ ...input, title, workspaceRoot });
+    },
+  );
+
+  const grouping: ProjectService["Service"]["grouping"] = Effect.fn("ProjectService.grouping")(
+    function* (input) {
+      const identifier = input.identifier.trim();
+      const projectId = ProjectId.make(identifier || "unknown");
+      if (identifier.length === 0) {
+        return yield* new ProjectInvalidError({
+          projectId,
+          detail: "Project identifier cannot be empty.",
+        });
+      }
+      let project = yield* getById(projectId);
+      if (Option.isNone(project)) {
+        const candidate = path.resolve(input.cwd, expandHomePath(identifier, homeDirectory));
+        const normalized = yield* Effect.result(workspacePaths.normalizeWorkspaceRoot(candidate));
+        const workspaceRoot =
+          normalized._tag === "Success"
+            ? normalized.success
+            : normalized.failure.normalizedWorkspaceRoot;
+        const rows = yield* projects
+          .findActiveByWorkspaceRoot(workspaceRoot)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectOperationError({ operation: "read-project", workspaceRoot, cause }),
+            ),
+          );
+        project = Option.isSome(rows) ? Option.some(yield* hydrate(rows.value)) : Option.none();
+      }
+      if (Option.isNone(project)) {
+        return yield* new ProjectInvalidError({
+          projectId,
+          detail: `No active project found for '${identifier}'.`,
+        });
+      }
+      if (input.groupingIdentity === undefined) return project.value;
+      return yield* update({
+        commandId: input.commandId,
+        projectId: project.value.id,
+        groupingIdentity: input.groupingIdentity,
+      });
+    },
+  );
+
   const bootstrap: ProjectService["Service"]["bootstrap"] = Effect.fn("ProjectService.bootstrap")(
     function* (input) {
       const existing = yield* getByWorkspaceRoot(input.workspaceRoot);
@@ -668,6 +769,8 @@ export const make = Effect.gen(function* () {
   );
 
   return ProjectService.of({
+    register,
+    grouping,
     create,
     bootstrap,
     update,
