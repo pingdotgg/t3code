@@ -1284,10 +1284,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     const installEnvironment = withPreferredPath(packageEnvironment, managerDirectory, platform);
     if (distribution === "npx") {
       // npm 12 blocks dependency scripts by default and an agent's native deps are unknown before
-      // install, so allow all of them unless the user configured an allow-scripts policy.
+      // install, so allow all of them unless the user configured an allow-scripts policy. The query
+      // is --global because global installs ignore a project .npmrc.
       const allowScriptsPolicy = yield* runCommand(
         managerPath,
-        ["config", "get", "allow-scripts"],
+        ["config", "get", "allow-scripts", "--global"],
         {
           env: installEnvironment,
           timeout: PACKAGE_QUERY_TIMEOUT,

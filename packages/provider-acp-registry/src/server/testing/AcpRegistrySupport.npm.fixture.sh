@@ -9,7 +9,7 @@ if [ "$1" = "prefix" ] && [ "$2" = "--global" ]; then
   printf '%s\n' "$prefix"
   exit 0
 fi
-if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "allow-scripts" ]; then
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "allow-scripts" ] && [ "$4" = "--global" ]; then
   printf '%s\n' "${npm_config_allow_scripts:-}"
   exit 0
 fi
