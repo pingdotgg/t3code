@@ -36,7 +36,11 @@ import { PullRequestActorAvatar, PullRequestActorLabel } from "./pullRequestPres
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
-import type { PendingReviewComment } from "./pullRequestReviewStore";
+import {
+  pullRequestThreadReplyKey,
+  usePullRequestReviewStore,
+  type PendingReviewComment,
+} from "./pullRequestReviewStore";
 import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
@@ -433,8 +437,6 @@ export function PullRequestThreadReplyForm({
   completionScope,
   pending,
   className,
-  initialReply = "",
-  onReplyChange,
   onReply,
   onSent,
 }: {
@@ -444,18 +446,16 @@ export function PullRequestThreadReplyForm({
   completionScope: PullRequestCompletionScope | null;
   pending: boolean;
   className?: string;
-  /** Lets a parent keep the draft when this form remounts elsewhere. */
-  initialReply?: string;
-  onReplyChange?: (reply: string) => void;
   onReply: (body: string) => Promise<boolean>;
   onSent?: () => void;
 }) {
-  const [replying, setReplying] = useState(initialReply.length > 0);
-  const [reply, setReplyState] = useState(initialReply);
-  const setReply = (next: string) => {
-    setReplyState(next);
-    onReplyChange?.(next);
-  };
+  // Resolving, reopening, or filtering remounts the form, so the draft lives in the store.
+  const replyKey = pullRequestThreadReplyKey(reference, threadId);
+  const reply = usePullRequestReviewStore((store) => store.replies[replyKey] ?? "");
+  const storeReply = usePullRequestReviewStore((store) => store.setReply);
+  const clearReply = usePullRequestReviewStore((store) => store.clearReply);
+  const setReply = (next: string) => storeReply(replyKey, next);
+  const [replying, setReplying] = useState(reply.length > 0);
   const sendingRef = useRef(false);
   const replyRef = useRef<HTMLTextAreaElement>(null);
 
@@ -468,7 +468,7 @@ export function PullRequestThreadReplyForm({
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     if (!result.value) return;
     onSent?.();
-    setReply("");
+    clearReply(replyKey, trimmed);
     setReplying(false);
   };
 
