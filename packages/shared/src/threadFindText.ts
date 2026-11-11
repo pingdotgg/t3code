@@ -230,7 +230,9 @@ export function searchablePlanSegments(markdown: string, cwd?: string): readonly
 }
 
 export function searchableMessageSegments(
-  message: Pick<OrchestrationV2ConversationMessage, "role" | "text" | "streaming" | "context">,
+  message: Pick<OrchestrationV2ConversationMessage, "role" | "text" | "streaming"> & {
+    readonly context?: { readonly records: ReadonlyArray<{ readonly contextId: string }> };
+  },
   cwd?: string,
   skills: readonly InlineSkill[] = [],
 ): readonly string[] | null {
