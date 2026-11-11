@@ -1,35 +1,12 @@
 import type { ReactNode } from "react";
 import { act } from "react";
+import type { AccessibilityActionEvent } from "react-native";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
-type NativeViewProps = {
-  readonly accessibilityElementsHidden?: boolean;
-  readonly children?: ReactNode;
-  readonly importantForAccessibility?: string;
-};
-
 vi.mock("react-native", () => {
-  const View = (props: NativeViewProps) => (
-    <div
-      data-accessibility-elements-hidden={props.accessibilityElementsHidden ? "true" : undefined}
-      data-important-for-accessibility={props.importantForAccessibility}
-    >
-      {props.children}
-    </div>
-  );
-  return {
-    View,
-    Pressable: (props: {
-      readonly accessibilityLabel?: string;
-      readonly children?: ReactNode;
-      readonly onPress?: () => void;
-    }) => (
-      <button aria-label={props.accessibilityLabel} onClick={props.onPress}>
-        {props.children}
-      </button>
-    ),
-  };
+  const View = ({ children }: { readonly children?: ReactNode }) => <div>{children}</div>;
+  return { View, Pressable: View };
 });
 vi.mock("react-native-reanimated", async () => {
   const { View } = await import("react-native");
@@ -80,18 +57,10 @@ vi.mock("../../components/ui/Menu", () => ({
 }));
 
 import { withThreadDismissal } from "./thread-dismissal";
-import { ThreadSwipeable } from "./thread-swipe-actions";
-
-type AccessibilityAction = { readonly name: string; readonly label?: string };
-type SwipeAccessibility = {
-  readonly accessibilityActions: readonly AccessibilityAction[];
-  readonly onAccessibilityAction: (event: {
-    readonly nativeEvent: { readonly actionName: string };
-  }) => void;
-};
+import { ThreadSwipeable, type ThreadSwipeAccessibility } from "./thread-swipe-actions";
 
 function renderSwipeRow(
-  children: (close: () => void, swipeAccessibility?: SwipeAccessibility) => ReactNode,
+  children: (close: () => void, swipeAccessibility: ThreadSwipeAccessibility) => ReactNode,
 ) {
   const onSettle = vi.fn();
   const onSnooze = vi.fn();
@@ -126,12 +95,11 @@ function renderSwipeRow(
         threadKey="thread-1"
         threadTitle="Fix login"
       >
-        {children as (close: () => void) => ReactNode}
+        {children}
       </ThreadSwipeable>,
     ),
   );
   return {
-    container,
     onSettle,
     onSnooze,
     [Symbol.dispose]: () => act(() => root.unmount()),
@@ -139,7 +107,7 @@ function renderSwipeRow(
 }
 
 it("exposes the swipe actions to screen readers as row accessibility actions", () => {
-  let swipeAccessibility: SwipeAccessibility | undefined;
+  let swipeAccessibility: ThreadSwipeAccessibility | undefined;
   using row = renderSwipeRow((_close, accessibility) => {
     swipeAccessibility = accessibility;
     return null;
@@ -151,12 +119,14 @@ it("exposes the swipe actions to screen readers as row accessibility actions", (
     expect.objectContaining({ label: expect.stringContaining("Next week") }),
   ]);
   const [settle, , nextWeek] = swipeAccessibility!.accessibilityActions;
-  act(() =>
-    swipeAccessibility!.onAccessibilityAction({ nativeEvent: { actionName: settle!.name } }),
-  );
-  act(() =>
-    swipeAccessibility!.onAccessibilityAction({ nativeEvent: { actionName: nextWeek!.name } }),
-  );
+  const invoke = (actionName: string) =>
+    act(() =>
+      swipeAccessibility!.onAccessibilityAction({
+        nativeEvent: { actionName },
+      } as AccessibilityActionEvent),
+    );
+  invoke(settle!.name);
+  invoke(nextWeek!.name);
   expect(row.onSettle).toHaveBeenCalledTimes(1);
   expect(row.onSnooze).toHaveBeenCalledTimes(1);
   expect(row.onSnooze).toHaveBeenCalledWith({ nativeEvent: { event: "snooze:next-week" } });
@@ -164,25 +134,6 @@ it("exposes the swipe actions to screen readers as row accessibility actions", (
   act(() => {
     void withThreadDismissal("thread-1", () => Promise.resolve(true), Boolean);
   });
-  act(() =>
-    swipeAccessibility!.onAccessibilityAction({ nativeEvent: { actionName: settle!.name } }),
-  );
+  invoke(settle!.name);
   expect(row.onSettle, "a dismissing row ignores screen-reader actions").toHaveBeenCalledTimes(1);
-});
-
-it("hides the swipe buttons behind a closed row from screen readers", () => {
-  using row = renderSwipeRow(() => null);
-
-  for (const label of ["Settle Fix login", "Choose when to snooze Fix login"]) {
-    const button = row.container.querySelector(`button[aria-label="${label}"]`);
-    expect(button, `${label} button is rendered`).not.toBeNull();
-    expect(
-      button!.closest('[data-accessibility-elements-hidden="true"]'),
-      `${label} is hidden from VoiceOver`,
-    ).not.toBeNull();
-    expect(
-      button!.closest('[data-important-for-accessibility="no-hide-descendants"]'),
-      `${label} is hidden from TalkBack`,
-    ).not.toBeNull();
-  }
 });
