@@ -441,7 +441,11 @@ const make = Effect.gen(function* () {
           git
             .hasCommit({ cwd: project.workspaceRoot, refName })
             .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
-        if (!(yield* hasCommit(startRef)) && !(yield* hasCommit("HEAD"))) {
+        // Probe as checkWorktreeBase does: `-` is the previous checkout, and a `:/text`
+        // search cannot take `^{commit}`, so leave it to `git worktree add`.
+        const startRefHasCommit =
+          startRef.startsWith(":") || (yield* hasCommit(startRef === "-" ? "@{-1}" : startRef));
+        if (!startRefHasCommit && !(yield* hasCommit("HEAD"))) {
           branch = null;
           yield* setupTracker.stageStatus(
             threadId,

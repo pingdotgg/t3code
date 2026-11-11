@@ -1155,6 +1155,60 @@ it.effect.each(["stable", "upstream/release"])(
     ),
 );
 
+it.effect.each([":/initial", "-"])(
+  "creates a worktree from %s while HEAD is an unborn branch",
+  (baseRef) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-unborn-head-" });
+      const cwd = `${directory}/repo`;
+      const worktreePath = `${directory}/worktree`;
+      yield* fs.makeDirectory(cwd);
+      const command = (at: string, args: string[]) =>
+        git.execute({ operation: "launch-test", cwd: at, args });
+      yield* command(cwd, ["init", "-b", "main"]);
+      yield* command(cwd, ["config", "user.name", "Test"]);
+      yield* command(cwd, ["config", "user.email", "test@example.test"]);
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+      const expected = (yield* command(cwd, ["rev-parse", "main"])).stdout.trim();
+      // Leaving main makes it `@{-1}`; the orphan switch adds no reflog entry.
+      yield* command(cwd, ["checkout", "-b", "side"]);
+      yield* command(cwd, ["checkout", "--orphan", "unborn"]);
+
+      const harness = makeHarness({
+        hasCommit: ({ refName }) =>
+          command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        createWorktree: (input, options) =>
+          git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const launched = yield* launches.launch(
+          launchInput({
+            command: `command:launch:unborn-head:${baseRef}`,
+            thread: `thread:launch:unborn-head:${baseRef}`,
+            message: "Reply with OK only",
+            workspace: { type: "worktree", baseRef, branch: "feature", startFromOrigin: false },
+          }),
+        );
+        const projection = yield* preparationSettled(launched.threadId);
+        assert.equal(projection.thread.worktreePath, worktreePath);
+        assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), expected);
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-unborn-git-" })),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
+);
+
 it.effect("fetches the origin base from the remote it already resolved", () => {
   let fetchInput: Deferred.Deferred<unknown> | null = null;
   const harness = makeHarness({
