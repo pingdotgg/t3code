@@ -83,6 +83,10 @@
       "types": "./src/scheduledTaskWebhook.ts",
       "default": "./src/scheduledTaskWebhook.ts"
     },
+    "./scheduled-task-time-zone": {
+      "types": "./src/scheduledTaskTimeZone.ts",
+      "default": "./src/scheduledTaskTimeZone.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"
@@ -242,6 +246,10 @@
     "./state/environmentHttpAuth": {
       "types": "./src/state/environmentHttpAuth.ts",
       "default": "./src/state/environmentHttpAuth.ts"
+    },
+    "./state/connectMcpApproval": {
+      "types": "./src/state/connectMcpApproval.ts",
+      "default": "./src/state/connectMcpApproval.ts"
     },
     "./state/peerPairingCode": {
       "types": "./src/state/peerPairingCode.ts",
@@ -419,6 +427,10 @@
       "types": "./src/work-log/commandLabel.ts",
       "default": "./src/work-log/commandLabel.ts"
     },
+    "./work-log/embedded-scripts": {
+      "types": "./src/work-log/embeddedScripts.ts",
+      "default": "./src/work-log/embeddedScripts.ts"
+    },
     "./work-log/scroll-anchor": {
       "types": "./src/work-log/scrollAnchor.ts",
       "default": "./src/work-log/scrollAnchor.ts"
@@ -570,7 +582,8 @@
     "@t3tools/source-control-definitions": "workspace:*",
     "effect": "catalog:",
     "jszip": "3.10.1",
-    "three": "0.180.0"
+    "three": "0.180.0",
+    "unbash": "^5.0.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

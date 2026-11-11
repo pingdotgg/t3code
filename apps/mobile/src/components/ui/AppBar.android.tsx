@@ -204,7 +204,6 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       }
       embedded={props.sheet}
       hideBottomBorder={props.hideBottomBorder}
-      compact={props.compact}
       actions={
         search && !inline
           ? [

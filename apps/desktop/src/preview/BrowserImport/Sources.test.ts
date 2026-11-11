@@ -199,6 +199,51 @@ describe("chromiumProcessIsAlive", () => {
 });
 
 describe("isSourceInstalled", () => {
+  it.effect.each([undefined, "", "relative-config", "relocated", "chrome-override"])(
+    "discovers Linux Chromium profiles with XDG_CONFIG_HOME=%s",
+    (configHome) =>
+      run(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-sources-xdg-" });
+          const xdgConfigHome =
+            configHome === "relocated" || configHome === "chrome-override"
+              ? path.join(home, "config")
+              : configHome;
+          const chromeConfigHome =
+            configHome === "chrome-override" ? path.join(home, ".config") : undefined;
+          const context = yield* sourcePathContext.pipe(
+            Effect.provideService(HostProcess.Environment, {
+              HOME: home,
+              XDG_CONFIG_HOME: xdgConfigHome,
+              CHROME_CONFIG_HOME: chromeConfigHome,
+            }),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          );
+          const configRoot =
+            chromeConfigHome ??
+            (configHome === "relocated" ? path.join(home, "config") : path.join(home, ".config"));
+          const source = BROWSER_IMPORT_SOURCES.find((source) => source.id === "chrome")!;
+          const root = path.join(configRoot, "google-chrome");
+          const database = path.join(root, "Default", "Network", "Cookies");
+          assert.isFalse(yield* isSourceInstalled(source, context));
+          yield* fileSystem.makeDirectory(path.dirname(database), { recursive: true });
+          yield* writeCookieDatabase(database, 2);
+          yield* fileSystem.writeFileString(
+            path.join(root, "Local State"),
+            '{"profile":{"info_cache":{"Default":{"name":"Fixture"}}}}',
+          );
+
+          assert.isTrue(yield* isSourceInstalled(source, context));
+          assert.deepEqual(yield* listSourceProfiles(source, context), [
+            { directory: "Default", name: "Fixture", cookieCount: 2 },
+          ]);
+          assert.equal(yield* resolveCookieDatabase(source, context, "Default"), database);
+        }),
+      ),
+  );
+
   it.effect("ignores a user-data directory that holds no cookie database", () =>
     run(
       Effect.gen(function* () {
@@ -325,13 +370,18 @@ describe("Zen", () => {
     run(
       Effect.gen(function* () {
         const darwinContext = yield* sourcePathContext.pipe(
-          Effect.provideService(HostProcess.Environment, { HOME: "/Users/zen-user" }),
+          Effect.provideService(HostProcess.Environment, {
+            HOME: "/Users/zen-user",
+            XDG_CONFIG_HOME: "/custom-config",
+          }),
           Effect.provideService(HostProcess.Platform, "darwin"),
         );
         const windowsContext = yield* sourcePathContext.pipe(
           Effect.provideService(HostProcess.Environment, {
             HOME: "C:\\Users\\zen-user",
             APPDATA: "C:\\Users\\zen-user\\AppData\\Roaming",
+            LOCALAPPDATA: "C:\\Users\\zen-user\\AppData\\Local",
+            XDG_CONFIG_HOME: "/custom-config",
           }),
           Effect.provideService(HostProcess.Platform, "win32"),
         );
@@ -359,6 +409,24 @@ describe("Zen", () => {
           linuxContext.path.join("/home/zen-user", ".zen"),
           linuxContext.path.join("/home/zen-user", ".var", "app", "app.zen_browser.zen", "zen"),
         ]);
+        assert.equal(
+          helium.userDataDirectory(darwinContext),
+          darwinContext.path.join(
+            "/Users/zen-user",
+            "Library",
+            "Application Support",
+            "net.imput.helium",
+          ),
+        );
+        assert.equal(
+          helium.userDataDirectory(windowsContext),
+          windowsContext.path.join(
+            "C:\\Users\\zen-user\\AppData\\Local",
+            "imput",
+            "Helium",
+            "User Data",
+          ),
+        );
       }),
     ),
   );
@@ -415,16 +483,19 @@ describe("Zen", () => {
     ),
   );
 
-  it.effect("discovers Zen profiles in both current and legacy Linux roots", () =>
+  it.effect("discovers Zen profiles in relocated and legacy Linux roots", () =>
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-zen-linux-" });
         const context = yield* sourcePathContext.pipe(
-          Effect.provideService(HostProcess.Environment, { HOME: home }),
+          Effect.provideService(HostProcess.Environment, {
+            HOME: home,
+            XDG_CONFIG_HOME: NodePath.join(home, "config"),
+          }),
           Effect.provideService(HostProcess.Platform, "linux"),
         );
-        const currentRoot = context.path.join(home, ".config", "zen");
+        const currentRoot = context.path.join(home, "config", "zen");
         const legacyRoot = context.path.join(home, ".zen");
         const currentProfile = context.path.join(currentRoot, "current.default");
         const legacyProfile = context.path.join(legacyRoot, "legacy.default");
