@@ -100,7 +100,7 @@ import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
 } from "../orchestration-v2/ProjectionStore.ts";
-import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
+import { delegatedTaskResultRun, runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -976,8 +976,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return `Asked the user for ${item.label}: ${item.secretStatus}.`;
     case "link_request":
       return item.linkStatus === "linked"
-        ? `Linked ${item.linkedLabel ?? item.label ?? item.url ?? "an environment"} (${item.linkedAccess}).`
-        : `Asked the user to link ${item.label ?? item.url ?? "an environment"}: ${item.linkStatus}.`;
+        ? `Linked ${item.linkedLabel ?? item.url ?? "an environment"} (${item.linkedAccess}).`
+        : `Asked the user to link ${item.url ?? "an environment"}: ${item.linkStatus}.`;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -1149,17 +1149,13 @@ const make = Effect.gen(function* () {
   const resolveProjectTarget = (
     parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
     projectId: ProjectId | undefined,
+    missingMessage = "Pass projectId: this MCP client is not running inside a T3 thread.",
   ) =>
     projectId !== undefined
       ? Effect.succeed(projectId)
       : parent !== undefined
         ? Effect.succeed(parent.thread.projectId)
-        : Effect.fail(
-            failure(
-              "target_required",
-              "Pass projectId: this MCP client is not running inside a T3 thread.",
-            ),
-          );
+        : Effect.fail(failure("target_required", missingMessage));
 
   const loadTargetThread = Effect.fn("OrchestratorMcpService.loadTargetThread")(function* (
     threadId: ThreadId,
@@ -1501,9 +1497,7 @@ const make = Effect.gen(function* () {
     const progress = delegatedTaskProgress(childControls);
     const taskResultRun =
       childRun?.delegatedTaskId === task.id
-        ? childControls.runs
-            .filter((run) => run.delegatedTaskId === task.id)
-            .toSorted((a, b) => b.ordinal - a.ordinal)[0]
+        ? delegatedTaskResultRun(childControls.runs, task.id)
         : progress.resultRun;
     const taskWorkState =
       childRun?.delegatedTaskId === task.id
@@ -1548,7 +1542,11 @@ const make = Effect.gen(function* () {
               : childRun,
           )
         : workState === "result_available"
-          ? taskStatusForRun(taskResultRun ?? childRun)
+          ? // A cancelled task's finished turn settles it as interrupted.
+            task.cancelledRunId !== undefined &&
+            taskStatusForRun(taskResultRun ?? childRun) === "completed"
+            ? "interrupted"
+            : taskStatusForRun(taskResultRun ?? childRun)
           : taskStatusForRun(taskResultRun ?? childRun) === "queued"
             ? "queued"
             : "running";
@@ -2110,11 +2108,11 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
-        // Update workspace strategy on rebinding so unbound root tasks cannot run in the shared checkout.
+        // Reset the workspace only when the binding flips, so unbinding cannot leave runs in the shared checkout.
         const workspaceStrategy =
-          input.bindToCurrentThread === undefined
+          (threadId === null) === (existing.threadId === null)
             ? existing.workspaceStrategy
-            : yield* scheduledTaskWorkspaceStrategy(input.bindToCurrentThread, existing.projectId);
+            : yield* scheduledTaskWorkspaceStrategy(threadId !== null, existing.projectId);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
@@ -2682,29 +2680,31 @@ const make = Effect.gen(function* () {
       const stopChild = Effect.gen(function* () {
         const commandId = stableCommandId({ scope, requestKey: key, operation: "cancel-task" });
         const reason = agentStopReason(input.reason);
+        const command = {
+          type: "thread.stop" as const,
+          commandId,
+          threadId: childThreadId,
+          stopDelegatedTasks: false,
+          reason,
+        };
         yield* threadManagement
-          .dispatch({
-            type: "thread.stop",
-            commandId,
-            threadId: childThreadId,
-            stopDelegatedTasks: false,
-            reason,
+          .cancelDelegatedTask({
+            parentThreadId: scope.thread.threadId,
+            taskId: input.taskId,
+            command,
+            stopDescendants: (remoteDispatch) =>
+              threadManagement.stopDelegatedTasks({
+                threadId: childThreadId,
+                commandId,
+                reason,
+                remoteDispatch,
+              }),
           })
           .pipe(
             Effect.mapError((error) =>
               failure(
                 "task_not_cancellable",
                 `Unable to stop delegated task ${input.taskId}: ${errorMessage(error)}`,
-              ),
-            ),
-          );
-        yield* threadManagement
-          .stopDelegatedTasks({ threadId: childThreadId, commandId, reason })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "task_not_cancellable",
-                `Stopped delegated task ${input.taskId}, but not every task it delegated: ${errorMessage(error)}`,
               ),
             ),
           );
@@ -3000,7 +3000,11 @@ const make = Effect.gen(function* () {
       const { parent } = yield* loadCaller(scope, []);
       const projectId = input.allProjects
         ? null
-        : yield* resolveProjectTarget(parent, input.projectId);
+        : yield* resolveProjectTarget(
+            parent,
+            input.projectId,
+            "Pass projectId, or allProjects: true for every project. This MCP client is not running inside a T3 thread.",
+          );
       const projectThreads = yield* threadManagement
         .listProjectThreads({
           projectId: projectId ?? undefined,
