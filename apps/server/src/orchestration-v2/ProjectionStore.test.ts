@@ -2536,6 +2536,14 @@ it.effect("lists threads whose latest run completed after the cutoff", () =>
           ["running", null],
         ],
       ],
+      [
+        "cancelled-before-start-after-completed",
+        null,
+        [
+          ["completed", recent],
+          ["cancelled", null],
+        ],
+      ],
       ["archived", recent, [["completed", recent]]],
     ] as const) {
       yield* sql`
@@ -2563,7 +2571,13 @@ it.effect("lists threads whose latest run completed after the cutoff", () =>
       yield* store.listIdleCompactionCandidates({
         completedAfter: DateTime.makeUnsafe("2026-01-05T12:00:00.000Z"),
       }),
-      [{ threadId: ThreadId.make("recent"), runId: RunId.make("recent:run-1") }],
+      [
+        { threadId: ThreadId.make("recent"), runId: RunId.make("recent:run-1") },
+        {
+          threadId: ThreadId.make("cancelled-before-start-after-completed"),
+          runId: RunId.make("cancelled-before-start-after-completed:run-1"),
+        },
+      ],
     );
   }).pipe(Effect.provide(layerTest)),
 );

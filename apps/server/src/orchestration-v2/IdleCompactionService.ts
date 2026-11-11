@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { idleCompactionWindow, MAX_PROMPT_CACHE_TTL } from "./IdleCompaction.ts";
+import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -27,6 +28,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const eventSink = yield* EventSink.EventSinkV2;
   const settings = yield* ServerSettings.ServerSettingsService;
 
   const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
@@ -130,6 +132,8 @@ export const make = Effect.gen(function* () {
   const start = Effect.fn("IdleCompactionService.start")(function* () {
     // Keyed by thread: a newer completed run replaces the waiting timer.
     const timers = yield* FiberMap.make<ThreadId>();
+    // Events after this sequence come from the stream; earlier ones are already in the projections the scan reads.
+    const afterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
     const rearm = Effect.fn("IdleCompactionService.rearm")(
       function* () {
         const completedAfter = DateTime.subtractDuration(yield* DateTime.now, MAX_PROMPT_CACHE_TTL);
@@ -149,14 +153,16 @@ export const make = Effect.gen(function* () {
     yield* forkParked(
       Effect.all(
         [
-          Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
-            event.type === "run.updated" && event.payload.status === "completed"
-              ? FiberMap.run(
-                  timers,
-                  event.threadId,
-                  compactWhenDue(event.threadId, event.payload.id),
-                )
-              : Effect.void,
+          Stream.runForEach(
+            eventSink.stream({ afterSequence, eventType: "run.updated" }),
+            ({ event }) =>
+              event.type === "run.updated" && event.payload.status === "completed"
+                ? FiberMap.run(
+                    timers,
+                    event.threadId,
+                    compactWhenDue(event.threadId, event.payload.id),
+                  )
+                : Effect.void,
           ),
           rearm(),
         ],

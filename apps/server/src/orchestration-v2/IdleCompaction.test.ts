@@ -3,6 +3,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
   MessageId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   NodeId,
   ProjectId,
@@ -24,6 +25,7 @@ import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
+import * as EventSink from "./EventSink.ts";
 import * as IdleCompactionService from "./IdleCompactionService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -194,6 +196,12 @@ describe("idleCompactionWindow", () => {
   });
 });
 
+const eventSinkStreaming = (events: Stream.Stream<OrchestrationV2DomainEvent>) =>
+  Layer.mock(EventSink.EventSinkV2)({
+    latestSequence: () => Effect.succeed(0),
+    stream: () => events.pipe(Stream.map((event) => ({ sequence: 1, commandId: null, event }))),
+  });
+
 describe("IdleCompactionService", () => {
   it.effect.each([
     { mode: "onReturn", reads: 0 },
@@ -268,8 +276,8 @@ describe("IdleCompactionService", () => {
             },
           });
           const dependencies = Layer.mergeAll(
-            Layer.mock(Orchestrator.OrchestratorV2)({
-              streamDomainEvents: Stream.make({
+            eventSinkStreaming(
+              Stream.make({
                 id: EventId.make("idle-completed"),
                 type: "run.updated",
                 threadId,
@@ -277,6 +285,8 @@ describe("IdleCompactionService", () => {
                 occurredAt: at(),
                 payload: data.runs[0]!,
               }),
+            ),
+            Layer.mock(Orchestrator.OrchestratorV2)({
               dispatch: () =>
                 Effect.sync(() => {
                   dispatches++;
@@ -380,11 +390,13 @@ describe("IdleCompactionService", () => {
         const dispatched: Array<string> = [];
         const streamDone = yield* Deferred.make<void>();
         const dependencies = Layer.mergeAll(
-          Layer.mock(Orchestrator.OrchestratorV2)({
-            // A delegated completion on the earlier run lands after the later run completed.
-            streamDomainEvents: Stream.make(completed(laterRun), completed(earlierRun)).pipe(
+          // A delegated completion on the earlier run lands after the later run completed.
+          eventSinkStreaming(
+            Stream.make(completed(laterRun), completed(earlierRun)).pipe(
               Stream.ensuring(Deferred.succeed(streamDone, undefined)),
             ),
+          ),
+          Layer.mock(Orchestrator.OrchestratorV2)({
             dispatch: (command) =>
               Effect.sync(() => {
                 dispatched.push(command.commandId);
@@ -443,9 +455,9 @@ describe("IdleCompactionService", () => {
         const dispatched = yield* Deferred.make<ReadonlyArray<string>>();
         const commandIds: Array<string> = [];
         const dependencies = Layer.mergeAll(
+          // The run completed before the restart, so no run.updated event arrives.
+          eventSinkStreaming(Stream.never),
           Layer.mock(Orchestrator.OrchestratorV2)({
-            // The run completed before the restart, so no run.updated event arrives.
-            streamDomainEvents: Stream.never,
             dispatch: (command) =>
               Effect.sync(() => {
                 commandIds.push(command.commandId);

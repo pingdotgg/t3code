@@ -7353,6 +7353,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND run.ordinal = (
             SELECT MAX(latest.ordinal) FROM orchestration_v2_projection_runs latest
             WHERE latest.thread_id = thread.thread_id
+              -- A removed or steered queued message leaves a cancelled run that never started.
+              AND (
+                latest.status <> 'cancelled'
+                OR json_extract(latest.payload_json, '$.startedAt') IS NOT NULL
+              )
           )
           AND run.status = 'completed'
           AND run.completed_at >= ${DateTime.formatIso(completedAfter)}
