@@ -1026,7 +1026,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaries: [assistantTurnDiffSummary],
       supportsConversationRollback: true,
-      threadStartCheckpointReady: true,
+      threadStartCheckpointAvailable: true,
     });
 
     const userRow = rows.find(
