@@ -71,6 +71,7 @@ export class SourceControlProviderRegistry extends Context.Service<
 function unsupportedProvider(
   kind: SourceControlProviderKind,
 ): SourceControlProvider.SourceControlProvider["Service"] {
+  // Binding context does not create a second provider-operation span.
   return SourceControlProvider.SourceControlProvider.of({
     kind,
     // Unknown hosts have no readable change requests; return none to avoid poll warnings on every refresh.
@@ -195,37 +196,45 @@ function bindProviderContext(
 
   return SourceControlProvider.SourceControlProvider.of({
     ...provider,
-    listChangeRequests: (input) =>
-      provider.listChangeRequests({
+    listChangeRequests: Effect.fnUntraced(function* (input) {
+      return yield* provider.listChangeRequests({
         ...input,
         context: input.context ?? context,
-      }),
-    getChangeRequest: (input) =>
-      provider.getChangeRequest({
+      });
+    }),
+    getChangeRequest: Effect.fnUntraced(function* (input) {
+      return yield* provider.getChangeRequest({
         ...input,
         context: input.context ?? context,
-      }),
-    createChangeRequest: (input) =>
-      provider.createChangeRequest({
+      });
+    }),
+    createChangeRequest: Effect.fnUntraced(function* (input) {
+      return yield* provider.createChangeRequest({
         ...input,
         context: input.context ?? context,
-      }),
-    getRepositoryCloneUrls: (input) =>
-      provider.getRepositoryCloneUrls({
+      });
+    }),
+    getRepositoryCloneUrls: Effect.fnUntraced(function* (input) {
+      return yield* provider.getRepositoryCloneUrls({
         ...input,
         context: input.context ?? context,
-      }),
-    createRepository: (input) => provider.createRepository(input),
-    getDefaultBranch: (input) =>
-      provider.getDefaultBranch({
+      });
+    }),
+    createRepository: Effect.fnUntraced(function* (input) {
+      return yield* provider.createRepository(input);
+    }),
+    getDefaultBranch: Effect.fnUntraced(function* (input) {
+      return yield* provider.getDefaultBranch({
         ...input,
         context: input.context ?? context,
-      }),
-    checkoutChangeRequest: (input) =>
-      provider.checkoutChangeRequest({
+      });
+    }),
+    checkoutChangeRequest: Effect.fnUntraced(function* (input) {
+      return yield* provider.checkoutChangeRequest({
         ...input,
         context: input.context ?? context,
-      }),
+      });
+    }),
   });
 }
 
@@ -336,7 +345,9 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       },
       get,
       resolveHandle,
-      resolve: (input) => resolveHandle(input).pipe(Effect.map((handle) => handle.provider)),
+      resolve: Effect.fn("SourceControlProviderRegistry.resolve")(function (input) {
+        return resolveHandle(input).pipe(Effect.map((handle) => handle.provider));
+      }),
       discover: Effect.forEach(
         discoverySpecs,
         (spec) =>

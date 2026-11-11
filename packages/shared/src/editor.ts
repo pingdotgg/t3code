@@ -3,9 +3,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as HostProcess from "./HostProcess.ts";
-import { isCommandAvailable } from "./shell.ts";
+import { isCommandAvailable, resolveCommandPath } from "./shell.ts";
 
 type Editor = (typeof EDITORS)[number];
 
@@ -25,6 +27,28 @@ const isVersionedBundle = (entry: string, name: string) => {
   return /^\d[\d.]*$/.test(entry.slice(name.length + 1, -".app".length));
 };
 
+// OpenZFS's event daemon is also named zed; it rejects `--version` instead of starting.
+const isZedEditor = Effect.fn("editor.isZedEditor")(
+  function* (command: string) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(command, ["--version"], {
+        stdin: "ignore",
+        stderr: "ignore",
+        forceKillAfter: "1 second",
+      }),
+    );
+    const [stdout, exitCode] = yield* Effect.all(
+      [handle.stdout.pipe(Stream.decodeText(), Stream.runHead), handle.exitCode],
+      { concurrency: "unbounded" },
+    );
+    return exitCode === 0 && Option.getOrElse(stdout, () => "").startsWith("Zed");
+  },
+  Effect.scoped,
+  Effect.timeout("2 seconds"),
+  Effect.catchCause(() => Effect.succeed(false)),
+);
+
 export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(function* (
   editor: Editor,
   env: NodeJS.ProcessEnv,
@@ -34,7 +58,8 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const platform = yield* HostProcess.Platform;
   // Prefer Zed's macOS bundle because OpenZFS also installs a zed executable.
   const preferBundle = platform === "darwin" && editor.id === "zed";
-  if (!preferBundle) {
+  const preferZeditor = platform === "linux" && editor.id === "zed";
+  if (!preferBundle && !preferZeditor) {
     for (const command of editor.commands) {
       if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
     }
@@ -129,20 +154,32 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
       if (dataHome) dirs.push(path.join(dataHome, "JetBrains/Toolbox/scripts"));
     }
-    for (const dir of dirs) {
-      for (const name of editor.commands) candidates.push(path.join(dir, name));
+    if (preferZeditor) {
+      // Linux packages use zeditor because OpenZFS owns the zed command.
+      for (const name of ["zeditor", "zed"]) {
+        candidates.push(name, ...dirs.map((dir) => path.join(dir, name)));
+      }
+    } else {
+      for (const dir of dirs) {
+        for (const name of editor.commands) candidates.push(path.join(dir, name));
+      }
     }
   }
 
   if (preferBundle) candidates.push(...editor.commands);
+  const rejected = new Set<string>();
   for (const candidate of candidates) {
-    if (yield* isCommandAvailable(candidate, { env })) {
-      return Option.some({
-        command: candidate,
-        baseArgs:
-          editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
-      });
+    const resolved = yield* resolveCommandPath(candidate, { env });
+    if (resolved === null || rejected.has(resolved)) continue;
+    if (preferZeditor && path.basename(candidate) === "zed" && !(yield* isZedEditor(resolved))) {
+      rejected.add(resolved);
+      continue;
     }
+    return Option.some({
+      command: candidate,
+      baseArgs:
+        editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
+    });
   }
   return Option.none();
 });
