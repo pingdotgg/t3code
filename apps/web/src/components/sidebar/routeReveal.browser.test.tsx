@@ -149,6 +149,29 @@ describe("useActiveRowReveal", () => {
     await expect.element(screen.getByText("thread-40", { exact: true })).toBeInViewport();
   });
 
+  it("stops watching a hidden active row once it unmounts", async () => {
+    const reveal = newReveal();
+    using observe = vi.spyOn(ResizeObserver.prototype, "observe");
+    using unobserve = vi.spyOn(ResizeObserver.prototype, "unobserve");
+    using disconnect = vi.spyOn(ResizeObserver.prototype, "disconnect");
+    await using screen = await render(
+      <div hidden>
+        <RevealList reveal={reveal} rowKeys={rowKeys(50)} activeKey="thread-40" />
+      </div>,
+      // No router: the route arrives as the activeKey prop.
+      { router: false },
+    );
+    const row = screen.getByText("thread-40", { exact: true }).element();
+    expect(observe).toHaveBeenCalledWith(row);
+
+    // A widening viewport unmounts the closed sheet before it ever opens.
+    await screen.rerender(<div hidden />);
+
+    expect(
+      unobserve.mock.calls.some(([target]) => target === row) || disconnect.mock.calls.length > 0,
+    ).toBe(true);
+  });
+
   it("reveals the open thread when the closed narrow sheet opens", async () => {
     await page.viewport(390, 844);
     const reveal = newReveal();

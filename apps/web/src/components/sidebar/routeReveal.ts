@@ -34,26 +34,28 @@ export function completeSidebarRouteReveal(reveal: SidebarRouteReveal): void {
 // The row can mount after the route, once its shells arrive, so its ref scrolls.
 export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string | null) {
   const mountRevealOwed = useRef(true);
-  const stopWaitingForHiddenRow = useRef<(() => void) | null>(null);
   pendingSidebarRouteReveal(reveal, routeKey);
-  const revealRow = (row: HTMLElement | null, rowKey: string) => {
-    if (row === null) return;
-    stopWaitingForHiddenRow.current?.();
-    if (reveal.pendingKey !== rowKey && !mountRevealOwed.current) return;
+  // Returns a ref cleanup while it waits on a hidden row, so an unmount releases the wait.
+  const revealRow = (row: HTMLElement | null, rowKey: string): (() => void) | undefined => {
+    if (row === null) return undefined;
+    if (reveal.pendingKey !== rowKey && !mountRevealOwed.current) return undefined;
     // The closed narrow sheet keeps rows mounted but hidden, and opening it does not
     // re-render them, so wait for the row to get a box before spending the reveal.
     if (row.getClientRects().length === 0) {
-      stopWaitingForHiddenRow.current = observeResize(row, () => {
-        if (row.isConnected && row.getClientRects().length > 0) revealRow(row, rowKey);
+      const stopWaiting = observeResize(row, () => {
+        if (row.getClientRects().length === 0) return;
+        stopWaiting();
+        revealRow(row, rowKey);
       });
-      return;
+      return stopWaiting;
     }
     completeSidebarRouteReveal(reveal);
     mountRevealOwed.current = false;
     // A row under the pointer was just clicked, so it is in view; scrolling it would force a
     // layout mid-commit. Keyboard activation can come from a focused row scrolled out of view.
-    if (row.matches(":hover")) return;
+    if (row.matches(":hover")) return undefined;
     row.scrollIntoView({ block: "nearest" });
+    return undefined;
   };
   return revealRow;
 }
