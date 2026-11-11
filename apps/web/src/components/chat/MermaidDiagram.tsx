@@ -1,6 +1,6 @@
 import DOMPurify from "dompurify";
 import type { DiagramType, MathResolver } from "pele/lazy";
-import { use, useLayoutEffect, useRef, useState } from "react";
+import { use, useState } from "react";
 
 import { serializeCodeBlockToMarkdown } from "../../markdown-clipboard";
 import { Button } from "../ui/button";
@@ -228,16 +228,15 @@ export function MermaidDiagram({
 }) {
   const [, setAttempt] = useState(0);
   const [renderError, setRenderError] = useState<string | null>(null);
-  const containerRef = useRef<HTMLSpanElement>(null);
   const trimmedSource = source.trim();
   const core = use(loadCore());
   const type = core.status === "loaded" ? detectDiagramType(core.pele, trimmedSource) : null;
   const load = core.status === "loaded" && type ? use(loadDiagramType(core.pele, type)) : core;
   const math = trimmedSource.includes("$$") ? use(loadMath()) : null;
 
-  useLayoutEffect(() => {
-    const container = containerRef.current;
-    if (load.status !== "loaded" || !container) return;
+  // Re-created, and so remounted, whenever the renderer, math support or source changes.
+  const mountDiagram = (container: HTMLSpanElement) => {
+    if (load.status !== "loaded") return;
     const mounted = load.pele.mount(container, trimmedSource, {
       links: false,
       images: false,
@@ -252,7 +251,7 @@ export function MermaidDiagram({
         ),
     });
     return () => mounted.destroy();
-  }, [load, math, trimmedSource]);
+  };
 
   if (load.status === "failed") {
     return (
@@ -280,12 +279,12 @@ export function MermaidDiagram({
         aria-label="Expand diagram"
         hidden={renderError !== null}
         className="block w-full cursor-zoom-in rounded-md focus-visible:outline-2 focus-visible:outline-ring"
-        onClick={() => {
-          const svg = containerRef.current?.querySelector("svg");
+        onClick={(event) => {
+          const svg = event.currentTarget.querySelector("svg");
           if (svg) onExpand(diagramImageUrl(svg));
         }}
       >
-        <span ref={containerRef} className="flex w-full justify-center" />
+        <span ref={mountDiagram} className="flex w-full justify-center" />
       </button>
     </div>
   );

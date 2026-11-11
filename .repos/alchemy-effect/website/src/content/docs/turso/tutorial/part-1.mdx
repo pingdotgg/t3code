@@ -1,0 +1,102 @@
+---
+title: "Part 1: Your First Database"
+description: Create a Turso group and a template database, migrated from a Drizzle schema.
+sidebar:
+  order: 1
+---
+
+Build a notes API where every customer (tenant) gets their own Turso database. A Worker creates each database by copying a template, then reads and writes notes with Drizzle.
+
+The finished code is in [`examples/cloudflare-turso-drizzle`](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-turso-drizzle).
+
+## Prerequisites
+
+Finish [Turso setup](/turso/setup) and [Cloudflare setup](/cloudflare/setup). Turso's free plan is enough.
+
+Start in `src/Db.ts`. Every tenant's database will be a copy of the template you make here.
+
+## Create a group
+
+```diff lang="typescript"
++export const Tenants = Turso.Group("Tenants", { location: "aws-us-east-1" });
+```
+
+A group decides where its databases run. All tenant databases go in this group.
+
+## Define the notes table
+
+```diff lang="typescript"
++// src/schema.ts
++import { sql } from "drizzle-orm";
++import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
++
++export const Notes = sqliteTable("notes", {
++  id: integer("id").primaryKey({ autoIncrement: true }),
++  body: text("body").notNull(),
++  createdAt: integer("created_at", { mode: "timestamp" })
++    .notNull()
++    .default(sql`(unixepoch())`),
++});
+```
+
+Turso databases are SQLite, so use Drizzle's `sqlite-core` columns.
+
+## Turn the schema into migrations
+
+```diff lang="typescript"
++export const Template = Effect.gen(function* () {
++  const schema = yield* Drizzle.Schema("NotesSchema", {
++    schema: "./src/schema.ts",
++    out: "./migrations",
++    dialect: "sqlite",
++  });
++});
+```
+
+When `src/schema.ts` changes, `Drizzle.Schema` writes a new migration to `./migrations`. Commit that folder.
+
+## Create the template database
+
+```diff lang="typescript"
+export const Template = Effect.gen(function* () {
++  const group = yield* Tenants;
+  const schema = yield* Drizzle.Schema("NotesSchema", {
+    schema: "./src/schema.ts",
+    out: "./migrations",
+    dialect: "sqlite",
+  });
++  return yield* Turso.Database("Template", {
++    group: group.name,
++    migrations: schema,
++  });
+});
+```
+
+Each deploy runs new migrations on the template. The template has tables but no rows, so each tenant starts empty.
+
+## Add the providers
+
+```diff lang="typescript"
+// alchemy.run.ts
+export default Alchemy.Stack(
+  "CloudflareTursoDrizzleExample",
+  {
++    providers: Layer.mergeAll(Cloudflare.providers(), Turso.providers(), Drizzle.providers()),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
++    const template = yield* Template;
++    return { template: template.name };
+  }),
+);
+```
+
+## Deploy
+
+```diff lang="sh"
++pnpm alchemy deploy
+```
+
+Alchemy prints the template database's name. It has an empty `notes` table.
+
+In [Part 2](/turso/tutorial/part-2), you'll add a Worker that creates a database for each tenant.
