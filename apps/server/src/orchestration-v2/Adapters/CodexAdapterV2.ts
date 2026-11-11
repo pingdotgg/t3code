@@ -4534,7 +4534,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
          * later requests still need an answer, and no ordinary handler has a
          * turn to give one.
          */
-        const rejectedExternalTurns = new Set<string>();
+        const rejectedExternalTurns = new Map<string, string>();
+        /** Codex's spawn parent of each child native thread, from `thread/started`. */
+        const nativeParentThreads = new Map<string, string>();
         const externalTurnIdOf = (payload: unknown) => {
           if (typeof payload !== "object" || payload === null) return undefined;
           const turnId =
@@ -4566,7 +4568,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 yield* held.frames[index]!(adopted);
               }
               heldExternalTurns.delete(nativeTurnId);
-              if (!adopted && !held.completed) rejectedExternalTurns.add(nativeTurnId);
+              if (!adopted && !held.completed)
+                rejectedExternalTurns.set(nativeTurnId, held.nativeThreadId);
             }),
           );
         });
@@ -4631,21 +4634,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             onRunSettled: rejectIfCurrent,
           });
         });
-        // Codex runs one turn per root thread, so a thread T3 does not know yet
-        // while an external turn is held is a descendant that turn spawned. Its
-        // frames wait with the parent's so the replayed spawn registers it first.
+        // A child the held turn spawned is not registered until its replayed spawn
+        // item runs, so its frames wait with the parent's. Sessions are shared by
+        // every T3 thread on the instance: only Codex's spawn ancestry says whose it is.
         const heldDescendantOwner =
           /* Runs for every Codex frame while a turn is held; avoid a span each. */
           Effect.fnUntraced(function* (payload: unknown) {
             const threadId = (payload as { readonly threadId?: unknown } | null)?.threadId;
-            if (typeof threadId !== "string" || rootProviderThreads.has(threadId)) return undefined;
+            if (typeof threadId !== "string") return undefined;
             if ((yield* Ref.get(subagentThreads)).has(threadId)) return undefined;
-            const owner = [...heldExternalTurns.keys()].at(-1);
-            if (owner !== undefined) return { owner, rejected: false };
-            return rejectedExternalTurns.size > 0
+            let root = threadId;
+            for (let depth = 0; depth <= nativeParentThreads.size; depth++) {
+              const parent = nativeParentThreads.get(root);
+              if (parent === undefined) break;
+              root = parent;
+            }
+            if (root === threadId) return undefined;
+            for (const [owner, held] of heldExternalTurns) {
+              if (held.nativeThreadId === root) return { owner, rejected: false };
+            }
+            return [...rejectedExternalTurns.values()].includes(root)
               ? { owner: undefined, rejected: true }
               : undefined;
           });
+        yield* client.handleServerNotification("thread/started", ({ thread }) =>
+          Effect.sync(() => {
+            const source = thread.source;
+            if (
+              typeof source === "object" &&
+              "subAgent" in source &&
+              typeof source.subAgent === "object" &&
+              "thread_spawn" in source.subAgent
+            )
+              nativeParentThreads.set(thread.id, source.subAgent.thread_spawn.parent_thread_id);
+          }),
+        );
         const noExternalTurns = () =>
           heldExternalTurns.size === 0 && rejectedExternalTurns.size === 0;
         const handleCodexNotification: CodexClient.CodexAppServerClient["Service"]["handleServerNotification"] =

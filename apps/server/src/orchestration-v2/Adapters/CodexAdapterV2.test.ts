@@ -4557,6 +4557,34 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
   };
 
+  const spawnedThreadStarted = (
+    threadId: string,
+    parentThreadId: string,
+  ): CodexReplay.CodexAppServerReplayEntry => ({
+    type: "emit_inbound",
+    label: `${threadId} thread/started`,
+    frame: {
+      method: "thread/started",
+      params: {
+        thread: {
+          id: threadId,
+          sessionId: threadId,
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 1782622459,
+          updatedAt: 1782622459,
+          status: { type: "idle" },
+          cwd: "/workspace",
+          cliVersion: "0.144.0",
+          projectId: null,
+          source: { subAgent: { thread_spawn: { parent_thread_id: parentThreadId, depth: 1 } } },
+          turns: [],
+        },
+      },
+    },
+  });
+
   it.effect(
     "adopts an external Codex turn that waits on approval and reads like a T3 command",
     () =>
@@ -4687,6 +4715,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               turnId,
               completedAtMs: 1782622459100,
             }),
+            spawnedThreadStarted(childThreadId, nativeThreadId),
             frame(childThreadId, "turn/started", {
               turn: makeCodexReplayTurn({ id: childTurnId, status: "inProgress" }),
             }),
@@ -4750,28 +4779,69 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const scenario = "codex-external-queue-rejected";
         const nativeThreadId = `native-${scenario}-thread`;
         const nextTurnId = `native-${scenario}-next-turn`;
+        const otherChildThreadId = `native-${scenario}-other-child-thread`;
+        const otherChildTurnId = `native-${scenario}-other-child-turn`;
         const prompt = "Reply with the word QUEUED.";
         const nextTurnStart = codexReplayPreamble({
           nativeThreadId,
           nativeTurnId: nextTurnId,
           prompt,
         }).slice(-3);
-        const transcript = externalQueueTranscript(scenario, prompt, () => [], [
-          withReplayRequestId(nextTurnStart[0]!, 4),
-          withReplayRequestId(nextTurnStart[1]!, 4),
-          nextTurnStart[2]!,
-          {
-            type: "emit_inbound",
-            label: "next turn/completed",
-            frame: {
-              method: "turn/completed",
-              params: {
-                threadId: nativeThreadId,
-                turn: makeCodexReplayTurn({ id: nextTurnId, status: "completed" }),
+        // The session is shared by every T3 thread on the instance: another
+        // thread's child starting now must not be taken for this held turn's.
+        const transcript = externalQueueTranscript(
+          scenario,
+          prompt,
+          () => [
+            spawnedThreadStarted(otherChildThreadId, `native-${scenario}-other-thread`),
+            {
+              type: "emit_inbound",
+              label: "other child turn/started",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: otherChildThreadId,
+                  turn: makeCodexReplayTurn({ id: otherChildTurnId, status: "inProgress" }),
+                },
               },
             },
-          },
-        ]);
+          ],
+          [
+            withReplayRequestId(nextTurnStart[0]!, 4),
+            withReplayRequestId(nextTurnStart[1]!, 4),
+            nextTurnStart[2]!,
+            {
+              type: "emit_inbound",
+              label: "other child spawn registered",
+              frame: {
+                method: "item/completed",
+                params: {
+                  item: {
+                    type: "subAgentActivity",
+                    id: `${scenario}-other-spawn`,
+                    kind: "started",
+                    agentThreadId: otherChildThreadId,
+                    agentPath: "/root/other_agent",
+                  },
+                  threadId: nativeThreadId,
+                  turnId: nextTurnId,
+                  completedAtMs: 1782622461000,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "next turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nextTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        );
         const harness = yield* makeCodexReplayHarness(transcript);
         const startTurn = (attempt: string, text: string, messageId?: MessageId) =>
           Effect.gen(function* () {
@@ -4800,6 +4870,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         // starts its own native turn instead of adopting the released one.
         yield* startTurn("attempt-late", prompt, wake.messageId);
         yield* harness.awaitTerminal(2);
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.nativeTurnRef?.nativeId === otherChildTurnId,
+          ),
+          "another thread's child turn that started during the hold was lost",
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
