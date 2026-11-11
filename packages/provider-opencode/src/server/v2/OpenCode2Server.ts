@@ -26,6 +26,7 @@ export class OpenCode2Server extends Context.Service<
     readonly withConnection: <A, E, R>(
       use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R>;
+    readonly retire: Effect.Effect<void>;
   }
 >()("@t3tools/provider-opencode/server/v2/OpenCode2Server") {}
 
@@ -144,6 +145,7 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
           Effect.flatMap(use),
         );
       }),
+      retire: Effect.void,
     });
   }
 
@@ -162,5 +164,6 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
           : Effect.die(new Error("OpenCode 2 server was lent before verification.")),
       );
     }),
+    retire: owner.retire,
   });
 });

@@ -522,10 +522,9 @@ export const OpenCodeDriver: ProviderDriver<
           }),
       ),
     );
-    // Ready catalogs are never re-probed on an interval, so edits to the global config
-    // would otherwise need a manual refresh. Mirrors OpenCode's config resolution, which
-    // loads OPENCODE_CONFIG_DIR on top of the global directory; a missing directory just
-    // skips watching.
+    // Ready catalogs are never re-probed on an interval, and an OpenCode server reads its
+    // config only at startup, so a save retires the shared servers before refreshing.
+    // Mirrors OpenCode loading OPENCODE_CONFIG_DIR on top of the global directory.
     if (effectiveConfig.enabled) {
       const globalConfigDir = pathService.join(
         processEnv.XDG_CONFIG_HOME ||
@@ -540,7 +539,12 @@ export const OpenCodeDriver: ProviderDriver<
         yield* fileSystem.watch(configDir).pipe(
           Stream.filter((event) => OPENCODE_CONFIG_FILES.has(pathService.basename(event.path))),
           Stream.debounce("200 millis"),
-          Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
+          Stream.runForEach(() =>
+            Effect.all([openCode2Server.retire, serverOwner.retire]).pipe(
+              Effect.andThen(snapshot.refresh),
+              Effect.ignoreCause({ log: true }),
+            ),
+          ),
           Effect.ignore,
           Effect.forkScoped,
         );

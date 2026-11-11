@@ -164,6 +164,7 @@ it.live("reloads a ready catalog when the global OpenCode config changes", () =>
     const configDir = NodePath.join(home, ".config", "opencode");
     yield* fs.makeDirectory(configDir, { recursive: true });
     let providerIds = ["opencode"];
+    let servedProviderIds = providerIds;
     const model = (providerID: string) => ({
       id: "m",
       modelID: "m",
@@ -187,7 +188,7 @@ it.live("reloads a ready catalog when the global OpenCode config changes", () =>
           ? JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body)
           : {
               location: { directory: "/work" },
-              data: path === "/api/model" ? providerIds.map(model) : [],
+              data: path === "/api/model" ? servedProviderIds.map(model) : [],
             };
       return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
     });
@@ -198,6 +199,7 @@ it.live("reloads a ready catalog when the global OpenCode config changes", () =>
       }: Parameters<OpenCodeRuntime.OpenCodeRuntime["Service"]["startOpenCodeServerProcess"]>[0]) =>
         Effect.gen(function* () {
           const url = "http://127.0.0.1:4096";
+          servedProviderIds = providerIds;
           const version = verify ? yield* verify(url) : "2.0.18";
           return { url, version, isRunning: Effect.succeed(true), exitCode: Effect.never };
         }),
@@ -220,15 +222,21 @@ it.live("reloads a ready catalog when the global OpenCode config changes", () =>
       ["opencode/m"],
     );
 
-    const reloaded = yield* instance.snapshot.streamChanges.pipe(
-      Stream.filter((snapshot) => snapshot.models.some((entry) => entry.slug === "zz-probe/m")),
-      Stream.take(1),
-      Stream.runDrain,
-      Effect.forkChild({ startImmediately: true }),
-    );
-    providerIds = ["opencode", "zz-probe"];
-    yield* fs.writeFileString(NodePath.join(configDir, "opencode.json"), "{}");
-    yield* Fiber.join(reloaded);
+    // The fake server reads config only at startup, like a real one, so a warm server would
+    // keep serving the first save's catalog.
+    for (const providerId of ["first", "second"]) {
+      const reloaded = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) =>
+          snapshot.models.some((entry) => entry.slug === `${providerId}/m`),
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      providerIds = ["opencode", providerId];
+      yield* fs.writeFileString(NodePath.join(configDir, "opencode.json"), "{}");
+      yield* Fiber.join(reloaded);
+    }
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
