@@ -1,12 +1,16 @@
 import {
   AuthStandardClientScopes,
   CommandId,
+  DEFAULT_SERVER_SETTINGS,
+  ServerSettings as ServerSettingsSchema,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
   type ProjectMutation,
   type ProjectSnapshot,
   ProjectId,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Console from "effect/Console";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
@@ -600,6 +604,15 @@ const projectRenameCommand = Command.make("rename", {
 );
 
 const encodeDiscoveryJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+// The app saves a project's model in settings.json; the project record keeps only a pre-fold value.
+const decodeProjectModelSettings = Schema.decodeUnknownOption(
+  fromLenientJson(
+    Schema.Struct({
+      projectSettingsOverrides: ServerSettingsSchema.fields.projectSettingsOverrides,
+      projectSettingsFolded: ServerSettingsSchema.fields.projectSettingsFolded,
+    }),
+  ),
+);
 
 const projectListCommand = Command.make("list", {
   ...projectLocationFlags,
@@ -614,6 +627,14 @@ const projectListCommand = Command.make("list", {
           projects: yield* listAllProjects(tools),
           threads: yield* listAllThreads(tools, { allProjects: true }),
         };
+        const { settingsPath } = yield* ServerConfig.ServerConfig;
+        const settingsJson = yield* (yield* FileSystem.FileSystem)
+          .readFileString(settingsPath)
+          .pipe(Effect.orElseSucceed(() => "{}"));
+        const settings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          ...Option.getOrUndefined(decodeProjectModelSettings(settingsJson)),
+        };
         const countsByProject = new Map<ProjectId, Record<string, number>>();
         for (const thread of snapshot.threads) {
           const counts = countsByProject.get(thread.projectId) ?? {};
@@ -626,7 +647,9 @@ const projectListCommand = Command.make("list", {
             id: project.id,
             title: project.title,
             workspaceRoot: project.workspaceRoot,
-            defaultModelSelection: project.defaultModelSelection,
+            defaultModelSelection:
+              resolveProjectSettings(settings, project.id, project).overrides
+                .defaultModelSelection ?? null,
             threadCounts,
           };
         });
@@ -638,7 +661,7 @@ const projectListCommand = Command.make("list", {
           );
         }
       }),
-      { access: "read-only" },
+      { access: "read-only", quietLogs: flags.json },
     ).pipe(reportDiscoveryErrors),
   ),
 );

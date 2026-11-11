@@ -420,7 +420,7 @@ const threadListCommand = Command.make("list", {
             );
           }
         }),
-        { access: "read-only" },
+        { access: "read-only", quietLogs: flags.json },
       );
     }).pipe(reportThreadErrors),
   ),

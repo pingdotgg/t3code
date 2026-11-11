@@ -147,10 +147,12 @@ export type ThreadTools = ReturnType<typeof makeThreadTools>;
 export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
   flags: { readonly baseDir: Option.Option<string> },
   run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
-  options?: { readonly access: AuthMcpClientAccess },
+  options?: { readonly access?: AuthMcpClientAccess; readonly quietLogs?: boolean },
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const config = yield* resolveCliAuthConfig(flags, logLevel, {
+    quietLogs: options?.quietLogs === true,
+  });
   return yield* Effect.gen(function* () {
     const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
@@ -180,8 +182,13 @@ export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function*
     Effect.scoped,
     Effect.provide(
       EnvironmentAuth.layerRuntime.pipe(
-        Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
+        Layer.provideMerge(ServerConfig.layer(config)),
+        Layer.provide(
+          Layer.succeed(
+            References.MinimumLogLevel,
+            options?.quietLogs === true ? "Error" : config.logLevel,
+          ),
+        ),
       ),
     ),
   );
