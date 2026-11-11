@@ -294,7 +294,9 @@ describe("workspace area focus", () => {
     bringBack.textContent = "Bring back";
     content.append(bringBack);
     panel.element.append(content);
-    fixture.area("conversation", 1, content);
+    const timeline = conversationScroller(50);
+    timeline.append(Object.assign(document.createElement("div"), { style: "height: 400px" }));
+    fixture.area("conversation", 1, content).element.append(timeline);
     const composer = fixture.area("composer", 2, content);
     const editor = document.createElement("div");
     editor.contentEditable = "true";
