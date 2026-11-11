@@ -1689,31 +1689,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ]),
   ];
 
-  /** One run's provider thread, active attempt and provider turn, as `contextSourcePointForRun` reads them. */
-  const readRunProviderRecords =
-    /* The delegated task operation that calls this owns the span. */
-    Effect.fnUntraced(function* (threadId: ThreadId, run: OrchestrationV2Run) {
-      const attemptIds = run.activeAttemptId === null ? [] : [run.activeAttemptId];
-      const records = yield* projectionStore.getThreadRecords(
-        threadId,
-        ["providerThreads", "providerTurns", "attempts"],
-        {
-          providerThreadIds: run.providerThreadId === null ? [] : [run.providerThreadId],
-          providerTurnAttemptIds: attemptIds,
-          attemptIds,
-        },
-      );
-      const attemptTurnId = records.attempts[0]?.providerTurnId;
-      if (records.providerTurns.length > 0 || attemptTurnId == null) return records;
-      // A steered run's attempt can point at a provider turn that another attempt started.
-      const { providerTurns } = yield* projectionStore.getThreadRecords(
-        threadId,
-        ["providerTurns"],
-        { providerTurnIds: [attemptTurnId] },
-      );
-      return { ...records, providerTurns };
-    });
-
   /** The parent records `planDelegatedCompletionDelivery` reads for one task: its run, and the queued wake's message, run and tasks. */
   const readDelegatedCompletionPlanRecords =
     /* The delegated task operation that calls this owns the span. */
@@ -8472,15 +8447,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     ) {
-      const parentProjectionError = (cause: unknown) =>
-        new OrchestratorProjectionError({ threadId: command.parentThreadId, cause });
-      const parentControls = yield* projectionStore
-        .getThreadRecords(command.parentThreadId, ["runs", "nodes"], {
-          runIds: [command.parentRunId],
-          nodeIds: [command.parentNodeId],
-        })
-        .pipe(Effect.mapError(parentProjectionError));
-      const parentRun = parentControls.runs.find(
+      const parentProjection = yield* projectionStore
+        .getRunProviderRecords(command.parentThreadId, command.parentRunId, command.parentNodeId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
+          ),
+        );
+      const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
       );
       if (parentRun === undefined || !isActiveRun(parentRun)) {
@@ -8497,7 +8471,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Parent run ${command.parentRunId} is stopping.`,
         });
       }
-      const parentNode = parentControls.nodes.find(
+      const parentNode = parentProjection.nodes.find(
         (candidate) => candidate.id === command.parentNodeId,
       );
       if (
@@ -8511,10 +8485,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Parent node ${command.parentNodeId} is not part of active run ${parentRun.id}.`,
         });
       }
-      const parentProjection = yield* readRunProviderRecords(
-        command.parentThreadId,
-        parentRun,
-      ).pipe(Effect.mapError(parentProjectionError));
 
       const targetAdapter = yield* providerAdapters.get(command.modelSelection.instanceId).pipe(
         Effect.mapError(

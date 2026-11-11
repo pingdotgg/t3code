@@ -645,6 +645,15 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runId: RunId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /** One run and node with the run's provider thread, active attempt and provider turn, read together. */
+  readonly getRunProviderRecords: (
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+  ) => Effect.Effect<
+    ProjectionRecords<"runs" | "nodes" | "providerThreads" | "providerTurns" | "attempts">,
+    ProjectionStoreV2Error
+  >;
   readonly isNodeStored: (
     node: OrchestrationV2ExecutionNode,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -5913,6 +5922,41 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
+    const getRunProviderRecords: ProjectionStoreV2Shape["getRunProviderRecords"] = (
+      threadId,
+      runId,
+      nodeId,
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const controls = yield* getThreadRecords(threadId, ["runs", "nodes"], {
+              runIds: [runId],
+              nodeIds: [nodeId],
+            });
+            const run = controls.runs[0];
+            const attemptIds = run?.activeAttemptId == null ? [] : [run.activeAttemptId];
+            const records = yield* getThreadRecords(
+              threadId,
+              ["providerThreads", "providerTurns", "attempts"],
+              {
+                providerThreadIds: run?.providerThreadId == null ? [] : [run.providerThreadId],
+                providerTurnAttemptIds: attemptIds,
+                attemptIds,
+              },
+            );
+            const attemptTurnId = records.attempts[0]?.providerTurnId;
+            if (records.providerTurns.length > 0 || attemptTurnId == null)
+              return { ...controls, ...records };
+            // A steered run's attempt can point at a provider turn that another attempt started.
+            const { providerTurns } = yield* getThreadRecords(threadId, ["providerTurns"], {
+              providerTurnIds: [attemptTurnId],
+            });
+            return { ...controls, ...records, providerTurns };
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
     const getThreadSnapshot: ProjectionStoreV2Shape["getThreadSnapshot"] = (threadId) =>
       sql
         .withTransaction(
@@ -7820,6 +7864,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),
       hasRunInterruptRequest: readOnReader(hasRunInterruptRequest),
+      getRunProviderRecords: readOnReader(getRunProviderRecords),
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
       getSubagentCount: readOnReader(getSubagentCount),
