@@ -340,17 +340,22 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
       Effect.as({}),
     );
 
+  // Kill and drain before closing the scope: closing it first would interrupt
+  // the output pumps before the command's shutdown output is read.
+  const releaseTerminal = (terminal: ManagedAcpTerminal) =>
+    Effect.sync(() => {
+      terminal.released = true;
+    }).pipe(
+      Effect.andThen(terminal.kill),
+      Effect.andThen(Deferred.await(terminal.exit)),
+      Effect.andThen(terminal.dispose),
+    );
+
   const release: AcpClientTerminals["release"] = (request) =>
     Effect.uninterruptible(
       requireTerminal(request.sessionId, request.terminalId, "terminal/release").pipe(
         Effect.flatMap((terminal) =>
-          Effect.sync(() => {
-            terminal.released = true;
-          }).pipe(
-            Effect.andThen(terminal.dispose),
-            Effect.andThen(Deferred.await(terminal.exit)),
-            Effect.andThen(Effect.sync(pruneReleasedSnapshots)),
-          ),
+          releaseTerminal(terminal).pipe(Effect.andThen(Effect.sync(pruneReleasedSnapshots))),
         ),
         Effect.as({}),
       ),
@@ -371,14 +376,10 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
 
   const disposeAll: AcpClientTerminals["disposeAll"] = Effect.uninterruptible(
     Effect.suspend(() =>
-      Effect.forEach(
-        Array.from(terminals.values()),
-        (terminal) =>
-          Effect.sync(() => {
-            terminal.released = true;
-          }).pipe(Effect.andThen(terminal.dispose), Effect.andThen(Deferred.await(terminal.exit))),
-        { concurrency: "unbounded", discard: true },
-      ).pipe(Effect.andThen(Effect.sync(pruneReleasedSnapshots))),
+      Effect.forEach(Array.from(terminals.values()), releaseTerminal, {
+        concurrency: "unbounded",
+        discard: true,
+      }).pipe(Effect.andThen(Effect.sync(pruneReleasedSnapshots))),
     ),
   );
 

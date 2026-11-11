@@ -202,6 +202,41 @@ describe("AcpClientTerminals", () => {
     ),
   );
 
+  it.live("keeps output a running command writes while release stops it", () =>
+    Effect.gen(function* () {
+      // Windows terminates without delivering SIGTERM to a handler.
+      if (yield* HostProcess.isWindows) return;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const handlerInstalled = yield* Deferred.make<void>();
+      const terminals = yield* makeAcpClientTerminals({ defaultCwd: process.cwd() }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+          ...spawner,
+          spawn: (command) =>
+            spawner.spawn(command).pipe(
+              Effect.map((child) => ({
+                ...child,
+                stdout: child.stdout.pipe(
+                  Stream.tap(() => Deferred.succeed(handlerInstalled, undefined)),
+                ),
+              })),
+            ),
+        }),
+      );
+      yield* Effect.addFinalizer(() => terminals.disposeAll);
+      const created = yield* terminals.create({
+        sessionId: "session",
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.on('SIGTERM', () => { process.stdout.write('bye'); process.exit(0); }); console.log('started'); setInterval(() => {}, 1000);",
+        ],
+      });
+      yield* Deferred.await(handlerInstalled);
+      yield* terminals.release({ sessionId: "session", terminalId: created.terminalId });
+      expect(terminals.readOutputSnapshot("session", created.terminalId)?.output).toContain("bye");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect.each([
     { deadline: "default", forceKillAfter: undefined, deadlineMillis: 5000 },
     { deadline: "configured", forceKillAfter: "250 millis" as const, deadlineMillis: 250 },
@@ -216,12 +251,15 @@ describe("AcpClientTerminals", () => {
           isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
           // Model a process that only exits when the spawner escalates after its deadline.
           kill: (options) =>
-            options?.forceKillAfter === undefined
-              ? Deferred.await(exited).pipe(Effect.asVoid)
-              : Effect.sleep(options.forceKillAfter).pipe(
-                  Effect.andThen(Deferred.succeed(exited, ChildProcessSpawner.ExitCode(137))),
-                  Effect.asVoid,
-                ),
+            Effect.gen(function* () {
+              if (yield* Deferred.isDone(exited)) return;
+              if (options?.forceKillAfter === undefined) {
+                yield* Deferred.await(exited);
+                return;
+              }
+              yield* Effect.sleep(options.forceKillAfter);
+              yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(137));
+            }),
           stdin: Sink.drain,
           stdout: Stream.empty,
           stderr: Stream.empty,
