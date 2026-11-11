@@ -446,6 +446,15 @@ describe("merge request reads", () => {
       }),
   );
 
+  it.effect("gives watches a fingerprint so a quiet merge request skips full reads", () =>
+    Effect.gen(function* () {
+      const { provider } = yield* countingProvider;
+
+      // Without one, watches reread the whole merge request every sweep while checks run.
+      assert.isDefined(provider.getChangeRequestWatchFingerprint);
+    }),
+  );
+
   it.effect("reads a merge request again once a minute has passed", () =>
     Effect.gen(function* () {
       const { provider, calls } = yield* countingProvider;
