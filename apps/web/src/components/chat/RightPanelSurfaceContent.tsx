@@ -11,6 +11,7 @@ import type {
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { lazy, Suspense } from "react";
 import SideChatPane from "./SideChatPane";
+import { ProjectThreadsPane } from "../projects/ProjectThreadsPane";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
@@ -182,6 +183,16 @@ export function RightPanelSurfaceContent(props: {
           threadId={surface.threadId}
           parentPanel={props.sideChatParentPanel}
           onClose={() => onCloseSurface(surface)}
+        />
+      );
+    case "project-threads":
+      // Not lazy, like side chats: the picked thread mounts a tiptap composer.
+      return (
+        <ProjectThreadsPane
+          key={surface.threadId ?? surface.id}
+          coordinatorRef={threadRef}
+          threadId={surface.threadId}
+          parentPanel={props.sideChatParentPanel}
         />
       );
     case "device":

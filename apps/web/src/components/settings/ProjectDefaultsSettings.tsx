@@ -90,6 +90,17 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     targets.length > 0 &&
     targets.every((candidate) => candidate.settings.defaultModelSelection === null);
   const mixedFallback = useScopedSettingsMixed(["fallbackModelSelection"]);
+  const mixedCoordinator = useScopedSettingsMixed(["coordinatorModelSelection"]);
+  const coordinatorSelection = settings.coordinatorModelSelection ?? selection;
+  const coordinatorEntry = entries.find(
+    (entry) => entry.instanceId === coordinatorSelection?.instanceId,
+  );
+  const coordinatorModelOptions = getCustomModelOptionsByInstance(
+    settings,
+    providers,
+    coordinatorSelection?.instanceId,
+    coordinatorSelection?.model,
+  );
   const fallbackSelection = settings.fallbackModelSelection ?? selection;
   const fallbackEntry = entries.find((entry) => entry.instanceId === fallbackSelection?.instanceId);
   const fallbackModelOptions = getCustomModelOptionsByInstance(
@@ -245,6 +256,81 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     />
   );
 
+  const setCoordinatorModel = (value: ModelSelection | null) => {
+    const reason = value ? modelDisabledReason(value.instanceId, value.model) : null;
+    if (reason) {
+      toastManager.add({
+        type: "error",
+        title: "Coordinator model not saved",
+        description: reason,
+      });
+      return;
+    }
+    updateSettings({ coordinatorModelSelection: value });
+  };
+  const coordinatorRow = (
+    <SettingsRow
+      serverScoped
+      settingKeys={["coordinatorModelSelection"]}
+      mixed={mixedCoordinator}
+      {...searchableSetting("coordinator-model")}
+      description={
+        isProjectScope
+          ? "Model for this project's coordinator on the Projects page. Agent threads use the model above."
+          : "Model for project coordinators on the Projects page. Follows the default model unless set."
+      }
+      resetAction={
+        mixedCoordinator || settings.coordinatorModelSelection !== null ? (
+          <SettingResetButton label="coordinator model" onClick={() => setCoordinatorModel(null)} />
+        ) : null
+      }
+      control={
+        coordinatorSelection ? (
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            <ProviderModelPicker
+              environmentId={representative?.environmentId ?? null}
+              activeInstanceId={coordinatorSelection.instanceId}
+              model={coordinatorSelection.model}
+              lockedProvider={null}
+              instanceEntries={entries}
+              modelOptionsByInstance={coordinatorModelOptions}
+              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+              triggerAriaLabel="Coordinator model"
+              {...(mixedCoordinator ? { triggerLabel: "Mixed" } : {})}
+              getModelDisabledReason={modelDisabledReason}
+              onInstanceModelChange={(instanceId, model) =>
+                setCoordinatorModel(createModelSelection(instanceId, model))
+              }
+            />
+            {settings.coordinatorModelSelection !== null &&
+            coordinatorEntry &&
+            !mixedCoordinator ? (
+              <TraitsPicker
+                provider={coordinatorEntry.driverKind}
+                models={coordinatorEntry.models}
+                model={coordinatorSelection.model}
+                modelOptions={coordinatorSelection.options ?? []}
+                allowPromptInjectedEffort={false}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                onModelOptionsChange={(options) =>
+                  setCoordinatorModel(
+                    createModelSelection(
+                      coordinatorSelection.instanceId,
+                      coordinatorSelection.model,
+                      options,
+                    ),
+                  )
+                }
+              />
+            ) : null}
+          </div>
+        ) : (
+          <span className="text-sm text-muted-foreground">No providers available</span>
+        )
+      }
+    />
+  );
+
   const fallbackRow = !isProjectScope ? (
     <SettingsRow
       serverScoped
@@ -326,12 +412,14 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       {category === "project" ? (
         <>
           {modelRow}
+          {coordinatorRow}
           {fallbackRow}
           {workspaceRow}
         </>
       ) : category === "general" ? (
         <>
           {modelRow}
+          {coordinatorRow}
           {fallbackRow}
           <SettingsRow
             serverScoped

@@ -287,6 +287,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new thread project provider reasoning effort"],
   },
   {
+    id: "coordinator-model",
+    title: "Coordinator model",
+    to: "/settings/threads",
+    scope: "project-defaults",
+    searchTerms: ["coordinator projects page orchestrator delegate agents provider"],
+  },
+  {
     id: "fallback-model",
     title: "Fallback model",
     to: "/settings/threads",

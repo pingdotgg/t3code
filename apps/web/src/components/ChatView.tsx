@@ -195,6 +195,7 @@ import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
 import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
+import { isCoordinatorThread } from "./projects/projectCoordinator.logic";
 import {
   NO_PROVIDER_MODEL_SELECTION,
   providerInstanceEntriesFor,
@@ -2803,6 +2804,15 @@ export default function ChatView(props: ChatViewProps) {
                 ? "Available once the thread's worktree is set up."
                 : null;
   const openSideChatStable = useStableCallback(() => void sideChat.open());
+  const coordinatorThreadRef =
+    !embedded && serverThread !== null && isCoordinatorThread(serverThread)
+      ? activeThreadRef
+      : null;
+  const openProjectThreadsStable = useStableCallback(() => {
+    if (coordinatorThreadRef !== null) {
+      useRightPanelStore.getState().openProjectThreads(coordinatorThreadRef, null);
+    }
+  });
   const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
   const { onConfirmRevertStable, onForkFromRunStable, onRevertTimelineTurnStable } =
     useTimelineRewind({
@@ -3978,6 +3988,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
+          onAddProjectThreads={coordinatorThreadRef !== null ? openProjectThreadsStable : undefined}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}

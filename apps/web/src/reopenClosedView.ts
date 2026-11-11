@@ -157,6 +157,9 @@ export async function reopenClosedView(
     case "side-chat":
       panels.openSideChat(ref, surface.threadId);
       break;
+    case "project-threads":
+      panels.openProjectThreads(ref, surface.threadId ?? null);
+      break;
     default:
       panels.open(ref, surface.kind);
   }

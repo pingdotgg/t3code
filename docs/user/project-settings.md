@@ -62,6 +62,23 @@ back. On mobile, both are in **Settings → Projects → Organize**.
 
 A project on several machines must have every machine connected to pin or archive it.
 
+## Projects page and coordinators
+
+Open **Projects** from the sidebar footer or the command palette to see each project with its
+threads. **Start coordinator** creates a persistent thread in the project root that plans work and
+delegates it to agent threads. It stays the project's coordinator on every connected client until
+you choose **Release**, which turns it back into an ordinary thread. In the coordinator, the
+**Threads** tab in the right panel lists the project's other threads; pick one to read and reply
+to it there, or reopen the tab from the panel's **+** menu.
+
+The coordinator uses **Settings → Threads → Coordinator model**, which follows the default model
+until you set it. Agent threads use the default **Model**. Select a project in Settings to give it
+its own. **Change models** on the Projects page opens those settings for that project.
+
+**Edit instructions** creates or edits `AGENTS.md` in the project root, which the coordinator and
+its agents follow from their next session. Claude reads `CLAUDE.md` instead, so when the project
+has none, saving also creates one that imports `AGENTS.md`. An existing `CLAUDE.md` is left as is.
+
 ## Worktree branch names
 
 In **Settings → Worktrees → Worktree branch naming**, choose a static prefix,

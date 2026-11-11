@@ -64,6 +64,7 @@ import {
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
+  FolderKanbanIcon,
   FolderPlusIcon,
   MessageSquareDashedIcon,
   LinkIcon,
@@ -1634,6 +1635,17 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:projects",
+    searchTerms: ["projects", "coordinator", "orchestrator", "delegate", "agents", "instructions"],
+    title: "Open projects",
+    icon: <FolderKanbanIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/projects" });
+    },
+  });
 
   actionItems.push({
     kind: "action",
