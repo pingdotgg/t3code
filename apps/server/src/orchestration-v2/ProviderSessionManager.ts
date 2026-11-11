@@ -2217,6 +2217,26 @@ export const layerWithOptions = (
         const runningRetries = new Map<ProviderTurnId, ProviderRetryItem>();
         const stalledRetries = new Map<ProviderTurnId, ProviderRetryItem>();
         const stallTimers = new Map<ProviderTurnId, Fiber.Fiber<void>>();
+        // Claude and Pi keep the retry row running while a recovered reply streams, so any
+        // event on the retry's thread counts as the provider being alive.
+        const activeSinceCheck = new Set<ProviderTurnId>();
+        const noteThreadActivity = (event: ProviderAdapter.ProviderAdapterV2Event) => {
+          if (runningRetries.size === 0) return;
+          const threadId =
+            event.type === "turn_item.updated"
+              ? event.turnItem.threadId
+              : event.type === "message.updated"
+                ? event.message.threadId
+                : event.type === "node.updated"
+                  ? event.node.threadId
+                  : event.type === "plan.updated"
+                    ? event.plan.threadId
+                    : undefined;
+          if (threadId === undefined) return;
+          for (const item of runningRetries.values()) {
+            if (item.threadId === threadId) activeSinceCheck.add(item.providerTurnId);
+          }
+        };
         // Stops the stalled turn; its interrupted terminal is then reported as the retry's failure.
         const stopStalledRetry = Effect.fn("ProviderSessionManager.stopStalledRetry")(
           function* (item: ProviderRetryItem) {
@@ -2264,6 +2284,7 @@ export const layerWithOptions = (
         const stopStallTimer = (providerTurnId: ProviderTurnId) => {
           const fiber = stallTimers.get(providerTurnId);
           stallTimers.delete(providerTurnId);
+          activeSinceCheck.delete(providerTurnId);
           return fiber === undefined ? Effect.void : Fiber.interrupt(fiber);
         };
         const trackProviderRetry = (
@@ -2273,6 +2294,7 @@ export const layerWithOptions = (
           readonly armed?: ProviderRetryItem;
           readonly settled?: ProviderTurnId;
         } => {
+          noteThreadActivity(event);
           if (event.type === "turn_item.updated") {
             const item = event.turnItem;
             if (
@@ -2347,15 +2369,18 @@ export const layerWithOptions = (
               return;
             }
             yield* stopStallTimer(item.providerTurnId);
-            const timer = yield* stopStalledRetry(item).pipe(
-              Effect.delay(
-                Duration.sum(
-                  PROVIDER_RETRY_STALL_TIMEOUT,
-                  Duration.millis(item.retry.retryDelayMs ?? 0),
-                ),
-              ),
-              Effect.forkChild({ startImmediately: true }),
+            const window = Duration.sum(
+              PROVIDER_RETRY_STALL_TIMEOUT,
+              Duration.millis(item.retry.retryDelayMs ?? 0),
             );
+            const timer = yield* Effect.gen(function* () {
+              // Only a thread that stayed silent for a whole window has stalled.
+              do {
+                activeSinceCheck.delete(item.providerTurnId);
+                yield* Effect.sleep(window);
+              } while (activeSinceCheck.has(item.providerTurnId));
+              yield* stopStalledRetry(item);
+            }).pipe(Effect.forkChild({ startImmediately: true }));
             stallTimers.set(item.providerTurnId, timer);
           }),
         };

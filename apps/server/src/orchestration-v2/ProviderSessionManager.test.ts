@@ -2061,13 +2061,11 @@ it.effect("ProviderSessionManagerV2 fails a turn whose provider retry never resu
         runtimePolicy,
       });
       const subscription = yield* runtime.subscribeEvents!;
-      const retryPublished = yield* Deferred.make<void>();
-      // The pump arms the stall timer before it publishes the retry row.
+      const published = yield* Queue.unbounded<void>();
+      // The pump updates the stall watch before it publishes a turn item.
       const collected = yield* subscription.events.pipe(
         Stream.tap((event) =>
-          event.type === "turn_item.updated"
-            ? Deferred.succeed(retryPublished, undefined)
-            : Effect.void,
+          event.type === "turn_item.updated" ? Queue.offer(published, undefined) : Effect.void,
         ),
         Stream.runCollect,
         Effect.forkScoped,
@@ -2105,8 +2103,41 @@ it.effect("ProviderSessionManagerV2 fails a turn whose provider retry never resu
         driver: CODEX_DRIVER,
         turnItem: retryItem("running"),
       });
-      yield* Deferred.await(retryPublished);
-      // The stall window starts after the provider's announced retry delay.
+      yield* Queue.take(published);
+      const offerOutput = (outputThreadId: ThreadId) =>
+        Queue.offer(adapterQueue!, {
+          type: "turn_item.updated",
+          driver: CODEX_DRIVER,
+          turnItem: {
+            id: idAllocator.derive.turnItemFromProviderItem({
+              driver: CODEX_DRIVER,
+              nativeItemId: `retry-stall-output-${outputThreadId}`,
+            }),
+            threadId: outputThreadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: providerThread.id,
+            providerTurnId,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 4,
+            type: "compaction",
+            driver: CODEX_DRIVER,
+            status: "running",
+            title: "Compacting context",
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+          },
+        }).pipe(Effect.andThen(Queue.take(published)));
+      // The stall window is 15 minutes plus the provider's announced retry delay.
+      yield* TestClock.adjust("15 minutes");
+      assert.equal((yield* Ref.get(state)).interruptCount, 0);
+      // Output on the retry's thread proves the provider is alive, so a new window starts.
+      yield* offerOutput(threadId);
+      yield* TestClock.adjust("1 minute");
+      // Another thread's output lets the timer start its next wait and does not count.
+      yield* offerOutput(ThreadId.make("thread-provider-session-manager-retry-stall-other"));
       yield* TestClock.adjust("15 minutes");
       assert.equal((yield* Ref.get(state)).interruptCount, 0);
       yield* TestClock.adjust("1 minute");
