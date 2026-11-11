@@ -28,15 +28,15 @@ installer or the desktop app did not create is already there, it leaves that
 one alone and stops. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
 `T3CODE_VERSION` to pin an exact version.
 
-| Task                                             | Command                                                                 |
-| ------------------------------------------------ | ----------------------------------------------------------------------- |
-| Start the server and open the web app            | `t3`                                                                    |
-| Start the server without a browser               | `t3 serve`                                                              |
-| Use it from your other devices                   | `t3 up` ([details](./remote-access.md))                                 |
-| Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md))               |
-| Move to the newest release                       | `t3 update`                                                             |
-| Reclaim database space                           | `t3 doctor` ([details](./background-service.md#reclaim-database-space)) |
-| Remove it again                                  | `t3 uninstall`                                                          |
+| Task                                  | Command                                                                 |
+| ------------------------------------- | ----------------------------------------------------------------------- |
+| Start the server and open the web app | `t3`                                                                    |
+| Start the server without a browser    | `t3 serve`                                                              |
+| Use it from your other devices        | `t3 up` ([details](./remote-access.md))                                 |
+| Keep it running in the background     | `t3 service install` ([details](./background-service.md))               |
+| Move to the newest release            | `t3 update`                                                             |
+| Reclaim database space                | `t3 doctor` ([details](./background-service.md#reclaim-database-space)) |
+| Remove it again                       | `t3 uninstall`                                                          |
 
 Run `t3 help` or `t3 --help` for the full reference. To start in a new working
 directory, use an explicit path such as `t3 ./my-project`. A bare directory name
@@ -239,6 +239,6 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 - [Working with threads](./thread-sidebar.md): start tasks and organize parallel work.
 - [Permission modes](./permission-modes.md): choose when agents ask before acting.
 - [Remote access](./remote-access.md): connect from another device.
-- [Running in the background](./background-service.md): keep a Linux or macOS host available.
+- [Running in the background](./background-service.md): keep a host available.
 - [Updating T3 Code](./updating.md): update the app and connected servers.
 - [Managed policy](./managed-policy.md): configure T3 Code for everyone on a machine.

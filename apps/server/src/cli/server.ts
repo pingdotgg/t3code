@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { Command, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
+import { awaitServiceLauncherStop } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { awaitLauncherLoss } from "../launcherWatch.ts";
 import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
@@ -35,8 +36,10 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
   const logLevel = yield* GlobalFlag.LogLevel;
   const selectAutomaticPort = yield* AutomaticPort.make.pipe(Effect.provide(ProcessRunner.layer));
   const config = yield* resolveServerConfig(flags, logLevel, { ...options, selectAutomaticPort });
-  const run = runServer.pipe(
-    Effect.provideService(ServerConfig.ServerConfig, config),
+  const run = Effect.raceFirst(
+    runServer.pipe(Effect.provideService(ServerConfig.ServerConfig, config)),
+    awaitServiceLauncherStop().pipe(Effect.andThen(Effect.interrupt)),
+  ).pipe(
     // Settings' Reclaim stops the server; repair once the database is closed, before the restart.
     Effect.ensuring(
       DatabaseMaintenance.runRequestedReclaim(config.dbPath).pipe(
