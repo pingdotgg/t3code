@@ -1,3 +1,4 @@
+import { trimOptionalString } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
@@ -54,11 +55,6 @@ const GitHubPullRequestSchema = Schema.Struct({
     ),
   ),
 });
-
-function trimOptionalString(value: string | null | undefined): string | null {
-  const trimmed = value?.trim() ?? "";
-  return trimmed.length > 0 ? trimmed : null;
-}
 
 function normalizeGitHubPullRequestState(input: {
   state?: string | null | undefined;

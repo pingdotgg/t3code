@@ -6,12 +6,8 @@ const config = useRuntimeConfig();
 const secret = useState("fixture-secret", () => {
   if (import.meta.server) {
     const event = useRequestEvent();
-    const env = event?.context.cloudflare?.env as
-      | Record<string, unknown>
-      | undefined;
-    return typeof env?.FIXTURE_SECRET === "string"
-      ? env.FIXTURE_SECRET
-      : "missing";
+    const env = event?.context.cloudflare?.env as Record<string, unknown> | undefined;
+    return typeof env?.FIXTURE_SECRET === "string" ? env.FIXTURE_SECRET : "missing";
   }
   return "missing";
 });
