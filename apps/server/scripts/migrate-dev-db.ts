@@ -381,6 +381,13 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
             AND stream_id NOT IN (SELECT thread_id FROM kept_threads))
            OR (aggregate_kind = 'project'
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))`;
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.pullRequests', (
+          SELECT json_group_array(json_remove(link.value, '$.watch') ORDER BY link.key)
+          FROM json_each(payload_json, '$.pullRequests') AS link))
+        WHERE EXISTS (
+          SELECT 1 FROM json_each(payload_json, '$.pullRequests') AS link
+          WHERE json_extract(link.value, '$.watch') IS NOT NULL)`;
       for (const table of CLEARED_TABLES) {
         yield* sql`DELETE FROM ${sql(table)}`;
       }
