@@ -5127,7 +5127,18 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         replyData("session.fork", sessionInfo({ id: FORK })),
         out("session.update", { sessionID: FORK, permissions: "<any>" }),
         reply("session.update", null),
+        out("session.active"),
+        reply("session.active", { data: {} }),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.interrupted", { sessionID: SESSION }),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.execution.failed", {
+          sessionID: SESSION,
+          error: { type: "provider", message: "second turn failed" },
+        }),
       ]);
+      const ended = yield* terminals(runtime, 2);
       yield* runtime.startTurn(turnInput(thread));
       yield* runtime.interruptTurn({
         providerThread: thread,
@@ -5138,6 +5149,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         targetThreadId: ThreadId.make("thread:opencode2-adapter:fork"),
       });
       assert.equal(forked.nativeThreadRef?.nativeId, FORK);
+      // The lost end arriving late must not finish the source's next turn.
+      yield* runtime.startTurn(secondTurn(thread));
+      const [first, second] = yield* Fiber.join(ended);
+      assert.equal(first?.status, "interrupted");
+      assert.equal(second?.failure?.message, "second turn failed");
     }).pipe(Effect.scoped),
   );
 
