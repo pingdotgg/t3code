@@ -725,7 +725,9 @@ function visibleTextFirst(body: string): string {
   for (const [index, line] of body.split("\n").entries()) {
     const inCode = codeLines.has(index + 1);
     const opener = inCode ? null : /^\s*<details(?=[\s>])([^>]*)/iu.exec(line);
-    if (opener) sections.push(!/\bopen\b/iu.test(opener[1] ?? ""));
+    // Quoted values are dropped first so `title="open logs"` does not read as the attribute.
+    const attributes = opener?.[1]?.replace(/"[^"]*"|'[^']*'/gu, "") ?? "";
+    if (opener) sections.push(!/(?:^|\s)open(?:[\s=/]|$)/iu.test(attributes));
     (sections.includes(true) ? folded : shown).push(line);
     if (!inCode && sections.length > 0 && /<\/details>/iu.test(line)) sections.pop();
   }

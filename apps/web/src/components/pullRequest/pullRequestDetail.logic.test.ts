@@ -1121,11 +1121,11 @@ describe("adding a remark to the chat", () => {
       kind: "comment",
       comment: remark(
         "c1",
-        `<details>\n<summary>Analysis chain</summary>\n\n${"script ".repeat(400)}\n</details>\n\nOne concern remains.`,
+        `<details title="open logs">\n<summary>Analysis chain</summary>\n\n${"script ".repeat(400)}\n</details>\n\nOne concern remains.`,
       ),
     });
 
-    expect(context?.text).toMatch(/^octocat: One concern remains\.\n\n<details>/u);
+    expect(context?.text).toMatch(/^octocat: One concern remains\.\n\n<details title/u);
   });
 
   it("closes a details section whose closing tag has text after it", () => {
