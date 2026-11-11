@@ -1,4 +1,4 @@
-import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
+import type { FileDiffMetadata } from "@pierre/diffs";
 import { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
@@ -55,13 +55,6 @@ function loaderReturning(oldContents: string, newContents: string) {
   );
 }
 
-function loadOutcome(loader: FileDiffContentsLoader, fileDiff: FileDiffMetadata) {
-  return loader(fileDiff).then(
-    () => "hydrated with stale contents",
-    () => "rejected",
-  );
-}
-
 describe("createGitDiffFileContentsLoader", () => {
   it("loads contents that still reproduce the patch", async () => {
     const loaded = await loaderReturning(
@@ -72,31 +65,26 @@ describe("createGitDiffFileContentsLoader", () => {
     expect(loaded.newFile.contents).toBe(toContents(changedLines));
   });
 
-  it("rejects contents that end before the patch's hunk", async () => {
-    const loader = loaderReturning(
-      toContents(originalLines.slice(0, 30)),
-      toContents(changedLines.slice(0, 30)),
-    );
+  it.each([
+    {
+      name: "end before the patch's hunk",
+      oldLines: originalLines.slice(0, 30),
+      newLines: changedLines.slice(0, 30),
+    },
+    {
+      name: "have unchanged tails that no longer match between sides",
+      oldLines: originalLines,
+      newLines: [...changedLines, "line 41 appended"],
+    },
+    {
+      name: "changed hunk lines without moving them",
+      oldLines: originalLines,
+      newLines: changedLines.map((line, index) => (index === 30 ? "edited since" : line)),
+    },
+  ])("rejects contents that $name", async ({ oldLines, newLines }) => {
+    const loader = loaderReturning(toContents(oldLines), toContents(newLines));
 
-    await expect(loadOutcome(loader, partialFileDiff())).resolves.toBe("rejected");
-  });
-
-  it("rejects contents whose unchanged tail no longer matches between sides", async () => {
-    const loader = loaderReturning(
-      toContents(originalLines),
-      toContents([...changedLines, "line 41 appended"]),
-    );
-
-    await expect(loadOutcome(loader, partialFileDiff())).resolves.toBe("rejected");
-  });
-
-  it("rejects contents whose hunk lines changed without moving", async () => {
-    const loader = loaderReturning(
-      toContents(originalLines),
-      toContents(changedLines.map((line, index) => (index === 30 ? "edited since" : line))),
-    );
-
-    await expect(loadOutcome(loader, partialFileDiff())).resolves.toBe("rejected");
+    await expect(loader(partialFileDiff())).rejects.toThrow("changed since the diff was loaded");
   });
 
   it("loads a whitespace-ignored patch whose context shows one side's whitespace", async () => {
