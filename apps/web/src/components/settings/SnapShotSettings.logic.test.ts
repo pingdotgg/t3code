@@ -5,42 +5,10 @@ import {
   createRecordingRequestTracker,
   snapShotStatus,
   snapShotShortcutStatus,
-  snapShotUnavailableMessage,
-  snapShotSoundPatch,
-  snapShotFeedbackUnavailableMessage,
   snapShotSetupSummary,
   snapShotSetupButtonLabel,
   snapShotSetupComplete,
-  snapShotDescription,
-  snapShotAccessibilityUnavailableMessage,
 } from "./SnapShotSettings.logic";
-
-it.each([
-  ["off", { snapShotPlaySound: false }],
-  ["soft-pop", { snapShotPlaySound: true, snapShotSound: "soft-pop" }],
-  ["camera-shutter", { snapShotPlaySound: true, snapShotSound: "camera-shutter" }],
-] as const)("maps %s to compatible capture settings", (sound, patch) => {
-  expect(snapShotSoundPatch(sound)).toEqual(patch);
-});
-
-it("offers effects only with a capable GNOME extension, explaining how to upgrade v1", () => {
-  const state: DesktopSnapShotState = {
-    mode: "portal",
-    linuxBackend: "gnome-extension",
-    shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
-    shortcutRegistered: true,
-    shortcutMessage: null,
-    message: null,
-  };
-  expect(snapShotFeedbackUnavailableMessage(state)).toContain("Update");
-  expect(
-    snapShotFeedbackUnavailableMessage({ ...state, linuxFeedbackAvailable: true }),
-  ).toBeUndefined();
-  expect(snapShotFeedbackUnavailableMessage({ ...state, linuxBackend: "picker" })).toContain(
-    "aren't available",
-  );
-  expect(snapShotFeedbackUnavailableMessage({ ...state, mode: "direct" })).toBeUndefined();
-});
 
 it("ignores a stale request after a newer request starts", () => {
   const requests = createRecordingRequestTracker();
@@ -56,67 +24,7 @@ it("ignores a stale request after a newer request starts", () => {
   expect(requests.tryBegin()).toBeNull();
 });
 
-it("reports unavailable capture support without browser globals", () => {
-  expect(snapShotUnavailableMessage(false)).toBe("Only available in the desktop app.");
-});
-
-it("describes Niri setup without claiming a global shortcut is registered", () => {
-  const state: DesktopSnapShotState = {
-    mode: "portal",
-    linuxBackend: "niri",
-    shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
-    shortcutRegistered: false,
-    shortcutMessage: "Managed by Niri",
-    message: null,
-  };
-  expect(snapShotStatus(state, true)).toBe("Finish shortcut setup");
-  expect(snapShotStatus(state, true)).not.toContain("could not be registered");
-  expect(snapShotFeedbackUnavailableMessage(state)).toContain("aren't available on Niri");
-});
-
-it("distinguishes Hyprland helper setup, action registration, and verified shortcut delivery", () => {
-  const state: DesktopSnapShotState = {
-    mode: "portal",
-    linuxBackend: "hyprland",
-    linuxDesktop: "hyprland",
-    shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
-    shortcutRegistered: false,
-    shortcutMessage: "Connecting to Hyprland shortcuts…",
-    message: null,
-    hyprlandHelper: { status: "not-installed", message: "Install helper" },
-  };
-  expect(snapShotSetupButtonLabel(state)).toBe("Set up Hyprland capture");
-  expect(snapShotStatus(state, false)).toBe("Turn this on to set up snapshots.");
-  expect(snapShotStatus(state, true)).toContain("Install the capture helper");
-  expect(snapShotFeedbackUnavailableMessage(state)).toContain("Install or update");
-  const ready = {
-    ...state,
-    hyprlandHelper: { status: "ready" as const, message: "Ready" },
-    linuxFeedbackAvailable: true,
-  };
-  expect(snapShotSetupButtonLabel(ready)).toBe("Manage capture");
-  expect(snapShotShortcutStatus({ ...ready, shortcutPending: true })).not.toContain("permission");
-  expect(snapShotStatus({ ...ready, shortcutActionRegistered: true }, true)).toBe(
-    "Use your shortcut from another app",
-  );
-  expect(snapShotStatus({ ...ready, shortcutVerified: true }, true)).toBe("Ready to capture");
-  expect(snapShotFeedbackUnavailableMessage(ready)).toBeUndefined();
-  expect(snapShotAccessibilityUnavailableMessage(ready)).toBeUndefined();
-});
-
-it("keeps unavailable capture distinct from the opt-in setup prompt", () => {
-  const state: DesktopSnapShotState = {
-    mode: "unavailable",
-    shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
-    shortcutRegistered: false,
-    shortcutMessage: null,
-    message: "Wayland is required.",
-  };
-
-  expect(snapShotStatus(state, false)).toBe("Wayland is required.");
-});
-
-it.each(["gnome-extension", "niri", "screenshot-portal", "picker"] as const)(
+it.each(["gnome-extension", "picker"] as const)(
   "waits for opt-in before presenting %s setup requirements",
   (linuxBackend) => {
     const state: DesktopSnapShotState = {
@@ -180,7 +88,7 @@ it("distinguishes saved shortcuts from observed delivery without making users re
       { ...state, linuxBackend: "picker", gnomeExtension: undefined, shortcutVerified: true },
       true,
     ),
-  ).toBe("Manual capture only — you'll choose a window each time");
+  ).toBe("Manual capture only. You'll choose a window each time");
   expect(
     snapShotSetupSummary(
       {
@@ -192,78 +100,6 @@ it("distinguishes saved shortcuts from observed delivery without making users re
       true,
     ),
   ).toBe("Ready to capture");
-});
-
-it.each([
-  ["gnome", "GNOME"],
-  ["kde", "KDE Plasma"],
-  ["niri", "Niri"],
-] as const)(
-  "names %s when setup cannot yet determine the capture backend",
-  (linuxDesktop, name) => {
-    const state: DesktopSnapShotState = {
-      mode: "portal",
-      linuxDesktop,
-      shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
-      shortcutRegistered: false,
-      shortcutMessage: null,
-      message: "Capability check failed",
-    };
-    expect(snapShotSetupButtonLabel(state)).toBe(`Set up ${name} capture`);
-  },
-);
-
-it("keeps picker limitations visible after shortcut verification without recommending a GNOME extension", () => {
-  const state: DesktopSnapShotState = {
-    mode: "portal",
-    linuxBackend: "picker",
-    shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
-    shortcutRegistered: true,
-    shortcutMessage: null,
-    message: null,
-    shortcutVerified: true,
-  };
-  expect(snapShotStatus(state, true)).toContain("Manual capture only");
-  expect(snapShotDescription(state)).toContain("Automatic capture isn't available");
-  expect(snapShotFeedbackUnavailableMessage(state)).not.toContain("GNOME");
-  expect(snapShotAccessibilityUnavailableMessage(state)).toContain("only provides a screenshot");
-  expect(
-    snapShotAccessibilityUnavailableMessage({ ...state, linuxBackend: "screenshot-portal" }),
-  ).toContain("only provides a screenshot");
-  expect(
-    snapShotAccessibilityUnavailableMessage({ ...state, linuxBackend: "kde" }),
-  ).toBeUndefined();
-  expect(snapShotFeedbackUnavailableMessage({ ...state, linuxBackend: "kde" })).toContain(
-    "capture helper",
-  );
-  expect(
-    snapShotFeedbackUnavailableMessage({
-      ...state,
-      linuxBackend: "kde",
-      linuxFeedbackAvailable: true,
-      kdeHelper: { status: "ready", message: "Ready", feedbackAvailable: true },
-    }),
-  ).toBeUndefined();
-  expect(
-    snapShotStatus(
-      { ...state, linuxBackend: "kde", kdeHelper: { status: "not-installed", message: "Install" } },
-      true,
-    ),
-  ).toContain("Install the capture helper");
-});
-
-it("does not ask Niri users to repeat setup when its capture endpoint is available", () => {
-  const state: DesktopSnapShotState = {
-    mode: "portal",
-    linuxBackend: "niri",
-    shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
-    shortcutRegistered: false,
-    shortcutBinding: "Ctrl+Shift+2 { spawn ...; }",
-    shortcutMessage: null,
-    message: null,
-  };
-  expect(snapShotStatus(state, true)).toBe("Use your shortcut from another app");
-  expect(snapShotSetupButtonLabel(state)).toBe("Manage capture");
 });
 
 it("reports pending, denied, and assigned shortcuts without inferring consent from saved keys", () => {

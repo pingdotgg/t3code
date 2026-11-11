@@ -1,3 +1,4 @@
+import type { SelectableMarkdownModel } from "./SelectableMarkdownText.types";
 import type { OrchestrationMessageContext, ServerProviderSkill } from "@t3tools/contracts";
 import type { Ref } from "react";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
@@ -22,6 +23,8 @@ export interface ComposerEditorHandle {
   focus: () => void;
   blur: () => void;
   setSelection: (selection: ComposerEditorSelection) => void;
+  /** iOS: resolves once a native edit still in flight has reached `onChangeText`. */
+  flushPendingInput: () => Promise<void>;
 }
 
 export interface ComposerEditorProps {
@@ -36,9 +39,13 @@ export interface ComposerEditorProps {
     },
   ) => void;
   readonly skills?: ReadonlyArray<
-    Pick<ServerProviderSkill, "name" | "displayName" | "shortDescription" | "description"> &
+    Pick<
+      ServerProviderSkill,
+      "name" | "displayName" | "shortDescription" | "description" | "enabled" | "userInvocable"
+    > &
       Partial<Pick<ServerProviderSkill, "path">>
   >;
+  readonly models?: ReadonlyArray<SelectableMarkdownModel>;
   readonly selection?: ComposerEditorSelection;
   readonly placeholder?: string;
   readonly autoFocus?: boolean;
@@ -55,6 +62,11 @@ export interface ComposerEditorProps {
   readonly style?: StyleProp<ViewStyle>;
   readonly textStyle?: StyleProp<TextStyle>;
   readonly onChangeText: (value: string) => void;
+  /**
+   * iOS: the owner's reset generation, raised synchronously when it replaces the text outright
+   * (send, discard). Native edits the editor made before applying that reset are dropped.
+   */
+  readonly readResetGeneration?: () => number;
   readonly onSelectionChange?: (selection: ComposerEditorSelection) => void;
   readonly onPasteImages?: (uris: ReadonlyArray<string>) => void;
   readonly onContextPress?: (reference: {
@@ -66,16 +78,17 @@ export interface ComposerEditorProps {
   readonly onFocus?: () => void;
   readonly onBlur?: () => void;
   /**
-   * Hardware-keyboard Return behavior on iOS. No-op on Android, which has no
-   * hardware Return handling.
+   * Size of the laid-out text in dp, without insets. Width is the widest line, so a
+   * one-line draft reports its natural width; only fires when the size changes.
    */
+  readonly onContentSizeChange?: (size: {
+    readonly width: number;
+    readonly height: number;
+  }) => void;
+  /** Hardware-keyboard Return behavior. Soft keyboards always insert a newline. */
   readonly enterBehavior?: ComposerEnterBehavior;
   readonly submitTitle?: string;
   readonly alternateSubmitTitle?: string;
-  /**
-   * `alternate` is true for the Command-modified chord, which sends using the
-   * opposite of the configured follow-up behavior. Always false on Android,
-   * which has no hardware Return handling.
-   */
+  /** Command chords (Ctrl on Android) reverse the configured follow-up behavior. */
   readonly onSubmit?: (alternate: boolean) => void;
 }

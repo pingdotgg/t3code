@@ -1,0 +1,44 @@
+import type * as sdb from "@distilled.cloud/aws/simpledb";
+import * as Binding from "alchemy/Binding";
+import type { RuntimeContext } from "alchemy/RuntimeContext";
+import type * as Effect from "effect/Effect";
+import type { Domain } from "./Domain.ts";
+
+export interface DeleteAttributesRequest extends Omit<sdb.DeleteAttributesRequest, "DomainName"> {}
+
+/**
+ * Runtime binding for `sdb:DeleteAttributes`.
+ *
+ * Bind this operation to a {@link Domain} inside a function runtime to get a
+ * callable that automatically injects the domain name. Omitting `Attributes`
+ * deletes the whole item.
+ * ### Deleting Items
+ * **Example:** Delete a Whole Item
+ * ```typescript
+ * const deleteAttributes = yield* AWS.SimpleDB.DeleteAttributes(domain);
+ *
+ * yield* deleteAttributes({ ItemName: "user#123" });
+ * ```
+ *
+ * **Example:** Delete a Single Attribute
+ * ```typescript
+ * yield* deleteAttributes({
+ *   ItemName: "user#123",
+ *   Attributes: [{ Name: "plan" }],
+ * });
+ * ```
+ *
+ * @binding
+ */
+export interface DeleteAttributes extends Binding.Service<
+  DeleteAttributes,
+  "AWS.SimpleDB.DeleteAttributes",
+  (
+    domain: Domain,
+  ) => Effect.Effect<
+    (
+      request: DeleteAttributesRequest,
+    ) => Effect.Effect<sdb.DeleteAttributesResponse, sdb.DeleteAttributesError, RuntimeContext>
+  >
+> {}
+export const DeleteAttributes = Binding.Service<DeleteAttributes>("AWS.SimpleDB.DeleteAttributes");
