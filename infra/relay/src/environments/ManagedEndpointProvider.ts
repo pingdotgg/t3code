@@ -1,11 +1,11 @@
 import * as CloudflareRetry from "@distilled.cloud/cloudflare/Retry";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -166,11 +166,7 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly origin: RelayManagedEndpointOrigin;
       readonly endpoint: RelayManagedEndpoint;
     }) => Effect.Effect<ManagedEndpointOriginSyncResult, ManagedEndpointProviderError>;
-    /**
-     * Captures the allocation generation owned by an unlink before its link
-     * revocation commits. Passing this target to `deprovision` prevents a
-     * concurrent relink from having its newer allocation torn down.
-     */
+    /** Capture before revocation so a concurrent relink's newer allocation survives deprovision. */
     readonly prepareDeprovision: (input: {
       readonly userId: string;
       readonly environmentId: string;
@@ -183,12 +179,7 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly environmentId: string;
       readonly target?: ManagedEndpointDeprovisionTarget | null;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
-    /**
-     * Resolves to whether the caller's connector token is now dead: true when
-     * the tunnel was deleted (or none was recorded to begin with), false when
-     * a concurrent provision outbid the release claim and the recorded tunnel
-     * — and any token issued for it — stays live.
-     */
+    /** True means the connector token is dead; false means concurrent provisioning kept its tunnel live. */
     readonly release: (input: {
       readonly userId: string;
       readonly environmentId: string;
@@ -225,6 +216,7 @@ const ManagedEndpointTunnelClientOperation = Schema.Literals([
   "list",
   "create",
   "put-configuration",
+  "get-configuration",
   "get-token",
   "delete",
 ]);
@@ -274,6 +266,16 @@ export class ManagedEndpointTunnelClient extends Context.Service<
         }>;
       },
     ) => Effect.Effect<unknown, ManagedEndpointTunnelClientError>;
+    readonly getConfiguration: (tunnelId: string) => Effect.Effect<
+      {
+        readonly ingress: ReadonlyArray<{
+          readonly hostname?: string | null;
+          readonly path?: string | null;
+          readonly service: string;
+        }>;
+      },
+      ManagedEndpointTunnelClientError
+    >;
     readonly getToken: (
       tunnelId: string,
     ) => Effect.Effect<string, ManagedEndpointTunnelClientError>;
@@ -386,7 +388,7 @@ function isLoopbackOrigin(origin: RelayManagedEndpointOrigin): boolean {
   );
 }
 
-export function isManagedEndpointNotFound(cause: unknown): boolean {
+function isManagedEndpointNotFound(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null) {
     return false;
   }
@@ -530,7 +532,7 @@ const makeCloudflareApiGate = (alchemyRuntimeContext: Alchemy.BaseRuntimeContext
  * either one that has not finished draining or another runtime still serving
  * the tunnel.
  */
-export function isManagedEndpointTunnelInUse(cause: unknown): boolean {
+function isManagedEndpointTunnelInUse(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null) {
     return false;
   }
@@ -559,9 +561,9 @@ const ignoreNotFound = <A>(
     }),
   );
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const tunnels = yield* ManagedEndpointTunnelClient;
   const dns = yield* ManagedEndpointDnsClient;
   const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
@@ -765,35 +767,53 @@ export const make = Effect.gen(function* () {
           hostname: allocation.hostname,
         });
       }
-      // A release keeps the recorded tunnel id, so the record alone cannot
-      // tell a live tunnel from one deleted by a shutdown whose host was
-      // killed before it dropped its config. Ask Cloudflare, or the host
-      // starts a connector that can never connect.
-      const recorded = yield* tunnels.get(input.tunnelId).pipe(
-        Effect.asSome,
-        Effect.catchTags({
-          ManagedEndpointTunnelClientError: (cause) =>
-            isManagedEndpointNotFound(cause.cause)
-              ? Effect.succeedNone
-              : Effect.fail(
-                  new ManagedEndpointProvisioningFailed({
-                    userId: input.userId,
-                    environmentId: input.environmentId,
-                    stage: "verify-tunnel",
-                    tunnelId: input.tunnelId,
-                    cause,
-                  }),
-                ),
-        }),
-      );
+      const verifyTunnel = <A>(read: Effect.Effect<A, ManagedEndpointTunnelClientError>) =>
+        read.pipe(
+          Effect.asSome,
+          Effect.catchTags({
+            ManagedEndpointTunnelClientError: (cause) =>
+              isManagedEndpointNotFound(cause.cause)
+                ? Effect.succeedNone
+                : Effect.fail(
+                    new ManagedEndpointProvisioningFailed({
+                      userId: input.userId,
+                      environmentId: input.environmentId,
+                      stage: "verify-tunnel",
+                      tunnelId: input.tunnelId,
+                      cause,
+                    }),
+                  ),
+          }),
+        );
+      // Released records retain tunnel ids; verify Cloudflare still has the tunnel before reconnecting.
+      const recorded = yield* verifyTunnel(tunnels.get(input.tunnelId));
       if (Option.isNone(recorded) || recorded.value.deletedAt) {
         return "recovery_required";
       }
+      const originService = formatOriginService(input.origin);
       if (
         allocation.origin?.localHttpHost === input.origin.localHttpHost &&
         allocation.origin.localHttpPort === input.origin.localHttpPort
       ) {
-        return "ready";
+        // Live ingress can drift from the recorded origin; only a matching rule skips the rewrite.
+        const configuration = yield* verifyTunnel(tunnels.getConfiguration(input.tunnelId));
+        if (Option.isNone(configuration)) {
+          return "recovery_required";
+        }
+        const hostname = normalizeHostname(allocation.hostname);
+        // Cloudflare routes by the first matching rule, so an earlier wildcard or catch-all wins.
+        const rule = configuration.value.ingress.find((entry) => {
+          if (entry.hostname == null) return true;
+          const candidate = normalizeHostname(entry.hostname);
+          return (
+            candidate === hostname ||
+            (candidate.startsWith("*.") && hostname.endsWith(candidate.slice(1)))
+          );
+        });
+        // A path-restricted rule leaves other paths to later rules, so it cannot prove routing.
+        if (rule?.service === originService && !rule.path) {
+          return "ready";
+        }
       }
 
       const updated = yield* allocations
@@ -807,10 +827,7 @@ export const make = Effect.gen(function* () {
           tunnels
             .putConfiguration(input.tunnelId, {
               ingress: [
-                {
-                  hostname: allocation.hostname,
-                  service: formatOriginService(input.origin),
-                },
+                { hostname: allocation.hostname, service: originService },
                 { service: "http_status:404" },
               ],
             })
@@ -894,6 +911,7 @@ export const make = Effect.gen(function* () {
         return false;
       }
       const tunnelId = allocation.tunnelId;
+      let tunnelDeleted = false;
       const deprovision = Effect.gen(function* () {
         const dnsRecordId = allocation.dnsRecordId;
         if (dnsRecordId !== null) {
@@ -921,6 +939,7 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           );
+          tunnelDeleted = true;
         }
         return yield* allocations
           .removeClaimed({
@@ -968,6 +987,30 @@ export const make = Effect.gen(function* () {
                 }),
               ),
           }),
+          // The rollback keeps the deleted tunnel's id; mark it released so the tunnel limit stops
+          // counting it. onError also covers an interrupted unlink, which rolls back the same way.
+          Effect.onError(() =>
+            tunnelDeleted
+              ? allocations
+                  .claimRelease({
+                    userId: input.userId,
+                    environmentId: input.environmentId,
+                    tunnelId,
+                    generation: claimedGeneration,
+                    markReleased: true,
+                  })
+                  .pipe(
+                    Effect.catch((error) =>
+                      Effect.logWarning("Failed to mark a deleted managed tunnel released", {
+                        userId: input.userId,
+                        environmentId: input.environmentId,
+                        tunnelId,
+                        error: error.message,
+                      }),
+                    ),
+                  )
+              : Effect.void,
+          ),
         );
       return Option.getOrElse(removed, () => false);
     }),
@@ -993,11 +1036,7 @@ export const make = Effect.gen(function* () {
       if (input.expectedTunnelId !== undefined && input.expectedTunnelId !== tunnelId) {
         return false;
       }
-      // Claim the release against the allocation's current generation before
-      // touching Cloudflare. A provision racing this release (fast environment
-      // restart) increments the generation when it records its tunnel, so a stale
-      // claim means the recorded tunnel may already back a fresh connector and
-      // must be left alive.
+      // Claim before deleting: concurrent provisioning can advance the generation and reuse the tunnel.
       const claimedGeneration = yield* allocations
         .claimRelease({
           userId: input.userId,
@@ -1114,26 +1153,25 @@ export const make = Effect.gen(function* () {
             if (finalGeneration === null) {
               return false;
             }
-            // A delete whose response is lost (a timeout) may still have
-            // removed the tunnel. Ask Cloudflare before rolling back: if the
-            // tunnel is gone, the delete happened and the claim, including any
-            // released marker, must commit, since no later sweep can find
-            // this tunnel again to retry.
+            // A timed-out deletion may have succeeded; confirm Cloudflare state before rolling back the claim.
             return yield* deleteTunnel.pipe(
               Effect.as(true),
-              Effect.catchIf(
-                (error) => isManagedEndpointTunnelInUse(error.cause),
-                () => Effect.succeed(false),
-              ),
               Effect.catchTags({
                 ManagedEndpointDeprovisioningFailed: (failure) =>
-                  confirmTunnelGone(failure).pipe(Effect.as(true)),
+                  isManagedEndpointTunnelInUse(failure.cause)
+                    ? Effect.fail(failure)
+                    : confirmTunnelGone(failure).pipe(Effect.as(true)),
               }),
             );
           }),
         )
         .pipe(
           Effect.catchTags({
+            // Return false only after the refused deletion rolls back the release marker.
+            ManagedEndpointDeprovisioningFailed: (failure) =>
+              isManagedEndpointTunnelInUse(failure.cause)
+                ? Effect.succeedSome(false)
+                : Effect.fail(failure),
             ManagedEndpointAllocationPersistenceError: (cause) =>
               Effect.fail(
                 new ManagedEndpointDeprovisioningFailed({
@@ -1145,10 +1183,7 @@ export const make = Effect.gen(function* () {
               ),
           }),
         );
-      // The recorded tunnelId is now stale, but the allocation row is left
-      // untouched deliberately: connect/status authorization requires a fully
-      // recorded allocation, and an offline environment must keep reporting
-      // "offline" (health probe fails) rather than "not authorized".
+      // Keep the allocation recorded so offline environments stay authorized and report offline, not unauthorized.
       return Option.getOrElse(released, () => false);
     }),
     provision: Effect.fn("relay.managed_endpoint_provider.provision")(function* (input) {
@@ -1167,9 +1202,9 @@ export const make = Effect.gen(function* () {
         });
       }
       const cf = yield* requireCloudflareSettings(config, input);
-      const environmentHash = yield* crypto
+      const environmentHash = yield* digest
         .digest(
-          "SHA-256",
+          Digest.sha256,
           new TextEncoder().encode(
             managedEndpointDigestInput(cf.namespace, input.userId, input.environmentId),
           ),
@@ -1192,27 +1227,7 @@ export const make = Effect.gen(function* () {
         environmentHash,
       );
       const requestedTunnelName = managedEndpointTunnelName(cf.namespace, environmentHash);
-      yield* tunnelLimits
-        .ensureCapacity({
-          userId: input.userId,
-          environmentId: input.environmentId,
-        })
-        .pipe(
-          Effect.catchTags({
-            ManagedTunnelLimitPersistenceError: (cause) =>
-              Effect.fail(
-                new ManagedEndpointProvisioningFailed({
-                  userId: input.userId,
-                  environmentId: input.environmentId,
-                  stage: "check-tunnel-limit",
-                  hostname: requestedHostname,
-                  tunnelName: requestedTunnelName,
-                  cause,
-                }),
-              ),
-          }),
-        );
-      const allocation = yield* allocations
+      const reserveAllocation = allocations
         .reserve({
           userId: input.userId,
           environmentId: input.environmentId,
@@ -1231,6 +1246,26 @@ export const make = Effect.gen(function* () {
                 cause,
               }),
           ),
+        );
+      const allocation = yield* tunnelLimits
+        .withCapacity(
+          { userId: input.userId, environmentId: input.environmentId },
+          reserveAllocation,
+        )
+        .pipe(
+          Effect.catchTags({
+            ManagedTunnelLimitPersistenceError: (cause) =>
+              Effect.fail(
+                new ManagedEndpointProvisioningFailed({
+                  userId: input.userId,
+                  environmentId: input.environmentId,
+                  stage: "check-tunnel-limit",
+                  hostname: requestedHostname,
+                  tunnelName: requestedTunnelName,
+                  cause,
+                }),
+              ),
+          }),
         );
       const { hostname, tunnelName } = allocation;
 
@@ -1297,8 +1332,7 @@ export const make = Effect.gen(function* () {
           ),
         );
       if (tunnelGeneration === null) {
-        // A newer provision can adopt this tunnel by name at any point after
-        // our claim fails. Leave it available for that provision or a retry.
+        // A newer provision can adopt this tunnel by name after our claim fails; leave it available.
         return yield* new ManagedEndpointProvisioningFailed({
           userId: input.userId,
           environmentId: input.environmentId,
@@ -1596,6 +1630,22 @@ export const layerCloudflareBindings = (
                     (cause) =>
                       new ManagedEndpointTunnelClientError({
                         operation: "put-configuration",
+                        tunnelId,
+                        cause,
+                      }),
+                  ),
+                ),
+              getConfiguration: (tunnelId) =>
+                gate(tunnelClient.getConfiguration(tunnelId)).pipe(
+                  Effect.map(({ config }) => ({ ingress: config?.ingress ?? [] })),
+                  // Cloudflare reports a tunnel without remote configuration as code 1055, not 404.
+                  Effect.catchTags({
+                    TunnelConfigurationNotFound: () => Effect.succeed({ ingress: [] }),
+                  }),
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointTunnelClientError({
+                        operation: "get-configuration",
                         tunnelId,
                         cause,
                       }),
