@@ -406,19 +406,21 @@ export function ReviewThreadCard({
               </Button>
             </div>
           ) : null}
-
-          {canReply ? (
-            <PullRequestThreadReplyForm
-              environmentId={environmentId}
-              reference={reference}
-              threadId={thread.id}
-              completionScope={completionScope}
-              pending={pending}
-              onReply={onReply}
-              onSent={keepLoadedPage}
-            />
-          ) : null}
         </>
+      ) : null}
+      {/* Stays mounted while collapsed so an unsent reply survives. */}
+      {canReply ? (
+        <div hidden={!expanded}>
+          <PullRequestThreadReplyForm
+            environmentId={environmentId}
+            reference={reference}
+            threadId={thread.id}
+            completionScope={completionScope}
+            pending={pending}
+            onReply={onReply}
+            onSent={keepLoadedPage}
+          />
+        </div>
       ) : null}
     </div>
   );

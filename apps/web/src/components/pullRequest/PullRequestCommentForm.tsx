@@ -48,9 +48,12 @@ export function PullRequestCommentForm({
   onClose: () => void;
 }) {
   const [body, setBody] = useState("");
+  const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
+  const locked = submitting !== null || actionPending;
   const [answeredQuoteRequest, setAnsweredQuoteRequest] = useState(quoteRequest);
   const [caretAfterQuote, setCaretAfterQuote] = useState(false);
-  if (quoteRequest !== answeredQuoteRequest) {
+  // A successful post clears the draft, so a quote waits until posting settles.
+  if (quoteRequest !== answeredQuoteRequest && !locked) {
     setAnsweredQuoteRequest(quoteRequest);
     if (quoteRequest) {
       setBody((draft) =>
@@ -70,8 +73,6 @@ export function PullRequestCommentForm({
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
     textarea.scrollTop = textarea.scrollHeight;
   }, [caretAfterQuote, textareaRef]);
-  const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
-  const locked = submitting !== null || actionPending;
   const speech = useTextFieldSpeech({
     environmentId,
     projectId: reference.projectId,
