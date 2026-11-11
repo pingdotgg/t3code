@@ -6,11 +6,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
   mergeClaudeProcessEnvironment,
+  resolveClaudeAccountConfigPath,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 
@@ -45,6 +48,49 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         const explicit = path.resolve(NodeOS.homedir(), ".claude-work");
         expect(yield* resolveClaudeHomePath({ homePath: "~/.claude-work" }, environment)).toBe(
           explicit,
+        );
+      }),
+    );
+
+    it.effect("leaves CLAUDE_CONFIG_DIR unset when homePath is the default Claude home", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const baseEnv = { CLAUDE_CONFIG_DIR: "/tmp/claude-inherited", KEEP: "1" };
+
+        for (const homePath of ["~/.claude", `${path.join(NodeOS.homedir(), ".claude")}/`]) {
+          expect(yield* makeClaudeEnvironment({ homePath }, baseEnv)).toEqual({ KEEP: "1" });
+        }
+        // Windows env names are case-insensitive, so any spelling selects the config dir there.
+        const windowsEnv = yield* makeClaudeEnvironment(
+          { homePath: "~/.claude" },
+          { Claude_Config_Dir: "/tmp/claude-inherited", KEEP: "1" },
+        ).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+        expect(windowsEnv).toEqual({ KEEP: "1" });
+      }),
+    );
+
+    it.effect("keeps CLAUDE_CONFIG_DIR when the instance moves the child's home", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const serverClaudeHome = path.resolve(NodeOS.homedir(), ".claude");
+        for (const HOME of ["/accounts/shell", `${NodeOS.homedir()} `]) {
+          const environment = yield* makeClaudeEnvironment({ homePath: "~/.claude" }, { HOME });
+          expect(environment.CLAUDE_CONFIG_DIR).toBe(serverClaudeHome);
+        }
+        // Windows resolves Claude's default home from USERPROFILE, not HOME.
+        const windowsEnv = yield* makeClaudeEnvironment(
+          { homePath: "~/.claude" },
+          { UserProfile: "/accounts/windows" },
+        ).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+        expect(windowsEnv.CLAUDE_CONFIG_DIR).toBe(serverClaudeHome);
+        // T3 reads Claude's sessions and tasks from CLAUDE_CONFIG_DIR or the server home, never the child's HOME.
+        const config = { homePath: "/accounts/alt/.claude" };
+        const altEnv = { HOME: "/accounts/alt" };
+        expect((yield* makeClaudeEnvironment(config, altEnv)).CLAUDE_CONFIG_DIR).toBe(
+          "/accounts/alt/.claude",
+        );
+        expect(yield* resolveClaudeAccountConfigPath(config, altEnv)).toBe(
+          "/accounts/alt/.claude/.claude.json",
         );
       }),
     );

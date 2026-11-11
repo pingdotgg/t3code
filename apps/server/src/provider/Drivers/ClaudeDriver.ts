@@ -52,6 +52,7 @@ import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   mergeClaudeProcessEnvironment,
+  resolveClaudeAccountConfigPath,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -132,11 +133,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     );
     const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig, processEnv);
     const configDir = yield* resolveClaudeHomePath(effectiveConfig, processEnv);
-    const accountConfigPath = yield* ClaudeResetCredits.claudeAccountConfigPath(
-      effectiveConfig.homePath.trim() || processEnv.CLAUDE_CONFIG_DIR?.trim()
-        ? configDir
-        : undefined,
-    );
+    const accountConfigPath = yield* resolveClaudeAccountConfigPath(effectiveConfig, processEnv);
     const stampIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,

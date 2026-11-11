@@ -38,12 +38,45 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   const homePath = config.homePath.trim();
   if (homePath.length === 0) return resolvedBaseEnv;
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
+  const path = yield* Path.Path;
+  const windows = (yield* HostProcess.Platform) === "win32";
+  const serverHome = yield* HostProcess.HomeDirectory;
+  const defaultHomePath = path.resolve(serverHome, ".claude");
+  // Node reads USERPROFILE on Windows and HOME elsewhere; T3's own Claude state readers use the server home.
+  const childHome = windows
+    ? Object.entries(resolvedBaseEnv).find(([key]) => key.toUpperCase() === "USERPROFILE")?.[1]
+    : resolvedBaseEnv.HOME;
+  // Claude Code picks its Keychain item and `.claude.json` by whether CLAUDE_CONFIG_DIR is set, not by value.
+  if (
+    (childHome === undefined || childHome === serverHome) &&
+    (windows
+      ? resolvedHomePath.toLowerCase() === defaultHomePath.toLowerCase()
+      : resolvedHomePath === defaultHomePath)
+  ) {
+    return Object.fromEntries(
+      Object.entries(resolvedBaseEnv).filter(
+        ([key]) => (windows ? key.toUpperCase() : key) !== "CLAUDE_CONFIG_DIR",
+      ),
+    );
+  }
   return {
     ...resolvedBaseEnv,
     // Changing HOME hides macOS Keychain credentials; use CLAUDE_CONFIG_DIR to keep login access.
     CLAUDE_CONFIG_DIR: resolvedHomePath,
   };
 });
+
+/** Claude keeps its account in `<CLAUDE_CONFIG_DIR>/.claude.json` when set, otherwise `~/.claude.json`. */
+export const resolveClaudeAccountConfigPath = Effect.fn("resolveClaudeAccountConfigPath")(
+  function* (config: Pick<ClaudeSettings, "homePath">, baseEnv: NodeJS.ProcessEnv) {
+    const path = yield* Path.Path;
+    const environment = yield* makeClaudeEnvironment(config, baseEnv);
+    const directory = environment.CLAUDE_CONFIG_DIR?.trim()
+      ? yield* resolveClaudeHomePath(config, environment)
+      : yield* HostProcess.HomeDirectory;
+    return path.join(directory, ".claude.json");
+  },
+);
 
 // A Claude Code session that launched T3 exports these. A claude spawned with them acts as part of
 // that session: its session id, messaging socket and token, and effort.
