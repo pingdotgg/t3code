@@ -306,8 +306,7 @@ function withThemeTokenProbeSession<Result>(run: () => Result): Result {
   try {
     return run();
   } finally {
-    // Flush every restored token while transitions are still suppressed. The
-    // browser never gets a paint opportunity between the probe and restore.
+    // Flush restored tokens before re-enabling transitions; no paint may occur during probing.
     void window.getComputedStyle(root).color;
     if (!wasAlreadyProbing) root.removeAttribute(THEME_TOKEN_PROBE_ATTRIBUTE);
   }
@@ -391,10 +390,8 @@ export function inspectThemeRoleFromUtilitiesAtElement(
 }
 
 export function highlightThemeRoleUsage(roles: ReadonlyArray<ThemeColorRole>): number {
-  const startedAt = performance.now();
   clearThemeInspectorAttribute(THEME_INSPECTOR_MATCH_ATTRIBUTE);
   const candidates = themeInspectorCandidates();
-  const probeStartedAt = performance.now();
   const matches = withThemeTokenProbeSession(() => {
     const baseline = new Map<Element, ThemePaintSnapshot>();
     for (const element of candidates) {
@@ -414,7 +411,6 @@ export function highlightThemeRoleUsage(roles: ReadonlyArray<ThemeColorRole>): n
     }
     return changed;
   });
-  const probeDuration = performance.now() - probeStartedAt;
 
   const highlightedElements = new Set<Element>();
   for (const element of matches) {
@@ -426,14 +422,6 @@ export function highlightThemeRoleUsage(roles: ReadonlyArray<ThemeColorRole>): n
     element.setAttribute(THEME_INSPECTOR_MATCH_ATTRIBUTE, "");
   }
   renderThemeInspectorSpotlight([...highlightedElements]);
-  if (import.meta.env.DEV) {
-    const spotlight = document.getElementById(THEME_SPOTLIGHT_ID);
-    if (spotlight) {
-      spotlight.dataset.themeInspectorCandidates = String(candidates.length);
-      spotlight.dataset.themeInspectorProbeMs = probeDuration.toFixed(2);
-      spotlight.dataset.themeInspectorTotalMs = (performance.now() - startedAt).toFixed(2);
-    }
-  }
   return highlightedElements.size;
 }
 
@@ -442,9 +430,8 @@ export function inspectThemeRoleAtElement(initialElement: Element): ThemeElement
 
   const candidates = themeInspectionCandidates(initialElement);
 
-  // Most app paint comes from Tailwind's semantic color utilities. Those class
-  // names express the token dependency directly and avoid dozens of forced
-  // style recalculations on every pointer-down.
+  // Semantic Tailwind utilities reveal token dependencies without forced style recalculations per
+  // pointerdown.
   const utilityInspection = inspectThemeRoleFromUtilitiesAtElement(initialElement);
   if (utilityInspection) return utilityInspection;
 
