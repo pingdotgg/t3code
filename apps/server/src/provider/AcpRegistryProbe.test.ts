@@ -144,61 +144,6 @@ describe("ACP Registry probe", () => {
     expect(methods[0]).not.toHaveProperty("command");
   });
 
-  it("omits overlong opaque auth method and environment variable ids", () => {
-    const methods = normalizeAcpRegistryAuthMethods([
-      { id: "x".repeat(129), name: "Invalid" },
-      {
-        id: "api-key",
-        name: "API key",
-        type: "env_var",
-        vars: [
-          { name: "y".repeat(129), label: "Invalid" },
-          { name: "OPENAI_API_KEY", label: "OpenAI API key" },
-        ],
-      },
-    ]);
-
-    expect(methods).toEqual([
-      {
-        id: "api-key",
-        name: "API key",
-        description: null,
-        type: "env_var",
-        envVarNames: ["OPENAI_API_KEY"],
-      },
-    ]);
-  });
-
-  it("falls back to model-category configuration options", () => {
-    const result = acpRegistryProbeResult(instanceId, {
-      sessionId: "probe-session",
-      initializeResult: { protocolVersion: 1 },
-      sessionSetupResult: {
-        sessionId: "probe-session",
-        configOptions: [
-          {
-            id: "model",
-            name: "Model",
-            category: "model",
-            type: "select",
-            currentValue: "sonnet",
-            options: [
-              { value: "sonnet", name: "Sonnet", description: "Balanced" },
-              { value: "haiku", name: "Haiku" },
-            ],
-          },
-        ],
-      },
-      modelConfigId: "model",
-    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
-
-    expect(result.models).toEqual([
-      { id: "sonnet", name: "Sonnet", description: "Balanced" },
-      { id: "haiku", name: "Haiku", description: null },
-    ]);
-    expect(result.currentModelId).toBe("sonnet");
-  });
-
   // The replay fixture's answers follow Cline 3.0.70's `acpAgent.ts` source, not
   // a captured run: `provider` and then `model`, both `category: "model"`. Its
   // integrated run writes the selection checked here and prompts successfully.

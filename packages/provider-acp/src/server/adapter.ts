@@ -7374,16 +7374,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (selection.id === modelOptionId || !withinCeiling(selection, liveConfigOptions))
                 continue;
               // Secondary model choices fail on rejection rather than silently using another model.
-              if (option?.category === "model" && option.type === "select") {
+              if (option.category === "model" && option.type === "select") {
                 yield* runtime.setConfigOption(selection.id, selection.value);
                 continue;
               }
               // Advertised tuning values union models; skip per-model rejections instead of failing open.
-              if (
-                option !== undefined &&
-                option.type === "select" &&
-                typeof selection.value === "string"
-              ) {
+              if (option.type === "select" && typeof selection.value === "string") {
                 const advertisedValues = option.options.flatMap((entry) =>
                   "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
                 );

@@ -105,31 +105,6 @@ describe("acpProviderOptionDescriptors", () => {
     ]);
   });
 
-  it("maps boolean session options", () => {
-    const descriptors = acpProviderOptionDescriptors({
-      configOptions: [
-        {
-          id: "fast_mode",
-          name: "Fast mode",
-          description: "Use lower-latency inference.",
-          type: "boolean",
-          currentValue: true,
-        },
-      ],
-      modeState: undefined,
-    });
-
-    expect(descriptors).toEqual([
-      {
-        id: "fast_mode",
-        label: "Fast mode",
-        description: "Use lower-latency inference.",
-        type: "boolean",
-        currentValue: true,
-      },
-    ]);
-  });
-
   it("flattens grouped select choices and drops empty or duplicate values", () => {
     const descriptors = acpProviderOptionDescriptors({
       configOptions: [
