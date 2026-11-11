@@ -42,3 +42,26 @@ it("ignores composing keys in the search", async () => {
     expect(screen.router?.state.location.pathname).toBe("/settings/appearance"),
   );
 });
+
+it("opens search from the physical Slash and F keys on non-US layouts", async () => {
+  await using _screen = await render(
+    <SidebarProvider defaultOpen>
+      <SettingsSidebarNav pathname="/settings/general" />
+    </SidebarProvider>,
+    { router: "/settings/general" },
+  );
+  const search = page.getByRole("combobox", { name: "Search settings" });
+
+  for (const { init, opens } of [
+    { init: { key: "/", code: "Digit7", shiftKey: true }, opens: true }, // German Shift+7
+    { init: { key: ".", code: "Slash" }, opens: true }, // Russian Slash key
+    { init: { key: "а", code: "KeyF", ctrlKey: true }, opens: true }, // Russian Ctrl+F
+    { init: { key: "?", code: "Slash", shiftKey: true }, opens: false },
+  ]) {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    const event = new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true });
+    await act(() => document.body.dispatchEvent(event));
+    expect(event.defaultPrevented, JSON.stringify(init)).toBe(opens);
+    if (opens) await expect.element(search).toHaveFocus();
+  }
+});
