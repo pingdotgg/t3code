@@ -70,7 +70,8 @@ const make = Effect.gen(function* () {
       ),
     );
     // The registry hears of the redemption's own limits read only later.
-    return { result: { outcome }, redeemedOn: yield* instance.snapshot.getSnapshot };
+    const result: ProviderConsumeResetCreditResult = { outcome };
+    return { result, redeemedOn: yield* instance.snapshot.getSnapshot };
   });
 
   // The credit is spent by now, so a failure here must not fail its redemption.
@@ -110,8 +111,11 @@ const make = Effect.gen(function* () {
     function* (input) {
       const startedAt = yield* DateTime.now;
       return yield* consume(input).pipe(
+        // A warning means the hub may still refuse until its cooldown ends.
         Effect.tap(({ result, redeemedOn }) =>
-          result.outcome === "reset" ? endLimitWaits(input, startedAt, redeemedOn) : Effect.void,
+          result.outcome === "reset" && result.warning === undefined
+            ? endLimitWaits(input, startedAt, redeemedOn)
+            : Effect.void,
         ),
         Effect.map(({ result }) => result),
         // The credit may be spent before the caller hears of it. A caller that goes away must

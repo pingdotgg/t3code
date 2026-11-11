@@ -40,6 +40,7 @@ const provider = (id: string, email: string, extra: Partial<ServerProvider> = {}
 const layerRedeeming = (input: {
   readonly outcome: ProviderConsumeResetCreditOutcome;
   readonly limits?: LimitsAfter;
+  readonly warning?: string;
   /** Runs once the provider has spent the credit, before it answers. */
   readonly afterSpend?: Effect.Effect<void>;
   readonly recordLimitReset: Orchestrator.OrchestratorV2["Service"]["recordLimitReset"];
@@ -96,7 +97,12 @@ const layerRedeeming = (input: {
           ]),
         }),
         Layer.mock(UsageLimitSources.UsageLimitSources)({
-          consumeResetCredit: () => consume.pipe(Effect.map((outcome) => ({ outcome }))),
+          consumeResetCredit: () =>
+            consume.pipe(
+              Effect.map((outcome) =>
+                input.warning === undefined ? { outcome } : { outcome, warning: input.warning },
+              ),
+            ),
           current: usageLimits.pipe(
             Effect.map((usageLimits) => [
               {
@@ -134,6 +140,7 @@ it.effect.each([
   { on: "hub", outcome: "reset", limits: "weeklyUsedUp", ends: "beforeWeeklyReset" },
   { on: "instance", outcome: "reset", limits: "notReadAgain", ends: "none" },
   { on: "hub", outcome: "reset", limits: "notReadAgain", ends: "none" },
+  { on: "hub", outcome: "reset", warning: "Cooldown not cleared.", ends: "none" },
   { on: "instance", outcome: "nothingToReset", ends: "none" },
   { on: "instance", outcome: "noCredit", ends: "none" },
   // The provider does not say whether this request's credit refilled anything.
@@ -150,6 +157,7 @@ it.effect.each([
     readonly on: "instance" | "hub";
     readonly outcome: ProviderConsumeResetCreditOutcome;
     readonly limits?: LimitsAfter;
+    readonly warning?: string;
     readonly ends: "all" | "beforeWeeklyReset" | "none";
     readonly recordFails?: boolean;
   }) =>
@@ -168,7 +176,12 @@ it.effect.each([
         ),
       );
       // The credit is spent either way, so the redemption reports its outcome.
-      assert.deepEqual(result, { outcome: redemption.outcome });
+      assert.deepEqual(
+        result,
+        redemption.warning === undefined
+          ? { outcome: redemption.outcome }
+          : { outcome: redemption.outcome, warning: redemption.warning },
+      );
       assert.deepEqual(
         yield* Queue.clear(resets),
         ends === "none"
