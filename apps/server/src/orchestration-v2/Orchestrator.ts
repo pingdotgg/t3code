@@ -2914,7 +2914,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* cancelQueuedDelegatedRequests({
         command,
         events,
-        projection,
+        projection: yield* loadProjectionForCommand(
+          command,
+          ["runs", "messages", "nodes", "attempts"],
+          { runStatuses: ["queued"], messageRoles: ["user"] },
+        ),
         taskIds: [task.id],
         now,
       });
