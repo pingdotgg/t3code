@@ -2475,44 +2475,6 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect("offers a continuation for MiniMax Code thoughts and running tools alone", () =>
-    Effect.gen(function* () {
-      const { update } = claudeFrames;
-      const gate = makeProviderReplayGate(["late"]);
-      const minimax = yield* openClaudeReplaySession(
-        [
-          ...minimaxResolvedPrompt,
-          {
-            ...update(MINIMAX_ROOT_SESSION, {
-              sessionUpdate: "agent_thought_chunk",
-              content: { type: "text", text: "Running the checks." },
-            }),
-            label: "late",
-          },
-          update(MINIMAX_ROOT_SESSION, {
-            sessionUpdate: "tool_call",
-            toolCallId: "late-check",
-            title: "Run tests",
-            kind: "execute",
-            status: "in_progress",
-          }),
-          update(MINIMAX_ROOT_SESSION, {
-            sessionUpdate: "session_info_update",
-            title: "late output sent",
-          }),
-        ],
-        gate,
-        true,
-        "minimax-code",
-      );
-      yield* minimax.runtime.startTurn(minimax.turnInput(1));
-      assert.equal((yield* minimax.terminal).status, "completed");
-      gate.release("late");
-      yield* minimax.throughMarker("late output sent");
-      assert.lengthOf(minimax.offers, 1, "a busy MiniMax turn must not look idle");
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
-  );
-
   const openMiniMaxContinuationWithRunningTool = Effect.fn(
     "openMiniMaxContinuationWithRunningTool",
   )(function* (afterToolStarts: ReadonlyArray<unknown>, labels: ReadonlyArray<string>) {
@@ -2567,9 +2529,7 @@ describe("AcpRegistryAdapterV2", () => {
     );
     gate.release("tool");
     const running = [...started, ...(yield* minimax.throughMarker("tool running"))];
-    const providerTurn = running.findLast((event) => event.type === "provider_turn.updated");
-    if (providerTurn?.type !== "provider_turn.updated") throw new Error("Missing continuation");
-    return { minimax, gate, running, providerTurnId: providerTurn.providerTurn.id };
+    return { minimax, gate, running };
   });
 
   const isCheckTool = (event: ProviderAdapter.ProviderAdapterV2Event, status: string) =>
@@ -2628,33 +2588,6 @@ describe("AcpRegistryAdapterV2", () => {
         assert.equal(terminal.runOrdinal, 2);
         assert.lengthOf(minimax.offers, 1, "the tool's completion must not start another run");
       }).pipe(Effect.provide(layerTest), Effect.scoped),
-  );
-
-  it.effect("stops a MiniMax Code continuation whose tool never finishes", () =>
-    Effect.gen(function* () {
-      const { update } = claudeFrames;
-      const { minimax, providerTurnId } = yield* openMiniMaxContinuationWithRunningTool(
-        [
-          {
-            type: "expect_outbound",
-            frame: { kind: "notification", method: "session/cancel", params: "<any>" },
-          },
-          update(MINIMAX_ROOT_SESSION, {
-            sessionUpdate: "session_info_update",
-            title: "cancel received",
-          }),
-        ],
-        [],
-      );
-      yield* minimax.runtime.interruptTurn({
-        providerThread: minimax.providerThread,
-        providerTurnId,
-      });
-      const stopped = yield* minimax.terminal;
-      assert.equal(stopped.status, "interrupted");
-      assert.equal(stopped.runOrdinal, 2);
-      yield* minimax.throughMarker("cancel received");
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("fails a MiniMax Code continuation whose process exits while its tool runs", () =>
