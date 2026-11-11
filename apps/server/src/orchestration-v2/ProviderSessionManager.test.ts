@@ -1947,8 +1947,10 @@ it.effect("ProviderSessionManagerV2 interrupts event subscriptions on server shu
 
       yield* manager.shutdown;
 
-      const exit = yield* bufferedSubscription.events.pipe(Stream.runCollect, Effect.exit);
-      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+      for (const subscription of [bufferedSubscription, yield* runtime.subscribeEvents!]) {
+        const exit = yield* subscription.events.pipe(Stream.runCollect, Effect.exit);
+        assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+      }
     });
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
@@ -1978,7 +1980,10 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
         runtimePolicy,
       });
       const subscription = yield* runtime.subscribeEvents!;
-      const collected = yield* subscription.events.pipe(Stream.runCollect, Effect.forkScoped);
+      const closed = yield* Deferred.make<void>();
+      const unsubscribe = yield* runtime.onSessionClosed!(
+        Deferred.succeed(closed, undefined).pipe(Effect.asVoid),
+      );
       const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
       assert.isDefined(adapterQueue);
       const providerThreadId = idAllocator.derive.providerThread({
@@ -2010,11 +2015,15 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
       });
       yield* Queue.end(adapterQueue!);
 
-      const events = Array.from(yield* Fiber.join(collected));
+      yield* Deferred.await(closed);
+      const events = Array.from(yield* subscription.events.pipe(Stream.runCollect));
       assert.deepEqual(
         events.map((event) => event.type),
         ["turn.terminal", "provider_session.updated"],
       );
+      const late = yield* runtime.subscribeEvents!;
+      assert.deepEqual(Array.from(yield* late.events.pipe(Stream.runCollect)), []);
+      yield* unsubscribe;
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
       assert.equal((yield* Ref.get(state)).closeCount, 1);
     });
@@ -3113,6 +3122,9 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
       const projection = yield* projectionStore.getThreadProjection(threadId);
 
       assert.isTrue(Option.isNone(liveSession));
+      const late = yield* runtime.subscribeEvents!;
+      const lateExit = yield* late.events.pipe(Stream.runCollect, Effect.exit);
+      assert.isTrue(Exit.isFailure(lateExit) && !Cause.hasInterruptsOnly(lateExit.cause));
       assert.equal(runtimeState.closeCount, 1);
       assert.equal(projection.providerSessions.at(-1)?.status, "error");
       assert.equal(

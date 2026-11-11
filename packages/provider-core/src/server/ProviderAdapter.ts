@@ -327,6 +327,18 @@ export class ProviderAdapterForkThreadError extends Schema.TaggedError<ProviderA
   }
 }
 
+export class ProviderAdapterTurnPreparationError extends Schema.TaggedError<ProviderAdapterTurnPreparationError>()(
+  "ProviderAdapterTurnPreparationError",
+  {
+    driver: ProviderDriverKind,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to prepare a turn on ${this.driver}.`;
+  }
+}
+
 export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAdapterTurnStartError>()(
   "ProviderAdapterTurnStartError",
   {
@@ -639,6 +651,8 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   /** Manager runtimes broadcast independent subscriptions; adapters may expose only a single-consumer stream. */
   readonly subscribeEvents?: Effect.Effect<ProviderAdapterV2EventSubscription>;
+  /** Manager-owned notification after this exact runtime's scope closes successfully; returns unsubscribe. */
+  readonly onSessionClosed?: (observer: Effect.Effect<void>) => Effect.Effect<Effect.Effect<void>>;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   /** Root-subscription probe; replacement checks opt in to subagents owned by the live process. */
   readonly hasPendingBackgroundWorkForThread?: (

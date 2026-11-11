@@ -62,6 +62,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as RunExecutionService from "./RunExecutionService.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
@@ -578,6 +579,7 @@ const isForceStopThreadError = Schema.is(OrchestrationV2ForceStopThreadError);
 
 const make = Effect.gen(function* () {
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const layerScope = yield* Effect.scope;
@@ -1230,6 +1232,12 @@ const make = Effect.gen(function* () {
               reason: "superseded",
             });
           }
+          if (target?.activeAttemptId != null)
+            yield* runExecution.revokeOwnedStart({
+              threadId: input.threadId,
+              runId: target.id,
+              attemptId: target.activeAttemptId,
+            });
           // Shared scopes are never tracked per thread, so this only kills the thread's own agent.
           const killed = yield* agentScope.kill(input.threadId);
           return { records, target, killed };
@@ -1256,13 +1264,24 @@ const make = Effect.gen(function* () {
         yield* providerTurn === undefined && !active
           ? Effect.void
           : providerTurn === undefined
-            ? orchestrator.dispatch({
-                type: "run.interrupt",
-                commandId,
-                threadId: input.threadId,
-                runId: run.id,
-                reason: FORCE_STOP_REASON,
-              })
+            ? orchestrator.dispatch(
+                run.activeAttemptId === null
+                  ? {
+                      type: "run.interrupt",
+                      commandId,
+                      threadId: input.threadId,
+                      runId: run.id,
+                      reason: FORCE_STOP_REASON,
+                    }
+                  : {
+                      type: "run.force-stop.settle",
+                      commandId,
+                      threadId: input.threadId,
+                      runId: run.id,
+                      attemptId: run.activeAttemptId,
+                      reason: FORCE_STOP_REASON,
+                    },
+              )
             : orchestrator.dispatch({
                 type: "thread.background-work.settle",
                 commandId,
@@ -1667,6 +1686,7 @@ const layerLegacyV1ThreadImporterNoop = Layer.succeed(
 export const layer: Layer.Layer<
   ThreadManagementService,
   never,
+  | RunExecutionService.RunExecutionServiceV2
   | Orchestrator.OrchestratorV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
@@ -1679,6 +1699,7 @@ export const layer: Layer.Layer<
 export const layerWithLegacyImporter: Layer.Layer<
   ThreadManagementService,
   never,
+  | RunExecutionService.RunExecutionServiceV2
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | Orchestrator.OrchestratorV2
   | ProviderSessionManager.ProviderSessionManagerV2

@@ -3534,6 +3534,21 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     requestId: RuntimeRequestId,
   }),
+  Schema.Struct({
+    type: Schema.Literal("run.interrupt.unresponsive"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    attemptId: RunAttemptId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("run.force-stop.settle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    attemptId: RunAttemptId,
+    reason: Schema.String,
+  }),
   /** The provider did not confirm a Stop of this turn in time. */
   Schema.Struct({
     type: Schema.Literal("thread.interrupt.unresponsive"),

@@ -60,8 +60,15 @@ import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
+const layerRunExecution = RunExecutionService.layer.pipe(
+  Layer.provide(
+    Layer.merge(ThreadCommandExecutor.layer, Layer.mock(ProjectionStore.ProjectionStoreV2)({})),
+  ),
+);
 const mockEventSink = (implementation: Partial<EventSink.EventSinkV2["Service"]>) =>
   Layer.mock(EventSink.EventSinkV2)({
     consumeProviderEvents: (source, process, after) =>
@@ -84,7 +91,7 @@ const layerTurnItemPositionsTest = Layer.mock(TurnItemPositionStore.TurnItemPosi
   allocate: () => Effect.succeed(1),
 });
 
-const layerRunExecutionTest = RunExecutionService.layer.pipe(
+const layerRunExecutionTest = layerRunExecution.pipe(
   Layer.provide(
     Layer.mergeAll(
       McpAppModelContext.layerEmpty,
@@ -899,7 +906,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
     ]);
   }).pipe(
     Effect.provide(
-      RunExecutionService.layer.pipe(
+      layerRunExecution.pipe(
         Layer.provide(
           Layer.mergeAll(
             PreviewAgentActivity.layer,
@@ -940,7 +947,7 @@ it.effect("fails the run when its ownership check cannot be read before calling 
     const runId = RunId.make("run:run-execution-start-guard-read");
     const attemptId = RunAttemptId.make("attempt:run-execution-start-guard-read");
     const providerInstanceId = ProviderInstanceId.make("codex");
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
@@ -1142,7 +1149,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
         effects: ReadonlyArray<PendingOrchestrationEffectV2>;
       }>
     >([]);
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
@@ -1262,7 +1269,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
       const refreshes = yield* Ref.make(0);
       const guardedWrites = yield* Ref.make(0);
       const writes = yield* Ref.make<ReadonlyArray<ReadonlyArray<OrchestrationV2DomainEvent>>>([]);
-      const layerTest = RunExecutionService.layer.pipe(
+      const layerTest = layerRunExecution.pipe(
         Layer.provide(
           Layer.mergeAll(
             McpAppModelContext.layerEmpty,
@@ -1435,7 +1442,7 @@ it.effect("ingests new member threads of an owned child after the root turn term
     const order = yield* Ref.make<ReadonlyArray<string>>([]);
     const origins = yield* Ref.make<ReadonlyArray<readonly [string, unknown, unknown]>>([]);
     const requests = yield* Ref.make<ReadonlyArray<string>>([]);
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
@@ -1662,12 +1669,8 @@ it.effect("ingests new member threads of an owned child after the root turn term
           },
         },
       });
+      yield* Deferred.await(childMessageIngested);
     }).pipe(Effect.provide(layerTest));
-
-    const observed = yield* Deferred.await(childMessageIngested).pipe(
-      Effect.timeoutOption("2 seconds"),
-    );
-    assert.isTrue(Option.isSome(observed), "child message was not ingested after root terminal");
     assert.deepEqual(yield* Ref.get(order), ["root-finalized", "member-thread", "child-message"]);
     // The run's message started the root; the parent agent started the child's turn.
     const recorded = yield* Ref.get(origins);
@@ -1705,7 +1708,7 @@ it.effect("ends a nested native subagent and its thread when the root run is int
     const nestedId = NodeId.make(`node:${key}:nested`);
     const grandchildRootId = NodeId.make(`node:${key}:grandchild-root`);
     const finalized = yield* Deferred.make<ReadonlyArray<OrchestrationV2DomainEvent>>();
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
@@ -1777,7 +1780,7 @@ it.effect("ends a nested native subagent and its thread when the root run is int
       },
     ];
 
-    yield* Effect.gen(function* () {
+    const finalizedEvents = yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:${key}`),
@@ -1812,9 +1815,10 @@ it.effect("ends a nested native subagent and its thread when the root run is int
           sandboxPolicy: { type: "readOnly", access: { type: "fullAccess" }, networkAccess: false },
         },
       });
+      return yield* Deferred.await(finalized);
     }).pipe(Effect.provide(layerTest));
 
-    const ended = (yield* Deferred.await(finalized)).flatMap((event) =>
+    const ended = finalizedEvents.flatMap((event) =>
       event.type === "subagent.updated" || event.type === "node.updated"
         ? [[event.type, event.payload.id, event.payload.status]]
         : [],
@@ -2150,7 +2154,7 @@ it.effect(
       const written = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
       const ingested = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>([]);
       const ingestionDone = yield* Deferred.make<void>();
-      const layerTest = RunExecutionService.layer.pipe(
+      const layerTest = layerRunExecution.pipe(
         Layer.provide(
           Layer.mergeAll(
             McpAppModelContext.layerEmpty,
@@ -2401,10 +2405,8 @@ it.effect(
             },
           },
         });
+        yield* Deferred.await(ingestionDone);
       }).pipe(Effect.provide(layerTest));
-
-      const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
-      assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
 
       const events = yield* Ref.get(written);
       const subagentEvents = events.flatMap((event) =>
@@ -3237,7 +3239,7 @@ function captureRootRunTermination(input: {
           }
         }
       });
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(McpAppModelContext.McpAppModelContext)({
@@ -3788,7 +3790,7 @@ function runBackgroundItemScenario(
             true,
           )
         : undefined;
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
@@ -3923,10 +3925,10 @@ function runBackgroundItemScenario(
           },
         },
       });
+      // The run's ingestion lives in the service scope, so await it before the layer closes.
+      // No timeout: tests advance the TestClock, which would fire it early.
+      yield* Deferred.await(ingestionDone);
     }).pipe(Effect.provide(layerTest));
-
-    // No timeout: tests advance the TestClock, which would fire it early.
-    yield* Deferred.await(ingestionDone);
 
     return yield* Ref.get(observed);
   });

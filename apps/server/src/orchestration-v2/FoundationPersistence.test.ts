@@ -2251,12 +2251,31 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const workerFiber = yield* worker.runOnce.pipe(Effect.forkChild);
         yield* Deferred.await(started);
+        const replacementId = `${effectId}:replacement`;
+        yield* outbox.enqueue([
+          {
+            id: replacementId,
+            commandId,
+            threadId,
+            request: { type: "provider-turn.start", runId: RunId.make("run:replacement") },
+          },
+        ]);
         const cancelledEffectIds = yield* outbox.cancelUnsettled({
           threadId,
-          effectTypes: ["provider-turn.start"],
+          runId: RunId.make("run:foundation-cancel-running-effect"),
+          effectTypes: ["provider-turn.start", "provider-turn.restart"],
           reason: "The owning run was interrupted.",
         });
         assert.deepEqual(cancelledEffectIds, [effectId]);
+        assert.equal(Option.getOrThrow(yield* outbox.get(replacementId)).status, "pending");
+        yield* outbox.signalCancellations(
+          yield* outbox.cancelUnsettled({
+            threadId,
+            runId: RunId.make("run:replacement"),
+            effectTypes: ["provider-turn.start"],
+            reason: "Test cleanup.",
+          }),
+        );
         yield* outbox.signalCancellations(cancelledEffectIds);
         assert.isTrue(yield* Fiber.join(workerFiber));
         yield* Deferred.await(interrupted);
