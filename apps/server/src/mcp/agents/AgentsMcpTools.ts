@@ -16,22 +16,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
-import type {
-  GatewayRuntimePort,
-  GatewayThreadControlAction,
-} from "@t3tools/client-runtime/gateway";
-import {
-  EnvironmentId,
-  OrchestratorMcpFailure,
-  ProviderInteractionMode,
-  RuntimeMode,
-  ThreadId,
-} from "@t3tools/contracts";
+import { EnvironmentId, OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
 
-import {
-  type DispatchModes,
-  exceededDispatchModeLimit,
-} from "../../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadTaskService from "../../threadTask/ThreadTaskService.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
@@ -39,6 +25,7 @@ import * as McpToolAccess from "../McpToolAccess.ts";
 import { loadCaller } from "../threadAccess.ts";
 import { LocalGatewayPort } from "./LocalGatewayPort.ts";
 import { assignRemoteChild, gatewayToolContext } from "./remoteThreads.ts";
+import { withinModes } from "./withinModes.ts";
 
 type ToolResult = {
   readonly isError?: boolean;
@@ -112,75 +99,6 @@ export const agentsToolRefusal = (error: unknown, args: Record<string, unknown>)
       requestContext(args),
     ),
   );
-
-const isThreadModes = Schema.is(
-  Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
-);
-const STARTS_WORK: ReadonlySet<GatewayThreadControlAction> = new Set([
-  "resume",
-  "retry",
-  "restart",
-]);
-
-/** A port that refuses to create, start or steer work above `limit` on any environment. */
-const withinModes = (port: GatewayRuntimePort, limit: DispatchModes): GatewayRuntimePort => {
-  if (limit.runtimeMode === "full-access" && limit.interactionMode === "default") return port;
-  const check = (
-    what: string,
-    modes: { readonly runtimeMode?: unknown; readonly interactionMode?: unknown },
-  ) => {
-    if (!isThreadModes(modes)) {
-      throw new GatewayError({
-        code: "scope_required",
-        message: `${what} does not report its modes, so they cannot be checked against this chat's.`,
-        retryable: false,
-      });
-    }
-    const exceeded = exceededDispatchModeLimit(limit, modes);
-    if (exceeded !== undefined) {
-      throw new GatewayError({
-        code: "scope_required",
-        message:
-          exceeded === "runtime"
-            ? `${what} runs in ${modes.runtimeMode}, broader than this chat's ${limit.runtimeMode}.`
-            : `${what} runs in ${modes.interactionMode} mode, broader than this chat's ${limit.interactionMode} mode.`,
-        retryable: false,
-      });
-    }
-  };
-  const checkThread = async (environmentId: string, threadId: string) =>
-    check(`Thread ${threadId}`, await port.getThread(environmentId, threadId));
-  const handoff = port.handoffThread;
-  return {
-    ...port,
-    createThread: async (input) => {
-      check(`The new thread ${input.threadId}`, input);
-      return port.createThread(input);
-    },
-    sendMessage: async (input) => {
-      await checkThread(input.environmentId, input.threadId);
-      return port.sendMessage(input);
-    },
-    controlThread: async (input) => {
-      if (STARTS_WORK.has(input.action)) await checkThread(input.environmentId, input.threadId);
-      return port.controlThread(input);
-    },
-    ...(handoff === undefined
-      ? {}
-      : {
-          handoffThread: async (input) => {
-            const profiles = (await port.listProfiles?.(input.environmentId)) ?? [];
-            const profile = profiles.find((candidate) => candidate.profileId === input.profileId);
-            check(`Agent ${input.profileId}`, {
-              runtimeMode:
-                profile?.runtimeMode === "read-only" ? "approval-required" : profile?.runtimeMode,
-              interactionMode: profile?.interactionMode,
-            });
-            return handoff.call(port, input);
-          },
-        }),
-  };
-};
 
 /** Whether this server hosts the Agents tools; servers without the in-process port host none. */
 export const hostsAgentsTools = Effect.map(Effect.serviceOption(LocalGatewayPort), Option.isSome);

@@ -165,7 +165,11 @@ const layerTools = Layer.mergeAll(
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-    Layer.provide(Layer.mock(TailnetDevices.TailnetDevices)({})),
+    Layer.provide(
+      Layer.mock(TailnetDevices.TailnetDevices)({
+        setAccess: (environmentId, access) => Effect.succeed({ environmentId, access } as never),
+      }),
+    ),
     Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
     Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
     Layer.provide(
@@ -410,6 +414,27 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
         const changed = yield* call(trusted, name, args);
         assert.equal(changed.isError, false, `${name}: ${JSON.stringify(changed.content)}`);
       }
+
+      // Revoking cuts a machine off everywhere, so it is the user's call or a chat's here:
+      // never a link's or an outside client's, and never this machine's own.
+      const setAccess = (
+        scope: McpInvocationContext.McpInvocationScope,
+        environmentId: string,
+        access: string,
+      ) => call(scope, "t3_environment_device_access", { environmentId, access });
+      for (const scope of [trusted, claudeCode]) {
+        const revoked = yield* setAccess(scope, "environment:desk", "revoked");
+        assert.equal(failureCode(revoked), "capability_denied", scope.client!.sessionId);
+      }
+      assert.equal(
+        failureCode(yield* setAccess(claudeCode, trusted.environmentId, "revoked")),
+        "invalid_request",
+      );
+      const narrowed = yield* setAccess(claudeCode, "environment:desk", "auto");
+      assert.deepEqual(narrowed.structuredContent, {
+        environmentId: "environment:desk",
+        access: "auto",
+      });
     }),
   );
 });

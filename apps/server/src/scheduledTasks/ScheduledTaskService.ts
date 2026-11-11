@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isRuntimeModeAbove,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProjectId,
@@ -881,8 +882,12 @@ export const layer = Layer.effect(
       ),
     );
 
-    /** Current revision of the task's agent profile; runs always launch with the latest revision. */
+    /**
+     * Current revision of the task's agent profile; runs always launch with the latest revision.
+     * An agent's task stored at most its chat's modes, so a since-widened profile is capped there.
+     */
     const profileSelection = Effect.fn("ScheduledTaskService.profileSelection")(function* (
+      task: ScheduledTask,
       profileId: string,
     ) {
       if (Option.isNone(settings)) {
@@ -897,7 +902,18 @@ export const layer = Layer.effect(
       if (profile === undefined) {
         return yield* taskError(`Agent profile '${profileId}' no longer exists.`);
       }
-      return { profileId, revision: profile.revision, overrideFields: [] };
+      const capped = task.createdBy === "agent";
+      const overrideFields = [
+        ...(capped &&
+        profile.runtimeMode !== "read-only" &&
+        isRuntimeModeAbove(profile.runtimeMode, task.runtimeMode)
+          ? (["runtimeMode"] as const)
+          : []),
+        ...(capped && profile.interactionMode === "default" && task.interactionMode === "plan"
+          ? (["interactionMode"] as const)
+          : []),
+      ];
+      return { profileId, revision: profile.revision, overrideFields };
     });
 
     /**
@@ -961,7 +977,7 @@ export const layer = Layer.effect(
         if (shell !== null && shell.archivedAt === null) return yield* send(threadId);
       }
       const selection =
-        task.profileId === undefined ? undefined : yield* profileSelection(task.profileId);
+        task.profileId === undefined ? undefined : yield* profileSelection(task, task.profileId);
       const launched = yield* threadLaunch.launch({
         ...(selection === undefined ? {} : { profileSelection: selection }),
         commandId: ids.commandId,
