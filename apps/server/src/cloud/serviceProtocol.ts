@@ -203,6 +203,24 @@ export function parseServiceState(value: string): ServiceState | undefined {
   }
 }
 
+export function parseLegacyServiceState(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      !isRecord(parsed) ||
+      Object.keys(parsed).length !== 2 ||
+      parsed.protocol !== 2 ||
+      typeof parsed.activeVersion !== "string" ||
+      !isExactServiceVersion(parsed.activeVersion)
+    ) {
+      return undefined;
+    }
+    return { protocol: 2, activeVersion: parsed.activeVersion } as const;
+  } catch {
+    return undefined;
+  }
+}
+
 export function serviceStateHasPendingUpdate(value: string): boolean {
   try {
     const parsed: unknown = JSON.parse(value);
