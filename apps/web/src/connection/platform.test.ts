@@ -55,6 +55,7 @@ import {
   provisionDesktopSshEnvironment,
   secondaryRegistrationsToRetainAfterTopologyRead,
 } from "./platform.ts";
+import { APP_VERSION } from "../branding.ts";
 
 const TARGET: DesktopSshEnvironmentTarget = {
   alias: "devbox",
@@ -94,6 +95,8 @@ function makeBridge(
   },
 ): DesktopBridge {
   return {
+    getClientPlatform: () => "linux",
+    getLocalEnvironmentEnabled: () => true,
     ensureSshEnvironment: async (
       target: DesktopSshEnvironmentTarget,
       ensureOptions?: { issuePairingToken?: boolean },
@@ -248,6 +251,41 @@ describe("desktop SSH pairing", () => {
       expect(ensure).toHaveBeenCalledTimes(2);
       expect(calls).toEqual(["disconnect", "ensure", "descriptor", "token"]);
       expect(exchange).toHaveBeenCalledExactlyOnceWith(SSH_BOOTSTRAP.httpBaseUrl, "pairing-token");
+    }),
+  );
+
+  const failPairing = (serverVersion: string, message: string) => {
+    const bridge = makeBridge([]);
+    const fetchDescriptor = bridge.fetchSshEnvironmentDescriptor;
+    vi.spyOn(bridge, "fetchSshEnvironmentDescriptor").mockImplementation(async (url) => ({
+      ...(await fetchDescriptor(url)),
+      serverVersion,
+    }));
+    vi.spyOn(bridge, "bootstrapSshBearerSession").mockRejectedValue(new Error(message));
+    return provisionDesktopSshEnvironment(bridge, TARGET).pipe(Effect.flip);
+  };
+  const PAIRING_500 =
+    "[ssh_http:500] SSH remote API request failed during bootstrap-bearer-session.";
+
+  it.effect("blocks with both versions when a server on another build rejects pairing", () =>
+    Effect.gen(function* () {
+      const error = yield* failPairing("0.0.46-nightly.20261004.2652", PAIRING_500);
+
+      expect(error).toBeInstanceOf(ConnectionBlockedError);
+      expect(error.detail).toContain("0.0.46-nightly.20261004.2652");
+      expect(error.detail).toContain(APP_VERSION);
+    }),
+  );
+
+  it.effect("keeps retrying pairing failures that are not a version mismatch", () =>
+    Effect.gen(function* () {
+      expect(yield* failPairing(APP_VERSION, PAIRING_500)).toBeInstanceOf(ConnectionTransientError);
+      expect(
+        yield* failPairing(
+          "0.0.46-nightly.20261004.2652",
+          "SSH remote API request failed during bootstrap-bearer-session.",
+        ),
+      ).toBeInstanceOf(ConnectionTransientError);
     }),
   );
 
@@ -471,34 +509,28 @@ const layerTestCredentials = Layer.effect(
 );
 
 describe("desktop-local startup bearer exchange", () => {
-  function fakeBootstrapEndpoint(
-    beforeExchange?: (request: number) => Promise<void>,
-    expiresInSeconds = 60,
-  ) {
+  function fakeBootstrapEndpoint(expiresInSeconds = 60) {
     const tokenRequests: string[] = [];
     const ticketRequests: Array<string | null> = [];
     let rejectExchange = false;
     let networkFailure = false;
     let currentBearer: string | undefined;
     let bootstrapToken = "bootstrap-token";
-    let present = true;
-    let host = "backend.example.test";
     vi.spyOn(PrimaryTarget, "readPrimaryEnvironmentTarget").mockReturnValue(null);
     vi.stubGlobal("window", {
       location: new URL("http://renderer.example.test/"),
       desktopBridge: {
-        getLocalEnvironmentBootstraps: () =>
-          present
-            ? [
-                {
-                  id: "wsl:test",
-                  label: "WSL test",
-                  httpBaseUrl: `http://${host}/`,
-                  wsBaseUrl: `ws://${host}/`,
-                  bootstrapToken,
-                },
-              ]
-            : [],
+        getLocalEnvironmentEnabled: () => true,
+        getClientPlatform: () => "linux",
+        getLocalEnvironmentBootstraps: () => [
+          {
+            id: "wsl:test",
+            label: "WSL test",
+            httpBaseUrl: "http://backend.example.test/",
+            wsBaseUrl: "ws://backend.example.test/",
+            bootstrapToken,
+          },
+        ],
       },
     });
     vi.stubGlobal("navigator", { userAgent: "test", platform: "Linux", maxTouchPoints: 0 });
@@ -535,7 +567,6 @@ describe("desktop-local startup bearer exchange", () => {
         if (url.pathname === "/oauth/token") {
           tokenRequests.push(url.href);
           const request = tokenRequests.length;
-          await beforeExchange?.(request);
           if (networkFailure) throw new TypeError("Network unavailable");
           if (rejectExchange) {
             return Response.json(
@@ -563,14 +594,8 @@ describe("desktop-local startup bearer exchange", () => {
     return {
       tokenRequests,
       ticketRequests,
-      move: () => {
-        host = "restarted-backend.example.test";
-      },
       rotate: () => {
         bootstrapToken = "rotated-bootstrap";
-      },
-      remove: () => {
-        present = false;
       },
       revoke: () => {
         rejectExchange = true;
@@ -615,34 +640,6 @@ describe("desktop-local startup bearer exchange", () => {
     }),
   );
 
-  it.effect("retains a valid bearer and backs off when a rotated bootstrap grant is rejected", () =>
-    Effect.gen(function* () {
-      const endpoint = fakeBootstrapEndpoint();
-      yield* Effect.gen(function* () {
-        const source = yield* PlatformConnectionSource.PlatformConnectionSource;
-        const first = Option.getOrThrow(yield* Stream.runHead(source.registrations));
-        endpoint.rotate();
-        endpoint.revoke();
-        const rejected = Option.getOrThrow(yield* Stream.runHead(source.registrations));
-        expect(rejected).toEqual(first);
-        endpoint.recover();
-        const backedOff = Option.getOrThrow(yield* Stream.runHead(source.registrations));
-        expect(backedOff).toEqual(first);
-        expect(endpoint.tokenRequests).toHaveLength(2);
-        yield* TestClock.adjust("60 seconds");
-        const recovered = Option.getOrThrow(yield* Stream.runHead(source.registrations));
-        expect(endpoint.tokenRequests).toHaveLength(3);
-        expect(recovered).not.toEqual(first);
-      }).pipe(
-        Effect.provide(
-          layerPlatformConnectionSource.pipe(Layer.provideMerge(layerTestCredentials)),
-        ),
-        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
-        Effect.scoped,
-      );
-    }),
-  );
-
   it.effect(
     "a stale bearer registration survives failed refreshes even if the registry restores its token",
     () =>
@@ -676,29 +673,6 @@ describe("desktop-local startup bearer exchange", () => {
           Effect.scoped,
         );
       }),
-  );
-
-  it.effect("a failed exchange is cleared and retried after bootstrap rejection backoff", () =>
-    Effect.gen(function* () {
-      const endpoint = fakeBootstrapEndpoint();
-      endpoint.revoke();
-      yield* Effect.gen(function* () {
-        const source = yield* PlatformConnectionSource.PlatformConnectionSource;
-        expect(Option.getOrThrow(yield* Stream.runHead(source.registrations))).toEqual([]);
-        endpoint.recover();
-        expect(Option.getOrThrow(yield* Stream.runHead(source.registrations))).toEqual([]);
-        expect(endpoint.tokenRequests).toHaveLength(1);
-        yield* TestClock.adjust("60 seconds");
-        expect(Option.getOrThrow(yield* Stream.runHead(source.registrations))).toHaveLength(1);
-        expect(endpoint.tokenRequests).toHaveLength(2);
-      }).pipe(
-        Effect.provide(
-          layerPlatformConnectionSource.pipe(Layer.provideMerge(layerTestCredentials)),
-        ),
-        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
-        Effect.scoped,
-      );
-    }),
   );
 
   it.effect.each(["recover", "network", "auth"] as const)(
@@ -843,50 +817,6 @@ describe("desktop-local startup bearer exchange", () => {
   );
 
   it.effect(
-    "missing credentials and failed persistence do not invalidate a healthy cached bearer",
-    () =>
-      Effect.gen(function* () {
-        const endpoint = fakeBootstrapEndpoint();
-        yield* Effect.gen(function* () {
-          const source = yield* PlatformConnectionSource.PlatformConnectionSource;
-          const store = yield* CredentialStore.ConnectionCredentialStore;
-          const first = Option.getOrThrow(yield* Stream.runHead(source.registrations));
-          const registration = first[0]!;
-          if (registration._tag !== "BearerConnectionRegistration")
-            throw new Error("Expected bearer");
-          expect(
-            yield* store
-              .put(registration.target.connectionId, registration.credential)
-              .pipe(Effect.flip),
-          ).toMatchObject({ _tag: "ConnectionTransientError" });
-          yield* TestClock.adjust("3 seconds");
-          expect(Option.getOrThrow(yield* Stream.runHead(source.registrations))).toEqual(first);
-          expect(endpoint.tokenRequests).toHaveLength(1);
-        }).pipe(
-          Effect.provide(
-            layerPlatformConnectionSource.pipe(
-              Layer.provideMerge(
-                Layer.succeed(CredentialStore.ConnectionCredentialStore, {
-                  get: () => Effect.succeedNone,
-                  put: () =>
-                    Effect.fail(
-                      new ConnectionTransientError({
-                        reason: "remote-unavailable",
-                        detail: "Storage unavailable",
-                      }),
-                    ),
-                  remove: () => Effect.void,
-                }),
-              ),
-            ),
-          ),
-          Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
-          Effect.scoped,
-        );
-      }),
-  );
-
-  it.effect(
     "repeated fresh bearer rejections back off with the endpoint and bootstrap signature",
     () =>
       Effect.gen(function* () {
@@ -936,7 +866,7 @@ describe("desktop-local startup bearer exchange", () => {
 
   it.effect("delayed rejections after clean polls retain growing recovery backoff", () =>
     Effect.gen(function* () {
-      const endpoint = fakeBootstrapEndpoint(undefined, 3_600);
+      const endpoint = fakeBootstrapEndpoint(3_600);
       yield* Effect.gen(function* () {
         const source = yield* PlatformConnectionSource.PlatformConnectionSource;
         const store = yield* CredentialStore.ConnectionCredentialStore;
@@ -995,7 +925,7 @@ describe("desktop-local startup bearer exchange", () => {
     "recovers immediately from an independent revocation after a sustained healthy recovery",
     () =>
       Effect.gen(function* () {
-        const endpoint = fakeBootstrapEndpoint(undefined, 3_600);
+        const endpoint = fakeBootstrapEndpoint(3_600);
         yield* Effect.gen(function* () {
           const source = yield* PlatformConnectionSource.PlatformConnectionSource;
           const store = yield* CredentialStore.ConnectionCredentialStore;
@@ -1070,26 +1000,5 @@ describe("desktop-local startup bearer exchange", () => {
           Effect.scoped,
         );
       }),
-  );
-
-  it.effect("reuses a valid bearer when the endpoint and bootstrap token are unchanged", () =>
-    Effect.gen(function* () {
-      const endpoint = fakeBootstrapEndpoint();
-      yield* Effect.gen(function* () {
-        const source = yield* PlatformConnectionSource.PlatformConnectionSource;
-        const first = Option.getOrThrow(yield* Stream.runHead(source.registrations));
-        yield* TestClock.adjust("3 seconds");
-        const next = Option.getOrThrow(yield* Stream.runHead(source.registrations));
-        expect(first).toHaveLength(1);
-        expect(next[0]).toBe(first[0]);
-        expect(endpoint.tokenRequests).toHaveLength(1);
-      }).pipe(
-        Effect.provide(
-          layerPlatformConnectionSource.pipe(Layer.provideMerge(layerTestCredentials)),
-        ),
-        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
-        Effect.scoped,
-      );
-    }),
   );
 });

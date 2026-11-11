@@ -97,10 +97,7 @@ interface NetworkInformationLike extends EventTarget {
   readonly type?: string;
 }
 
-/**
- * `change` also fires for bandwidth and latency estimates on the same network,
- * so only a type change counts.
- */
+// change also fires for same-network bandwidth and latency estimates; count only type changes.
 const networkPathChanges = Stream.callback<"network-changed">((queue) =>
   Effect.acquireRelease(
     Effect.sync(() => {
@@ -155,7 +152,7 @@ const layerWakeups = Wakeups.layer({
   ),
 });
 
-function clientMetadata() {
+export function currentClientMetadata() {
   return clientPresentationMetadata({
     appVersion: APP_VERSION,
     hosted: isHostedStaticApp(),
@@ -239,7 +236,22 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   }
   const access = yield* Effect.tryPromise({
     try: () => bridge.bootstrapSshBearerSession(bootstrap.httpBaseUrl, pairingToken),
-    catch: sshPreparationError,
+    catch: (cause) => {
+      const error = sshPreparationError(cause);
+      // A reused remote server on another build can fail to decode the grant
+      // the desktop's runner just minted, and answers 500 on every retry.
+      if (
+        error._tag === "ConnectionBlockedError" ||
+        descriptor.serverVersion === APP_VERSION ||
+        !error.detail.includes("[ssh_http:500]")
+      ) {
+        return error;
+      }
+      return new ConnectionBlockedError({
+        reason: "configuration",
+        detail: `${descriptor.label} runs T3 Code ${descriptor.serverVersion}, but this desktop is ${APP_VERSION}, and that server could not accept its pairing. Restart the T3 server on ${descriptor.label} so it runs ${APP_VERSION}, then retry.`,
+      });
+    },
   });
   return {
     environmentId: descriptor.environmentId,
@@ -249,11 +261,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   };
 });
 
-/**
- * Connects a saved SSH environment. A token from an earlier pairing is kept
- * while the host still accepts it with every standard scope, because every
- * pairing adds a session there.
- */
+/** Reuses SSH pairing tokens with all standard scopes to avoid adding a session on each connection. */
 export const prepareDesktopSshEnvironment = Effect.fn("web.connectionPlatform.ssh.prepareDesktop")(
   function* (
     bridge: DesktopBridge,
@@ -269,8 +277,7 @@ export const prepareDesktopSshEnvironment = Effect.fn("web.connectionPlatform.ss
         try: () => bridge.ensureSshEnvironment(input.target, { issuePairingToken: false }),
         catch: sshPreparationError,
       });
-      // Stop without sending the saved token, or pairing, when the forward
-      // reaches a different environment.
+      // Check identity before sending saved credentials or pairing.
       const descriptor = yield* Effect.tryPromise({
         try: () => bridge.fetchSshEnvironmentDescriptor(bootstrap.httpBaseUrl),
         catch: sshPreparationError,
@@ -285,8 +292,7 @@ export const prepareDesktopSshEnvironment = Effect.fn("web.connectionPlatform.ss
         try: () => bridge.fetchSshSessionState(bootstrap.httpBaseUrl, bearerToken),
         catch: sshPreparationError,
       });
-      // Servers never widen a stored grant, so a token from before the standard
-      // scopes grew is replaced by pairing again.
+      // Stored grants never widen; re-pair tokens missing newer standard scopes.
       const granted = session.permissions ?? session.scopes ?? [];
       if (
         session.authenticated &&
@@ -308,19 +314,21 @@ const ANALYTICS_DEVICE_ID_KEY = "t3code:analytics-device-id";
 
 // Lives as long as this browser profile's site data. Storage can be blocked, which only drops the id.
 const analyticsDevice = {
-  id: Effect.try(() => {
-    const existing = window.localStorage.getItem(ANALYTICS_DEVICE_ID_KEY);
-    if (existing) return existing;
-    const created = randomUUID();
-    window.localStorage.setItem(ANALYTICS_DEVICE_ID_KEY, created);
-    return created;
-  }).pipe(Effect.option),
+  id: Effect.sync(
+    Option.liftThrowable(() => {
+      const existing = window.localStorage.getItem(ANALYTICS_DEVICE_ID_KEY);
+      if (existing) return existing;
+      const created = randomUUID();
+      window.localStorage.setItem(ANALYTICS_DEVICE_ID_KEY, created);
+      return created;
+    }),
+  ),
 };
 
 const layerCapabilities = Layer.effectContext(
   Effect.sync(() => {
     const presentation = ClientCapabilities.ClientPresentation.of({
-      metadata: clientMetadata(),
+      metadata: currentClientMetadata(),
     });
     const cloudSession = ClientCapabilities.CloudSession.of({
       identity: Effect.sync(() =>
@@ -457,12 +465,9 @@ const loadSecondaryConnectionRegistration = Effect.fn(
     httpBaseUrl,
     credential: entry.bootstrapToken,
     scopes: AuthStandardClientScopes,
-    clientMetadata: clientMetadata(),
+    clientMetadata: currentClientMetadata(),
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
-  // Keep the desktop pool's stable backend id in the connection id. The
-  // descriptor environment id still scopes projects and RPC state, while the
-  // backend id lets desktop-only operations (notably the WSL folder picker)
-  // route back to the instance that owns the environment.
+  // Desktop operations need the pool backend id to reach the owning instance; RPC uses the environment id.
   const connectionId = desktopLocalConnectionId(entry.id);
   const label = entry.label || descriptor.label;
   return {
@@ -486,9 +491,7 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   };
 });
 
-// Poll cadence for the desktop bootstrap topology. There is no change event on
-// the bridge, so the renderer polls; successful registrations are cached by a
-// signature of their endpoint until bearer credentials approach expiry.
+// The bridge has no topology event. Cache registrations until bearer credentials near expiry.
 const PLATFORM_POLL_INTERVAL = "3 seconds";
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
 
@@ -581,13 +584,7 @@ export interface RejectedSecondaryBootstrap {
   readonly delayMs: number;
 }
 
-/**
- * A backend that rejected a bootstrap token will usually keep rejecting it, so
- * the poll backs off on that exact signature instead of re-presenting a dead
- * credential every few seconds. It still retries on a capped backoff: a backend
- * that restarts on the same port seeds a fresh grant for the same token, and
- * nothing in the topology says it restarted.
- */
+/** Retry with backoff: a backend can restart on the same port with a fresh grant and no topology change. */
 export function isRejectedSecondaryBootstrap(
   rejected: RejectedSecondaryBootstrap | undefined,
   signature: string,
@@ -706,10 +703,7 @@ export const layerPlatformConnectionSource = Layer.effect(
         const rejected = new Map(yield* Ref.get(rejectedRef));
         const nextRejected = new Map<string, RejectedSecondaryBootstrap>();
         for (const bootstrap of topologyRead.bootstraps) {
-          // The cached bearer belongs to the endpoint, not to the bootstrap
-          // token it was exchanged for: a new token must not drop a live
-          // session (its removal also clears the environment's drafts). The
-          // token only decides whether a rejected exchange is retried.
+          // Token rotation only controls exchange retries; dropping endpoint bearers also clears drafts.
           const endpointSignature = `${bootstrap.httpBaseUrl}|${bootstrap.wsBaseUrl}`;
           const signature = `${endpointSignature}|${bootstrap.bootstrapToken ?? ""}`;
           let cached = previous.get(bootstrap.id);
@@ -755,9 +749,7 @@ export const layerPlatformConnectionSource = Layer.effect(
           if (cached?.recoverySignature === signature && priorRejection?.signature === signature) {
             nextRejected.set(bootstrap.id, priorRejection);
           }
-          // A new token from the desktop means something changed (rotation, a
-          // restarted backend): exchange it rather than reusing a bearer that
-          // may be dead. The old bearer stays registered if that exchange fails.
+          // Rotation may mean a restart; retain the old bearer if the new exchange fails.
           if (
             cached !== undefined &&
             !cached.stale &&
@@ -796,8 +788,7 @@ export const layerPlatformConnectionSource = Layer.effect(
             ),
             Effect.tapError((error) =>
               isRejectedBootstrapCredentialError(error)
-                ? // Back off from when the rejection arrived; the exchanges in
-                  // this poll can take longer than the first backoff step.
+                ? // Start backoff at rejection; this poll can outlast the first delay.
                   Clock.currentTimeMillis.pipe(
                     Effect.map((rejectedAtEpochMs) =>
                       nextRejected.set(
@@ -868,34 +859,55 @@ export const layerPlatformConnectionSource = Layer.effect(
 const layerEnvironmentOwnedDataCleanup = Layer.succeed(
   Persistence.EnvironmentOwnedDataCleanup,
   Persistence.EnvironmentOwnedDataCleanup.of({
-    clear: (environmentId) =>
-      Effect.sync(() => {
+    clear: Effect.fn("Persistence.EnvironmentOwnedDataCleanup.clear")(function (environmentId) {
+      return Effect.sync(() => {
         clearComposerDraftsEnvironment(environmentId);
-      }),
+      });
+    }),
   }),
 );
 
 const layerRpcRequestObserver = Layer.succeed(
   EnvironmentRpcRequestObserver,
   EnvironmentRpcRequestObserver.of({
-    observe: ({ environmentId, environmentLabel, method }) =>
-      Effect.sync(() => {
+    // Every RPC passes through this observer; the request owns its span.
+    observe: Effect.fnUntraced(function* ({ environmentId, environmentLabel, method }) {
+      return yield* Effect.sync(() => {
         nextObservedRpcRequestId += 1;
         const requestId = `${environmentId}:${nextObservedRpcRequestId}`;
         trackRpcRequestSent(requestId, method, `${method} · ${environmentLabel}`);
         return Effect.sync(() => {
           acknowledgeRpcRequest(requestId);
         });
-      }),
+      });
+    }),
   }),
 );
 
-export const layer = Layer.mergeAll(
+// The source must read the same credential store the registry evicts from.
+const layerPlatformConnectionSourceWithStorage = layerPlatformConnectionSource.pipe(
+  Layer.provide(ConnectionStorage.layer),
+);
+
+type ConnectionPlatformLayerSource =
+  | typeof ConnectionStorage.layer
+  | typeof layerConnectivity
+  | typeof layerWakeups
+  | typeof layerCapabilities
+  | typeof layerPlatformConnectionSourceWithStorage
+  | typeof layerEnvironmentOwnedDataCleanup
+  | typeof layerRpcRequestObserver;
+
+export const layer: Layer.Layer<
+  Layer.Success<ConnectionPlatformLayerSource>,
+  Layer.Error<ConnectionPlatformLayerSource>,
+  Layer.Services<ConnectionPlatformLayerSource>
+> = Layer.mergeAll(
   ConnectionStorage.layer,
   layerConnectivity,
   layerWakeups,
   layerCapabilities,
-  layerPlatformConnectionSource.pipe(Layer.provide(ConnectionStorage.layer)),
+  layerPlatformConnectionSourceWithStorage,
   layerEnvironmentOwnedDataCleanup,
   layerRpcRequestObserver,
 );

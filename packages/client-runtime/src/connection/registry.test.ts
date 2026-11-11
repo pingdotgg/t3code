@@ -22,6 +22,7 @@ import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as Tracer from "effect/Tracer";
 
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
@@ -59,10 +60,10 @@ import * as Persistence from "../platform/persistence.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import {
-  GitHubRoutingPermissions,
-  type StoredGitHubRoutingPermission,
-  makeGitHubRoutingPermissions,
-} from "./githubRoutingPermissions.ts";
+  PullRequestRoutingPermissions,
+  type StoredPullRequestRoutingPermission,
+  makePullRequestRoutingPermissions,
+} from "./pullRequestRoutingPermissions.ts";
 import * as RpcSession from "../rpc/session.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
@@ -152,7 +153,6 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   initialCredentials: ReadonlyArray<readonly [string, ConnectionCredential]> = [],
   options?: {
     readonly prepareError?: ConnectionBlockedError;
-    readonly credentialReadFailureAt?: number;
     readonly beforeSessionConnect?: (environmentId: EnvironmentId) => Effect.Effect<void>;
     readonly beforeRegistrationRegister?: (
       registration: ConnectionRegistration,
@@ -160,6 +160,9 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     readonly beforeRegistrationRemove?: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly beforeCredentialPut?: (
+      connectionId: string,
+    ) => Effect.Effect<void, ConnectionTransientError>;
     readonly checkRoute?: (route: ConnectionRoute) => RouteCheck;
     readonly prepareRoute?: (target: ConnectionTarget) => ConnectionBlockedError | undefined;
     readonly beforePrepareRoute?: (
@@ -334,24 +337,22 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         return next;
       }),
   });
-  let credentialReads = 0;
   const rejectedCredentials = new Map<string, ConnectionCredential>();
   const credentialStore = ConnectionCredentialStore.ConnectionCredentialStore.of({
     get: (connectionId) =>
-      Effect.gen(function* () {
-        if (++credentialReads === options?.credentialReadFailureAt)
-          return yield* new ConnectionTransientError({
-            reason: "remote-unavailable",
-            detail: "Credential storage unavailable",
-          });
-        return Option.fromUndefinedOr((yield* Ref.get(storedCredentials)).get(connectionId));
-      }),
+      Ref.get(storedCredentials).pipe(
+        Effect.map((current) => Option.fromUndefinedOr(current.get(connectionId))),
+      ),
     put: (connectionId, credential) =>
-      Ref.update(storedCredentials, (current) => {
-        const next = new Map(current);
-        next.set(connectionId, credential);
-        return next;
-      }),
+      (options?.beforeCredentialPut?.(connectionId) ?? Effect.void).pipe(
+        Effect.andThen(
+          Ref.update(storedCredentials, (current) => {
+            const next = new Map(current);
+            next.set(connectionId, credential);
+            return next;
+          }),
+        ),
+      ),
     wasRejected: (connectionId, credential) =>
       Effect.sync(() => Equal.equals(rejectedCredentials.get(connectionId), credential)),
     removeIfMatches: (connectionId, credential) =>
@@ -430,9 +431,16 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               ? Effect.die(new Error("Config is not used by registry tests."))
               : Effect.succeed({ directEndpoints: options.directEndpoints } as ServerConfig),
           subscribeServerConfig: () =>
-            Stream.die(new Error("Config is not used by registry tests.")),
+            options?.directEndpoints === undefined
+              ? Stream.never
+              : Stream.make({
+                  version: 1 as const,
+                  type: "snapshot" as const,
+                  config: { directEndpoints: options.directEndpoints } as ServerConfig,
+                }),
           ready: Effect.void,
           probe: Effect.void,
+          inboundFrames: Effect.succeed(0),
           closed: Deferred.await(closed),
         } satisfies RpcSession.RpcSession),
         () => Ref.update(releasedSessions, (count) => count + 1),
@@ -449,9 +457,13 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           ),
         ),
       ),
-    checkRoute: (_entry, route) => checkRoute(route),
     preflight: (_entry, route) =>
-      checkRoute(route).pipe(Effect.map((check) => check === "answered")),
+      checkRoute(route).pipe(
+        Effect.map((check): ConnectionDriver.RoutePreflight =>
+          check === "answered" ? "ready" : check,
+        ),
+      ),
+    checkHost: () => Effect.succeed<ConnectionDriver.RouteCheck>("unchecked"),
   });
 
   const layerCache = Layer.succeed(Persistence.EnvironmentCacheStore, cacheStore);
@@ -516,6 +528,17 @@ function replaceRoutes(
       : current.slice(0, firstIndex).filter((target) => target.environmentId !== environmentId)
           .length;
   return [...others.slice(0, insertAt), ...routes, ...others.slice(insertAt)];
+}
+
+function registrySpanNames<A, E, R>(effect: Effect.Effect<A, E, R>) {
+  const names: Array<string> = [];
+  const tracer = Tracer.make({
+    span: (options) => {
+      if (options.name.startsWith("EnvironmentRegistry.")) names.push(options.name);
+      return new Tracer.NativeSpan(options);
+    },
+  });
+  return effect.pipe(Effect.withTracer(tracer), Effect.as(names));
 }
 
 function awaitConnectionState(
@@ -1404,32 +1427,6 @@ describe("EnvironmentRegistry", () => {
   );
 
   it.effect(
-    "a failed eviction snapshot read does not block an otherwise valid platform connection",
-    () =>
-      Effect.gen(function* () {
-        const harness = yield* makeHarness([], [], [], { credentialReadFailureAt: 2 });
-        yield* Effect.gen(function* () {
-          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-          yield* registry.reconcilePlatform([
-            new BearerConnectionRegistration({
-              target: BEARER_TARGET,
-              profile: BEARER_PROFILE,
-              credential: BEARER_CREDENTIAL,
-            }),
-          ]);
-          yield* awaitConnectionState(
-            registry,
-            BEARER_TARGET.environmentId,
-            (state) => state.phase === "connected",
-          );
-          expect(
-            (yield* Ref.get(harness.storedCredentials)).get(BEARER_TARGET.connectionId),
-          ).toEqual(BEARER_CREDENTIAL);
-        }).pipe(Effect.provide(harness.layer), Effect.scoped);
-      }),
-  );
-
-  it.effect(
     "evicts a revoked platform bearer before the next reconcile installs a fresh exchange",
     () =>
       Effect.gen(function* () {
@@ -1601,7 +1598,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([], [], [], {
         beforePrepareRoute: (target) =>
           target._tag !== "BearerConnectionTarget" || storedCredentials === undefined
-            ? Effect.succeed(undefined)
+            ? Effect.undefined
             : Ref.get(storedCredentials).pipe(
                 Effect.map((current) =>
                   current.get(target.connectionId)?.token === "old-bearer"
@@ -1640,7 +1637,18 @@ describe("EnvironmentRegistry", () => {
 
   it.effect("a replaced platform bearer reaches a connected session's HTTP requests", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness([]);
+      let failCredentialWrites = false;
+      const harness = yield* makeHarness([], [], [], {
+        beforeCredentialPut: () =>
+          failCredentialWrites
+            ? Effect.fail(
+                new ConnectionTransientError({
+                  reason: "remote-unavailable",
+                  detail: "Storage unavailable",
+                }),
+              )
+            : Effect.void,
+      });
 
       yield* Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
@@ -1669,6 +1677,11 @@ describe("EnvironmentRegistry", () => {
         );
         expect(yield* preparedToken).toBe("old-bearer");
 
+        failCredentialWrites = true;
+        yield* registry.reconcilePlatform([registration("new-bearer")]);
+        expect(yield* preparedToken).toBe("old-bearer");
+
+        failCredentialWrites = false;
         yield* registry.reconcilePlatform([registration("new-bearer")]);
 
         expect(yield* preparedToken).toBe("new-bearer");
@@ -1685,7 +1698,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([], [], [], {
         beforePrepareRoute: (target) =>
           target._tag !== "BearerConnectionTarget"
-            ? Effect.succeed(undefined)
+            ? Effect.undefined
             : Ref.updateAndGet(attempts, (count) => count + 1).pipe(
                 Effect.flatMap((count) =>
                   count === 1
@@ -1698,7 +1711,7 @@ describe("EnvironmentRegistry", () => {
                           }),
                         ),
                       )
-                    : Effect.succeed(undefined),
+                    : Effect.undefined,
                 ),
               ),
       });
@@ -1737,7 +1750,7 @@ describe("EnvironmentRegistry", () => {
 
       yield* Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        yield* registry.registerPlatform(new PrimaryConnectionRegistration({ target: TARGET }));
+        yield* registry.reconcilePlatform([new PrimaryConnectionRegistration({ target: TARGET })]);
         yield* awaitConnectionState(
           registry,
           TARGET.environmentId,
@@ -1758,41 +1771,145 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
-  it.effect("gives a primary platform registration precedence over persisted registrations", () =>
+  it.effect("applies overlapping platform snapshots in order", () =>
     Effect.gen(function* () {
-      const shadowedTarget = new RelayConnectionTarget({
-        environmentId: TARGET.environmentId,
-        label: "Shadowed relay environment",
+      const started = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const harness = yield* makeHarness([TARGET]);
+      const permissions = yield* makePullRequestRoutingPermissions({
+        read: Effect.succeed([
+          { environmentId: TARGET.environmentId, connectionKey: "saved", permission: "read-write" },
+        ]),
+        write: () =>
+          Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(resume))),
       });
-      const harness = yield* makeHarness([shadowedTarget]);
-      const permissions = yield* makeGitHubRoutingPermissions({
-        read: Effect.succeed([]),
-        write: () => Effect.void,
-      });
-      const shadowedEntry = { target: shadowedTarget, profile: Option.none(), enabled: true };
-      yield* permissions.set(shadowedEntry, "read-write");
 
       yield* Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        yield* registry.registerPlatform(new PrimaryConnectionRegistration({ target: TARGET }));
-        expect(yield* permissions.get(shadowedEntry)).toBe("off");
+        const installing = yield* registry
+          .reconcilePlatform([new PrimaryConnectionRegistration({ target: TARGET })])
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        const removing = yield* registry
+          .reconcilePlatform([])
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(installing);
+        yield* Fiber.join(removing);
 
-        expect(
-          (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.target,
-        ).toEqual(TARGET);
-        expect(hasRoutes(yield* Ref.get(harness.storedTargets), TARGET.environmentId)).toBe(false);
-
-        yield* registry.register(new RelayConnectionRegistration({ target: shadowedTarget }));
-
-        expect(
-          (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.target,
-        ).toEqual(TARGET);
-        expect(hasRoutes(yield* Ref.get(harness.storedTargets), TARGET.environmentId)).toBe(false);
+        expect((yield* SubscriptionRef.get(registry.entries)).has(TARGET.environmentId)).toBe(
+          false,
+        );
+        expect(yield* registrySpanNames(registry.reconcilePlatform([]))).toEqual([]);
       }).pipe(
         Effect.provide(harness.layer),
-        Effect.provideService(GitHubRoutingPermissions, permissions),
+        Effect.provideService(PullRequestRoutingPermissions, permissions),
         Effect.scoped,
       );
+    }),
+  );
+
+  it.effect("gives platform registrations precedence over persisted registrations", () =>
+    Effect.gen(function* () {
+      for (const registration of [
+        new PrimaryConnectionRegistration({ target: TARGET }),
+        new BearerConnectionRegistration({
+          target: BEARER_TARGET,
+          profile: BEARER_PROFILE,
+          credential: new BearerConnectionCredential({ token: "platform-bearer" }),
+        }),
+      ]) {
+        const target = registration.target;
+        const shadowedTarget =
+          registration._tag === "BearerConnectionRegistration"
+            ? registration.target
+            : new RelayConnectionTarget({
+                environmentId: target.environmentId,
+                label: "Shadowed relay environment",
+              });
+        let failRemoval = true;
+        const harness = yield* makeHarness(
+          [shadowedTarget],
+          registration._tag === "BearerConnectionRegistration" ? [registration.profile] : [],
+          registration._tag === "BearerConnectionRegistration"
+            ? [
+                [
+                  registration.target.connectionId,
+                  new BearerConnectionCredential({ token: "saved-bearer" }),
+                ],
+              ]
+            : [],
+          {
+            beforeRegistrationRemove: () =>
+              failRemoval
+                ? Effect.fail(
+                    new Persistence.ConnectionPersistenceError({
+                      operation: "remove-connection",
+                      message: "Storage unavailable",
+                    }),
+                  )
+                : Effect.void,
+          },
+        );
+        const permissions = yield* makePullRequestRoutingPermissions({
+          read: Effect.succeed([]),
+          write: () => Effect.void,
+        });
+        const shadowedEntry = {
+          target: shadowedTarget,
+          profile:
+            registration._tag === "BearerConnectionRegistration"
+              ? Option.some(registration.profile)
+              : Option.none(),
+          enabled: true,
+        };
+        yield* permissions.set(shadowedEntry, "read-write");
+
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.reconcilePlatform([registration]);
+          expect(yield* permissions.get(shadowedEntry)).toBe("off");
+          expect(hasRoutes(yield* Ref.get(harness.storedTargets), target.environmentId)).toBe(true);
+
+          failRemoval = false;
+          yield* registry.reconcilePlatform([registration]);
+
+          expect(
+            (yield* SubscriptionRef.get(registry.entries)).get(target.environmentId)?.target,
+          ).toEqual(target);
+          expect(hasRoutes(yield* Ref.get(harness.storedTargets), target.environmentId)).toBe(
+            false,
+          );
+          if (registration._tag === "BearerConnectionRegistration") {
+            expect(
+              (yield* Ref.get(harness.storedCredentials)).get(registration.target.connectionId),
+            ).toEqual(registration.credential);
+            expect(yield* registrySpanNames(registry.reconcilePlatform([registration]))).toEqual(
+              [],
+            );
+          }
+
+          yield* registry.register(
+            new RelayConnectionRegistration({
+              target: new RelayConnectionTarget({
+                environmentId: target.environmentId,
+                label: "Shadowed relay environment",
+              }),
+            }),
+          );
+
+          expect(
+            (yield* SubscriptionRef.get(registry.entries)).get(target.environmentId)?.target,
+          ).toEqual(target);
+          expect(hasRoutes(yield* Ref.get(harness.storedTargets), target.environmentId)).toBe(
+            false,
+          );
+        }).pipe(
+          Effect.provide(harness.layer),
+          Effect.provideService(PullRequestRoutingPermissions, permissions),
+          Effect.scoped,
+        );
+      }
     }),
   );
 
@@ -1819,7 +1936,7 @@ describe("EnvironmentRegistry", () => {
         yield* Deferred.await(registrationStarted);
 
         const platformRegistration = yield* registry
-          .registerPlatform(new PrimaryConnectionRegistration({ target: TARGET }))
+          .reconcilePlatform([new PrimaryConnectionRegistration({ target: TARGET })])
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Effect.yieldNow;
         const removal = yield* Effect.flip(registry.remove(TARGET.environmentId)).pipe(
@@ -1882,7 +1999,7 @@ describe("EnvironmentRegistry", () => {
       yield* Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const registration = new PrimaryConnectionRegistration({ target: TARGET });
-        yield* registry.registerPlatform(registration);
+        yield* registry.reconcilePlatform([registration]);
         yield* awaitConnectionState(
           registry,
           TARGET.environmentId,
@@ -1898,29 +2015,29 @@ describe("EnvironmentRegistry", () => {
           TARGET.environmentId,
           (state) => state.phase === "available",
         );
-        yield* registry.registerPlatform(registration);
+        yield* registry.reconcilePlatform([registration]);
         yield* registry.reconcilePlatform([registration]);
         expect(
           (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId),
         ).toMatchObject({ enabled: true, unsupportedReason: error.message });
-        yield* registry.registerPlatform(
+        yield* registry.reconcilePlatform([
           new PrimaryConnectionRegistration({
             target: new PrimaryConnectionTarget({ ...TARGET, label: "Renamed" }),
           }),
-        );
+        ]);
         expect(yield* registry.state(TARGET.environmentId)).toMatchObject({
           desired: false,
           phase: "available",
         });
         expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
-        yield* registry.registerPlatform(
+        yield* registry.reconcilePlatform([
           new PrimaryConnectionRegistration({
             target: new PrimaryConnectionTarget({
               ...TARGET,
               httpBaseUrl: "https://changed.example.test",
             }),
           }),
-        );
+        ]);
         yield* awaitConnectionState(
           registry,
           TARGET.environmentId,
@@ -1942,7 +2059,7 @@ describe("EnvironmentRegistry", () => {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const registration = new PrimaryConnectionRegistration({ target: TARGET });
         yield* Effect.all(
-          Array.from({ length: 5 }, () => registry.registerPlatform(registration)),
+          Array.from({ length: 5 }, () => registry.reconcilePlatform([registration])),
           { concurrency: "unbounded", discard: true },
         );
         yield* awaitConnectionState(
@@ -1953,7 +2070,7 @@ describe("EnvironmentRegistry", () => {
 
         yield* Effect.all(
           [
-            ...Array.from({ length: 5 }, () => registry.registerPlatform(registration)),
+            ...Array.from({ length: 5 }, () => registry.reconcilePlatform([registration])),
             ...Array.from({ length: 5 }, () => registry.retryNow(TARGET.environmentId)),
             registry.reconcilePlatform([registration]),
           ],
@@ -1977,7 +2094,7 @@ describe("EnvironmentRegistry", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness([]);
       let failWrites = false;
-      const permissions = yield* makeGitHubRoutingPermissions({
+      const permissions = yield* makePullRequestRoutingPermissions({
         read: Effect.succeed([]),
         write: () =>
           failWrites
@@ -1994,7 +2111,7 @@ describe("EnvironmentRegistry", () => {
       yield* Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const registration = new PrimaryConnectionRegistration({ target: TARGET });
-        yield* registry.registerPlatform(registration);
+        yield* registry.reconcilePlatform([registration]);
         yield* awaitConnectionState(
           registry,
           TARGET.environmentId,
@@ -2002,8 +2119,13 @@ describe("EnvironmentRegistry", () => {
         );
         yield* permissions.set(entry, "read-write");
 
-        yield* registry.registerPlatform(registration);
+        const repeated = yield* registrySpanNames(
+          registry.reconcilePlatform([
+            new PrimaryConnectionRegistration({ target: new PrimaryConnectionTarget(TARGET) }),
+          ]),
+        );
 
+        expect(repeated).toEqual([]);
         expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
         expect(yield* permissions.get(entry)).toBe("read-write");
 
@@ -2012,29 +2134,41 @@ describe("EnvironmentRegistry", () => {
           httpBaseUrl: "https://changed.example.test",
         });
         failWrites = true;
-        yield* registry.registerPlatform(
+        yield* registry.reconcilePlatform([
           new PrimaryConnectionRegistration({ target: changedTarget }),
-        );
+        ]);
         expect(
           (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.target,
         ).toEqual(TARGET);
-        yield* registry.reconcilePlatform([]);
-        expect((yield* SubscriptionRef.get(registry.entries)).has(TARGET.environmentId)).toBe(true);
 
         failWrites = false;
-        yield* registry.registerPlatform(
+        yield* registry.reconcilePlatform([
           new PrimaryConnectionRegistration({ target: changedTarget }),
+        ]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.target,
+        ).toEqual(changedTarget);
+        expect(yield* permissions.get(entry)).toBe("off");
+        yield* registry.reconcilePlatform([registration]);
+        expect(yield* permissions.get(entry)).toBe("off");
+
+        yield* permissions.set(entry, "read-write");
+        failWrites = true;
+        yield* registry.reconcilePlatform([]);
+        expect((yield* SubscriptionRef.get(registry.entries)).has(TARGET.environmentId)).toBe(true);
+        failWrites = false;
+        yield* registry.reconcilePlatform([]);
+        expect((yield* SubscriptionRef.get(registry.entries)).has(TARGET.environmentId)).toBe(
+          false,
         );
         expect(yield* permissions.get(entry)).toBe("off");
-        yield* registry.registerPlatform(registration);
-        expect(yield* permissions.get(entry)).toBe("off");
-        yield* permissions.set(entry, "read-write");
-        yield* registry.reconcilePlatform([]);
-        yield* registry.registerPlatform(registration);
+        expect(yield* registrySpanNames(registry.reconcilePlatform([]))).toEqual([]);
+
+        yield* registry.reconcilePlatform([registration]);
         expect(yield* permissions.get(entry)).toBe("off");
       }).pipe(
         Effect.provide(harness.layer),
-        Effect.provideService(GitHubRoutingPermissions, permissions),
+        Effect.provideService(PullRequestRoutingPermissions, permissions),
         Effect.scoped,
       );
     }),
@@ -2129,6 +2263,38 @@ describe("EnvironmentRegistry routes", () => {
 
         expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
           repaired,
+          RELAY_TARGET,
+        ]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("re-pairing at another loopback address prefers the new route", () =>
+    Effect.gen(function* () {
+      const loopback = (connectionId: string, host: string) =>
+        [
+          new BearerConnectionTarget({ ...LAN_TARGET, connectionId }),
+          new BearerConnectionProfile({
+            ...LAN_PROFILE,
+            connectionId,
+            httpBaseUrl: `http://${host}:3773/`,
+            wsBaseUrl: `ws://${host}:3773/`,
+          }),
+        ] as const;
+      const [savedTarget, savedProfile] = loopback("bearer:ip", "127.0.0.1");
+      const [pastedTarget, pastedProfile] = loopback("bearer:localhost", "localhost");
+      const harness = yield* makeHarness(
+        [savedTarget, RELAY_TARGET],
+        [savedProfile],
+        [[savedTarget.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.register(lanRegistration(pastedTarget, pastedProfile));
+
+        expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
+          pastedTarget,
+          savedTarget,
           RELAY_TARGET,
         ]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
@@ -2233,33 +2399,38 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
-  it.effect("revokes GitHub routing trust when a route is added but keeps it on reorder", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness([RELAY_TARGET]);
-      let stored: ReadonlyArray<StoredGitHubRoutingPermission> = [];
-      const permissions = yield* makeGitHubRoutingPermissions({
-        read: Effect.sync(() => stored),
-        write: (next) => Effect.sync(() => void (stored = next)),
-      });
-      yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        const current = () =>
-          SubscriptionRef.get(registry.entries).pipe(
-            Effect.map((entries) => entries.get(RELAY_TARGET.environmentId)!),
-          );
-        yield* permissions.set(yield* current(), "read");
-        yield* registry.register(lanRegistration());
-        expect(yield* permissions.get(yield* current())).toBe("off");
+  it.effect(
+    "revokes pull request routing trust when a route is added but keeps it on reorder",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness([RELAY_TARGET]);
+        let stored: ReadonlyArray<StoredPullRequestRoutingPermission> = [];
+        const permissions = yield* makePullRequestRoutingPermissions({
+          read: Effect.sync(() => stored),
+          write: (next) => Effect.sync(() => void (stored = next)),
+        });
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          const current = () =>
+            SubscriptionRef.get(registry.entries).pipe(
+              Effect.map((entries) => entries.get(RELAY_TARGET.environmentId)!),
+            );
+          yield* permissions.set(yield* current(), "read");
+          yield* registry.register(lanRegistration());
+          expect(yield* permissions.get(yield* current())).toBe("off");
 
-        yield* permissions.set(yield* current(), "read");
-        yield* registry.reorderRoutes(LAN_TARGET.environmentId, ["relay", LAN_TARGET.connectionId]);
-        expect(yield* permissions.get(yield* current())).toBe("read");
-      }).pipe(
-        Effect.provide(harness.layer),
-        Effect.provideService(GitHubRoutingPermissions, permissions),
-        Effect.scoped,
-      );
-    }),
+          yield* permissions.set(yield* current(), "read");
+          yield* registry.reorderRoutes(LAN_TARGET.environmentId, [
+            "relay",
+            LAN_TARGET.connectionId,
+          ]);
+          expect(yield* permissions.get(yield* current())).toBe("read");
+        }).pipe(
+          Effect.provide(harness.layer),
+          Effect.provideService(PullRequestRoutingPermissions, permissions),
+          Effect.scoped,
+        );
+      }),
   );
 
   it.effect("loads saved routes grouped by environment, in saved order", () =>
