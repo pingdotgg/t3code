@@ -927,7 +927,11 @@ const makeForwardedAgentHarness = Effect.fn("makeForwardedAgentHarness")(functio
   yield* Effect.addFinalizer(() =>
     readServer.pipe(
       // The manager normally stops it first; this only covers a failed test.
-      Effect.flatMap((server) => Effect.try(() => process.kill(server.pid, "SIGKILL"))),
+      Effect.map((server) => {
+        try {
+          process.kill(server.pid, "SIGKILL");
+        } catch {}
+      }),
       Effect.ignore,
     ),
   );
