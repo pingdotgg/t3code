@@ -4,13 +4,20 @@ import * as Effect from "effect/Effect";
 import { type ProjectCloneTracker } from "./ProjectCloneTracker.ts";
 import { type ProjectService } from "./ProjectService.ts";
 
-type ProjectMutations = Pick<ProjectService["Service"], "create" | "delete" | "update">;
+type ProjectMutations = Pick<
+  ProjectService["Service"],
+  "create" | "delete" | "update" | "register" | "grouping"
+>;
 
 export const projectMutationOperation = Effect.fn("projectMutationOperation")(function* (
   projects: ProjectMutations,
   mutation: ProjectMutation,
 ) {
   switch (mutation.type) {
+    case "project.register":
+      return yield* projects.register(mutation);
+    case "project.grouping":
+      return yield* projects.grouping(mutation);
     case "project.create":
       return yield* projects.create({
         commandId: mutation.commandId,

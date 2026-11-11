@@ -507,70 +507,40 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   },
 );
 
-it.effect(
-  "assigns grouping through add and can inspect, change, and clear it while preserving threads",
-  () =>
-    Effect.gen(function* () {
-      const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
-      const threadId = ThreadId.make("grouping-preserved-thread");
-      yield* seedNativeThreads(baseDir, [{ id: threadId, projectId: project.id, archived: false }]);
-      const before = yield* readNativeThreadState(baseDir, threadId);
-      const identity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
-      for (let attempt = 0; attempt < 2; attempt++) {
-        yield* runCli([
-          "project",
-          "add",
-          workspaceRoot,
-          "--title",
-          "Ignored for existing",
-          "--grouping-identity",
-          identity,
-          "--base-dir",
-          baseDir,
-        ]);
-      }
-      const assigned = (yield* readProjects(baseDir)).projects;
-      assert.equal(assigned.length, 1);
-      assert.equal(assigned[0]?.id, project.id);
-      assert.equal(assigned[0]?.title, project.title);
-      assert.equal(assigned[0]?.groupingIdentity, identity);
-      const groupingOutput = yield* runCli([
-        "project",
-        "grouping",
-        project.id,
-        "--base-dir",
-        baseDir,
-      ]).pipe(Effect.andThen(TestConsole.logLines), Effect.provide(Layer.fresh(TestConsole.layer)));
-      assert.deepEqual(
-        groupingOutput.map((line) => JSON.parse(String(line))),
-        [{ projectId: project.id, groupingIdentity: identity }],
-      );
-      const listOutput = yield* runCli(["project", "list", "--base-dir", baseDir]).pipe(
-        Effect.andThen(TestConsole.logLines),
-        Effect.provide(Layer.fresh(TestConsole.layer)),
-      );
-      assert.lengthOf(listOutput, 1);
-      const listed = JSON.parse(String(listOutput[0]));
-      assert.lengthOf(listed, 1);
-      assert.nestedPropertyVal(listed, "[0].id", project.id);
-      assert.nestedPropertyVal(listed, "[0].groupingIdentity", identity);
-      yield* runCli([
-        "project",
-        "grouping",
-        workspaceRoot,
-        "--identity",
-        "e703c118-3547-41b1-88c5-9774cf40ae86",
-        "--base-dir",
-        baseDir,
-      ]);
-      assert.equal(
-        (yield* readProjects(baseDir)).projects[0]?.groupingIdentity,
-        "e703c118-3547-41b1-88c5-9774cf40ae86",
-      );
-      yield* runCli(["project", "grouping", workspaceRoot, "--clear", "--base-dir", baseDir]);
-      assert.isNull((yield* readProjects(baseDir)).projects[0]?.groupingIdentity);
-      assert.deepEqual(yield* readNativeThreadState(baseDir, threadId), before);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+it.effect("formats grouping and project list output", () =>
+  Effect.gen(function* () {
+    const { baseDir, project } = yield* makeProjectLookupFixture();
+    const identity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
+    yield* runCli([
+      "project",
+      "grouping",
+      project.id,
+      "--identity",
+      identity,
+      "--base-dir",
+      baseDir,
+    ]);
+    const groupingOutput = yield* runCli([
+      "project",
+      "grouping",
+      project.id,
+      "--base-dir",
+      baseDir,
+    ]).pipe(Effect.andThen(TestConsole.logLines), Effect.provide(Layer.fresh(TestConsole.layer)));
+    assert.deepEqual(
+      groupingOutput.map((line) => JSON.parse(String(line))),
+      [{ projectId: project.id, groupingIdentity: identity }],
+    );
+    const listOutput = yield* runCli(["project", "list", "--base-dir", baseDir]).pipe(
+      Effect.andThen(TestConsole.logLines),
+      Effect.provide(Layer.fresh(TestConsole.layer)),
+    );
+    assert.lengthOf(listOutput, 1);
+    const listed = JSON.parse(String(listOutput[0]));
+    assert.lengthOf(listed, 1);
+    assert.nestedPropertyVal(listed, "[0].id", project.id);
+    assert.nestedPropertyVal(listed, "[0].groupingIdentity", identity);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("rejects malformed grouping flags before opening or changing project state", () =>

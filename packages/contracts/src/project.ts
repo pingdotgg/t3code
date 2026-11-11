@@ -214,6 +214,21 @@ export type ProjectUpdatePayload = typeof ProjectUpdatePayload.Type;
 
 export const ProjectMutation = Schema.Union([
   Schema.Struct({
+    type: Schema.Literal("project.register"),
+    commandId: CommandId,
+    projectId: ProjectId,
+    workspaceRoot: Schema.String,
+    title: Schema.optional(Schema.String),
+    groupingIdentity: Schema.optional(ProjectGroupingIdentity),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("project.grouping"),
+    commandId: CommandId,
+    identifier: Schema.String,
+    cwd: Schema.String,
+    groupingIdentity: Schema.optional(Schema.NullOr(ProjectGroupingIdentity)),
+  }),
+  Schema.Struct({
     type: Schema.Literal("project.create"),
     commandId: CommandId,
     projectId: ProjectId,

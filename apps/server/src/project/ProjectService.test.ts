@@ -963,7 +963,7 @@ it.layer(
         const service = yield* ProjectService.ProjectService;
         const projectId = ProjectId.make("explicit-grouping");
         const identity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
-        const created = yield* service.create({
+        const created = yield* service.register({
           commandId: CommandId.make("group-create"),
           projectId,
           title: "sdk",
@@ -971,6 +971,14 @@ it.layer(
           groupingIdentity: identity,
         });
         assert.equal(created.groupingIdentity, identity);
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_threads
+            (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+          VALUES ('grouping-thread', ${projectId}, 'Existing thread', 'codex', 'full-access', 'default', '2026-10-27', '2026-10-27', '{}')
+        `;
+        const threadsBefore = yield* sql`SELECT * FROM orchestration_v2_projection_threads`;
+
         yield* service.update({
           commandId: CommandId.make("group-rename"),
           projectId,
@@ -981,15 +989,49 @@ it.layer(
           identity,
         );
         assert.equal((yield* service.listShells())[0]?.groupingIdentity, identity);
-        const changed = yield* service.update({
+        yield* service.grouping({
+          commandId: CommandId.make("group-before-assignment"),
+          identifier: created.id,
+          cwd: "/",
+          groupingIdentity: null,
+        });
+        for (const suffix of ["assign", "repeat"]) {
+          const registered = yield* service.register({
+            commandId: CommandId.make(`group-${suffix}`),
+            projectId: ProjectId.make(`unused-${suffix}`),
+            title: "Ignored for existing",
+            workspaceRoot: "/groups/sdk",
+            groupingIdentity: identity,
+          });
+          assert.equal(registered.id, created.id);
+          assert.equal(registered.title, "Renamed");
+          assert.equal(registered.createdAt, created.createdAt);
+        }
+        const duplicate = yield* service
+          .register({
+            commandId: CommandId.make("group-duplicate"),
+            projectId: ProjectId.make("unused-duplicate"),
+            workspaceRoot: "/groups/sdk",
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(duplicate, ProjectService.ProjectConflictError);
+        const inspected = yield* service.grouping({
+          commandId: CommandId.make("group-inspect"),
+          identifier: created.id,
+          cwd: "/",
+        });
+        assert.equal(inspected.groupingIdentity, identity);
+        const changed = yield* service.grouping({
           commandId: CommandId.make("group-change"),
-          projectId,
+          identifier: "groups/sdk",
+          cwd: "/",
           groupingIdentity: "e703c118-3547-41b1-88c5-9774cf40ae86",
         });
         assert.equal(changed.groupingIdentity, "e703c118-3547-41b1-88c5-9774cf40ae86");
-        const cleared = yield* service.update({
+        const cleared = yield* service.grouping({
           commandId: CommandId.make("group-clear"),
-          projectId,
+          identifier: created.id,
+          cwd: "/",
           groupingIdentity: null,
         });
         assert.isNull(cleared.groupingIdentity);
@@ -998,6 +1040,10 @@ it.layer(
         assert.equal(cleared.createdAt, created.createdAt);
         assert.isNull((yield* service.snapshot).projects[0]?.groupingIdentity);
         assert.isNull(Option.getOrThrow(yield* service.getById(projectId)).repositoryIdentity);
+        assert.deepEqual(
+          yield* sql`SELECT * FROM orchestration_v2_projection_threads`,
+          threadsBefore,
+        );
       }),
   );
 });
