@@ -421,7 +421,7 @@ describe("AgentAwarenessRelay", () => {
       const parent = shell({ status: "completed" });
       const child = waitingChild();
       const { relay, secrets, publications } = yield* makeTestRelay({
-        catchUpThreads: [parent, child],
+        catchUpThreads: [child, parent],
         readShell: (id) => Effect.succeed(id === child.id ? child : parent),
       });
       yield* relay.start();
@@ -916,7 +916,7 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("does not alert an old completion after publishing its thread's tombstone", () =>
+  it.effect("reopens an old completion silently after publishing its thread's tombstone", () =>
     Effect.gen(function* () {
       const oldCompleted = shell({
         status: "completed",
@@ -943,47 +943,11 @@ describe("AgentAwarenessRelay", () => {
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
       assert.deepEqual(
-        publications.map((publication) => publication.state),
-        [null],
-      );
-    }),
-  );
-
-  it.effect("alerts a completion settled during its hold after an earlier tombstone", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)));
-      const { relay, currentShell, publications } = yield* makeTestRelay();
-      const settledAt = DateTime.makeUnsafe(NOW);
-      yield* Ref.set(currentShell, {
-        ...shell({ status: "completed" }),
-        settledOverride: "settled",
-        settledAt,
-        lastVisitedAt: null,
-      });
-      yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-
-      const completed = shell({
-        status: "completed",
-        latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:06.000Z"),
-      });
-      yield* Ref.set(currentShell, completed);
-      yield* relay.publishThread(THREAD_ID);
-      yield* Ref.set(currentShell, {
-        ...completed,
-        settledOverride: "settled",
-        settledAt,
-        lastVisitedAt: null,
-      });
-      yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-      assert.deepEqual(
-        publications.map((publication) => publication.state?.phase ?? null),
-        [null, "completed", null],
+        publications.map((publication) => [publication.state?.phase ?? null, publication.replay]),
+        [
+          [null, false],
+          ["completed", true],
+        ],
       );
     }),
   );

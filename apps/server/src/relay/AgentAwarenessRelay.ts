@@ -618,7 +618,6 @@ export const make = Effect.gen(function* () {
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
-    const previous = publishedStateByThread.get(threadId);
     const previousCompletion = publishedCompletions.get(threadId);
     const sameCompletion =
       snapshot.state?.completedAt !== undefined &&
@@ -878,7 +877,8 @@ export const make = Effect.gen(function* () {
       environmentId,
       now: nowMs,
       projects: projectSnapshot.projects,
-      threads: [...activitySnapshot.threads, ...liveChildren.filter((thread) => thread !== null)],
+      // Children first, so a parent's catch-up publish already sees its waiting child.
+      threads: [...liveChildren.filter((thread) => thread !== null), ...activitySnapshot.threads],
     });
     if (activeThreadIds.length === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");

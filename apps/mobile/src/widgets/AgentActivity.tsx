@@ -309,7 +309,7 @@ function AgentActivity(
     isRead(row) ? (
       <Text
         date={new Date(row.completedAt ?? row.updatedAt)}
-        dateStyle="relativeMinutes"
+        dateStyle="relative"
         modifiers={[
           font({ size: 11 }),
           foregroundStyle(secondaryForeground),
