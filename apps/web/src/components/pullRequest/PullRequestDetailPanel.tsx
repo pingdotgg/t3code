@@ -115,6 +115,7 @@ import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { pullRequestMarkdownExtensions } from "./pullRequestMarkdown.logic";
 import { PullRequestComposer } from "./PullRequestComposer";
+import type { PullRequestQuoteRequest } from "./PullRequestCommentForm";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
@@ -434,6 +435,7 @@ export function PullRequestDetailPanel({
   useEnvironmentQuery(pullRequestEnvironment.changeBreakdown({ environmentId, input: reference }));
   const [threadPickerOpen, setThreadPickerOpen] = useState(false);
   const [openReviewRequest, setOpenReviewRequest] = useState(0);
+  const [quoteRequest, setQuoteRequest] = useState<PullRequestQuoteRequest>();
   const {
     canWriteSourceControl,
     detailQuery,
@@ -2103,6 +2105,9 @@ export function PullRequestDetailPanel({
                   fixCheckLabel={handoffLabels.fixCheck}
                   {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                   {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
+                  {...(detail.capabilities.comment && detail.viewerPermissions.comment
+                    ? { onQuoteReply: (text: string) => setQuoteRequest({ text }) }
+                    : {})}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}
                 />
@@ -2229,6 +2234,7 @@ export function PullRequestDetailPanel({
             onCommented={refreshDetail}
             onReviewSubmitted={refreshDetail}
             openReviewRequest={openReviewRequest}
+            quoteRequest={quoteRequest}
           />
         </div>
       ) : null}

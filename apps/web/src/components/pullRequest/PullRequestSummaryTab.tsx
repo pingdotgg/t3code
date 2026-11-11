@@ -20,6 +20,7 @@ import {
   HammerIcon,
   ListFilterIcon,
   MessageSquarePlusIcon,
+  ReplyIcon,
   TagIcon,
   UsersIcon,
 } from "lucide-react";
@@ -73,6 +74,7 @@ import {
   pullRequestConversationItemComments,
   pullRequestConversationItems,
   pullRequestFindingKey,
+  pullRequestQuoteReply,
   pullRequestReviewOutcome,
   visibleBody,
   type PullRequestChatSubject,
@@ -99,6 +101,7 @@ import {
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { canReactPullRequestComment } from "@t3tools/client-runtime/pull-request-reactions";
 import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton";
+import { PullRequestThreadReplyForm } from "./PullRequestReviewAnnotation";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 
@@ -290,6 +293,7 @@ function CollapsedComment({
   replyCount = 0,
   replies = null,
   moreReplies = null,
+  replyForm = null,
   onAddToChat,
 }: {
   comment: PullRequestComment;
@@ -303,6 +307,7 @@ function CollapsedComment({
   replyCount?: number;
   replies?: ReactNode;
   moreReplies?: ReactNode;
+  replyForm?: ReactNode;
   onAddToChat?: (() => void) | undefined;
 }) {
   const gt = useGT();
@@ -353,6 +358,7 @@ function CollapsedComment({
                 <CommentBody className="mt-2" comment={comment} editing={editing} />
               )}
               {replies ? <div className="mt-3">{replies}</div> : null}
+              {replyForm}
             </div>
           ) : null}
         </CollapsiblePanel>
@@ -481,6 +487,7 @@ export function PullRequestSummaryTab({
   fixCheckLabel: requestedFixCheckLabel,
   onFixFinding,
   onAddToChat,
+  onQuoteReply,
   onRefresh,
   onRefreshChecks = onRefresh,
 }: {
@@ -501,6 +508,8 @@ export function PullRequestSummaryTab({
   onFixFinding?: (finding: PullRequestFinding) => void;
   /** Absent where there is no composer beside the panel to add a remark to. */
   onAddToChat?: (subject: PullRequestChatSubject) => void;
+  /** Absent when the viewer cannot comment; opens the composer with the comment quoted. */
+  onQuoteReply?: (quote: string) => void;
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
@@ -701,6 +710,37 @@ export function PullRequestSummaryTab({
   };
 
   const completionScope = pullRequestCompletionScope(detail, environmentId, reference);
+  const replyToThread = useAtomCommand(pullRequestEnvironment.replyToThread, {
+    reportFailure: false,
+  });
+  const [threadReplyPending, setThreadReplyPending] = useState(false);
+  const canReplyToThreads = detail.capabilities.review.reply && detail.viewerPermissions.comment;
+  const sendThreadReply = async (threadId: string, body: string) => {
+    if (threadReplyPending) return false;
+    setThreadReplyPending(true);
+    const result = await replyToThread({ environmentId, input: { ...reference, threadId, body } });
+    setThreadReplyPending(false);
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Reply could not be posted" });
+      return false;
+    }
+    onRefresh();
+    return true;
+  };
+  const threadReplyForm = (thread: PullRequestConversationThread, className?: string) =>
+    canReplyToThreads ? (
+      <PullRequestThreadReplyForm
+        // Host thread ids can collide across pull requests.
+        key={`${detail.url}:${thread.id}`}
+        environmentId={environmentId}
+        reference={reference}
+        threadId={thread.id}
+        completionScope={completionScope}
+        pending={threadReplyPending}
+        {...(className === undefined ? {} : { className })}
+        onReply={(body) => sendThreadReply(thread.id, body)}
+      />
+    ) : null;
   const commentEditing: CommentEditing = {
     cwd: detail.workspaceRoot,
     environmentId,
@@ -770,6 +810,8 @@ export function PullRequestSummaryTab({
           : { kind: "thread", thread };
     // A reply goes with its conversation, from the card that heads it.
     const chat = reply ? null : chatSubject(comment, thread);
+    // Review threads take real replies; anything else can only be answered by quoting it.
+    const canQuote = onQuoteReply && !reply && thread === undefined && body !== null;
     return (
       <article
         key={`${detail.url}:${comment.id}`}
@@ -805,6 +847,31 @@ export function PullRequestSummaryTab({
           {resolveButtonFor(thread)}
           {onAddToChat && chat !== null ? (
             <AddToChatButton onClick={() => onAddToChat(chat)} />
+          ) : null}
+          {onQuoteReply && canQuote ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              className="shrink-0"
+              // Keeps the reader's text selection alive through the click.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={(event) => {
+                const card = event.currentTarget.closest("article");
+                const selection = window.getSelection();
+                const selected =
+                  card && selection && !selection.isCollapsed && selection.rangeCount > 0
+                    ? card.contains(selection.getRangeAt(0).commonAncestorContainer)
+                      ? selection.toString()
+                      : undefined
+                    : undefined;
+                onQuoteReply(pullRequestQuoteReply(comment, selected));
+              }}
+            >
+              <span className="inline-flex items-baseline gap-1">
+                <ReplyIcon className="size-3 self-center" />
+                <span>Quote reply</span>
+              </span>
+            </Button>
           ) : null}
           {reactionBarFor(comment)}
         </div>
@@ -849,6 +916,7 @@ export function PullRequestSummaryTab({
           replyCount={item.kind === "thread" ? item.replies.length + item.moreReplies : 0}
           replies={replies}
           moreReplies={moreReplies}
+          replyForm={thread ? threadReplyForm(thread) : null}
           onAddToChat={onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined}
           reactionBar={reactionBarFor(comment)}
           resolveButton={resolveButtonFor(thread)}
@@ -861,6 +929,7 @@ export function PullRequestSummaryTab({
         {renderCommentCard(comment, thread)}
         {replies}
         {moreReplies}
+        {thread ? threadReplyForm(thread, "mt-0") : null}
       </div>
     );
   };
