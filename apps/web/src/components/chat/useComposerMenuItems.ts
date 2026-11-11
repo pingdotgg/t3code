@@ -21,7 +21,7 @@ import {
 } from "@t3tools/shared/composerPullRequestMatches";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
-import type { ComposerTrigger } from "../../composer-logic";
+import { literalSpacedPathMatches, type ComposerTrigger } from "../../composer-logic";
 import type { DraftId } from "../../composerDraftStore";
 import { basenameOfPath } from "../../pierre-icons";
 import {
@@ -196,7 +196,7 @@ export function useComposerMenuItems({
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return [
+      const pathItems = [
         ...matchComposerThreadItems({
           shells: environmentThreadShells,
           environmentId,
@@ -228,6 +228,7 @@ export function useComposerMenuItems({
           description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
         })),
       ];
+      return literalSpacedPathMatches(pathItems, composerTrigger.query);
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [

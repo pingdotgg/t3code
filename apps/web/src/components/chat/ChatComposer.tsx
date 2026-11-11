@@ -970,7 +970,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resolveTrigger: resolveComposerTrigger,
     dismissTrigger: dismissComposerTrigger,
     resetTrigger: resetComposerTrigger,
-    clearPathTriggerForSelection: clearComposerPathTriggerForSelection,
+    clearPathTrigger: clearComposerPathTrigger,
   } = useComposerTriggerState(prompt, !isLiteralPendingAnswer);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const composerSuggestionId = useId();
@@ -1118,6 +1118,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelMentions: { instanceEntries: providerInstanceEntries, modelOptionsByInstance },
   });
 
+  // A search continued past a space ends once nothing matches it literally, so Enter sends the prose.
+  if (
+    composerTrigger?.kind === "path" &&
+    /\s/u.test(composerTrigger.query) &&
+    !isComposerMenuLoading &&
+    composerMenuItems.length === 0
+  ) {
+    clearComposerPathTrigger();
+  }
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
     ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
@@ -1688,9 +1697,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
-  const clearComposerPathTriggerForSelectionStable = useStableCallback(
-    clearComposerPathTriggerForSelection,
-  );
+  const clearComposerPathTriggerStable = useStableCallback(clearComposerPathTrigger);
 
   const applyPromptReplacement = (
     rangeStart: number,
@@ -3484,7 +3491,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     skills={selectedProviderSkills}
                     className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
                     onChange={onPromptChangeStable}
-                    onVisibleSelectionChange={clearComposerPathTriggerForSelectionStable}
+                    onVisibleSelectionChange={clearComposerPathTriggerStable}
                     onCommandKeyDown={onComposerCommandKeyStable}
                     onPageScrollKeyDown={onPageScrollKeyDown}
                     onPageScrollKeyUp={onPageScrollKeyUp}

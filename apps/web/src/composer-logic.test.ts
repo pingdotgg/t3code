@@ -22,6 +22,7 @@ import {
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
+  literalSpacedPathMatches,
   replaceTextRange,
 } from "./composer-logic";
 import { slashCommandItemsForPromptPosition } from "./components/chat/composerSlashCommandSearch";
@@ -80,6 +81,24 @@ describe("isPathSuggestionCurrent", () => {
         current.cwd,
       ),
     ).toBe(false);
+  });
+});
+
+describe("literalSpacedPathMatches", () => {
+  const items = [
+    { label: "Release Notes.md", path: "docs/Release Notes.md" },
+    { label: "AGENTS.md", path: "AGENTS.md" },
+    { label: "Fix login flow" },
+  ];
+
+  it.each([
+    ["AGENTS", ["Release Notes.md", "AGENTS.md", "Fix login flow"]],
+    ["release no", ["Release Notes.md"]],
+    ["login f", ["Fix login flow"]],
+    ["AGENTS.md ", []],
+    ["AGENTS.md before you push", []],
+  ])("keeps the literal matches for %j", (query, labels) => {
+    expect(literalSpacedPathMatches(items, query).map((item) => item.label)).toEqual(labels);
   });
 });
 

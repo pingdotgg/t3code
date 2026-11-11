@@ -32,14 +32,14 @@ export function useComposerTriggerState(initialText: string, initialEnabled = tr
     return candidate;
   };
 
-  const clearPathTriggerForSelection = () => {
+  const clearPathTrigger = () => {
     previousSearchRef.current = { text: "", trigger: null, queryEnd: 0 };
     setActiveTrigger((current) => (current?.kind === "path" ? null : current));
   };
 
   const resolveTrigger = (candidate: ComposerTrigger | null, hasSelection = false) => {
     if (hasSelection && candidate?.kind === "path") {
-      clearPathTriggerForSelection();
+      clearPathTrigger();
       return null;
     }
     const dismissed = dismissedTriggerRef.current;
@@ -89,6 +89,6 @@ export function useComposerTriggerState(initialText: string, initialEnabled = tr
     resolveTrigger,
     dismissTrigger,
     resetTrigger,
-    clearPathTriggerForSelection,
+    clearPathTrigger,
   };
 }
