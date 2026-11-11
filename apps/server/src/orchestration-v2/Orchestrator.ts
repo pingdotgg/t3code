@@ -1893,17 +1893,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return false;
     const source = notification.source;
     const task = projection.subagents.find((candidate) => source.taskIds.includes(candidate.id));
+    const childThreadId = task?.childThreadId ?? null;
     if (
       task === undefined ||
-      task.childThreadId === null ||
+      childThreadId === null ||
       ["completed", "failed", "cancelled", "interrupted"].includes(task.status)
     )
       return true;
     const child = yield* projectionStore
-      .getThreadRecords(task.childThreadId, ["runtimeRequests"])
+      .getThreadRecords(childThreadId, ["runtimeRequests"])
       .pipe(
         Effect.mapError(
-          (cause) => new OrchestratorProjectionError({ threadId: task.childThreadId!, cause }),
+          (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),
         ),
       );
     return !child.runtimeRequests.some(
