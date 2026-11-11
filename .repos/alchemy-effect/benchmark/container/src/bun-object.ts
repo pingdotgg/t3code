@@ -1,15 +1,14 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import * as Schedule from "effect/Schedule";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Schedule from "effect/Schedule";
 import { BunContainer } from "./bun-container.ts";
 
 /**
  * Durable Object backing one bun-baseline container instance. `boot()` blocks
  * until the `Bun.serve` HTTP server answers on its TCP port. NOTE: the
- * authoritative cold-start clock runs in the Worker AROUND the whole DO call —
- * the container layer eagerly starts the container during DO construction, so
- * a clock started here would miss part of the start.
+ * authoritative cold-start clock runs in the Worker AROUND the whole DO call,
+ * so it also covers Durable Object construction.
  */
 export class BunObject extends Cloudflare.DurableObject<BunObject>()(
   "BenchBunObject",
@@ -17,16 +16,20 @@ export class BunObject extends Cloudflare.DurableObject<BunObject>()(
     const container = yield* BunContainer;
 
     return Effect.gen(function* () {
-      const { fetch } = yield* container.getTcpPort(8080);
+      const port = yield* container.getTcpPort(8080);
 
       return {
         boot: () =>
           Effect.gen(function* () {
             const start = yield* Effect.sync(() => Date.now());
-            yield* fetch(HttpClientRequest.get("http://container/")).pipe(
+            yield* container.start({ enableInternet: true });
+            yield* port.fetch(HttpClientRequest.get("http://container/")).pipe(
               Effect.flatMap((r) => r.text),
               Effect.retry({
-                schedule: Schedule.min([Schedule.exponential("1 second"), Schedule.spaced("5 seconds")]),
+                schedule: Schedule.min([
+                  Schedule.exponential("1 second"),
+                  Schedule.spaced("5 seconds"),
+                ]),
                 times: 40,
               }),
             );
@@ -36,11 +39,5 @@ export class BunObject extends Cloudflare.DurableObject<BunObject>()(
         shutdown: () => container.destroy().pipe(Effect.ignore),
       };
     });
-  }).pipe(
-    Effect.provide(
-      Cloudflare.Containers.layer(BunContainer, {
-        enableInternet: true,
-      }),
-    ),
-  ),
+  }),
 ) {}

@@ -1,8 +1,8 @@
-import * as Alchemy from "alchemy";
-import * as Kubernetes from "alchemy/Kubernetes";
-import { connectCluster, readObject } from "alchemy/Kubernetes/internal/client";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Kubernetes from "@alchemy.run/kubernetes";
+import { connectCluster, readObject } from "@alchemy.run/kubernetes/Client";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -24,12 +24,7 @@ afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
 // The cluster the tutorial creates, reached the way `kubectl` would.
 const cluster = Kubernetes.KubeConfig({ context: "kind-alchemy" });
 
-const read = (object: {
-  apiVersion: string;
-  kind: string;
-  name: string;
-  namespace?: string;
-}) =>
+const read = (object: { apiVersion: string; kind: string; name: string; namespace?: string }) =>
   connectCluster(cluster).pipe(
     Effect.flatMap((transport) => readObject({ transport, object })),
     Effect.provide(Kubernetes.builtinAdapters()),
@@ -48,8 +43,7 @@ test(
       Effect.repeat({
         schedule: Schedule.spaced("2 seconds"),
         until: (job) =>
-          ((job as { status?: { succeeded?: number } } | undefined)?.status
-            ?.succeeded ?? 0) >= 1,
+          ((job as { status?: { succeeded?: number } } | undefined)?.status?.succeeded ?? 0) >= 1,
         times: 60,
       }),
     )) as { status?: { succeeded?: number } };
