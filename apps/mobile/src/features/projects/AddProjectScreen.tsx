@@ -3,6 +3,7 @@ import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspace
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { NavigationRow } from "../../components/ui/NavigationRow";
+import { SelectionRow } from "../../components/ui/SelectionRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { Button } from "../../components/ui/Button";
@@ -48,6 +49,12 @@ import {
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
+import {
+  COPYABLE_FILE_MAX_BYTES,
+  defaultCopiedFilePaths,
+  readProjectFilesToCopy,
+  writeProjectFilesAfterClone,
+} from "@t3tools/client-runtime/state/project-file-copy";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   AuthOrchestrationOperateScope,
@@ -57,6 +64,7 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   ProjectId,
+  type ProjectIgnoredFile,
   resolveEnvironmentMachineKind,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
@@ -75,6 +83,9 @@ import * as Cause from "effect/Cause";
 import * as Order from "effect/Order";
 import { AsyncResult } from "effect/reactivity";
 import { cn } from "../../lib/cn";
+import { formatBytes } from "../../lib/formatBytes";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { environmentProjectCloneListAtom, setProjectFilesCopying } from "../../state/projectClones";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
@@ -103,9 +114,11 @@ import {
 } from "./AddProjectScreen.logic";
 import {
   createNewTaskDraft,
+  retargetNewTaskDraft,
   setComposerDraftText,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
+import { isNewTaskDraftKey } from "../../state/new-task-draft-key";
 
 interface EnvironmentOption {
   readonly environmentId: EnvironmentId;
@@ -696,6 +709,8 @@ function useOpenNewTaskDraft() {
       draftId?: string;
     },
     originRoute: NavigationState<ParamListBase>["routes"][number] | undefined,
+    /** Restamp `draftId` to this project first; skipped with the navigation it belongs to. */
+    moveDraft = false,
   ) => {
     const activeRoute = getActiveRoute(navigation);
     // A warm link can change the task without replacing its native route key.
@@ -706,6 +721,7 @@ function useOpenNewTaskDraft() {
       activeRoute.params !== originRoute.params
     )
       return;
+    if (moveDraft && params.draftId) retargetNewTaskDraft(params.draftId, params);
     selectDetail({ name: "Thread", params: { draft: params } });
   };
 }
@@ -1357,12 +1373,89 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   );
 }
 
+/** Collapsed to its summary so a long list does not push the folder browser off screen. */
+function IgnoredFilesToCopy(props: {
+  readonly files: ReadonlyArray<ProjectIgnoredFile>;
+  readonly selected: ReadonlySet<string>;
+  readonly onSelect: (selected: ReadonlySet<string>) => void;
+  /** Shown in place of the count: loading, empty, or the listing error. */
+  readonly status: string | null;
+  readonly truncated: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const selectedBytes = props.files
+    .filter((file) => props.selected.has(file.path))
+    .reduce((total, file) => total + file.byteLength, 0);
+  return (
+    <>
+      <ListSection>
+        <ListRow
+          isFirst
+          title="Copy ignored files"
+          subtitle={
+            props.status ??
+            `${props.selected.size} of ${props.files.length} selected${
+              selectedBytes > 0 ? ` · ${formatBytes(selectedBytes)}` : ""
+            }`
+          }
+          icon={<SymbolView name="doc.on.doc" size={18} tintColorClassName="accent-icon-muted" />}
+          disabled={props.files.length === 0}
+          right={
+            props.files.length > 0 ? (
+              <SymbolView
+                name={expanded ? "chevron.up" : "chevron.down"}
+                size={13}
+                tintColorClassName="accent-chevron"
+              />
+            ) : null
+          }
+          onPress={() => setExpanded(!expanded)}
+        />
+        {expanded
+          ? props.files.map((file, index) => {
+              const tooLarge = file.byteLength > COPYABLE_FILE_MAX_BYTES;
+              return (
+                <SelectionRow
+                  key={file.path}
+                  role="checkbox"
+                  title={file.path}
+                  subtitle={tooLarge ? "Over 1 MB" : formatBytes(file.byteLength)}
+                  selected={props.selected.has(file.path)}
+                  disabled={tooLarge}
+                  isLast={index === props.files.length - 1}
+                  onPress={() => {
+                    const next = new Set(props.selected);
+                    if (!next.delete(file.path)) next.add(file.path);
+                    props.onSelect(next);
+                  }}
+                />
+              );
+            })
+          : null}
+      </ListSection>
+      {props.files.length > 0 ? (
+        <Text className="px-1 text-xs text-foreground-muted">
+          {props.truncated ? `Showing the first ${props.files.length} files. ` : ""}
+          Files are copied after the clone finishes. Folders git ignores whole, like node_modules,
+          are left out.
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
 export function AddProjectDestinationScreen(props: {
   readonly environmentId?: string | string[];
   readonly remoteUrl?: string | string[];
   readonly repositoryTitle?: string | string[];
   readonly repositoryName?: string | string[];
   readonly prompt?: string | string[];
+  /** A new-task draft to carry onto the clone, when a project is added to another machine. */
+  readonly draftId?: string | string[];
+  /** The project being added to another machine; its ignored files can come along. */
+  readonly sourceEnvironmentId?: string | string[];
+  readonly sourceCwd?: string | string[];
+  readonly sourceSubdirectory?: string | string[];
 }) {
   const openNewTaskDraft = useOpenNewTaskDraft();
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
@@ -1386,6 +1479,8 @@ export function AddProjectDestinationScreen(props: {
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
   const prompt = stringParam(props.prompt);
+  const draftIdParam = stringParam(props.draftId);
+  const movedDraftId = draftIdParam && isNewTaskDraftKey(draftIdParam) ? draftIdParam : null;
   const repositoryName = stringParam(props.repositoryName)?.trim() ?? "";
   const ghqDirectoryPath =
     remoteUrl && environment?.ghqCloneLayout
@@ -1400,6 +1495,32 @@ export function AddProjectDestinationScreen(props: {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const sourceEnvironmentId = stringParam(props.sourceEnvironmentId) as EnvironmentId | null;
+  const sourceCwd = stringParam(props.sourceCwd);
+  const serverConfigs = useServerConfigs();
+  const canListFiles =
+    sourceEnvironmentId !== null &&
+    sourceCwd !== null &&
+    serverConfigs.get(sourceEnvironmentId)?.environment.capabilities.ignoredFileListing === true;
+  const ignoredFiles = useEnvironmentQuery(
+    canListFiles
+      ? projectEnvironment.listIgnoredFiles({
+          environmentId: sourceEnvironmentId,
+          input: { cwd: sourceCwd },
+        })
+      : null,
+  );
+  const files = ignoredFiles.data?.files ?? [];
+  const [fileSelection, setFileSelection] = useState<ReadonlySet<string> | null>(null);
+  const selectedFiles = fileSelection ?? defaultCopiedFilePaths(files);
+  // Submitting before the list loads would silently skip the default .env copies.
+  const filesLoading = canListFiles && ignoredFiles.data === null && ignoredFiles.error === null;
+  let ignoredFilesStatus = ignoredFiles.error;
+  if (filesLoading) ignoredFilesStatus = "Finding ignored files…";
+  else if (ignoredFilesStatus === null && files.length === 0) {
+    ignoredFilesStatus = "No ignored files to copy.";
+  }
+
   const submitPath = async () => {
     if (
       !environment ||
@@ -1407,6 +1528,7 @@ export function AddProjectDestinationScreen(props: {
       !readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope) ||
       !remoteUrl ||
       isBrowseNavigating ||
+      filesLoading ||
       isSubmitting
     ) {
       return;
@@ -1425,6 +1547,15 @@ export function AddProjectDestinationScreen(props: {
     const originRoute = getActiveRoute(navigation);
     setIsSubmitting(true);
     const title = inferProjectTitleFromPath(resolved.path);
+    const reads =
+      canListFiles && selectedFiles.size > 0
+        ? await readProjectFilesToCopy(
+            appAtomRegistry,
+            projectEnvironment,
+            { environmentId: sourceEnvironmentId, cwd: sourceCwd },
+            files.filter((file) => selectedFiles.has(file.path)).map((file) => file.path),
+          )
+        : [];
     const startResult = await startProjectClone({
       environmentId: environment.environmentId,
       input: {
@@ -1440,6 +1571,25 @@ export function AddProjectDestinationScreen(props: {
     } else {
       void suggestAppAccessForRemote(checkAppAccess, environment.environmentId, remoteUrl);
       const { projectId } = startResult.value;
+      if (reads.length > 0) {
+        const cloneRef = { environmentId: environment.environmentId, projectId };
+        setProjectFilesCopying(cloneRef, true);
+        void writeProjectFilesAfterClone(appAtomRegistry, projectEnvironment, {
+          clonesAtom: environmentProjectCloneListAtom(environment.environmentId),
+          ...cloneRef,
+          cwd: startResult.value.cwd,
+          subdirectory: stringParam(props.sourceSubdirectory) ?? "",
+          reads,
+        }).then((failed) => {
+          setProjectFilesCopying(cloneRef, false);
+          if (failed?.length) {
+            Dialog.alert(
+              `Could not copy ${failed.length} ${failed.length === 1 ? "file" : "files"} to ${environment.label}`,
+              failed.join("\n"),
+            );
+          }
+        });
+      }
       // Wait for the create event; the client store otherwise falls back to the project picker and loses clone controls.
       const project = await waitForProject(
         { environmentId: environment.environmentId, projectId },
@@ -1450,20 +1600,25 @@ export function AddProjectDestinationScreen(props: {
           "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
         );
       } else {
+        let draftId: string | undefined;
+        if (movedDraftId) {
+          await waitForComposerDraftsLoaded();
+          draftId = movedDraftId;
+        } else if (prompt) {
+          draftId = await draftWithPrompt(environment.environmentId, projectId, prompt).catch(
+            () => undefined,
+          );
+        }
         openNewTaskDraft(
           {
             environmentId: environment.environmentId,
             projectId,
             title,
             cloning: "1",
-            ...(prompt
-              ? await draftWithPrompt(environment.environmentId, projectId, prompt).then(
-                  (draftId) => ({ draftId }),
-                  () => ({}),
-                )
-              : {}),
+            ...(draftId ? { draftId } : {}),
           },
           originRoute,
+          movedDraftId !== null,
         );
       }
     }
@@ -1486,7 +1641,9 @@ export function AddProjectDestinationScreen(props: {
           <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
           <PrimaryActionButton
             label="Clone project"
-            disabled={!canCloneProject || isBrowseNavigating || isSubmitting || !remoteUrl}
+            disabled={
+              !canCloneProject || isBrowseNavigating || filesLoading || isSubmitting || !remoteUrl
+            }
             onPress={submitPath}
             loading={isSubmitting}
           />
@@ -1494,6 +1651,15 @@ export function AddProjectDestinationScreen(props: {
             <Text className="text-sm text-foreground-muted">
               This connection cannot clone projects.
             </Text>
+          ) : null}
+          {canListFiles ? (
+            <IgnoredFilesToCopy
+              files={files}
+              selected={selectedFiles}
+              onSelect={setFileSelection}
+              status={ignoredFilesStatus}
+              truncated={ignoredFiles.data?.truncated === true}
+            />
           ) : null}
           <FolderBrowser
             environment={environment}

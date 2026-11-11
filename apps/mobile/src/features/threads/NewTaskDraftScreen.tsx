@@ -63,7 +63,7 @@ import {
   scheduleUnusedComposerAttachmentCleanup,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
-import { useProjectClone } from "../../state/projectClones";
+import { useProjectClone, useProjectFilesCopying } from "../../state/projectClones";
 import { projectEnvironment } from "../../state/projects";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -203,6 +203,11 @@ export function NewTaskDraftScreen(props: {
       : null,
   );
   const projectClone = projectCloneState === "pending" ? null : projectCloneState;
+  const filesCopying = useProjectFilesCopying(
+    selectedProject
+      ? { environmentId: selectedProject.environmentId, projectId: selectedProject.id }
+      : null,
+  );
   const awaitingKnownClone =
     projectCloneState === "pending" &&
     props.initialProjectRef?.cloning === true &&
@@ -210,7 +215,7 @@ export function NewTaskDraftScreen(props: {
     selectedProject.id === props.initialProjectRef.projectId &&
     selectedProject.environmentId === props.initialProjectRef.environmentId;
   const cloneBlocksStart =
-    awaitingKnownClone || (projectClone !== null && projectClone.phase !== "done");
+    awaitingKnownClone || (projectClone !== null && projectClone.phase !== "done") || filesCopying;
   const cancelProjectClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
     reportFailure: false,
   });
@@ -693,10 +698,14 @@ export function NewTaskDraftScreen(props: {
   // an empty loading surface here flashes between two already-cached threads.
   if (!selectedProject) return null;
 
+  const cloneBlockReason =
+    filesCopying && (projectClone === null || projectClone.phase === "done")
+      ? "Wait for the ignored files to finish copying."
+      : "Wait for the project clone to finish.";
   const setupBlockReason =
     isIncomingShareReady && !isImportingShare
       ? cloneBlocksStart
-        ? "Wait for the project clone to finish."
+        ? cloneBlockReason
         : flow.submitting
           ? "Starting the thread…"
           : flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown)

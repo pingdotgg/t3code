@@ -150,6 +150,10 @@ vi.mock("../../state/sourceControl", () => ({
     },
   },
 }));
+vi.mock("../../state/projectClones", () => ({
+  environmentProjectCloneListAtom: () => ({}),
+  setProjectFilesCopying: () => {},
+}));
 vi.mock("../../state/projects", () => ({
   projectEnvironment: {
     createNew: () => state.createNewResult,
