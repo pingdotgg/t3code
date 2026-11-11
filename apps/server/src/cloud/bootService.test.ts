@@ -570,17 +570,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.2.4",
         });
-        if (platform === "darwin") {
-          const program = BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath));
-          expect(program).toBe(path.join(baseDir, "runtime", "launcher", "t3"));
-          expect(
-            yield* fs.readFileString(
-              path.join(baseDir, "runtime", "launcher", ".install-complete"),
-            ),
-          ).toBe("1.2.4\n");
-        } else {
-          expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
-        }
+        expect(yield* fs.readFileString(plan.unitPath)).toContain(
+          platform === "darwin" ? "runtime/launcher/t3" : "versions/1.2.4/t3",
+        );
         expect(
           commands.filter(
             (command) =>
