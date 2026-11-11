@@ -1165,6 +1165,12 @@ it.effect("a task named only by environment inherits the parent's model, within 
         runtimeMode: "auto-accept-edits",
         interactionMode: "default",
       });
+      // Inherited modes stay omitted, so the destination can step down to what its provider offers.
+      const stored = (yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents[0]
+        ?.remoteChild?.launch;
+      expect(stored).toBeDefined();
+      expect(stored).not.toHaveProperty("runtimeMode");
+      expect(stored).not.toHaveProperty("interactionMode");
 
       // Asking for more than the link allows is still refused there.
       const broader = yield* a.call("delegate_task", {
@@ -1474,7 +1480,6 @@ it.effect.each(["lowered parent", "revoked link"] as const)(
 );
 
 it.effect.each([
-  { cancel: false, restriction: "lowered parent" },
   { cancel: false, restriction: "replaced link" },
   { cancel: true, restriction: "revoked link" },
 ] as const)(
@@ -1502,14 +1507,7 @@ it.effect.each([
             if (cancel) {
               expect((yield* before.call("task_cancel", { taskId: task.id })).isError).toBe(false);
             }
-            if (restriction === "lowered parent") {
-              yield* before.orchestrator.dispatch({
-                type: "thread.runtime-mode.set",
-                commandId: CommandId.make("command:lower-after-acceptance"),
-                threadId: parentThreadId,
-                runtimeMode: "approval-required",
-              });
-            } else if (restriction === "revoked link") {
+            if (restriction === "revoked link") {
               const [session] = yield* b.linkedSessions;
               yield* b.auth.revokeSession(session!.sessionId);
             }

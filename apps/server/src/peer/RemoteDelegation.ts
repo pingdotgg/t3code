@@ -32,7 +32,6 @@ import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
   resolveInteractionMode,
   resolveRuntimeMode,
-  runtimeModeRank,
   taskPrompt,
 } from "../mcp/delegatedTaskModes.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -239,8 +238,9 @@ const make = Effect.gen(function* () {
         (instanceId === inherited.instanceId && model === inherited.model
           ? inherited.options
           : undefined);
-      // Explicit modes are checked against this thread. Inherited modes are
-      // resolved below against the link before storing the launch intent.
+      // Modes asked for are checked against this thread. Omitted ones are left
+      // to the other side, which inherits this thread's modes capped by the
+      // link's access, so a narrower link still takes the task.
       const runtimeMode =
         input.runtimeMode === undefined || input.runtimeMode === "inherit"
           ? undefined
@@ -274,13 +274,6 @@ const make = Effect.gen(function* () {
           message: "The destination is no longer linked here.",
         });
       }
-      // Keep the original inherited modes across recovery, even if the parent
-      // is later raised. Forwarding still checks the current parent's limits.
-      const linkRuntimeMode = link.access === "read-only" ? "approval-required" : link.access;
-      const inheritedRuntimeMode =
-        runtimeModeRank(linkRuntimeMode) < runtimeModeRank(parent.thread.runtimeMode)
-          ? linkRuntimeMode
-          : parent.thread.runtimeMode;
       const commandId = CommandId.make(
         `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
       );
@@ -291,8 +284,8 @@ const make = Effect.gen(function* () {
         projectId,
         title,
         modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
-        runtimeMode: runtimeMode ?? inheritedRuntimeMode,
-        interactionMode: interactionMode ?? parent.thread.interactionMode,
+        ...(runtimeMode === undefined ? {} : { runtimeMode }),
+        ...(interactionMode === undefined ? {} : { interactionMode }),
         delegatedFrom: {
           environmentId: hereId,
           threadId: parent.thread.id,
