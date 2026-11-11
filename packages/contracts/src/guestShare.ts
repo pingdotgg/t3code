@@ -65,7 +65,7 @@ export const GuestShareCreateResult = Schema.Struct({
 export type GuestShareCreateResult = typeof GuestShareCreateResult.Type;
 
 const GUEST_SHARE_CREATE_MESSAGES = {
-  disabled: "Guest links are off. Turn them on in Settings > Beta.",
+  disabled: "Guest links are off. Turn them on in Settings > Labs.",
   connect_unavailable: "Guest links need a running T3 Connect tunnel.",
   thread_unavailable: "This thread cannot be shared.",
   read_failed: "Failed to read the shared thread.",
@@ -129,6 +129,11 @@ export const guestSessionCookieName = (shareId: string) => `t3_guest_${shareId}`
 export const GUEST_RENDER_ROUTE = `${GUEST_ROUTE_PREFIX}/render`;
 /** One item of the shared thread, as an expanded row loads it: `?share=<share id>&item=<id>`. */
 export const GUEST_ITEM_ROUTE = `${GUEST_ROUTE_PREFIX}/item`;
+/**
+ * Older turns of the shared thread, as the owner's "Load earlier turns" pages them:
+ * `?share=<share id>&cursor=<history cursor>`.
+ */
+export const GUEST_HISTORY_ROUTE = `${GUEST_ROUTE_PREFIX}/history`;
 /** Server-sent output frames of one command in the shared thread: `?share=<share id>&item=<id>`. */
 export const GUEST_COMMAND_OUTPUT_ROUTE = `${GUEST_ROUTE_PREFIX}/command-output`;
 /**
@@ -136,3 +141,8 @@ export const GUEST_COMMAND_OUTPUT_ROUTE = `${GUEST_ROUTE_PREFIX}/command-output`
  * Images load inline; other files download.
  */
 export const GUEST_ATTACHMENT_ROUTE = `${GUEST_ROUTE_PREFIX}/attachment`;
+/**
+ * An image file on the host that an agent message in the shared thread embeds:
+ * `?share=<share id>&path=<absolute path>`.
+ */
+export const GUEST_MEDIA_ROUTE = `${GUEST_ROUTE_PREFIX}/media`;
