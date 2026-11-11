@@ -4392,7 +4392,10 @@ interface ActiveClaudeTurnContext {
   // Steer text by prompt uuid until a reply frame echoes the uuid. A steer the
   // CLI still holds in its queue (behind a foreground tool call) is dropped
   // when Stop closes the query, so the turn says which ones may not have arrived.
-  readonly unreadSteers: Map<string, string>;
+  readonly unreadSteers: Map<
+    string,
+    { readonly text: string; readonly liveQuery: ClaudeLiveQueryContext }
+  >;
   // Set as finalization starts: a steer admitted later would miss the
   // unread-steer snapshot, so it fails and the orchestrator follows up instead.
   steersClosed: boolean;
@@ -8116,7 +8119,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const unreadSteers = [...input.context.unreadSteers];
           input.context.unreadSteers.clear();
           if (input.status === "interrupted") {
-            for (const [uuid, text] of unreadSteers) {
+            for (const [uuid, { text, liveQuery }] of unreadSteers) {
+              // Only a CLI proven to echo prompt uuids can leave a steer unconfirmed.
+              if (
+                liveQuery.promptEchoMode !== "early" &&
+                liveQuery.promptEchoMode !== "result_only"
+              ) {
+                continue;
+              }
               const nativeItemId = `unread-steer:${uuid}`;
               const notice = `Claude did not confirm reading your steer before Stop. It may not have been delivered. Resend it if needed: "${text}"`;
               yield* emitProviderEvent({
@@ -11808,7 +11818,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
               });
             }
-            currentTurn.unreadSteers.set(steerUuid, turnInput.message.text);
+            currentTurn.unreadSteers.set(steerUuid, {
+              text: turnInput.message.text,
+              liveQuery: existing,
+            });
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);

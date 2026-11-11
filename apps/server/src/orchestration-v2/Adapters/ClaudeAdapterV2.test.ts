@@ -4872,15 +4872,30 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect.each([
     {
       readBy: "none",
+      echoes: true,
       title: "warns that a steer Claude never read before Stop was not delivered",
     },
-    { readBy: "assistant", title: "does not warn about a steer Claude read before Stop" },
-    { readBy: "stream", title: "does not warn about a steer a stream event echoed before Stop" },
+    {
+      readBy: "none",
+      echoes: false,
+      title: "does not warn about a steer on a CLI that never echoes prompt uuids",
+    },
+    {
+      readBy: "assistant",
+      echoes: true,
+      title: "does not warn about a steer Claude read before Stop",
+    },
+    {
+      readBy: "stream",
+      echoes: true,
+      title: "does not warn about a steer a stream event echoed before Stop",
+    },
     {
       readBy: "result",
+      echoes: true,
       title: "does not warn about a steer only a steering result echoed before Stop",
     },
-  ] as const)("$title", ({ readBy }) =>
+  ] as const)("$title", ({ readBy, echoes }) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({
         close: (sdkMessages) => Queue.shutdown(sdkMessages),
@@ -4906,6 +4921,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000015701",
           session_id: WAKE_NATIVE_SESSION,
           parent_tool_use_id: null,
+          ...(echoes ? { user_message_uuids: [harness.promptUuid(0)] } : {}),
           message: {
             id: "msg_unread_steer_bash",
             type: "message",
@@ -5010,7 +5026,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const undelivered = notices.find((message) =>
         /not (have )?(been )?delivered|never (reached|delivered)/i.test(message ?? ""),
       );
-      if (readBy !== "none") {
+      if (readBy !== "none" || !echoes) {
         assert.isUndefined(undelivered);
         return;
       }
