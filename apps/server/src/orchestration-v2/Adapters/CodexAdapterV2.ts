@@ -4845,7 +4845,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const started = unclaimedRootTurns.get(input.turnId);
           unclaimedRootTurns.delete(input.turnId);
           const compaction = pendingCompactions.get(input.threadId);
-          if (compaction !== undefined && input.compaction) {
+          // An itemless start that completes or fails with no goal to own it is the compact
+          // failing before its first item; an itemless interrupted start can be a resumed turn.
+          const itemlessCompaction =
+            started !== undefined &&
+            (input.status === "completed" || input.status === "failed") &&
+            !goalHolds.has(input.threadId) &&
+            goalsByNativeThread.get(input.threadId)?.status !== "active" &&
+            stoppedRootThreads.get(input.threadId) !== "goal";
+          if (compaction !== undefined && (input.compaction || itemlessCompaction)) {
             pendingCompactions.delete(input.threadId);
             manualCompactionTurns.add(input.turnId);
             yield* releaseGoalHold(input.threadId);
