@@ -127,6 +127,8 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
 }`;
 const UNATTACHED_FILL_VIEWPORT = { width: 1280, height: 800 } as const;
 const NAVIGATION_TIMEOUT_MS = 15_000;
+// Must stay under the broker's 1 s host response grace.
+const HOST_ANSWER_MARGIN_MS = 500;
 const VIEWER_NAVIGATION_OPTIONS = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
 const ACTION_TIMELINE_LIMIT = 50;
 
@@ -1936,6 +1938,15 @@ const make = Effect.gen(function* () {
     );
   };
 
+  // Work blocked by a dialog outlives its request; point the agent at the dialog, not at `busy`.
+  const requireNoOverdueDialog = (tab: ServerTab, agentSessionId: string) => {
+    if (tab.dialog && tab.control.overdue && tab.control.agentCanActNow(agentSessionId))
+      throw new BrowserControlInterrupted({
+        message: "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+        reason: "dialogPending",
+      });
+  };
+
   const requireTab = async (request: PreviewAutomationRequest) => {
     if (!request.agentSessionId)
       throw new BrowserControlInterrupted({
@@ -1984,7 +1995,7 @@ const make = Effect.gen(function* () {
 
   const runOperation = async (
     request: PreviewAutomationRequest,
-    deadlineMs: number,
+    signal: AbortSignal,
   ): Promise<unknown> => {
     const input = request.input;
     switch (request.operation) {
@@ -2109,7 +2120,7 @@ const make = Effect.gen(function* () {
             }
             return statusWithTitle(tab, request.agentSessionId);
           },
-          deadlineMs,
+          signal,
         );
       }
       case "recordingStop": {
@@ -2143,9 +2154,12 @@ const make = Effect.gen(function* () {
             message: "No recording is active for this thread.",
           });
         }
+        requireNoOverdueDialog(tab, request.agentSessionId ?? "");
         // A stop cannot act twice (a retry finds no recording);
         // dropping a late one would leave capture running.
-        return tab.control.agent(request.agentSessionId ?? "", () => stopRecording(tab));
+        return tab.control.agent(request.agentSessionId ?? "", () => stopRecording(tab), signal, {
+          runIfExpired: true,
+        });
       }
     }
     const tab = await requireTab(request);
@@ -2192,6 +2206,7 @@ const make = Effect.gen(function* () {
         return executeTabOperation(tab, request);
       });
     }
+    requireNoOverdueDialog(tab, agentSessionId);
     return tab.control.agent(
       agentSessionId,
       async () => {
@@ -2212,7 +2227,7 @@ const make = Effect.gen(function* () {
           if (generation !== tab.control.generation) ServerBrowserPage.invalidateRefs(tab.page);
         }
       },
-      deadlineMs,
+      signal,
     );
   };
 
@@ -2310,14 +2325,35 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
-    Effect.tryPromise({
-      try: () =>
-        runOperation(request, performance.now() + request.timeoutMs).finally(() =>
-          markUsed(request),
-        ),
+  const handleRequest = Effect.fn("ServerBrowser.handleRequest")(function* (
+    connectionId: string,
+    request: PreviewAutomationRequest,
+  ) {
+    // Queued work expires at the request's timeout; a started run past it marks its tab busy.
+    const expiry = yield* Scope.make();
+    const signal = yield* Effect.abortSignal.pipe(Scope.provide(expiry));
+    yield* Effect.sleep(request.timeoutMs).pipe(
+      Effect.andThen(Scope.close(expiry, Exit.void)),
+      Effect.forkChild,
+    );
+    const outcome = yield* Effect.tryPromise({
+      try: () => runOperation(request, signal).finally(() => markUsed(request)),
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
+      // Lets the operation report its own timeout first, yet answers before the broker's
+      // response grace evicts this host. The abandoned run still holds its tab's queue.
+      Effect.timeoutOrElse({
+        duration: request.timeoutMs + HOST_ANSWER_MARGIN_MS,
+        orElse: () =>
+          Effect.fail(
+            new ServerBrowserPage.ServerBrowserOperationError({
+              tag: "PreviewAutomationTimeoutError",
+              message: `The browser did not finish ${request.operation} in ${request.timeoutMs}ms.`,
+              detail: { timeoutMs: request.timeoutMs },
+            }),
+          ),
+      }),
+      Effect.ensuring(Scope.close(expiry, Exit.void)),
       Effect.match({
         onSuccess: (result) => ({ ok: true as const, result }),
         onFailure: (error) => ({
@@ -2329,16 +2365,16 @@ const make = Effect.gen(function* () {
           },
         }),
       }),
-      Effect.flatMap((outcome) =>
-        broker.respond({
-          clientId: SERVER_HOST_CLIENT_ID,
-          connectionId,
-          requestId: request.requestId,
-          ...outcome,
-        }),
-      ),
-      Effect.ignore,
     );
+    yield* broker
+      .respond({
+        clientId: SERVER_HOST_CLIENT_ID,
+        connectionId,
+        requestId: request.requestId,
+        ...outcome,
+      })
+      .pipe(Effect.ignore);
+  });
 
   const mirrorManagerEvent = (event: PreviewEvent) =>
     Effect.promise(async () => {
@@ -2358,8 +2394,9 @@ const make = Effect.gen(function* () {
         closedSessions.delete(key);
         return;
       }
+      // Queued per tab at call time, so one stuck tab cannot hold back the others.
       if (event.type === "resized") {
-        await tab.control
+        void tab.control
           .system(async () => {
             if (
               !viewportSettingsEqual(event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT, tab.setting)

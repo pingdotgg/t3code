@@ -344,6 +344,17 @@ describe("SessionControl", () => {
     expect(control.generation).toBe(1);
   });
 
+  it("rejects system work on a closed tab instead of throwing", async () => {
+    const control = new SessionControl("agent");
+    await control.close();
+    // Callers handle failures on the returned promise; a synchronous throw escapes them.
+    let applied: Promise<void> | undefined;
+    expect(() => {
+      applied = control.system(async () => {});
+    }).not.toThrow();
+    await expect(applied).rejects.toThrow("closed");
+  });
+
   it("lets any agent act on a tab no agent opened, but only while no human controls it", async () => {
     const control = new SessionControl(null);
     await expect(control.agent("agent-a", async () => "acted")).resolves.toBe("acted");

@@ -2611,3 +2611,237 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+/** Makes the tab's next color scheme change hang in Playwright; resolves once it has started. */
+const stallColorScheme = (page: ReturnType<typeof makeContext>["page"]) => {
+  const started = Promise.withResolvers<void>();
+  page.emulateMedia.mockImplementationOnce(() => {
+    started.resolve();
+    return new Promise<void>(() => {});
+  });
+  return Effect.promise(() => started.promise);
+};
+
+it.effect("a stuck agent action times out on the server and later calls on its tab fail fast", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const stalled = stallColorScheme(contexts[0]!.page);
+      const stuck = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "setColorScheme",
+          input: { colorScheme: "dark" },
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* stalled;
+      // The broker evicts a host that has not answered by timeoutMs plus its one second grace.
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* Fiber.join(stuck)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      // The server answered in time, so the host every tab shares stays connected.
+      const status = yield* broker
+        .invoke({ scope, tabId, operation: "status", input: {} })
+        .pipe(Effect.exit);
+      expect(status).toMatchObject({ _tag: "Success" });
+      const busy = yield* broker
+        .invoke<void>({ scope, tabId, operation: "click", input: { ref: "e1" }, timeoutMs: 1_000 })
+        .pipe(Effect.flip);
+      expect(busy.message).toMatch(/busy|still running/i);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a tab stuck in an agent action does not hold back setting changes for other tabs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const other = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const stalled = stallColorScheme(contexts[0]!.page);
+      const applied = Promise.withResolvers<void>();
+      contexts[1]!.page.emulateMedia.mockImplementationOnce(async () => applied.resolve());
+      yield* broker
+        .invoke({
+          scope,
+          tabId,
+          operation: "setColorScheme",
+          input: { colorScheme: "dark" },
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.ignore, Effect.forkScoped);
+      // The stuck action has already published its own tab's resized event.
+      yield* stalled;
+      yield* manager.adjust({
+        threadId: scope.thread.threadId,
+        tabId: PreviewTabId.make(other.tabId!),
+        colorScheme: "dark",
+      });
+      yield* Effect.promise(() => applied.promise);
+      expect(contexts[1]!.page.emulateMedia).toHaveBeenCalledWith({ colorScheme: "dark" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a dialog on a stuck tab is reported before the tab is busy", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+      const stalled = stallColorScheme(page);
+      const stuck = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "setColorScheme",
+          input: { colorScheme: "dark" },
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* stalled;
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* Fiber.join(stuck)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      page.emit("dialog", {
+        type: () => "alert",
+        message: () => "Saved",
+        defaultValue: () => "",
+        accept: vi.fn(async () => {}),
+        dismiss: vi.fn(async () => {}),
+      });
+      const blocked = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "click",
+          input: { ref: "e1" },
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.flip);
+      expect(blocked).toMatchObject({
+        _tag: "PreviewAutomationControlInterruptedError",
+        reason: "dialogPending",
+      });
+      const stop = yield* broker
+        .invoke<void>({ scope, tabId, operation: "recordingStop", input: {}, timeoutMs: 1_000 })
+        .pipe(Effect.flip);
+      expect(stop).toMatchObject({
+        _tag: "PreviewAutomationControlInterruptedError",
+        reason: "dialogPending",
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("an action that fails just after its timeout still reports its own failure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const failing = Promise.withResolvers<void>();
+      const started = Promise.withResolvers<void>();
+      contexts[0]!.page.emulateMedia.mockImplementationOnce(() => {
+        started.resolve();
+        return failing.promise;
+      });
+      const failed = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "setColorScheme",
+          input: { colorScheme: "dark" },
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+      // Operations time themselves out a little after the request arrives; their reason wins.
+      yield* TestClock.adjust("1100 millis");
+      failing.reject(new Error("Target page crashed"));
+      expect(yield* Fiber.join(failed)).toMatchObject({ _tag: "PreviewAutomationExecutionError" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a recording stop that never finishes leaves its tab busy", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const context = contexts[0]!;
+      yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+      const started = Promise.withResolvers<void>();
+      context.sessions.at(-1)!.detach.mockImplementationOnce(() => {
+        started.resolve();
+        return new Promise<void>(() => {});
+      });
+      const stuck = yield* broker
+        .invoke<void>({ scope, tabId, operation: "recordingStop", input: {}, timeoutMs: 1_000 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* Fiber.join(stuck)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      const busy = yield* broker
+        .invoke<void>({ scope, tabId, operation: "click", input: { ref: "e1" }, timeoutMs: 1_000 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      // The host answers in arrival order, so a refused click has its answer before this one.
+      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+      // A click that queued instead of being refused would time out here.
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* Fiber.join(busy)).toMatchObject({
+        _tag: "PreviewAutomationControlInterruptedError",
+        reason: "busy",
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a queued action whose timeout passes while it waits never runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+      const stopRan = Promise.withResolvers<void>();
+      contexts[0]!.sessions.at(-1)!.detach.mockImplementationOnce(() => {
+        stopRan.resolve();
+        return new Promise<void>(() => {});
+      });
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      page.emulateMedia.mockImplementationOnce(() => {
+        started.resolve();
+        return finish.promise;
+      });
+      const slow = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "setColorScheme",
+          input: { colorScheme: "dark" },
+          timeoutMs: 3_000,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+      const queued = yield* broker
+        .invoke<void>({ scope, tabId, operation: "click", input: { ref: "e1" }, timeoutMs: 1_000 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      // The host answers in arrival order, so the click is queued once this answers.
+      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+      yield* broker
+        .invoke({ scope, tabId, operation: "recordingStop", input: {}, timeoutMs: 1_000 })
+        .pipe(Effect.ignore, Effect.forkScoped);
+      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+      // Past the click's timeout but before the server answers it.
+      yield* TestClock.adjust("1200 millis");
+      finish.resolve();
+      yield* Fiber.join(slow);
+      expect(yield* Fiber.join(queued)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      expect(page.locator).not.toHaveBeenCalled();
+      // A late stop still runs, or capture would keep going with no recording to stop.
+      yield* Effect.promise(() => stopRan.promise);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
