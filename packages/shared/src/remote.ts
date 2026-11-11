@@ -76,8 +76,12 @@ export const RemotePairingTargetError = Schema.Union([
 export type RemotePairingTargetError = typeof RemotePairingTargetError.Type;
 
 const isLocalNetworkHost = (host: string): boolean => {
-  const hostname = URL.parse(`http://${host}`)?.hostname;
-  if (!hostname) return false;
+  let hostname: string;
+  try {
+    hostname = new URL(`http://${host}`).hostname;
+  } catch {
+    return false;
+  }
   return (
     PRIVATE_IPV4_HOSTNAME.test(hostname) ||
     PRIVATE_IPV6_HOSTNAME.test(hostname) ||
