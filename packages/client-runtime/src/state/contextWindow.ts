@@ -258,11 +258,12 @@ export function hasPendingProviderBackgroundWork(
 }
 
 /**
- * Whether a plain send into an idle thread compacts it first, as web's composer does under
- * "When you return". Web reads the same state for its "Compact and send" button. A send that
- * hands off to another conversation starts that one fresh, so only the resumed one counts.
+ * The tokens a plain send into an idle thread compacts first, as web's composer does under
+ * "When you return", or null when it sends as is. Web reads the same state for its "Compact and
+ * send" button. A send that hands off to another conversation starts that one fresh, so only the
+ * resumed one counts.
  */
-export function shouldCompactBeforeSend(input: {
+export function compactBeforeSendTokens(input: {
   readonly projection: Pick<
     ThreadStructure,
     | "thread"
@@ -284,7 +285,7 @@ export function shouldCompactBeforeSend(input: {
   readonly text: string;
   readonly threadIdle: boolean;
   readonly now: string;
-}): boolean {
+}): number | null {
   const { projection } = input;
   const provider = input.providers.find((entry) => entry.instanceId === input.selection.instanceId);
   if (
@@ -315,14 +316,14 @@ export function shouldCompactBeforeSend(input: {
         .map((request) => ({ kind: "user-input.resolved", payload: { answers: request.answers } })),
     )
   ) {
-    return false;
+    return null;
   }
   const activeProviderThreadId = projection.thread.activeProviderThreadId;
   const providerThread = projection.providerThreads.find(
     (thread) => thread.id === activeProviderThreadId,
   );
   // Background agents keep the session live and report into its next turn.
-  if (hasPendingProviderBackgroundWork(projection)) return false;
+  if (hasPendingProviderBackgroundWork(projection)) return null;
   const liveUsage = latestProviderTurnTokenUsage(
     projection.providerTurns.filter((turn) => turn.providerThreadId === activeProviderThreadId),
     input.selection.instanceId === projection.thread.modelSelection.instanceId ? projection : null,
@@ -333,8 +334,7 @@ export function shouldCompactBeforeSend(input: {
     liveUsage,
     providerThread,
   );
-  return (
-    contextWindow !== null &&
+  return contextWindow !== null &&
     shouldOfferResumeCompaction({
       provider: provider.driver,
       usedTokens: contextWindow.usedTokens,
@@ -342,5 +342,6 @@ export function shouldCompactBeforeSend(input: {
       promptCacheTtlMs: liveUsage?.promptCacheTtlMs,
       now: input.now,
     })
-  );
+    ? contextWindow.usedTokens
+    : null;
 }
