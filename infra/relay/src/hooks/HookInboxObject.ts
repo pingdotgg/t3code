@@ -1,6 +1,6 @@
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
 import type * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -11,11 +11,7 @@ import * as HookInboxStore from "./HookInboxStore.ts";
 import { sendUpstream, TUNNEL_OFFLINE_STATUS } from "./upstream.ts";
 
 const UNREACHABLE_STATUSES = new Set([502, 503, 504, TUNNEL_OFFLINE_STATUS]);
-/**
- * Statuses that mean the environment is there but did not take this request
- * yet: its task's queue is full (429) or it failed while handling it (500).
- * The environment drops a delivery id it has already run, so retrying is safe.
- */
+/** Retry queue-full (429) and handling failures (500); the environment deduplicates delivery ids. */
 const BUSY_STATUSES = new Set([429, 500]);
 const RUN_FAILURE_RETRY_MS = 60_000;
 
@@ -42,8 +38,7 @@ const deliver = (baseUrl: string, hook: HookInboxStore.HeldHook) =>
   sendUpstream(baseUrl, hook).pipe(
     Effect.result,
     Effect.map((result) => {
-      // Unreachable or timed out: a timeout may still have run it, and the
-      // environment drops a delivery id it has already seen.
+      // Timeouts may have executed; retries reuse delivery IDs for environment deduplication.
       if (Result.isFailure(result)) {
         return { outcome: "unreachable" as const, reason: result.failure._tag };
       }
@@ -79,9 +74,7 @@ const deliver = (baseUrl: string, hook: HookInboxStore.HeldHook) =>
 export const layer = HookInboxObject.make(
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
-    // The init phase returns the per-instance Effect, which alchemy runs once
-    // per object; only that inner Effect may touch storage.
-    // @effect-diagnostics-next-line returnEffectInGen:off
+    // Only the per-object inner Effect may access storage.
     return Effect.gen(function* () {
       const layerSql = SqliteClient.layer({ storage: state.raw.storage });
       const inboxId = state.raw.id.name ?? state.raw.id.toString();
@@ -124,8 +117,7 @@ export const layer = HookInboxObject.make(
         ),
         alarm: () =>
           run(HookInboxStore.deliverDue(deliver)).pipe(
-            // A wake during this run may already have asked for an earlier
-            // run; a backoff must not push it out.
+            // Backoff must not delay an earlier run requested by a concurrent wake.
             Effect.flatMap((nextAt) => (nextAt === null ? Effect.void : scheduleBy(nextAt))),
             Effect.catchCause((cause) =>
               Effect.logWarning("Held webhook delivery run failed", { cause }).pipe(
