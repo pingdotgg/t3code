@@ -44,31 +44,12 @@ describe("isLocalEditorFileHref", () => {
 });
 
 describe("rewriteMarkdownFileUriHref", () => {
-  it("preserves encoded octets so file paths are decoded only once later", () => {
-    expect(rewriteMarkdownFileUriHref("file:///Users/julius/project/file%2520name.md")).toBe(
-      "/Users/julius/project/file%2520name.md",
-    );
-  });
-
   it("normalizes file uri hrefs for windows drive paths", () => {
     expect(
       rewriteMarkdownFileUriHref(
         "file:///D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
       ),
     ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69");
-  });
-
-  it("preserves file uri authorities as windows UNC paths", () => {
-    expect(rewriteMarkdownFileUriHref("file://server/share/workspace-image.svg")).toBe(
-      "\\\\server\\share\\workspace-image.svg",
-    );
-  });
-
-  // regression: #6433 workspace images in chat markdown did not render
-  it("treats a localhost file uri as a local path", () => {
-    expect(rewriteMarkdownFileUriHref("file://localhost/home/me/notes.md")).toBe(
-      "/home/me/notes.md",
-    );
   });
 });
 

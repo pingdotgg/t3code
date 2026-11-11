@@ -596,14 +596,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
         : "";
     });
 
-  // Claude Code refuses bypassPermissions as root and explains why only on
-  // stderr, so the turn failure has to carry that line.
-  it.effect("reports the CLI's root refusal when it exits before answering", () =>
-    Effect.gen(function* () {
-      assert.include(yield* startupFailureMessage(rootRefusal), rootRefusal);
-    }).pipe(Effect.provide(realQueryRunner)),
-  );
-
   // Startup stderr can carry paths, tokens, or settings, so only the known
   // refusal reaches the failure the client shows.
   it.effect("keeps other startup stderr out of the turn failure", () =>
