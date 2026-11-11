@@ -4750,8 +4750,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  // Archive detaches the provider session, so archiving a live turn kills it
-  // mid-flight and strands its tool calls (#15135).
   it.effect.each(["starting", "running", "waiting"] as const)(
     "rejects archiving a thread while a run is %s",
     (status) =>

@@ -4567,7 +4567,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     // Archive and settle stop idle background work; serialized commands prevent starts racing detach.
-    // Settlement rejects active or blocked runs.
+    // Both reject threads with a live turn before reaching here.
     const detachSessionIds = new Set(
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
