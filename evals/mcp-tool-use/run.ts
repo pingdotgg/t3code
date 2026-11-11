@@ -2354,7 +2354,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         const showHeld =
           held.length > 0 &&
           (totalLength > 300 ||
-            (isT3Mcp && !sample.lessonCardSeen) ||
+            (isT3Mcp && (!sample.lessonCardSeen || isCard)) ||
             (sample.lessonCardSeen && !isCard && !hidePostCardText));
         if (showHeld) {
           if (isCard) {
