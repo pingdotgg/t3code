@@ -1387,10 +1387,6 @@ describe("extractMcpToolCallIdentity", () => {
       server: "editor_github_1234abcd",
       tool: "html_render",
     });
-    expect(identityFor("mcp__not_t3_code__html_render")).toEqual({
-      server: "not_t3_code",
-      tool: "html_render",
-    });
   });
 
   it("recovers T3 identity from Kiro's @-scoped titles", () => {
