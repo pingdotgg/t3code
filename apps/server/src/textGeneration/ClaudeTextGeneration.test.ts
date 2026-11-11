@@ -21,6 +21,7 @@ import {
 import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "@t3tools/provider-core/server/textGenerationUtils";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
+import { ClaudeSettingsLaunchArgError } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -208,7 +209,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
 
   const launchSettings = {
     disableAllHooks: false,
-    fastMode: false,
+    fastMode: true,
     env: { ANTHROPIC_VERTEX_PROJECT_ID: "issue-25017-marker" },
   };
   it.effect.each([
@@ -226,7 +227,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       return yield* withFakeClaudeEnv(
         {
           output: JSON.stringify({ structured_output: { title: "Use launch settings" } }),
-          settingsMustEqual: { ...launchSettings, disableAllHooks: true, fastMode: true },
+          settingsMustEqual: { ...launchSettings, disableAllHooks: true, fastMode: false },
           claudeConfig: {
             launchArgs: `--settings '${inline ? JSON.stringify(launchSettings) : "launch-settings.json"}'`,
           },
@@ -238,25 +239,18 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             modelSelection: createModelSelection(
               ProviderInstanceId.make("claudeAgent"),
               SYNTHETIC_CLAUDE_CAPABLE_MODEL,
-              [{ id: "fastMode", value: true }],
+              [{ id: "fastMode", value: false }],
             ),
           }),
       );
     }).pipe(Effect.scoped),
   );
 
-  it.effect.each([
-    [
-      "malformed JSON",
-      `--settings '{"env":'`,
-      "The --settings launch argument is not a JSON object.",
-    ],
-    ["no value", "--settings", "The --settings launch argument needs a JSON object or file path."],
-  ] as const)("rejects a --settings launch arg with %s", ([, launchArgs, detail]) =>
+  it.effect("reports an unreadable --settings launch arg as a text generation error", () =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({ structured_output: { title: "Unused" } }),
-        claudeConfig: { launchArgs },
+        claudeConfig: { launchArgs: `--settings '{"env":'` },
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -271,7 +265,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             }),
           );
 
-          expect(error.detail).toBe(detail);
+          expect(error.detail).toBe(new ClaudeSettingsLaunchArgError({}).message);
         }),
     ),
   );

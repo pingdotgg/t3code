@@ -7,7 +7,6 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
-import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
@@ -34,6 +33,7 @@ import {
   hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
+import { readClaudeLaunchArgSettings } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 /** `--tools` takes bare names; patterns go in the allow list. */
@@ -76,9 +76,6 @@ const ClaudeErrorResult = Schema.Struct({
   errors: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 const isClaudeErrorResult = Schema.is(ClaudeErrorResult);
-const decodeLaunchSettings = Schema.decodeEffect(
-  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
-);
 const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 // Claude reports JSON errors on stdout; stderr may contain only wrapper notices.
@@ -142,34 +139,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
-  // Claude passes one --settings flag, so ours has to carry the launch-arg settings too.
-  // Like the CLI, a value starting with "{" is JSON and anything else is a file path.
-  const readLaunchSettings = Effect.fn("readLaunchSettings")(function* (
-    operation: TextGenerationOperations.Operation,
-    cwd: string,
-  ) {
-    const raw = parseCliArgs(claudeSettings.launchArgs).flags.settings;
-    if (raw === undefined) return {};
-    const value = raw?.trim() ?? "";
-    const fail = (detail: string) => (cause: unknown) =>
-      new TextGenerationError({ operation, detail, cause });
-    if (value.length === 0) {
-      return yield* new TextGenerationError({
-        operation,
-        detail: "The --settings launch argument needs a JSON object or file path.",
-      });
-    }
-    const filePath = path.resolve(cwd, value);
-    const json = value.startsWith("{")
-      ? value
-      : yield* fileSystem
-          .readFileString(filePath)
-          .pipe(Effect.mapError(fail(`Failed to read Claude settings file ${filePath}.`)));
-    return yield* decodeLaunchSettings(json).pipe(
-      Effect.mapError(fail("The --settings launch argument is not a JSON object.")),
-    );
-  });
-
   const runClaudeJson = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
     operation,
     cwd,
@@ -220,10 +189,20 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
-      ...(yield* readLaunchSettings(operation, cwd)),
+      // Claude takes one --settings flag, so the launch-arg settings ride beneath ours.
+      ...(yield* readClaudeLaunchArgSettings({
+        settings: claudeSettings,
+        cwd,
+        fileSystem,
+        path,
+      }).pipe(
+        Effect.mapError(
+          (cause) => new TextGenerationError({ operation, detail: cause.message, cause }),
+        ),
+      )),
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
-      ...(fastMode ? { fastMode: true } : {}),
+      ...(typeof fastMode === "boolean" ? { fastMode } : {}),
       ...(typeof ultracode === "boolean" ? { ultracode } : {}),
     };
     const settingsJson = yield* encodeJsonForOperation(
