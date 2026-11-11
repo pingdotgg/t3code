@@ -554,6 +554,10 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./pull-request-stats": {
+      "types": "./src/pull-request-stats.ts",
+      "default": "./src/pull-request-stats.ts"
     }
   },
   "scripts": {

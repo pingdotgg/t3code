@@ -1,3 +1,7 @@
+import {
+  pullRequestStatKey,
+  resolvePullRequestStats,
+} from "@t3tools/client-runtime/pull-request-stats";
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
@@ -76,9 +80,7 @@ export type EnvironmentPullRequestListEntry = PullRequestListEntry & {
 export const scopedPullRequestListKey = (entry: EnvironmentPullRequestListEntry) =>
   `${entry.environmentId}:${pullRequestListKey(entry)}`;
 
-export const pullRequestStatKey = (
-  row: Pick<PullRequestDiffStat, "projectId" | "repository" | "number">,
-) => `${row.projectId}:${row.repository}:${row.number}`;
+export { pullRequestStatKey };
 
 /**
  * Diff stats an environment has answered, the stats query that answered each, and each row's
@@ -106,7 +108,7 @@ export function withListedPullRequests(
   cache: PullRequestStatsCache,
   entries: readonly Pick<
     PullRequestListEntry,
-    "projectId" | "repository" | "number" | "updatedAt"
+    "projectId" | "host" | "repository" | "number" | "updatedAt"
   >[],
 ): {
   readonly cache: PullRequestStatsCache;
@@ -138,7 +140,7 @@ export function withAnsweredPullRequestStats(
 ): PullRequestStatsCache {
   const stats = new Map(cache.stats);
   const answeredBy = new Map(cache.answeredBy);
-  for (const row of answered) {
+  for (const row of resolvePullRequestStats(input.refs, answered)) {
     stats.set(pullRequestStatKey(row), row);
     answeredBy.set(pullRequestStatKey(row), input);
   }
@@ -158,7 +160,10 @@ export function withShownPullRequestStats(
 ): readonly EnvironmentPullRequestListEntry[] {
   const shown = new Map(
     answers.flatMap(({ environmentId, stats }) =>
-      stats.map((row) => [`${environmentId}:${pullRequestStatKey(row)}`, row] as const),
+      resolvePullRequestStats(
+        entries.filter((entry) => entry.environmentId === environmentId),
+        stats,
+      ).map((row) => [`${environmentId}:${pullRequestStatKey(row)}`, row] as const),
     ),
   );
   if (!shown.size) return entries;

@@ -720,6 +720,9 @@ export function PullRequestsPage() {
   ) {
     const stat = {
       ...panelSummary,
+      ...(renderedPullRequestSurface?.host === undefined
+        ? {}
+        : { host: renderedPullRequestSurface.host }),
       environmentId: panelEnvironmentId,
       additions: panelSummary.additions,
       deletions: panelSummary.deletions,
