@@ -1,12 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { PullRequestDiffSide } from "@t3tools/contracts";
 
-/**
- * A thread naming a file is not the same as a thread the diff can show: its line may have moved
- * out of the change, or sit in a hunk the host withheld. Pinning it anyway would put the remark
- * against whatever code now occupies that line number, and silently dropping it would lose the
- * conversation, so the answer decides which of the two lists it belongs in.
- */
+/** Only rendered hunks can anchor comments; list others off-diff. */
 export function isLineInFileDiff(
   file: FileDiffMetadata,
   side: PullRequestDiffSide,
@@ -21,31 +16,39 @@ export function isLineInFileDiff(
 
 export type DiffFoldOverride = "expanded" | "folded" | null;
 
+/** The reader's own fold choice per file. It is absolute, so a Viewed mark loading later keeps it. */
+export type FileDiffFoldChoices = ReadonlyMap<string, boolean>;
+
 /**
- * A diff arrives a slice at a time, so the reader's own choices are kept as the difference from
- * what the toolbar last said rather than as the set of folded files: a file that has not loaded
- * yet cannot be in a set, and would otherwise land expanded moments after the reader folded
- * everything.
+ * A reader's own choice wins. Otherwise the toolbar decides, and a file still marked Viewed
+ * starts folded. Fold all and Expand all clear the choices, so later pages follow the toolbar.
  */
 export function isFileDiffCollapsed(
   fileKey: string,
   foldOverride: DiffFoldOverride,
-  toggledFileKeys: ReadonlySet<string>,
+  choices: FileDiffFoldChoices,
+  viewed = false,
 ): boolean {
-  const foldedByDefault = foldOverride === "folded";
-  return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
+  return choices.get(fileKey) ?? (foldOverride === "folded" || viewed);
 }
 
-export function toggleFileDiffFoldForViewed(
+export function withFileDiffFold(
+  choices: FileDiffFoldChoices,
   fileKey: string,
-  viewed: boolean,
-  foldOverride: DiffFoldOverride,
-  toggledFileKeys: ReadonlySet<string>,
-): ReadonlySet<string> {
-  if (isFileDiffCollapsed(fileKey, foldOverride, toggledFileKeys) === viewed)
-    return toggledFileKeys;
-  const next = new Set(toggledFileKeys);
-  if (next.has(fileKey)) next.delete(fileKey);
-  else next.add(fileKey);
-  return next;
+  collapsed: boolean,
+): FileDiffFoldChoices {
+  if (choices.get(fileKey) === collapsed) return choices;
+  return new Map(choices).set(fileKey, collapsed);
+}
+
+export function getFileViewedRange<T extends { readonly fileKey: string }>(
+  files: ReadonlyArray<T>,
+  fileKey: string,
+  anchorFileKey: string | null,
+): ReadonlyArray<T> {
+  const index = files.findIndex((file) => file.fileKey === fileKey);
+  if (index === -1) return [];
+  const anchorIndex = files.findIndex((file) => file.fileKey === anchorFileKey);
+  if (anchorIndex === -1) return files.slice(index, index + 1);
+  return files.slice(Math.min(index, anchorIndex), Math.max(index, anchorIndex) + 1);
 }

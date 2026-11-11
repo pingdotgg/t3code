@@ -18,7 +18,6 @@ export {
   logoutAcpRegistry,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryCommands,
-  probeAcpRegistryConfiguration,
   type AcpRegistryAvailableCommands,
   type AcpRegistryLiveConfiguration,
 } from "./server/probe.ts";

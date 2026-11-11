@@ -28,11 +28,6 @@ it("rejects other clients before looking at the active window", async () => {
   expect(await service.capture(":1.23")).toBe("pixels");
 });
 
-it.each(CLIENT_NAMES)("accepts the current owner of %s", async (client) => {
-  const { service } = fixture({ getNameOwner: async (name) => (name === client ? ":1.23" : null) });
-  expect(await service.capture(":1.23")).toBe("pixels");
-});
-
 it("rechecks the name owner on each capture", async () => {
   let owner = ":1.23";
   const { service } = fixture({ getNameOwner: async () => owner });

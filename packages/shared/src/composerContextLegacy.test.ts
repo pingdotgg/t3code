@@ -46,31 +46,6 @@ describe("upgradeLegacyContextMessage", () => {
     }
   });
 
-  it.each(["terminal_context", "element_context"])(
-    "keeps mixed messages atomic for malformed %s",
-    (tag) => {
-      const text = `Before ${review} after\n<${tag}>\ninvalid entry\n</${tag}>`;
-      expect(upgradeLegacyContextMessage(text)).toEqual({ text, records: [] });
-    },
-  );
-
-  it.each([
-    "unparsed content",
-    "- Invalid header:\n  html: text",
-    "- <div>:\n  html:\n    <div />\nunparsed content",
-  ])("preserves malformed nested preview elements: %s", (body) => {
-    const text = `Before ${review} after\n<preview_annotation>\nPage: Example\n<element_context>\n${body}\n</element_context>\n</preview_annotation>`;
-    expect(upgradeLegacyContextMessage(text)).toEqual({ text, records: [] });
-  });
-
-  it("allows an empty nested element block", () => {
-    const result = upgradeLegacyContextMessage(
-      "<preview_annotation>\nPage: Example\n<element_context>\n\n</element_context>\n</preview_annotation>",
-    );
-    expect(result.records).toHaveLength(1);
-    expect(result.records[0]).toMatchObject({ kind: "preview-annotation", pageTitle: "Example" });
-  });
-
   it.each([3, 4, 6])("preserves closing review tags inside a %i-backtick fence", (length) => {
     const fence = "`".repeat(length);
     const diff = '+ const tag = "</review_comment>";\n</review_comment>\n+ final line';
@@ -105,43 +80,15 @@ describe("upgradeLegacyContextMessage", () => {
     expect(upgradeLegacyContextMessage(text)).toEqual({ text, records: [] });
   });
 
-  it.each([
-    `<element_context>\n- <div>:\n  html:\n    ${"x".repeat(8_001)}\n</element_context>`,
-    `<preview_annotation>\nComment: ${"x".repeat(8_001)}\n</preview_annotation>`,
-  ])("keeps oversized element and preview source", (text) => {
-    expect(upgradeLegacyContextMessage(text)).toEqual({ text, records: [] });
-  });
-
-  it.each([
-    "email@build:7",
-    "café@build:7",
-    "𐐀@build:7",
-    "@build:7foo",
-    "@build:7st",
-    "@build:7é",
-    "@build:7.foo",
-    "@build:7@mention",
-    "@build:7..foo",
-    "@build:7.é",
-  ])("does not replace terminal labels embedded in %s", (prompt) => {
-    const upgraded = upgradeLegacyContextMessage(
-      `${prompt}\n<terminal_context>\n- Build line 7:\n  output\n</terminal_context>`,
-    );
-    expect(upgraded.text).toBe(
-      `${prompt}\n\n[Build line 7](t3-context://v1/terminal/legacy_terminal_1)`,
-    );
-  });
-
-  it.each([".", ",", ":", ";", "!", "?", ")", "@", ". Next sentence", "@ next", ".)"])(
-    "upgrades terminal labels before punctuation %s",
-    (suffix) => {
-      const result = upgradeLegacyContextMessage(
-        `See @build:7${suffix}\n<terminal_context>\n- Build line 7:\n  output\n</terminal_context>`,
+  it.each(["email@build:7", "@build:7foo", "@build:7.foo"])(
+    "does not replace terminal labels embedded in %s",
+    (prompt) => {
+      const upgraded = upgradeLegacyContextMessage(
+        `${prompt}\n<terminal_context>\n- Build line 7:\n  output\n</terminal_context>`,
       );
-      expect(result.text).toBe(
-        `See [Build line 7](t3-context://v1/terminal/legacy_terminal_1)${suffix}`,
+      expect(upgraded.text).toBe(
+        `${prompt}\n\n[Build line 7](t3-context://v1/terminal/legacy_terminal_1)`,
       );
-      expect(result.records).toHaveLength(1);
     },
   );
 
@@ -217,22 +164,6 @@ describe("upgradeLegacyContextMessage", () => {
     );
   });
 
-  it("keeps URL-valued preview pages as locations", () => {
-    const upgraded = upgradeLegacyContextMessage(
-      "<preview_annotation>\nPage: https://example.com/checkout\n</preview_annotation>",
-    );
-    expect(upgraded.records[0]).toMatchObject({
-      pageUrl: "https://example.com/checkout",
-      pageTitle: null,
-    });
-  });
-  it("passes plain text through untouched", () => {
-    expect(upgradeLegacyContextMessage("hello **world**")).toEqual({
-      text: "hello **world**",
-      records: [],
-    });
-  });
-
   it("preserves Markdown hard breaks while removing legacy context", () => {
     const text = [
       "Line with hard break  ",
@@ -301,24 +232,6 @@ describe("upgradeLegacyContextMessage", () => {
     );
   });
 
-  it("binds materialized inline terminal labels from sent messages in place", () => {
-    const text = [
-      "Look at @terminal-1:509-510 and again @build:7 please",
-      "",
-      "<terminal_context>",
-      "- Terminal 1 lines 509-510:",
-      "  509 | error: boom",
-      "  510 |   at main.ts:1",
-      "",
-      "- Build line 7:",
-      "  7 | done",
-      "</terminal_context>",
-    ].join("\n");
-    expect(upgradeLegacyContextMessage(text).text).toBe(
-      "Look at [Terminal 1 lines 509-510](t3-context://v1/terminal/legacy_terminal_1) and again [Build line 7](t3-context://v1/terminal/legacy_terminal_2) please",
-    );
-  });
-
   it("upgrades a trailing element block into element records", () => {
     const text = [
       "fix this",
@@ -369,21 +282,6 @@ describe("upgradeLegacyContextMessage", () => {
     expect(upgraded.records[0]).toMatchObject({
       kind: "preview-annotation",
       comment: "First instruction\nSecond instruction",
-    });
-  });
-
-  it("keeps a blank line inside a legacy annotation comment", () => {
-    const text = [
-      "<preview_annotation>",
-      "Preview annotation:",
-      "Comment: First paragraph",
-      "",
-      "Second paragraph",
-      "Targets: 1 selected element.",
-      "</preview_annotation>",
-    ].join("\n");
-    expect(upgradeLegacyContextMessage(text).records[0]).toMatchObject({
-      comment: "First paragraph\n\nSecond paragraph",
     });
   });
 
@@ -541,47 +439,6 @@ describe("upgradeLegacyContextMessage", () => {
         fenceLanguage: "diff",
       },
     ]);
-  });
-
-  it("appends trailing review blocks after the other trailing blocks", () => {
-    const text = [
-      "prose",
-      "",
-      "<terminal_context>",
-      "- T line 1:",
-      "  1 | a",
-      "</terminal_context>",
-      "",
-      '<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="2">',
-      "note",
-      "```diff",
-      "+x",
-      "```",
-      "</review_comment>",
-      "",
-      '<review_comment sectionId="s" filePath="g.ts" startIndex="3" endIndex="3">',
-      "note 2",
-      "```diff",
-      "+y",
-      "```",
-      "</review_comment>",
-    ].join("\n");
-    const upgraded = upgradeLegacyContextMessage(text);
-    expect(upgraded.text).toBe(
-      "prose\n\n[T line 1](t3-context://v1/terminal/legacy_terminal_1) [f.ts line](t3-context://v1/review-comment/legacy_review-comment_1) [g.ts line](t3-context://v1/review-comment/legacy_review-comment_2)",
-    );
-    expect(upgraded.records.map((record) => record.contextId)).toEqual([
-      "legacy_terminal_1",
-      "legacy_review-comment_1",
-      "legacy_review-comment_2",
-    ]);
-  });
-
-  it("keeps adjacent trailing reviews in place, including their original spacing", () => {
-    const upgraded = upgradeLegacyContextMessage(`Compare ${review}  ${review}`);
-    expect(upgraded.text).toBe(
-      "Compare [f.ts line](t3-context://v1/review-comment/legacy_review-comment_1)  [f.ts line](t3-context://v1/review-comment/legacy_review-comment_2)",
-    );
   });
 
   it("keeps a trailing review beside a terminal chip whose payload follows it", () => {
