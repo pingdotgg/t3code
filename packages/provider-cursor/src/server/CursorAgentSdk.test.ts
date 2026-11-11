@@ -16,7 +16,6 @@ const cursorSdkMock = vi.hoisted(() => {
   const closeExecutionOrder: Array<string> = [];
   const runOperations: Array<string> = [];
   let agentCloseFailure: unknown;
-  let staleRunActive = false;
   // The local store lists runs oldest first, like the real SDK.
   let storedRuns: Array<{ readonly id: string; readonly status: string }> = [];
   const runWait = vi.fn(async () => ({
@@ -40,7 +39,7 @@ const cursorSdkMock = vi.hoisted(() => {
       options: { readonly onDelta?: (input: { readonly update: unknown }) => Promise<void> },
     ) => {
       runOperations.push("run.start");
-      if (staleRunActive) {
+      if (storedRuns.some((run) => run.status === "running")) {
         throw new Error("Agent agent-cursor-agent-sdk-test already has active run");
       }
       await options.onDelta?.({
@@ -69,13 +68,12 @@ const cursorSdkMock = vi.hoisted(() => {
   }));
   const listRuns = vi.fn(async (_agentId: string, options?: ListRunsOptions) => {
     runOperations.push("agent.listRuns");
-    const runs = staleRunActive ? storedRuns : [];
     // Mirrors the SDK's opaque cursor pagination with its default page size of 50.
     const offset = options?.cursor === undefined ? 0 : Number(options.cursor);
     const end = offset + (options?.limit ?? 50);
     return {
-      items: runs.slice(offset, end),
-      ...(end < runs.length ? { nextCursor: String(end) } : {}),
+      items: storedRuns.slice(offset, end),
+      ...(end < storedRuns.length ? { nextCursor: String(end) } : {}),
     };
   });
   const cancelRun = vi.fn(async (runId: string) => {
@@ -83,7 +81,6 @@ const cursorSdkMock = vi.hoisted(() => {
     storedRuns = storedRuns.map((run) =>
       run.id === runId ? { ...run, status: "cancelled" } : run,
     );
-    staleRunActive = storedRuns.some((run) => run.status === "running");
   });
 
   return {
@@ -100,13 +97,8 @@ const cursorSdkMock = vi.hoisted(() => {
     setAgentCloseFailure: (failure: unknown) => {
       agentCloseFailure = failure;
     },
-    setStaleRunActive: (active: boolean) => {
-      staleRunActive = active;
-      storedRuns = active ? [{ id: "run-stale", status: "running" }] : [];
-    },
     setStoredRuns: (runs: Array<{ readonly id: string; readonly status: string }>) => {
       storedRuns = runs;
-      staleRunActive = runs.some((run) => run.status === "running");
     },
   };
 });
@@ -192,7 +184,7 @@ describe("CursorAgentSdkRunner", () => {
       cursorSdkMock.runOperations.length = 0;
       cursorSdkMock.listRuns.mockClear();
       cursorSdkMock.cancelRun.mockClear();
-      cursorSdkMock.setStaleRunActive(true);
+      cursorSdkMock.setStoredRuns([{ id: "run-stale", status: "running" }]);
 
       const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const session = yield* runner.open({
