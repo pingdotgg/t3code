@@ -8,6 +8,7 @@ import {
 } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -20,9 +21,12 @@ import { makeStaleWhileRevalidate } from "./staleWhileRevalidate.ts";
 const SSH_PORT = 22;
 const TARGETS_CACHE_TTL = "60 seconds";
 const TAILNET_NAME_LOOKUP_TIMEOUT = "1500 millis";
+// Only the open-source tailscaled creates this; its CLI is not in an app bundle.
+const OPEN_SOURCE_TAILSCALED_SOCKET = "/var/run/tailscaled.socket";
 
 // MagicDNS answers reverse lookups for tailnet addresses through the system resolver.
-const lookupTailnetName = Effect.gen(function* () {
+// Without an answer (e.g. accept-dns=false), the tailnet address is still reachable.
+const lookupTailnetHost = Effect.gen(function* () {
   const address = Object.values(NodeOS.networkInterfaces())
     .flatMap((addresses) => addresses ?? [])
     .find(
@@ -34,11 +38,14 @@ const lookupTailnetName = Effect.gen(function* () {
     NodeDns.promises.lookupService(address, 0).then(
       ({ hostname }) => {
         const name = hostname.trim().replace(/\.$/u, "");
-        return name.includes(".") && NodeNet.isIP(name) === 0 ? name : null;
+        return name.includes(".") && NodeNet.isIP(name) === 0 ? name : address;
       },
-      () => null,
+      () => address,
     ),
-  ).pipe(Effect.timeoutOption(TAILNET_NAME_LOOKUP_TIMEOUT), Effect.map(Option.getOrNull));
+  ).pipe(
+    Effect.timeoutOption(TAILNET_NAME_LOOKUP_TIMEOUT),
+    Effect.map(Option.getOrElse(() => address)),
+  );
 });
 
 export class RemoteOpenTargets extends Context.Service<
@@ -52,9 +59,8 @@ export class RemoteOpenTargets extends Context.Service<
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const net = yield* NetService.NetService;
-  // On macOS the CLI runs from the Tailscale app bundle, and macOS can ask the user to let
-  // T3 Code access another app's data on every spawn, so connect-time discovery avoids it.
-  const avoidTailscaleCli = (yield* HostProcess.Platform) === "darwin";
+  const fileSystem = yield* FileSystem.FileSystem;
+  const isMacOS = (yield* HostProcess.Platform) === "darwin";
 
   const discoverTargets = Effect.gen(function* () {
     // Check both loopback families: sshd can be bound IPv6-only.
@@ -65,8 +71,15 @@ export const make = Effect.gen(function* () {
     );
     const username = yield* HostProcess.Username;
 
-    const magicDnsName = avoidTailscaleCli
-      ? yield* lookupTailnetName
+    // The macOS Tailscale apps run the CLI from their app bundle, and macOS can ask the user
+    // to let T3 Code access another app's data on every spawn, so connect-time discovery avoids it.
+    const avoidTailscaleCli =
+      isMacOS &&
+      !(yield* fileSystem
+        .exists(OPEN_SOURCE_TAILSCALED_SOCKET)
+        .pipe(Effect.orElseSucceed(() => false)));
+    const tailnetHost = avoidTailscaleCli
+      ? yield* lookupTailnetHost
       : yield* readTailscaleStatus.pipe(
           Effect.map((status) => status.magicDnsName),
           Effect.orElseSucceed(() => null),
@@ -77,9 +90,9 @@ export const make = Effect.gen(function* () {
 
     if (!sshdListening) {
       // Tailscale SSH needs no local sshd; tailscaled alone does not prove an SSH route.
-      // Only `tailscale debug prefs` proves it, so macOS skips this target.
+      // Only `tailscale debug prefs` proves it; the macOS apps cannot run an SSH server.
       if (
-        magicDnsName !== null &&
+        tailnetHost !== null &&
         !avoidTailscaleCli &&
         (yield* readTailscaleSshEnabled.pipe(
           Effect.orElseSucceed(() => false),
@@ -88,17 +101,17 @@ export const make = Effect.gen(function* () {
       ) {
         targets.push({
           kind: "tailscale",
-          host: magicDnsName,
+          host: tailnetHost,
           ...(username === null ? {} : { username }),
         });
       }
       return targets;
     }
 
-    if (magicDnsName !== null) {
+    if (tailnetHost !== null) {
       targets.push({
         kind: "tailscale",
-        host: magicDnsName,
+        host: tailnetHost,
         ...(username === null ? {} : { username }),
       });
     }
