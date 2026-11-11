@@ -21,6 +21,7 @@ import {
   SourceControlCloneRepositoryResult,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
@@ -71,6 +72,45 @@ const ProjectReadTool = Tool.make("t3_project_read", {
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
   }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+const StartingMapRouteKind = Schema.Literals([
+  "trailhead",
+  "readme",
+  "architecture",
+  "progress",
+  "contributing",
+  "area",
+  "roster",
+]);
+const ProjectOrientTool = Tool.make("t3_project_orient", {
+  ...shared,
+  description:
+    "Project starting map before substantive work: who you are, which trailhead files exist, and where to go when the map runs out. Returns routes only; read present files yourself. Omit projectId inside a thread.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    projectId: Schema.optional(ProjectId),
+  }),
+  success: Schema.Struct({
+    projectId: ProjectId,
+    title: Schema.String,
+    workspaceRoot: Schema.String,
+    cwd: Schema.String,
+    threadId: Schema.NullOr(ThreadId),
+    providerInstanceId: Schema.NullOr(Schema.String),
+    trailhead: Schema.NullOr(Schema.String),
+    routes: Schema.Array(
+      Schema.Struct({
+        path: Schema.String,
+        kind: StartingMapRouteKind,
+        purpose: Schema.String,
+        present: Schema.Boolean,
+      }),
+    ),
+    whenMapRunsOut: Schema.Array(Schema.String),
+  }),
+  dependencies: [...shared.dependencies, FileSystem.FileSystem, Path.Path],
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
@@ -182,6 +222,7 @@ export const ProjectToolkit = Toolkit.make(
   ThreadLaunchTool,
   ProjectListTool,
   ProjectReadTool,
+  ProjectOrientTool,
   ProjectCreateTool,
   ProjectUpdateTool,
   ProjectDeleteTool,

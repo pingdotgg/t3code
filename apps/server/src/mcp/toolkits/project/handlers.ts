@@ -30,6 +30,7 @@ import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
+import { discoverStartingMap } from "../../../project/StartingMap.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -332,6 +333,34 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           message: "The project was not found.",
         });
       return result.value;
+    }),
+  ),
+  t3_project_orient: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const context = yield* readCaller();
+      const projectId = yield* resolveProjectId(context, input.projectId);
+      const projects = yield* Project.ProjectService;
+      const project = yield* projects.getById(projectId).pipe(Effect.mapError(unavailable));
+      if (Option.isNone(project))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The project was not found.",
+        });
+      const caller = context.caller;
+      const cwd = caller?.worktreePath ?? project.value.workspaceRoot;
+      const map = yield* discoverStartingMap(cwd).pipe(Effect.mapError(unavailable));
+      return {
+        projectId: project.value.id,
+        title: project.value.title,
+        workspaceRoot: project.value.workspaceRoot,
+        cwd,
+        threadId: caller?.id ?? null,
+        providerInstanceId:
+          caller?.providerInstanceId != null ? String(caller.providerInstanceId) : null,
+        trailhead: map.trailhead,
+        routes: map.routes,
+        whenMapRunsOut: map.whenMapRunsOut,
+      };
     }),
   ),
   t3_project_create: McpToolAccess.writesEnvironment(

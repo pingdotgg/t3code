@@ -333,6 +333,9 @@ export function summarizeT3ToolCalls(
     case "project-read":
       label = phrase("Read", "read", quantity(countEntities(projectIds), "project"));
       break;
+    case "project-orient":
+      label = phrase("Oriented", "orient", `on a project starting map ${times}`);
+      break;
     case "project-create":
       label = phrase("Registered", "register", quantity(countEntities(projectIds), "project"));
       break;

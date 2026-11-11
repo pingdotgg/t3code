@@ -17,6 +17,7 @@ Ordinary coding tasks need no T3 tools.
 - A machine the user names that isn't linked ("delegate this to my vps"): call \`t3_environment_link\` with a \`hint\` from their words. Never ask for a pairing code in chat.
 - In your reply, mention a thread by its \`link\`, verbatim, never a plain title or bare id.
 - A login, token, PIN, pairing code or sudo password only the user can give: call \`request_secret\`, not a chat ask or a handoff. Not for access you have. Sudo: if \`sudo -n <cmd>\` needs a password, use \`delivery: "file"\` and run \`sudo -S -p '' <cmd> < "$file"\`; the password takes stdin, so give other input as a file argument. Asked only to schedule: \`schedule_task\` without running its prompt.
+- Before substantive work, call \`t3_project_orient\` once for the project's starting map (routes only). Read present routes yourself; when they run out, follow its \`whenMapRunsOut\` guidance.
 - T3 tools may load late. Try the name once before you call it absent.`,
   `### Visuals and preview
 

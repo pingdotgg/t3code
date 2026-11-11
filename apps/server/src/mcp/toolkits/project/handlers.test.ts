@@ -871,3 +871,71 @@ it.effect("an update the project refuses tells the agent why", () =>
     expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request", message: detail });
   }),
 );
+
+it.effect("t3_project_orient returns routes without inlining file contents", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-project-orient-",
+    });
+    yield* fileSystem.writeFileString(
+      path.join(workspaceRoot, "README.md"),
+      "# Secret body that must not appear in the tool result\n",
+    );
+    yield* fileSystem.makeDirectory(path.join(workspaceRoot, ".agents"));
+    yield* fileSystem.writeFileString(
+      path.join(workspaceRoot, ".agents", "STARTING_MAP.md"),
+      "trailhead\n",
+    );
+
+    const harness = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched: [],
+      workspaceRoot,
+    });
+    const projectId = harness.projectId;
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        getById: (id) =>
+          Effect.succeed(
+            id === projectId
+              ? Option.some({
+                  id,
+                  title: "orient-target",
+                  workspaceRoot,
+                  defaultModelSelection: null,
+                } as unknown as ProjectRecord)
+              : Option.none(),
+          ),
+      }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const oriented = yield* toolkit
+      .handle("t3_project_orient", { projectId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    const result = oriented.at(-1)?.result;
+    expect(result).toMatchObject({
+      projectId,
+      title: "orient-target",
+      workspaceRoot,
+      cwd: workspaceRoot,
+      threadId: null,
+      trailhead: ".agents/STARTING_MAP.md",
+    });
+    expect(result).toMatchObject({
+      routes: expect.arrayContaining([
+        expect.objectContaining({ path: ".agents/STARTING_MAP.md", present: true }),
+        expect.objectContaining({ path: "README.md", present: true }),
+        expect.objectContaining({ path: "AGENTS.md", present: false }),
+      ]),
+    });
+    expect(JSON.stringify(result)).not.toContain("Secret body");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
