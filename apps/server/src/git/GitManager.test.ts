@@ -4206,6 +4206,21 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(actions).toMatchObject([
         { repository: "pingdotgg/codething-mvp", number: 7, action: "draft" },
       ]);
+
+      // A draft of a PR the host does not list yet fails, so a retry drafts it.
+      yield* runGit(repoDir, ["push"]);
+      const unlisted = yield* makeManager({ providerScenario: { prListSequence: [[], []] } });
+      const notListed = yield* Effect.flip(
+        unlisted.manager.createPullRequest({
+          cwd: repoDir,
+          projectId: ProjectId.make("project-1"),
+          title: "Feature",
+          body: "Body",
+          draft: true,
+        }),
+      );
+      expect(notListed.message).toContain("does not list it yet");
+      expect(created(unlisted.providerCalls)).toHaveLength(1);
     }),
   );
 

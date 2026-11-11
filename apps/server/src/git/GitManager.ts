@@ -2545,7 +2545,14 @@ export const make = Effect.gen(function* () {
     );
     // The thread's branch PR comes from status, which may hold the lookup from before.
     if (result.status === "created") yield* invalidateStatus(input.cwd);
-    if (input.draft === true) yield* draftOpened(input, result);
+    if (input.draft === true && !(yield* draftOpened(input, result))) {
+      // A retry finds the open PR and drafts it then.
+      return yield* new GitManagerError({
+        operation: "createPullRequest",
+        cwd: input.cwd,
+        detail: "Opened the pull request, but the host does not list it yet to make it a draft.",
+      });
+    }
     return result;
   });
 
@@ -2560,12 +2567,13 @@ export const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => undefined),
       );
       const key = createdPullRequestKey({ pr: result }, project);
-      if (key === null) return;
+      if (key === null) return false;
       const ref = { projectId: input.projectId, ...key };
       const isDraft =
         result.status === "opened_existing" &&
         (yield* pullRequests.summary({ ...ref, allowStale: false })).isDraft;
       if (!isDraft) yield* pullRequests.runAction({ ...ref, action: "draft" });
+      return true;
     },
     (effect, input) =>
       effect.pipe(
