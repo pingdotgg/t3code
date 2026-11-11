@@ -16,6 +16,7 @@ import { AcpRequestError } from "effect-acp/errors";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import { formatFailureDetail, makeAcpRegistryAuth } from "./auth.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import { withMinimaxCodeRegions } from "./minimaxCodeAcp.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -361,16 +362,15 @@ it.effect("offers MiniMax Code's Global region alongside its Mainland China defa
   Effect.gen(function* () {
     // mcode advertises one terminal method whose `login` defaults to mainland
     // China; its CLI selects a Global account with `--region global`.
-    const h = yield* makeHarness(
-      {
-        id: "minimax-code-login",
-        name: "Sign in to MiniMax Code",
-        type: "terminal",
-        args: ["login"],
-      },
-      false,
-      decodeSettings({ agentId: "minimax-code" }),
-    );
+    const login: AcpSchema.AuthMethod = {
+      id: "minimax-code-login",
+      name: "Sign in to MiniMax Code",
+      type: "terminal",
+      args: ["login"],
+    };
+    // Only the MiniMax Code registry agent is rewritten, whatever its method IDs.
+    assert.deepEqual(withMinimaxCodeRegions("other-agent", [login]), [login]);
+    const h = yield* makeHarness(login, false, decodeSettings({ agentId: "minimax-code" }));
     const { methods = [] } = yield* h.state((value) => (value.methods?.length ?? 0) > 0);
     const global = methods.find((method) => /global/i.test(method.name));
     assert.isDefined(global, `no Global sign-in among ${JSON.stringify(methods)}`);

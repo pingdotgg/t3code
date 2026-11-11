@@ -1,5 +1,6 @@
 import type * as AcpSchema from "effect-acp/compat";
 
+const MINIMAX_CODE_AGENT = "minimax-code";
 const MINIMAX_CODE_LOGIN = "minimax-code-login";
 
 // mcode advertises one terminal login. Without `--region` it reuses the saved
@@ -7,10 +8,12 @@ const MINIMAX_CODE_LOGIN = "minimax-code-login";
 // not sign in. Offer both regions, keeping the advertised ID for Mainland China
 // so a configured authMethodId still selects the same login.
 export function withMinimaxCodeRegions(
+  agentKey: string,
   methods: ReadonlyArray<AcpSchema.AuthMethod> | undefined,
 ): ReadonlyArray<AcpSchema.AuthMethod> | undefined {
   const login = methods?.find((method) => method.id === MINIMAX_CODE_LOGIN);
   if (
+    agentKey !== MINIMAX_CODE_AGENT ||
     methods === undefined ||
     login?.type !== "terminal" ||
     methods.some((method) => method.type === "terminal" && method.args?.includes("--region"))

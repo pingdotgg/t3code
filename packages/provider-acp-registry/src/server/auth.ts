@@ -145,7 +145,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           ),
         );
       const advertised = normalizeAcpRegistryAuthMethods(
-        withMinimaxCodeRegions(initialized.authMethods),
+        withMinimaxCodeRegions(agentKey, initialized.authMethods),
       )
         .filter(
           (method) => method.id.length <= 128 && (method.type !== "terminal" || Option.isSome(pty)),
@@ -302,7 +302,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
               failure("start", "Could not initialize the selected ACP agent.", cause),
             ),
           );
-        const method = withMinimaxCodeRegions(initialized.authMethods)?.find(
+        const method = withMinimaxCodeRegions(agentKey, initialized.authMethods)?.find(
           (method) => method.id === methodId,
         );
         if (!method)
