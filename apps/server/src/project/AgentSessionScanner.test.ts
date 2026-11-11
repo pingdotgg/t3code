@@ -1867,7 +1867,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("imports long Claude conversation history beyond the selected-history budget", () =>
+    it.effect("imports long Claude history beyond the selected-history and record limits", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
@@ -1892,6 +1892,8 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               const role = index % 2 === 0 ? "assistant" : "user";
               return record({ type: role, message: { role, content: longText } });
             }),
+            // Tool and progress records push the file past the 100,000-record limit.
+            ...Array.from({ length: 100_000 }, () => "{}"),
             record({ type: "user", message: { role: "user", content: "Latest prompt" } }),
           ].join("\n"),
           mtimeMs: nowMs - 60_000,
