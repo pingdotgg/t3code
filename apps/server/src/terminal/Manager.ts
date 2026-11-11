@@ -1881,6 +1881,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Deferred.doneUnsafe(exited, Effect.void);
     });
     yield* Effect.gen(function* () {
+      // Read the tree first: a shell that exits on SIGTERM reparents its children out of it.
+      const descendantPids = yield* findDescendantPids;
+      for (const pid of descendantPids) signalProcess(pid, "SIGTERM");
       const terminated = yield* Effect.try({
         try: () => process.kill("SIGTERM"),
         catch: (cause) =>
@@ -1900,25 +1903,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           }).pipe(Effect.as(false)),
         ),
       );
-      if (!terminated) {
-        return;
-      }
-      // Interactive shells ignore SIGTERM, so the tree is still intact here.
-      const descendantPids = yield* findDescendantPids;
-      for (const pid of descendantPids) signalProcess(pid, "SIGTERM");
-
-      const exitedBeforeGrace = yield* Deferred.await(exited).pipe(
-        Effect.as(true),
-        Effect.timeoutOrElse({
-          duration: processKillGraceMs,
-          orElse: () => Effect.succeed(false),
-        }),
+      const shellExitedBeforeGrace = terminated
+        ? Deferred.await(exited).pipe(
+            Effect.as(true),
+            Effect.timeoutOrElse({
+              duration: processKillGraceMs,
+              orElse: () => Effect.succeed(false),
+            }),
+          )
+        : Effect.succeed(true);
+      // Descendants get the full grace even when the shell exits early.
+      const [shellExited] = yield* Effect.all(
+        [
+          shellExitedBeforeGrace,
+          descendantPids.length > 0 ? Effect.sleep(processKillGraceMs) : Effect.void,
+        ],
+        { concurrency: "unbounded" },
       );
-      if (exitedBeforeGrace) {
-        return;
-      }
 
       for (const pid of descendantPids) signalProcess(pid, "SIGKILL");
+      if (shellExited) {
+        return;
+      }
       yield* Effect.try({
         try: () => process.kill("SIGKILL"),
         catch: (cause) =>

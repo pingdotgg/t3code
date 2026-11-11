@@ -232,6 +232,7 @@ interface CreateManagerOptions {
   >;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
+  onSignal?: (pid: number, signal: string) => void;
   registerTerminalProcesses?: Parameters<
     typeof TerminalManager.makeWithOptions
   >[0]["registerTerminalProcesses"];
@@ -288,7 +289,10 @@ const createManager = (
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
         processKillGraceMs: options.processKillGraceMs ?? 1,
-        signalProcess: (pid, signal) => signals.push({ pid, signal }),
+        signalProcess: (pid, signal) => {
+          signals.push({ pid, signal });
+          options.onSignal?.(pid, signal);
+        },
         ...(options.registerTerminalProcesses !== undefined
           ? { registerTerminalProcesses: options.registerTerminalProcesses }
           : {}),
@@ -827,6 +831,41 @@ it.layer(
           ...descendants.map((pid) => ({ pid, signal: "SIGKILL" })),
         ]);
       }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("stops background jobs even when the shell exits on SIGTERM and orphans them", () =>
+    Effect.gen(function* () {
+      let shellTerminated = false;
+      const jobKilled = yield* Deferred.make<void>();
+      const { manager, ptyAdapter, signals } = yield* createManager(5, {
+        processTable: Effect.sync(() => [
+          { pid: 9000, ppid: 1, name: "bash" },
+          { pid: 300, ppid: shellTerminated ? 1 : 9000, name: "sleep" },
+        ]),
+        onSignal: (pid, signal) => {
+          if (pid === 300 && signal === "SIGKILL") Deferred.doneUnsafe(jobKilled, Effect.void);
+        },
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+      const shell = ptyAdapter.processes[0]!;
+      const terminated = yield* Deferred.make<void>();
+      shell.onKill = () => {
+        shellTerminated = true;
+        shell.emitExit({ exitCode: 0, signal: 15 });
+        Deferred.doneUnsafe(terminated, Effect.void);
+      };
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(terminated);
+      yield* TestClock.adjust("1 millis");
+      yield* Deferred.await(jobKilled);
+
+      expect(signals).toEqual([
+        { pid: 300, signal: "SIGTERM" },
+        { pid: 300, signal: "SIGKILL" },
+      ]);
+      expect(shell.killSignals).toEqual(["SIGTERM"]);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("labels a running command by its whole process name, spaces included", () =>
@@ -2061,6 +2100,7 @@ it.layer(
       const providerInstanceId = ProviderInstanceId.make("codex_work");
       let providerSecret = "first-secret";
       const { manager, ptyAdapter } = yield* createManager(5, {
+        processTable: Effect.succeed([]),
         resolveProviderInstanceEnvironment: () =>
           Effect.succeed({ PROVIDER_SECRET: providerSecret }),
       });
