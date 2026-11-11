@@ -97,12 +97,12 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     timeoutMs?: number;
   },
 ): Effect.fn.Return<A, BootstrapError> {
-  yield* Effect.try({
+  const stat = yield* Effect.try({
     try: () => NodeFS.fstatSync(fd),
     catch: (cause) => new BootstrapFdStatError({ fd, cause }),
   });
 
-  const stream = yield* makeBootstrapInputStream(fd);
+  const stream = yield* makeBootstrapInputStream(fd, stat.isSocket() || stat.isFIFO());
 
   // Covers slow cold starts while staying well under the desktop readiness timeout.
   const timeoutMs = options?.timeoutMs ?? 30_000;
@@ -175,11 +175,17 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
 
 const makeBootstrapInputStream = Effect.fn("bootstrap.makeBootstrapInputStream")(function* (
   fd: number,
+  isPipe: boolean,
 ) {
   const platform = yield* HostProcess.Platform;
-  const fdPath = resolveFdPath(fd, platform);
+  const fdPath = isPipe ? undefined : resolveFdPath(fd, platform);
   return yield* Effect.try<NodeStream.Readable, BootstrapInputStreamOpenError>({
     try: () => {
+      // fs reads of an empty non-blocking pipe fail with EAGAIN, and blocking ones pin a
+      // threadpool thread past the timeout; a libuv stream waits for data and destroys cleanly.
+      if (isPipe) {
+        return makeSocketBootstrapStream(fd);
+      }
       if (fdPath === undefined) {
         return makeDirectBootstrapStream(fd);
       }
@@ -212,22 +218,21 @@ const makeBootstrapInputStream = Effect.fn("bootstrap.makeBootstrapInputStream")
   });
 });
 
-const makeDirectBootstrapStream = (fd: number): NodeStream.Readable => {
-  try {
-    return NodeFS.createReadStream("", {
-      fd,
-      encoding: "utf8",
-      autoClose: true,
-    });
-  } catch {
-    const stream = new NodeNet.Socket({
-      fd,
-      readable: true,
-      writable: false,
-    });
-    stream.setEncoding("utf8");
-    return stream;
-  }
+const makeDirectBootstrapStream = (fd: number): NodeStream.Readable =>
+  NodeFS.createReadStream("", {
+    fd,
+    encoding: "utf8",
+    autoClose: true,
+  });
+
+const makeSocketBootstrapStream = (fd: number): NodeStream.Readable => {
+  const stream = new NodeNet.Socket({
+    fd,
+    readable: true,
+    writable: false,
+  });
+  stream.setEncoding("utf8");
+  return stream;
 };
 
 // WSL-inherited stdin pipes cannot be reopened via /proc/self/fd/0 (EACCES),
