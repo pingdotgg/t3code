@@ -136,7 +136,7 @@ export function HostedBrowserWebview(props: {
 
   const [webviewGeneration, setWebviewGeneration] = useState(0);
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
-  // The guest is transparent until a page's styles apply, so the host paints the theme until then.
+  // The guest stays transparent until its page and stylesheets load; paint the theme until then.
   const [readyGeneration, setReadyGeneration] = useState<number | null>(null);
   const active = presentation.visible && presentation.rect !== null;
   const shown = active || pictureInPicture;
@@ -195,7 +195,7 @@ export function HostedBrowserWebview(props: {
     };
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
-    webview.addEventListener("dom-ready", markDocumentReady);
+    webview.addEventListener("did-finish-load", markDocumentReady);
     webview.addEventListener("render-process-gone", recoverGuest);
     webview.addEventListener("focus", dismissHostPopups);
     register();
@@ -204,7 +204,7 @@ export function HostedBrowserWebview(props: {
       if (recoveryTimeout !== null) clearTimeout(recoveryTimeout);
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
-      webview.removeEventListener("dom-ready", markDocumentReady);
+      webview.removeEventListener("did-finish-load", markDocumentReady);
       webview.removeEventListener("render-process-gone", recoverGuest);
       webview.removeEventListener("focus", dismissHostPopups);
     };
