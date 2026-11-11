@@ -60,7 +60,6 @@ import * as Cause from "effect/Cause";
 import * as PlatformError from "effect/PlatformError";
 import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import * as Context from "effect/Context";
 import * as Scope from "effect/Scope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -10029,9 +10028,7 @@ describe("codexDynamicToolOutput", () => {
 });
 
 describe("CodexAdapterV2 app-server process", () => {
-  // An app-server that ignores SIGTERM must not hold the server's shutdown forever: the
-  // spawner waits for the process without a deadline unless the command sets one.
-  it.live.skipIf(Context.get(Context.empty(), HostProcess.Platform) === "win32")(
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "stops an app-server that ignores SIGTERM within its kill deadline",
     () =>
       Effect.gen(function* () {
