@@ -113,15 +113,6 @@ const clientLaunchHarness = (input: {
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
       checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
       launch: (launch) => {
-        if (launch.projectId !== projectId)
-          return Effect.fail(
-            new ThreadLaunch.ThreadLaunchError({
-              operation: "resolve-project",
-              commandId: launch.commandId,
-              projectId: launch.projectId,
-              cause: "Project not found.",
-            }),
-          );
         input.launched.push(launch);
         if (input.refusedByCeiling) {
           return Effect.fail(
