@@ -803,8 +803,7 @@ function ModelsSection(props: {
 
 /** Identity and figure, then the row's share as a bar beside one secondary line. */
 function ShareRow(props: {
-  /** Provider colour for the dot and bar; `null` for rows that span providers. */
-  readonly color: string | null;
+  readonly color: string;
   readonly label: string;
   readonly labelLines?: number;
   readonly value: string;
@@ -822,9 +821,7 @@ function ShareRow(props: {
       className={cn("flex-row items-center gap-3 px-4 py-2.5", props.className)}
       style={props.width === undefined ? undefined : { width: props.width }}
     >
-      {props.color === null ? null : (
-        <View className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: props.color }} />
-      )}
+      <View className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: props.color }} />
       <View className="min-w-0 flex-1 gap-0.5">
         <View className="flex-row items-baseline gap-3">
           <Text
@@ -846,11 +843,8 @@ function ShareRow(props: {
           {props.share === null ? null : (
             <View className="h-1.5 w-14 shrink-0 flex-row overflow-hidden rounded-full bg-foreground/10">
               <View
-                className={cn("h-full rounded-full", props.color === null && "bg-primary")}
-                style={[
-                  { flex: props.share },
-                  props.color ? { backgroundColor: props.color } : null,
-                ]}
+                className="h-full rounded-full"
+                style={{ flex: props.share, backgroundColor: props.color }}
               />
               <View style={{ flex: 1 - props.share }} />
             </View>

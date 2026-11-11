@@ -893,7 +893,7 @@ function UsageOverview({
           </ToggleGroup>
         </div>
 
-        {breakdown !== "time" ? (
+        {breakdown === "model" ? (
           <>
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
               <p className="text-xs text-muted-foreground">
@@ -928,7 +928,7 @@ function UsageOverview({
                 className={cn("w-full text-sm", showExactValues ? "table-auto" : "table-fixed")}
               >
                 <caption className="sr-only">
-                  Usage by {breakdown}, sorted by {metric === "cost" ? "estimated cost" : "tokens"},
+                  Usage by model, sorted by {metric === "cost" ? "estimated cost" : "tokens"},
                   highest first
                 </caption>
                 <colgroup>
@@ -975,8 +975,7 @@ function UsageOverview({
                   </tr>
                 </thead>
                 <tbody>
-                  {breakdownModels.map((row, index) => {
-                    const model = row;
+                  {breakdownModels.map((model, index) => {
                     const key = `${model.provider}:${model.model}`;
                     const share = modelShare(model, metric);
                     return (
@@ -1020,7 +1019,7 @@ function UsageOverview({
                             metric === "cost" && "font-medium text-foreground",
                           )}
                         >
-                          <UsageCost exact={showExactValues} model={row} />
+                          <UsageCost exact={showExactValues} model={model} />
                           {metric === "cost" && share !== null ? (
                             <span className="block text-xs font-normal text-muted-foreground sm:hidden">
                               <span className="sr-only">Share of cost: </span>
@@ -1038,8 +1037,8 @@ function UsageOverview({
                           )}
                         >
                           <UsageFigure
-                            value={formatTokens(row.totalTokens)}
-                            precise={formatCount(row.totalTokens)}
+                            value={formatTokens(model.totalTokens)}
+                            precise={formatCount(model.totalTokens)}
                             exact={showExactValues}
                           />
                           {metric === "tokens" && share !== null ? (
