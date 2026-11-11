@@ -24,6 +24,7 @@ describe("projectThreadAwarenessV2", () => {
       Pick<
         OrchestrationV2ThreadShell,
         | "activityRunStatus"
+        | "latestRunBackgroundWake"
         | "latestRunStopRequested"
         | "status"
         | "pendingBackgroundTasks"
@@ -64,38 +65,66 @@ describe("projectThreadAwarenessV2", () => {
   });
 
   it.each([
-    ["running", null],
-    ["completed", null],
-    ["failed", "failed"],
-  ] as const)("keeps an idle compaction's %s run quiet unless it fails", (status, phase) => {
+    ["holds a wake run", true, [{ taskId: "watch", kind: "monitor" as const }], "running"],
+    ["completes a wake run once its monitor ends", true, [], "completed"],
+    [
+      "holds a wake run while a monitor remains beside other work",
+      true,
+      [
+        { taskId: "build", kind: "command" as const },
+        { taskId: "watch", kind: "monitor" as const },
+      ],
+      "running",
+    ],
+    [
+      "completes a wake run with only a command pending",
+      true,
+      [{ taskId: "build", kind: "command" as const }],
+      "completed",
+    ],
+    [
+      "completes a run the user started",
+      false,
+      [{ taskId: "watch", kind: "monitor" as const }],
+      "completed",
+    ],
+  ] as const)("%s while a monitor wakes the thread", (_, latestRunBackgroundWake, tasks, phase) => {
     expect(
       projectThreadAwarenessV2({
         environmentId: "env-1" as EnvironmentId,
         project,
-        thread: { ...v2Thread({ status }), latestRunSilent: true },
-      })?.phase ?? null,
+        thread: v2Thread({
+          status: "completed",
+          latestRunBackgroundWake,
+          pendingBackgroundTasks: [...tasks],
+        }),
+      })?.phase,
     ).toBe(phase);
   });
 
-  it.each(["running", "completed", "failed"] as const)(
-    "does not publish %s subagent activity",
-    (status) => {
-      expect(
-        projectThreadAwarenessV2({
-          environmentId: "env-1" as EnvironmentId,
-          project,
-          thread: v2Thread({
-            status,
-            lineage: {
-              rootThreadId: "parent" as ThreadId,
-              parentThreadId: "parent" as ThreadId,
-              relationshipToParent: "subagent",
-            },
-          }),
+  it.each([
+    ["running", "subagent"],
+    ["completed", "subagent"],
+    ["failed", "subagent"],
+    ["running", "side chat"],
+  ] as const)("does not publish %s %s activity", (status, kind) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status,
+          lineage: {
+            rootThreadId: "parent" as ThreadId,
+            parentThreadId: "parent" as ThreadId,
+            ...(kind === "subagent"
+              ? { relationshipToParent: "subagent" }
+              : { relationshipToParent: "fork", sideChat: true }),
+          },
         }),
-      ).toBeNull();
-    },
-  );
+      }),
+    ).toBeNull();
+  });
 
   it("keeps an older activity run visible over a newer cancelled run", () => {
     expect(
@@ -107,12 +136,21 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
   });
 
-  it.each(["completed", "failed"] as const)("removes settled %s work", (status) => {
+  it.each([
+    ["completed", "completed", false],
+    ["failed", "failed", false],
+    ["monitor-held", "completed", true],
+  ] as const)("removes settled %s work", (_, status, latestRunBackgroundWake) => {
     expect(
       projectThreadAwarenessV2({
         environmentId: "env-1" as EnvironmentId,
         project,
-        thread: v2Thread({ status, settledOverride: "settled" }),
+        thread: v2Thread({
+          status,
+          settledOverride: "settled",
+          latestRunBackgroundWake,
+          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor" }],
+        }),
       }),
     ).toBeNull();
   });
@@ -153,7 +191,7 @@ describe("projectThreadAwarenessV2", () => {
     },
   );
 
-  it("keeps settled work held open by a monitor", () => {
+  it("keeps settled work held open by an awaited monitor", () => {
     expect(
       projectThreadAwarenessV2({
         environmentId: "env-1" as EnvironmentId,
@@ -161,7 +199,7 @@ describe("projectThreadAwarenessV2", () => {
         thread: v2Thread({
           status: "completed",
           settledOverride: "settled",
-          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor" }],
+          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor", awaited: true }],
         }),
       }),
     ).toMatchObject({ phase: "running" });
@@ -169,7 +207,12 @@ describe("projectThreadAwarenessV2", () => {
 
   it.each([
     ["only a dev server", "completed", [{ taskId: "dev", kind: "command" }]],
-    ["a monitor", "running", [{ taskId: "watch", kind: "monitor" }]],
+    ["a dev server's watchdog monitor", "completed", [{ taskId: "watch", kind: "monitor" }]],
+    [
+      "a command the agent waits on",
+      "running",
+      [{ taskId: "tests", kind: "command", awaited: true }],
+    ],
     [
       "a dev server and a subagent",
       "running",
@@ -188,7 +231,7 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase });
   });
 
-  it("reports an async question as input only after the working run completes", () => {
+  it("reports an async question as input while the run keeps working", () => {
     const input = {
       environmentId: "env-1" as EnvironmentId,
       project,
@@ -202,12 +245,9 @@ describe("projectThreadAwarenessV2", () => {
       }),
     };
     expect(projectThreadAwarenessV2(input)).toMatchObject({
-      phase: "running",
-      headline: "Agent is working",
+      phase: "waiting_for_input",
+      headline: "Waiting for input",
     });
-    expect(
-      projectThreadAwarenessV2({ ...input, thread: { ...input.thread, status: "completed" } }),
-    ).toMatchObject({ phase: "waiting_for_input", headline: "Waiting for input" });
   });
 
   it("does not present authentication refreshes as user approvals", () => {

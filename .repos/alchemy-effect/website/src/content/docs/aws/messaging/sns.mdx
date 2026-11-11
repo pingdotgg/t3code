@@ -17,7 +17,7 @@ and invoke permission for you.
 
 ```typescript
 // src/topic.ts
-import * as SNS from "alchemy/AWS/SNS";
+import * as SNS from "@alchemy.run/aws/SNS";
 
 export const Orders = SNS.Topic("Orders");
 ```
@@ -57,8 +57,8 @@ execution role:
 
 ```typescript
 // src/api.ts
-import * as AWS from "alchemy/AWS";
-import * as SNS from "alchemy/AWS/SNS";
+import * as AWS from "@alchemy.run/aws";
+import * as SNS from "@alchemy.run/aws/SNS";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Orders } from "./topic.ts";
@@ -133,8 +133,7 @@ Effect.provide(
 
 ## Consume notifications on a Lambda
 
-`SNS.consumeTopicNotifications(topic, ...)` is the consumer-side
-mirror of `SQS.consumeQueueMessages`: a typed `Stream` of SNS
+`SNS.consumeTopicNotifications(topic, ...)` hands your handler a typed `Stream` of SNS
 notifications you compose with any operator. Behind the scenes
 it creates the SNS subscription (protocol `lambda`, endpoint =
 this function) and the `lambda:InvokeFunction` permission for
@@ -142,8 +141,8 @@ this function) and the `lambda:InvokeFunction` permission for
 
 ```typescript
 // src/worker.ts
-import * as AWS from "alchemy/AWS";
-import * as SNS from "alchemy/AWS/SNS";
+import * as AWS from "@alchemy.run/aws";
+import * as SNS from "@alchemy.run/aws/SNS";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -151,7 +150,7 @@ import { Orders } from "./topic.ts";
 
 export default class Worker extends AWS.Lambda.Function<Worker>()(
   "OrdersWorker",
-  { main: import.meta.url },
+  { main: import.meta.url, functionUrl: false },
   Effect.gen(function* () {
     const topic = yield* Orders;
 
@@ -207,8 +206,8 @@ queue to a topic is one declaration:
 
 ```typescript
 // alchemy.run.ts (inside the Stack's Effect.gen)
-import * as SNS from "alchemy/AWS/SNS";
-import * as SQS from "alchemy/AWS/SQS";
+import * as SNS from "@alchemy.run/aws/SNS";
+import * as SQS from "@alchemy.run/aws/SQS";
 
 const topic = yield* Orders;
 
