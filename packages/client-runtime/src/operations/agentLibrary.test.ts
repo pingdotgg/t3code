@@ -416,6 +416,12 @@ it("sends a patch an older server keeps dropping once per change of its library"
   expect(pass(false)).toContain("old");
   expect(pass(true)).toContain("old");
   expect(pass(true)).not.toContain("old");
+  // Converging forgets the delivery, so a target restored to the earlier state is sent again.
+  const dropped = old;
+  old = { mcpGatewayProfiles: [agent("p1", "2026-01-01"), agent("p3", "2026-01-03")] };
+  expect(pass(true)).not.toContain("old");
+  old = dropped;
+  expect(pass(true)).toContain("old");
 });
 
 it("turns a whole-library patch into per-item operations based on the revisions the editor opened", () => {

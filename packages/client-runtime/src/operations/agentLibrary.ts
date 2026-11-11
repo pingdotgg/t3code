@@ -384,6 +384,9 @@ export function createAgentLibrarySyncGate() {
   const delivered = new Map<string, string>();
   return {
     take(plan: AgentLibrarySyncPlan, sources: ReadonlyArray<AgentLibrarySource>) {
+      for (const environmentId of delivered.keys())
+        if (!plan.targets.some((target) => target.environmentId === environmentId))
+          delivered.delete(environmentId);
       const keyed = plan.targets.flatMap((target) => {
         const own = sources.find((source) => source.environmentId === target.environmentId);
         const key = JSON.stringify([target.patch, libraryFingerprint(own?.library)]);
