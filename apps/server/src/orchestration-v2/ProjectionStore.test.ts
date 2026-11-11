@@ -3490,14 +3490,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const loaded = new Set<TurnItemId>();
         for (let pages = 0; cursor !== null; pages += 1) {
           assert.isBelow(pages, 20);
-          const page: OrchestrationV2ThreadHistoryPage =
-            yield* historyPage(
-              threadId,
-              cursor,
-              oldWork!.sourceItemId,
-              false,
-              "work",
-            );
+          const page: OrchestrationV2ThreadHistoryPage = yield* historyPage(
+            threadId,
+            cursor,
+            oldWork!.sourceItemId,
+            false,
+            "work",
+          );
           for (const row of page.items) loaded.add(row.sourceItemId);
           cursor = page.nextCursor;
         }
