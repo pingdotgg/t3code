@@ -1,5 +1,11 @@
 import { Schema } from "effect";
-import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  NonNegativeInt,
+  PositiveInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { BROWSER_PROFILE_MAX_COUNT, BrowserProfile, BrowserProfileId } from "./browserProfile.ts";
 
 export const PREVIEW_URL_MAX_LENGTH = 2_048;
@@ -222,6 +228,8 @@ export const PreviewReportProfilesInput = Schema.Struct({
   defaultProfileId: BrowserProfileId,
   /** Optional so older clients keep reporting; omitting it keeps the last reported rate. */
   recordingFrameRate: Schema.optional(BrowserRecordingFrameRate),
+  /** This environment's projects that override `defaultProfileId` for tabs agents open. */
+  projectProfileIds: Schema.optional(Schema.Record(ProjectId, BrowserProfileId)),
 });
 export type PreviewReportProfilesInput = typeof PreviewReportProfilesInput.Type;
 

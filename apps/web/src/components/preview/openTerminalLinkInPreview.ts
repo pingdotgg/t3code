@@ -55,7 +55,7 @@ export async function openTerminalLinkInPreview<E>(
     targetOrigin: new URL(input.url).origin,
   };
 
-  const defaults = await resolveBrowserDefaults();
+  const defaults = await resolveBrowserDefaults(input.threadRef);
   const runtime = previewRuntimeFor(input.threadRef.environmentId);
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,

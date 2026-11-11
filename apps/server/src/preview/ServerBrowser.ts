@@ -78,6 +78,7 @@ import { PENDING_ATTACHMENT_THREAD_SEGMENT } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ProjectionStoreV2 from "../orchestration-v2/ProjectionStore.ts";
 import * as PreviewAutomationBroker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
@@ -481,6 +482,7 @@ const make = Effect.gen(function* () {
   const manager = yield* PreviewManager.PreviewManager;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  const projections = yield* ProjectionStoreV2.ProjectionStoreV2;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
   const agentTurns = yield* (yield* PreviewAgentActivity.PreviewAgentActivity).changes;
@@ -1543,6 +1545,7 @@ const make = Effect.gen(function* () {
   let reportedProfiles: {
     readonly profiles: ReadonlyArray<BrowserProfile>;
     readonly defaultProfileId: string;
+    readonly projectProfileIds: ReadonlyMap<string, string>;
   } | null = null;
   // Agent recordings encode here, so they need the client's Browser recording frame rate. The
   // last report outlives the client, which lets agents record while no client is connected.
@@ -1560,10 +1563,16 @@ const make = Effect.gen(function* () {
     }
     if (latest === undefined) return;
     const profiles = resolveBrowserProfiles([...byId.values()]);
+    const projectProfileIds = new Map<string, string>();
+    for (const [projectId, profileId] of Object.entries(latest.projectProfileIds ?? {})) {
+      const profile = findBrowserProfile(profiles, profileId);
+      if (profile && profile.kind !== "incognito") projectProfileIds.set(projectId, profile.id);
+    }
     reportedProfiles = {
       profiles,
       defaultProfileId:
         findBrowserProfile(profiles, latest.defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID,
+      projectProfileIds,
     };
   };
 
@@ -1588,7 +1597,19 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const profileStatus = () => {
+  // The default a client reported for the thread's project, else its global default.
+  const threadDefaultProfileId = async (threadId: ThreadId): Promise<string | undefined> => {
+    if (!reportedProfiles?.projectProfileIds.size) return reportedProfiles?.defaultProfileId;
+    const thread = await runPromise(
+      projections.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null)),
+    );
+    return (
+      (thread ? reportedProfiles?.projectProfileIds.get(thread.projectId) : undefined) ??
+      reportedProfiles?.defaultProfileId
+    );
+  };
+
+  const profileStatus = (defaultProfileId: string | undefined) => {
     const profiles = reportedProfiles?.profiles ?? BUILT_IN_BROWSER_PROFILES;
     return {
       profiles: profiles.map((profile) => ({
@@ -1596,12 +1617,15 @@ const make = Effect.gen(function* () {
         name: profile.name,
         ...(profile.kind === "incognito" ? { incognito: true } : {}),
       })),
-      ...(reportedProfiles ? { defaultProfileId: reportedProfiles.defaultProfileId } : {}),
+      ...(defaultProfileId === undefined ? {} : { defaultProfileId }),
     };
   };
 
-  const resolveOpenProfile = (requested: string | undefined): string | undefined => {
-    if (requested === undefined) return reportedProfiles?.defaultProfileId;
+  const resolveOpenProfile = async (
+    requested: string | undefined,
+    threadId: ThreadId,
+  ): Promise<string | undefined> => {
+    if (requested === undefined) return threadDefaultProfileId(threadId);
     const profiles = reportedProfiles?.profiles ?? BUILT_IN_BROWSER_PROFILES;
     const wanted = requested.toLowerCase();
     const match =
@@ -1625,9 +1649,11 @@ const make = Effect.gen(function* () {
   };
 
   const statusWithTitle = async (
+    threadId: ThreadId,
     tab: ServerTab | undefined,
     agentSessionId?: string,
   ): Promise<PreviewAutomationStatus> => {
+    const profileInfo = profileStatus(await threadDefaultProfileId(threadId));
     if (!tab) {
       return {
         available: false,
@@ -1636,7 +1662,7 @@ const make = Effect.gen(function* () {
         url: null,
         title: null,
         loading: false,
-        ...profileStatus(),
+        ...profileInfo,
       };
     }
     const url = ServerBrowserPage.withoutDataPayload(tab.page.url());
@@ -1675,7 +1701,7 @@ const make = Effect.gen(function* () {
           visible: isVisible(candidate),
           ...(candidate.profileId === undefined ? {} : { profileId: candidate.profileId }),
         })),
-      ...profileStatus(),
+      ...profileInfo,
       downloads: tab.downloads.map(({ fileName, path, sizeBytes, url, completedAt }) => ({
         fileName,
         path,
@@ -2000,6 +2026,7 @@ const make = Effect.gen(function* () {
     switch (request.operation) {
       case "status":
         return statusWithTitle(
+          request.threadId,
           request.tabId === undefined
             ? latestThreadTab(request.threadId, request.agentSessionId)
             : tabs.get(tabKey(request.threadId, request.tabId)),
@@ -2056,7 +2083,9 @@ const make = Effect.gen(function* () {
             ? found
             : undefined;
         const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
-        const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
+        const profileId = existing
+          ? undefined
+          : await resolveOpenProfile(open.profileId, request.threadId);
         if (!existing) closeIdleAgentTabs();
         const tab =
           existing ??
@@ -2117,7 +2146,7 @@ const make = Effect.gen(function* () {
                 .waitForLoadState("load", { timeout: navigationTimeout })
                 .catch(constVoid);
             }
-            return statusWithTitle(tab, request.agentSessionId);
+            return statusWithTitle(request.threadId, tab, request.agentSessionId);
           },
           deadlineMs,
         );
@@ -2184,7 +2213,7 @@ const make = Effect.gen(function* () {
           reason: "humanControl",
         });
       await resolveDialog(tab, input as PreviewAutomationDialogInput);
-      return statusWithTitle(tab, request.agentSessionId);
+      return statusWithTitle(request.threadId, tab, request.agentSessionId);
     }
     const agentSessionId = request.agentSessionId!;
 
@@ -2239,7 +2268,7 @@ const make = Effect.gen(function* () {
             navigateInput.timeoutMs ?? request.timeoutMs,
           ),
         );
-        return statusWithTitle(tab, request.agentSessionId);
+        return statusWithTitle(request.threadId, tab, request.agentSessionId);
       }
       case "resize": {
         const setting = resolvePreviewViewport(input as PreviewAutomationResizeInput);
