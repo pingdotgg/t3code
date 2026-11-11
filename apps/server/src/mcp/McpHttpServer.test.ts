@@ -1414,7 +1414,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
       expect(yield* listed()).toEqual(["where"]);
       expect(yield* ranIn(elsewhere)).toMatchObject({
         isError: true,
-        content: [{ text: expect.stringContaining("Linked environments is off on this machine") }],
+        content: [{ text: expect.stringContaining("This machine is not taking part in the device network") }],
       });
       expect((yield* ranIn(environmentId)).structuredContent).toEqual({ ranIn: "here" });
 

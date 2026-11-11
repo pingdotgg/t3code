@@ -232,7 +232,7 @@ it.effect(
         yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: false });
         const refusedThere = yield* link.pipe(Effect.flip);
         expect(refusedThere.reason).toBe("pairing_rejected");
-        expect(refusedThere.message).toContain("Linked environments is off on that machine");
+        expect(refusedThere.message).toContain("That machine is not taking part in your device network");
         expect(yield* linkedSessions(b)).toEqual([]);
 
         yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: true });
@@ -241,7 +241,7 @@ it.effect(
         // Not final, so a task already running there picks up again once it is back on.
         const waiting = yield* probe(a).pipe(Effect.flip);
         expect(waiting.code).toBe("orchestration_error");
-        expect(waiting.message).toContain("has Linked environments turned off");
+        expect(waiting.message).toContain("is not taking part in your device network");
         yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: true });
         expect(yield* probe(a)).toEqual({ caller: "T3 Code · Laptop", modes: "auto/default" });
       }),
