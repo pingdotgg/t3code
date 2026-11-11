@@ -70,7 +70,7 @@ it.each(["inside", "outside", "touch", "sibling", "guest", "navigation"])(
     addEventListener("load", function () { parent.postMessage("ready", "*"); });
     drag.addEventListener("pointerdown", function () { held = true; drag.style.height = "300px"; });
     addEventListener("resize", function () { if (held) parent.postMessage("cancelled", "*"); });
-    addEventListener("pointerup", function () { held = false; });
+    addEventListener("pointerup", function () { held = false; parent.postMessage("released", "*"); });
   </script>`),
         ],
         { type: "text/html" },
@@ -120,11 +120,16 @@ it.each(["inside", "outside", "touch", "sibling", "guest", "navigation"])(
     let cancelled = false,
       ready = false,
       siblingReady = !sibling,
-      navigated = false;
+      navigated = false,
+      released = false;
+    const holds: boolean[] = [];
     const receive = (event: MessageEvent) => {
       if (sibling && event.source === sibling.contentWindow && event.data === "ready")
         siblingReady = true;
       if (event.source !== frame.contentWindow) return;
+      if (event.data?.method === "t3/notifications/pointer-held")
+        holds.push(event.data.params.held);
+      if (event.data === "released") released = true;
       if (kind === "guest" && event.data?.method === "t3/notifications/pointer-held")
         pin(event.data.params.held);
       if (event.data === "cancelled") cancelled = true;
@@ -149,6 +154,8 @@ it.each(["inside", "outside", "touch", "sibling", "guest", "navigation"])(
         touchPoints: [first, { x: x + 60, y, id: 12 }],
       });
       await cdp().send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [first] });
+      await vi.waitFor(() => expect(released).toBe(true));
+      expect(holds).toEqual([true]);
       expect(pin).toHaveBeenLastCalledWith(true);
       expect(frame.clientHeight).toBe(216 - border);
       await cdp().send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
