@@ -588,7 +588,10 @@ export function ThreadRelationshipsPanel(props: {
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
 
-  const canPromote = currentThread !== undefined && !isListedThreadLineage(currentThread.lineage);
+  const canPromote =
+    currentThread !== undefined &&
+    currentThread.archivedAt === null &&
+    !isListedThreadLineage(currentThread.lineage);
   const promoted = currentThread?.promotedAt != null;
   const lineageVisible =
     props.showLineage &&
