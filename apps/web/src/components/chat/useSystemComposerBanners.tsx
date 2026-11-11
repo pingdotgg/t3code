@@ -205,18 +205,19 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
           ) : undefined,
         actions: (
           <>
-            {/* While backing off, Reconnect skips the wait and tries now. */}
-            <Button
-              size="xs"
-              variant="secondary"
-              onClick={() =>
-                void handleReconnectActiveEnvironmentStable(
-                  activeEnvironmentUnavailableState.environmentId,
-                )
-              }
-            >
-              Reconnect
-            </Button>
+            {unavailableConnection.phase !== "connecting" ? (
+              <Button
+                size="xs"
+                variant="secondary"
+                onClick={() =>
+                  void handleReconnectActiveEnvironmentStable(
+                    activeEnvironmentUnavailableState.environmentId,
+                  )
+                }
+              >
+                {environmentReconnecting ? "Retry now" : "Reconnect"}
+              </Button>
+            ) : null}
             <Button
               size="xs"
               variant="secondary"
