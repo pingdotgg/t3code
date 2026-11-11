@@ -1536,6 +1536,11 @@ it.effect("a native fork whose source session is gone starts fresh with the sour
     assert.equal(projection.contextTransfers[0]?.status, "resolved_portable");
     assert.isNull(projection.providerThreads[0]?.forkedFrom);
     assert.include(JSON.stringify(turn), "FORKED_SOURCE_MARKER");
+    const notices = projection.turnItems.flatMap((item) =>
+      item.type === "system_notice" ? [item.message] : [],
+    );
+    assert.lengthOf(notices, 1);
+    assert.include(notices[0], "Session not found: native-deleted-source");
   }),
 );
 

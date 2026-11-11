@@ -115,6 +115,18 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
+const startFailureMessage = (error: Error): string => {
+  const nestedCause = "cause" in error ? error.cause : undefined;
+  return (
+    knownProviderFailureMessage(error) ??
+    (nestedCause instanceof Error
+      ? nestedCause.message
+      : typeof nestedCause === "string"
+        ? nestedCause
+        : error.message)
+  );
+};
+
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
     readonly threadId: ThreadId;
@@ -522,7 +534,6 @@ export const layer: Layer.Layer<
           readonly error: Error;
           readonly message?: string;
         }) {
-          const nestedCause = "cause" in failed.error ? failed.error.cause : undefined;
           yield* settleRunBeforeStart({
             signal: failed.signal,
             status: "failed",
@@ -534,14 +545,7 @@ export const layer: Layer.Layer<
               title: failed.title,
               failure: makeProviderFailure({
                 cause: failed.error,
-                message:
-                  failed.message ??
-                  knownProviderFailureMessage(failed.error) ??
-                  (nestedCause instanceof Error
-                    ? nestedCause.message
-                    : typeof nestedCause === "string"
-                      ? nestedCause
-                      : failed.error.message),
+                message: failed.message ?? startFailureMessage(failed.error),
                 class: "provider_error",
               }),
             },
@@ -1146,7 +1150,7 @@ export const layer: Layer.Layer<
           const sourceBusy = sourceProjection.runs.some(
             (candidate) => candidate.ordinal > sourceRun.ordinal && isActiveRun(candidate),
           );
-          let nativeForkFailed = false;
+          let nativeForkFailure: string | undefined;
           if (!sourceBusy) {
             // Rolled-back turns are no longer in the source conversation, so they cannot bound a fork.
             const rolledBackAttemptIds = new Set(
@@ -1185,8 +1189,9 @@ export const layer: Layer.Layer<
               runId,
               errorTag: forked.failure._tag,
             });
-            nativeForkFailed = true;
+            nativeForkFailure = startFailureMessage(forked.failure);
           }
+          const nativeForkFailed = nativeForkFailure !== undefined;
           const sourceItems = yield* ContextHandoffService.readForkHistoryItems(
             projectionStore,
             sourceProjection,
@@ -1254,6 +1259,45 @@ export const layer: Layer.Layer<
                   updatedAt: createdAt,
                 },
               },
+              ...(nativeForkFailure === undefined
+                ? []
+                : [
+                    {
+                      id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                      type: "turn-item.updated" as const,
+                      threadId: projection.thread.id,
+                      runId: run.id,
+                      providerInstanceId: run.providerInstanceId,
+                      occurredAt: createdAt,
+                      payload: {
+                        id: idAllocator.derive.runSignalTurnItem({
+                          runId,
+                          signal: "native-fork-fallback",
+                        }),
+                        threadId: projection.thread.id,
+                        runId,
+                        nodeId: rootNode.id,
+                        providerThreadId: providerThread.id,
+                        providerTurnId: null,
+                        nativeItemRef: null,
+                        parentItemId: null,
+                        ordinal:
+                          Math.max(
+                            0,
+                            ...projection.turnItems
+                              .filter((item) => item.runId === runId)
+                              .map((item) => item.ordinal),
+                          ) + 1,
+                        status: "completed" as const,
+                        title: "Native fork failed",
+                        startedAt: createdAt,
+                        completedAt: createdAt,
+                        updatedAt: createdAt,
+                        type: "system_notice" as const,
+                        message: `Could not fork the source conversation natively (${nativeForkFailure}). Started a fresh session with its history.`,
+                      },
+                    },
+                  ]),
             ],
           });
           return loaded;
