@@ -36,6 +36,7 @@ import {
   type OrchestratorMcpUpdateScheduledTaskInput,
   type OrchestratorMcpListScheduledTasksInput,
   type ProjectId,
+  type ProviderInstanceId,
   type OrchestratorMcpThreadDetail,
   type OrchestratorMcpThreadPullRequest,
   type OrchestratorMcpThreadInterruptInput,
