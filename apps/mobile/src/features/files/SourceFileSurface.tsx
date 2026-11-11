@@ -1,10 +1,10 @@
+import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentType } from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
-  FlatList,
   Platform,
   Pressable,
   RefreshControl,
@@ -13,6 +13,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { WebView } from "react-native-webview";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -43,7 +44,6 @@ import {
   selectableSourceHtml,
 } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
-import { createSourceLineScroll } from "./source-file-scroll";
 
 interface SourceFileSurfaceProps {
   readonly contents: string;
@@ -270,8 +270,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
   const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
   const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
-  const listRef = useRef<FlatList<string>>(null);
-  const [lineScroll] = useState(createSourceLineScroll);
+  const listRef = useRef<LegendListRef>(null);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
   const refreshControl = props.onRefresh ? (
     <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
@@ -283,15 +282,21 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const usesTextSelection = props.selectable === true && !usesWebSelection;
 
   // Layout effect so a pending jump is cancelled in the commit that swaps the file.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the FlatList to the target line and cancels a pending jump when the file changes
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to the target line and cancels a pending jump when the file changes
   useLayoutEffect(() => {
     if (targetIndex === null || !usesLineList) {
       return;
     }
-    lineScroll.scrollToLine(listRef.current, targetIndex);
-    return lineScroll.cancel;
+    const frame = requestAnimationFrame(() => {
+      void listRef.current?.scrollToIndex({
+        index: targetIndex,
+        animated: false,
+        viewPosition: 0.3,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index, or leaving selection mode, scrolls the remounted list to it.
-  }, [lineScroll, props.path, targetIndex, usesLineList]);
+  }, [props.path, targetIndex, usesLineList]);
 
   const { onLongPressLine } = props;
   const renderLine = ({ item, index }: { item: string; index: number }) => (
@@ -385,33 +390,26 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   ) : null;
 
   const list = (
-    <FlatList
+    <LegendList
       ref={listRef}
+      // An embedded viewer sits inside another screen's scroll surface.
+      renderScrollComponent={props.embedded ? undefined : NativeScrollView}
       contentInsetAdjustmentBehavior={usesAutomaticInsets ? "automatic" : "never"}
       automaticallyAdjustsScrollIndicatorInsets={usesAutomaticInsets}
       refreshControl={refreshControl}
       data={lines}
       keyExtractor={(_line, index) => String(index)}
-      initialNumToRender={80}
-      maxToRenderPerBatch={80}
-      windowSize={12}
-      {...(codeWordBreak
-        ? {}
-        : {
-            getItemLayout: (_data, index) => ({
-              length: codeSurface.rowHeight,
-              offset: codeSurface.rowHeight * index,
-              index,
-            }),
-          })}
+      extraData={{ tokens, targetIndex, codeSurface, codeWordBreak, onLongPressLine }}
+      estimatedItemSize={codeSurface.rowHeight}
+      getFixedItemSize={codeWordBreak ? undefined : () => codeSurface.rowHeight}
+      drawDistance={codeSurface.rowHeight * 40}
+      recycleItems
       contentContainerStyle={{
         minWidth: codeWordBreak ? undefined : "100%",
         paddingBottom: codeSurface.rowHeight,
         paddingTop: 8,
       }}
       renderItem={renderLine}
-      onScrollToIndexFailed={lineScroll.onScrollToIndexFailed}
-      onScrollBeginDrag={lineScroll.cancel}
     />
   );
 
