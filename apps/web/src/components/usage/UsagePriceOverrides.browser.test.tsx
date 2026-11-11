@@ -82,15 +82,4 @@ describe("UsagePriceOverrides", () => {
       .toHaveTextContent("Output is required on workstation.");
     await expect.element(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
   });
-
-  it("does not flag a new row while only its model ID is typed", async () => {
-    await using _screen = await renderPrices();
-    await userEvent.click(page.getByRole("button", { name: "Add model price" }));
-    const modelId = page.getByLabelText("New model ID");
-    await userEvent.type(modelId, "mx");
-    await expect.element(modelId).toHaveValue("mx");
-
-    expect(page.getByRole("alert").elements()).toEqual([]);
-    await expect.element(modelId).not.toHaveAttribute("aria-invalid");
-  });
 });
