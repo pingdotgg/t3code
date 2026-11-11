@@ -1,0 +1,41 @@
+import type * as guardduty from "@distilled.cloud/aws/guardduty";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Detector } from "./Detector.ts";
+
+/**
+ * Runtime binding for `guardduty:StopMonitoringMembers`.
+ *
+ * Pauses GuardDuty monitoring for the given member accounts.
+ * The detector id is injected from the bound {@link Detector}.
+ * Provide the implementation with
+ * `Effect.provide(AWS.GuardDuty.StopMonitoringMembersHttp)`.
+ * ### Member Administration
+ * **Example:** Pause Monitoring
+ * ```typescript
+ * // init
+ * const stopMonitoringMembers = yield* AWS.GuardDuty.StopMonitoringMembers(detector);
+ *
+ * // runtime
+ * yield* stopMonitoringMembers({ AccountIds: ["111122223333"] });
+ * ```
+ *
+ * @binding
+ */
+export interface StopMonitoringMembers extends Binding.Service<
+  StopMonitoringMembers,
+  "AWS.GuardDuty.StopMonitoringMembers",
+  (
+    detector: Detector,
+  ) => Effect.Effect<
+    (
+      request?: Omit<guardduty.StopMonitoringMembersRequest, "DetectorId">,
+    ) => Effect.Effect<
+      guardduty.StopMonitoringMembersResponse,
+      guardduty.StopMonitoringMembersError
+    >
+  >
+> {}
+export const StopMonitoringMembers = Binding.Service<StopMonitoringMembers>(
+  "AWS.GuardDuty.StopMonitoringMembers",
+);
