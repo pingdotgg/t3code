@@ -13,7 +13,7 @@ const SHORTCUT_ICON = "shortcut_icon";
 
 const THREAD_SHORTCUT_HREF_PATTERN = /^\/threads\/[^/?#]+\/[^/?#]+$/;
 
-function threadShortcutHref(thread: RecentThreadShortcut): string {
+export function threadShortcutHref(thread: RecentThreadShortcut): string {
   return `/threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`;
 }
 
@@ -54,7 +54,7 @@ export function activeThreadRef(state: NavigationState): ScopedThreadRef | null 
   }
 }
 
-function threadShortcutLabel(thread: RecentThreadShortcut): string {
+export function threadShortcutLabel(thread: RecentThreadShortcut): string {
   const title = thread.title.trim();
   return title.length > 0 ? title : "Thread";
 }

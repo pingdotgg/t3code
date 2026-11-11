@@ -11,6 +11,7 @@ import {
 } from "../../persistence/imperative";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells } from "../../state/threads";
+import { publishQuickActionsWidget } from "../../widgets/publishQuickActionsWidget";
 import {
   activeThreadRef,
   buildShortcutActions,
@@ -108,8 +109,6 @@ const activeThreadShortcutAtom = Atom.make((get): RecentThreadShortcut | null =>
 
 /** Wired to the root navigation container's state changes. */
 export function recordAppShortcutNavigationState(state: NavigationState): void {
-  // Launcher shortcuts are Android-only; iOS never subscribes to thread shells.
-  if (Platform.OS !== "android") return;
   const next = activeThreadRef(state);
   const current = appAtomRegistry.get(activeThreadRefAtom);
   if (next?.environmentId === current?.environmentId && next?.threadId === current?.threadId) {
@@ -130,12 +129,15 @@ export function installAppShortcuts(navigate: (href: string) => void): () => voi
     const href = shortcutHref(action);
     if (href !== null) navigate(href);
   });
-  if (Platform.OS !== "android") return () => subscription.remove();
 
+  // Recent threads feed Android's launcher shortcuts and the iOS Quick actions widget.
   const recents = createRecentThreadShortcuts({
     load: loadRecentThreadShortcuts,
     save: saveRecentThreadShortcuts,
-    publish: (list) => QuickActions.setItems(buildShortcutActions(list)),
+    publish: (list) =>
+      Platform.OS === "android"
+        ? QuickActions.setItems(buildShortcutActions(list))
+        : publishQuickActionsWidget(list),
   });
   const unsubscribe = appAtomRegistry.subscribe(
     activeThreadShortcutAtom,
