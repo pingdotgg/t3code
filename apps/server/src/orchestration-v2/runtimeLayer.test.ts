@@ -40,6 +40,7 @@ import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -162,17 +163,35 @@ const alternateProviderInstance = {
     instanceId: alternateInstanceId,
   },
 } satisfies ProviderInstance;
+const claudeInstanceId = ProviderInstanceId.make("claude_test");
+const claudeDriver = ProviderDriverKind.make("claudeAgent");
+const claudeProviderInstance = {
+  ...providerInstance,
+  instanceId: claudeInstanceId,
+  driverKind: claudeDriver,
+  continuationIdentity: { driverKind: claudeDriver, continuationKey: "claude:test" },
+  displayName: "Claude test",
+  orchestrationAdapter: {
+    ...orchestrationAdapter,
+    instanceId: claudeInstanceId,
+    driver: claudeDriver,
+  },
+} satisfies ProviderInstance;
 
 const layerTestProviderInstanceRegistry = Layer.succeed(
   ProviderInstanceRegistry.ProviderInstanceRegistry,
   {
     getInstance: (instanceId) =>
       Effect.succeed(
-        [providerInstance, alternateProviderInstance].find(
+        [providerInstance, alternateProviderInstance, claudeProviderInstance].find(
           (instance) => instanceId === instance.instanceId,
         ),
       ),
-    listInstances: Effect.succeed([providerInstance, alternateProviderInstance]),
+    listInstances: Effect.succeed([
+      providerInstance,
+      alternateProviderInstance,
+      claudeProviderInstance,
+    ]),
     listUnavailable: Effect.succeed([]),
     streamChanges: Stream.empty,
     subscribeChanges: Effect.never,
@@ -993,6 +1012,228 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  it.effect("captures and repeatedly rewinds non-Git conversations without losing run links", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-non-git-rewind-" });
+      const threadId = ThreadId.make("runtime-non-git-rewind");
+      const rollbackThread = vi.fn(
+        ({ providerThread }: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
+          Effect.succeed({
+            providerThread: {
+              ...providerThread,
+              nativeThreadRef: {
+                driver,
+                nativeId: "rewound-native-thread",
+                strength: "strong" as const,
+              },
+            },
+          }),
+      );
+      const sessionSpy = vi.spyOn(sessions, "open").mockReturnValue(
+        Effect.succeed({
+          rollbackThread,
+        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("non-git-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("non-git-project"),
+        title: "Non-Git rewind",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+      });
+
+      const completeMessage = (name: string) =>
+        Effect.gen(function* () {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(name),
+            createdBy: "user",
+            creationSource: "web",
+            threadId,
+            messageId: MessageId.make(name),
+            text: name,
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          });
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const run = projection.runs.find((candidate) => candidate.userMessageId === name)!;
+          const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId)!;
+          const providerThread = projection.providerThreads.find(
+            (candidate) => candidate.id === run.providerThreadId,
+          )!;
+          const now = yield* DateTime.now;
+          const commandId = CommandId.make(`${name}-complete`);
+          // The provider completion is the fixture boundary; capture and rollback use real effects.
+          yield* outbox.cancelUnsettled({
+            threadId,
+            effectTypes: ["provider-turn.start"],
+            reason: "provider completion supplied by fixture",
+          });
+          yield* eventSink.writeWithEffects({
+            commandId,
+            events: [
+              {
+                id: EventId.make(`${name}-run`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "waiting", startedAt: now },
+              },
+              {
+                id: EventId.make(`${name}-node`),
+                type: "node.updated",
+                threadId,
+                runId: run.id,
+                nodeId: node.id,
+                occurredAt: now,
+                payload: { ...node, status: "completed", completedAt: now },
+              },
+              {
+                id: EventId.make(`${name}-turn`),
+                type: "provider-turn.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: {
+                  id: ProviderTurnId.make(`${name}-turn`),
+                  providerThreadId: providerThread.id,
+                  nodeId: node.id,
+                  runAttemptId: run.activeAttemptId,
+                  nativeTurnRef: null,
+                  ordinal: run.ordinal,
+                  status: "completed",
+                  startedAt: now,
+                  completedAt: now,
+                },
+              },
+            ],
+            effects: [
+              {
+                id: `${name}-capture`,
+                commandId,
+                threadId,
+                request: {
+                  type: "checkpoint.capture",
+                  runId: run.id,
+                  scopeId: node.checkpointScopeId!,
+                },
+              },
+            ],
+          });
+          yield* worker.drain();
+          const captured = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            captured.runs.find((candidate) => candidate.id === run.id)?.status,
+            "completed",
+          );
+          const checkpoint = captured.checkpoints.find((candidate) => candidate.runId === run.id)!;
+          assert.equal(checkpoint.status, "missing");
+          return { run, checkpoint };
+        });
+
+      const first = yield* completeMessage("non-git-first");
+      const second = yield* completeMessage("non-git-second");
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        before.checkpoints.find((checkpoint) => checkpoint.id === first.checkpoint.id)?.runId,
+        first.run.id,
+        "capturing a later run must preserve the earlier checkpoint's run link",
+      );
+      const baseline = before.checkpoints.find(
+        (checkpoint) => checkpoint.ordinalWithinScope === 0,
+      )!;
+      assert.equal(baseline.status, "missing");
+      for (const checkpoint of [baseline, first.checkpoint]) {
+        for (const restoreFiles of [undefined, true]) {
+          const commandId = CommandId.make(`non-git-files-${checkpoint.id}-${restoreFiles}`);
+          yield* orchestrator
+            .dispatch({
+              type: "checkpoint.rollback",
+              commandId,
+              threadId,
+              checkpointId: checkpoint.id,
+              scopeId: checkpoint.scopeId,
+              ...(restoreFiles === undefined ? {} : { restoreFiles }),
+            })
+            .pipe(Effect.flip);
+          assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+        }
+      }
+      assert.equal(rollbackThread.mock.calls.length, 0);
+
+      const rewind = (name: string) =>
+        Effect.gen(function* () {
+          const commandId = CommandId.make(name);
+          yield* orchestrator.dispatch({
+            type: "checkpoint.rollback",
+            commandId,
+            threadId,
+            checkpointId: baseline.id,
+            scopeId: baseline.scopeId,
+            restoreFiles: false,
+          });
+          yield* worker.drain();
+          assert.deepEqual(
+            (yield* outbox.listByCommandId(commandId)).map((effect) => effect.status),
+            ["succeeded"],
+          );
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.ok(projection.runs.every((run) => run.status === "rolled_back"));
+          assert.isNull(projection.providerThreads[0]!.lastRunOrdinal);
+          assert.equal(
+            projection.providerThreads[0]!.nativeThreadRef?.nativeId,
+            "rewound-native-thread",
+          );
+          assert.isNull(projection.thread.rollbackFailure);
+        });
+
+      yield* rewind("non-git-rewind-first");
+      assert.equal(rollbackThread.mock.calls[0]![0].target.type, "thread_start");
+      assert.deepEqual(
+        rollbackThread.mock.calls[0]![0].providerThreadTurns.map((turn) => turn.id),
+        [ProviderTurnId.make("non-git-first-turn"), ProviderTurnId.make("non-git-second-turn")],
+      );
+      const discardedCommandId = CommandId.make("non-git-discarded-target");
+      yield* orchestrator
+        .dispatch({
+          type: "checkpoint.rollback",
+          commandId: discardedCommandId,
+          threadId,
+          checkpointId: second.checkpoint.id,
+          scopeId: second.checkpoint.scopeId,
+          restoreFiles: false,
+        })
+        .pipe(Effect.flip);
+      assert.deepEqual(yield* outbox.listByCommandId(discardedCommandId), []);
+      assert.equal(rollbackThread.mock.calls.length, 1);
+
+      const resent = yield* completeMessage("non-git-resent");
+      assert.isAbove(resent.run.ordinal, second.run.ordinal);
+      yield* rewind("non-git-rewind-again");
+      assert.equal(rollbackThread.mock.calls.length, 2);
+      assert.equal(rollbackThread.mock.calls[1]![0].target.type, "thread_start");
+      assert.deepEqual(
+        rollbackThread.mock.calls[1]![0].providerThreadTurns.map((turn) => turn.id),
+        [ProviderTurnId.make("non-git-resent-turn")],
+      );
+    }).pipe(Effect.provide(Layer.merge(Layer.fresh(layerTest), NodeServices.layer))),
+  );
+
   it.effect("rejects non-ready rollback targets before persisting events or effects", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1573,10 +1814,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         assert.equal(native.runtimeRequests[0]?.responseCapability.type, "not_resumable");
         yield* recovery.reconcile("shutdown");
         yield* recovery.reconcile("startup");
-        assert.deepEqual(
-          (yield* orchestrator.getThreadProjection(threadId)).runtimeRequests,
-          recovered.runtimeRequests,
-        );
+        const rerecovered = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(rerecovered.runtimeRequests, recovered.runtimeRequests);
+        const runItems = rerecovered.turnItems.filter((item) => item.runId === runId);
+        const notices = runItems.filter((item) => item.type === "system_notice");
+        assert.lengthOf(notices, scope === "run" ? 1 : 0);
+        if (scope === "run") {
+          assert.equal(notices[0]?.title, "Server restarted");
+          assert.equal(notices[0]?.nodeId, recovered.runs[0]?.rootNodeId);
+          assert.equal(notices[0]?.ordinal, Math.max(...runItems.map((item) => item.ordinal)));
+        }
         yield* orchestrator.dispatch({
           type: "runtime-request.respond",
           commandId: CommandId.make(`recovery-answer-${trigger}-${scope}`),
@@ -3416,6 +3663,75 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("ends a watch on a closed pull request whose activity cannot be read", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-closed-unreadable");
+      const projectId = ProjectId.make("pr-watch-closed-unreadable-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch closed unreadable",
+        workspaceRoot: "/workspace/watch-closed-unreadable",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-closed-unreadable-create"),
+        threadId,
+        projectId,
+        title: "Watch closed unreadable",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-closed-unreadable-start"),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 8,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
+      });
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              watchFingerprint: () => Effect.succeed(null),
+              detail: () =>
+                Effect.succeed({
+                  ...watchedPullRequestDetail({
+                    projectId,
+                    number: 8,
+                    at: "2026-10-02T12:00:00.000Z",
+                  }),
+                  state: "closed" as const,
+                }),
+              activity: () => Effect.die("host unreachable"),
+            }),
+          ),
+        ),
+      );
+      yield* reactor.sweep;
+
+      const thread = yield* orchestrator.getThreadShell(threadId);
+      assert.isUndefined(thread?.pullRequests?.[0]?.watch);
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.deepEqual(
+        messages.flatMap((message) => message.notification?.summary ?? []),
+        ["#8: closed, stopped watching"],
+      );
+    }),
+  );
+
   it.effect("wakes once for a state it reported, across a restart and a new watch", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -3870,6 +4186,127 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         watching: false,
       });
     }),
+  );
+
+  it.effect(
+    "reads a watched pull request when the host reports a change, and wakes once per change",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const threadId = ThreadId.make("runtime-pull-request-watch-host-event");
+          const projectId = ProjectId.make("pr-watch-host-event-project");
+          yield* seedProject({
+            projectId,
+            title: "Watch host events",
+            workspaceRoot: "/workspace/watch-host-event",
+            defaultModelSelection: null,
+            createdAt: "2026-10-01T00:00:00.000Z",
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("pr-watch-host-event-create"),
+            threadId,
+            projectId,
+            title: "Watch host events",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          const key = { host: "github.com", repository: "pingdotgg/t3code", number: 15 };
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make("pr-watch-host-event-start"),
+            threadId,
+            ...key,
+            watching: true,
+            link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
+          });
+
+          let checks: PullRequestDetail["checks"] = [
+            { name: "lint", status: "pending", description: null, url: null, required: true },
+          ];
+          let fingerprints = 0;
+          const events = yield* Queue.unbounded<void>();
+          const following = yield* Deferred.make<void>();
+          const detailReads = yield* Queue.unbounded<void>();
+          const host = Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              detail: () =>
+                Queue.offer(detailReads, undefined).pipe(
+                  Effect.as({
+                    ...watchedPullRequestDetail({
+                      projectId,
+                      number: 15,
+                      at: "2026-10-02T12:00:00.000Z",
+                    }),
+                    headSha: "aaaaaaaaaa",
+                    checks,
+                  }),
+                ),
+              activity: () =>
+                Effect.succeed({
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                }),
+              // A fresh fingerprint every time, so every pass reads the detail.
+              watchFingerprint: () =>
+                Effect.sync(() => ({ status: String(++fingerprints), remarks: "" })),
+              invalidate: () => Effect.void,
+              changes: () =>
+                Stream.fromEffectDrain(Deferred.succeed(following, undefined)).pipe(
+                  Stream.concat(Stream.fromQueue(events)),
+                ),
+            }),
+          );
+          const wakes = Effect.map(
+            orchestrator.getThreadRecords(threadId, ["messages"]),
+            ({ messages }) =>
+              messages.filter(
+                (message) => message.notification !== undefined && message.notification !== null,
+              ),
+          );
+          const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          yield* reactor.start();
+          // The feed starts after the first sweep has read the pull request.
+          yield* Deferred.await(following);
+          yield* Queue.take(detailReads);
+
+          checks = [
+            { name: "lint", status: "failure", description: null, url: null, required: true },
+          ];
+          yield* Queue.offer(events, undefined);
+          // The clock never moves, so no sweep can be the one that reads the failure.
+          yield* Queue.take(detailReads);
+          // Nothing new: this read must compare against the watch the last one recorded.
+          yield* Queue.offer(events, undefined);
+          yield* Queue.take(detailReads);
+          // A sweep waits for the change read in flight.
+          yield* reactor.sweep;
+          yield* worker.drain();
+          const woken = yield* wakes;
+          assert.lengthOf(woken, 1);
+          assert.include(woken[0]!.notification?.summary ?? "", "failed");
+
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make("pr-watch-host-event-end"),
+            threadId,
+            ...key,
+            watching: false,
+          });
+        }),
+      ),
   );
 
   it.effect("wakes for checks that complete after the no-checks notice on the same head", () =>
@@ -4355,6 +4792,357 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         { headSha: "abc1234def", failedChecks: ["lint"], wakes: incomplete ? 1 : 0 },
       );
     }),
+  );
+
+  const createWatchedThread = Effect.fnUntraced(function* (name: string, reopened = false) {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make(`pr-wake-${name}`);
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make(`${threadId}-create`),
+      threadId,
+      projectId: ProjectId.make(`${threadId}-project`),
+      title: "Watch wake",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: process.cwd(),
+    });
+    const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+    yield* orchestrator.dispatch({
+      type: "thread.pull-request.watch",
+      commandId: CommandId.make(`${threadId}-watch`),
+      threadId,
+      ...key,
+      watching: true,
+      link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" },
+    });
+    let watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+    assert.isDefined(watch);
+    const snapshotSyncedAt = reopened
+      ? DateTime.formatIso(yield* DateTime.now)
+      : "2026-10-02T12:00:00.000Z";
+    if (reopened) {
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make(`${threadId}-end-watch`),
+        threadId,
+        ...key,
+        startedAt: watch.startedAt,
+        watch: null,
+      });
+      yield* TestClock.adjust("1 millis");
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make(`${threadId}-rewatch`),
+        threadId,
+        ...key,
+        watching: true,
+      });
+      watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      assert.isDefined(watch);
+    }
+    return { threadId, key, watch, snapshotSyncedAt };
+  });
+
+  it.effect.each([
+    "unwatch",
+    "unlink",
+    "new watch",
+    "merged",
+    "closed",
+    "newer head",
+    "comments then newer head",
+    "comment limit",
+    "still watching",
+    "closed notice",
+    "closed notice unlinked and relinked",
+    "reopened",
+  ] as const)("revalidates a queued pull-request wake before promotion: %s", (mode) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const { threadId, key, watch, snapshotSyncedAt } = yield* createWatchedThread(
+        `queued-${mode}`,
+        mode === "reopened",
+      );
+      const finalNotice =
+        mode === "closed notice" || mode === "closed notice unlinked and relinked";
+      const deliverable =
+        mode === "still watching" ||
+        mode === "closed notice" ||
+        mode === "reopened" ||
+        mode === "comments then newer head" ||
+        mode === "comment limit";
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}-active`),
+        threadId,
+        messageId: MessageId.make(`${threadId}-active`),
+        text: "Active work",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const wakeMessageId = MessageId.make(`${threadId}-wake`);
+      const recordedWatch = { ...watch, headSha: "abc123", wakes: 1 };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make(`${threadId}-wake`),
+        threadId,
+        ...key,
+        startedAt: watch.startedAt,
+        watch: finalNotice ? null : recordedWatch,
+        wake: {
+          messageId: wakeMessageId,
+          text: finalNotice ? "Closed, stopped watching" : "Checks failed",
+          notification: {
+            source: { kind: "monitor" },
+            outcome: "updated",
+            summary: finalNotice ? "#7: closed, stopped watching" : "#7: checks failed",
+          },
+          ...(mode === "comments then newer head" || mode === "comment limit"
+            ? { includesRemarks: true }
+            : {}),
+        },
+      });
+      const userMessageId = MessageId.make(`${threadId}-user`);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}-user`),
+        threadId,
+        messageId: userMessageId,
+        text: "User follow-up",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const activeRun = before.runs.find((run) => run.status === "starting");
+      const wakeRun = before.runs.find((run) => run.userMessageId === wakeMessageId);
+      const userRun = before.runs.find((run) => run.userMessageId === userMessageId);
+      assert.isDefined(activeRun);
+      assert.isDefined(wakeRun);
+      assert.isDefined(userRun);
+      assert.equal(wakeRun.status, "queued");
+      assert.equal(userRun.status, "queued");
+
+      if (mode === "unwatch" || mode === "new watch") {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`${threadId}-unwatch`),
+          threadId,
+          ...key,
+          watching: false,
+        });
+        if (mode === "new watch") {
+          yield* TestClock.adjust("1 millis");
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`${threadId}-rewatch`),
+            threadId,
+            ...key,
+            watching: true,
+          });
+          const restarted = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]
+            ?.watch;
+          assert.isDefined(restarted);
+          assert.notEqual(restarted.startedAt, watch.startedAt);
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request-watch.sync",
+            commandId: CommandId.make(`${threadId}-same-head`),
+            threadId,
+            ...key,
+            startedAt: restarted.startedAt,
+            watch: { ...restarted, headSha: recordedWatch.headSha },
+          });
+        }
+      } else if (mode === "unlink" || mode === "closed notice unlinked and relinked") {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.unlink",
+          commandId: CommandId.make(`${threadId}-unlink`),
+          threadId,
+          ...key,
+        });
+        if (mode === "closed notice unlinked and relinked") {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.link",
+            commandId: CommandId.make(`${threadId}-relink`),
+            threadId,
+            ...key,
+            url: "https://github.com/pingdotgg/t3code/pull/7",
+            source: "manual",
+          });
+        }
+      } else if (
+        mode === "merged" ||
+        mode === "closed" ||
+        mode === "closed notice" ||
+        mode === "reopened"
+      ) {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`${threadId}-snapshot`),
+          threadId,
+          ...key,
+          snapshot: {
+            state: mode === "merged" ? "merged" : "closed",
+            title: "Watched pull request",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            // A delayed sync can still report the closure from before this watch restarted.
+            syncedAt: snapshotSyncedAt,
+          },
+          stack: null,
+        });
+      } else if (mode === "comment limit") {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`${threadId}-exhausted`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch: null,
+          endedWatch: recordedWatch,
+          wake: {
+            messageId: MessageId.make(`${threadId}-exhausted`),
+            text: "New comments, stopped watching",
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "updated",
+              summary: "#7: new comments, stopped watching",
+            },
+            includesRemarks: true,
+          },
+        });
+      } else if (mode === "newer head" || mode === "comments then newer head") {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`${threadId}-advance`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch: { ...recordedWatch, headSha: "def456" },
+        });
+      }
+
+      const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+      const completedAt = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}-completed`),
+            type: "run.updated",
+            threadId,
+            runId: activeRun.id,
+            ...(activeRun.rootNodeId === null ? {} : { nodeId: activeRun.rootNodeId }),
+            providerInstanceId: activeRun.providerInstanceId,
+            occurredAt: completedAt,
+            payload: { ...activeRun, status: "completed", completedAt },
+          },
+        ],
+      });
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "starting",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        after.runs.find((run) => run.id === wakeRun.id)?.status,
+        deliverable ? "starting" : "cancelled",
+      );
+      assert.equal(
+        after.runs.find((run) => run.id === userRun.id)?.status,
+        deliverable ? "queued" : "starting",
+      );
+      if (!deliverable) {
+        assert.equal(
+          after.attempts.find((attempt) => attempt.id === wakeRun.activeAttemptId)?.status,
+          "cancelled",
+        );
+        assert.equal(
+          after.nodes.find((node) => node.id === wakeRun.rootNodeId)?.status,
+          "cancelled",
+        );
+        assert.isFalse(after.turnItems.some((item) => item.runId === wakeRun.id));
+      }
+      assert.deepEqual(
+        after.messages
+          .filter((message) => message.id === wakeMessageId)
+          .map((message) => message.notification?.summary),
+        [finalNotice ? "#7: closed, stopped watching" : "#7: checks failed"],
+      );
+    }),
+  );
+
+  it.effect.each(["open", "merged", "closed", "closed notice", "reopened"] as const)(
+    "revalidates a pull-request wake before idle dispatch: %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const { threadId, key, watch, snapshotSyncedAt } = yield* createWatchedThread(
+          `idle-${mode}`,
+          mode === "reopened",
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`${threadId}-snapshot`),
+          threadId,
+          ...key,
+          snapshot: {
+            state: mode === "closed notice" || mode === "reopened" ? "closed" : mode,
+            title: "Watched pull request",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: snapshotSyncedAt,
+          },
+          stack: null,
+        });
+        const wakeMessageId = MessageId.make(`${threadId}-wake`);
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`${threadId}-wake`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch: mode === "closed notice" ? null : { ...watch, headSha: "abc123", wakes: 1 },
+          wake: {
+            messageId: wakeMessageId,
+            text: mode === "closed notice" ? "Closed, stopped watching" : "Checks failed",
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "updated",
+              summary:
+                mode === "closed notice" ? "#7: closed, stopped watching" : "#7: checks failed",
+            },
+          },
+        });
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const deliverable = mode === "open" || mode === "closed notice" || mode === "reopened";
+        assert.deepEqual(
+          after.runs.map((run) => [run.userMessageId, run.status]),
+          deliverable ? [[wakeMessageId, "starting"]] : [],
+        );
+        assert.deepEqual(
+          after.messages.map((message) => message.id),
+          deliverable ? [wakeMessageId] : [],
+        );
+      }),
   );
 
   it.effect("reads each watched PR as soon as its own fingerprint lands", () =>
@@ -5373,6 +6161,218 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each([
+    { origin: "agent" as const, delivery: "queued" as const },
+    { origin: "agent" as const, delivery: "after-completion" as const },
+    { origin: "agent" as const, delivery: "held-resume" as const },
+    { origin: "agent" as const, delivery: "resume-before-stop-ends" as const },
+    { origin: "child" as const, delivery: "after-completion" as const },
+    { origin: "user" as const, delivery: "queued" as const },
+  ])(
+    "preserves queued agent and child updates but resets fresh requests (%j)",
+    ({ origin, delivery }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`work-clock-${origin}-${delivery}`);
+        const originalMessageId = MessageId.make(`${threadId}-original`);
+        const followUpMessageId = MessageId.make(`${threadId}-follow-up`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}-create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}-project`),
+          title: "Agent message work clock",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}-original`),
+          threadId,
+          messageId: originalMessageId,
+          text: "Original user work",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const dispatchFollowUp = orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: origin === "user" ? "user" : "agent",
+          creationSource: origin === "user" ? "web" : "mcp",
+          ...(origin === "user" ? {} : { senderThreadId: ThreadId.make("sending-agent") }),
+          commandId: CommandId.make(`${threadId}-follow-up`),
+          threadId,
+          messageId: followUpMessageId,
+          text: "Follow-up work",
+          attachments: [],
+          modelSelection,
+          dispatchMode: {
+            type: delivery === "after-completion" ? "start_immediately" : "queue_after_active",
+          },
+        });
+        const held = delivery === "held-resume" || delivery === "resume-before-stop-ends";
+        const drainsOnEnd = delivery === "queued" || delivery === "resume-before-stop-ends";
+        if (delivery === "queued" || held) yield* dispatchFollowUp;
+        const startedRunIds = yield* Queue.unbounded<RunId>();
+        const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+        yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.runForEach((stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "starting"
+              ? Queue.offer(startedRunIds, stored.event.payload.id)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+        const original = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === originalMessageId,
+        );
+        assert.isDefined(original);
+        if (origin === "child") {
+          assert.isNotNull(original.rootNodeId);
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-child`),
+                type: "subagent.updated",
+                threadId,
+                runId: original.id,
+                occurredAt: original.requestedAt,
+                payload: {
+                  id: NodeId.make(`${threadId}-child`),
+                  threadId,
+                  runId: original.id,
+                  parentNodeId: original.rootNodeId,
+                  origin: "app_owned",
+                  createdBy: "agent",
+                  driver,
+                  providerInstanceId: original.providerInstanceId,
+                  providerThreadId: null,
+                  childThreadId: ThreadId.make("sending-agent"),
+                  nativeTaskRef: null,
+                  prompt: "Delegated work",
+                  title: null,
+                  model: null,
+                  status: "completed",
+                  result: "Done",
+                  startedAt: original.requestedAt,
+                  completedAt: original.requestedAt,
+                  updatedAt: original.requestedAt,
+                },
+              },
+            ],
+          });
+        }
+        if (held) {
+          const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.userMessageId === followUpMessageId,
+          );
+          assert.isDefined(queued);
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-hold`),
+                type: "run.updated",
+                threadId,
+                occurredAt: original.requestedAt,
+                payload: { ...queued, queueHeld: true },
+              },
+              {
+                id: EventId.make(`${threadId}-interrupt-request`),
+                type: "turn-item.updated",
+                threadId,
+                runId: original.id,
+                occurredAt: original.requestedAt,
+                payload: {
+                  id: TurnItemId.make(`${threadId}-interrupt-request`),
+                  type: "run_interrupt_request",
+                  threadId,
+                  runId: original.id,
+                  nodeId: original.rootNodeId,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 90,
+                  status: "completed",
+                  title: "Interrupt requested",
+                  startedAt: original.requestedAt,
+                  completedAt: original.requestedAt,
+                  updatedAt: original.requestedAt,
+                  message: "Stopped by user",
+                },
+              },
+            ],
+          });
+        }
+        if (delivery === "resume-before-stop-ends") {
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`${threadId}-resume`),
+            threadId,
+          });
+        }
+        const originalStart = DateTime.makeUnsafe("2026-10-21T14:20:17.457Z");
+        const completedAt = DateTime.makeUnsafe("2026-10-21T14:23:53.509Z");
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-completed`),
+              type: "run.updated",
+              threadId,
+              runId: original.id,
+              ...(original.rootNodeId === null ? {} : { nodeId: original.rootNodeId }),
+              providerInstanceId: original.providerInstanceId,
+              occurredAt: completedAt,
+              payload: {
+                ...original,
+                status: held ? "interrupted" : "completed",
+                startedAt: originalStart,
+                completedAt,
+              },
+            },
+          ],
+        });
+        if (delivery === "held-resume") {
+          yield* TestClock.adjust("3 hours");
+          const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.userMessageId === followUpMessageId,
+          );
+          assert.isDefined(queued);
+          assert.equal(queued.status, "queued");
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`${threadId}-resume`),
+            threadId,
+          });
+        } else if (delivery === "after-completion") yield* dispatchFollowUp;
+        const startedRunId = drainsOnEnd ? yield* Queue.take(startedRunIds) : null;
+        const followUp = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === followUpMessageId,
+        );
+        assert.isDefined(followUp);
+        if (drainsOnEnd) assert.equal(startedRunId, followUp.id);
+        assert.equal(followUp.status, "starting");
+        if (origin === "child" || (origin === "agent" && delivery === "queued")) {
+          assert.isDefined(followUp.workStartedAt);
+          assert.equal(
+            DateTime.toEpochMillis(followUp.workStartedAt),
+            DateTime.toEpochMillis(originalStart),
+          );
+        } else {
+          assert.isUndefined(followUp.workStartedAt);
+        }
+      }),
+  );
+
   it.effect.each(["usage_limit", "provider_error"] as const)(
     "handles a queued message after a %s failure",
     (failureClass) =>
@@ -5933,10 +6933,143 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["the reset passes", "the user resumes"] as const)(
+    "holds a limited provider's queue through another provider's turn until %s",
+    (release) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-layer-queue-limit-switch-${release}`);
+        const switchedSelection = { instanceId: alternateInstanceId, model: "gpt-5.5" };
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          createdBy: "user",
+          creationSource: "web",
+          projectId: ProjectId.make(`${threadId}:project`),
+          title: "Limit switch",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        const send = (
+          name: string,
+          selection: typeof modelSelection | typeof switchedSelection,
+          type: "start_immediately" | "queue_after_active",
+        ) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:${name}`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:${name}`),
+            text: name,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            modelSelection: selection,
+            dispatchMode: { type },
+          });
+        yield* send("limited", modelSelection, "start_immediately");
+        yield* send("queued", modelSelection, "queue_after_active");
+        const [limited, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+        assert.isDefined(limited);
+        assert.isDefined(queued);
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:error`),
+              type: "turn-item.updated",
+              threadId,
+              runId: limited.id,
+              nodeId: limited.rootNodeId!,
+              providerInstanceId: limited.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`${threadId}:error`),
+                type: "error",
+                threadId,
+                runId: limited.id,
+                nodeId: limited.rootNodeId!,
+                providerThreadId: limited.providerThreadId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Usage limit reached",
+                  code: "usage_limit",
+                  retryable: null,
+                  resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+                },
+              },
+            },
+            {
+              id: EventId.make(`${threadId}:failed`),
+              type: "run.updated",
+              threadId,
+              runId: limited.id,
+              providerInstanceId: limited.providerInstanceId,
+              occurredAt: now,
+              payload: { ...limited, status: "failed", completedAt: now },
+            },
+          ],
+        });
+
+        // A message on another provider starts ahead of the held queue and
+        // completes there.
+        yield* send("switch", switchedSelection, "start_immediately");
+        const switched = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === MessageId.make(`${threadId}:switch`),
+        );
+        assert.equal(switched?.status, "starting");
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:switch:completed`),
+              type: "run.updated",
+              threadId,
+              runId: switched!.id,
+              providerInstanceId: switched!.providerInstanceId,
+              occurredAt: now,
+              payload: { ...switched!, status: "completed", completedAt: now },
+            },
+          ],
+        });
+
+        yield* orchestrator.resumeQueuedRuns;
+        const held = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(held.runs.find((run) => run.id === queued.id)?.status, "queued");
+
+        if (release === "the reset passes") {
+          yield* TestClock.adjust("61 minutes");
+          yield* orchestrator.resumeQueuedRuns;
+        } else {
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`${threadId}:resume`),
+            threadId,
+          });
+        }
+        const reset = yield* orchestrator.getThreadProjection(threadId);
+        const resumed = reset.runs.find((run) => run.id === queued.id);
+        assert.equal(resumed?.status, "starting");
+        assert.deepEqual(resumed?.modelSelection, modelSelection);
+      }),
+  );
+
   it.effect.each([
     ["server", modelSelection],
     ["provider", modelSelection],
-    ["provider", { ...modelSelection, instanceId: alternateInstanceId }],
   ] as const)(
     "delivers a queued monitor update from %s after conversation selection %j",
     ([creationSource, currentSelection]) =>
@@ -6049,7 +7182,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
   it.effect.each([
     { ...modelSelection, model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] },
-    { instanceId: alternateInstanceId, model: "gpt-5.5" },
   ])(
     "starts a queued delegated completion on a selection set while it waited: %j",
     (newerSelection) =>
@@ -6155,6 +7287,220 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         );
         assert.deepEqual(after.thread.modelSelection, newerSelection);
       }),
+  );
+
+  it.effect("keeps a model picked ahead of a queued agent message that names none", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-queued-agent-message-model-pick");
+      const pickedSelection = { ...modelSelection, model: "gpt-5.5" };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        createdBy: "user",
+        creationSource: "web",
+        title: "Queued model pick",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const [key, selection] of [
+        ["active", modelSelection],
+        ["picked", pickedSelection],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:${key}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${key}`),
+          text: key,
+          attachments: [],
+          modelSelection: selection,
+          dispatchMode: { type: key === "active" ? "start_immediately" : "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      // What t3_thread_send dispatches: no model of its own.
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:agent`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:agent`),
+        text: "Message from another thread",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const [active, picked, agent] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.isDefined(active);
+      assert.isDefined(picked);
+      assert.isDefined(agent);
+      const now = yield* DateTime.now;
+      for (const runId of [active.id, picked.id]) {
+        const current = yield* orchestrator.getThreadProjection(threadId);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${runId}:completed`),
+              type: "run.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                ...current.runs.find((run) => run.id === runId)!,
+                status: "completed",
+                completedAt: now,
+              },
+            },
+          ],
+        });
+        yield* orchestrator.resumeQueuedRuns;
+      }
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const delivered = after.runs.find((run) => run.id === agent.id)!;
+      assert.equal(delivered.status, "starting");
+      assert.deepEqual(delivered.modelSelection, pickedSelection);
+      assert.deepEqual(after.thread.modelSelection, pickedSelection);
+    }),
+  );
+
+  it.effect("keeps a buffered provider wake on its own provider behind a queued pick", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-buffered-wake-behind-queued-pick");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        createdBy: "user",
+        creationSource: "web",
+        title: "Buffered wake behind a pick",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const [key, selection] of [
+        ["active", modelSelection],
+        ["picked", { ...modelSelection, instanceId: alternateInstanceId }],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:${key}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${key}`),
+          text: key,
+          attachments: [],
+          modelSelection: selection,
+          dispatchMode: { type: key === "active" ? "start_immediately" : "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:wake`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:wake`),
+        text: "Background activity updated",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "provider",
+        notification: {
+          source: { kind: "background_task" },
+          outcome: "updated",
+          summary: "Background activity updated",
+        },
+      });
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const active = projection.runs.find(
+        (run) => run.userMessageId === MessageId.make(`${threadId}:active`),
+      );
+      const wake = projection.runs.find(
+        (run) => run.userMessageId === MessageId.make(`${threadId}:wake`),
+      );
+      assert.deepEqual(wake?.modelSelection, modelSelection);
+      assert.equal(wake?.providerThreadId, active?.providerThreadId);
+    }),
+  );
+
+  it.effect("checks a queued goal pause against the model picked ahead of it", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-goal-pause-behind-queued-pick");
+      const claudeSelection = { ...modelSelection, instanceId: claudeInstanceId };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        createdBy: "user",
+        creationSource: "web",
+        title: "Goal pause behind a pick",
+        modelSelection: claudeSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const [key, selection] of [
+        ["active", claudeSelection],
+        ["picked", modelSelection],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:${key}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${key}`),
+          text: key,
+          attachments: [],
+          modelSelection: selection,
+          dispatchMode: { type: key === "active" ? "start_immediately" : "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      const sendGoal = (key: string, text: string, deliveryIntent?: "auto") =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:${key}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${key}`),
+          text,
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          ...(deliveryIntent === undefined ? {} : { deliveryIntent }),
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+      // It runs after the pick, on a provider that can pause goals.
+      yield* sendGoal("pause", "/goal pause");
+      // A resume stops the active run and starts before the pick, so the thread's
+      // Claude instance still refuses it.
+      const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+      const refused = yield* Effect.flip(sendGoal("resume", "/goal resume", "auto"));
+      assert.instanceOf(refused, Orchestrator.OrchestratorDispatchError);
+      assert.equal(
+        refused.cause,
+        "Claude goals cannot be paused or resumed. Send /goal clear to remove the goal.",
+      );
+      assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+
+      const pause = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.userMessageId === MessageId.make(`${threadId}:pause`),
+      );
+      assert.deepEqual(pause?.modelSelection, modelSelection);
+    }),
   );
 
   it.effect("keeps the queue after a user interrupts the active run", () =>
@@ -6948,7 +8294,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
         ["user_message", "run_interrupt_request", "run_interrupt_result"],
       );
       assert.deepEqual(interrupted.providerTurns, []);
-      assert.isFalse(yield* effectWorker.runOnce);
+      assert.isFalse(yield* effectWorker.runOnce());
     }),
   );
 });
@@ -8718,6 +10064,12 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             item.type === "user_message" && visible(item) ? [item.runId] : [],
           ),
           [run.id, resumed.runs.at(-1)!.id],
+        );
+        assert.deepEqual(
+          resumed.turnItems.flatMap((item) =>
+            item.type === "system_notice" && item.title === "Server restarted" ? [item.runId] : [],
+          ),
+          scenario === "resume" ? [] : [continuation.id],
         );
         assert.deepEqual(
           resumed.runs.map((row) => row.status),
