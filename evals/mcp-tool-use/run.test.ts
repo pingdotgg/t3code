@@ -321,6 +321,13 @@ it("grades a page passed by path on the file the agent last wrote there", () => 
   };
 
   assert.deepEqual(failed(expect, run([write, fix, render])), []);
+  assert.deepEqual(
+    failed(
+      { calls: [{ tool: "html_render", args: { page: "re:clean\\s+copper" } }] },
+      run([{ ...render, input: { html: "CLEAN COPPER" } }]),
+    ),
+    [],
+  );
   assert.deepEqual(failed(expect, run([write, fix, { ...render, failed: true }])), [
     'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',
   ]);
