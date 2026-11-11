@@ -154,6 +154,14 @@ describe("GitHub media URLs", () => {
       fileName: "a.mp4",
     });
     expect(media("https://raw.githubusercontent.com/o/r/main/100%.png")?.fileName).toBe("100%.png");
+    expect(
+      media("https://acme.ghe.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c")
+        ?.fetchUrl,
+    ).toBe("https://acme.ghe.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c");
+    expect(media("https://acme.ghe.com/owner/repo/blob/main/docs/shot.png?raw=true")).toEqual({
+      fetchUrl: "https://raw.acme.ghe.com/owner/repo/main/docs/shot.png",
+      fileName: "shot.png",
+    });
   });
 
   it("marks only uploads and files at a full commit SHA as immutable", () => {
