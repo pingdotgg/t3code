@@ -3,6 +3,7 @@ import {
   CommandId,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
