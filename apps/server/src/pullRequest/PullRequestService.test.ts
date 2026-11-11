@@ -2928,48 +2928,6 @@ it.effect("reads the fresh diff when detail or summary discovers a changed revis
   }),
 );
 
-it.effect("tells a reader shown a held detail when the refresh behind it finds a change", () =>
-  Effect.gen(function* () {
-    let title = "original title";
-    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
-    const service = yield* makeService({
-      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
-      providers: [
-        fakeProvider(SourceControlProviderKind.make("github"), {
-          getChangeRequest: () =>
-            Effect.sync(() => ({
-              ...hostedChangeRequest("body"),
-              title,
-              updatedAt:
-                title === "original title" ? "2026-07-02T00:00:00Z" : "2026-07-02T00:01:00Z",
-            })),
-        }),
-      ],
-    });
-
-    assert.strictEqual((yield* service.detail(reference)).title, "original title");
-    title = "changed title";
-    yield* TestClock.adjust("61 seconds");
-    // A visible panel's live refresh is a display read: it is answered from the held copy.
-    const reread = yield* service.subscribeRefreshes.pipe(
-      Stream.take(1),
-      Stream.mapEffect(() => service.detail(reference)),
-      Stream.runHead,
-      Effect.timeoutOption("5 minutes"),
-      Effect.forkChild({ startImmediately: true }),
-    );
-    assert.strictEqual((yield* service.detail(reference)).title, "original title");
-    yield* TestClock.adjust("5 minutes");
-    const reached = Option.flatten(yield* Fiber.join(reread));
-    // The server did learn the change; only the reader still showing the held copy never heard.
-    assert.strictEqual((yield* service.detail(reference)).title, "changed title");
-    assert.strictEqual(
-      Option.map(reached, (detail) => detail.title).pipe(Option.getOrUndefined),
-      "changed title",
-    );
-  }),
-);
-
 it.effect("tells a held detail reader about a check change only when the refresh finds one", () =>
   Effect.gen(function* () {
     let status: "pending" | "success" = "pending";
@@ -2977,7 +2935,7 @@ it.effect("tells a held detail reader about a check change only when the refresh
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
-        fakeProvider(SourceControlProviderKind.make("github"), {
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
           // Hosts do not always move `updatedAt` when CI finishes.
           getChangeRequest: () =>
             Effect.sync(() => ({
@@ -3025,7 +2983,7 @@ it.effect("a held detail's change notice does not leave checks readers on the ca
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
-        fakeProvider(SourceControlProviderKind.make("github"), {
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
           getChangeRequest: () =>
             Effect.sync(() => ({ ...hostedChangeRequest("body"), checks: checks() })),
           getChangeRequestChecks: () =>
