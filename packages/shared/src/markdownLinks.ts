@@ -37,7 +37,7 @@ const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const ELIDED_PATH_SEGMENT_PATTERN = /(?:^|[\\/])(?:\.{3,}|…)(?:[\\/]|$)/;
 
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
-const UNICODE_FILE_EXTENSION_PATTERN = /\.[\p{L}\p{N}_-]+$/u;
+const ANY_FILE_EXTENSION_PATTERN = /\.[^./\\]+$/;
 const VERSION_SUFFIX_PATTERN = /\d\.\d[^.]*$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
 
@@ -206,7 +206,7 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
       // A `:line` suffix alone does not make `I/W217:220` a file reference.
       if (
         withoutPosition.includes("/") &&
-        !UNICODE_FILE_EXTENSION_PATTERN.test(basename) &&
+        !ANY_FILE_EXTENSION_PATTERN.test(basename) &&
         !EXTENSIONLESS_FILE_NAMES.has(basename)
       ) {
         return null;
