@@ -1062,6 +1062,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       setAddSurfaceMenuOpen(true);
     }
   });
+  const keybindingsRef = useRef(props.keybindings);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps remapped chords available to the open-panel command without re-registering
+  useEffect(() => {
+    keybindingsRef.current = props.keybindings;
+  }, [props.keybindings]);
   const registerNewSurfaceCommand = useEffectEvent(() =>
     registerCommands(
       { "rightPanel.new": (event) => openNewSurfaceMenu(event) },
@@ -1069,7 +1074,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         capture: true,
         when: (event) => !event.defaultPrevented,
         context: () => ({ ...props.getShortcutContext(), rightPanelOpen: true }),
-        keybindings: () => props.keybindings,
+        keybindings: () => keybindingsRef.current,
       },
     ),
   );

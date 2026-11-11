@@ -1792,12 +1792,15 @@ function OpenCommandPaletteDialog(props: {
     if (item.shortcutCommand) coveredCommands.add(item.shortcutCommand);
   }
   // /pull-requests has no thread route target; panel state is keyed by PULL_REQUESTS_PANEL_REF.
+  // Draft routes still own terminal/preview panel state under the draft's thread ref.
   const routeThreadRef =
     pathname === "/pull-requests"
       ? referenceThreadRef
       : paletteRouteTarget?.kind === "server"
         ? paletteRouteTarget.threadRef
-        : null;
+        : paletteRouteTarget?.kind === "draft"
+          ? previewPanelThreadRef
+          : null;
   actionItems.push(
     ...buildRegistryPaletteActions({
       context: readCommandContext({ threadRef: routeThreadRef, pathname }),

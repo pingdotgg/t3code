@@ -177,13 +177,19 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         !isCommandPaletteOpen(),
       context: () => {
         const threadRef = readRouteThreadRef();
+        if (!threadRef) {
+          return { terminalOpen: false, previewOpen: readPreviewOpen() };
+        }
+        const drawerOpen = selectThreadTerminalUiState(
+          useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+          threadRef,
+        ).terminalOpen;
+        const panelKind = selectActiveRightPanel(
+          useRightPanelStore.getState().byThreadKey,
+          threadRef,
+        );
         return {
-          terminalOpen: threadRef
-            ? selectThreadTerminalUiState(
-                useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-                threadRef,
-              ).terminalOpen
-            : false,
+          terminalOpen: drawerOpen || panelKind === "terminal",
           previewOpen: readPreviewOpen(),
         };
       },

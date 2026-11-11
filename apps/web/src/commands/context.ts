@@ -23,7 +23,7 @@ export function readCommandContext(input: CommandContextInput = {}): ShortcutMat
   const threadRef = input.threadRef ?? null;
   const pathname =
     input.pathname ?? (typeof window !== "undefined" ? window.location.pathname : "");
-  const terminalOpen = threadRef
+  const drawerTerminalOpen = threadRef
     ? selectThreadTerminalUiState(
         useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
         threadRef,
@@ -32,6 +32,8 @@ export function readCommandContext(input: CommandContextInput = {}): ShortcutMat
   const activeRightPanel = threadRef
     ? selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, threadRef)
     : null;
+  // Split/new/close act on the drawer or an open panel terminal; both count as open.
+  const terminalOpen = drawerTerminalOpen || activeRightPanel === "terminal";
 
   return {
     terminalFocus: isTerminalFocused(),
