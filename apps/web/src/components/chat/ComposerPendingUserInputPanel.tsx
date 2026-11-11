@@ -87,6 +87,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
   const autoAdvanceTimerRef = useRef<number | null>(null);
+  const spacePressedOptionRef = useRef<HTMLElement | null>(null);
   const advance = useStableCallback(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
     questionId: string;
@@ -275,7 +276,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   isOptimisticallySelected || draftSelectedOptions?.[index] === true;
                 const className = cn(
                   questionTextAlign,
-                  "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
+                  "group flex w-full select-text items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
                   isSelected ? "text-foreground" : "text-foreground/70 hover:bg-muted/30",
                   (disabled || isResponding) && "opacity-50 cursor-not-allowed",
                   !disabled && !isResponding && "cursor-pointer",
@@ -310,19 +311,56 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     ) : null}
                   </>
                 );
+                // Chromium cannot start a text selection inside a native <button>, so the
+                // option is a button-role div whose label and description stay copyable.
                 return (
-                  <button
+                  <div
                     key={`${activeQuestion.id}:${optionValue}`}
-                    type="button"
+                    role="button"
                     aria-pressed={isSelected}
-                    disabled={disabled || isResponding}
-                    onClick={() => {
+                    tabIndex={disabled || isResponding ? -1 : 0}
+                    aria-disabled={disabled || isResponding}
+                    onClick={(event) => {
+                      // A drag that selected text in the option ends in a click; it must not answer.
+                      // Assistive technology activates with detail 0 and still answers.
+                      const selection = window.getSelection();
+                      if (
+                        event.detail > 0 &&
+                        selection &&
+                        !selection.isCollapsed &&
+                        selection.containsNode(event.currentTarget, true)
+                      ) {
+                        return;
+                      }
                       handleOptionSelection(activeQuestion.id, optionValue);
+                    }}
+                    // Native button keys: Enter answers on keydown, Space on keyup, and
+                    // blurring while Space is held cancels it. Modified keys stay with global
+                    // shortcuts such as Mod+Shift+Enter.
+                    onKeyDown={(event) => {
+                      if (event.metaKey || event.ctrlKey || event.altKey) return;
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        handleOptionSelection(activeQuestion.id, optionValue);
+                      } else if (event.key === " ") {
+                        event.preventDefault();
+                        if (!event.repeat) spacePressedOptionRef.current = event.currentTarget;
+                      }
+                    }}
+                    onKeyUp={(event) => {
+                      if (event.key !== " ") return;
+                      const pressed = spacePressedOptionRef.current === event.currentTarget;
+                      spacePressedOptionRef.current = null;
+                      if (event.metaKey || event.ctrlKey || event.altKey) return;
+                      if (pressed) handleOptionSelection(activeQuestion.id, optionValue);
+                    }}
+                    onBlur={() => {
+                      spacePressedOptionRef.current = null;
                     }}
                     className={className}
                   >
                     {content}
-                  </button>
+                  </div>
                 );
               })}
             </div>

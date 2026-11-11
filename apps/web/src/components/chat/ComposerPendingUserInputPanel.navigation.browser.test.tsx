@@ -20,6 +20,7 @@ import { act, fakeTimers, render } from "../../../test/render";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
+import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
@@ -264,4 +265,91 @@ it("isolates drafts by environment, thread and request and discards only resolve
       index === 0 ? undefined : `Answer ${index}`,
     );
   }
+});
+
+it("answers an option with Space on keyup, once per press, and not after focus leaves", async () => {
+  const onToggleOption = vi.fn();
+  await using screen = await render(
+    <ComposerPendingUserInputPanel
+      pendingUserInputs={[
+        { ...prompt, questions: [{ ...prompt.questions[0]!, multiSelect: true }] },
+      ]}
+      cwd={undefined}
+      threadRef={threadRef}
+      respondingRequestIds={[]}
+      answers={{}}
+      questionIndex={0}
+      onToggleOption={onToggleOption}
+      onAdvance={() => {}}
+      onDismiss={() => {}}
+    />,
+  );
+  const option = screen.getByRole("button", { name: /Incremental/ }).element() as HTMLElement;
+  const key = (type: "keydown" | "keyup", key: string, repeat = false) =>
+    act(() => {
+      option.dispatchEvent(new KeyboardEvent(type, { key, repeat, bubbles: true }));
+    });
+
+  option.focus();
+  await key("keydown", " ");
+  await key("keydown", " ", true);
+  await key("keydown", " ", true);
+  expect(onToggleOption).not.toHaveBeenCalled();
+  await key("keyup", " ");
+  expect(onToggleOption).toHaveBeenCalledTimes(1);
+
+  await key("keydown", " ");
+  await act(() => option.blur());
+  option.focus();
+  await key("keyup", " ");
+  expect(onToggleOption).toHaveBeenCalledTimes(1);
+
+  await key("keydown", "Enter");
+  expect(onToggleOption).toHaveBeenCalledTimes(2);
+
+  const modifiedEnter = new KeyboardEvent("keydown", {
+    key: "Enter",
+    metaKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  await act(() => {
+    option.dispatchEvent(modifiedEnter);
+  });
+  expect(modifiedEnter.defaultPrevented).toBe(false);
+  expect(onToggleOption).toHaveBeenCalledTimes(2);
+});
+
+it("ignores a pointer click that ends a text selection but still answers assistive activation", async () => {
+  const onToggleOption = vi.fn();
+  await using screen = await render(
+    <ComposerPendingUserInputPanel
+      pendingUserInputs={[
+        { ...prompt, questions: [{ ...prompt.questions[0]!, multiSelect: true }] },
+      ]}
+      cwd={undefined}
+      threadRef={threadRef}
+      respondingRequestIds={[]}
+      answers={{}}
+      questionIndex={0}
+      onToggleOption={onToggleOption}
+      onAdvance={() => {}}
+      onDismiss={() => {}}
+    />,
+  );
+  const option = screen.getByRole("button", { name: /Incremental/ }).element() as HTMLElement;
+  const range = document.createRange();
+  range.selectNodeContents(option);
+  window.getSelection()!.removeAllRanges();
+  window.getSelection()!.addRange(range);
+  const click = (detail: number) =>
+    act(() => {
+      option.dispatchEvent(new MouseEvent("click", { detail, bubbles: true }));
+    });
+
+  await click(1);
+  expect(onToggleOption).not.toHaveBeenCalled();
+  await click(0);
+  expect(onToggleOption).toHaveBeenCalledTimes(1);
 });
