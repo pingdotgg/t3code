@@ -31,6 +31,9 @@ import {
   type WebviewCrashRecoveryState,
 } from "./webviewCrashRecovery";
 
+// Sent by the desktop guest preload (apps/desktop/src/preview/GuestProtocol.ts).
+const GUEST_PAINTED_CHANNEL = "preview:guest-painted";
+
 interface ElectronWebview extends HTMLElement {
   src: string;
   partition: string;
@@ -136,8 +139,8 @@ export function HostedBrowserWebview(props: {
 
   const [webviewGeneration, setWebviewGeneration] = useState(0);
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
-  // The guest stays transparent until its page and stylesheets load; paint the theme until then.
-  const [readyGeneration, setReadyGeneration] = useState<number | null>(null);
+  // The guest is transparent until a page paints, so the host shows the theme until the first frame.
+  const [paintedGeneration, setPaintedGeneration] = useState<number | null>(null);
   const active = presentation.visible && presentation.rect !== null;
   const shown = active || pictureInPicture;
   const reportedShown = useEffectEvent(() => serverDriven && shown);
@@ -189,13 +192,17 @@ export function HostedBrowserWebview(props: {
         new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
       );
     };
-    const markDocumentReady = () => {
+    const markPainted = () => {
       if (webview.getURL() === "about:blank") return;
-      setReadyGeneration(webviewGeneration);
+      setPaintedGeneration(webviewGeneration);
+    };
+    const onGuestMessage = (event: Event) => {
+      if ((event as Event & { channel?: string }).channel === GUEST_PAINTED_CHANNEL) markPainted();
     };
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
-    webview.addEventListener("did-finish-load", markDocumentReady);
+    webview.addEventListener("ipc-message", onGuestMessage);
+    webview.addEventListener("did-finish-load", markPainted);
     webview.addEventListener("render-process-gone", recoverGuest);
     webview.addEventListener("focus", dismissHostPopups);
     register();
@@ -204,7 +211,8 @@ export function HostedBrowserWebview(props: {
       if (recoveryTimeout !== null) clearTimeout(recoveryTimeout);
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
-      webview.removeEventListener("did-finish-load", markDocumentReady);
+      webview.removeEventListener("ipc-message", onGuestMessage);
+      webview.removeEventListener("did-finish-load", markPainted);
       webview.removeEventListener("render-process-gone", recoverGuest);
       webview.removeEventListener("focus", dismissHostPopups);
     };
@@ -367,7 +375,7 @@ export function HostedBrowserWebview(props: {
           className={cn(
             "absolute flex overflow-hidden",
             // White is the browser canvas behind transparent pages once a document exists.
-            readyGeneration === webviewGeneration ? "bg-white" : "bg-background",
+            paintedGeneration === webviewGeneration ? "bg-white" : "bg-background",
             active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
           )}
           style={{

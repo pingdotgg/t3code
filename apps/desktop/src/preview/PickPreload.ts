@@ -31,6 +31,7 @@ import {
   ANNOTATION_VOICE_STATE_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
+  GUEST_PAINTED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
@@ -1809,3 +1810,10 @@ ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotatio
   activeSession?.applyTheme(theme);
 });
 ipcRenderer.on(CANCEL_PICK_CHANNEL, () => activeSession?.teardown(false));
+
+// Rendering, and with it rAF, waits for render-blocking stylesheets, so this marks the first real frame.
+window.addEventListener("DOMContentLoaded", () => {
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => ipcRenderer.sendToHost(GUEST_PAINTED_CHANNEL)),
+  );
+});
