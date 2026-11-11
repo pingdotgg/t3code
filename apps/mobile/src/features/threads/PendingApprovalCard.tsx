@@ -19,7 +19,7 @@ export interface PendingApprovalCardProps {
   readonly canOperateThread: boolean;
   readonly approval: PendingApproval;
   readonly respondingApprovalId: RuntimeRequestId | null;
-  readonly maxHeight: DerivedValue<number>;
+  readonly maxHeight?: DerivedValue<number>;
   readonly onRespond: (
     requestId: RuntimeRequestId,
     decision: ProviderApprovalDecision,
@@ -40,7 +40,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
   const [explanationOpen, setExplanationOpen] = useState(false);
   const { maxHeight } = props;
-  const maxHeightStyle = useAnimatedStyle(() => ({ maxHeight: maxHeight.value }));
+  const maxHeightStyle = useAnimatedStyle(() => ({ maxHeight: maxHeight?.value }));
   return (
     <Animated.View
       className="overflow-hidden gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
