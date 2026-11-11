@@ -60,6 +60,7 @@ import {
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
+  OrchestrationV2LaunchTeamTemplateError,
   type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
@@ -117,6 +118,7 @@ import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import * as TeamTemplateService from "./orchestration-v2/TeamTemplateService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
@@ -1440,6 +1442,7 @@ export const layerWsRpc = (
         ).pipe(Effect.ignore);
       };
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const teamTemplates = yield* TeamTemplateService.TeamTemplateService;
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
@@ -2227,6 +2230,35 @@ export const layerWsRpc = (
                       }),
                   }),
                 ),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.launchTeamTemplate]: (input) =>
+          Effect.annotateCurrentSpan({
+            "orchestration_v2.command_id": input.commandId,
+            "orchestration_v2.project_id": input.projectId,
+            "orchestration_v2.team_template_id": input.templateId,
+          }).pipe(
+            Effect.andThen(
+              startup.enqueueCommand(teamTemplates.launch(input)).pipe(
+                Effect.catchTags({
+                  ThreadManagementProviderInstanceDisabledError: (cause) =>
+                    new OrchestrationV2LaunchTeamTemplateError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      templateId: input.templateId,
+                      message: cause.message,
+                      cause,
+                    }),
+                  ServerRuntimeStartupError: (cause) =>
+                    new OrchestrationV2LaunchTeamTemplateError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      templateId: input.templateId,
+                      message: "Failed to launch team template",
+                      cause,
+                    }),
+                }),
+              ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>

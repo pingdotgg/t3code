@@ -78,6 +78,7 @@ import {
   PlugIcon,
   SquarePenIcon,
   TextSearchIcon,
+  UsersIcon,
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
@@ -99,6 +100,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useLaunchWorkshopTeam } from "../hooks/useLaunchWorkshopTeam";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import {
@@ -457,6 +459,7 @@ function OpenCommandPaletteDialog(props: {
   });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
   const startTriage = useStartTriage();
+  const launchWorkshopTeam = useLaunchWorkshopTeam();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -712,6 +715,17 @@ function OpenCommandPaletteDialog(props: {
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     supportsTriage(triageEnvironmentId);
+  const workshopProjectRef = defaultProjectRef;
+  const workshopEnvironmentId = workshopProjectRef?.environmentId ?? null;
+  const supportsTeamTemplates =
+    workshopEnvironmentId !== null &&
+    environments.find((environment) => environment.environmentId === workshopEnvironmentId)
+      ?.serverConfig?.environment.capabilities.teamTemplates === true;
+  const canLaunchWorkshopTeamPermission = useAtomValue(
+    threadEnvironment.launchTeamTemplate.permissionAtom(workshopEnvironmentId),
+  );
+  const canLaunchWorkshopTeam =
+    workshopProjectRef !== null && supportsTeamTemplates && canLaunchWorkshopTeamPermission;
   const currentProject = resolveCommandPaletteProject(
     projectByKey,
     currentProjectEnvironmentId,
@@ -1341,6 +1355,29 @@ function OpenCommandPaletteDialog(props: {
       description: "An agent investigates a T3 Code problem and helps file an issue",
       icon: <BugIcon className={ITEM_ICON_CLASS} />,
       run: () => startTriage(triageEnvironmentId),
+    });
+  }
+
+  if (workshopProjectRef !== null && canLaunchWorkshopTeam) {
+    actionItems.push({
+      kind: "action",
+      value: "action:launch-workshop-team",
+      searchTerms: [
+        "workshop",
+        "team",
+        "template",
+        "starter",
+        "lead",
+        "builder",
+        "qa",
+        "reviewer",
+        "multi agent",
+        "openrig",
+      ],
+      title: "Launch Workshop team",
+      description: "Pinned lead, builder, QA, and reviewer seats in this project",
+      icon: <UsersIcon className={ITEM_ICON_CLASS} />,
+      run: () => launchWorkshopTeam(workshopProjectRef),
     });
   }
 

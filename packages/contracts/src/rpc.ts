@@ -234,6 +234,7 @@ import {
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
+import { OrchestrationV2LaunchTeamTemplateError } from "./teamTemplates.ts";
 import {
   ProjectCreateNewInput,
   ProjectCreateNewResult,
@@ -1911,6 +1912,15 @@ const WsOrchestrationV2LaunchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.la
   error: Schema.Union([OrchestrationV2ThreadLaunchError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2LaunchTeamTemplateRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.launchTeamTemplate,
+  {
+    payload: OrchestrationV2RpcSchemas.launchTeamTemplate.input,
+    success: OrchestrationV2RpcSchemas.launchTeamTemplate.output,
+    error: Schema.Union([OrchestrationV2LaunchTeamTemplateError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2SubscribeShellRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeShell, {
   payload: OrchestrationV2RpcSchemas.subscribeShell.input,
   success: OrchestrationV2RpcSchemas.subscribeShell.output,
@@ -2279,6 +2289,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetOlderSettledThreadsRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,
+  WsOrchestrationV2LaunchTeamTemplateRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
