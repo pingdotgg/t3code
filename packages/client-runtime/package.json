@@ -87,6 +87,10 @@
       "types": "./src/tailnetDevices.ts",
       "default": "./src/tailnetDevices.ts"
     },
+    "./scheduled-task-destinations": {
+      "types": "./src/scheduledTaskDestinations.ts",
+      "default": "./src/scheduledTaskDestinations.ts"
+    },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
       "default": "./src/scheduledTaskWebhook.ts"

@@ -35,6 +35,7 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import { scheduledTaskDestinationThreads } from "@t3tools/client-runtime/scheduled-task-destinations";
 import {
   MAX_WEBHOOK_FILTERS,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
@@ -96,7 +97,6 @@ import {
   changeDraftProject,
   moveDraftToThread,
   scheduleDraftErrors,
-  scheduledTaskDestinationThreads,
   toDateTimeLocalValue,
   webhookDeliveryLabel,
   defaultScheduledTaskProjectId,
