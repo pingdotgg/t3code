@@ -485,6 +485,8 @@ export const layerExecutor: Layer.Layer<
                 scopeId: effect.request.scopeId,
               })
               .pipe(
+                // Parent settlement must survive a missed live run update, including capture retries.
+                Effect.andThen(threads.recoverDelegatedTask(effect.threadId)),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({

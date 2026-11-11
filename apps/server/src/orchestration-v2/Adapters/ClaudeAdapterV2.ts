@@ -5718,6 +5718,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly nativeThreadId: string;
           readonly providerThread: OrchestrationV2ProviderThread;
           readonly status?: OrchestrationV2ProviderThread["status"];
+          readonly owedWakeTasks?: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
         }) {
           const roster = rosterForNativeThread(
             yield* Ref.get(pendingBackgroundTasksByNativeThread),
@@ -5732,7 +5733,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...input.providerThread,
             providerSessionId: session.id,
             ...(input.status === undefined ? {} : { status: input.status }),
-            pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster, awaitedTaskIds),
+            pendingBackgroundTasks: [
+              ...claudePendingBackgroundTasksFromRoster(roster, awaitedTaskIds),
+              ...(input.owedWakeTasks ?? []).filter((task) => !roster.has(task.taskId)),
+            ],
             ...(goalsByNativeThread.has(input.nativeThreadId)
               ? { goal: goalsByNativeThread.get(input.nativeThreadId) ?? null }
               : {}),
@@ -8696,13 +8700,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (baseThread === undefined) {
             return;
           }
+          // An exited task still owes its wake turn; publishing an empty roster settles the
+          // delegated task with the previous turn's interim answer before that wake starts.
+          const owedWakeTasks: OrchestrationV2PendingBackgroundTask[] = [];
+          if (activeContext === null) {
+            for (const task of baseThread.pendingBackgroundTasks ?? []) {
+              if (yield* isKnownOpaqueBackgroundTaskOnNativeThread(nativeThreadId, task.taskId)) {
+                owedWakeTasks.push(task);
+              }
+            }
+          }
           const status =
             activeContext === null
               ? ("idle" as const)
               : baseThread.status === "idle"
                 ? ("active" as const)
                 : baseThread.status;
-          yield* emitProviderThreadRoster({ nativeThreadId, providerThread: baseThread, status });
+          yield* emitProviderThreadRoster({
+            nativeThreadId,
+            providerThread: baseThread,
+            status,
+            owedWakeTasks,
+          });
         });
 
         const applyBackgroundTaskRosterMessage = Effect.fnUntraced(function* (input: {
