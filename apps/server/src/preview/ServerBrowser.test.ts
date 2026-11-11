@@ -261,31 +261,64 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
 
 // Runs the real encoder script against fake canvas and MediaRecorder globals.
 function makeEncoderPage() {
+  let paintedFrame = "";
   const canvas = {
     width: 0,
     height: 0,
-    getContext: () => ({ drawImage() {}, fillRect() {} }),
-    captureStream: (frameRate?: number) => ({ frameRate, getTracks: () => [] }),
+    getContext: () => ({
+      drawImage(bitmap: { pixels: string }) {
+        paintedFrame = bitmap.pixels;
+      },
+      fillRect() {},
+    }),
+    captureStream: (frameRate?: number) => ({
+      frameRate,
+      getTracks: () => [],
+      getVideoTracks: () => [{ requestFrame() {} }],
+    }),
+  };
+  const video = {
+    play: async () => {},
+    pause() {},
+    requestVideoFrameCallback: (callback: () => void) => queueMicrotask(callback),
   };
   class FakeMediaRecorder {
     static isTypeSupported = (type: string) => type === "video/webm";
+    mimeType = "video/webm";
+    state = "inactive";
     onstart: (() => void) | null = null;
+    onstop: (() => void) | null = null;
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    readonly stream: { frameRate?: number };
     constructor(stream: { frameRate?: number }, options: { videoBitsPerSecond: number }) {
+      this.stream = stream;
       encoderStreams.push({
         frameRate: stream.frameRate,
         bitsPerSecond: options.videoBitsPerSecond,
       });
     }
     start() {
+      this.state = "recording";
       this.onstart?.();
+    }
+    stop() {
+      this.state = "inactive";
+      this.ondataavailable?.({ data: new Blob([paintedFrame]) });
+      this.onstop?.();
     }
   }
   const sandbox: Record<string, unknown> = {
-    document: { createElement: () => canvas },
+    document: { createElement: (tag: string) => (tag === "video" ? video : canvas) },
     Path2D: function Path2D() {},
     MediaRecorder: FakeMediaRecorder,
-    createImageBitmap: async () => ({ width: 1280, height: 800, close() {} }),
+    createImageBitmap: async (blob: Blob) => ({
+      width: 1280,
+      height: 800,
+      pixels: await blob.text(),
+      close() {},
+    }),
     atob,
+    btoa,
     Blob,
     performance,
   };
@@ -822,6 +855,37 @@ it.live.each([
         }
         yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
         expect(encoderStreams).toEqual([{ frameRate, bitsPerSecond }]);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live.each([
+  { refreshFails: false, expected: "final frame" },
+  { refreshFails: true, expected: "frame" },
+])(
+  "saves the last page state when stopping a recording ($refreshFails)",
+  ({ refreshFails, expected }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const fs = yield* FileSystem.FileSystem;
+        yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+
+        const cdp = contexts[0]!.sessions[0]!;
+        const send = cdp.send.getMockImplementation()!;
+        cdp.send.mockImplementation((method, input) => {
+          if (method !== "Page.captureScreenshot") return send(method, input);
+          return refreshFails
+            ? Promise.reject(new Error("Page cannot capture a frame"))
+            : Promise.resolve({ data: Buffer.from("final frame").toString("base64") });
+        });
+        const artifact = yield* broker.invoke<{ path: string }>({
+          scope,
+          tabId,
+          operation: "recordingStop",
+          input: {},
+        });
+        expect(yield* fs.readFileString(artifact.path)).toBe(expected);
       }),
     ).pipe(Effect.provide(layer)),
 );
@@ -2255,6 +2319,33 @@ it.live("agents read a human's tab with no arguments and act on it only while no
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("preview_open reports a tab it shows as visible once the client attaches", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      yield* Effect.yieldNow;
+      // Like a real client, the stream attaches asynchronously after the reveal request arrives.
+      yield* Effect.gen(function* () {
+        let event;
+        do event = yield* PubSub.take(events);
+        while (event.type !== "navigated" || !event.snapshot.revealRequest);
+        yield* browser.attachViewer(viewerInput(event.tabId, false)).pipe(Effect.forkScoped);
+      }).pipe(Effect.forkScoped);
+
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, open: true },
+      });
+
+      expect(opened.visible).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a session's own tab stays its default while other sessions' tabs are listed", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -2649,8 +2740,14 @@ it.live("reports why a page failed to load while the tab shows the error page", 
       page.emit("request", request);
       page.emit("requestfailed", request);
       page.url = () => "chrome-error://chromewebdata/";
-      expect((yield* status()).loadError).toEqual(certificateError);
-      expect((yield* snapshot()).loadError).toEqual(certificateError);
+      expect(yield* status()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
+      expect(yield* snapshot()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
 
       const subframeRequest = {
         ...request,
@@ -2659,7 +2756,10 @@ it.live("reports why a page failed to load while the tab shows the error page", 
       };
       page.emit("request", subframeRequest);
       page.emit("requestfailed", subframeRequest);
-      expect((yield* status()).loadError).toEqual(certificateError);
+      expect(yield* status()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
 
       // Clearing must happen before the next navigation replaces the error page.
       page.emit("request", { ...request, url: () => "https://device.local/login" });
@@ -2670,6 +2770,53 @@ it.live("reports why a page failed to load while the tab shows the error page", 
       page.emit("request", dataRequest);
       page.emit("requestfailed", dataRequest);
       expect((yield* status()).loadError?.url).toBe("data:text/html,…");
+      initialNavigation = async () => {
+        page.emit("request", request);
+        page.emit("requestfailed", request);
+      };
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "navigate",
+          input: { url: certificateError.url },
+        })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "PreviewAutomationExecutionError",
+        reason: `Navigation to ${certificateError.url} failed: ${certificateError.description}`,
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("preview_open rejects a desktop navigation that failed before automation attached", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const channel = yield* DesktopChannel.DesktopBrowserChannel;
+      desktopRendersNext = true;
+      desktopPageUrl = "chrome-error://chromewebdata/";
+      const failure = {
+        ...certificateError,
+        url: "https://user:secret@device.local/?token=private#fragment",
+      };
+      using _failure = vi.spyOn(channel, "loadFailure").mockReturnValue(failure);
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { url: failure.url, reuseExistingTab: false, open: false },
+        })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "PreviewAutomationExecutionError",
+        reason: `Navigation to ${certificateError.url} failed: ${certificateError.description}`,
+      });
+      expect(JSON.stringify(error)).not.toMatch(/secret|private|fragment/);
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.map((session) => session.tabId)).toEqual([tabId]);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -2701,8 +2848,14 @@ it.live("reports a desktop tab's load failure from before the server connected",
           input: {},
           tabId: PreviewTabId.make(opened.tabId),
         });
-      expect((yield* status()).loadError).toEqual(certificateError);
-      expect((yield* snapshot()).loadError).toEqual(certificateError);
+      expect(yield* status()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
+      expect(yield* snapshot()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
       desktopLoadFailures.set(opened.tabId, { ...certificateError, url: dataUrl });
       expect((yield* status()).loadError?.url).toBe("data:text/html,…");
       // A navigation the server sees supersedes it, even before the error page goes.
