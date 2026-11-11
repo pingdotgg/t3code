@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
@@ -10,6 +11,15 @@ import type {
 } from "@t3tools/contracts";
 import { CheckpointRef } from "@t3tools/contracts";
 import * as VcsProcess from "./VcsProcess.ts";
+
+export class VcsCheckpointPartialRestoreError extends Schema.TaggedError<VcsCheckpointPartialRestoreError>()(
+  "VcsCheckpointPartialRestoreError",
+  { cwd: Schema.String, checkpointRef: CheckpointRef, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Checkpoint restoration failed after workspace files may have changed.";
+  }
+}
 
 export interface VcsCaptureCheckpointInput {
   readonly cwd: string;
@@ -55,7 +65,7 @@ export interface VcsCheckpointOps {
   ) => Effect.Effect<boolean, VcsError>;
   readonly restoreCheckpoint: (
     input: VcsRestoreCheckpointInput,
-  ) => Effect.Effect<boolean, VcsError>;
+  ) => Effect.Effect<boolean, VcsError | VcsCheckpointPartialRestoreError>;
   readonly diffCheckpoints: (input: VcsDiffCheckpointsInput) => Effect.Effect<string, VcsError>;
   readonly listAuthoredPaths: (
     input: VcsListAuthoredPathsInput,

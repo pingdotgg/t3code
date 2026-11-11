@@ -12,6 +12,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
+  type VcsError,
   VcsProcessExitError,
   VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
@@ -1393,105 +1394,141 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd: input.cwd,
         args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
       });
-      // An empty index and checkpoint have nothing for git restore's pathspec to match.
-      if (tracked.stdout.length > 0) {
-        yield* execute({
+      let filesMayHaveChanged = false;
+      // A mutating Git command can fail after writing some paths. Only known
+      // pre-execution failures are safe to retry when no earlier mutation ran.
+      const mutate = <A>(effect: Effect.Effect<A, VcsError>) =>
+        Effect.suspend(() => {
+          const changedBefore = filesMayHaveChanged;
+          filesMayHaveChanged = true;
+          return effect.pipe(
+            Effect.tapError((cause) =>
+              Effect.sync(() => {
+                if (
+                  !changedBefore &&
+                  (cause._tag === "VcsProcessSpawnError" ||
+                    (cause._tag === "VcsProcessExitError" &&
+                      cause.detail === VcsProcess.GIT_INDEX_LOCKED_DETAIL))
+                ) {
+                  filesMayHaveChanged = false;
+                }
+              }),
+            ),
+          );
+        });
+      return yield* Effect.gen(function* () {
+        // An empty index and checkpoint have nothing for git restore's pathspec to match.
+        if (tracked.stdout.length > 0) {
+          yield* mutate(
+            execute({
+              operation,
+              cwd: input.cwd,
+              args: [
+                ...longPaths,
+                "restore",
+                "--source",
+                commitOid,
+                "--worktree",
+                "--staged",
+                "--",
+                ".",
+              ],
+            }),
+          );
+        }
+        // Restoring away the last tracked file can remove a nested workspace directory.
+        const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new VcsProcessExitError({
+                operation,
+                command: "git restore",
+                cwd: input.cwd,
+                exitCode: 0,
+                detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
+              }),
+          ),
+        );
+        const resetIndex = Effect.gen(function* () {
+          // On Windows clean can remove './' and exit 0.
+          yield* recreateWorkspace;
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [...longPaths, "reset", "--quiet", "--", "."],
+          });
+        });
+        yield* recreateWorkspace;
+        const clean = execute({
           operation,
           cwd: input.cwd,
-          args: [
-            ...longPaths,
-            "restore",
-            "--source",
-            commitOid,
-            "--worktree",
-            "--staged",
-            "--",
-            ".",
-          ],
+          args: [...longPaths, "clean", "-fd", "--", "."],
+          env: { LC_ALL: "C" },
+          allowNonZeroExit: true,
         });
-      }
-      // Restoring away the last tracked file can remove a nested workspace directory.
-      const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new VcsProcessExitError({
+        let cleaned = yield* mutate(clean);
+        // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
+        for (
+          let pass = 1;
+          pass < 4 && cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout);
+          pass++
+        ) {
+          yield* recreateWorkspace;
+          cleaned = yield* mutate(clean);
+        }
+        if (cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout)) {
+          yield* recreateWorkspace;
+          const remaining = yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [...longPaths, "clean", "-dn", "--", "."],
+            env: { LC_ALL: "C" },
+          });
+          if (/^Would remove /m.test(remaining.stdout)) {
+            yield* resetIndex;
+            return yield* new VcsProcessExitError({
               operation,
-              command: "git restore",
+              command: "git clean",
               cwd: input.cwd,
               exitCode: 0,
-              detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
-            }),
+              detail: "Could not clean the checkpoint workspace: untracked files remain.",
+            });
+          }
+        }
+        if (cleaned.exitCode !== 0) {
+          // Git can remove every child, then fail trying to remove './' itself.
+          const emptiedWorkspace =
+            cleaned.exitCode === 1 &&
+            /^warning: failed to remove \.\/: [^\n]+$/.test(cleaned.stderr.trim()) &&
+            (yield* fileSystem.readDirectory(input.cwd).pipe(
+              Effect.map((entries) => entries.length === 0),
+              Effect.orElseSucceed(() => false),
+            ));
+          if (!emptiedWorkspace) {
+            yield* resetIndex;
+            return yield* new VcsProcessExitError({
+              operation,
+              command: "git clean",
+              cwd: input.cwd,
+              exitCode: cleaned.exitCode,
+              detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
+            });
+          }
+        }
+        yield* resetIndex;
+
+        return true;
+      }).pipe(
+        Effect.mapError((cause) =>
+          filesMayHaveChanged
+            ? new VcsDriver.VcsCheckpointPartialRestoreError({
+                cwd: input.cwd,
+                checkpointRef: input.checkpointRef,
+                cause,
+              })
+            : cause,
         ),
       );
-      const resetIndex = Effect.gen(function* () {
-        // On Windows clean can remove './' and exit 0.
-        yield* recreateWorkspace;
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", "."],
-        });
-      });
-      yield* recreateWorkspace;
-      const clean = execute({
-        operation,
-        cwd: input.cwd,
-        args: [...longPaths, "clean", "-fd", "--", "."],
-        env: { LC_ALL: "C" },
-        allowNonZeroExit: true,
-      });
-      let cleaned = yield* clean;
-      // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
-      for (
-        let pass = 1;
-        pass < 4 && cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout);
-        pass++
-      ) {
-        yield* recreateWorkspace;
-        cleaned = yield* clean;
-      }
-      if (cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout)) {
-        yield* recreateWorkspace;
-        const remaining = yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...longPaths, "clean", "-dn", "--", "."],
-          env: { LC_ALL: "C" },
-        });
-        if (/^Would remove /m.test(remaining.stdout)) {
-          yield* resetIndex;
-          return yield* new VcsProcessExitError({
-            operation,
-            command: "git clean",
-            cwd: input.cwd,
-            exitCode: 0,
-            detail: "Could not clean the checkpoint workspace: untracked files remain.",
-          });
-        }
-      }
-      if (cleaned.exitCode !== 0) {
-        // Git can remove every child, then fail trying to remove './' itself.
-        const emptiedWorkspace =
-          cleaned.exitCode === 1 &&
-          /^warning: failed to remove \.\/: [^\n]+$/.test(cleaned.stderr.trim()) &&
-          (yield* fileSystem.readDirectory(input.cwd).pipe(
-            Effect.map((entries) => entries.length === 0),
-            Effect.orElseSucceed(() => false),
-          ));
-        if (!emptiedWorkspace) {
-          yield* resetIndex;
-          return yield* new VcsProcessExitError({
-            operation,
-            command: "git clean",
-            cwd: input.cwd,
-            exitCode: cleaned.exitCode,
-            detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
-          });
-        }
-      }
-      yield* resetIndex;
-
-      return true;
     }),
 
     diffCheckpoints: Effect.fn("GitVcsDriver.checkpoints.diffCheckpoints")(function* (input) {

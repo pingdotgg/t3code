@@ -1186,7 +1186,10 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
       const incomplete = yield* driver.checkpoints
         .restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false })
         .pipe(Effect.flip);
-      assert.strictEqual(incomplete._tag, "VcsProcessExitError");
+      assert.strictEqual(incomplete._tag, "VcsCheckpointPartialRestoreError");
+      if (incomplete._tag === "VcsCheckpointPartialRestoreError") {
+        assert.instanceOf(incomplete.cause, VcsProcessExitError);
+      }
       assert.strictEqual(
         yield* fileSystem.readFileString(path.join(cwd, "checkpoint.txt")),
         "checkpoint\n",
@@ -1210,6 +1213,67 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
         );
       }
     }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("reports cleanup failure after restoring checkpoint files as a partial restore", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-partial-restore-" });
+    yield* runGit(cwd, ["init"]);
+    yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+    yield* runGit(cwd, ["config", "user.name", "Test"]);
+    yield* runGit(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+    const file = path.join(cwd, "file.txt");
+    yield* fileSystem.writeFileString(file, "checkpoint");
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/partial");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* fileSystem.writeFileString(file, "later edits");
+    let deepest = cwd;
+    for (let depth = 0; depth < 5; depth++) {
+      yield* fileSystem.writeFileString(path.join(deepest, ".gitignore"), "d/.gitignore\n");
+      deepest = path.join(deepest, "d");
+      yield* fileSystem.makeDirectory(deepest);
+    }
+    yield* fileSystem.writeFileString(path.join(deepest, ".gitignore"), "hidden.txt\n");
+    yield* fileSystem.writeFileString(path.join(deepest, "hidden.txt"), "untracked");
+    const error = yield* driver.checkpoints
+      .restoreCheckpoint({ cwd, checkpointRef })
+      .pipe(Effect.flip);
+    assert.equal(error._tag, "VcsCheckpointPartialRestoreError");
+    if (error._tag === "VcsCheckpointPartialRestoreError")
+      assert.instanceOf(error.cause, VcsProcessExitError);
+    assert.equal(yield* fileSystem.readFileString(file), "checkpoint");
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("keeps a restore blocked by the Git index lock retryable", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-restore-locked-" });
+    yield* runGit(cwd, ["init"]);
+    yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+    yield* runGit(cwd, ["config", "user.name", "Test"]);
+    const file = path.join(cwd, "file.txt");
+    yield* fileSystem.writeFileString(file, "checkpoint");
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/locked");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* fileSystem.writeFileString(file, "later edits");
+    yield* fileSystem.writeFileString(path.join(cwd, ".git", "index.lock"), "");
+    const error = yield* driver.checkpoints
+      .restoreCheckpoint({ cwd, checkpointRef })
+      .pipe(Effect.flip);
+    assert.equal(error._tag, "VcsProcessExitError");
+    if (error._tag === "VcsProcessExitError")
+      assert.equal(error.detail, VcsProcess.GIT_INDEX_LOCKED_DETAIL);
+    assert.equal(yield* fileSystem.readFileString(file), "later edits");
+    yield* fileSystem.remove(path.join(cwd, ".git", "index.lock"));
+    assert.isTrue(yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef }));
+    assert.equal(yield* fileSystem.readFileString(file), "checkpoint");
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import type { CheckpointStoreError } from "./Errors.ts";
-import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
+import type { VcsCheckpointOps, VcsCheckpointPartialRestoreError } from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 export interface CaptureCheckpointInput {
@@ -57,7 +57,7 @@ export class CheckpointStore extends Context.Service<
 
     readonly restoreCheckpoint: (
       input: RestoreCheckpointInput,
-    ) => Effect.Effect<boolean, CheckpointStoreError>;
+    ) => Effect.Effect<boolean, CheckpointStoreError | VcsCheckpointPartialRestoreError>;
 
     readonly diffCheckpoints: (
       input: DiffCheckpointsInput,

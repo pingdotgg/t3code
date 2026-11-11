@@ -16,6 +16,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { VcsCheckpointPartialRestoreError } from "../vcs/VcsDriver.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import type * as ServerConfig from "../config.ts";
@@ -86,6 +87,20 @@ export class CheckpointRollbackPartialRestoreError extends Schema.TaggedError<Ch
   }
 }
 
+export class CheckpointRollbackIncompleteRestoreError extends Schema.TaggedError<CheckpointRollbackIncompleteRestoreError>()(
+  "CheckpointRollbackIncompleteRestoreError",
+  {
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+    checkpointId: CheckpointId,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "File restoration failed after workspace files may have changed. The conversation rollback was not attempted. Check your files and the server logs before retrying.";
+  }
+}
+
 export class CheckpointRollbackIndexRefreshError extends Schema.TaggedError<CheckpointRollbackIndexRefreshError>()(
   "CheckpointRollbackIndexRefreshError",
   {
@@ -101,7 +116,11 @@ export class CheckpointRollbackIndexRefreshError extends Schema.TaggedError<Chec
 }
 
 export const isCheckpointRollbackPostRestoreError = Schema.is(
-  Schema.Union([CheckpointRollbackPartialRestoreError, CheckpointRollbackIndexRefreshError]),
+  Schema.Union([
+    CheckpointRollbackPartialRestoreError,
+    CheckpointRollbackIndexRefreshError,
+    CheckpointRollbackIncompleteRestoreError,
+  ]),
 );
 
 const isCheckpointRollbackError = Schema.is(
@@ -109,9 +128,11 @@ const isCheckpointRollbackError = Schema.is(
     CheckpointRollbackExecutionError,
     CheckpointRollbackPartialRestoreError,
     CheckpointRollbackIndexRefreshError,
+    CheckpointRollbackIncompleteRestoreError,
   ]),
 );
 
+const isVcsCheckpointPartialRestoreError = Schema.is(VcsCheckpointPartialRestoreError);
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
 const isRuntimePolicyAboveCeilingError = Schema.is(RuntimePolicyAboveCeilingError);
@@ -124,7 +145,8 @@ export function rollbackFailureClientMessage(
   error:
     | CheckpointRollbackExecutionError
     | CheckpointRollbackPartialRestoreError
-    | CheckpointRollbackIndexRefreshError,
+    | CheckpointRollbackIndexRefreshError
+    | CheckpointRollbackIncompleteRestoreError,
 ): string {
   if (isCheckpointRollbackPostRestoreError(error)) return error.message;
   if (isRuntimePolicyAboveCeilingError(error.cause)) return error.cause.message;
@@ -146,6 +168,7 @@ export interface CheckpointRollbackServiceV2Shape {
     | CheckpointRollbackExecutionError
     | CheckpointRollbackPartialRestoreError
     | CheckpointRollbackIndexRefreshError
+    | CheckpointRollbackIncompleteRestoreError
   >;
 }
 
@@ -340,7 +363,21 @@ export const layer: Layer.Layer<
       );
 
       if (input.restoreFiles !== false) {
-        yield* checkpoints.restore({ scope, checkpoint });
+        yield* checkpoints.restore({ scope, checkpoint }).pipe(
+          Effect.catchTags({
+            CheckpointRestoreError: (cause) =>
+              Effect.fail(
+                isVcsCheckpointPartialRestoreError(cause.cause)
+                  ? new CheckpointRollbackIncompleteRestoreError({
+                      threadId: input.threadId,
+                      providerThreadId: input.providerThreadId,
+                      checkpointId: input.checkpointId,
+                      cause,
+                    })
+                  : cause,
+              ),
+          }),
+        );
         yield* workspaceEntries.refresh(scope.cwd).pipe(
           Effect.catchDefect((cause) =>
             Effect.fail(
