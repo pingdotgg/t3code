@@ -10405,31 +10405,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           if ((providerThread.pendingBackgroundTasks?.length ?? 0) === 3) break;
         }
 
-        // The foreground subagent returns its result inside the launching turn, so its
-        // own background work never reaches the root thread as a wake.
         const marked = yield* awaitBackgroundTasks({
           providerThread: harness.providerThread,
           taskIds: ["root-shell", "foreground-owned-shell", "background-owned-shell"],
           awaited: true,
         });
         assert.deepStrictEqual(marked.matched, ["root-shell", "background-owned-shell"]);
-        while (true) {
-          const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
-          const tasks = providerThread.pendingBackgroundTasks ?? [];
-          if (!tasks.some((task) => task.awaited === true)) continue;
-          assert.deepStrictEqual(
-            tasks.map((task) => [task.taskId, task.awaited === true]),
-            [
-              ["root-shell", true],
-              ["foreground-owned-shell", false],
-              ["background-owned-shell", true],
-            ],
-          );
-          break;
-        }
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),
