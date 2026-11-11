@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { BackendApi, Note, NotesList } from "./BackendApi";
@@ -13,9 +13,7 @@ export const BackendHandlers = HttpApiBuilder.group(
     return handlers
       .handle("listNotes", () =>
         db
-          .prepare(
-            "SELECT id, title, source, created_at FROM notes ORDER BY created_at DESC",
-          )
+          .prepare("SELECT id, title, source, created_at FROM notes ORDER BY created_at DESC")
           .all<{
             id: string;
             title: string;
@@ -49,9 +47,7 @@ export const BackendHandlers = HttpApiBuilder.group(
             createdAt: Date.now(),
           });
           yield* db
-            .prepare(
-              "INSERT INTO notes (id, title, source, created_at) VALUES (?, ?, ?, ?)",
-            )
+            .prepare("INSERT INTO notes (id, title, source, created_at) VALUES (?, ?, ?, ?)")
             .bind(note.id, note.title, note.source, note.createdAt)
             .run();
           return note;

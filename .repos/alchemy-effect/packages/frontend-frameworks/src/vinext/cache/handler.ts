@@ -34,10 +34,7 @@ export interface DataCacheHandlerOptions {
 
 const DEFAULT_TTL_SECONDS = 2592000;
 
-export const makeDataCacheHandler = (
-  store: DataCacheStore,
-  options?: DataCacheHandlerOptions,
-) => {
+export const makeDataCacheHandler = (store: DataCacheStore, options?: DataCacheHandlerOptions) => {
   const keys = keySpace(options?.appPrefix);
   const ttlSeconds = options?.ttlSeconds ?? DEFAULT_TTL_SECONDS;
   const tagCacheTtl = options?.tagCacheTtlMs ?? 5_000;
@@ -46,20 +43,14 @@ export const makeDataCacheHandler = (
   const ttlMsFor = (expireAt: number | null, now: number) =>
     expireAt !== null ? Math.max(expireAt - now, 1000) : ttlSeconds * 1000;
 
-  const hasRevalidatedTag = async (
-    tags: Array<string>,
-    lastModified: number,
-  ) => {
+  const hasRevalidatedTag = async (tags: Array<string>, lastModified: number) => {
     if (tags.length === 0) return false;
     const now = Date.now();
     const uncached: Array<string> = [];
     for (const tag of tags) {
       const cached = tagCache.get(tag);
       if (cached && now - cached.fetchedAt < tagCacheTtl) {
-        if (
-          Number.isNaN(cached.timestamp) ||
-          cached.timestamp >= lastModified
-        ) {
+        if (Number.isNaN(cached.timestamp) || cached.timestamp >= lastModified) {
           return true;
         }
       } else {
@@ -67,17 +58,12 @@ export const makeDataCacheHandler = (
       }
     }
     if (uncached.length === 0) return false;
-    const results = await Promise.all(
-      uncached.map((tag) => store.getText(keys.tagKey(tag))),
-    );
+    const results = await Promise.all(uncached.map((tag) => store.getText(keys.tagKey(tag))));
     for (let i = 0; i < uncached.length; i++) {
       const raw = results[i];
       const timestamp = raw !== undefined ? Number(raw) : 0;
       tagCache.set(uncached[i]!, { timestamp, fetchedAt: now });
-      if (
-        timestamp !== 0 &&
-        (Number.isNaN(timestamp) || timestamp >= lastModified)
-      ) {
+      if (timestamp !== 0 && (Number.isNaN(timestamp) || timestamp >= lastModified)) {
         return true;
       }
     }
@@ -109,9 +95,7 @@ export const makeDataCacheHandler = (
           return null;
         }
       }
-      if (
-        await hasRevalidatedTag(validUniqueTags(entry.tags), entry.lastModified)
-      ) {
+      if (await hasRevalidatedTag(validUniqueTags(entry.tags), entry.lastModified)) {
         await store.delete(storageKey);
         return null;
       }
@@ -124,9 +108,7 @@ export const makeDataCacheHandler = (
       const now = Date.now();
       const requestedRevalidate = readPositiveNumberField(ctx, "revalidate");
       const requestedRevalidateAt =
-        requestedRevalidate === undefined
-          ? null
-          : entry.lastModified + requestedRevalidate * 1000;
+        requestedRevalidate === undefined ? null : entry.lastModified + requestedRevalidate * 1000;
       if (
         (entry.revalidateAt !== null && now > entry.revalidateAt) ||
         (requestedRevalidateAt !== null && now > requestedRevalidateAt)
@@ -145,11 +127,7 @@ export const makeDataCacheHandler = (
       };
     },
 
-    async set(
-      key: string,
-      data: Record<string, unknown> | null,
-      ctx?: Record<string, unknown>,
-    ) {
+    async set(key: string, data: Record<string, unknown> | null, ctx?: Record<string, unknown>) {
       const tagSet = new Set<string>();
       if (data && Array.isArray(data.tags)) {
         for (const tag of data.tags) {
@@ -187,12 +165,8 @@ export const makeDataCacheHandler = (
         typeof effectiveRevalidate === "number"
           ? {
               revalidate: effectiveRevalidate,
-              ...(effectiveExpire === undefined
-                ? {}
-                : { expire: effectiveExpire }),
-              ...(effectiveStale === undefined
-                ? {}
-                : { stale: effectiveStale }),
+              ...(effectiveExpire === undefined ? {} : { expire: effectiveExpire }),
+              ...(effectiveStale === undefined ? {} : { stale: effectiveStale }),
             }
           : undefined;
       const entry = {
@@ -203,11 +177,7 @@ export const makeDataCacheHandler = (
         expireAt,
         cacheControl,
       };
-      await store.putText(
-        keys.entryKey(key),
-        JSON.stringify(entry),
-        ttlMsFor(expireAt, now),
-      );
+      await store.putText(keys.entryKey(key), JSON.stringify(entry), ttlMsFor(expireAt, now));
     },
 
     async revalidateTag(tags: string | Array<string>) {
@@ -216,9 +186,7 @@ export const makeDataCacheHandler = (
       const validTags = tagList.filter((tag) => validateTag(tag) !== null);
       const ttlMs = ttlSeconds * 1000;
       await Promise.all(
-        validTags.map((tag) =>
-          store.putText(keys.tagKey(tag), String(now), ttlMs),
-        ),
+        validTags.map((tag) => store.putText(keys.tagKey(tag), String(now), ttlMs)),
       );
       for (const tag of validTags) {
         tagCache.set(tag, { timestamp: now, fetchedAt: now });

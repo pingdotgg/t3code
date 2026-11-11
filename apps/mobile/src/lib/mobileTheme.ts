@@ -34,7 +34,7 @@ export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
 export type MobileThemeVariable = keyof ReturnType<typeof createMobileThemeVariables>;
 export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>;
 
-export function normalizeMobileThemeId(value: unknown): MobileThemeId {
+function normalizeMobileThemeId(value: unknown): MobileThemeId {
   return typeof value === "string" && (MOBILE_THEME_IDS as readonly string[]).includes(value)
     ? (value as MobileThemeId)
     : DEFAULT_MOBILE_THEME_ID;
@@ -94,6 +94,22 @@ function linearToSrgb(value: number): number {
   return Math.round(Math.min(1, Math.max(0, converted)) * 255);
 }
 
+function oklabToLinearSrgb(lightness: number, a: number, b: number) {
+  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ] as const;
+}
+
+function oklabToSrgb(lightness: number, a: number, b: number) {
+  const [red, green, blue] = oklabToLinearSrgb(lightness, a, b);
+  return [linearToSrgb(red), linearToSrgb(green), linearToSrgb(blue)] as const;
+}
+
 /** React Native does not accept OKLCH ColorValues, so palettes cross the app boundary as sRGB. */
 export function themeColorToNativeColor(value: string): string {
   const match = OKLCH_PATTERN.exec(value);
@@ -103,17 +119,7 @@ export function themeColorToNativeColor(value: string): string {
   const chroma = Number(match[2]);
   const hue = (Number(match[3]) * Math.PI) / 180;
   const alpha = match[4] === undefined ? 1 : Number(match[4]);
-  const a = chroma * Math.cos(hue);
-  const b = chroma * Math.sin(hue);
-  const lPrime = lightness + 0.3963377774 * a + 0.2158037573 * b;
-  const mPrime = lightness - 0.1055613458 * a - 0.0638541728 * b;
-  const sPrime = lightness - 0.0894841775 * a - 1.291485548 * b;
-  const l = lPrime ** 3;
-  const m = mPrime ** 3;
-  const s = sPrime ** 3;
-  const red = linearToSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s);
-  const green = linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s);
-  const blue = linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s);
+  const [red, green, blue] = oklabToSrgb(lightness, chroma * Math.cos(hue), chroma * Math.sin(hue));
 
   return alpha < 1
     ? `rgba(${red}, ${green}, ${blue}, ${Number(alpha.toFixed(4))})`
@@ -142,11 +148,7 @@ function rgbChannels(color: string): readonly [number, number, number] | null {
   return [Number.parseInt(red, 16), Number.parseInt(green, 16), Number.parseInt(blue, 16)];
 }
 
-/**
- * Native chip drawing parses only opaque hex — an `rgba()` string falls back to a default that
- * is nothing like the colour asked for — so a translucent role like `--color-border` has to be
- * flattened first.
- */
+/** Native chips require opaque hex; flatten translucent roles. */
 export function flattenThemeColor(color: string, surface: string): string {
   const alphaHex = /^#([\da-f]{6})([\da-f]{2})$/i.exec(color);
   if (alphaHex) {
@@ -168,12 +170,31 @@ export function flattenThemeColor(color: string, surface: string): string {
   return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
+function srgbToLinear(channel: number): number {
+  const value = channel / 255;
+  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+}
+
+function srgbToOklab(channels: readonly [number, number, number]) {
+  const [red = 0, green = 0, blue = 0] = channels.map(srgbToLinear);
+  const l = Math.cbrt(0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue);
+  const m = Math.cbrt(0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue);
+  const s = Math.cbrt(0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ] as const;
+}
+
 function relativeLuminance(channels: readonly [number, number, number]): number {
-  const [red, green, blue] = channels.map((channel) => {
-    const value = channel / 255;
-    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
+  const [red, green, blue] = channels.map(srgbToLinear);
   return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+}
+
+export function isDarkThemeColor(color: string): boolean {
+  const channels = rgbChannels(color);
+  return channels !== null && relativeLuminance(channels) < 0.18;
 }
 
 function contrastRatio(
@@ -186,6 +207,12 @@ function contrastRatio(
     (Math.max(firstLuminance, secondLuminance) + 0.05) /
     (Math.min(firstLuminance, secondLuminance) + 0.05)
   );
+}
+
+export function themeColorContrastRatio(first: string, second: string): number {
+  const firstChannels = rgbChannels(first);
+  const secondChannels = rgbChannels(second);
+  return firstChannels && secondChannels ? contrastRatio(firstChannels, secondChannels) : 1;
 }
 
 export function themeColorWithContrast(
@@ -228,6 +255,63 @@ export function themeColorWithContrast(
     }
   }
   return `#${readable.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * Unlike `themeColorWithContrast`, which blends toward black or white and greys the color out,
+ * this moves only OKLCH lightness and takes the most chroma sRGB allows at each step, so a vivid
+ * accent stays vivid at the contrast it needs.
+ */
+export function themeAccentWithContrast(
+  accent: string,
+  surfaces: ReadonlyArray<string>,
+  minimum = 4.5,
+): string {
+  const accentChannels = rgbChannels(accent);
+  const surfaceChannels = surfaces.map(rgbChannels).filter((channels) => channels !== null);
+  const minimumContrast = (channels: readonly [number, number, number]) =>
+    Math.min(...surfaceChannels.map((surface) => contrastRatio(channels, surface)));
+  if (
+    !accentChannels ||
+    surfaceChannels.length === 0 ||
+    minimumContrast(accentChannels) >= minimum
+  ) {
+    return accent;
+  }
+
+  const [lightness, a, b] = srgbToOklab(accentChannels);
+  const hue = Math.atan2(b, a);
+  const inGamut = (channels: ReadonlyArray<number>) =>
+    channels.every((channel) => channel >= -1e-4 && channel <= 1 + 1e-4);
+  const mostVivid = (stepLightness: number) => {
+    let chroma = 0;
+    let lower = 0;
+    let upper = Math.max(Math.hypot(a, b), 0.2);
+    for (let index = 0; index < 20; index += 1) {
+      const candidate = (lower + upper) / 2;
+      if (
+        inGamut(
+          oklabToLinearSrgb(stepLightness, candidate * Math.cos(hue), candidate * Math.sin(hue)),
+        )
+      ) {
+        chroma = candidate;
+        lower = candidate;
+      } else {
+        upper = candidate;
+      }
+    }
+    return oklabToSrgb(stepLightness, chroma * Math.cos(hue), chroma * Math.sin(hue));
+  };
+
+  const lighten = minimumContrast([255, 255, 255]) >= minimumContrast([0, 0, 0]);
+  const step = lighten ? 0.002 : -0.002;
+  for (let next = lightness; lighten ? next <= 1 : next >= 0; next += step) {
+    const candidate = mostVivid(next);
+    if (minimumContrast(candidate) >= minimum) {
+      return `#${candidate.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+    }
+  }
+  return lighten ? "#ffffff" : "#000000";
 }
 
 export function themeColorWithAlpha(color: string, alpha: number): string {
@@ -363,10 +447,6 @@ export function createMobileThemeVariables(
     "--color-chevron": withAlpha(c.textMuted, 0.42),
   };
 }
-
-export const MOBILE_THEME_VARIABLE_NAMES = Object.keys(
-  createMobileThemeVariables(T3_CHAT_THEME.colors, "light"),
-) as ReadonlyArray<MobileThemeVariable>;
 
 export function getMobileThemeColors(
   themeId: SharedMobileThemeId,
