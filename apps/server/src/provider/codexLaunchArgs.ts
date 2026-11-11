@@ -9,8 +9,9 @@ export const resolveCodexLaunchArgs = (
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 
-export const codexAppServerArgs = (launchArgs?: string) => [
+export const codexAppServerArgs = (launchArgs?: string, configArgs: ReadonlyArray<string> = []) => [
   "app-server",
+  ...configArgs,
   ...codexLaunchArgv(launchArgs),
 ];
 

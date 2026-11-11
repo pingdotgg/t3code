@@ -920,6 +920,9 @@ importers:
       saxes:
         specifier: 6.0.0
         version: 6.0.0
+      smol-toml:
+        specifier: 1.9.1
+        version: 1.9.1
       stream-chain:
         specifier: ^4.2.5
         version: 4.2.5
