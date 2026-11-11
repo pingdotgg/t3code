@@ -219,7 +219,7 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       interactiveElements: [],
     })),
     ariaSnapshot: vi.fn(async () => '- button "delete" [ref=e1]'),
-    locator: vi.fn(() => {
+    locator: vi.fn((): unknown => {
       throw new Error("Unexpected locator action");
     }),
     isClosed: () => closed,
