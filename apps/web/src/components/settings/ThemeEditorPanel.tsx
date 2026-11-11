@@ -794,6 +794,9 @@ export function ThemeEditorPanel({
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+          ...(mergeTarget.syntax || editingTheme.syntax
+            ? { syntax: { ...mergeTarget.syntax, ...editingTheme.syntax } }
+            : {}),
         });
         retiredTheme = editingTheme;
         retireMergedTheme(editingTheme, mergeTarget);
@@ -813,6 +816,7 @@ export function ThemeEditorPanel({
             ...(isAdvanced ? {} : { managed: true }),
           }),
           ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
+          ...(editingTheme.syntax ? { syntax: editingTheme.syntax } : {}),
         });
       } else if (mergeTarget) {
         if (takenAppearances.includes(activeAppearance)) {
@@ -836,6 +840,7 @@ export function ThemeEditorPanel({
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+          ...(mergeTarget.syntax ? { syntax: mergeTarget.syntax } : {}),
         });
       } else {
         savedTheme = installCustomTheme(

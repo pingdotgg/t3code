@@ -289,7 +289,7 @@ describe("theme files", () => {
     });
   });
 
-  it("preserves valid imported-theme collections and drops malformed metadata", () => {
+  it("preserves valid imported-theme collections and syntax and drops malformed metadata", () => {
     vi.stubGlobal("window", {
       localStorage: {
         getItem: (key: string) =>
@@ -301,6 +301,12 @@ describe("theme files", () => {
                   appearance: "dark",
                   colors: { canvas: "#0d1117" },
                   collection: { id: "open-vsx:github.github-vscode-theme", label: "GitHub Theme" },
+                  syntax: {
+                    dark: {
+                      keyword: { color: "#ff7b72", font_style: "italic" },
+                      string: { color: "red" },
+                    },
+                  },
                 },
                 {
                   id: "github-light",
@@ -308,6 +314,7 @@ describe("theme files", () => {
                   appearance: "light",
                   colors: { canvas: "#ffffff" },
                   collection: { id: "bad collection id", label: "GitHub Theme" },
+                  syntax: { light: "#ffffff" },
                 },
               ])
             : null,
@@ -320,6 +327,10 @@ describe("theme files", () => {
       { id: "github-light" },
     ]);
     expect(getCustomThemes()[1]).not.toHaveProperty("collection");
+    expect(getCustomThemes()[0]!.syntax).toEqual({
+      dark: { keyword: { color: "#ff7b72", font_style: "italic" } },
+    });
+    expect(getCustomThemes()[1]).not.toHaveProperty("syntax");
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();
