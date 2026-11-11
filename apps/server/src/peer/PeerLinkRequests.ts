@@ -39,7 +39,7 @@ type LinkRequestItem = Extract<OrchestrationV2TurnItem, { readonly type: "link_r
 /** The request as it was asked, which every update of its card repeats. */
 type LinkRequestAsk = Pick<
   LinkRequestItem,
-  "id" | "threadId" | "url" | "reason" | "environmentId" | "label" | "hint" | "requestedAccess"
+  "id" | "threadId" | "url" | "reason" | "environmentId" | "hint" | "requestedAccess"
 > & { readonly runId: RunId; readonly nodeId: NodeId };
 
 /** The notification that tells the agent how its card ended. */
@@ -129,7 +129,6 @@ const make = Effect.gen(function* () {
       ...(card.url === undefined ? {} : { url: card.url }),
       reason: card.reason,
       ...(card.environmentId === undefined ? {} : { environmentId: card.environmentId }),
-      ...(card.label === undefined ? {} : { label: card.label }),
       ...(card.hint === undefined ? {} : { hint: card.hint }),
       ...(card.requestedAccess === undefined ? {} : { requestedAccess: card.requestedAccess }),
       ...outcome,
@@ -252,9 +251,8 @@ const make = Effect.gen(function* () {
             "Asking to link an environment requires an active run owned by this MCP provider session.",
         });
       }
-      // Best effort: the card names the machine at an address the agent was
-      // given, and the client finds it by id.
-      const peer = input.url === undefined ? Option.none() : yield* peerLinks.describe(input.url);
+      // Anything can answer at an address as any machine, so a card for an
+      // address names none. The client names it from addresses it already has.
       yield* record(
         {
           id: turnItemId,
@@ -263,11 +261,7 @@ const make = Effect.gen(function* () {
           nodeId: run.rootNodeId,
           ...(input.url === undefined ? {} : { url: input.url }),
           reason: input.reason ?? "",
-          ...(Option.isSome(peer)
-            ? { environmentId: peer.value.environmentId, label: peer.value.label }
-            : input.environmentId === undefined
-              ? {}
-              : { environmentId: input.environmentId }),
+          ...(input.environmentId === undefined ? {} : { environmentId: input.environmentId }),
           ...(input.hint === undefined ? {} : { hint: input.hint }),
           ...(input.requestedAccess === undefined
             ? {}
@@ -357,7 +351,18 @@ const make = Effect.gen(function* () {
       if (card.linkStatus !== "pending") {
         return yield* new PeerLinkRequestError({ reason: "already_answered" });
       }
-      const outcome = yield* answerOutcome(input.answer);
+      // An id beside an address is what answered there, recorded by an older
+      // server. Linking that machine could send its pairing code to the address.
+      const outcome: LinkRequestOutcome =
+        card.url !== undefined &&
+        card.environmentId !== undefined &&
+        input.answer.type === "link" &&
+        input.answer.environmentId !== undefined
+          ? {
+              linkStatus: "failed",
+              failure: "This request is from before an update. Ask for the link again.",
+            }
+          : yield* answerOutcome(input.answer);
       // If Stop closed the card while linking, the card keeps that; the link
       // itself stands and Settings lists it.
       yield* record(
@@ -416,16 +421,16 @@ const resultOf = (card: LinkRequestItem): OrchestratorMcpEnvironmentLinkResult =
   }
 };
 
-/** What the agent's words call the target: its name, its address, or the user's pick. */
-const linkTarget = (card: Pick<LinkRequestItem, "url" | "label" | "environmentId">) =>
-  card.label ?? card.url ?? card.environmentId ?? "a machine";
+/** What the agent's words call the target: its address, its id, or the user's pick. */
+const linkTarget = (card: Pick<LinkRequestItem, "url" | "environmentId">) =>
+  card.url ?? card.environmentId ?? "a machine";
 
 /**
  * The notification an answer sends the agent: what the card says, and what
  * to do next. It carries the outcome only, never the pairing code.
  */
 const outcomeNotice = (
-  card: Pick<LinkRequestItem, "url" | "label" | "environmentId">,
+  card: Pick<LinkRequestItem, "url" | "environmentId">,
   outcome: LinkRequestOutcome,
 ): Omit<LinkRequestWake, "messageId"> => {
   const target = linkTarget(card);
