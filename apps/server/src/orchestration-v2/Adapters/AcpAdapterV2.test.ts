@@ -2270,6 +2270,182 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  const textChunk = (
+    sessionUpdate: "agent_message_chunk" | "agent_thought_chunk",
+    messageId: string | undefined,
+    text: string,
+  ) => ({
+    sessionUpdate,
+    ...(messageId === undefined ? {} : { messageId }),
+    content: { type: "text" as const, text },
+  });
+  const answer = (messageId: string | undefined, text: string) =>
+    textChunk("agent_message_chunk", messageId, text);
+  const thought = (messageId: string | undefined, text: string) =>
+    textChunk("agent_thought_chunk", messageId, text);
+  const agentMessage = (messageId: string, text: string) => ({
+    sessionUpdate: "agent_message" as const,
+    messageId,
+    content: [{ type: "text" as const, text }],
+  });
+  type ScriptedTextStep = EffectAcpSchema.SessionUpdate | { readonly advance: Duration.Input };
+
+  const runScriptedTextTurn = Effect.fnUntraced(function* (steps: ReadonlyArray<ScriptedTextStep>) {
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let handler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+    const instanceId = ProviderInstanceId.make("acp-named-text-resume");
+    const path = yield* Path.Path;
+    const adapter = yield* makeAcpAdapterV2({
+      instanceId,
+      selfInvocation: yield* resolveSelfInvocation(),
+      flavor: {
+        driver: ACP_TEST_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        makeRuntime: makeMockRuntime({
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          mockAgentPath: yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+          ),
+          wrapRuntime: (runtime) => ({
+            ...runtime,
+            handleSessionUpdate: (next) =>
+              Effect.sync(() => {
+                handler = next;
+              }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+            prompt: () =>
+              Effect.gen(function* () {
+                assert.isDefined(handler);
+                for (const step of steps) {
+                  if ("advance" in step) yield* TestClock.adjust(step.advance);
+                  else yield* handler!({ sessionId: "mock-session-1", update: step });
+                }
+                return { stopReason: "end_turn" as const };
+              }),
+          }),
+        }),
+      },
+    });
+    const threadId = ThreadId.make("thread-acp-named-text-resume");
+    const modelSelection = { instanceId, model: "default" };
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("session-acp-named-text-resume"),
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+    yield* runtime.startTurn(
+      makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now: yield* DateTime.now,
+        ordinal: 1,
+      }),
+    );
+    return yield* runtime.events.pipe(
+      Stream.takeUntil((event) => event.type === "turn.terminal"),
+      Stream.runCollect,
+    );
+  });
+
+  it.effect.each([
+    {
+      label: "a thought with its own id interrupts a named assistant message",
+      steps: [
+        answer("answer", "First. "),
+        { advance: "1 second" },
+        thought("thought", "Thinking"),
+        answer("answer", "Second."),
+      ],
+      expected: [
+        ["assistant_message", "First. Second."],
+        ["reasoning", "Thinking"],
+      ],
+    },
+    {
+      label: "named assistant messages interleave",
+      steps: [answer("a", "A1 "), answer("b", "B1"), answer("a", "A2")],
+      expected: [
+        ["assistant_message", "A1 A2"],
+        ["assistant_message", "B1"],
+      ],
+    },
+    {
+      label: "a resumed message continues from authoritative text",
+      steps: [
+        answer("answer", "stale"),
+        thought("thought", "Thinking"),
+        agentMessage("answer", "fresh "),
+        thought("thought", " more"),
+        answer("answer", "tail"),
+      ],
+      expected: [
+        ["assistant_message", "fresh tail"],
+        ["reasoning", "Thinking more"],
+      ],
+    },
+  ] satisfies ReadonlyArray<{
+    readonly label: string;
+    readonly steps: ReadonlyArray<ScriptedTextStep>;
+    readonly expected: ReadonlyArray<readonly [string, string]>;
+  }>)("resumes ACP text segments when $label", ({ steps, expected }) =>
+    Effect.gen(function* () {
+      const events = yield* runScriptedTextTurn(steps);
+      const history = new Map<string, Array<OrchestrationV2TurnItem>>();
+      for (const event of events) {
+        if (event.type !== "turn_item.updated") continue;
+        const item = event.turnItem;
+        if (item.nativeItemRef?.nativeId?.includes(":turn:") !== true) continue;
+        history.set(item.id, [...(history.get(item.id) ?? []), item]);
+      }
+      const texts = [...history.values()].flatMap((snapshots) => {
+        const last = snapshots.at(-1);
+        return last !== undefined && "text" in last ? [[last.type, last.text]] : [];
+      });
+      assert.deepEqual(texts, expected);
+      for (const snapshots of history.values()) {
+        assert.equal(new Set(snapshots.map((item) => item.ordinal)).size, 1);
+        assert.equal(new Set(snapshots.map((item) => DateTime.formatIso(item.startedAt!))).size, 1);
+        assert.equal(snapshots.at(-1)?.status, "completed");
+      }
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("ignores a text flush scheduled before an ACP segment resumed", () =>
+    Effect.gen(function* () {
+      const events = yield* runScriptedTextTurn([
+        answer("answer", "A"),
+        answer("answer", "B"),
+        thought("thought", "Thinking"),
+        { advance: "30 millis" },
+        answer("answer", "C"),
+        answer("answer", "D"),
+        { advance: "20 millis" },
+        answer("answer", "E"),
+        { advance: "30 millis" },
+      ]);
+      const snapshots = events.flatMap((event) =>
+        event.type === "message.updated" && event.message.role === "assistant"
+          ? [[event.message.text, event.message.streaming]]
+          : [],
+      );
+      assert.deepEqual(snapshots, [
+        ["A", true],
+        ["AB", false],
+        ["ABC", true],
+        ["ABCDE", true],
+        ["ABCDE", false],
+      ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("starts a new replay message after ACP v2 plan boundaries", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
