@@ -3,13 +3,9 @@ interface PickScope<E> {
   contains(node: NoInfer<E>): boolean;
 }
 
-/**
- * `Document.elementsFromPoint` retargets shadow content to its outermost host, so the pick
- * descends into each open shadow root. `ShadowRoot.elementsFromPoint` hit-tests the whole page
- * and only retargets, so it also lists the host and everything outside it (including the picker
- * overlay); only the root's own elements count. Closed roots expose no `shadowRoot` and stay
- * opaque.
- */
+// Document hit-testing retargets shadow content to its host, so descend into open roots.
+// ShadowRoot.elementsFromPoint still lists the host and the rest of the page (the overlay
+// too), so only the root's own elements count. Closed roots expose no shadowRoot.
 export function pickElementAtPoint<E extends { readonly shadowRoot: PickScope<E> | null }>(
   scope: PickScope<E>,
   x: number,

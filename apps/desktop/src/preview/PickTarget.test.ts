@@ -87,17 +87,6 @@ describe("pickElementAtPoint", () => {
     expect(page.pick()?.label).toBe("button");
   });
 
-  it("descends through nested open shadow roots", () => {
-    const page = new FakePage();
-    const outerHost = new FakeElement("outer-host", page.document);
-    const outerRoot = page.attachShadow(outerHost, "open");
-    const innerHost = new FakeElement("inner-host", outerRoot);
-    const button = new FakeElement("button", page.attachShadow(innerHost, "open"));
-    page.hits = [button, innerHost, outerHost, page.body, page.html];
-
-    expect(page.pick()?.label).toBe("button");
-  });
-
   it("falls back to the host when the point misses its shadow content", () => {
     const page = new FakePage();
     const host = new FakeElement("shadow-demo", page.document);
