@@ -9247,7 +9247,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
 
           // The API answering again is recovery; a long text or tool input block emits nothing else.
-          if (message.type === "stream_event" && message.event.type === "message_start") {
+          if (
+            message.type === "stream_event" &&
+            message.event.type === "message_start" &&
+            input.replayed !== true
+          ) {
             yield* completeProviderRetry(context, yield* DateTime.now);
           }
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
