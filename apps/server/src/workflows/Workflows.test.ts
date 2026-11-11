@@ -187,7 +187,6 @@ const triggered = [
     {
       version: 1,
       payload: WebhookRequest,
-      returns: Schema.String,
       triggers: [webhook("push", { key: (request) => request.headers["x-delivery"] })],
     },
     (request) => (request.body === "ping" ? stop("only a ping") : Effect.succeed(request.body)),
