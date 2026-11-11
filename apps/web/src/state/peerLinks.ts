@@ -1,12 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
-import { linkableMachines, offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
+import {
+  linkableMachines,
+  linkedEnvironmentNames,
+  offersLinkedEnvironments,
+} from "@t3tools/client-runtime/link-request";
 import { createPeerLinkEnvironmentAtoms } from "@t3tools/client-runtime/state/peerLinks";
 import { AuthAccessReadScope, type EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useEffect, useEffectEvent } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { useEnvironments } from "./environments";
+import { useEnvironmentIdentities, useEnvironments } from "./environments";
 import { environmentPresentations } from "./presentation";
 import { relayEnvironmentDiscovery } from "./relay";
 import { useEnvironmentQuery } from "./query";
@@ -21,6 +25,31 @@ export const offersLinkedEnvironmentsAtom = Atom.family((environmentId: Environm
     offersLinkedEnvironments(get(environmentPresentations.serverConfigsAtom).get(environmentId)),
   ).pipe(Atom.withLabel(`peer-links:offered:${environmentId}`)),
 );
+
+const offersNoLinksAtom = Atom.make(false).pipe(Atom.withLabel("peer-links:offered:none"));
+
+/**
+ * The machines `environmentId` links to, by name, while it offers links, and none otherwise.
+ * Its agents can read threads there. Listing asks each linked machine whether it answers, so
+ * every caller shares one briefly cached list.
+ */
+export function useLinkedEnvironments(
+  environmentId: EnvironmentId | null,
+): ReadonlyMap<EnvironmentId, string> {
+  const offered = useAtomValue(
+    environmentId === null ? offersNoLinksAtom : offersLinkedEnvironmentsAtom(environmentId),
+  );
+  const identities = useEnvironmentIdentities();
+  const links = useEnvironmentQuery(
+    offered && environmentId !== null
+      ? peerLinkEnvironment.list({ environmentId, input: {} })
+      : null,
+  );
+  return linkedEnvironmentNames({
+    links: offered ? (links.data?.links ?? []) : [],
+    environments: identities,
+  });
+}
 
 export function usePeerLinkHosts() {
   const { environments } = useEnvironments();
@@ -49,7 +78,7 @@ export function useLinkableMachines(environmentId: EnvironmentId, enabled: boole
   const discoverIfUnasked = useEffectEvent(() => {
     if (discovery.environments.size === 0 && !discovery.refreshing) void refreshDiscovery();
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- discovery follows the picker's visibility, which a card's mount or a dialog's open sets
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- discovery follows the picker's visibility, which a card's mount or a dialog's open sets
   useEffect(() => {
     if (enabled) discoverIfUnasked();
   }, [enabled]);

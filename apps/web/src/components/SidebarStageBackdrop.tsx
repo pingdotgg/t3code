@@ -60,7 +60,7 @@ export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdro
   );
 }
 
-export function StageBackdropArt({ variant }: { variant: SidebarStageBackdropVariant }) {
+function StageBackdropArt({ variant }: { variant: SidebarStageBackdropVariant }) {
   return variant === "nightly" ? <NightlySkyArt /> : <DevBlueprintArt />;
 }
 
