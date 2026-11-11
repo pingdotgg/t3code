@@ -1,4 +1,11 @@
-import { CommandId, EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -93,6 +100,7 @@ function queuedCreation(environmentId: string): QueuedThreadMessage {
     commandId: CommandId.make(`command-${environmentId}`),
     text: "Test",
     attachments: [],
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
     creation: {
       projectId: ProjectId.make("project-1"),
       workspaceMode: "local",
@@ -109,10 +117,12 @@ describe("buildPendingNewTasks", () => {
     const syncing = EnvironmentId.make("syncing");
     const readOnly = EnvironmentId.make("read-only");
     const retrying = EnvironmentId.make("retrying");
+    const { modelSelection: _model, ...modelless } = queuedCreation("sending");
     const tasks = buildPendingNewTasks({
-      queuedMessages: ["sending", "syncing", "read-only", "retrying", "offline"].map(
-        queuedCreation,
-      ),
+      queuedMessages: [
+        ...["sending", "syncing", "read-only", "retrying", "offline"].map(queuedCreation),
+        { ...modelless, messageId: MessageId.make("message-modelless") },
+      ],
       drafts: {},
       sendGate: {
         connectedEnvironmentIds: new Set([sending, syncing, readOnly, retrying]),
@@ -127,8 +137,9 @@ describe("buildPendingNewTasks", () => {
       },
     });
 
+    expect(tasks).toHaveLength(5);
     expect(new Set(tasks.map((task) => task.environmentId))).toEqual(
-      new Set(["syncing", "read-only", "retrying", "offline"]),
+      new Set(["syncing", "read-only", "retrying", "offline", "sending"]),
     );
   });
 });

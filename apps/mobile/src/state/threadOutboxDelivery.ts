@@ -156,7 +156,20 @@ function logThreadOutboxUploadFailure(queuedMessage: QueuedThreadMessage, error:
   }
 }
 
+function setQueuedMessageRetrying(queuedMessageId: MessageId, retrying: boolean): void {
+  const { [queuedMessageId]: current, ...others } = appAtomRegistry.get(
+    retryingQueuedMessageIdsAtom,
+  );
+  if ((current === true) === retrying) return;
+  appAtomRegistry.set(
+    retryingQueuedMessageIdsAtom,
+    retrying ? { ...others, [queuedMessageId]: true } : others,
+  );
+}
+
 function beginDispatchingQueuedMessage(queuedMessageId: MessageId): void {
+  // An attempt in flight is sending, even while its retry count is kept.
+  setQueuedMessageRetrying(queuedMessageId, false);
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, queuedMessageId);
 }
 
@@ -702,12 +715,7 @@ export function createThreadOutboxDelivery(): {
       notBefore: Date.now() + delayMs,
       timer: setTimeout(drain, delayMs),
     });
-    if (previous === undefined) {
-      appAtomRegistry.set(retryingQueuedMessageIdsAtom, {
-        ...appAtomRegistry.get(retryingQueuedMessageIdsAtom),
-        [messageId]: true,
-      });
-    }
+    setQueuedMessageRetrying(messageId, true);
   };
 
   const clearRetry = (messageId: MessageId): void => {
@@ -715,10 +723,7 @@ export function createThreadOutboxDelivery(): {
     if (retry === undefined) return;
     clearTimeout(retry.timer);
     retries.delete(messageId);
-    const { [messageId]: _cleared, ...retrying } = appAtomRegistry.get(
-      retryingQueuedMessageIdsAtom,
-    );
-    appAtomRegistry.set(retryingQueuedMessageIdsAtom, retrying);
+    setQueuedMessageRetrying(messageId, false);
   };
 
   // A delivery that throws backs off like any failure. Releasing the slot

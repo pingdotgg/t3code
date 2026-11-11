@@ -3,6 +3,7 @@ import type { EnvironmentId, MessageId, ProjectId } from "@t3tools/contracts";
 
 import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
 import {
+  isQueuedThreadCreationSendable,
   resolveThreadOutboxDeliveryAction,
   type QueuedThreadCreation,
   type QueuedThreadMessage,
@@ -97,13 +98,14 @@ export interface ThreadOutboxSendGate {
   readonly retryingMessageIds: Readonly<Partial<Record<MessageId, true>>>;
 }
 
-/** The outbox drain's gate for a creation (connected, shell live, operate granted), outside retry backoff. */
+/** The outbox drain's gate for a creation: sendable, connected, shell live, operate granted, not backing off. */
 export function isQueuedCreationSending(
   message: QueuedThreadMessage,
   gate: ThreadOutboxSendGate,
 ): boolean {
   const environmentId = message.environmentId;
   return (
+    isQueuedThreadCreationSendable(message) &&
     gate.retryingMessageIds[message.messageId] !== true &&
     gate.operableEnvironmentIds.has(environmentId) &&
     resolveThreadOutboxDeliveryAction({
