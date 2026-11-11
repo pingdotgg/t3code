@@ -552,7 +552,6 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       <AssistantCitationChip
         citation={citation}
         citationNumber={markerNumber}
-        composer
         commentEditor={{
           open: commentTarget !== null,
           sourceAnchor: commentTarget?.sourceAnchor,
