@@ -217,7 +217,8 @@ const makeProjectCliRuntimeLayer = (layerProjectService: typeof RuntimeLayer.lay
         Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layer)),
       ),
     ),
-    Layer.provideMerge(SqlitePersistence.layerCliConfig),
+    // Built after acquireServerOwnership; layerCliConfig would contend with this process's own lock.
+    Layer.provideMerge(SqlitePersistence.layerConfig),
   );
 
 const PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT = Duration.seconds(1);
