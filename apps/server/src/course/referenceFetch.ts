@@ -3,7 +3,7 @@ import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeZlib from "node:zlib";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Agent } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 import { isPublicFaviconHost } from "@t3tools/shared/hostClassification";
 import { auditDownload, type DownloadAuditContext } from "./downloadAudit.ts";
 
@@ -78,7 +78,7 @@ const checkedDispatcher = async (
             family?: number,
           ) => void,
         ) =>
-          options.all
+          options?.all
             ? callback(
                 null,
                 addresses.map(({ address: value, family }) => ({ address: value, family })),
@@ -234,7 +234,7 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
 > {
   return yield* Effect.tryPromise({
     try: async () => {
-      const fetchImpl = input.fetchImpl ?? fetch;
+      const fetchImpl = input.fetchImpl ?? undiciFetch;
       let url = new URL("http://invalid.local/");
       let response: Response | undefined;
       const hops: { url: string; status: number | null; ips: string[] }[] = [];
@@ -258,7 +258,11 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
         if (!response) throw new Error("No response.");
         body = await readBody(response);
         const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-        if (contentType.includes("pdf") || url.pathname.toLowerCase().endsWith(".pdf")) {
+        if (
+          contentType.includes("pdf") ||
+          url.pathname.toLowerCase().endsWith(".pdf") ||
+          body.subarray(0, 5).toString("ascii") === "%PDF-"
+        ) {
           const pages = [
             ...new Set(
               (input.pages?.length ? input.pages : [1, 2, 3, 4]).filter((page) => page >= 1),
