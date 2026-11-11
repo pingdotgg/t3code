@@ -3407,7 +3407,8 @@ function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
 }
 
 // Claude Code opens a subagent's result with the tools it used, a note for the parent model.
-const CLAUDE_TOOLS_USED_LINE = /^<tools-used-before-summary>[^<]*<\/tools-used-before-summary>\s*/u;
+const CLAUDE_TOOLS_USED_LINE =
+  /^<tools-used-before-summary>[^<]*<\/tools-used-before-summary>[ \t]*(?:\r?\n)?/u;
 
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
