@@ -454,13 +454,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     </div>
                   ))}
                   {extensionPages.length > 0 && (
-                    <div
-                      role="group"
-                      aria-label="Installed extensions"
-                      className="flex flex-col gap-1"
-                    >
+                    <div className="flex flex-col gap-1">
                       <h3
-                        aria-hidden="true"
+                        id="settings-nav-extensions"
                         className={cn(
                           "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
                           !compactSearchOpen && "max-md:hidden",
@@ -468,36 +464,41 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       >
                         Installed extensions
                       </h3>
-                      <SidebarMenu>
-                        {extensionPages.map(({ entry, page }) => {
-                          const path = extensionSettingsPath(entry.manifest.id, page.id);
-                          const active = pathname === path;
-                          return (
-                            <SidebarMenuItem key={path}>
-                              <SidebarMenuButton
-                                data-settings-section={path}
-                                aria-current={active ? "page" : undefined}
-                                isActive={active}
-                                onClick={() =>
-                                  void navigate({
-                                    to: "/settings/extension/$extensionId/$pageId",
-                                    params: { extensionId: entry.manifest.id, pageId: page.id },
-                                    hash: "",
-                                    replace: true,
-                                  })
-                                }
-                              >
-                                <WrenchIcon />
-                                <span
-                                  className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
+                      <div role="group" aria-labelledby="settings-nav-extensions">
+                        <SidebarMenu>
+                          {extensionPages.map(({ entry, page }) => {
+                            const path = extensionSettingsPath(entry.manifest.id, page.id);
+                            const active = pathname === path;
+                            return (
+                              <SidebarMenuItem key={path}>
+                                <SidebarMenuButton
+                                  data-settings-section={path}
+                                  aria-current={active ? "page" : undefined}
+                                  isActive={active}
+                                  onClick={() =>
+                                    void navigate({
+                                      to: "/settings/extension/$extensionId/$pageId",
+                                      params: { extensionId: entry.manifest.id, pageId: page.id },
+                                      hash: "",
+                                      replace: true,
+                                    })
+                                  }
                                 >
-                                  {page.title}
-                                </span>
-                              </SidebarMenuButton>
-                            </SidebarMenuItem>
-                          );
-                        })}
-                      </SidebarMenu>
+                                  <WrenchIcon />
+                                  <span
+                                    className={cn(
+                                      "truncate",
+                                      !compactSearchOpen && "max-md:sr-only",
+                                    )}
+                                  >
+                                    {page.title}
+                                  </span>
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            );
+                          })}
+                        </SidebarMenu>
+                      </div>
                     </div>
                   )}
                 </div>
