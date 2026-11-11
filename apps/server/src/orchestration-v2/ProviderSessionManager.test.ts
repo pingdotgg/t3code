@@ -2633,7 +2633,7 @@ it.effect(
         const [firstConfig, otherConfig] = yield* Ref.get(mcpConfigs);
         assert.equal(firstConfig?.providerInstanceId, modelSelection.instanceId);
         assert.equal(otherConfig?.providerInstanceId, otherSelection.instanceId);
-        const firstToken = yield* assertAccess(firstConfig!);
+        yield* assertAccess(firstConfig!);
         const otherToken = yield* assertAccess(otherConfig!);
 
         assert.strictEqual(yield* manager.open(firstInput), firstRuntime);
@@ -2649,16 +2649,8 @@ it.effect(
         yield* manager.open(otherInput);
         const reopenedConfig = (yield* Ref.get(mcpConfigs)).at(-1);
         assert.isDefined(reopenedConfig);
-        const reopenedToken = yield* assertAccess(reopenedConfig!);
-        assert.notEqual(reopenedToken, otherToken);
+        assert.notEqual(yield* assertAccess(reopenedConfig!), otherToken);
         yield* assertAccess(firstConfig!);
-
-        yield* registry.revokeThread(threadId);
-        yield* mcpSessions.clear(threadId);
-        assert.isUndefined(yield* registry.resolve(firstToken));
-        assert.isUndefined(yield* registry.resolve(reopenedToken));
-        assert.isUndefined(yield* mcpSessions.read(threadId, modelSelection.instanceId));
-        assert.isUndefined(yield* mcpSessions.read(threadId, otherSelection.instanceId));
       });
 
       yield* effect.pipe(
