@@ -1,6 +1,7 @@
 import {
   parsePullRequestAnchor,
   pullRequestDiffPathMatches,
+  pullRequestLinkCommit,
 } from "@t3tools/shared/pullRequestAnchor";
 import {
   capitalizeTerm,
@@ -1459,6 +1460,12 @@ function PullRequestCodeTab({
   const revealLink = useEffectEvent(() => {
     if (revealUrl === undefined) answeredLink.current = null;
     if (revealUrl === undefined || linkAnchor?.kind !== "diff") return;
+    // The panel selects the link's commit after this tab's effects run, so the files on screen
+    // can still be another commit's.
+    const linkCommit = pullRequestLinkCommit(revealUrl);
+    if ((detail.commits.some((entry) => entry.oid === linkCommit) ? linkCommit : null) !== commit) {
+      return;
+    }
     const key = `${scopeKey}:${revealUrl}`;
     if (answeredLink.current === key) return;
     if (

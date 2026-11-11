@@ -264,3 +264,37 @@ it("never requests the diff of a selected commit the pull request no longer has"
     .toBeVisible();
   expect(mocks.diffCommits).not.toContain("gone");
 });
+
+it("answers a commit's diff link only once that commit's diff is shown", async () => {
+  setup({ paged: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  const oid = "c".repeat(40);
+  const withCommit = {
+    ...detail,
+    commits: [{ oid, messageHeadline: "Linked commit", committedDate: "2026-09-01T00:00:00Z" }],
+  };
+  const url = `${detail.url}/commits/${oid}#diff-${bytesToHex(sha256(new TextEncoder().encode("a.ts")))}R2`;
+  const settled = vi.fn();
+  const scoped = (selectedCommitOid: string | null, revealUrl?: string) => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={withCommit}
+      selectedCommitOid={selectedCommitOid}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+      revealUrl={revealUrl}
+      onRevealSettled={settled}
+    />
+  );
+  await using screen = await render(scoped(null), { container });
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+
+  // The panel selects the link's commit after this tab has already seen the link.
+  await screen.rerender(scoped(null, url));
+  expect(settled).not.toHaveBeenCalled();
+  await screen.rerender(scoped(oid, url));
+  await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+});
