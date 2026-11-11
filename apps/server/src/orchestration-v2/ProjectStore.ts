@@ -9,6 +9,7 @@ import {
   ThreadEnvMode,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -38,6 +39,8 @@ export const ProjectRow = Schema.Struct({
   faviconPath: Schema.NullOr(Schema.String),
   projectIcon: Schema.NullOr(StoredProjectIcon),
   scripts: Schema.Array(ProjectScript),
+  pinnedAt: Schema.NullOr(IsoDateTime),
+  archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -64,6 +67,8 @@ function toShell(row: ProjectRow): OrchestrationProjectShell {
     faviconPath: row.faviconPath,
     projectIcon: row.projectIcon,
     scripts: row.scripts,
+    pinnedAt: row.pinnedAt,
+    archivedAt: row.archivedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -95,7 +100,7 @@ export class ProjectStoreV2 extends Context.Service<
   }
 >()("t3/orchestration-v2/ProjectStore/ProjectStoreV2") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const encodeRow = Schema.encodeEffect(ProjectDbRow);
@@ -119,6 +124,8 @@ export const make = Effect.gen(function* () {
         favicon_path AS "faviconPath",
         project_icon_json AS "projectIcon",
         scripts_json AS "scripts",
+        pinned_at AS "pinnedAt",
+        archived_at AS "archivedAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt",
         deleted_at AS "deletedAt"
@@ -149,6 +156,8 @@ export const make = Effect.gen(function* () {
             favicon_path,
             project_icon_json,
             scripts_json,
+            pinned_at,
+            archived_at,
             created_at,
             updated_at,
             deleted_at
@@ -163,6 +172,8 @@ export const make = Effect.gen(function* () {
             ${encoded.faviconPath},
             ${encoded.projectIcon},
             ${encoded.scripts},
+            ${encoded.pinnedAt},
+            ${encoded.archivedAt},
             ${encoded.createdAt},
             ${encoded.updatedAt},
             ${encoded.deletedAt}
@@ -177,6 +188,8 @@ export const make = Effect.gen(function* () {
             favicon_path = excluded.favicon_path,
             project_icon_json = excluded.project_icon_json,
             scripts_json = excluded.scripts_json,
+            pinned_at = excluded.pinned_at,
+            archived_at = excluded.archived_at,
             created_at = excluded.created_at,
             updated_at = excluded.updated_at,
             deleted_at = excluded.deleted_at
@@ -191,6 +204,7 @@ export const make = Effect.gen(function* () {
 
   const get: ProjectStoreV2["Service"]["get"] = (projectId, options) =>
     selectRows({ projectId, includeDeleted: options?.includeDeleted === true }).pipe(
+      NodeSqliteClient.readOnly,
       Effect.map((rows) => Option.fromUndefinedOr(rows[0])),
       mapError("get"),
     );
@@ -199,12 +213,13 @@ export const make = Effect.gen(function* () {
     selectRows({
       ...(options?.projectIds === undefined ? {} : { projectIds: options.projectIds }),
       includeDeleted: options?.includeDeleted === true,
-    }).pipe(mapError("list"));
+    }).pipe(NodeSqliteClient.readOnly, mapError("list"));
 
   const findActiveByWorkspaceRoot: ProjectStoreV2["Service"]["findActiveByWorkspaceRoot"] = (
     workspaceRoot,
   ) =>
     selectRows({ workspaceRoot, includeDeleted: false }).pipe(
+      NodeSqliteClient.readOnly,
       Effect.map((rows) => Option.fromUndefinedOr(rows[0])),
       mapError("findActiveByWorkspaceRoot"),
     );
@@ -223,6 +238,8 @@ export const make = Effect.gen(function* () {
           faviconPath: payload.faviconPath ?? null,
           projectIcon: payload.projectIcon ?? null,
           scripts: payload.scripts,
+          pinnedAt: null,
+          archivedAt: null,
           createdAt: payload.createdAt,
           updatedAt: payload.updatedAt,
           deletedAt: null,
@@ -253,6 +270,8 @@ export const make = Effect.gen(function* () {
         ...(payload.faviconPath === undefined ? {} : { faviconPath: payload.faviconPath }),
         ...(payload.projectIcon === undefined ? {} : { projectIcon: payload.projectIcon }),
         ...(payload.scripts === undefined ? {} : { scripts: payload.scripts }),
+        ...(payload.pinnedAt === undefined ? {} : { pinnedAt: payload.pinnedAt }),
+        ...(payload.archivedAt === undefined ? {} : { archivedAt: payload.archivedAt }),
         updatedAt: payload.updatedAt,
       }).pipe(mapError("apply"));
     },
@@ -263,11 +282,14 @@ export const make = Effect.gen(function* () {
     get,
     list,
     findActiveByWorkspaceRoot,
-    getShell: (projectId) => get(projectId).pipe(Effect.map(Option.map(toShell))),
-    listShells: (options) =>
-      list(options?.projectIds === undefined ? undefined : { projectIds: options.projectIds }).pipe(
-        Effect.map((rows) => rows.map(toShell)),
-      ),
+    getShell: Effect.fn("ProjectStoreV2.getShell")(function (projectId) {
+      return get(projectId).pipe(Effect.map(Option.map(toShell)));
+    }),
+    listShells: Effect.fn("ProjectStoreV2.listShells")(function (options) {
+      return list(
+        options?.projectIds === undefined ? undefined : { projectIds: options.projectIds },
+      ).pipe(Effect.map((rows) => rows.map(toShell)));
+    }),
   });
 });
 
