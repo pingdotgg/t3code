@@ -165,6 +165,46 @@ describe("orchestration V2 wire projection", () => {
     expect(item.output).toEqual({ ok: true });
   });
 
+  it("keeps Claude Artifact publish fields on the wire after omitting raw output", () => {
+    const item = {
+      ...base,
+      toolName: "Artifact",
+      input: { file_path: "/tmp/page.html", label: "Demo" },
+      output: {
+        type: "structured_tool_use_result",
+        value: {
+          url: "https://claude.ai/artifact/abc123",
+          path: "/tmp/page.html",
+          title: "Demo page",
+        },
+      },
+    } satisfies OrchestrationV2TurnItem;
+    const projected = projectTurnItemForWire(item);
+    expect(projected).toMatchObject({
+      toolName: "Artifact",
+      outputOmitted: true,
+      output: {
+        url: "https://claude.ai/artifact/abc123",
+        path: "/tmp/page.html",
+        title: "Demo page",
+      },
+    });
+    expect(JSON.stringify(projected)).not.toContain("structured_tool_use_result");
+  });
+
+  it("keeps Published-at Claude Artifact URLs when raw text output is omitted", () => {
+    const item = {
+      ...base,
+      toolName: "Artifact",
+      input: {},
+      output: "Published at https://claude.ai/code/artifact/xyz",
+    } satisfies OrchestrationV2TurnItem;
+    expect(projectTurnItemForWire(item)).toMatchObject({
+      outputOmitted: true,
+      output: { url: "https://claude.ai/code/artifact/xyz" },
+    });
+  });
+
   it("uses encoded JSON bytes for strings near the dynamic-value limit", () => {
     const small = '"'.repeat(8_191);
     const large = '"'.repeat(8_192);

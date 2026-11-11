@@ -197,7 +197,7 @@ function ArtifactsIndex(props: {
         <div role="status" className="px-3 py-4 text-xs text-muted-foreground">
           {normalizedQuery.length > 0
             ? "No matching artifacts."
-            : "Artifacts made in this thread appear here: Claude Artifact publishes, HTML renders, and temp file writes."}
+            : "Artifacts from loaded history appear here: Claude Artifact publishes, HTML renders, and temp file writes."}
         </div>
       ) : (
         <FileTree

@@ -15,6 +15,7 @@ import {
   dedupeSubagentBodies,
   dedupeTurnItemBodies,
 } from "@t3tools/shared/orchestrationV2DedupedBodies";
+import { claudeArtifactFieldsForWire } from "@t3tools/shared/publishedArtifacts";
 import {
   compactDynamicToolOutput,
   omitToolOutputImageData,
@@ -191,7 +192,12 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       };
     case "dynamic_tool": {
       const { output: rawOutput, ...projected } = item;
-      const output = compactDynamicToolOutput(rawOutput);
+      const compacted = compactDynamicToolOutput(rawOutput);
+      const artifactFields = claudeArtifactFieldsForWire(item.toolName, rawOutput);
+      const output =
+        compacted === undefined && artifactFields === undefined
+          ? undefined
+          : { ...compacted, ...artifactFields };
       return {
         ...projected,
         input: summarizeDynamicValue(item.input),

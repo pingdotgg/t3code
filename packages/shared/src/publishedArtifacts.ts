@@ -115,6 +115,22 @@ function isClaudeArtifactToolName(toolName: string | null | undefined): boolean 
   return normalized === "artifact";
 }
 
+/** Wire compacting drops raw tool output; keep publish metadata clients can list. */
+export function claudeArtifactFieldsForWire(
+  toolName: string | null | undefined,
+  output: unknown,
+): { readonly url?: string; readonly path?: string; readonly title?: string } | undefined {
+  if (!isClaudeArtifactToolName(toolName)) return undefined;
+  const fields = extractClaudeArtifactFields(output);
+  const wire: { url?: string; path?: string; title?: string } = {};
+  if (fields.url !== null) wire.url = fields.url;
+  if (fields.path !== null) wire.path = fields.path;
+  if (fields.title !== null) wire.title = fields.title;
+  return wire.url !== undefined || wire.path !== undefined || wire.title !== undefined
+    ? wire
+    : undefined;
+}
+
 function normalizePathSeparators(value: string): string {
   return value.replaceAll("\\", "/");
 }

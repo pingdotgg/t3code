@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isTempArtifactPath, publishedArtifactsFromTurnItems } from "./publishedArtifacts.ts";
+import {
+  claudeArtifactFieldsForWire,
+  isTempArtifactPath,
+  publishedArtifactsFromTurnItems,
+} from "./publishedArtifacts.ts";
 
 describe("publishedArtifactsFromTurnItems", () => {
   it("extracts Claude Artifact publishes from structured results", () => {
@@ -57,6 +61,46 @@ describe("publishedArtifactsFromTurnItems", () => {
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0]?.url).toBe("https://claude.ai/code/artifact/xyz");
     expect(artifacts[0]?.kind).toBe("claude-artifact");
+  });
+
+  it("lists Claude Artifacts from wire-compacted output metadata", () => {
+    const raw = {
+      type: "structured_tool_use_result",
+      value: {
+        url: "https://claude.ai/artifact/wire",
+        path: "/tmp/page.html",
+        title: "Wire page",
+      },
+    };
+    const wire = claudeArtifactFieldsForWire("Artifact", raw);
+    expect(wire).toEqual({
+      url: "https://claude.ai/artifact/wire",
+      path: "/tmp/page.html",
+      title: "Wire page",
+    });
+    expect(claudeArtifactFieldsForWire("ArtifactComments", raw)).toBeUndefined();
+
+    const artifacts = publishedArtifactsFromTurnItems([
+      {
+        id: "item-1",
+        type: "dynamic_tool",
+        status: "completed",
+        toolName: "Artifact",
+        output: wire,
+      },
+    ]);
+    expect(artifacts).toEqual([
+      {
+        id: "claude-artifact:https://claude.ai/artifact/wire",
+        kind: "claude-artifact",
+        title: "Wire page",
+        url: "https://claude.ai/artifact/wire",
+        path: "/tmp/page.html",
+        htmlRender: null,
+        toolName: "Artifact",
+        itemId: "item-1",
+      },
+    ]);
   });
 
   it("extracts html_render references", () => {
