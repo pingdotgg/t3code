@@ -56,8 +56,12 @@ export function codexAuthorizationRequest(value: string) {
 }
 
 export function codexCallbackUrl(value: string, redirectUri: string, state: string) {
-  const callback = new URL(value);
   const expected = new URL(redirectUri);
+  const pasted = value.trimStart();
+  // Browsers can hide `http://` in the address bar, so a pasted callback may lack it.
+  const callback = new URL(
+    /^[a-z][a-z\d+.-]*:\/\//iu.test(pasted) ? pasted : `${expected.protocol}//${pasted}`,
+  );
   const states = callback.searchParams.getAll("state");
   const codes = callback.searchParams.getAll("code");
   const errors = callback.searchParams.getAll("error");

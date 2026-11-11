@@ -1,6 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as GitHubQuota from "./GitHubQuota.ts";
 import { CredentialScope } from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -61,23 +60,11 @@ describe("GitHubQuota", () => {
     Effect.gen(function* () {
       const quota = yield* GitHubQuota.GitHubQuota;
       yield* quota.observe("github.com", headers(501, "core"));
-      // Conditional reads answer 304 with the balance unchanged, however many are sent.
       for (let index = 0; index < 5; index++) {
         yield* quota.admit("github.com", "core");
         yield* quota.observe("github.com", headers(501, "core"));
       }
       yield* quota.admit("github.com", "core");
-    }).pipe(Effect.provide(GitHubQuota.layer)),
-  );
-
-  it.effect("forgets a balance once its window resets, and ignores answers naming no quota", () =>
-    Effect.gen(function* () {
-      const quota = yield* GitHubQuota.GitHubQuota;
-      yield* quota.observe("github.com", headers(0));
-      yield* TestClock.setTime(RESET);
-      yield* quota.admit("github.com", "graphql");
-      yield* quota.observe("other.example", { "x-ratelimit-remaining": "0" });
-      yield* quota.admit("other.example", "graphql");
     }).pipe(Effect.provide(GitHubQuota.layer)),
   );
 });

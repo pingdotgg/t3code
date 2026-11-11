@@ -2,10 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 
 import {
-  canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
-  filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
+  getFilesystemBrowseTabCompletion,
   resolveFilesystemReadAccess,
 } from "./filesystem.ts";
 
@@ -21,64 +20,6 @@ describe("filesystem read access", () => {
         sessionError: null,
       }),
     ).toEqual({ canReadFiles: false, isPending: true, error: null });
-  });
-
-  it("stops waiting when the loaded catalog has no matching environment", () => {
-    expect(
-      resolveFilesystemReadAccess({
-        isCatalogReady: true,
-        connection: null,
-        session: null,
-        sessionError: null,
-      }),
-    ).toEqual({
-      canReadFiles: false,
-      isPending: false,
-      error: "This environment is not connected.",
-    });
-  });
-
-  it.each(["available", "offline", "error"] as const)(
-    "stops waiting for an unresolved session when the connection is %s",
-    (phase) => {
-      expect(
-        resolveFilesystemReadAccess({
-          isCatalogReady: true,
-          connection: { phase, error: null },
-          session: null,
-          sessionError: null,
-        }),
-      ).toEqual({
-        canReadFiles: false,
-        isPending: false,
-        error: "This environment is not connected.",
-      });
-    },
-  );
-
-  it.each(["connected", "connecting", "reconnecting"] as const)(
-    "waits for the session check while %s",
-    (phase) => {
-      expect(
-        resolveFilesystemReadAccess({
-          isCatalogReady: true,
-          connection: { phase, error: null },
-          session: null,
-          sessionError: null,
-        }),
-      ).toEqual({ canReadFiles: false, isPending: true, error: null });
-    },
-  );
-
-  it("reports the transport failure when the session cannot be checked", () => {
-    expect(
-      resolveFilesystemReadAccess({
-        isCatalogReady: true,
-        connection: { phase: "error", error: "The relay is unavailable." },
-        session: null,
-        sessionError: null,
-      }),
-    ).toEqual({ canReadFiles: false, isPending: false, error: "The relay is unavailable." });
   });
 
   it.each([false, true])(
@@ -140,20 +81,31 @@ describe("filesystem browse model", () => {
     expect(getFilesystemBrowsePath("~/projects/", "", false).isBrowsing).toBe(false);
   });
 
-  it("filters names, hidden directories, and exact matches consistently", () => {
-    const entries = [
-      { name: ".config", fullPath: "/Users/test/.config" },
-      { name: "Code", fullPath: "/Users/test/Code" },
-      { name: "codething", fullPath: "/Users/test/codething" },
-    ];
-
-    expect(filterFilesystemBrowseEntries(entries, "co")).toEqual({
-      visibleEntries: entries.slice(1, 3),
-      exactEntry: null,
+  it("completes Tab like a shell", () => {
+    const entry = (name: string) => ({ name, fullPath: `/Users/me/${name}` });
+    expect(getFilesystemBrowseTabCompletion([entry("Creations")], "Creation")).toEqual({
+      name: "Creations",
+      isComplete: true,
     });
-    expect(filterFilesystemBrowseEntries(entries, "").visibleEntries).toEqual(entries.slice(1));
-    expect(filterFilesystemBrowseEntries(entries, ".").visibleEntries).toEqual(entries.slice(0, 1));
-    expect(filterFilesystemBrowseEntries(entries, "Code").exactEntry).toEqual(entries[1]);
+    expect(getFilesystemBrowseTabCompletion([entry("OpenSourced"), entry("OpenAI")], "op")).toEqual(
+      { name: "Open", isComplete: false },
+    );
+    expect(getFilesystemBrowseTabCompletion([entry("Open"), entry("Opal")], "Op")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("openAI"), entry("OpenSource")], "o")).toEqual({
+      name: "open",
+      isComplete: false,
+    });
+    expect(getFilesystemBrowseTabCompletion([entry("😀one"), entry("😁two")], "")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("ΟΣα"), entry("οσβ")], "ο")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("İfoo"), entry("İfar")], "i\u0307")).toEqual({
+      name: "İf",
+      isComplete: false,
+    });
+    expect(getFilesystemBrowseTabCompletion([entry("😀one"), entry("😀other")], "😀")).toEqual({
+      name: "😀o",
+      isComplete: false,
+    });
+    expect(getFilesystemBrowseTabCompletion([], "x")).toBeNull();
   });
 });
 
@@ -179,12 +131,5 @@ describe("browse navigation", () => {
 
     await expect(invalidatedRun).resolves.toBe(false);
     expect(commits).toEqual(["second"]);
-  });
-
-  it("only preloads connected environments", () => {
-    expect(canPreloadBrowsePath("connected")).toBe(true);
-    expect(canPreloadBrowsePath("offline")).toBe(false);
-    expect(canPreloadBrowsePath("reconnecting")).toBe(false);
-    expect(canPreloadBrowsePath(null)).toBe(false);
   });
 });

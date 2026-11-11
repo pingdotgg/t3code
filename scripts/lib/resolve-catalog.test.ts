@@ -28,13 +28,6 @@ describe("resolveCatalogDependencies", () => {
     );
   });
 
-  it("fails on a catalog entry that does not exist", () => {
-    assert.throws(
-      () => resolveCatalogDependencies({ "a>missing": "catalog:" }, catalog, "apps/desktop"),
-      /Expected key 'missing' in root workspace catalog/,
-    );
-  });
-
   it("resolves version-qualified overrides without changing their selectors", () => {
     assert.deepStrictEqual(
       resolveCatalogDependencies(

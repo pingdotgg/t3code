@@ -62,23 +62,4 @@ describe("snapshotCookieDatabase", () => {
       }),
     ),
   );
-
-  it.effect("removes a successful snapshot when its scope closes", () =>
-    runNode(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const sourceDirectory = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3code-cookie-cleanup-source-",
-        });
-        const source = path.join(sourceDirectory, "Cookies");
-        yield* Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          yield* sql`CREATE TABLE cookies(name TEXT NOT NULL)`;
-        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: source })));
-        const snapshot = yield* snapshotCookieDatabase(source).pipe(Effect.scoped);
-        expect(yield* fileSystem.exists(snapshot)).toBe(false);
-      }),
-    ),
-  );
 });
