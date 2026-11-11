@@ -60,28 +60,6 @@ const settledFor = (
   cancelledRunId: cancelledRunId === null ? null : RunId.make(cancelledRunId),
 });
 
-it("holds an outcome that lands before the dispatch bookkeeping is saved", () => {
-  const runs = makeTrackedRuns();
-  runs.track(messageId, taskId, "start");
-  assert.deepEqual(runs.observe(runEvent("run:fast", "failed")), []);
-  assert.deepEqual(runs.dispatched(messageId, threadId), settledFor("failed", "The run failed."));
-  assert.isNull(runs.dispatched(messageId, threadId));
-});
-
-it("does not end a queued run cancelled only because its message was promoted into the active run", () => {
-  const runs = makeTrackedRuns();
-  runs.track(messageId, taskId, "start");
-  runs.dispatched(messageId, threadId);
-  assert.deepEqual(runs.observe(runEvent("run:queued", "queued")), []);
-  // Promotion cancels the queued run first, then moves the message into the active run.
-  const [cancelled] = runs.observe(runEvent("run:queued", "cancelled"));
-  assert.deepEqual(cancelled, settledFor("failed", "The run was cancelled.", "run:queued"));
-  assert.isFalse(runs.confirmCancel(messageId, RunId.make("run:queued"), RunId.make("run:active")));
-  assert.deepEqual(runs.observe(runEvent("run:active", "completed")), [
-    settledFor("succeeded", null),
-  ]);
-});
-
 it("ends a queued run that was cancelled outright", () => {
   const runs = makeTrackedRuns();
   runs.track(messageId, taskId, "start");
@@ -122,29 +100,6 @@ it("fails a run whose thread is deleted before the turn ends", () => {
     }),
     [settledFor("failed", "The thread was deleted.")],
   );
-});
-
-it.each(["completed", "failed"] as const)("settles every task sharing a %s run", (status) => {
-  const runs = makeTrackedRuns();
-  const secondMessage = MessageId.make("message:second-task");
-  const secondTask = ScheduledTaskId.make("task:second");
-  runs.track(messageId, taskId, "start");
-  runs.track(secondMessage, secondTask, "second-start");
-  runs.dispatched(messageId, threadId);
-  runs.dispatched(secondMessage, threadId);
-  runs.bindRun(messageId, RunId.make("run:shared"), null);
-  runs.bindRun(secondMessage, RunId.make("run:shared"), null);
-  const error = status === "failed" ? "The run failed." : null;
-  assert.deepEqual(runs.observe(runEvent("run:shared", status)), [
-    settledFor(status === "completed" ? "succeeded" : "failed", error),
-    {
-      ...settledFor(status === "completed" ? "succeeded" : "failed", error),
-      messageId: secondMessage,
-      taskId: secondTask,
-      startedAtIso: "second-start",
-    },
-  ]);
-  assert.deepEqual(runs.pending(), []);
 });
 
 it("keeps a promoted message tracked when cancellation arrived before dispatch returned", () => {

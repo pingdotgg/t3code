@@ -62,7 +62,17 @@ export function makeTrackedRuns() {
     };
   };
 
+  const threadDeleted = (threadId: ThreadId): ReadonlyArray<SettledRun> =>
+    [...runs.values()]
+      .filter((run) => run.threadId === threadId)
+      .flatMap((run) =>
+        settled(
+          end(run, { status: "failed", error: "The thread was deleted.", cancelledRunId: null }),
+        ),
+      );
+
   return {
+    threadDeleted,
     track: (messageId: MessageId, taskId: ScheduledTaskId, startedAtIso: string) => {
       // Only a task's latest run is reflected on its row.
       forgetTask(taskId);
@@ -176,19 +186,8 @@ export function makeTrackedRuns() {
               ),
             );
         }
-        case "thread.deleted": {
-          return [...runs.values()]
-            .filter((run) => run.threadId === event.threadId)
-            .flatMap((run) =>
-              settled(
-                end(run, {
-                  status: "failed",
-                  error: "The thread was deleted.",
-                  cancelledRunId: null,
-                }),
-              ),
-            );
-        }
+        case "thread.deleted":
+          return threadDeleted(event.threadId);
         default:
           return [];
       }
