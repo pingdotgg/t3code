@@ -762,6 +762,206 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("a compacted thread reads its recent runs, live runs, fresh starts and named runs", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("compacted");
+    const now = yield* DateTime.now;
+    const nodeId = NodeId.make("node:compacted");
+    const runId = (ordinal: number) => RunId.make(`run:compacted:${ordinal}`);
+    const read = (keepRunIds: ReadonlyArray<RunId>) =>
+      store.getThreadRecords(threadId, ["runs", "messages"], {
+        messageRoles: ["user"],
+        sinceLastCompaction: { keepRunIds },
+      });
+    // Run 1 is the helper's rolled-back run. Run 2 is live and run 3 starts a fresh session.
+    // Runs 6 and 9 are `/compact` runs that hold a compaction; run 8 is one that does not.
+    for (const [ordinal, status] of [
+      [2, "running"],
+      [3, "completed"],
+      [4, "completed"],
+      [5, "completed"],
+      [6, "completed"],
+      [7, "completed"],
+      [8, "completed"],
+      [9, "completed"],
+    ] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:compacted:run-${ordinal}`),
+        type: "run.created",
+        threadId,
+        runId: runId(ordinal),
+        nodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: runId(ordinal),
+          threadId,
+          ordinal,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`message:compacted:${ordinal}`),
+          rootNodeId: nodeId,
+          activeAttemptId: null,
+          status,
+          requestedAt: now,
+          startedAt: now,
+          completedAt: status === "running" ? null : now,
+          checkpointId: null,
+          contextHandoffId: null,
+          ...(ordinal === 3 ? { freshContext: true } : {}),
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:compacted:message-${ordinal}`),
+        type: "message.updated",
+        threadId,
+        runId: runId(ordinal),
+        occurredAt: now,
+        payload: {
+          id: MessageId.make(`message:compacted:${ordinal}`),
+          threadId,
+          runId: runId(ordinal),
+          nodeId,
+          createdBy: "user",
+          creationSource: "web",
+          role: "user",
+          text: [6, 8, 9].includes(ordinal) ? "/compact" : `Prompt ${ordinal}`,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+    }
+    const rolledBackId = RunId.make("run:compacted:rolled-back");
+    const ids = <T extends { readonly id: string }>(rows: ReadonlyArray<T>) =>
+      rows.map((row) => row.id);
+    const compact = (ordinal: number) =>
+      store.apply({
+        id: EventId.make(`event:compacted:compaction-${ordinal}`),
+        type: "turn-item.updated",
+        threadId,
+        runId: runId(ordinal),
+        nodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`item:compacted:compaction-${ordinal}`),
+          threadId,
+          runId: runId(ordinal),
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "compaction",
+          driver,
+        },
+      });
+    // Nothing is compacted yet, so the whole history is current.
+    assert.lengthOf((yield* read([])).runs, 9);
+
+    yield* compact(6);
+    // Legacy rows can hold unreadable JSON; the fresh-context index must not reject them.
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+      VALUES ('run:compacted:legacy', ${threadId}, 0, 'codex', 'completed', '', '{')
+    `;
+    const runIdsOf = (ordinals: ReadonlyArray<number>) => ordinals.map(runId);
+    // The window starts at run 5, the prompt before the compaction.
+    const recent = yield* read([rolledBackId]);
+    assert.deepEqual(ids(recent.runs), [rolledBackId, ...runIdsOf([2, 3, 5, 6, 7, 8, 9])]);
+    assert.deepEqual(
+      ids(recent.messages),
+      [2, 3, 5, 6, 7, 8, 9].map((ordinal) => `message:compacted:${ordinal}`),
+    );
+    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9]));
+
+    // Run 8 is a `/compact` run, so the model-switch baseline is the prompt before it, run 7.
+    yield* compact(9);
+    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 7, 8, 9]));
+
+    // The search for a prompt before the compaction may walk past an unreadable run.
+    const legacyThreadId = yield* addRolledBackRecoveryCandidate("compacted-legacy");
+    const legacyNodeId = NodeId.make("node:compacted-legacy");
+    const compactionRunId = RunId.make("run:compacted-legacy:2");
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+      VALUES ('run:compacted-legacy:0', ${legacyThreadId}, 0, 'codex', 'completed', '', '{')
+    `;
+    yield* store.apply({
+      id: EventId.make("event:compacted-legacy:run"),
+      type: "run.created",
+      threadId: legacyThreadId,
+      runId: compactionRunId,
+      nodeId: legacyNodeId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: compactionRunId,
+        threadId: legacyThreadId,
+        ordinal: 2,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:compacted-legacy:2"),
+        rootNodeId: legacyNodeId,
+        activeAttemptId: null,
+        status: "completed",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: now,
+        checkpointId: null,
+        contextHandoffId: null,
+      },
+    });
+    yield* store.apply({
+      id: EventId.make("event:compacted-legacy:compaction"),
+      type: "turn-item.updated",
+      threadId: legacyThreadId,
+      runId: compactionRunId,
+      nodeId: legacyNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("item:compacted-legacy:compaction"),
+        threadId: legacyThreadId,
+        runId: compactionRunId,
+        nodeId: legacyNodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "compaction",
+        driver,
+      },
+    });
+    const legacy = yield* store.getThreadRecords(legacyThreadId, ["runs"], {
+      sinceLastCompaction: { keepRunIds: [] },
+    });
+    assert.deepEqual(ids(legacy.runs), [compactionRunId]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("record reads filter notification sources without dropping matching message bodies", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;

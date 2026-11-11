@@ -1458,7 +1458,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
-  const readCommandProjection = (threadId: ThreadId) =>
+  const readCommandProjection = (
+    threadId: ThreadId,
+    recent?: { keepRunIds: ReadonlyArray<RunId> },
+  ) =>
     projectionStore
       .getThreadRecords(
         threadId,
@@ -1483,6 +1486,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // Commands here read only undelivered or active tasks; a dispatcher thread keeps
           // thousands of delivered ones, each carrying its full prompt.
           omitSettledSubagents: true,
+          ...(recent === undefined ? {} : { sinceLastCompaction: recent }),
         },
       )
       .pipe(
@@ -1571,9 +1575,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.fnUntraced(function* (
       threadId: ThreadId,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      recent?: { keepRunIds: ReadonlyArray<RunId> },
     ) {
       const pending = (yield* Ref.get(events)).filter((event) => event.threadId === threadId);
-      const stored = yield* Effect.option(readCommandProjection(threadId));
+      const stored = yield* Effect.option(readCommandProjection(threadId, recent));
       let projection: OrchestrationV2ThreadProjection;
       if (Option.isSome(stored)) {
         projection = stored.value;
@@ -6166,7 +6171,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
-    let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    // A compacted thread needs only its recent runs, plus any older run the command names.
+    let projection = yield* getProjectionWithPendingEvents(command.threadId, events, {
+      keepRunIds: [
+        command.manualContinuationOfRunId,
+        command.restartContinuationOfRunId,
+        command.usageLimitContinuationOfRunId,
+        command.delegatedCompletion?.parentRunId,
+        ...(command.dispatchMode.type === "steer_active" ||
+        command.dispatchMode.type === "restart_active"
+          ? [command.dispatchMode.targetRunId]
+          : []),
+      ].flatMap((runId) => (runId === undefined ? [] : [runId])),
+    });
     if (yield* isStaleQuestionWake(projection, command.messageId, command.notification)) {
       yield* emit(
         events,
@@ -6178,6 +6195,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: projection.thread,
       });
       return;
+    }
+    const activeProviderInstanceId = projection.providerThreads.find(
+      (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+    )?.providerInstanceId;
+    // A fresh session or another provider is handed the whole history, so it reads all of it.
+    if (
+      command.freshContext === true ||
+      (activeProviderInstanceId !== undefined &&
+        activeProviderInstanceId !==
+          (command.modelSelection ?? projection.thread.modelSelection).instanceId)
+    ) {
+      projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
@@ -6381,16 +6410,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       projection = applyToProjection(projection, event);
     }
-    const userMessages = projection.messages.filter((message) => message.role === "user");
-    const onlyMaintenanceHistory =
-      userMessages.length > 0 && userMessages.every(isNativeMaintenanceCommand);
     if (
       !isNativeMaintenanceCommand(command) &&
       ((command.titleSeed !== undefined &&
         (yield* projectionStore
           .getMessageCount(command.threadId)
           .pipe(mapDispatchError(command))) === 0) ||
-        (command.createdBy === "user" && onlyMaintenanceHistory))
+        (command.createdBy === "user" &&
+          (yield* projectionStore
+            .hasOnlyMaintenanceUserMessages(command.threadId)
+            .pipe(mapDispatchError(command)))))
     ) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
