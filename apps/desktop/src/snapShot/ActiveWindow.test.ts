@@ -152,6 +152,11 @@ it.each([
 it.each([
   { name: "untitled dialog", title: "", bounds: { x: 300, y: 200, width: 400, height: 240 } },
   { name: "titled palette", title: "Palette", bounds: { x: 0, y: 0, width: 800, height: 50 } },
+  {
+    name: "small titled palette",
+    title: "Timer",
+    bounds: { x: 200, y: 200, width: 80, height: 60 },
+  },
   { name: "offset untitled strip", title: "", bounds: { x: 100, y: 100, width: 800, height: 50 } },
   { name: "tall untitled window", title: "", bounds: { x: 0, y: 0, width: 800, height: 900 } },
   {
@@ -211,13 +216,4 @@ it("keeps an untitled content window ahead of a much taller background window", 
 
   assert.strictEqual(window?.id, 1);
   assert.deepEqual(window?.bounds, bounds);
-});
-
-it("keeps a small window when the app has nothing larger", async () => {
-  const bounds = { x: 200, y: 200, width: 80, height: 60 };
-  stubMacLookup(macLookup([{ id: 7, title: "Timer", bounds }]));
-
-  const window = await activeWindow("darwin");
-
-  assert.strictEqual(window?.id, 7);
 });

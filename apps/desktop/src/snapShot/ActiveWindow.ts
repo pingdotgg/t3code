@@ -28,8 +28,8 @@ export type ActiveWindow = {
 const MAC_LOOKUP_TIMEOUT_MS = 5_000;
 
 const MAC_HELPER_STRIP_MAX_THICKNESS_RATIO = 0.25;
-// macOS adds a titled ~66x20 indicator window to an app while another app captures it.
-const MAC_MIN_CONTENT_WINDOW_SIZE = 100;
+// While another app captures it, macOS adds a titled ~66x20 indicator on the window's top edge.
+const MAC_SHARING_INDICATOR_MAX_SIZE = 100;
 
 const MacActiveWindowLookup = Schema.Struct({
   owner: Schema.Struct({
@@ -115,19 +115,24 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   const output = (await runMacLookup()).trim();
   if (!output) return undefined;
   const lookup = decodeMacActiveWindowLookup(output);
-  const shown = lookup.windows.filter(
+  const visible = lookup.windows.filter(
     (window) => window.alpha > 0 && window.bounds.width > 0 && window.bounds.height > 0,
   );
-  const contentSized = shown.filter(
-    (window) =>
-      window.bounds.width >= MAC_MIN_CONTENT_WINDOW_SIZE ||
-      window.bounds.height >= MAC_MIN_CONTENT_WINDOW_SIZE,
-  );
-  const visible = contentSized.length > 0 ? contentSized : shown;
   // Helpers belong to the content behind them, which may not be the app's largest window.
   const window = visible.find((candidate, index) => {
-    if (candidate.title.trim() !== "") return true;
     const bounds = candidate.bounds;
+    const isSharingIndicator =
+      bounds.width < MAC_SHARING_INDICATOR_MAX_SIZE &&
+      bounds.height < MAC_SHARING_INDICATOR_MAX_SIZE &&
+      visible.some(
+        (reference, referenceIndex) =>
+          referenceIndex > index &&
+          bounds.y === reference.bounds.y &&
+          bounds.x >= reference.bounds.x &&
+          bounds.x + bounds.width <= reference.bounds.x + reference.bounds.width,
+      );
+    if (isSharingIndicator) return false;
+    if (candidate.title.trim() !== "") return true;
     return !visible.some((reference, referenceIndex) => {
       if (referenceIndex <= index) return false;
       return (
