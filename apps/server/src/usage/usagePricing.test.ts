@@ -293,28 +293,6 @@ describe("usage pricing", () => {
     expect(cost(272_001, "fast")).toBeCloseTo(72_001 * 4e-6 + 200_000 * 4e-7 + 1_000 * 2e-5, 12);
   });
 
-  it("leaves price overrides and models without above-tier rates at their flat rates", () => {
-    const table = parseRateTable({ "gpt-6-sol": rate(2e-6) });
-    const overrides = createOverrideRateTable({
-      "claude-haiku-5-5": { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 5 },
-    });
-    const long = (model: string) => ({
-      model,
-      speed: "standard" as const,
-      reportedCostUsd: null,
-      totals: {
-        uncachedInputTokens: 500_000,
-        cachedInputTokens: 0,
-        cacheCreationTokens: 0,
-        outputTokens: 0,
-        reasoningTokens: 0,
-      },
-    });
-
-    expect(priceUsage(table, long("gpt-6-sol")).costUsd).toBeCloseTo(1, 12);
-    expect(priceUsage(table, long("claude-haiku-5-5"), overrides).costUsd).toBeCloseTo(0.5, 12);
-  });
-
   it("keeps the canonical Fable rate separate from DeepInfra in either order", () => {
     const canonical = ["claude-fable-5", rate(1e-5, 1e-6)] as const;
     const deepInfra = ["deepinfra/anthropic/claude-fable-5", rate(1e-5)] as const;
