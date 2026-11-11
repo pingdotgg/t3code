@@ -14,7 +14,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
 import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
-import ChatMarkdown from "../ChatMarkdown";
+import ChatMarkdown, { type MarkdownMathSyntax } from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequestMarkdown.logic";
 
@@ -68,6 +68,7 @@ function PullRequestBodySegmentView({
   environmentId,
   threadRef,
   lineBreaks,
+  mathSyntax,
   onTaskListChange,
 }: {
   segment: PullRequestBodySegment;
@@ -75,6 +76,7 @@ function PullRequestBodySegmentView({
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | undefined;
   lineBreaks: boolean;
+  mathSyntax: MarkdownMathSyntax;
   onTaskListChange: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
 }) {
   const context = useContext(PullRequestMarkdownContext);
@@ -103,6 +105,7 @@ function PullRequestBodySegmentView({
                     environmentId={environmentId}
                     threadRef={threadRef}
                     lineBreaks={lineBreaks}
+                    mathSyntax={mathSyntax}
                     onTaskListChange={onTaskListChange}
                   />
                 ))}
@@ -123,6 +126,7 @@ function PullRequestBodySegmentView({
         environmentId={environmentId}
         {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
         lineBreaks={lineBreaks}
+        mathSyntax={mathSyntax}
         sourceControlMedia
         sourceControlMediaRepository={repository}
         onTaskListChange={
@@ -185,6 +189,7 @@ export function PullRequestMarkdown({
   environmentId,
   threadRef,
   lineBreaks,
+  mathSyntax = "sourceControl",
   className,
   onTaskListChange,
 }: {
@@ -193,6 +198,7 @@ export function PullRequestMarkdown({
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | null;
   lineBreaks?: boolean;
+  mathSyntax?: MarkdownMathSyntax;
   className?: string;
   /** `markerOffset` is into `text`. Checkboxes stay read-only without it. */
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
@@ -216,6 +222,7 @@ export function PullRequestMarkdown({
           environmentId={environmentId}
           threadRef={resolvedThreadRef}
           lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
+          mathSyntax={mathSyntax}
           onTaskListChange={onTaskListChange}
         />
       ))}

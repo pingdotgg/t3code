@@ -499,6 +499,14 @@ describe("ChatMarkdown headings", () => {
   });
 });
 
+it("typesets backslash-delimited math in chat when math rendering is on", async () => {
+  setup();
+  settingsOverrides.mathRenderingEnabled = true;
+  await using screen = await renderText("Area \\(x^2\\) and $y$");
+  await expect.element(screen.getByText(/Area/)).toBeInTheDocument();
+  expect(screen.container.querySelectorAll('[data-markdown-math="inline"]')).toHaveLength(2);
+});
+
 describe("ChatMarkdown inline code selection", () => {
   it("selects the whole inline code span on double-click, but only a word in fenced code", async () => {
     setup();

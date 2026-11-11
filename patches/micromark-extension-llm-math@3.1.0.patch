@@ -1,3 +1,18 @@
+diff --git a/dev/index.d.ts b/dev/index.d.ts
+--- a/dev/index.d.ts
++++ b/dev/index.d.ts
+@@ -31,6 +31,11 @@
+    * If you turn this off, you can use two or more dollars for text math.
+    */
+   singleDollarTextMath?: boolean | null | undefined
++  /**
++   * Whether to support `\(...\)` and `\[...\]` math (default: `true`).
++   * Off, they are CommonMark escapes, as on GitHub.
++   */
++  texDelimiters?: boolean | null | undefined
+ }
+ 
+ /**
 diff --git a/dev/lib/math-flow.js b/dev/lib/math-flow.js
 --- a/dev/lib/math-flow.js
 +++ b/dev/lib/math-flow.js
@@ -345,6 +360,27 @@ diff --git a/dev/lib/math-text.js b/dev/lib/math-text.js
        }
  
        // More or less accents: mark as data.
+diff --git a/dev/lib/syntax.js b/dev/lib/syntax.js
+--- a/dev/lib/syntax.js
++++ b/dev/lib/syntax.js
+@@ -19,11 +19,11 @@
+  *   enable math syntax.
+  */
+ export function math(options) {
+-  return {
+-    flow: {[codes.dollarSign]: mathFlow, [codes.backslash]: mathTexFlow},
+-    text: {
+-      [codes.dollarSign]: mathText(options),
+-      [codes.backslash]: mathTexText
+-    }
++  const flow = {[codes.dollarSign]: mathFlow}
++  const text = {[codes.dollarSign]: mathText(options)}
++  if (!options || options.texDelimiters !== false) {
++    flow[codes.backslash] = mathTexFlow
++    text[codes.backslash] = mathTexText
+   }
++  return {flow, text}
+ }
 diff --git a/package.json b/package.json
 --- a/package.json
 +++ b/package.json
