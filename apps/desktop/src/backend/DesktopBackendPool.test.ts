@@ -349,7 +349,8 @@ describe("DesktopBackendPool", () => {
           const primary = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
           yield* primary.start;
           yield* Deferred.await(firstProbe);
-          yield* TestClock.adjust(Duration.minutes(1));
+          // Past the manager's default readiness timeout.
+          yield* TestClock.adjust(Duration.minutes(3));
 
           const startup = yield* SubscriptionRef.get(
             (yield* DesktopState.DesktopState).primaryBackendStartup,
