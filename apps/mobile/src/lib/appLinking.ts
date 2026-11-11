@@ -10,11 +10,13 @@ import type { RootStackResetAction } from "./root-stack-reset";
  * to the NotFound wildcard route on every dev launch.
  */
 export function shouldHandleAppLink(url: string, cloudConfigured: boolean): boolean {
+  // Only the route: a thread link's ?prompt= may mention either lifecycle URL.
+  const route = url.split(/[?#]/)[0] ?? "";
   return (
-    !url.includes("expo-development-client") &&
-    !url.includes("://expo-sharing") &&
+    !route.includes("expo-development-client") &&
+    !route.includes("://expo-sharing") &&
     !/^t3code(-dev|-preview)?:\/*$/.test(url) &&
-    (cloudConfigured || !CLOUD_ONLY_LINK_PATH.test(url.split(/[?#]/)[0] ?? ""))
+    (cloudConfigured || !CLOUD_ONLY_LINK_PATH.test(route))
   );
 }
 
