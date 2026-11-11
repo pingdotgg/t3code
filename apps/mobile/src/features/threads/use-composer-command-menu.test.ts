@@ -115,7 +115,13 @@ describe("mobile slash commands", () => {
       resolveComposerCommandSelection({
         draftMessage: "$rev",
         trigger: { rangeStart: 0, rangeEnd: 4 },
-        item: { id: `skill:${skill.path}`, type: "skill", skill, label: skill.name },
+        item: {
+          id: `skill:${skill.path}`,
+          type: "skill",
+          skill,
+          label: skill.name,
+          description: "",
+        },
         skills,
       }).text;
     expect(skills.map(select)).toEqual([
