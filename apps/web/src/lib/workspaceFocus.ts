@@ -25,12 +25,6 @@ export interface WorkspaceFocusTarget {
   restore?: boolean;
 }
 
-function containsComposed(container: Element, element: Element): boolean {
-  if (container.contains(element)) return true;
-  const root = element.getRootNode();
-  return root instanceof ShadowRoot && containsComposed(container, root.host);
-}
-
 function workspaceArea(element: Element): HTMLElement | null {
   const area = element.closest<HTMLElement>(AREA_SELECTOR);
   if (area) return area;
@@ -141,15 +135,10 @@ export function createWorkspaceFocusController(doc: Document) {
 
   const focusArea = (area: HTMLElement, restore = true, nested = true) => {
     const key = area.dataset.workspaceFocusKey ?? area.dataset.workspaceArea!;
-    const surface = area.querySelector<HTMLElement>("[data-right-panel-surface-content]");
     const previous = restore ? lastFocused.get(key) : undefined;
     const usable = (element: HTMLElement) =>
       isWorkspaceElementVisible(element) && !element.matches(":disabled");
     const belongs = (element: HTMLElement) => workspaceArea(element) === area && usable(element);
-    // A panel tab restores focus inside its content, never to the tab strip or "+" that the
-    // shortcut or menu passed through on the way.
-    const restorable = (element: HTMLElement) =>
-      belongs(element) && (!surface || containsComposed(surface, element));
     // A side chat's message input sits in its own area inside the panel. Opening the
     // panel focuses it, but F6 visits that area on its own, so it moves past it here.
     const preferred = Array.from(
@@ -166,7 +155,7 @@ export function createWorkspaceFocusController(doc: Document) {
       previous && !previous.isConnected
         ? Array.from(area.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
             (element) =>
-              restorable(element) &&
+              belongs(element) &&
               element.tagName === previous.tagName &&
               ((previous.id && element.id === previous.id) ||
                 (previous.getAttribute("aria-label") &&
@@ -176,6 +165,7 @@ export function createWorkspaceFocusController(doc: Document) {
                   element.textContent === previous.textContent)),
           )
         : undefined;
+    const surface = area.querySelector<HTMLElement>("[data-right-panel-surface-content]");
     const surfaceControl = surface
       ? Array.from(surface.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
           (element) => belongs(element) && element.tabIndex >= 0,
@@ -185,7 +175,7 @@ export function createWorkspaceFocusController(doc: Document) {
     // so the conversation reuses a control only while it is still in view.
     const isConversation = area.dataset.workspaceArea === "conversation";
     const targets = new Set([
-      previous && restorable(previous) && (!isConversation || isInScrollView(previous))
+      previous && belongs(previous) && (!isConversation || isInScrollView(previous))
         ? previous
         : undefined,
       isConversation ? undefined : restored,

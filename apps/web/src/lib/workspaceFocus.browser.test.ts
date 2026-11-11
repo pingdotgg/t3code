@@ -259,21 +259,6 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(clickedRow);
   });
 
-  it("restores a panel tab inside its content, not to the tab strip", () => {
-    using fixture = setup();
-    const panel = fixture.area("panel", 3);
-    const content = document.createElement("div");
-    content.setAttribute("data-right-panel-surface-content", "");
-    const search = document.createElement("input");
-    search.setAttribute("data-workspace-focus-default", "");
-    content.append(search);
-    panel.element.append(content);
-    panel.element.dataset.workspaceFocusKey = "panel:files";
-    panel.button.focus();
-    expect(fixture.controller.focus("panel")).toBe(true);
-    expect(document.activeElement).toBe(search);
-  });
-
   it("focuses a side chat's message input when the panel opens on it", () => {
     using fixture = setup();
     const panel = fixture.area("panel", 3);
