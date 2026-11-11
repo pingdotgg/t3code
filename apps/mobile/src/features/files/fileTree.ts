@@ -100,11 +100,12 @@ function flattenNode(
   const isSearching = searchResultPaths !== null;
   const matches = searchResultPaths?.has(node.path) ?? false;
   let descendantMatches = false;
-  const childOutput: VisibleFileTreeNode[] = [];
+  const start = output.length;
+  output.push({ node, depth });
 
   if (node.kind === "directory" && (expanded.has(node.path) || isSearching)) {
     for (const child of node.children) {
-      if (flattenNode(childOutput, child, depth + 1, expanded, searchResultPaths)) {
+      if (flattenNode(output, child, depth + 1, expanded, searchResultPaths)) {
         descendantMatches = true;
       }
     }
@@ -112,11 +113,10 @@ function flattenNode(
 
   const visible = !isSearching || matches || descendantMatches;
   if (!visible) {
+    output.length = start;
     return false;
   }
 
-  output.push({ node, depth });
-  output.push(...childOutput);
   return matches || descendantMatches;
 }
 
