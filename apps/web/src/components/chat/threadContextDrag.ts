@@ -40,7 +40,8 @@ export interface ThreadContextDragGhost {
   readonly y: number;
   readonly count: number;
   /** The sidebar row's width, so the lifted row keeps its size. */
-  readonly width: number;
+  readonly width?: number;
+  readonly title?: string;
 }
 
 let ghost: ThreadContextDragGhost | null = null;
@@ -105,7 +106,7 @@ export function hoverThreadContextDrop(
  */
 export function moveThreadContextDrag(
   point: { x: number; y: number },
-  label: { count: number; width: number },
+  label: { count: number; width?: number; title?: string },
 ): HTMLElement | null {
   setGhost({ x: point.x, y: point.y, ...label });
   return hoverThreadContextDrop(point);
