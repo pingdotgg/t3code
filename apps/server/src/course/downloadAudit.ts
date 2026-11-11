@@ -19,6 +19,7 @@ export interface DownloadAuditAttempt {
   readonly bytes?: number;
   readonly contentType?: string | null;
   readonly body?: Uint8Array;
+  readonly sha256?: string | null;
   readonly blocked?: string;
   readonly error?: string;
 }
@@ -64,9 +65,9 @@ export const auditDownload = async (
       status: attempt.status ?? null,
       bytes: attempt.bytes ?? attempt.body?.byteLength ?? 0,
       contentType: attempt.contentType ?? null,
-      sha256: attempt.body
-        ? NodeCrypto.createHash("sha256").update(attempt.body).digest("hex")
-        : null,
+      sha256:
+        attempt.sha256 ??
+        (attempt.body ? NodeCrypto.createHash("sha256").update(attempt.body).digest("hex") : null),
       threadId: context.threadId ?? null,
       courseId: context.courseId ?? null,
       ...(attempt.blocked ? { blocked: attempt.blocked } : {}),

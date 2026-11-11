@@ -4,6 +4,8 @@ import * as Schema from "effect/Schema";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeDnsPromises from "node:dns/promises";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { openZipArchive } from "../zipArchive.ts";
@@ -57,6 +59,11 @@ const MAX_PDF_TEXT = 2 * 1024 * 1024;
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"]);
 
 const isCourseIngestError = Schema.is(CourseIngestError);
+class OcwBlockedError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+  }
+}
 
 const fail = (message: string): Effect.Effect<never, CourseIngestError> =>
   Effect.fail(new CourseIngestError({ message }));
@@ -575,72 +582,108 @@ export const parseOcwZip = (zipPath: string, source: string) =>
 const boundedDownload = (url: string, destination: string, audit?: DownloadAuditContext) =>
   Effect.tryPromise({
     try: async (signal) => {
-      const response = await fetch(url, {
-        redirect: "error",
-        signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60_000)]),
-      });
-      if (!response.ok || !response.body)
-        throw new Error(`Download failed with HTTP ${response.status}.`);
-      const length = Number(response.headers.get("content-length") ?? 0);
-      if (length > MAX_ZIP_BYTES)
-        throw new Error("The OCW download is larger than the 300 MB limit.");
-      const handle = await NodeFSP.open(destination, "w");
+      let response: Response | undefined;
       let total = 0;
-      const chunks: Uint8Array[] = [];
+      const hash = NodeCrypto.createHash("sha256");
+      let failure: unknown;
+      let ips: string[] = [];
       try {
-        const reader = response.body.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          total += value.byteLength;
-          if (total > MAX_ZIP_BYTES)
-            throw new Error("The OCW download is larger than the 300 MB limit.");
-          await handle.write(value);
-          chunks.push(value);
-        }
-      } finally {
-        await handle.close();
-      }
-      if (audit)
-        await auditDownload(audit, {
-          url,
-          hops: [{ url, status: response.status, ips: [] }],
-          status: response.status,
-          bytes: total,
-          contentType: response.headers.get("content-type"),
-          body: Buffer.concat(chunks),
+        try {
+          ips = (await NodeDnsPromises.lookup(new URL(url).hostname, { all: true })).map(
+            ({ address }) => address,
+          );
+        } catch {}
+        response = await fetch(url, {
+          redirect: "error",
+          signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60_000)]),
         });
+        if (!response.ok || !response.body)
+          throw new Error(`Download failed with HTTP ${response.status}.`);
+        const length = Number(response.headers.get("content-length") ?? 0);
+        if (length > MAX_ZIP_BYTES)
+          throw new Error("The OCW download is larger than the 300 MB limit.");
+        const handle = await NodeFSP.open(destination, "w");
+        const reader = response.body.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            total += value.byteLength;
+            if (total > MAX_ZIP_BYTES)
+              throw new Error("The OCW download is larger than the 300 MB limit.");
+            hash.update(value);
+            await handle.write(value);
+          }
+        } finally {
+          await handle.close();
+        }
+      } catch (cause) {
+        failure = cause;
+        throw cause;
+      } finally {
+        if (audit)
+          await auditDownload(audit, {
+            url,
+            hops: [{ url, status: response?.status ?? null, ips }],
+            status: response?.status ?? null,
+            bytes: total,
+            contentType: response?.headers.get("content-type") ?? null,
+            sha256: total > 0 ? hash.digest("hex") : null,
+            ...(failure ? { error: String(failure) } : {}),
+          });
+      }
     },
     catch: (cause) => new CourseIngestError({ message: String(cause) }),
   });
 
-const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) =>
-  Effect.tryPromise({
+const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
+  const auditHops: { url: string; status: number | null; ips: string[] }[] = [];
+  return Effect.tryPromise({
     try: async (signal) => {
-      const fetchPage = (url: URL, redirect: "follow" | "error" = "follow") =>
-        fetch(url, { redirect, signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
       // Every URL we fetch stays on OCW: the source can come from a YouTube description.
       const onOcw = (url: URL) => {
         if (url.hostname !== "ocw.mit.edu" || !/^https?:$/.test(url.protocol))
-          throw new Error(`${url.origin} is not MIT OpenCourseWare.`);
+          throw new OcwBlockedError(`${url.origin} is not MIT OpenCourseWare.`);
         return url;
+      };
+      const fetchPage = async (initial: URL) => {
+        let current = onOcw(initial);
+        const hops: { url: string; status: number | null; ips: string[] }[] = [];
+        for (let count = 0; count <= 5; count += 1) {
+          const ips = await NodeDnsPromises.lookup(current.hostname, { all: true })
+            .then((rows) => rows.map(({ address }) => address))
+            .catch(() => []);
+          const response = await fetch(current, {
+            redirect: "manual",
+            signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+          });
+          hops.push({ url: current.toString(), status: response.status, ips });
+          auditHops.push(hops.at(-1)!);
+          if (![301, 302, 303, 307, 308].includes(response.status))
+            return { response, hops, url: current };
+          const location = response.headers.get("location");
+          await response.body?.cancel();
+          if (!location || count === 5) throw new Error("Too many OCW redirects.");
+          current = onOcw(new URL(location, current));
+        }
+        throw new Error("Too many OCW redirects.");
       };
       let parsed = onOcw(new URL(source));
       // Short links such as ocw.mit.edu/18-06S05 redirect to /courses/<slug>/.
       if (!parsed.pathname.startsWith("/courses/")) {
         const landing = await fetchPage(parsed);
-        await landing.body?.cancel();
-        parsed = onOcw(new URL(landing.url));
+        parsed = landing.url;
       }
       const page = new URL(parsed.origin);
       page.pathname = `${parsed.pathname.replace(/\/$/, "")}/download/`;
-      const response = await fetchPage(page, "error");
+      const fetched = await fetchPage(page);
+      const response = fetched.response;
       if (!response.ok) throw new Error(`OCW download page returned HTTP ${response.status}.`);
       const html = await response.text();
       if (audit)
         await auditDownload(audit, {
           url: page.toString(),
-          hops: [{ url: page.toString(), status: response.status, ips: [] }],
+          hops: fetched.hops,
           status: response.status,
           bytes: Buffer.byteLength(html),
           contentType: response.headers.get("content-type"),
@@ -650,11 +693,21 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) =>
       if (!match) throw new Error("The OCW download page did not contain a course zip.");
       return onOcw(new URL(match[1]!, page)).toString();
     },
-    catch: (cause) =>
-      new CourseIngestError({
+    catch: (cause) => {
+      if (audit)
+        void auditDownload(audit, {
+          url: source,
+          hops: auditHops,
+          status: null,
+          blocked: cause instanceof OcwBlockedError ? cause.reason : undefined,
+          error: cause instanceof OcwBlockedError ? undefined : String(cause),
+        });
+      return new CourseIngestError({
         message: `Could not find the OCW course download: ${String(cause)}`,
-      }),
+      });
+    },
   });
+};
 
 const ingestOcw = Effect.fn("course.ingestOcw")(function* (
   source: string,
