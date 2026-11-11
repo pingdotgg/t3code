@@ -55,6 +55,12 @@ const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   cwd: null,
 });
 
+const fullAccessRuntimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  cwd: null,
+});
+
 const makeTurnInput = Effect.fnUntraced(function* (
   providerThread: OrchestrationV2ProviderThread,
   text = TURN_TEXT,
@@ -267,6 +273,50 @@ describe("ZcodeAdapterV2 (frame-driven)", () => {
         assert.equal(harness.scenario.createdSessionId(), "sess_2");
         assert.deepEqual(harness.scenario.unexpectedMethods(), []);
       }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
+  );
+
+  it.effect("reapplies the runtime mode when a detached session resumes", () =>
+    Effect.gen(function* () {
+      const openRuntime = (scenario: FakeZcodeScenario, policy: typeof runtimePolicy) =>
+        Effect.gen(function* () {
+          const adapter = yield* makeZcodeAdapterV2({
+            ...makeZcodeAdapterOptions(),
+            makeConnection: () => Effect.succeed(scenario.connection),
+          });
+          return yield* adapter.openSession({
+            threadId: THREAD_ID,
+            providerSessionId: PROVIDER_SESSION_ID,
+            modelSelection: MODEL_SELECTION,
+            runtimePolicy: policy,
+          });
+        });
+
+      const createdScenario = yield* makeFakeZcodeConnection();
+      const created = yield* openRuntime(createdScenario, fullAccessRuntimePolicy);
+      const providerThread = yield* created.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: MODEL_SELECTION,
+        runtimePolicy: fullAccessRuntimePolicy,
+      });
+      assert.equal(requestFor(createdScenario, "session/create")?.params["mode"], "yolo");
+
+      // thread.runtime-mode.set detaches the session; the next turn reopens and resumes it.
+      const resumedScenario = yield* makeFakeZcodeConnection();
+      const resumed = yield* openRuntime(resumedScenario, runtimePolicy);
+      yield* resumed.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: MODEL_SELECTION,
+        runtimePolicy,
+        existingProviderThread: providerThread,
+      });
+      assert.isUndefined(requestFor(resumedScenario, "session/create"));
+      assert.equal(requestFor(resumedScenario, "session/resume")?.params["sessionId"], "sess_1");
+      assert.deepEqual(requestFor(resumedScenario, "session/setMode")?.params, {
+        sessionId: "sess_1",
+        mode: "guarded",
+      });
+      assert.deepEqual(resumedScenario.unexpectedMethods(), []);
+    }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
   );
 
   it.effect("streams text deltas and completes the turn with token usage", () =>

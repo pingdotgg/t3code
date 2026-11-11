@@ -17,6 +17,7 @@ import {
   resolveZcodeLaunchCommand,
   zcodeBuiltinCatalogPath,
   zcodeBundledCatalogPath,
+  zcodeBaseUrl,
   zcodeDataRoot,
   zcodeModelSelectionFromSlug,
   zcodePersonalProviderConfigPath,
@@ -131,6 +132,23 @@ describe("zcodeBuiltinCatalogPath", () => {
         arch: "x64",
       }),
       `C:\\d/.zcode/v2/runtime/provider/win32-x64/3.17.2/endpoint-${ZCODE_ENDPOINT_HASH}/zcode-builtin.json`,
+    );
+  });
+
+  it("keys an overridden endpoint's catalog on its normalized origin", () => {
+    const originHash = NodeCrypto.createHash("sha256")
+      .update("https://proxy.example")
+      .digest("hex")
+      .slice(0, 32);
+    assert.equal(
+      zcodeBuiltinCatalogPath({
+        root: "/home/dev",
+        appVersion: "3.17.2",
+        platform: "linux",
+        arch: "x64",
+        baseUrl: "https://proxy.example/team/",
+      }),
+      `/home/dev/.zcode/v2/runtime/provider/linux-x86_64/3.17.2/endpoint-${originHash}/zcode-builtin.json`,
     );
   });
 
@@ -291,6 +309,16 @@ describe("zcodeRuntimeEnvironment", () => {
     assert.equal(env.KEEP, "1");
     assert.equal(env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, undefined);
     assert.equal(env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE, undefined);
+  });
+
+  it("honors a configured endpoint and normalizes it to an origin", () => {
+    const env = zcodeRuntimeEnvironment(
+      { HOME: "/home/dev", ZCODE_BASE_URL: " https://proxy.example/team/ " },
+      {},
+    );
+    assert.equal(env.ZCODE_BASE_URL, "https://proxy.example");
+    // Unparseable values keep their text so the catalog lookup fails honestly.
+    assert.equal(zcodeBaseUrl({ ZCODE_BASE_URL: "not a url" }), "not a url");
   });
 
   it("emits catalog env vars only for files that exist", () => {
@@ -497,6 +525,38 @@ it.layer(NodeServices.layer)("ZcodeRuntime catalog resolution", (it) => {
           "account:start-individual-coding-plan",
         ]);
         assert.equal(push?.states["account:zai-individual-coding-plan"]?.entitled, false);
+      }),
+    ),
+  );
+
+  it.effect("resolves the catalog under the overridden endpoint directory", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "zcode-runtime-test-" });
+        const platformDir = zcodePlatformDir(
+          yield* HostProcess.Platform,
+          yield* HostProcess.Architecture,
+        );
+        if (platformDir === undefined) return;
+        const origin = "https://proxy.example";
+        const endpointHash = NodeCrypto.createHash("sha256")
+          .update(origin)
+          .digest("hex")
+          .slice(0, 32);
+        yield* fs.makeDirectory(`${root}/.zcode/server`, { recursive: true });
+        yield* fs.writeFileString(`${root}/.zcode/server/current.json`, '{"version":"3.17.1"}');
+        const builtinDir = `${root}/.zcode/v2/runtime/provider/${platformDir}/3.17.1/endpoint-${endpointHash}`;
+        yield* fs.makeDirectory(builtinDir, { recursive: true });
+        yield* fs.writeFileString(
+          `${builtinDir}/zcode-builtin.json`,
+          JSON.stringify(inlineCatalog),
+        );
+        const resolved = yield* resolveZcodeCatalogFiles(fs, {
+          ZCODE_DATA_BASE_DIR: root,
+          ZCODE_BASE_URL: origin,
+        });
+        assert.equal(resolved.builtinPath, `${builtinDir}/zcode-builtin.json`);
       }),
     ),
   );

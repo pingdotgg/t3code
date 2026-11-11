@@ -64,8 +64,10 @@ import {
   type ZcodeRecord,
 } from "./zcodeProtocol.ts";
 import {
+  readZcodeAppVersion,
   resolveZcodeCatalogFiles,
   resolveZcodeLaunchCommand,
+  zcodeDataRoot,
   zcodeModelSelectionFromSlug,
   zcodeRuntimeEnvironment,
   zcodeSpawnArgs,
@@ -208,7 +210,7 @@ function providerRef(
  * edit auto-accepts file changes, yolo never asks. Unoffered stored modes arrive as
  * Supervised, so anything unexpected falls back to the strictest mode.
  */
-function zcodeSessionMode(runtimeMode: RuntimeMode | undefined): "guarded" | "edit" | "yolo" {
+function zcodeSessionMode(runtimeMode: RuntimeMode | undefined): ZcodeSessionMode {
   switch (runtimeMode) {
     case "auto-accept-edits":
       return "edit";
@@ -390,7 +392,10 @@ interface ZcodeThreadState {
   providerThread: OrchestrationV2ProviderThread;
   readonly nativeSessionId: string;
   activeTurn: ActiveZcodeTurn | null;
+  sessionMode: ZcodeSessionMode;
 }
+
+type ZcodeSessionMode = "guarded" | "edit" | "yolo";
 
 function zcodeFailureFromErrorDetail(error: unknown): OrchestrationV2ProviderFailure {
   const record = Predicate.isObject(error) ? error : {};
@@ -427,11 +432,18 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
       ...(payload === undefined ? {} : { payload }),
     });
 
+  // The CLI's own host reports the installed version in the token exchange; unknown stays omitted.
+  const dataRoot = zcodeDataRoot(options.environment);
+  const clientVersion =
+    dataRoot === undefined
+      ? undefined
+      : yield* readZcodeAppVersion(fileSystem, `${dataRoot}/.zcode/server/current.json`);
+
   const requestAuth = (options.makeRequestAuth ?? makeZcodeRequestAuth)({
     fileSystem,
     httpClient,
     environment: options.environment,
-    clientVersion: "0.0.0",
+    clientVersion,
   });
 
   const zcodeMcpServers = (
@@ -1517,6 +1529,8 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
                 ? {}
                 : { rejectedProjectTokenFingerprint }),
             });
+            // Minting can take seconds on a cache miss; the CLI correlates the reply by id, so
+            // fork it instead of stalling every session event this permit serializes.
             yield* answer.pipe(
               Effect.flatMap((response) => connection.respond(respondId, response)),
               Effect.catchCause((cause) =>
@@ -1524,6 +1538,7 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
                   errorTag: causeErrorTag(cause),
                 }),
               ),
+              Effect.forkIn(scope),
             );
             return;
           }
@@ -1724,8 +1739,6 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
         const mcpServers = zcodeMcpServers(yield* mcpSessions.read(threadInput.threadId));
         const createParams: ZcodeRecord = {
           workspace: { workspacePath: cwd, workspaceKey: cwd },
-          // Mode changes restart the session (supportsRuntimeModeSwitchInSession: false), so
-          // the mode is set once here and zcode enforces it natively for the session's life.
           mode: zcodeSessionMode(threadInput.runtimePolicy?.runtimeMode),
           titleGenerationEnabled: false,
           ...(mcpServers === undefined ? {} : { mcpServers }),
@@ -1767,6 +1780,12 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
           },
           SESSION_CREATE_TIMEOUT_MS,
         );
+        // session/resume carries no mode, so a mode chosen while the session was detached (or
+        // before a host restart) must be applied explicitly.
+        yield* request("session/setMode", {
+          sessionId: nativeSessionId,
+          mode: zcodeSessionMode(threadInput.runtimePolicy?.runtimeMode),
+        });
         yield* subscribeSession(nativeSessionId);
         return nativeSessionId;
       });
@@ -1826,7 +1845,12 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
                 createdAt,
                 updatedAt: createdAt,
               };
-        threadState = { providerThread, nativeSessionId, activeTurn: null };
+        threadState = {
+          providerThread,
+          nativeSessionId,
+          activeTurn: null,
+          sessionMode: zcodeSessionMode(threadInput.runtimePolicy?.runtimeMode),
+        };
         yield* emit({
           type: "provider_thread.updated",
           driver: ZCODE_PROVIDER,
@@ -1999,6 +2023,16 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
                 ...modelSelection,
                 ...(reasoningLevel === undefined ? {} : { options: { reasoningLevel } }),
               };
+            }
+            // The orchestrator detaches on a mode change, but in-process reuse and CLI-side mode
+            // edits still leave the native session on an older mode.
+            const requestedMode = zcodeSessionMode(turnInput.runtimePolicy?.runtimeMode);
+            if (state.sessionMode !== requestedMode) {
+              yield* request("session/setMode", {
+                sessionId: state.nativeSessionId,
+                mode: requestedMode,
+              });
+              state.sessionMode = requestedMode;
             }
             yield* sessionEventPermit.withPermits(1)(
               Effect.gen(function* () {

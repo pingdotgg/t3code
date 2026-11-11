@@ -14,6 +14,14 @@ configuration.
 ZCode runs on the server's machine only. A desktop ZCode app elsewhere does not share its sign-in
 with T3 Code; the server's own `zcode login` is what counts.
 
+## Credentials
+
+T3 Code never stores your Z.AI sign-in. The ZCode agent asks its host for credentials before every
+account-model request, so the server stands in as that host: it reads the sign-in `zcode login`
+already wrote on the same machine, exchanges it for a short-lived access token through the same
+Z.AI endpoints the ZCode app uses, and holds that token in memory only. The store is never
+written, so signing out or signing in again from a terminal applies on the next refresh.
+
 ## Models
 
 After signing in, the model picker lists the GLM models your Z.AI plan offers — no API key or
@@ -33,5 +41,5 @@ ZCode gates tool calls by its own permission modes, and T3 Code answers by the p
 ## Steering, Forks and Compaction
 
 - A message you send while ZCode is working joins the running turn.
-- Forking a thread creates a ZCode fork of the conversation from that point.
+- Forking a ZCode thread is not available yet, and the fork command is hidden for these threads.
 - `/compact` uses ZCode's own compaction.

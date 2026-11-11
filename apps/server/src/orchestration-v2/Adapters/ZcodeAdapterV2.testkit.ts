@@ -52,6 +52,7 @@ const KNOWN_METHODS = new Set([
   "session/read",
   "session/resume",
   "session/send",
+  "session/setMode",
   "session/stop",
   "session/subscribe",
 ]);

@@ -15,6 +15,20 @@ const ZCODE_BASE_URL = "https://zcode.z.ai";
 
 const DEFAULT_ZCODE_BINARY = "zcode";
 
+/** The configured endpoint, normalized to an origin exactly like the CLI's cache key. */
+const normalizeZcodeEndpoint = (raw: string | undefined): string => {
+  const trimmed = raw?.trim();
+  if (trimmed === undefined || trimmed.length === 0) return ZCODE_BASE_URL;
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return trimmed;
+  }
+};
+
+export const zcodeBaseUrl = (environment: NodeJS.ProcessEnv): string =>
+  normalizeZcodeEndpoint(environment.ZCODE_BASE_URL);
+
 /** Wire shape of `model` in session/create and `modelSelection` in session/send. */
 export interface ZcodeModelSelection {
   readonly providerId: string;
@@ -31,10 +45,13 @@ export interface ZcodeCatalogFileSet {
 }
 
 const ZCODE_ENDPOINT_HASH_LENGTH = 32;
-const ZCODE_ENDPOINT_HASH = NodeCrypto.createHash("sha256")
-  .update(ZCODE_BASE_URL)
-  .digest("hex")
-  .slice(0, ZCODE_ENDPOINT_HASH_LENGTH);
+
+/** The CLI keys its endpoint-scoped catalog directory on sha256 of the endpoint origin. */
+const zcodeEndpointHash = (baseUrl: string): string =>
+  NodeCrypto.createHash("sha256")
+    .update(baseUrl)
+    .digest("hex")
+    .slice(0, ZCODE_ENDPOINT_HASH_LENGTH);
 
 /** zcode stores CDN-refreshed catalogs under its own platform spelling, not process.platform. */
 export function zcodePlatformDir(platform: NodeJS.Platform, arch: string): string | undefined {
@@ -62,10 +79,12 @@ export function zcodeBuiltinCatalogPath(input: {
   readonly appVersion: string;
   readonly platform: NodeJS.Platform;
   readonly arch: string;
+  /** Endpoint origin the CLI would normalize; defaults to the production endpoint. */
+  readonly baseUrl?: string;
 }): string | undefined {
   const platformDir = zcodePlatformDir(input.platform, input.arch);
   if (platformDir === undefined) return undefined;
-  return `${input.root}/.zcode/v2/runtime/provider/${platformDir}/${input.appVersion}/endpoint-${ZCODE_ENDPOINT_HASH}/zcode-builtin.json`;
+  return `${input.root}/.zcode/v2/runtime/provider/${platformDir}/${input.appVersion}/endpoint-${zcodeEndpointHash(normalizeZcodeEndpoint(input.baseUrl))}/zcode-builtin.json`;
 }
 
 export function zcodeBundledCatalogPath(root: string): string {
@@ -127,6 +146,7 @@ export const resolveZcodeCatalogFiles = Effect.fn("ZcodeRuntime.resolveCatalogFi
       appVersion,
       platform: yield* HostProcess.Platform,
       arch: yield* HostProcess.Architecture,
+      baseUrl: zcodeBaseUrl(environment),
     });
     if (builtinPath !== undefined && (yield* catalogFileExists(fileSystem, builtinPath))) {
       result.builtinPath = builtinPath;
@@ -146,13 +166,14 @@ export const resolveZcodeCatalogFiles = Effect.fn("ZcodeRuntime.resolveCatalogFi
 /**
  * The CLI requires ZCODE_BUILTIN_PROVIDER_CONFIG_FILE and ZCODE_PERSONAL_PROVIDER_CONFIG_FILE
  * together; a builtin var without the personal one fails session startup, so the personal var
- * is dropped when its file is missing.
+ * is dropped when its file is missing. ZCODE_BASE_URL stays overridable: its normalized origin
+ * also keys the catalog path, so a proxy endpoint resolves the matching catalog directory.
  */
 export function zcodeRuntimeEnvironment(
   environment: NodeJS.ProcessEnv,
   files: ZcodeCatalogFileSet,
 ): NodeJS.ProcessEnv {
-  const next: NodeJS.ProcessEnv = { ...environment, ZCODE_BASE_URL };
+  const next: NodeJS.ProcessEnv = { ...environment, ZCODE_BASE_URL: zcodeBaseUrl(environment) };
   if (files.builtinPath !== undefined) {
     next.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = files.builtinPath;
     if (files.bundledPath !== undefined) {

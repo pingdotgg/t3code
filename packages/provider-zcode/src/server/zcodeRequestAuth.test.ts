@@ -120,7 +120,7 @@ describe("zcodeAccountScope", () => {
 
 describe("makeZcodeRequestAuth", () => {
   /** A temp data root with the zai login on disk plus an HTTP fake answering the mint chain. */
-  const harness = Effect.fnUntraced(function* () {
+  const harness = Effect.fnUntraced(function* (clientVersion: string | undefined) {
     const fileSystem = yield* FileSystem.FileSystem;
     const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "zcode-request-auth-test-" });
     yield* fileSystem.makeDirectory(`${root}/.zcode/v2`, { recursive: true });
@@ -138,6 +138,7 @@ describe("makeZcodeRequestAuth", () => {
       );
     yield* writeLogin("login-a");
     const exchangeLogins: Array<string> = [];
+    const exchangeBodies: Array<unknown> = [];
     const httpClient = HttpClient.make((request, url) => {
       const ok = (data: unknown) =>
         Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ code: 200, data })));
@@ -156,12 +157,18 @@ describe("makeZcodeRequestAuth", () => {
         return ok([{ name: "zcode-api-key", apiKey: "key-1" }]);
       }
       exchangeLogins.push((request.headers.authorization ?? "").replace(/^Bearer /, ""));
+      exchangeBodies.push(
+        request.body._tag === "Uint8Array"
+          ? JSON.parse(new TextDecoder().decode(request.body.body))
+          : undefined,
+      );
       return ok({ accessToken: `access-token-${exchangeLogins.length}` });
     });
     return {
-      auth: makeZcodeRequestAuth({ fileSystem, httpClient, environment, clientVersion: "test" }),
+      auth: makeZcodeRequestAuth({ fileSystem, httpClient, environment, clientVersion }),
       writeLogin,
       exchangeLogins,
+      exchangeBodies,
     };
   });
 
@@ -170,7 +177,7 @@ describe("makeZcodeRequestAuth", () => {
 
   it.effect("serves a cache hit while the family's credentials stay the same", () =>
     Effect.gen(function* () {
-      const h = yield* harness();
+      const h = yield* harness("test");
       const first = yield* h.auth.answerRuntimeHeaders({ family: "zai" });
       assert.equal(zcodeRecordString(requestAuthOf(first), "apiKey"), "access-token-1");
       assert.equal(
@@ -188,7 +195,7 @@ describe("makeZcodeRequestAuth", () => {
 
   it.effect("re-mints against the new account when the family's login changes", () =>
     Effect.gen(function* () {
-      const h = yield* harness();
+      const h = yield* harness("test");
       const first = yield* h.auth.answerRuntimeHeaders({ family: "zai" });
       assert.equal(zcodeRecordString(requestAuthOf(first), "apiKey"), "access-token-1");
       yield* h.writeLogin("login-b");
@@ -205,7 +212,7 @@ describe("makeZcodeRequestAuth", () => {
 
   it.effect("declines once the family's login disappears", () =>
     Effect.gen(function* () {
-      const h = yield* harness();
+      const h = yield* harness("test");
       const first = yield* h.auth.answerRuntimeHeaders({ family: "zai" });
       assert.equal(zcodeRecordString(requestAuthOf(first), "apiKey"), "access-token-1");
       yield* h.writeLogin(undefined);
@@ -213,6 +220,17 @@ describe("makeZcodeRequestAuth", () => {
       assert.equal(zcodeRecordField(second, "headersApplied"), false);
       assert.match(zcodeRecordString(second, "errorMessage") ?? "", /no OAuth login for family/);
       assert.deepEqual(h.exchangeLogins, ["login-a"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports the installed CLI version in the token exchange only when known", () =>
+    Effect.gen(function* () {
+      const known = yield* harness("3.17.2");
+      yield* known.auth.answerRuntimeHeaders({ family: "zai" });
+      const unknown = yield* harness(undefined);
+      yield* unknown.auth.answerRuntimeHeaders({ family: "zai" });
+      assert.deepEqual(known.exchangeBodies, [{ clientType: "zcode", clientVersion: "3.17.2" }]);
+      assert.deepEqual(unknown.exchangeBodies, [{ clientType: "zcode" }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

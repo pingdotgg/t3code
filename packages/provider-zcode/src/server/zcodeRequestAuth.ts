@@ -92,14 +92,25 @@ export const decryptZcodeCredential = (value: string, secret: string): string =>
 
 const decodeJsonText = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
+interface CredentialStoreCache {
+  digest: string;
+  store: Record<string, string>;
+}
+
 const readDecryptedCredentialStore = Effect.fn("ZcodeRequestAuth.readCredentialStore")(function* (
   fileSystem: FileSystem.FileSystem,
   credentialsPath: string,
   environment: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
+  cache?: CredentialStoreCache,
 ): Effect.fn.Return<Record<string, string>> {
   const raw = yield* fileSystem.readFileString(credentialsPath).pipe(Effect.option);
-  const parsed = Option.isNone(raw) ? undefined : Option.getOrUndefined(decodeJsonText(raw.value));
+  if (Option.isNone(raw)) return {};
+  // Content, not mtime: a rewrite can land in the same timestamp tick, and a stale login token
+  // would mint project tokens against the previous account.
+  const digest = sha256Hex(raw.value);
+  if (cache !== undefined && cache.digest === digest) return cache.store;
+  const parsed = Option.getOrUndefined(decodeJsonText(raw.value));
   if (!Predicate.isObject(parsed)) return {};
   const secret = resolveZcodeCredentialSecret(environment, platform);
   const entries: Record<string, string> = {};
@@ -110,6 +121,10 @@ const readDecryptedCredentialStore = Effect.fn("ZcodeRequestAuth.readCredentialS
       catch: () => undefined,
     }).pipe(Effect.option);
     if (Option.isSome(decrypted)) entries[key] = decrypted.value;
+  }
+  if (cache !== undefined) {
+    cache.digest = digest;
+    cache.store = entries;
   }
   return entries;
 });
@@ -391,7 +406,8 @@ export interface ZcodeRequestAuthOptions {
   readonly fileSystem: FileSystem.FileSystem;
   readonly httpClient: HttpClient.HttpClient;
   readonly environment: NodeJS.ProcessEnv;
-  readonly clientVersion: string;
+  /** The installed CLI's version, as its own host reports it; omitted when unknown. */
+  readonly clientVersion?: string | undefined;
 }
 
 /**
@@ -404,6 +420,7 @@ export const makeZcodeRequestAuth = (options: ZcodeRequestAuthOptions): ZcodeReq
   const root = zcodeDataRoot(options.environment) ?? "";
   const credentialsPath = `${root}/.zcode/v2/credentials.json`;
   const cache = new Map<string, CachedProjectToken>();
+  const credentialCache: CredentialStoreCache = { digest: "", store: {} };
 
   /** The family's current login with the credential scope digesting it; undefined once gone. */
   const currentLogin = Effect.fn("ZcodeRequestAuth.currentLogin")(function* (
@@ -414,6 +431,7 @@ export const makeZcodeRequestAuth = (options: ZcodeRequestAuthOptions): ZcodeReq
       credentialsPath,
       options.environment,
       yield* HostProcess.Platform,
+      credentialCache,
     );
     const loginToken = store[`oauth:${family}:access_token`];
     if (loginToken === undefined || loginToken.length === 0) return undefined;
@@ -530,7 +548,10 @@ export const makeZcodeRequestAuth = (options: ZcodeRequestAuthOptions): ZcodeReq
       { headers: { Authorization: `Bearer ${login.loginToken}` } },
     ).pipe(
       HttpClientRequest.bodyText(
-        zcodeJsonStringify({ clientType: "zcode", clientVersion: options.clientVersion }),
+        zcodeJsonStringify({
+          clientType: "zcode",
+          ...(options.clientVersion === undefined ? {} : { clientVersion: options.clientVersion }),
+        }),
         "application/json",
       ),
     );
