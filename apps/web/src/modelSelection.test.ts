@@ -820,6 +820,50 @@ describe("instance-scoped model selection", () => {
     ).toEqual(createModelSelection(instanceId, "openai/gpt-5.5"));
   });
 
+  it("keeps a thread's stored options while the draft holds options for another provider", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const providers = [
+      provider({ instanceId: "codex", models: ["gpt-5.5"] }),
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: ["claude-opus-5-5"],
+      }),
+    ];
+    const stored = createModelSelection(codex, "gpt-5.5", [
+      { id: "reasoningEffort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+    const claudePick = createModelSelection(claude, "claude-opus-5-5", [
+      { id: "effort", value: "max" },
+    ]);
+    const optionsFor = (draftSelections: Record<string, ReturnType<typeof createModelSelection>>) =>
+      deriveEffectiveComposerModelState({
+        draft: { activeProvider: codex, modelSelectionByProvider: draftSelections },
+        providers,
+        selectedProvider: ProviderDriverKind.make("codex"),
+        selectedInstanceId: codex,
+        requestedInstanceId: claude,
+        threadModelSelection: stored,
+        projectModelSelection: null,
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      }).modelOptions;
+
+    expect(
+      optionsFor({ [claude]: claudePick, [codex]: createModelSelection(codex, "gpt-5.5") }),
+    ).toEqual({ [claude]: claudePick.options, [codex]: stored.options });
+    // Claude turned off after an unsent pick: the composer is back on the thread's instance.
+    expect(optionsFor({ [claude]: claudePick })?.[codex]).toEqual(stored.options);
+    const fastOff = createModelSelection(codex, "gpt-5.5", [
+      { id: "reasoningEffort", value: "high" },
+      { id: "fastMode", value: false },
+    ]);
+    expect(optionsFor({ [claude]: claudePick, [codex]: fastOff })?.[codex]).toEqual(
+      fastOff.options,
+    );
+  });
+
   it("keeps the default instance's draft model off a custom instance of the same driver", () => {
     const driver = ProviderDriverKind.make("opencode");
     const defaultInstanceId = ProviderInstanceId.make("opencode");
