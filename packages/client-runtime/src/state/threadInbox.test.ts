@@ -64,6 +64,24 @@ describe("isThreadWorkingOrSourceControlBusy", () => {
     ).toBe(false);
     expect(isThreadWorkingOrSourceControlBusy(thread("a", true), false)).toBe(true);
   });
+
+  it("keeps guest requests out of Working when the runtime is idle", () => {
+    const idle = {
+      ...thread("a", false),
+      runtime: {
+        status: "idle" as const,
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "Codex",
+        lastError: null,
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      },
+      pendingGuestMessageCount: 1,
+    };
+    expect(isThreadWorking(idle)).toBe(true);
+    expect(isThreadWorkingOrSourceControlBusy(idle, false)).toBe(false);
+    expect(isThreadWorkingOrSourceControlBusy(idle, true)).toBe(false);
+  });
 });
 
 describe("createInboxReturnTracker", () => {

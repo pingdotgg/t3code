@@ -38,11 +38,11 @@ export function isThreadWorkingOrSourceControlBusy(
   thread: WorkingThreadInput & Pick<EnvironmentThreadShell, "pendingGuestMessageCount">,
   sourceControlBusy: boolean,
 ): boolean {
+  if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
   if (isThreadWorking(thread)) return true;
   if (!sourceControlBusy) return false;
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.pendingSubagentRequest != null) return false;
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
   return true;
 }
 
