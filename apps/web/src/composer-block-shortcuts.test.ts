@@ -1,4 +1,4 @@
-import { Editor } from "@tiptap/core";
+import { Editor, Extension, InputRule, type Extensions } from "@tiptap/core";
 import { closeHistory, redo, undo } from "@tiptap/pm/history";
 import { splitBlock } from "@tiptap/pm/commands";
 import { TextSelection } from "@tiptap/pm/state";
@@ -34,7 +34,7 @@ function chord(spec: string) {
   } as unknown as KeyboardEvent;
 }
 
-function createEditor(value: string) {
+function createEditor(value: string, extra: Extensions = []) {
   const editor = new Editor({
     extensions: [
       StarterKit.configure({
@@ -52,6 +52,7 @@ function createEditor(value: string) {
       ...ComposerListExtensions,
       ComposerTaskListExtension,
       ComposerTaskItemExtension,
+      ...extra,
     ],
     content: buildDocJson(value, (name) => ({ label: name, description: null })),
   });
@@ -266,6 +267,53 @@ describe("composer list normalization", () => {
     expect(editor.state.doc.textContent).toBe("- ");
     editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atStart(editor.state.doc)));
     expect(editor.state.doc.firstChild?.type.name).toBe("paragraph");
+  });
+
+  it("keeps the literal marker that Backspace restores from a list input rule", () => {
+    // Mirrors the composer's `- ` + first character rule; the test editor keeps Tiptap's `- ` rule.
+    const dashRule = Extension.create({
+      name: "dashRule",
+      addInputRules() {
+        return [
+          new InputRule({
+            find: /^- (?<carried>\S)$/,
+            handler: ({ range, match, chain }) => {
+              chain()
+                .deleteRange(range)
+                .wrapInList("bulletList")
+                .command(({ tr }) => {
+                  tr.insertText(match.groups?.carried ?? "");
+                  return true;
+                })
+                .run();
+            },
+          }),
+        ];
+      },
+    });
+    const editor = createEditor("", [dashRule]);
+    const type = (text: string) => {
+      const { from, to } = editor.state.selection;
+      const insert = () => editor.state.tr.insertText(text, from, to);
+      const handled = editor.state.plugins.some((plugin) =>
+        plugin.props.handleTextInput?.call(plugin, editor.view, from, to, text, insert),
+      );
+      if (!handled) editor.view.dispatch(editor.state.tr.insertText(text, from, to));
+    };
+    editor.view.dispatch(editor.state.tr.insertText("- "));
+    type("g");
+    expect(editor.state.doc.firstChild?.type.name).toBe("bulletList");
+    const backspace = chord("Backspace");
+    expect(
+      editor.state.plugins.some((plugin) =>
+        plugin.props.handleKeyDown?.call(plugin, editor.view, backspace),
+      ),
+    ).toBe(true);
+    expect(editor.state.doc.firstChild?.type.name).toBe("paragraph");
+    expect(editor.state.doc.textContent).toBe("- g");
+    type("o");
+    expect(editor.state.doc.firstChild?.type.name).toBe("paragraph");
+    expect(editor.state.doc.textContent).toBe("- go");
   });
 
   it("preserves formatting and the caret when removing the literal prefix", () => {

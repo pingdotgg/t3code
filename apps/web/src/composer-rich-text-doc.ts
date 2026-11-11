@@ -643,7 +643,11 @@ function listNormalizationPlugin(isComposing: () => boolean) {
       },
     },
     appendTransaction(transactions, oldState, state) {
-      if (transactions.some(isHistoryTransaction)) {
+      // Tiptap's undoInputRule (Backspace right after a rule) restores the typed text on purpose.
+      const undoesInputRule = oldState.plugins.some(
+        (plugin) => plugin.spec.isInputRules && plugin.getState(oldState),
+      );
+      if (undoesInputRule || transactions.some(isHistoryTransaction)) {
         pending.clear();
         return null;
       }
@@ -657,7 +661,10 @@ function listNormalizationPlugin(isComposing: () => boolean) {
       );
       for (const { newRange } of getChangedRanges(changes)) {
         state.doc.nodesBetween(newRange.from, newRange.to, (node, pos) => {
-          if (node.type.name === "paragraph") pending.add(pos);
+          if (node.type.name !== "paragraph") return false;
+          const parsed = parseListPrefix(paragraphText(node));
+          // Typing after a marker left literal keeps it literal; only an edit reaching the marker converts.
+          if (parsed && newRange.from <= pos + 1 + parsed.markerLength) pending.add(pos);
           return false;
         });
       }
@@ -671,7 +678,7 @@ function listNormalizationPlugin(isComposing: () => boolean) {
         if (state.doc.resolve(pos).depth !== 0) continue;
         const node = state.doc.nodeAt(pos);
         if (node?.type.name !== "paragraph") continue;
-        const text = node.textBetween(0, node.content.size, undefined, "\ufffc");
+        const text = paragraphText(node);
         const parsed = parseListPrefix(text);
         // Input rules only introduce unindented top-level lists; keep the same boundary here.
         if (!parsed || parsed.prefix.indent) continue;
@@ -731,6 +738,10 @@ function listNormalizationPlugin(isComposing: () => boolean) {
       return tr.docChanged ? tr : null;
     },
   });
+}
+
+function paragraphText(node: ProseMirrorNode): string {
+  return node.textBetween(0, node.content.size, undefined, "\ufffc");
 }
 
 /** Rebuilding from Markdown merges adjacent lists of one type whose markers share a delimiter. */
