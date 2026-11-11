@@ -164,6 +164,40 @@ function publishPushFailureDetail(input: {
   }
 }
 
+const CLONE_CREDENTIALS_NOTE =
+  "Clones use this environment's Git credentials, not a token saved in Settings.";
+
+// Hosts report private repositories the credentials cannot see as not found.
+const REPOSITORY_NOT_FOUND_LINE = /^fatal: repository '.+' not found$/i;
+
+// Clients clamp clone errors to a few lines, so the explanation leads; Git's lines follow
+// because hosts explain rejected credentials there.
+function cloneFailureDetail(
+  reason: GitCommandFailureReason | undefined,
+  stderrTail: ReadonlyArray<string>,
+): string {
+  const output = stderrTail.join(" ");
+  const explanation =
+    reason === "authentication_failed"
+      ? "Git could not authenticate."
+      : stderrTail.some((line) => REPOSITORY_NOT_FOUND_LINE.test(line))
+        ? "The repository was not found, or Git's credentials cannot access it."
+        : null;
+  if (explanation === null) {
+    return output.length > 0 ? output : "The repository could not be cloned.";
+  }
+  return `${explanation} ${CLONE_CREDENTIALS_NOTE}${output.length > 0 ? ` ${output}` : ""}`;
+}
+
+// The note leads once even when only the HTTPS attempt carries it.
+function combinedCloneFailureDetail(sshDetail: string, httpsDetail: string): string {
+  const withoutNote = (detail: string) => detail.replace(` ${CLONE_CREDENTIALS_NOTE}`, "");
+  const combined = `${withoutNote(sshDetail)} Cloning over HTTPS instead also failed: ${withoutNote(httpsDetail)}`;
+  return sshDetail.includes(CLONE_CREDENTIALS_NOTE) || httpsDetail.includes(CLONE_CREDENTIALS_NOTE)
+    ? `${CLONE_CREDENTIALS_NOTE} ${combined}`
+    : combined;
+}
+
 /**
  * SSH rejection can be retried over HTTPS when the host's credential helper is available.
  * Explicit SSH requests must not fall back; unknown URL shapes must not be guessed.
@@ -368,10 +402,7 @@ export const make = Effect.gen(function* () {
             new SourceControlRepositoryError({
               operation: "cloneRepository",
               provider: input.provider ?? SourceControlProviderKind.make("unknown"),
-              detail:
-                stderrTail.length > 0
-                  ? stderrTail.join(" ")
-                  : "The repository could not be cloned.",
+              detail: cloneFailureDetail(cause.reason, stderrTail),
               cause,
             }),
         ),
@@ -402,7 +433,7 @@ export const make = Effect.gen(function* () {
                   new SourceControlRepositoryError({
                     operation: "cloneRepository",
                     provider: sshError.provider,
-                    detail: `${sshError.detail} Cloning over HTTPS instead also failed: ${httpsError.detail}`,
+                    detail: combinedCloneFailureDetail(sshError.detail, httpsError.detail),
                     cause: httpsError.cause,
                   }),
               ),

@@ -41,6 +41,9 @@ If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same
 the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence
 over that choice; a host turned off stays off either way.
 
+Cloning runs Git on the server, so it uses the server's Git credentials, not a token saved
+in Settings. Run `gh auth setup-git` there, or configure another credential helper or an SSH key.
+
 For GitHub Enterprise, sign in with `gh auth login --hostname YOUR_HOST`. T3 Code treats a
 custom server name as GitHub once it has a credential for that host.
 
