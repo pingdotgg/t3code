@@ -6517,6 +6517,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         [
           {
             type: "app_thread.model_selection.updated",
+            runId: turn(1, original).runId,
+            attemptId: turn(1, original).attemptId,
             driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
             threadId: harness.threadId,
             previousModelSelection: original,

@@ -368,6 +368,26 @@ export const layer: Layer.Layer<
               },
               occurredAt: now,
             });
+            if (input.event.type === "app_thread.model_selection.updated") {
+              const source = input.event;
+              const run = yield* projections.getRun(threadId, source.runId);
+              if (
+                run === undefined ||
+                run.activeAttemptId !== source.attemptId ||
+                (run.status !== "running" && run.status !== "waiting")
+              )
+                return [];
+              const result = yield* eventSink
+                .writeIfRunCurrent({
+                  threadId,
+                  runId: source.runId,
+                  activeAttemptId: source.attemptId,
+                  expectedStatus: run.status,
+                  events: [event],
+                })
+                .pipe(retryLockTimeout);
+              return result.storedEvents;
+            }
             return yield* eventSink.write({ events: [event] }).pipe(retryLockTimeout);
           }),
         );

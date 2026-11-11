@@ -2359,6 +2359,35 @@ layer("ProviderEventIngestorV2", (it) => {
         providerInstanceId: modelSelection.instanceId,
         threadId,
       });
+      const runId = RunId.make("run:fallback");
+      const attemptId = RunAttemptId.make("attempt:fallback");
+      const run = {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId: modelSelection.instanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:fallback"),
+        rootNodeId: NodeId.make("node:fallback"),
+        activeAttemptId: attemptId,
+        status: "running",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      } satisfies OrchestrationV2Run;
+      yield* eventSink.write({
+        events: [
+          {
+            ...rootEvent,
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "run.created",
+            payload: run,
+          },
+        ],
+      });
       const reportModel = (reported: ModelSelection) =>
         ingestor.ingestNormalized({
           providerSessionId,
@@ -2366,6 +2395,8 @@ layer("ProviderEventIngestorV2", (it) => {
           threadId,
           event: {
             type: "app_thread.model_selection.updated",
+            runId,
+            attemptId,
             driver: CODEX_DRIVER,
             threadId,
             previousModelSelection: modelSelection,
@@ -2374,12 +2405,14 @@ layer("ProviderEventIngestorV2", (it) => {
         });
       const switched = { ...modelSelection, model: "gpt-fallback" };
 
-      const first = yield* reportModel(switched);
-      const repeated = yield* reportModel(switched);
       const otherInstance = yield* reportModel({
         ...switched,
         instanceId: ProviderInstanceId.make("codex-work"),
       });
+
+      assert.lengthOf(otherInstance, 0);
+      const first = yield* reportModel(switched);
+      const repeated = yield* reportModel(switched);
 
       assert.deepEqual(
         first.map((stored) => stored.event.type),
@@ -2409,6 +2442,30 @@ layer("ProviderEventIngestorV2", (it) => {
         assert.lengthOf(yield* reportModel(switched), 0);
         assert.deepEqual((yield* projectionStore.getThread(threadId)).modelSelection, newer);
       }
+      yield* eventSink.write({
+        events: [
+          {
+            ...rootEvent,
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "thread.model-selection-updated",
+            payload: { ...(yield* projectionStore.getThread(threadId)), modelSelection },
+          },
+          {
+            ...rootEvent,
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "run.updated",
+            payload: { ...run, status: "interrupted", completedAt: now },
+          },
+          {
+            ...rootEvent,
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "run.created",
+            payload: { ...run, id: RunId.make("run:newer"), ordinal: 2 },
+          },
+        ],
+      });
+      assert.lengthOf(yield* reportModel(switched), 0);
+      assert.deepEqual((yield* projectionStore.getThread(threadId)).modelSelection, modelSelection);
     }),
   );
 });

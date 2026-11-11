@@ -9636,6 +9636,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               liveQuery.selection = compileClaudeModelSelection(modelSelection, modelCatalog);
               yield* emitProviderEvent({
                 type: "app_thread.model_selection.updated",
+                runId: context.input.runId,
+                attemptId: context.input.attemptId,
                 driver: CLAUDE_PROVIDER,
                 threadId: context.input.threadId,
                 previousModelSelection: context.input.modelSelection,

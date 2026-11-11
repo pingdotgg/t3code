@@ -90,6 +90,8 @@ export const ProviderAdapterV2Event = Schema.Union([
   /** The provider moved the thread's session to another model on its own, such as Claude's refusal fallback. */
   Schema.Struct({
     type: Schema.Literal("app_thread.model_selection.updated"),
+    runId: RunId,
+    attemptId: RunAttemptId,
     driver: ProviderDriverKind,
     threadId: ThreadId,
     previousModelSelection: ModelSelection,
