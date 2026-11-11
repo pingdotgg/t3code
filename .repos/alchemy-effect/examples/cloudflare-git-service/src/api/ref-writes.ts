@@ -1,5 +1,5 @@
 /** Authorization and commit stay in the request effect, across every write transport. */
-import * as Git from "alchemy/Git";
+import * as Git from "@alchemy.run/git";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { AppApi } from "./api.ts";
