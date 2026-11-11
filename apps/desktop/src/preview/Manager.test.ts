@@ -615,6 +615,7 @@ describe("PreviewManager", () => {
                 attach: () => {},
                 detach: () => {},
                 setShown: () => {},
+                loadFailed: () => {},
                 humanStartedDownload: () => true,
                 placeDownload: () => true,
               }),
