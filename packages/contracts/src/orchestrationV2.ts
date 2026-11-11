@@ -69,6 +69,7 @@ import {
   ProviderApprovalDecision,
   ProviderApprovalFullAccessOverride,
   ProviderApprovalOption,
+  ProviderApprovalPermissions,
   ProviderInteractionMode,
   ProviderRequestKind,
   ProviderUserInputAnswers,
@@ -1741,6 +1742,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    permissions: Schema.optional(ProviderApprovalPermissions),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2584,6 +2586,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    permissions: Schema.optional(ProviderApprovalPermissions),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

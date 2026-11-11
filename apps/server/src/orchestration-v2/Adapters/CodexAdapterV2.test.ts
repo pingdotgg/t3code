@@ -9930,12 +9930,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
-    it.effect("classifies permission requests that only list sandbox entries", () =>
+    it.effect("classifies permission requests and lists every right they grant", () =>
       Effect.gen(function* () {
         const permissionRequest = (
           id: number,
           itemId: string,
-          entries: CodexSchema.PermissionsRequestApprovalParams__AdditionalFileSystemPermissions["entries"],
+          permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
+          reason: string | null = null,
         ): Array<CodexReplay.CodexAppServerReplayEntry> => [
           {
             type: "emit_inbound",
@@ -9949,38 +9950,80 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 itemId,
                 cwd: "/w",
                 startedAtMs: 2,
-                permissions: { fileSystem: { entries } },
+                permissions,
+                reason,
               },
             },
           },
           {
             type: "expect_outbound",
             label: `permissions ${itemId}`,
-            frame: { id, result: { permissions: { fileSystem: { entries } }, scope: "turn" } },
+            frame: { id, result: { permissions, scope: "turn" } },
           },
         ];
         const { harness, answerNext } = yield* startApprovalTurn("permission-entries", [
-          ...permissionRequest(0, "write-glob", [
-            { access: "read", path: { type: "path", path: "/w/src" } },
-            { access: "write", path: { type: "glob_pattern", pattern: "/w/out/**" } },
-          ]),
-          ...permissionRequest(1, "read-glob", [
-            { access: "read", path: { type: "glob_pattern", pattern: "/w/docs/**" } },
-          ]),
+          ...permissionRequest(0, "write-glob", {
+            fileSystem: {
+              read: ["/w/src"],
+              entries: [
+                { access: "read", path: { type: "path", path: "/w/src" } },
+                { access: "write", path: { type: "glob_pattern", pattern: "/w/out/**" } },
+                { access: "deny", path: { type: "path", path: "/w/secrets" } },
+              ],
+            },
+          }),
+          ...permissionRequest(1, "read-glob", {
+            fileSystem: {
+              entries: [{ access: "read", path: { type: "glob_pattern", pattern: "/w/docs/**" } }],
+            },
+          }),
+          ...permissionRequest(
+            2,
+            "network",
+            { network: { enabled: true } },
+            "Need to fetch a dependency",
+          ),
           turnCompleted(nativeTurnId),
         ]);
         const write = yield* answerNext;
         const read = yield* answerNext;
+        const network = yield* answerNext;
         yield* harness.firstTerminal;
 
         assert.deepEqual(
-          [write, read].map((request) => [
-            request.kind,
-            approvalItem(harness.events, request)?.requestKind,
-          ]),
+          [write, read, network].map((request) => {
+            const item = approvalItem(harness.events, request);
+            return [request.kind, item?.requestKind, item?.prompt, item?.reason, item?.permissions];
+          }),
           [
-            ["file-change", "file-change"],
-            ["file-read", "file-read"],
+            [
+              "file-change",
+              "file-change",
+              "read /w/src\nwrite glob /w/out/**\ndeny /w/secrets",
+              undefined,
+              {
+                network: false,
+                fileSystem: [
+                  { access: "read", path: "/w/src" },
+                  { access: "write", path: "/w/out/**", glob: true },
+                  { access: "deny", path: "/w/secrets" },
+                ],
+              },
+            ],
+            [
+              "file-read",
+              "file-read",
+              "read glob /w/docs/**",
+              undefined,
+              { network: false, fileSystem: [{ access: "read", path: "/w/docs/**", glob: true }] },
+            ],
+            [
+              "command",
+              "command",
+              "Network access",
+              "Need to fetch a dependency",
+              { network: true, fileSystem: [] },
+            ],
           ],
         );
       }).pipe(

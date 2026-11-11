@@ -1259,6 +1259,25 @@ describe("native provider presentation in the v2 timeline", () => {
     expect(workEntryDisplayIndicatesToolFailure(entry.entry)).toBe(true);
     expect(workEntryIndicatesToolSuccess(entry.entry)).toBe(false);
   });
+
+  it("shows a resolved approval's requested rights and the agent's reason", () => {
+    const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        visible({
+          ...base,
+          type: "approval_request",
+          requestId: RuntimeRequestId.make("permissions"),
+          requestKind: "command",
+          prompt: "Network access",
+          reason: "Need to fetch a dependency",
+        }),
+      ],
+      optimisticMessages: [],
+    });
+    if (entry?.kind !== "work") throw new Error("Expected an approval work entry");
+
+    expect(entry.entry.detail).toBe("Network access\n\nNeed to fetch a dependency");
+  });
 });
 
 describe("HTML renders in the timeline", () => {

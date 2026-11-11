@@ -464,7 +464,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
       return {
         ...common,
         label: title ?? "Approval requested",
-        detail: item.prompt ?? item.requestKind,
+        detail: [item.prompt, item.reason].filter(Boolean).join("\n\n") || item.requestKind,
         toolData: item,
       };
     case "user_input_request":

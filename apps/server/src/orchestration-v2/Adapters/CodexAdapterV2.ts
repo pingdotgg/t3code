@@ -72,6 +72,7 @@ import type {
   ProviderUserInputAnswers,
   ProviderApprovalDecision,
   ProviderApprovalOption,
+  ProviderApprovalPermissions,
   ProviderRequestKind,
   ProviderThreadId,
   ProviderTurnId,
@@ -184,6 +185,68 @@ function codexFileChangeApprovalPrompt(input: {
     return remaining > 0 ? `${described.join("\n")}\n+${remaining} more` : described.join("\n");
   }
   return input.grantRoot?.trim() || undefined;
+}
+
+function codexFileSystemPathLabel(
+  path: Exclude<
+    CodexSchema.PermissionsRequestApprovalParams__FileSystemPath,
+    { readonly type: "glob_pattern" }
+  >,
+): string {
+  if (path.type === "path") return path.path;
+  const special = path.value;
+  switch (special.kind) {
+    case "root":
+      return "entire filesystem (/)";
+    case "minimal":
+      return "minimal system paths";
+    case "project_roots":
+      return special.subpath ? `project roots/${special.subpath}` : "project roots";
+    case "tmpdir":
+      return "$TMPDIR";
+    case "slash_tmp":
+      return "/tmp";
+    case "unknown":
+      return special.subpath ? `${special.path}/${special.subpath}` : special.path;
+  }
+}
+
+function codexApprovalPermissions(
+  permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
+): ProviderApprovalPermissions {
+  const fileSystem = permissions.fileSystem;
+  const entries: Array<ProviderApprovalPermissions["fileSystem"][number]> = [
+    ...(fileSystem?.entries ?? []).map(({ access, path }) =>
+      path.type === "glob_pattern"
+        ? { access, path: path.pattern, glob: true as const }
+        : { access, path: codexFileSystemPathLabel(path) },
+    ),
+    ...(fileSystem?.write ?? []).map((path) => ({ access: "write" as const, path })),
+    ...(fileSystem?.read ?? []).map((path) => ({ access: "read" as const, path })),
+  ];
+  const seen = new Set<string>();
+  return {
+    network: permissions.network?.enabled === true,
+    fileSystem: entries.filter((entry) => {
+      const key = `${entry.access} ${entry.glob ? "glob " : ""}${entry.path}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }),
+  };
+}
+
+function codexPermissionsApprovalPrompt(
+  permissions: ProviderApprovalPermissions,
+): string | undefined {
+  // Accepting grants every line, so none are truncated.
+  const lines = [
+    ...(permissions.network ? ["Network access"] : []),
+    ...permissions.fileSystem.map(
+      ({ access, path, glob }) => `${access} ${glob ? "glob " : ""}${path}`,
+    ),
+  ];
+  return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
 // Reasoning-effort changes preserve the tokenizer and context window; other changes need fresh telemetry.
@@ -4325,10 +4388,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly nativeRequestId: string;
           readonly requestKind: ProviderRequestKind;
           readonly prompt?: string | null;
+          readonly reason?: string | null;
           readonly appName?: string;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
+          readonly permissions?: ProviderApprovalPermissions;
         }) {
           const createdAt = yield* DateTime.now;
+          const reason = trimText(input.reason);
           const { owner, subagent } = approvalOwnerCodexTurn(input.context);
           const parentNodeId =
             subagent?.subagentNodeId ??
@@ -4408,8 +4474,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ...(input.prompt === null || input.prompt === undefined
               ? {}
               : { prompt: input.prompt }),
+            ...(reason === undefined || reason === input.prompt?.trim() ? {} : { reason }),
             ...(input.appName === undefined ? {} : { appName: input.appName }),
             ...(input.options === undefined ? {} : { options: input.options }),
+            ...(input.permissions === undefined ? {} : { permissions: input.permissions }),
           };
           return { node, request, turnItem };
         });
@@ -5626,12 +5694,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             const requestKind = providerRequestKindFromPermissions(payload.permissions);
+            const permissions = codexApprovalPermissions(payload.permissions);
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind,
-              ...(payload.reason === undefined ? {} : { prompt: payload.reason }),
+              prompt: codexPermissionsApprovalPrompt(permissions) ?? payload.reason ?? null,
+              reason: payload.reason ?? null,
+              permissions,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
