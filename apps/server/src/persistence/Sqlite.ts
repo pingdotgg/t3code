@@ -11,7 +11,7 @@ import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
 
-const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
+const WAL_SIZE_LIMIT_BYTES = 128 * 1024 * 1024;
 
 export class ServerOwnsDatabaseError extends Schema.TaggedError<ServerOwnsDatabaseError>()(
   "ServerOwnsDatabaseError",
@@ -54,6 +54,9 @@ const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
       yield* sql`PRAGMA synchronous = NORMAL;`;
       // macOS fsync misses drive caches; F_FULLFSYNC flushes them at checkpoints and is ignored elsewhere.
       yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
+      // Keep statement journals and sort spills off the main thread's disk path.
+      // Large statements and open savepoints can increase peak memory use.
+      yield* sql`PRAGMA temp_store = MEMORY;`;
       // PASSIVE checkpoints retain peak WAL size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
       yield* migrate;
@@ -64,7 +67,7 @@ const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
         yield* sql`DELETE FROM sqlite_stat1;`;
         yield* sql`ANALYZE sqlite_schema;`;
       }
-    }),
+    }).pipe(Effect.withSpan("Sqlite.setup")),
   );
 
 const layerSetup = makeLayerSetup(runMigrations());

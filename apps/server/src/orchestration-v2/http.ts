@@ -3,7 +3,6 @@ import {
   EnvironmentHttpApi,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Predicate from "effect/Predicate";
@@ -32,13 +31,11 @@ import {
 } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import {
-  buildActiveShellSnapshot,
-  loadShellSnapshotParts,
-  shellSnapshotForSubscriber,
-} from "./ShellStream.ts";
+import { loadSubscriberShellSnapshot } from "./ShellStream.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
+
+const isInvalidThreadHistoryCursorError = Schema.is(InvalidThreadHistoryCursorError);
 
 const isThreadTranscriptTooLargeError = Schema.is(
   ThreadManagementService.ThreadTranscriptTooLargeError,
@@ -84,19 +81,19 @@ export const layer = HttpApiBuilder.group(
         readonly omitIdleSubagents: boolean;
         readonly omitOlderSettled: boolean;
       }) {
-        const base = buildActiveShellSnapshot(
-          yield* loadShellSnapshotParts({
-            sql,
-            readThreads: threadManagement.readShellSnapshot({ location: "active" }),
-            listProjects: projectStore.listShells(),
-            latestSequence: applicationEvents.latestApplicationSequence,
-          }),
-        );
-        const { snapshot } = shellSnapshotForSubscriber(base, {
-          ...options,
-          now: yield* DateTime.now,
+        const { snapshot } = yield* loadSubscriberShellSnapshot({
+          sql,
+          listShellIndex: threadManagement.listActiveShellIndex(),
+          readThreads: (threadIds) =>
+            threadManagement.readShellSnapshot({
+              location: "active",
+              ...(threadIds === undefined ? {} : { threadIds }),
+            }),
+          listProjects: projectStore.listShells(),
+          latestSequence: applicationEvents.latestApplicationSequence,
+          options,
         });
-        const projects = yield* enrichProjectShells(base.projects);
+        const projects = yield* enrichProjectShells(snapshot.projects);
         return { ...snapshot, projects };
       },
     );
@@ -251,12 +248,10 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadHistoryPage")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          const decoded = yield* Effect.try(() =>
-            decodeThreadHistoryCursor(args.query.cursor),
-          ).pipe(Effect.result);
+          const decoded = Result.try(() => decodeThreadHistoryCursor(args.query.cursor));
           if (Result.isFailure(decoded)) {
-            const cause = decoded.failure.cause;
-            if (cause instanceof InvalidThreadHistoryCursorError)
+            const cause = decoded.failure;
+            if (isInvalidThreadHistoryCursorError(cause))
               return yield* failEnvironmentInvalidRequest("invalid_history_cursor");
             return yield* failEnvironmentInternal("orchestration_thread_history_failed", cause);
           }
