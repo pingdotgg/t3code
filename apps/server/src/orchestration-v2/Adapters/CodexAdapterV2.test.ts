@@ -9097,7 +9097,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
-    it.effect.each(["no hold", "held active goal"] as const)(
+    it.effect.each(["no hold", "held active goal", "unrecorded goal"] as const)(
       "keeps manual compaction separate from an earlier goal turn with %s",
       (ownership) =>
         Effect.gen(function* () {
@@ -9129,10 +9129,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 { threadId: nativeThreadId },
                 {},
               ),
-              notification("goal progress", "thread/goal/updated", {
-                threadId: nativeThreadId,
-                goal: codexGoal("active", 10),
-              }),
+              // A resumed thread has no goal state until Codex reports it.
+              ...(ownership === "unrecorded goal"
+                ? []
+                : [
+                    notification("goal progress", "thread/goal/updated", {
+                      threadId: nativeThreadId,
+                      goal: codexGoal("active", 10),
+                    }),
+                  ]),
               notification("continuation", "turn/started", {
                 threadId: nativeThreadId,
                 turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "inProgress" }),
@@ -9280,6 +9285,92 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ),
           ),
         ),
+    );
+
+    it.effect("settles a manual compaction a PreCompact hook stops before its first item", () =>
+      Effect.gen(function* () {
+        const hookRun = (status: "running" | "stopped") => ({
+          threadId: nativeThreadId,
+          turnId: "compact-turn",
+          run: {
+            id: "pre-compact-hook",
+            eventName: "preCompact",
+            source: "project",
+            sourcePath: "/workspace/.codex/hooks.json",
+            scope: "turn",
+            executionMode: "sync",
+            handlerType: "command",
+            displayOrder: 1,
+            startedAt: 1782622440,
+            status,
+            entries: status === "stopped" ? [{ kind: "stop", text: "Not now" }] : [],
+          },
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-pre-compact-hook-stop",
+          entries: [
+            ...sessionStart,
+            notification("goal active", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              goal: codexGoal("active", 10),
+            }),
+            ...request(3, "thread/compact/start", { threadId: nativeThreadId }, {}),
+            notification("compaction", "turn/started", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "compact-turn", status: "inProgress" }),
+            }),
+            notification("hook started", "hook/started", hookRun("running")),
+            notification("hook stopped", "hook/completed", hookRun("stopped")),
+            notification("compaction stopped", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "compact-turn", status: "interrupted" }),
+            }),
+            notification("accounted", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              goal: codexGoal("active", 20),
+            }),
+          ],
+        });
+        const accounted = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+          event.type === "provider_thread.updated" && event.providerThread.goal?.tokensUsed === 20
+            ? Deferred.succeed(accounted, undefined)
+            : Effect.void,
+        );
+        yield* harness.runtime.compactThread!(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("compact-attempt"),
+            text: "/compact",
+          }),
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(accounted);
+
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => [event.providerTurnId, event.status]),
+          [
+            [
+              (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+                driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                nativeTurnId: "compact-turn",
+              }),
+              "interrupted",
+            ],
+          ],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
     );
 
     it.effect("run.interrupt stops compact after RPC success and before its first item", () =>

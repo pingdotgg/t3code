@@ -1918,8 +1918,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }
         >();
         const stoppedRootThreads = new Map<string, "goal" | "compaction">();
-        // A pending /compact and a held goal can both own the next native turn.
-        // Wait for its first item before publishing an irreversible run binding.
+        // While a /compact is pending, a native start may still be a goal or resumed turn
+        // whose goal state is not known yet. Classify it before binding it to a run.
         const unclaimedRootTurns = new Map<
           string,
           { readonly threadId: string; readonly startedAt: DateTime.Utc }
@@ -4861,6 +4861,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }
         });
 
+        // A PreCompact hook runs before the contextCompaction item and can stop the turn itemless.
+        yield* client.handleServerNotification("hook/started", (payload) =>
+          payload.turnId == null || payload.run.eventName !== "preCompact"
+            ? Effect.void
+            : claimRootTurn({
+                threadId: payload.threadId,
+                turnId: payload.turnId,
+                compaction: true,
+              }).pipe(turnTerminalizationPermit.withPermits(1)),
+        );
+
         yield* client.handleServerNotification("turn/started", (payload) =>
           Effect.gen(function* () {
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
@@ -4885,20 +4896,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             if (pendingCompactions.has(payload.threadId)) {
-              // Without a competing goal, this start belongs to the requested compact.
-              if (
-                !goalHolds.has(payload.threadId) &&
-                goalsByNativeThread.get(payload.threadId)?.status !== "active" &&
-                stoppedRootThreads.get(payload.threadId) !== "goal"
-              ) {
-                yield* claimRootTurn({
-                  threadId: payload.threadId,
-                  turnId: payload.turn.id,
-                  compaction: true,
-                  startedAt: codexTimestamp(payload.turn.startedAt),
-                });
-                return;
-              }
               unclaimedRootTurns.set(payload.turn.id, {
                 threadId: payload.threadId,
                 startedAt: codexTimestamp(payload.turn.startedAt),
