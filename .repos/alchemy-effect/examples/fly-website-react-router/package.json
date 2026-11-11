@@ -2,6 +2,11 @@
   "name": "fly-website-react-router",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/fly-website-react-router"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -10,6 +15,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/fly": "workspace:*",
     "@react-router/node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:",
@@ -20,6 +26,7 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/fly-io": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@react-router/dev": "catalog:",
@@ -31,10 +38,5 @@
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/fly-website-react-router"
   }
 }

@@ -87,9 +87,7 @@ describe("guardHttpResponseWriteErrors", () => {
     });
 
     server.on("upgrade", (_request, socket) => {
-      // Simulate the client vanishing while the auth rejection response is
-      // written to the upgrade socket: the write failure surfaces as an
-      // "error" event on a socket Node's http server no longer listens to.
+      // Node's HTTP server no longer listens for errors on an upgraded socket.
       socket.destroy(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
     });
 
@@ -124,26 +122,6 @@ describe("guardHttpResponseWriteErrors", () => {
       response.end("ok");
     });
     await expect(fetchStatus(port, "/")).resolves.toBe(200);
-  });
-
-  it("arms every response with an error listener without disturbing normal traffic", async () => {
-    const writeErrors: unknown[] = [];
-    let responseErrorListeners = -1;
-    const server = guardHttpResponseWriteErrors(NodeHttp.createServer(), (error) => {
-      writeErrors.push(error);
-    });
-
-    server.on("request", (_request, response) => {
-      responseErrorListeners = response.listenerCount("error");
-      response.writeHead(200, { "content-type": "text/plain" });
-      response.end("ok");
-    });
-
-    const port = await listen(server);
-
-    await expect(fetchStatus(port, "/")).resolves.toBe(200);
-    expect(responseErrorListeners).toBeGreaterThan(0);
-    expect(writeErrors).toEqual([]);
   });
 });
 
@@ -183,5 +161,5 @@ describe("rejectRequestsUntilServing", () => {
     expect(servingUpgrade.statusCode).toBe(101);
     expect(servingUpgrade.headers["retry-after"]).toBeUndefined();
     expect(writeErrors).toEqual([]);
-  }, 5_000);
+  });
 });

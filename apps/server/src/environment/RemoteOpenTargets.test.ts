@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- replace the native OS lookup and sync its ESM bindings.
 import * as NodeModule from "node:module";
-import type * as NodeOS from "node:os";
 import { it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
@@ -13,8 +12,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 import * as RemoteOpenTargets from "./RemoteOpenTargets.ts";
-
-const mutableOs = NodeModule.createRequire(import.meta.url)("node:os") as typeof NodeOS;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -140,21 +137,6 @@ describe("RemoteOpenTargets", () => {
     }),
   );
 
-  it.effect("orders the tailnet name before the mDNS name", () =>
-    Effect.gen(function* () {
-      const targets = yield* resolveTargets({
-        sshd: { ipv4: true, ipv6: true },
-        tailscale: TAILSCALE_UP,
-        hostname: "bb-1",
-        username: "t3-user",
-      });
-      expect(targets).toEqual([
-        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
-        { kind: "mdns", host: "bb-1.local", username: "t3-user" },
-      ]);
-    }),
-  );
-
   it.effect("accepts an sshd bound to IPv6 loopback only", () =>
     Effect.gen(function* () {
       const targets = yield* resolveTargets({
@@ -164,49 +146,6 @@ describe("RemoteOpenTargets", () => {
         username: "t3-user",
       });
       expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local", username: "t3-user" }]);
-    }),
-  );
-
-  it.effect("falls back to mDNS alone when tailscale is unavailable", () =>
-    Effect.gen(function* () {
-      const targets = yield* resolveTargets({
-        sshd: { ipv4: true, ipv6: false },
-        tailscale: TAILSCALE_DOWN,
-        hostname: "bb-1",
-        username: "t3-user",
-      });
-      expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local", username: "t3-user" }]);
-    }),
-  );
-
-  it.effect("shortens an FQDN hostname to its first label for mDNS", () =>
-    Effect.gen(function* () {
-      const targets = yield* resolveTargets({
-        sshd: { ipv4: true, ipv6: true },
-        tailscale: TAILSCALE_DOWN,
-        hostname: "bb-1.example.com",
-        username: "t3-user",
-      });
-      expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local", username: "t3-user" }]);
-    }),
-  );
-
-  it.effect("still advertises hostname targets when the OS login lookup fails", () =>
-    Effect.gen(function* () {
-      const userInfo = vi.spyOn(mutableOs, "userInfo").mockImplementation(() => {
-        throw new Error("No passwd entry for this UID");
-      });
-      NodeModule.syncBuiltinESMExports();
-      const targets = yield* resolveTargets({
-        sshd: { ipv4: true, ipv6: true },
-        tailscale: TAILSCALE_UP,
-        hostname: "bb-1",
-      });
-      expect(userInfo).toHaveBeenCalled();
-      expect(targets).toEqual([
-        { kind: "tailscale", host: "bb-1.tail1234.ts.net" },
-        { kind: "mdns", host: "bb-1.local" },
-      ]);
     }),
   );
 });

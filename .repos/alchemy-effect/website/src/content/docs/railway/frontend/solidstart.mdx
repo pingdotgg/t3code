@@ -5,7 +5,7 @@ sidebar:
   order: 10.5
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
@@ -32,38 +32,12 @@ The build integration is not bundled with alchemy. Install
 deploy time. It is only used at build time, so a dev dependency is
 enough:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers dev={devDeps} />
 
 `@solidjs/vite-plugin-nitro-2` is the server half of a SolidStart
 build and must be a project dependency too:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun add @solidjs/vite-plugin-nitro-2" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm install @solidjs/vite-plugin-nitro-2" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm add @solidjs/vite-plugin-nitro-2" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn add @solidjs/vite-plugin-nitro-2" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add="@solidjs/vite-plugin-nitro-2" />
 
 ## Configure Vite
 
@@ -95,7 +69,7 @@ Stack):
 
 ```typescript
 // alchemy.run.ts
-import * as Railway from "alchemy/Railway";
+import * as Railway from "@alchemy.run/railway";
 
 export const Website = Railway.Website.SolidStart("Website");
 ```

@@ -3,7 +3,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import type * as Scope from "effect/Scope";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -19,7 +21,7 @@ const runNode = <A, E>(
 ) => effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.runPromise);
 
 describe("Cursor skills", () => {
-  it("discovers recursive project skills with project precedence", async () =>
+  it("discovers project, user, then built-in skills by precedence", async () =>
     await runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -66,6 +68,10 @@ describe("Cursor skills", () => {
           "oversized",
           "x".repeat(1_000_001),
         );
+        const builtinRoot = path.join(userHome, ".cursor", "skills-cursor");
+        yield* writeSkill(builtinRoot, "loop", "---\ndescription: builtin loop\n---\n");
+        yield* writeSkill(builtinRoot, "review", "---\ndescription: builtin review\n---\n");
+        yield* writeSkill(builtinRoot, "ide-only", "---\nmetadata:\n  surfaces:\n    - ide\n---\n");
         yield* fileSystem.makeDirectory(path.join(userHome, ".codex"), { recursive: true });
         yield* fileSystem.writeFileString(
           path.join(userHome, ".codex", "skills"),
@@ -80,6 +86,13 @@ describe("Cursor skills", () => {
             scope: "project",
             enabled: true,
             userInvocable: false,
+          },
+          {
+            name: "loop",
+            description: "builtin loop",
+            path: path.join(builtinRoot, "loop", "SKILL.md"),
+            scope: "system",
+            enabled: true,
           },
           {
             name: "oversized",
@@ -162,108 +175,83 @@ describe("Cursor skills", () => {
       }),
     ));
 
-  it("discovers skills across roots without scanning installed node_modules", async () =>
+  it("finds sibling skills when one skill ships more files than the scan budget", async () =>
     await runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const userHome = yield* fileSystem
-          .makeTempDirectoryScoped({
-            directory: NodeOS.tmpdir(),
-            prefix: "cursor-skills-home-",
-          })
-          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
-        const root = path.join(userHome, ".agents", "skills");
-        const dependencies = path.join(root, "review", "tests", "node_modules");
-        yield* fileSystem.makeDirectory(dependencies, { recursive: true });
+        const tempDirectory = (prefix: string) =>
+          fileSystem
+            .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix })
+            .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const userHome = yield* tempDirectory("cursor-skills-home-");
+        const workspace = yield* tempDirectory("cursor-skills-workspace-");
+        const root = path.join(workspace, ".cursor", "skills");
+        const artifacts = path.join(root, "a-large", "artifacts");
+        yield* fileSystem.makeDirectory(artifacts, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(root, "a-large", "SKILL.md"), "---\n---\n");
+        yield* fileSystem.makeDirectory(path.join(root, "b-small"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(root, "b-small", "SKILL.md"), "---\n---\n");
+        // More ordinary files than the whole-scan entry budget of 10,000.
         yield* Effect.forEach(
-          Array.from({ length: 10_001 }, (_, index) => path.join(dependencies, `entry-${index}`)),
+          Array.from({ length: 11_000 }, (_, index) => path.join(artifacts, `file-${index}.txt`)),
           (file) => fileSystem.writeFileString(file, ""),
           { concurrency: 64, discard: true },
         );
-        const skillDirectories = [
-          path.join(root, "review"),
-          path.join(root, "sibling"),
-          path.join(userHome, ".claude", "skills", "later"),
+
+        const expected = [
+          {
+            name: "a-large",
+            path: path.join(root, "a-large", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+          {
+            name: "b-small",
+            path: path.join(root, "b-small", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
         ];
-        for (const directory of skillDirectories) {
-          yield* fileSystem.makeDirectory(directory, { recursive: true });
-          yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), "---\n---\n");
+        expect(yield* discoverCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
+        expect(yield* probeCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
+      }),
+    ));
+
+  it("stops a scan of a huge file tree instead of statting every file", async () => {
+    const root = "/workspace/.cursor/skills";
+    let stats = 0;
+    const fileSystem = FileSystem.layerNoop({
+      realPath: (path) => Effect.succeed(path),
+      readDirectory: (path) =>
+        path === root
+          ? Effect.succeed(Array.from({ length: 200_000 }, (_, index) => `file-${index}`))
+          : Effect.succeed([]),
+      stat: (path) => {
+        stats += 1;
+        if (path === root) return Effect.succeed({ type: "Directory" } as FileSystem.File.Info);
+        if (path.startsWith(`${root}/file-`)) {
+          return Effect.succeed({ type: "File" } as FileSystem.File.Info);
         }
-
-        const result = yield* probeCursorSkills(undefined, { HOME: userHome }).pipe(Effect.result);
-        expect(result._tag).toBe("Success");
-        if (result._tag !== "Success") return;
-        expect(result.success).toEqual(
-          skillDirectories
-            .map((directory) => ({
-              name: path.basename(directory),
-              path: path.join(directory, "SKILL.md"),
-              scope: "user",
-              enabled: true,
-            }))
-            .sort((left, right) => left.name.localeCompare(right.name)),
+        return Effect.fail(
+          PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method: "stat" }),
         );
-      }),
-    ));
+      },
+    });
 
-  it("still fails discovery when a root holds more entries than the scan allows", async () =>
-    await runNode(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const userHome = yield* fileSystem.makeTempDirectoryScoped({
-          directory: NodeOS.tmpdir(),
-          prefix: "cursor-skills-home-",
-        });
-        const root = path.join(userHome, ".cursor", "skills");
-        yield* fileSystem.makeDirectory(root, { recursive: true });
-        yield* Effect.forEach(
-          Array.from({ length: 10_001 }, (_, index) => path.join(root, `entry-${index}`)),
-          (file) => fileSystem.writeFileString(file, ""),
-          { concurrency: 64, discard: true },
-        );
+    const result = await probeCursorSkills("/workspace", { HOME: "/home" }).pipe(
+      Effect.result,
+      Effect.provide(Layer.mergeAll(fileSystem, Path.layer)),
+      Effect.runPromise,
+    );
 
-        const error = yield* Effect.flip(probeCursorSkills(undefined, { HOME: userHome }));
-        expect(error.message).toContain("scan-budget-exhausted");
-      }),
-    ));
-
-  it.skipIf(!symlinksSupported)(
-    "scans a skills root linked to another root only once",
-    async () =>
-      await runNode(
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const userHome = yield* fileSystem.makeTempDirectoryScoped({
-            directory: NodeOS.tmpdir(),
-            prefix: "cursor-skills-home-",
-          });
-          // More than half the entry budget, so a second walk of the same tree runs out.
-          const claudeRoot = path.join(userHome, ".claude", "skills");
-          yield* fileSystem.makeDirectory(path.join(claudeRoot, "review"), { recursive: true });
-          yield* fileSystem.writeFileString(
-            path.join(claudeRoot, "review", "SKILL.md"),
-            "---\n---\n",
-          );
-          yield* Effect.forEach(
-            Array.from({ length: 6_000 }, (_, index) => path.join(claudeRoot, `entry-${index}`)),
-            (file) => fileSystem.writeFileString(file, ""),
-            { concurrency: 64, discard: true },
-          );
-          yield* fileSystem.makeDirectory(path.join(userHome, ".agents"), { recursive: true });
-          yield* fileSystem.symlink(claudeRoot, path.join(userHome, ".agents", "skills"));
-
-          const result = yield* probeCursorSkills(undefined, { HOME: userHome }).pipe(
-            Effect.result,
-          );
-          expect(result._tag).toBe("Success");
-          const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
-          expect(skills.map((skill) => `${skill.scope}:${skill.name}`)).toEqual(["user:review"]);
-        }),
-      ),
-  );
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: "scan-budget-exhausted" },
+    });
+    expect(stats).toBeGreaterThanOrEqual(100_000);
+    expect(stats).toBeLessThanOrEqual(100_000);
+  });
 
   it.skipIf(!symlinksSupported)(
     "treats a symlinked skill outside the root as a package boundary",
