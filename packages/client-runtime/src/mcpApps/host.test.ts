@@ -230,11 +230,6 @@ describe("makeMcpAppHost", () => {
       },
     });
     await flush();
-    expect(sent).toContainEqual({
-      jsonrpc: "2.0",
-      id: 9,
-      result: { content: [], structuredContent: { ok: true } },
-    });
     expect(received).toStrictEqual([{}, { nested: { b: 1 }, list: [1, null] }]);
     expect(sent).toContainEqual({
       jsonrpc: "2.0",

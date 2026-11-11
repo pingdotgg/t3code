@@ -395,12 +395,14 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
   const hostHandle: McpAppHost = {
     receive: (data) => {
       if (disposed || !Predicate.isObject(data) || data.jsonrpc !== "2.0") return;
+      const requestId = isId(data.id) && typeof data.method === "string" ? data.id : undefined;
       const json = stringifyJson(data);
-      if (json === undefined || encoder.encode(json).byteLength > MAX_MESSAGE_BYTES) {
-        if (isId(data.id) && typeof data.method === "string") {
-          if (json === undefined) fail(data.id, -32602, "Params must be JSON.");
-          else fail(data.id, -32600, "Message too large.");
-        }
+      if (json === undefined) {
+        if (requestId !== undefined) fail(requestId, -32602, "Params must be JSON.");
+        return;
+      }
+      if (encoder.encode(json).byteLength > MAX_MESSAGE_BYTES) {
+        if (requestId !== undefined) fail(requestId, -32600, "Message too large.");
         return;
       }
       const method = data.method;
