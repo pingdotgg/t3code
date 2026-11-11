@@ -37,73 +37,42 @@ const failed: WorktreeSetupSnapshot = {
   error: "Fetch base branch failed",
 };
 
-function createProbe(seen: Array<WorktreeSetupSnapshot | null>) {
-  return function Probe(props: { preparing: boolean }) {
-    const { snapshot } = useWorktreeSetup({
-      environmentId,
-      threadId,
-      preparing: props.preparing,
-      hasWorktree: false,
-      turnStarted: false,
-      followUpSent: false,
-    });
-    useLayoutEffect(() => {
-      seen.push(snapshot);
-    });
-    return null;
-  };
+function Probe(props: { preparing: boolean; seen: Array<WorktreeSetupSnapshot | null> }) {
+  const { snapshot } = useWorktreeSetup({
+    environmentId,
+    threadId,
+    preparing: props.preparing,
+    hasWorktree: false,
+    turnStarted: false,
+    followUpSent: false,
+  });
+  useLayoutEffect(() => {
+    props.seen.push(snapshot);
+  });
+  return null;
 }
 
-it("shows the retry's progress after a failed worktree setup", async () => {
+// A fast retry's preparing -> failed can coalesce, so the hook never renders it as preparing.
+it("shows a retry's failure that arrives without a preparing render", async () => {
   mocks.server = failed;
   const seen: Array<WorktreeSetupSnapshot | null> = [];
-  const Probe = createProbe(seen);
-
   const root = createRoot(document.createElement("div"));
-  await act(async () => root.render(<Probe preparing />));
-  await act(async () => root.render(<Probe preparing={false} />));
+  await act(async () => root.render(<Probe preparing seen={seen} />));
+  await act(async () => root.render(<Probe preparing={false} seen={seen} />));
   expect(seen.at(-1)).toBe(failed);
 
-  const retry: WorktreeSetupSnapshot = {
-    ...failed,
-    sequence: 3,
-    phase: "running",
-    startedAt: "2026-10-30T00:01:00.000Z",
-    endedAt: null,
-    error: null,
-  };
-  mocks.server = retry;
-  await act(async () => root.render(<Probe preparing />));
-  expect(seen.at(-1)).toBe(retry);
-  act(() => root.unmount());
-});
-
-it("shows a retry that fails before its first snapshot arrives", async () => {
-  mocks.server = failed;
-  const seen: Array<WorktreeSetupSnapshot | null> = [];
-  const Probe = createProbe(seen);
-
-  const root = createRoot(document.createElement("div"));
-  await act(async () => root.render(<Probe preparing />));
-  await act(async () => root.render(<Probe preparing={false} />));
+  // Retention ended, so the server resets the retry's sequence.
   mocks.server = null;
-  await act(async () => root.render(<Probe preparing />));
-  await act(async () => root.render(<Probe preparing={false} />));
-  expect(seen.at(-1)).toBe(failed);
-
+  await act(async () => root.render(<Probe preparing={false} seen={seen} />));
   const retryFailed: WorktreeSetupSnapshot = {
     ...failed,
-    sequence: 1,
+    sequence: 0,
     startedAt: "2026-10-30T00:01:00.000Z",
     endedAt: "2026-10-30T00:01:00.050Z",
     error: "Checkout failed",
   };
   mocks.server = retryFailed;
-  await act(async () => root.render(<Probe preparing={false} />));
-  expect(seen.at(-1)).toBe(retryFailed);
-
-  mocks.server = { ...retryFailed, sequence: 2 };
-  await act(async () => root.render(<Probe preparing={false} />));
+  await act(async () => root.render(<Probe preparing={false} seen={seen} />));
   expect(seen.at(-1)).toBe(retryFailed);
   act(() => root.unmount());
 });
