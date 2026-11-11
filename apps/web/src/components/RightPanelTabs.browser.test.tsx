@@ -6,7 +6,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { render, stubGlobal } from "../../test/render";
-import { createWorkspaceFocusController } from "~/lib/workspaceFocus";
+import { startWorkspaceFocus, workspaceAreaProps } from "~/lib/workspaceFocus";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import { RightPanelTabs } from "./RightPanelTabs";
 
@@ -143,37 +143,44 @@ describe("RightPanelTabs", () => {
 
     expect(navigateHistory).toHaveBeenCalledExactlyOnceWith("back");
   });
-  it("a surface picked from the add menu keeps the focus it takes; dismissing the menu returns to +", async () => {
-    const focus = createWorkspaceFocusController(document);
-    using _focus = { [Symbol.dispose]: focus.dispose };
+  it("a surface picked from the add menu takes focus, even when already open; dismissing the menu returns to +", async () => {
+    using _focus = {
+      [Symbol.dispose]: startWorkspaceFocus({ subscribe: () => () => {} } as never),
+    };
     function Panel() {
       const [activeSurfaceId, setActiveSurfaceId] = useState("terminal:0");
       return (
-        <Tabs
-          activeSurfaceId={activeSurfaceId}
-          filesAvailable
-          onAddFiles={() => {
-            setActiveSurfaceId("terminal:1");
-            focus.request({ area: "panel" });
-          }}
-        >
-          <input
-            key={activeSurfaceId}
-            aria-label={`Content of ${activeSurfaceId}`}
-            data-workspace-focus-default
-          />
-        </Tabs>
+        <>
+          <div {...workspaceAreaProps("composer", 2, "Composer")}>
+            <textarea aria-label="Message" />
+          </div>
+          <Tabs
+            activeSurfaceId={activeSurfaceId}
+            filesAvailable
+            onAddFiles={() => setActiveSurfaceId("terminal:1")}
+          >
+            <input
+              key={activeSurfaceId}
+              aria-label={`Content of ${activeSurfaceId}`}
+              data-workspace-focus-default
+            />
+          </Tabs>
+        </>
       );
     }
     await using _screen = await render(<Panel />);
     const add = page.getByRole("button", { name: "Add panel surface" });
+    const content = page.getByRole("textbox", { name: "Content of terminal:1" });
 
-    await userEvent.click(add);
-    await userEvent.keyboard("f");
-    await expect.element(page.getByRole("menu")).not.toBeInTheDocument();
-    await expect
-      .element(page.getByRole("textbox", { name: "Content of terminal:1" }))
-      .toHaveFocus();
+    for (let pick = 0; pick < 2; pick++) {
+      await userEvent.click(add);
+      await vi.waitFor(() =>
+        expect(document.activeElement?.closest('[role="menu"]')).not.toBeNull(),
+      );
+      await userEvent.keyboard("f");
+      await expect.element(page.getByRole("menu")).not.toBeInTheDocument();
+      await expect.element(content).toHaveFocus();
+    }
 
     await userEvent.click(add);
     await userEvent.keyboard("{Escape}");

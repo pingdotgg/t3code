@@ -104,6 +104,7 @@ import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
+import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
 
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -1043,6 +1044,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const pickSurface = (open: () => void) => () => {
     setSurfacePicked(true);
     open();
+    requestWorkspaceFocus({ area: "panel" });
   };
   const [tabScrollState, setTabScrollState] = useState({
     hasOverflow: false,
