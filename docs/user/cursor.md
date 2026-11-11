@@ -32,6 +32,9 @@ Choose **Sign in**, then open the sign-in page and complete it in your browser. 
 updates automatically when sign-in finishes. This works when connected to a remote environment too.
 On mobile, use **Settings > Providers** for an already configured Cursor instance.
 
+If your Cursor account belongs to several teams, runs use the account's default team. To use another
+team, enter its id in **Team ID**. It applies to browser sign-in and to `CURSOR_API_KEY`.
+
 Each provider instance keeps its own login on the environment that runs it. Your Cursor editor and
 CLI login are separate. A configured `CURSOR_API_KEY` overrides browser sign-in; remove that override
 to use the browser flow.

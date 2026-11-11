@@ -6,6 +6,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -46,14 +47,19 @@ export class CursorSdkCatalog extends Context.Service<
   {
     readonly read: (
       apiKey: string,
+      teamId?: number,
     ) => Effect.Effect<CursorSdkCatalogSnapshot, CursorSdkCatalogError>;
   }
 >()("@t3tools/provider-cursor/server/CursorSdkCatalog") {}
 
 export interface CursorSdkCatalogProbes {
-  readonly readUser: (apiKey: string) => Effect.Effect<SDKUser, CursorSdkCatalogError>;
+  readonly readUser: (
+    apiKey: string,
+    teamId?: number,
+  ) => Effect.Effect<SDKUser, CursorSdkCatalogError>;
   readonly readModels: (
     apiKey: string,
+    teamId?: number,
   ) => Effect.Effect<ReadonlyArray<SDKModel>, CursorSdkCatalogError>;
 }
 
@@ -111,10 +117,17 @@ const makeLiveProbes = Effect.gen(function* () {
     Config.withDefault("https://api.cursor.com"),
     Effect.orDie,
   )).replace(/\/$/, "");
-  const request = Effect.fn("CursorSdkCatalog.request")(function* (apiKey: string, path: string) {
+  const request = Effect.fn("CursorSdkCatalog.request")(function* (
+    apiKey: string,
+    path: string,
+    teamId: number | undefined,
+  ) {
     const response = yield* client
       .execute(
-        HttpClientRequest.get(`${baseUrl}${path}`).pipe(HttpClientRequest.bearerToken(apiKey)),
+        HttpClientRequest.get(`${baseUrl}${path}`).pipe(
+          HttpClientRequest.bearerToken(apiKey),
+          HttpClientRequest.setHeaders(teamId ? { "x-cursor-team-id": String(teamId) } : {}),
+        ),
       )
       .pipe(
         Effect.mapError(
@@ -136,8 +149,8 @@ const makeLiveProbes = Effect.gen(function* () {
     return response;
   });
   return {
-    readUser: (apiKey) =>
-      request(apiKey, "/v1/me").pipe(
+    readUser: (apiKey, teamId) =>
+      request(apiKey, "/v1/me", teamId).pipe(
         Effect.flatMap(HttpClientResponse.schemaBodyJson(CatalogUser)),
         Effect.mapError((cause) =>
           isCatalogError(cause)
@@ -145,8 +158,8 @@ const makeLiveProbes = Effect.gen(function* () {
             : new CursorSdkCatalogError({ authenticationFailure: false, cause }),
         ),
       ),
-    readModels: (apiKey) =>
-      request(apiKey, "/v1/models").pipe(
+    readModels: (apiKey, teamId) =>
+      request(apiKey, "/v1/models", teamId).pipe(
         Effect.flatMap(HttpClientResponse.schemaBodyJson(CatalogModels)),
         Effect.map((body) => body.items),
         Effect.mapError((cause) =>
@@ -158,26 +171,34 @@ const makeLiveProbes = Effect.gen(function* () {
   } satisfies CursorSdkCatalogProbes;
 });
 
+class ModelCacheKey extends Data.Class<{
+  readonly apiKey: string;
+  readonly teamId: number | undefined;
+}> {}
+
 export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function* (
   probes: CursorSdkCatalogProbes,
 ) {
-  const modelCache = yield* Cache.makeWith(probes.readModels, {
-    capacity: 32,
-    timeToLive: (exit) =>
-      Exit.isSuccess(exit) && exit.value.length > 0 ? Duration.minutes(30) : Duration.zero,
-  });
+  const modelCache = yield* Cache.makeWith(
+    (key: ModelCacheKey) => probes.readModels(key.apiKey, key.teamId),
+    {
+      capacity: 32,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value.length > 0 ? Duration.minutes(30) : Duration.zero,
+    },
+  );
   return CursorSdkCatalog.of({
-    read: Effect.fn("CursorSdkCatalog.read")(function (apiKey) {
+    read: Effect.fn("CursorSdkCatalog.read")(function (apiKey, teamId) {
       return Effect.all(
         {
           // Enterprise teams can block account labels while model discovery still works.
           user: Effect.catchIf(
-            probes.readUser(apiKey),
+            probes.readUser(apiKey, teamId),
             (error: CursorSdkCatalogError): boolean => error.accountBlocked,
             () => Effect.undefined,
             (error: CursorSdkCatalogError) => Effect.fail(error),
           ),
-          models: Cache.get(modelCache, apiKey),
+          models: Cache.get(modelCache, new ModelCacheKey({ apiKey, teamId })),
         },
         { concurrency: "unbounded" },
       );
