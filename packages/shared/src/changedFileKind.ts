@@ -26,7 +26,7 @@ const GENERATED_FILES = new Set([
 ]);
 const GENERATED_NAME =
   /(\.generated\.|\.gen\.|\.g\.dart$|\.pb\.go$|_pb2(_grpc)?\.py$|\.pb\.(cc|h)$|\.min\.(js|css)$|\.(js|css)\.map$)/;
-const GENERATED_DIRS = new Set(["__generated__", "generated"]);
+const GENERATED_DIRS = new Set(["__generated__", "_generated", "generated"]);
 
 const MOCK_NAME =
   /(\.snap$|\.(mocks?|fixtures?|stubs?|fakes?)\.[^.]+$|^(mocks?|fixtures?|stubs?|fakes?)([-_.A-Z]|$))/;
@@ -44,7 +44,7 @@ const MOCK_DIRS = new Set([
 ]);
 
 const TEST_NAME =
-  /(\.(test|spec|e2e)\.[^.]+$|_(test|spec)\.[^.]+$|^test_.+\.py$|^conftest\.py$|^(vitest|jest)\.setup\.[^.]+$)/i;
+  /(\.(test|spec|e2e|eval)\.[^.]+$|_(test|spec)\.[^.]+$|^test_.+\.py$|^conftest\.py$|^(vitest|jest)\.setup\.[^.]+$)/i;
 // Case-sensitive: `FooTest.java` is a test class, `Latest.java` is not.
 const CLASS_TEST_NAME = /(Tests?|Spec)\.(java|kt|kts|scala|groovy|cs|php|swift|m)$/;
 const TEST_DIRS = new Set([
@@ -52,6 +52,7 @@ const TEST_DIRS = new Set([
   "__test__",
   "cypress",
   "e2e",
+  "evals",
   "spec",
   "specs",
   "test",
