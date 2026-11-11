@@ -5905,6 +5905,17 @@ body {
   margin-top: var(--composer-corner-h);
 }
 
+@media (width < 40rem) {
+  .composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"] {
+    padding-inline-end: var(--composer-corner-w);
+    mask-image: none;
+  }
+
+  .composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"]::before {
+    display: none;
+  }
+}
+
 .composer-prompt-body [data-composer-placeholder] {
   padding-inline-end: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
 }
