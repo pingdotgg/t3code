@@ -10,13 +10,21 @@ public struct SettingsView: View {
     @State private var saveErrorMessage: String?
     @State private var isPresented = false
     @State private var path: [FeatureSettingsDestination] = []
+    private let showsCloseButton: Bool
 
     public init(model: FeatureRootModel) {
         self.model = model
+        showsCloseButton = true
     }
 
-    init(model: FeatureRootModel, initialDestination: FeatureSettingsDestination?) {
+    /// Pass `showsCloseButton: false` when Settings is a tab, not a sheet.
+    init(
+        model: FeatureRootModel,
+        initialDestination: FeatureSettingsDestination?,
+        showsCloseButton: Bool = true
+    ) {
         self.model = model
+        self.showsCloseButton = showsCloseButton
         _path = State(initialValue: initialDestination.map { [$0] } ?? [])
     }
 
@@ -50,9 +58,11 @@ public struct SettingsView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
-                        .accessibilityIdentifier("settings-done")
+                if showsCloseButton {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Close", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
+                            .accessibilityIdentifier("settings-done")
+                    }
                 }
             }
         }

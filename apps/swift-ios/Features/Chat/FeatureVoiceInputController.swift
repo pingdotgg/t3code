@@ -110,7 +110,7 @@ protocol FeatureVoiceInputAdapter: AnyObject {
 
     func prepare() async throws
     func requestMicrophonePermission() async -> FeatureVoiceMicrophonePermission
-    func startRecording(maximumDuration: TimeInterval) throws
+    func startRecording(maximumDuration: TimeInterval) async throws
     func stopRecording() async throws -> URL
     func transcribe(recordingURL: URL) async throws -> String
     func cancelTranscription() async
@@ -299,7 +299,7 @@ final class FeatureVoiceInputController {
                 return
             }
 
-            try adapter.startRecording(maximumDuration: Self.maximumRecordingDuration)
+            try await adapter.startRecording(maximumDuration: Self.maximumRecordingDuration)
             guard isCurrent(id) else {
                 await cleanupAndRelease(id: id)
                 return

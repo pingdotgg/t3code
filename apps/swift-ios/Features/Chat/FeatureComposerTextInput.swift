@@ -8,6 +8,7 @@ import Observation
 /// offer an image. Bridging `UITextView` buys the native paste menu, image
 /// paste, and internal scrolling once the draft outgrows its viewport cap.
 struct FeatureComposerTextInput: UIViewRepresentable {
+    @SwiftUI.Environment(\.featureThreadViewportHeight) private var viewportHeight
     @Binding var text: String
     // A plain binding, not `FocusState`: SwiftUI ignores writes to a
     // `FocusState` that no `.focused()` view registers with, and a
@@ -192,7 +193,10 @@ struct FeatureComposerTextInput: UIViewRepresentable {
             height: FeatureComposerTextInputSizing.height(
                 fittingHeight: fittingSize.height,
                 lineHeight: uiView.font?.lineHeight ?? 22,
-                availableHeight: proposal.height
+                availableHeight: min(
+                    proposal.height ?? .infinity,
+                    FeatureThreadViewport.panelHeight(.infinity, in: viewportHeight)
+                )
             )
         )
     }

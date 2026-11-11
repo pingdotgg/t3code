@@ -166,7 +166,7 @@ final class FeatureCommandPaletteController: UIViewController,
         selected.backgroundColor = UIColor(white: 0.16, alpha: 1)
         cell.selectedBackgroundView = selected
         cell.accessibilityTraits.insert(.button)
-        if traitCollection.userInterfaceIdiom == .pad && indexPath.row < 9 {
+        if indexPath.row < 9 {
             let shortcut = UILabel()
             shortcut.text = "⌘\(indexPath.row + 1)"
             shortcut.font = .preferredFont(forTextStyle: .footnote)
@@ -196,11 +196,9 @@ final class FeatureCommandPaletteController: UIViewController,
             key(UIKeyCommand.inputUpArrow, title: "Previous Result"),
             key(UIKeyCommand.inputEscape, title: "Close Command Palette"),
         ]
-        if traitCollection.userInterfaceIdiom == .pad {
-            commands.append(key("k", modifiers: .command, title: "Close Command Palette"))
-            commands += results.prefix(9).enumerated().map { index, item in
-                key(String(index + 1), modifiers: .command, title: item.title)
-            }
+        commands.append(key("k", modifiers: .command, title: "Close Command Palette"))
+        commands += results.prefix(9).enumerated().map { index, item in
+            key(String(index + 1), modifiers: .command, title: item.title)
         }
         return commands
     }

@@ -6,8 +6,8 @@ public struct ThreadDetailView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @SwiftUI.Environment(\.t3CodeSizeSteps) private var codeSizeSteps
     @SwiftUI.Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @SwiftUI.Environment(\.openURL) private var parentOpenURL
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
+    @SwiftUI.Environment(FeatureWorkspaceActivity.self) private var workspaceActivity: FeatureWorkspaceActivity?
 
     @Bindable var model: FeatureRootModel
     let thread: FeatureThread
@@ -26,6 +26,7 @@ public struct ThreadDetailView: View {
     let isPresentedThread: Bool
     let rootNavigationDismissalID: UUID?
     let onRootNavigationDismissed: (UUID) -> Void
+    private let onOpenWorkspaceTool: ((FeatureThreadDestination) -> Void)?
     private let draftStore: FeatureComposerDraftStore
 
     @State private var draft = ""
@@ -54,15 +55,18 @@ public struct ThreadDetailView: View {
     @State private var sendFailed = false
     @State private var feedbackMessages: [FeatureMessage] = []
     @State private var feedbackRevision: UInt64 = 0
-    @State private var timelineMessagesCache = FeatureTimelineMessagesCache()
     @State private var feedbackAlertMessage: String?
     @State private var feedbackIdentifier: String?
     @State private var didRestoreDraft = false
     @State private var draftRestoreBaseline: FeatureComposerDraft?
     @State private var missingFileRecoverySnapshot: FeatureComposerDraft?
     @State private var draftSaveTask: Task<Void, Never>?
+    @State private var workflowTask: Task<Void, Never>?
     @State private var draftSaveError: String?
     @State private var toolSurface: FeatureThreadToolSurface?
+    @State private var appliedToolRequest: FeatureThreadToolRequest?
+    @State private var didLoadDetail = false
+    @State private var composerViewportHeight: CGFloat?
     @State private var pendingWorkspaceAction: (@MainActor () -> Void)?
     @State private var rootNavigationDismissal = FeatureRootNavigationDismissal()
     @State private var branchPullRequest: FeaturePullRequest?
@@ -82,8 +86,7 @@ public struct ThreadDetailView: View {
     @State private var showsAgents = false
     @State private var isUpdatingWorkflow = false
     @State private var workflowError: String?
-    @State private var workflowTask: Task<Void, Never>?
-    @StateObject private var v2TimelineState = FeatureV2TimelineState()
+    @State private var v2TimelineState = FeatureV2TimelineState()
     @State private var visitCoordinator = FeatureThreadVisitCoordinator()
     // Plain state, not `FocusState`: the composer's UIKit text view owns
     // focus and mirrors it through this binding, because SwiftUI drops
@@ -104,6 +107,7 @@ public struct ThreadDetailView: View {
         onToolDestinationChange: @escaping (FeatureThreadDestination?) -> Void = { _ in },
         rootNavigationDismissalID: UUID? = nil,
         onRootNavigationDismissed: @escaping (UUID) -> Void = { _ in },
+        onOpenWorkspaceTool: ((FeatureThreadDestination) -> Void)? = nil,
         draftStore: FeatureComposerDraftStore = .shared,
         isPresentedThread: Bool = true
     ) {
@@ -121,6 +125,7 @@ public struct ThreadDetailView: View {
         self.onToolDestinationChange = onToolDestinationChange
         self.rootNavigationDismissalID = rootNavigationDismissalID
         self.onRootNavigationDismissed = onRootNavigationDismissed
+        self.onOpenWorkspaceTool = onOpenWorkspaceTool
         self.draftStore = draftStore
     }
 
@@ -139,7 +144,7 @@ public struct ThreadDetailView: View {
         .sheet(isPresented: $showsLinkedPullRequests, onDismiss: threadPresentationDidDismiss) {
             NavigationStack {
                 FeatureThreadPullRequestsView(model: model, threadID: thread.id,
-                                              fallbackThread: currentThread, openURL: { parentOpenURL($0) })
+                                              fallbackThread: currentThread)
                     .onAppear { rootNavigationDismissal.presentationDidAppear() }
             }
             .preferredColorScheme(.dark)
@@ -224,8 +229,17 @@ public struct ThreadDetailView: View {
     }
 
     private func presentTool(_ surface: FeatureThreadToolSurface) {
-        if let active = toolSurface, (active == .devices) != (surface == .devices) {
-            pendingWorkspaceAction = { toolSurface = surface }
+        if surface.usesInspector, let onOpenWorkspaceTool {
+            if toolSurface != nil {
+                pendingWorkspaceAction = { onOpenWorkspaceTool(surface.destination) }
+                toolSurface = nil
+            } else { onOpenWorkspaceTool(surface.destination) }
+            return
+        }
+        if let current = toolSurface, (current == .devices) != (surface == .devices) {
+            pendingWorkspaceAction = {
+                toolSurface = surface
+            }
             toolSurface = nil
         } else {
             toolSurface = surface
@@ -352,12 +366,18 @@ public struct ThreadDetailView: View {
                 persistDraftBeforeLeaving()
             }
         }
+        .onChange(of: isPresentedThread) { _, isPresented in
+            if !isPresented { workflowTask?.cancel() }
+        }
         .onDisappear {
-            workflowTask?.cancel()
             clearVisibleThread()
             onToolDestinationChange(nil)
-            model.releaseThread(thread.id)
             persistDraftBeforeLeaving()
+            if workspaceActivity?.isActive != false {
+                workflowTask?.cancel()
+                model.releaseThread(thread.id)
+                didLoadDetail = false
+            }
         }
         return AnyView(content)
     }
@@ -365,8 +385,10 @@ public struct ThreadDetailView: View {
     private var loadedThreadContent: AnyView {
         let content = baseThreadContent
         .task(id: thread.id) {
+            guard !didLoadDetail else { return }
             isLoading = true
-            _ = await model.detail(for: thread.id, force: true)
+            let loaded = await model.detail(for: thread.id, force: true)
+            if loaded != nil, !Task.isCancelled { didLoadDetail = true }
             isLoading = false
         }
         .task(id: thread.id) {
@@ -377,7 +399,10 @@ public struct ThreadDetailView: View {
             await restoreDraft(from: composerDraft, key: draftKey)
         }
         .task(id: FeatureThreadToolRequest(destination: initialDestination, requestID: initialDestinationID)) {
-            if let initialDestination { presentTool(FeatureThreadToolSurface(initialDestination)) }
+            let request = FeatureThreadToolRequest(destination: initialDestination, requestID: initialDestinationID)
+            guard let initialDestination, appliedToolRequest != request else { return }
+            appliedToolRequest = request
+            presentTool(FeatureThreadToolSurface(initialDestination))
         }
         .task(id: didRestoreDraft) {
             await restoreQueuedEditIfNeeded()
@@ -411,14 +436,21 @@ public struct ThreadDetailView: View {
         .onChange(of: toolSurface) { _, surface in
             onToolDestinationChange(surface?.destination)
         }
-        .onAppear { updateVisibleThread() }
+        .onChange(of: onOpenWorkspaceTool != nil) { _, _ in
+            if let surface = toolSurface, surface.usesInspector { presentTool(surface) }
+        }
+        .onAppear {
+            updateVisibleThread()
+            onToolDestinationChange(toolSurface?.destination)
+        }
+        .onChange(of: workspaceActivity?.isActive) { _, _ in updateVisibleThread() }
         .task(id: pullRequestObservationID) {
             await observeThreadPullRequest()
         }
-        .task(id: scenePhase == .active ? FeatureThreadVisitRequest(
+        .task(id: scenePhase == .active && isForegroundThread ? FeatureThreadVisitRequest(
             observation: FeatureThreadVisitObservation(thread: currentThread), connection: threadConnectionState
         ) : nil) {
-            guard scenePhase == .active, threadConnectionState == .connected,
+            guard scenePhase == .active, isForegroundThread, threadConnectionState == .connected,
                   let visitor = model.client as? any FeatureThreadVisiting else { return }
             await visitCoordinator.visit(FeatureThreadVisitObservation(thread: currentThread), using: visitor)
         }
@@ -448,10 +480,10 @@ public struct ThreadDetailView: View {
         }
         .task(id: FeatureThreadDeviceObservation(
             threadID: currentThread.id, connection: threadConnectionState,
-            foreground: scenePhase == .active && isPresentedThread && supportsServerBrowser
+            foreground: scenePhase == .active && isForegroundThread && supportsServerBrowser
         )) {
             browserObserver?.suspend()
-            guard scenePhase == .active, isPresentedThread, supportsServerBrowser,
+            guard scenePhase == .active, isForegroundThread, supportsServerBrowser,
                   threadConnectionState == .connected,
                   let browser = model.client as? any FeatureServerBrowserManaging else { return }
             let observer = FeatureServerBrowserModel(threadID: currentThread.id, client: browser)
@@ -460,7 +492,7 @@ public struct ThreadDetailView: View {
             await observer.watch()
         }
         .onChange(of: browserObserver?.revealRequest) { _, request in
-            guard let request, isPresentedThread, scenePhase == .active else { return }
+            guard let request, isForegroundThread, scenePhase == .active else { return }
             if toolSurface == nil || request.force { presentTool(.browser(request.tabID)) }
             browserObserver?.consumeReveal()
         }
@@ -471,7 +503,7 @@ public struct ThreadDetailView: View {
     }
 
     private var supportsServerBrowser: Bool {
-        model.snapshot.environments.first { $0.id == currentThread.environmentID }?.supportsServerBrowser == true
+        model.snapshotExceptThreads.environments.first { $0.id == currentThread.environmentID }?.supportsServerBrowser == true
     }
 
     private var baseThreadContent: AnyView {
@@ -507,17 +539,6 @@ public struct ThreadDetailView: View {
             get: { linkedPromptNotice != nil }, set: { if !$0 { linkedPromptNotice = nil } }
         )) { Button("OK") { linkedPromptNotice = nil } }
         message: { Text(linkedPromptNotice ?? "") }
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(false)
-        .t3NavigationChrome()
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                threadHeaderTitle
-            }
-            ToolbarItem(placement: .primaryAction) {
-                threadActionsMenu
-            }
-        }
         return AnyView(content)
     }
 
@@ -649,8 +670,13 @@ public struct ThreadDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .environment(\.openURL, transcriptOpenURL)
+        .modifier(FeatureTranscriptOpenURL(route: routeTranscriptURL))
         .environment(\.featureThreadPresentationDismissal, transcriptPresentationDismissal)
+        .modifier(FeatureThreadNavigationChrome(
+            title: currentThread.title, header: AnyView(threadHeaderTitle),
+            actions: AnyView(threadActionsMenu), showsDirectTools: horizontalSizeClass == .regular,
+            open: presentTool
+        ))
         .onChange(of: rootNavigationDismissalID, initial: true) { _, _ in
             dismissPresentationsForRootNavigation()
         }
@@ -685,8 +711,11 @@ public struct ThreadDetailView: View {
         }
     }
 
+    /// Tracks only the detail's chrome. The transcript reads message content
+    /// itself (`FeatureTranscriptContent`), so streamed text does not re-render this screen.
     private var detail: FeatureThreadDetail? {
-        model.details[thread.id]
+        model.observeDetailChrome(for: thread.id)
+        return model.untrackedDetail(for: thread.id)
     }
 
     private var currentThread: FeatureThread {
@@ -770,7 +799,7 @@ public struct ThreadDetailView: View {
                     Image(systemName: "arrow.triangle.branch")
                     Text(headerBranch)
                         .lineLimit(1)
-                    if let environmentName = currentThread.homeEnvironmentLabel(in: model.snapshot) {
+                    if let environmentName = currentThread.homeEnvironmentLabel(in: model.snapshotExceptThreads) {
                         Text("·")
                         Text(environmentName)
                             .lineLimit(1)
@@ -860,9 +889,7 @@ public struct ThreadDetailView: View {
                     }
                 }
                 if let pullRequest = currentPullRequest {
-                    Button {
-                        parentOpenURL(pullRequest.url)
-                    } label: {
+                    Link(destination: pullRequest.url) {
                         Label("Open pull request #\(pullRequest.number)", systemImage: "arrow.triangle.pull")
                     }
                 }
@@ -996,21 +1023,21 @@ public struct ThreadDetailView: View {
                         onNewTaskFromThread(currentThread)
                     }
                 }
-                Button { toolSurface = .files } label: {
+                Button { presentTool(.files) } label: {
                     Label("Files", systemImage: "folder")
                 }
-                Button { toolSurface = .review } label: {
+                Button { presentTool(.review) } label: {
                     Label("Review changes", systemImage: "doc.text.magnifyingglass")
                 }
-                Button { toolSurface = .sourceControl(.git) } label: {
+                Button { presentTool(.sourceControl(.git)) } label: {
                     Label("Source control", systemImage: "arrow.triangle.branch")
                 }
-                Button { toolSurface = .terminal(nil) } label: {
+                Button { presentTool(.terminal(nil)) } label: {
                     Label("Terminal", systemImage: "terminal")
                 }
                 FeatureProjectScriptsMenu(client: model.client, threadID: thread.id,
                     onError: { scriptLaunchError = $0 }) {
-                    toolSurface = .terminal($0)
+                    presentTool(.terminal($0))
                 }
                 if supportsServerBrowser {
                     Button("Browser (\(browserObserver?.count ?? 0))", systemImage: "globe") {
@@ -1018,7 +1045,7 @@ public struct ThreadDetailView: View {
                     }
                 }
                 if remoteDeviceCount > 0 {
-                    Button("Devices (\(remoteDeviceCount))", systemImage: "iphone") { toolSurface = .devices }
+                    Button("Devices (\(remoteDeviceCount))", systemImage: "iphone") { presentTool(.devices) }
                 }
             }
             Section {
@@ -1066,7 +1093,7 @@ public struct ThreadDetailView: View {
     private func changePullRequest(url: String, linked: Bool) {
         Task {
             do {
-                let repository = model.snapshot.projects.first { $0.id == currentThread.projectID }?.repositoryIdentity
+                let repository = model.snapshotExceptThreads.projects.first { $0.id == currentThread.projectID }?.repositoryIdentity
                 let resolved = linked ? try FeaturePullRequestLinkInput.resolve(url, repository: repository) : url
                 try await model.client.setThreadPullRequest(id: thread.id, url: resolved, linked: linked)
             }
@@ -1110,7 +1137,7 @@ public struct ThreadDetailView: View {
 
     private var threadConnectionState: FeatureConnection.State? {
         guard let environmentID = currentThread.environmentID else { return nil }
-        return model.snapshot.environments.first { $0.id == environmentID }?.connectionState
+        return model.snapshotExceptThreads.environments.first { $0.id == environmentID }?.connectionState
     }
 
     private var queueControlsAvailable: Bool {
@@ -1325,8 +1352,13 @@ public struct ThreadDetailView: View {
                 FeatureTranscriptCollectionView(
                     threadID: thread.id,
                     environmentID: currentThread.environmentID,
-                    messages: timelineMessages(detail.messages),
-                    openURL: transcriptOpenURL,
+                    content: FeatureTranscriptContent(
+                        model: model,
+                        threadID: thread.id,
+                        feedbackMessages: feedbackMessages,
+                        feedbackRevision: feedbackRevision,
+                        expandedTurnFoldIDs: expandedTurnFoldIDs
+                    ),
                     imageContext: markdownImageContext,
                     attachmentContext: (model.client as? any FeatureAttachmentAssetResolving).map {
                         FeatureAttachmentContext(
@@ -1346,7 +1378,6 @@ public struct ThreadDetailView: View {
                     },
                     onOpenThread: openRelatedThread,
                     presentationDismissal: transcriptPresentationDismissal,
-                    renderUpdate: timelineRenderUpdate,
                     expandedTurnFoldIDs: expandedTurnFoldIDs,
                     dynamicTypeSize: dynamicTypeSize,
                     codeSizeSteps: codeSizeSteps,
@@ -1451,7 +1482,7 @@ public struct ThreadDetailView: View {
                         environmentIsConnected: threadConnectionState == .connected,
                         attachmentUploads: model.attachmentUploads,
                         attachmentPreferences: currentThread.environmentID.flatMap {
-                            model.snapshot.preferencesByEnvironment?[$0]
+                            model.snapshotExceptThreads.preferencesByEnvironment?[$0]
                         } ?? FeatureEnvironmentPreferences(),
                         providers: threadProviders,
                         threadSelection: currentSelection,
@@ -1493,11 +1524,11 @@ public struct ThreadDetailView: View {
                         onSendWithDelivery: model.client is any FeatureMessageDeliveryManaging
                             ? { send(delivery: $0) } : nil,
                         allowProviderSwitch: detail.allowsProviderSwitch == true,
-                        followUpBehavior: model.snapshot.settings.followUpBehavior,
+                        followUpBehavior: model.snapshotExceptThreads.settings.followUpBehavior,
                         interactionMode: effectiveInteractionMode,
                         onInteractionModeChange: queuedEdit == nil ? { draftInteractionMode = $0 } : nil,
                         isSendEnabled: canSubmitComposer,
-                        composerEnterBehavior: model.snapshot.settings.composerEnterBehavior,
+                        composerEnterBehavior: model.snapshotExceptThreads.settings.composerEnterBehavior,
                         retainedAttachmentCount: queuedEdit?.existingAttachments.count ?? 0,
                         submitLabel: queuedEdit == nil ? nil : "Save message",
                         isModelSelectionEnabled: queuedEdit == nil,
@@ -1517,12 +1548,18 @@ public struct ThreadDetailView: View {
                     .disabled(isRewinding || isTransferringDraft || isUpdatingQueue)
                 }
             }
+            .frame(maxWidth: T3Metrics.readingWidth + 24)
+            .frame(maxWidth: .infinity)
             .background(T3Colors.background)
         }
+        .onGeometryChange(for: CGFloat.self) { geometry in
+            (geometry.size.height / 40).rounded(.down) * 40
+        } action: { composerViewportHeight = $0 }
+        .environment(\.featureThreadViewportHeight, composerViewportHeight)
     }
 
     private var composerRepository: String? {
-        guard let key = model.snapshot.projects.first(where: { $0.id == currentThread.projectID })?.repositoryIdentity?.groupingKey,
+        guard let key = model.snapshotExceptThreads.projects.first(where: { $0.id == currentThread.projectID })?.repositoryIdentity?.groupingKey,
               let slash = key.firstIndex(of: "/") else { return nil }
         return String(key[key.index(after: slash)...])
     }
@@ -1565,12 +1602,12 @@ public struct ThreadDetailView: View {
     private var threadProviders: [FeatureProvider] {
         ThreadComposerProviderCatalog.providers(
             for: currentThread,
-            in: model.snapshot
+            in: model.snapshotExceptThreads
         )
     }
 
     private var workspaceCatalogPath: String? {
-        currentThread.worktreePath ?? model.snapshot.projects.first { $0.id == currentThread.projectID }?.path
+        currentThread.worktreePath ?? model.snapshotExceptThreads.projects.first { $0.id == currentThread.projectID }?.path
     }
 
     private var workspaceCatalogID: String {
@@ -1590,59 +1627,15 @@ public struct ThreadDetailView: View {
             .workspaceCatalog(cwd: workspaceCatalogPath).skills ?? []
     }
 
-    private var timelineRenderUpdate: FeatureDetailRenderUpdate? {
-        guard !feedbackMessages.isEmpty else {
-            return model.detailRenderUpdates[thread.id]
-        }
-        let revision = model.detailRevisions[thread.id] ?? 0
-        return FeatureDetailRenderUpdate(
-            baseRevision: revision,
-            revision: (UInt64.max / 2) &+ revision &+ feedbackRevision,
-            change: .full
-        )
-    }
-
     private var expandedTurnFoldIDs: Set<String>? {
         guard v2InspectionContext != nil else { return nil }
         return Set(v2TimelineState.expandedIDs.filter { $0.hasPrefix("v2-fold:") })
     }
 
-    /// Body runs for many reasons that do not change the transcript, so reuse
-    /// the last result until the detail revision, folds, or feedback change.
-    private func timelineMessages(_ messages: [FeatureMessage]) -> [FeatureMessage] {
-        let key = FeatureTimelineMessagesCache.Key(
-            threadID: thread.id,
-            detailRevision: model.detailRevisions[thread.id] ?? 0,
-            expandedTurnFoldIDs: expandedTurnFoldIDs,
-            feedbackRevision: feedbackRevision
-        )
-        if timelineMessagesCache.key == key { return timelineMessagesCache.messages }
-        let result = uncachedTimelineMessages(messages, expandedTurnFoldIDs: key.expandedTurnFoldIDs)
-        timelineMessagesCache.key = key
-        timelineMessagesCache.messages = result
-        return result
-    }
-
-    private func uncachedTimelineMessages(
-        _ messages: [FeatureMessage],
-        expandedTurnFoldIDs: Set<String>?
-    ) -> [FeatureMessage] {
-        if let expandedTurnFoldIDs {
-            // Folds are display-only. The model retains source order and original action targets.
-            return FeatureV2TurnFolding.messages(messages, expandedIDs: expandedTurnFoldIDs) + feedbackMessages
-        }
-        guard !feedbackMessages.isEmpty else { return messages }
-        return (messages + feedbackMessages).sorted {
-            if $0.createdAt == $1.createdAt {
-                return $0.id < $1.id
-            }
-            return $0.createdAt < $1.createdAt
-        }
-    }
 
     private var markdownImageContext: MarkdownImageContext? {
         guard let resolver = model.client as? any FeatureWorkspaceAssetResolving,
-              let project = model.snapshot.projects.first(where: {
+              let project = model.snapshotExceptThreads.projects.first(where: {
                   $0.id == currentThread.projectID
               }) else {
             return nil
@@ -1741,7 +1734,7 @@ public struct ThreadDetailView: View {
                 attachments: [], runtimeMode: effectiveRuntimeMode, interactionMode: effectiveInteractionMode
             ))
             guard sent else { throw FeatureCapabilityUnavailable("Message delivery") }
-        }, canEnterFullscreen: scenePhase == .active && isPresentedThread
+        }, canEnterFullscreen: scenePhase == .active && isForegroundThread
             && detail?.approvals.isEmpty != false && detail?.userInputs.isEmpty != false)
     }
 
@@ -1785,6 +1778,8 @@ public struct ThreadDetailView: View {
     private func performWorkflow(_ action: @escaping @MainActor (any FeatureThreadWorkflowClient) async throws -> String) {
         guard !isUpdatingWorkflow, let client = model.client as? any FeatureThreadWorkflowClient else { return }
         isUpdatingWorkflow = true
+        // Tab changes keep this work. Leaving the thread cancels it before
+        // loading a related thread can replace the active detail stream.
         workflowTask = Task {
             defer { isUpdatingWorkflow = false }
             do {
@@ -1815,7 +1810,7 @@ public struct ThreadDetailView: View {
             ? FeatureComposerSendPresentation.resolve(
                 isWorking: detail?.execution?.activeRun != nil || currentThread.state == .working || isCompacting,
                 canSteer: messageDeliveries.contains(.steer),
-                followUpBehavior: model.snapshot.settings.followUpBehavior,
+                followUpBehavior: model.snapshotExceptThreads.settings.followUpBehavior,
                 supportsExplicitDelivery: messageDeliveries.contains(.queue)
             ).delivery : .auto)
         guard detail?.execution?.isReadOnly != true else { return }
@@ -2054,7 +2049,7 @@ public struct ThreadDetailView: View {
     }
 
     private var canSubmitComposer: Bool {
-        if let environment = model.snapshot.environments.first(where: { $0.id == currentThread.environmentID }),
+        if let environment = model.snapshotExceptThreads.environments.first(where: { $0.id == currentThread.environmentID }),
            environment.connectionState == .connected,
            environment.permissions?.grants("orchestration:operate") != true { return false }
         guard didRestoreQueuedEdit else { return false }
@@ -2341,9 +2336,13 @@ public struct ThreadDetailView: View {
         }
     }
 
+    private var isForegroundThread: Bool {
+        isPresentedThread && (workspaceActivity?.isActive ?? true)
+    }
+
     private func updateVisibleThread() {
         guard let environmentID = currentThread.environmentID, let wireID = currentThread.wireID else { return }
-        if scenePhase == .active {
+        if scenePhase == .active && isForegroundThread {
             PlatformVisibleThreadTracker.shared.setVisibleThread(environmentID: environmentID, wireID: wireID)
         } else {
             PlatformVisibleThreadTracker.shared.clear(environmentID: environmentID, wireID: wireID)
@@ -2472,73 +2471,71 @@ public struct ThreadDetailView: View {
         persistDraftImmediately()
     }
 
-    /// Routes transcript links in-app: workspace files open the Files sheet,
+    /// Routes transcript links in-app: workspace files open the Files browser,
     /// media opens the native preview, artifact templates fill the composer.
     /// Installed on the SwiftUI tree and injected into every hosted cell,
     /// because `UIHostingConfiguration` does not inherit the parent
     /// environment across the representable boundary.
-    private var transcriptOpenURL: OpenURLAction {
-        OpenURLAction { url in
-            if handleArtifactTemplateURL(url) { return .handled }
-            if handleTypedMediaPreviewURL(url) { return .handled }
-            if PlatformDeepLinkParser.isThreadLink(url) {
-                if let environmentID = currentThread.environmentID,
-                   let route = try? PlatformDeepLinkParser.threadLinkRoute(
-                    url, environmentID: environmentID, in: model.snapshot
-                ), let scopedURL = route.url {
-                    parentOpenURL(scopedURL)
-                } else {
-                    parentOpenURL(url)
-                }
-                return .handled
+    private func routeTranscriptURL(_ url: URL, parent: OpenURLAction) -> OpenURLAction.Result {
+        if handleArtifactTemplateURL(url) { return .handled }
+        if handleTypedMediaPreviewURL(url) { return .handled }
+        if PlatformDeepLinkParser.isThreadLink(url) {
+            if let environmentID = currentThread.environmentID,
+               let route = try? PlatformDeepLinkParser.threadLinkRoute(
+                url, environmentID: environmentID, in: model.snapshotExceptThreads
+            ), let scopedURL = route.url {
+                parent(scopedURL)
+            } else {
+                parent(url)
             }
-            if PlatformInAppLinkRouter.route(for: url, in: model.snapshot) != nil {
-                parentOpenURL(url)
-                return .handled
-            }
-            if case let .workspaceFile(hostPath) = MarkdownImageSource.classify(
-                url.absoluteString, workspaceRoot: markdownImageContext?.workspaceRoot
-            ) {
-                let kind = FeatureFilePreviewKind.infer(path: hostPath)
-                if kind.opensLinkedMediaPreview {
-                    resolveHostMedia(path: hostPath, kind: kind)
-                    return .handled
-                }
-            }
-            guard let workspaceRoot = markdownImageContext?.workspaceRoot,
-                  let path = MarkdownWorkspaceFileLink.relativePath(
-                      for: url,
-                      workspaceRoot: workspaceRoot
-                  ) else {
-                if url.scheme?.lowercased() == "http" || url.scheme?.lowercased() == "https",
-                   let kind = FeatureLinkedMediaPreview.previewKind(for: url) {
-                    linkedMediaPreview = FeatureLinkedMediaPreview(
-                        source: url.isFileURL ? .file(url) : .remote(url),
-                        kind: kind,
-                        fileName: url.lastPathComponent
-                    )
-                    return .handled
-                }
-                if url.isFileURL {
-                    let path = url.path
-                    let kind = FeatureFilePreviewKind.infer(path: path)
-                    if kind.opensLinkedMediaPreview {
-                        resolveHostMedia(path: path, kind: kind)
-                        return .handled
-                    }
-                }
-                if url.scheme?.lowercased() == "t3code" { return .discarded }
-                parentOpenURL(url)
-                return .handled
-            }
-            let kind = FeatureFilePreviewKind.infer(path: path)
-            if kind.opensLinkedMediaPreview {
-                resolveHostMedia(path: path, kind: kind)
-                return .handled
-            }
-            toolSurface = .file(path, line: nil)
             return .handled
         }
+        if PlatformInAppLinkRouter.route(for: url, in: model.snapshotExceptThreads) != nil {
+            parent(url)
+            return .handled
+        }
+        if case let .workspaceFile(hostPath) = MarkdownImageSource.classify(
+            url.absoluteString, workspaceRoot: markdownImageContext?.workspaceRoot
+        ) {
+            let kind = FeatureFilePreviewKind.infer(path: hostPath)
+            if kind.opensLinkedMediaPreview {
+                resolveHostMedia(path: hostPath, kind: kind)
+                return .handled
+            }
+        }
+        guard let workspaceRoot = markdownImageContext?.workspaceRoot,
+              let path = MarkdownWorkspaceFileLink.relativePath(
+                  for: url,
+                  workspaceRoot: workspaceRoot
+              ) else {
+            if url.scheme?.lowercased() == "http" || url.scheme?.lowercased() == "https",
+               let kind = FeatureLinkedMediaPreview.previewKind(for: url) {
+                linkedMediaPreview = FeatureLinkedMediaPreview(
+                    source: url.isFileURL ? .file(url) : .remote(url),
+                    kind: kind,
+                    fileName: url.lastPathComponent
+                )
+                return .handled
+            }
+            if url.isFileURL {
+                let path = url.path
+                let kind = FeatureFilePreviewKind.infer(path: path)
+                if kind.opensLinkedMediaPreview {
+                    resolveHostMedia(path: path, kind: kind)
+                    return .handled
+                }
+            }
+            if url.scheme?.lowercased() == "t3code" { return .discarded }
+            parent(url)
+            return .handled
+        }
+        let kind = FeatureFilePreviewKind.infer(path: path)
+        if kind.opensLinkedMediaPreview {
+            resolveHostMedia(path: path, kind: kind)
+            return .handled
+        }
+        presentTool(.file(path, line: nil))
+        return .handled
     }
 
     private var composerDraft: FeatureComposerDraft {
@@ -2612,8 +2609,59 @@ enum ThreadRefreshPresentation: Equatable {
     }
 }
 
-/// Last `timelineMessages` result. A plain class, so filling it during body
-/// does not invalidate the view.
+/// The transcript's rows. Only the transcript coordinator reads them, outside
+/// Observation (`FeatureRootModel.observeTranscript`). If a SwiftUI body read
+/// message content, every streamed chunk would re-render the thread screen,
+/// its composer, and its menus.
+@MainActor
+private struct FeatureTranscriptContent {
+    let model: FeatureRootModel
+    let threadID: String
+    let feedbackMessages: [FeatureMessage]
+    let feedbackRevision: UInt64
+    let expandedTurnFoldIDs: Set<String>?
+
+    var renderUpdate: FeatureDetailRenderUpdate? {
+        guard !feedbackMessages.isEmpty else {
+            return model.untrackedRenderUpdate(for: threadID)
+        }
+        let revision = model.untrackedDetailRevision(for: threadID)
+        return FeatureDetailRenderUpdate(
+            baseRevision: revision,
+            revision: (UInt64.max / 2) &+ revision &+ feedbackRevision,
+            change: .full
+        )
+    }
+
+    /// Reuses the last result until the detail revision, folds, or feedback change.
+    func messages(cache: FeatureTimelineMessagesCache) -> [FeatureMessage] {
+        let key = FeatureTimelineMessagesCache.Key(
+            threadID: threadID,
+            detailRevision: model.untrackedDetailRevision(for: threadID),
+            expandedTurnFoldIDs: expandedTurnFoldIDs,
+            feedbackRevision: feedbackRevision
+        )
+        if cache.key == key { return cache.messages }
+        let messages = model.untrackedDetail(for: threadID)?.messages ?? []
+        let result: [FeatureMessage]
+        if let expandedTurnFoldIDs {
+            // Folds are display-only. The model retains source order and original action targets.
+            result = FeatureV2TurnFolding.messages(messages, expandedIDs: expandedTurnFoldIDs) + feedbackMessages
+        } else if feedbackMessages.isEmpty {
+            result = messages
+        } else {
+            result = (messages + feedbackMessages).sorted {
+                $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt
+            }
+        }
+        cache.key = key
+        cache.messages = result
+        return result
+    }
+}
+
+/// Last `FeatureTranscriptContent.messages` result. A plain class, so
+/// filling it during body does not invalidate the view.
 @MainActor
 private final class FeatureTimelineMessagesCache {
     struct Key: Equatable {
@@ -2670,7 +2718,7 @@ private struct FeatureThreadToolRequest: Hashable {
     let requestID: UUID?
 }
 
-private enum FeatureThreadToolSurface: Identifiable, Equatable {
+enum FeatureThreadToolSurface: Identifiable, Equatable {
     case files
     case file(String, line: Int?)
     case review
@@ -2704,6 +2752,13 @@ private enum FeatureThreadToolSurface: Identifiable, Equatable {
     }
 
     var id: FeatureThreadDestination { destination }
+
+    var usesInspector: Bool {
+        switch self {
+        case .files, .file, .sourceControl: true
+        default: false
+        }
+    }
 
     var isTerminal: Bool {
         if case .terminal = self { return true }
@@ -2866,6 +2921,16 @@ enum FeatureComposerDraftRestoration {
     }
 }
 
+/// Keep the changing system URL action below the thread screen's body.
+private struct FeatureTranscriptOpenURL: ViewModifier {
+    @SwiftUI.Environment(\.openURL) private var parent
+    let route: (URL, OpenURLAction) -> OpenURLAction.Result
+
+    func body(content: Content) -> some View {
+        content.environment(\.openURL, OpenURLAction { route($0, parent) })
+    }
+}
+
 /// A recycled transcript surface. SwiftUI still owns each message's rendering,
 /// while UIKit keeps offscreen messages out of the active view hierarchy.
 private struct FeatureTranscriptCollectionView: UIViewRepresentable {
@@ -2878,8 +2943,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
     let threadID: String
     let environmentID: String?
-    let messages: [FeatureMessage]
-    let openURL: OpenURLAction
+    let content: FeatureTranscriptContent
     let imageContext: MarkdownImageContext?
     let attachmentContext: FeatureAttachmentContext?
     let skills: [FeatureProviderSkill]
@@ -2891,7 +2955,6 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     let onFork: (FeatureThreadWorkflowSource) -> Void
     let onOpenThread: (String) -> Void
     let presentationDismissal: FeatureThreadPresentationDismissal
-    let renderUpdate: FeatureDetailRenderUpdate?
     let expandedTurnFoldIDs: Set<String>?
     let dynamicTypeSize: DynamicTypeSize
     let codeSizeSteps: Int
@@ -2930,7 +2993,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     }
 
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
-        context.coordinator.currentOpenURL = openURL
+        context.coordinator.currentOpenURL = context.environment.openURL
         context.coordinator.canEditMessage = canEditMessage
         context.coordinator.onEditMessage = onEditMessage
         context.coordinator.canEditPendingMessage = canEditPendingMessage
@@ -2944,18 +3007,34 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         context.coordinator.currentEmbeddedContext = embeddedContext
         context.coordinator.onFork = onFork
         context.coordinator.onOpenThread = onOpenThread
-        context.coordinator.update(
+        let coordinator = context.coordinator
+        // Streamed text arrives through the model's transcript observer, not
+        // through SwiftUI, and reapplies these inputs with fresh rows.
+        coordinator.applyContent = { [weak collectionView] in
+            guard let collectionView else { return }
+            apply(to: collectionView, coordinator: coordinator, inspectionChanged: false)
+        }
+        coordinator.observe(content.model, threadID: threadID)
+        apply(to: collectionView, coordinator: coordinator, inspectionChanged: inspectionChanged)
+    }
+
+    static func dismantleUIView(_ collectionView: UICollectionView, coordinator: Coordinator) {
+        coordinator.stopObserving()
+    }
+
+    private func apply(to collectionView: UICollectionView, coordinator: Coordinator, inspectionChanged: Bool) {
+        coordinator.update(
             threadID: threadID,
             environmentID: environmentID,
             inspectionChanged: inspectionChanged,
-            messages: messages,
+            messages: content.messages(cache: coordinator.timelineCache),
             imageContext: imageContext,
             attachmentContext: attachmentContext,
             skills: skills,
             workflows: workflows,
             isWorkflowBusy: isWorkflowBusy,
             presentationDismissal: presentationDismissal,
-            renderUpdate: renderUpdate,
+            renderUpdate: content.renderUpdate,
             expandedTurnFoldIDs: expandedTurnFoldIDs,
             dynamicTypeSize: dynamicTypeSize,
             codeSizeSteps: codeSizeSteps,
@@ -2978,7 +3057,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let sideInset = max(18, (width - T3Metrics.readingWidth) / 2)
             let itemSize = NSCollectionLayoutSize(
                 widthDimension: .fractionalWidth(1),
-                heightDimension: .estimated(120)
+                heightDimension: .estimated(BottomAnchoredTranscriptCollectionView.estimatedRowHeight)
             )
             let item = NSCollectionLayoutItem(layoutSize: itemSize)
             let group = NSCollectionLayoutGroup.vertical(
@@ -3040,6 +3119,94 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var markdownPrefetches: [String: MarkdownPrefetch] = [:]
         private var onLoadEarlier: (() -> Void)?
         private var onDismissKeyboard: (() -> Void)?
+        let timelineCache = FeatureTimelineMessagesCache()
+        var applyContent: (() -> Void)?
+        private var observation: (model: FeatureRootModel, threadID: String, token: UUID)?
+        private var selectingMessageID: String?
+        /// Rows last dequeued as `TranscriptTextMessageCell`. A row that switches
+        /// between that and a SwiftUI cell must be reloaded, not reconfigured.
+        private var nativeTextIDs: Set<String> = []
+
+        func nativeTextContent(for messageID: String) -> TranscriptTextMessageCell.Content? {
+            guard let message = messagesByID[messageID],
+                  message.role == .assistant,
+                  message.state != .streaming,
+                  message.attachments.isEmpty,
+                  message.context == nil,
+                  !message.text.isEmpty,
+                  messageID != selectingMessageID,
+                  !TranscriptDebug.forcesSelectableText,
+                  !message.text.contains("t3-context://"),
+                  let document = MarkdownRenderCache.shared.documentImmediately(for: MarkdownContentRevision(message.text))
+            else { return nil }
+            let segments = MarkdownTextRun.segments(document.blocks, spacing: 12)
+            let runs = segments.compactMap { segment -> MarkdownTextRun? in
+                if case let .text(run) = segment { run } else { nil }
+            }
+            guard !runs.isEmpty, runs.count == segments.count else { return nil }
+            var timestamp: String?
+            if let source = message.v2Timeline, source.itemType == "assistant_message", source.status == "completed" {
+                timestamp = (NativeTimestampParser.parse(source.updatedAt) ?? message.createdAt)
+                    .formatted(.dateTime.hour().minute())
+            }
+            var fork: TranscriptTextMessageCell.Content.Fork?
+            if message.v2FoldID == nil, let source = message.v2Timeline?.workflowSource, currentWorkflows.canFork(source) {
+                fork = .init(itemID: source.itemID, isBusy: currentIsWorkflowBusy) { [weak self] in self?.onFork?(source) }
+            }
+            return TranscriptTextMessageCell.Content(
+                runs: runs,
+                skills: currentSkills,
+                dynamicTypeSize: currentDynamicTypeSize ?? .large,
+                timestamp: timestamp,
+                fork: fork,
+                messageID: messageID,
+                onOpenURL: { [weak self] url in _ = self?.currentOpenURL?(url) },
+                onCopy: { [weak self] in self?.copy(message) }
+            )
+        }
+
+        /// Reconfigures rows in place, reloading the ones whose cell class changes.
+        private func refresh(_ ids: [String], in snapshot: inout NSDiffableDataSourceSnapshot<Section, String>) {
+            var reconfigure: [String] = []
+            var reload: [String] = []
+            for id in ids {
+                if nativeTextIDs.contains(id) == (nativeTextContent(for: id) != nil) {
+                    reconfigure.append(id)
+                } else {
+                    reload.append(id)
+                }
+            }
+            if !reconfigure.isEmpty { snapshot.reconfigureItems(reconfigure) }
+            if !reload.isEmpty { snapshot.reloadItems(reload) }
+        }
+        private var isContentRefreshScheduled = false
+
+        func observe(_ model: FeatureRootModel, threadID: String) {
+            guard observation?.model !== model || observation?.threadID != threadID else { return }
+            stopObserving()
+            let token = model.observeTranscript(of: threadID) { [weak self] in
+                self?.scheduleContentRefresh()
+            }
+            observation = (model, threadID, token)
+        }
+
+        func stopObserving() {
+            if let observation {
+                observation.model.stopObservingTranscript(of: observation.threadID, token: observation.token)
+            }
+            observation = nil
+        }
+
+        /// One event can bump a detail more than once; apply them together.
+        private func scheduleContentRefresh() {
+            guard !isContentRefreshScheduled else { return }
+            isContentRefreshScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                isContentRefreshScheduled = false
+                applyContent?()
+            }
+        }
 
         deinit {
             markdownPrefetches.values.forEach { $0.task.cancel() }
@@ -3050,11 +3217,25 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             contextMenuConfigurationForItemAt indexPath: IndexPath,
             point: CGPoint
         ) -> UIContextMenuConfiguration? {
+            // The message being selected belongs to its text views' own long press.
             guard let messageID = dataSource?.itemIdentifier(for: indexPath),
-                  messagesByID[messageID]?.role == .user,
-                  canEditMessage?(messageID) == true || canEditPendingMessage?(messageID) == true else { return nil }
+                  messageID != selectingMessageID,
+                  let message = messagesByID[messageID],
+                  message.role == .user || message.role == .assistant else { return nil }
+            let hasText = !message.text.isEmpty && message.workflowScript != true
+            let canEdit = message.role == .user
+                && (canEditMessage?(messageID) == true || canEditPendingMessage?(messageID) == true)
+            guard hasText || canEdit else { return nil }
             return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
                 var actions: [UIAction] = []
+                if hasText {
+                    actions.append(UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                        self?.copy(message)
+                    })
+                    actions.append(UIAction(title: "Select Text", image: UIImage(systemName: "character.cursor.ibeam")) { [weak self] _ in
+                        self?.beginSelecting(messageID)
+                    })
+                }
                 if self?.canEditPendingMessage?(messageID) == true {
                     actions.append(UIAction(title: "Edit pending message", image: UIImage(systemName: "pencil")) { [weak self] _ in
                         guard self?.canEditPendingMessage?(messageID) == true else { return }
@@ -3070,8 +3251,36 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             }
         }
 
+        private func copy(_ message: FeatureMessage) {
+            let source = currentAttachmentContext?.environmentID.map {
+                ComposerContextClipboardFragment.Source(
+                    environmentId: $0,
+                    threadId: message.v2Timeline?.sourceThreadID ?? currentAttachmentContext?.wireThreadID,
+                    messageId: message.v2Timeline?.messageID ?? message.id
+                )
+            }
+            if (try? FeatureContextClipboard.write(text: message.text, source: source, context: message.context)) != true {
+                UIPasteboard.general.string = message.text
+            }
+        }
+
+        /// Text draws without text views while scrolling. One message at a time
+        /// switches to selectable text views when the reader asks for it.
+        private func beginSelecting(_ messageID: String) {
+            guard let dataSource else { return }
+            let previous = selectingMessageID
+            selectingMessageID = messageID
+            var snapshot = dataSource.snapshot()
+            let ids = [previous, messageID].compactMap { $0 }.filter { snapshot.indexOfItem($0) != nil }
+            refresh(ids, in: &snapshot)
+            dataSource.apply(snapshot, animatingDifferences: false)
+        }
+
         func connect(to collectionView: UICollectionView) {
-            let registration = UICollectionView.CellRegistration<UICollectionViewCell, String> {
+            // One registration per row kind, so a recycled cell usually shows the
+            // same kind of row and SwiftUI updates its tree instead of rebuilding
+            // it (LegendList's item types). Each registration has its own reuse pool.
+            let makeRegistration = { UICollectionView.CellRegistration<UICollectionViewCell, String> {
                 [weak self] cell, _, messageID in
                 if messageID == FeatureTranscriptCollectionView.loadEarlierID {
                     cell.contentConfiguration = UIHostingConfiguration {
@@ -3130,6 +3339,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                         )
                         .environment(\.t3CodeSizeSteps, self?.currentCodeSizeSteps ?? 0)
                         .environment(
+                            \.markdownTextSelectable,
+                            self?.selectingMessageID == messageID || TranscriptDebug.forcesSelectableText
+                        )
+                        .environment(
                             \.openURL,
                             self?.currentOpenURL ?? OpenURLAction { _ in .systemAction }
                         )
@@ -3137,16 +3350,40 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 .margins(.all, 0)
                 cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
                 cell.accessibilityIdentifier = "message-cell-\(messageID)"
+            } }
+            let registrations = (
+                user: makeRegistration(), assistant: makeRegistration(),
+                tool: makeRegistration(), other: makeRegistration()
+            )
+            let nativeText = UICollectionView.CellRegistration<TranscriptTextMessageCell, String> {
+                [weak self] cell, _, messageID in
+                guard let content = self?.nativeTextContent(for: messageID) else { return }
+                cell.configure(content)
             }
 
             dataSource = UICollectionViewDiffableDataSource<Section, String>(
                 collectionView: collectionView
-            ) { collectionView, indexPath, messageID in
-                collectionView.dequeueConfiguredReusableCell(
+            ) { [weak self] collectionView, indexPath, messageID in
+                if self?.nativeTextContent(for: messageID) != nil {
+                    self?.nativeTextIDs.insert(messageID)
+                    return collectionView.dequeueConfiguredReusableCell(using: nativeText, for: indexPath, item: messageID)
+                }
+                self?.nativeTextIDs.remove(messageID)
+                let registration = switch self?.messagesByID[messageID]?.role {
+                case .user: registrations.user
+                case .assistant: registrations.assistant
+                case .tool: registrations.tool
+                default: registrations.other
+                }
+                return collectionView.dequeueConfiguredReusableCell(
                     using: registration,
                     for: indexPath,
                     item: messageID
                 )
+            }
+            if let transcript = collectionView as? BottomAnchoredTranscriptCollectionView {
+                transcript.readerItemID = { [weak self] in self?.dataSource?.itemIdentifier(for: $0) }
+                transcript.readerIndexPath = { [weak self] in self?.dataSource?.indexPath(for: $0) }
             }
             collectionView.prefetchDataSource = self
             collectionView.delegate = self
@@ -3259,6 +3496,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 || workingDetailChanged || loadEarlierChanged else { return }
 
             if threadChanged {
+                selectingMessageID = nil
                 cancelAllMarkdownPrefetches()
             } else {
                 // Agent progress and fork controls do not change parsed markdown.
@@ -3270,7 +3508,6 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             }
 
             let wasNearBottom = isNearBottom(collectionView)
-            let lastIDChanged = orderedIDs.last != newIDs.last || workingChanged
             let isInitialLoad = currentThreadID == nil || threadChanged
             let previousIDs = orderedIDs
             let prependedMessages = !threadChanged
@@ -3343,9 +3580,12 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 reconfiguredIDs.append(FeatureTranscriptCollectionView.workingIndicatorID)
             }
             if !reconfiguredIDs.isEmpty {
-                snapshot.reconfigureItems(reconfiguredIDs)
+                refresh(reconfiguredIDs, in: &snapshot)
             }
 
+            let transcript = collectionView as? BottomAnchoredTranscriptCollectionView
+            let visibleRow = isInitialLoad ? nil : transcript?.firstVisibleItem()
+            defer { if let visibleRow { transcript?.keepOnScreen(visibleRow) } }
             dataSource.apply(snapshot, animatingDifferences: false) {
                 [weak self, weak collectionView] in
                 guard let self, let collectionView else { return }
@@ -3359,10 +3599,9 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                     let stillFollowing = (collectionView as? BottomAnchoredTranscriptCollectionView)?
                         .maintainsBottomAnchor == true
                     if stillFollowing, !userIsScrolling {
-                        self.scrollToBottom(
-                            collectionView,
-                            animated: !isInitialLoad && lastIDChanged
-                        )
+                        collectionView.layoutIfNeeded()
+                        (collectionView as? BottomAnchoredTranscriptCollectionView)?
+                            .followBottom(animated: !isInitialLoad)
                     } else if !userIsScrolling, !stillFollowing, let prependAnchor {
                         self.restore(prependAnchor, in: collectionView, dataSource: dataSource)
                     }
@@ -3399,6 +3638,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             in collectionView: UICollectionView,
             dataSource: UICollectionViewDiffableDataSource<Section, String>
         ) {
+            (collectionView as? BottomAnchoredTranscriptCollectionView)?.releaseReaderAnchor()
             collectionView.layoutIfNeeded()
             guard let indexPath = dataSource.indexPath(for: anchor.id),
                   let attributes = collectionView.layoutAttributesForItem(at: indexPath) else {
@@ -3568,24 +3808,15 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             return collectionView.contentSize.height - visibleBottom < 120
         }
 
-        private func scrollToBottom(
-            _ collectionView: UICollectionView,
-            animated: Bool
-        ) {
-            collectionView.layoutIfNeeded()
-            let geometry = TranscriptViewportGeometry(
-                contentHeight: collectionView.contentSize.height,
-                viewportHeight: collectionView.bounds.height,
-                topInset: collectionView.adjustedContentInset.top,
-                bottomInset: collectionView.adjustedContentInset.bottom
-            )
-            let target = CGPoint(x: collectionView.contentOffset.x, y: geometry.bottomOffset)
-            collectionView.setContentOffset(target, animated: animated)
-            (collectionView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor = true
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            guard let view = scrollView as? BottomAnchoredTranscriptCollectionView else { return }
+            view.releaseReaderAnchor()
+            view.maintainsBottomAnchor = false
         }
 
-        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-            (scrollView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor = false
+        func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+            scrollViewWillBeginDragging(scrollView)
+            return true
         }
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
@@ -3602,6 +3833,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 return
             }
             collectionView.maintainsBottomAnchor = isNearBottom(collectionView)
+            collectionView.setNeedsLayout()
         }
     }
 }
@@ -3716,6 +3948,35 @@ struct TranscriptViewportGeometry: Equatable {
         guard contentChanged || viewportChanged else { return nil }
 
         return bottomOffset
+    }
+
+    /// Only content growth or shrink glides; a changed viewport snaps with it.
+    func glidesToBottom(after previous: Self?) -> Bool {
+        guard let previous, previous.contentHeight > 0 else { return false }
+        return abs(viewportHeight - previous.viewportHeight) <= 0.5
+            && abs(topInset - previous.topInset) <= 0.5
+            && abs(bottomInset - previous.bottomInset) <= 0.5
+    }
+
+    /// One step of a critically damped spring (exact solution, so any frame
+    /// rate traces the same curve). It keeps its velocity when the next chunk
+    /// moves the target, so back-to-back chunks read as one continuous scroll.
+    /// From rest it covers 90% of the distance in about 280 ms, slow enough
+    /// that chunks arriving every few hundred milliseconds blend into one scroll.
+    static func glideStep(
+        from current: CGFloat,
+        velocity: CGFloat,
+        to target: CGFloat,
+        elapsed: CFTimeInterval
+    ) -> (offset: CGFloat, velocity: CGFloat) {
+        let omega: CGFloat = 14
+        let dt = CGFloat(max(0, elapsed))
+        let delta = current - target
+        let decay = exp(-omega * dt)
+        let nextDelta = (delta + (velocity + omega * delta) * dt) * decay
+        let nextVelocity = (velocity - omega * (velocity + omega * delta) * dt) * decay
+        if abs(nextDelta) <= 0.5, abs(nextVelocity) <= 20 { return (target, 0) }
+        return (target + nextDelta, nextVelocity)
     }
 }
 
@@ -3957,11 +4218,30 @@ private struct ThreadBackSwipeGestureView: UIViewRepresentable {
 /// while presenting the keyboard changes the viewport without changing the content at all.
 /// Preserve the visual bottom only while the reader is already following the latest turn.
 final class BottomAnchoredTranscriptCollectionView: UICollectionView {
-    var maintainsBottomAnchor = false
+    var maintainsBottomAnchor = false {
+        didSet {
+            if maintainsBottomAnchor { pendingReaderAnchor = nil } else { stopBottomGlide() }
+        }
+    }
+    var readerItemID: ((IndexPath) -> String?)?
+    var readerIndexPath: ((String) -> IndexPath?)?
+
+    private struct ReaderAnchor {
+        let indexPath: IndexPath
+        let itemID: String?
+        let offset: CGFloat
+        let text: TranscriptTextAnchor?
+    }
 
     private var lastLaidOutGeometry: TranscriptViewportGeometry?
+    private var lastLaidOutWidth: CGFloat?
+    private var lastReaderAnchor: ReaderAnchor?
+    private var pendingReaderAnchor: ReaderAnchor?
     private var isRestoringBottomAnchor = false
+    private var isPerformingLayout = false
     private var needsInitialBottomPosition = true
+    private var bottomGlide: CADisplayLink?
+    private var glideVelocity: CGFloat = 0
     private let bottomButton = UIButton(type: .system)
 
     override init(frame: CGRect, collectionViewLayout layout: UICollectionViewLayout) {
@@ -3985,20 +4265,103 @@ final class BottomAnchoredTranscriptCollectionView: UICollectionView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        #if DEBUG
+        if window != nil { TranscriptScrollBenchmark.startIfRequested(on: self) }
+        #endif
         if window != nil {
-            needsInitialBottomPosition = true
-            maintainsBottomAnchor = true
+            if needsInitialBottomPosition { maintainsBottomAnchor = true }
+            if maintainsBottomAnchor { lastLaidOutGeometry = nil }
             setNeedsLayout()
+        } else {
+            stopBottomGlide()
         }
+    }
+
+    /// Follows the latest output. Streamed Markdown lands in multi-line chunks,
+    /// so snapping reads as a 50-300 pt stutter; gliding moves at most a few
+    /// points per frame. The target is re-read every frame because content can
+    /// keep growing while the glide runs. Distances over one screen (opening a
+    /// thread, a reply that lands whole) snap so intervening rows never render.
+    func followBottom(animated: Bool) {
+        maintainsBottomAnchor = true
+        guard animated, !UIAccessibility.isReduceMotionEnabled, window != nil,
+              abs(viewportGeometry.bottomOffset - contentOffset.y) <= bounds.height else {
+            stopBottomGlide()
+            snapToBottom()
+            return
+        }
+        guard bottomGlide == nil,
+              abs(contentOffset.y - viewportGeometry.bottomOffset) > 0.5 else { return }
+        // CADisplayLink retains its target until invalidated; every stop path invalidates it.
+        let link = CADisplayLink(target: self, selector: #selector(stepBottomGlide))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        link.add(to: .main, forMode: .common)
+        bottomGlide = link
+    }
+
+    private func stopBottomGlide() {
+        bottomGlide?.invalidate()
+        bottomGlide = nil
+        glideVelocity = 0
+    }
+
+    private func snapToBottom() {
+        let target = viewportGeometry.bottomOffset
+        guard abs(contentOffset.y - target) > 0.5 else { return }
+        isRestoringBottomAnchor = true
+        contentOffset.y = target
+        isRestoringBottomAnchor = false
+    }
+
+    @objc private func stepBottomGlide(_ link: CADisplayLink) {
+        guard maintainsBottomAnchor, window != nil, !isTracking, !isDragging, !isDecelerating else {
+            stopBottomGlide()
+            return
+        }
+        let target = viewportGeometry.bottomOffset
+        let step = TranscriptViewportGeometry.glideStep(
+            from: contentOffset.y,
+            velocity: glideVelocity,
+            to: target,
+            elapsed: link.targetTimestamp - link.timestamp
+        )
+        glideVelocity = step.velocity
+        isRestoringBottomAnchor = true
+        contentOffset.y = step.offset
+        isRestoringBottomAnchor = false
+        if step.offset == target, step.velocity == 0 { stopBottomGlide() }
+    }
+
+    func releaseReaderAnchor() {
+        pendingReaderAnchor = nil
+        lastReaderAnchor = nil
+    }
+
+    override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
+        // UICollectionView also uses this API while changing its geometry.
+        // Those adjustments belong to the reflow, not to a reader scroll.
+        if !isRestoringBottomAnchor, !isPerformingLayout,
+           contentOffset != self.contentOffset,
+           lastLaidOutWidth == bounds.width, lastLaidOutGeometry == viewportGeometry {
+            releaseReaderAnchor()
+            maintainsBottomAnchor = false
+        }
+        super.setContentOffset(contentOffset, animated: animated)
+    }
+
+    override func accessibilityScroll(_ direction: UIAccessibilityScrollDirection) -> Bool {
+        releaseReaderAnchor()
+        maintainsBottomAnchor = false
+        return super.accessibilityScroll(direction)
     }
 
     @objc private func jumpToBottom() {
         layoutIfNeeded()
-        maintainsBottomAnchor = true
         let geometry = viewportGeometry
         // Jump directly in long threads instead of rendering every intervening
         // message. Keep keyboard focus and follow subsequent streamed output.
         setContentOffset(CGPoint(x: contentOffset.x, y: geometry.bottomOffset), animated: false)
+        maintainsBottomAnchor = true
         updateBottomButton(geometry)
     }
 
@@ -4012,7 +4375,8 @@ final class BottomAnchoredTranscriptCollectionView: UICollectionView {
     }
 
     private func updateBottomButton(_ geometry: TranscriptViewportGeometry) {
-        bottomButton.isHidden = needsInitialBottomPosition || bounds.height < 64
+        // A glide can trail a large chunk by more than the button threshold.
+        bottomButton.isHidden = needsInitialBottomPosition || maintainsBottomAnchor || bounds.height < 64
             || !geometry.showsScrollToBottom(at: contentOffset.y)
         bottomButton.frame = CGRect(
             x: bounds.midX - 22, y: bounds.maxY - adjustedContentInset.bottom - 54,
@@ -4022,12 +4386,54 @@ final class BottomAnchoredTranscriptCollectionView: UICollectionView {
     }
 
     override func layoutSubviews() {
-        super.layoutSubviews()
+        isPerformingLayout = true
+        defer { isPerformingLayout = false }
+        // Asking for visible cells after bounds changes can already trigger a reflow.
+        // Use the reading position saved at the end of the previous layout instead.
+        if maintainsBottomAnchor || isTracking || isDragging || isDecelerating {
+            pendingReaderAnchor = nil
+        } else if pendingReaderAnchor == nil, let previousWidth = lastLaidOutWidth, previousWidth != bounds.width {
+            pendingReaderAnchor = lastReaderAnchor
+        }
+        let visibleAnchor = lastLaidOutWidth == bounds.width && !needsInitialBottomPosition
+            ? firstVisibleItem()
+            : nil
+        // UIKit animates self-sizing cell changes. Streamed text then draws over
+        // the next row while frames ease into place under the bottom anchor.
+        // Resize in the same frame the content changes; following is the glide's job.
+        UIView.performWithoutAnimation { super.layoutSubviews() }
+        if let visibleAnchor { keepOnScreen(visibleAnchor) }
 
         let geometry = viewportGeometry
         defer {
             lastLaidOutGeometry = geometry
+            lastLaidOutWidth = bounds.width
+            if pendingReaderAnchor == nil, !maintainsBottomAnchor,
+               !isTracking, !isDragging, !isDecelerating {
+                lastReaderAnchor = captureReaderAnchor()
+            } else if maintainsBottomAnchor {
+                lastReaderAnchor = nil
+            }
             updateBottomButton(geometry)
+        }
+
+        // Hosted Markdown can finish measuring on a later pass. Keep the same
+        // message anchored through those passes until the reader takes control.
+        if let anchor = pendingReaderAnchor {
+            let indexPath = anchor.itemID.flatMap { readerIndexPath?($0) }
+                ?? (anchor.itemID == nil ? anchor.indexPath : nil)
+            if let indexPath, let attributes = collectionViewLayout.layoutAttributesForItem(at: indexPath) {
+                let textOffset = cellForItem(at: indexPath).flatMap { anchor.text?.targetOffset(in: $0, viewport: self) }
+                let target = min(geometry.bottomOffset, max(-geometry.topInset,
+                    textOffset ?? (attributes.frame.minY - anchor.offset)))
+                if abs(contentOffset.y - target) > 0.5 {
+                    isRestoringBottomAnchor = true
+                    contentOffset.y = target
+                    isRestoringBottomAnchor = false
+                }
+            } else {
+                pendingReaderAnchor = nil
+            }
         }
 
         let isInteracting = isTracking || isDragging || isDecelerating || isRestoringBottomAnchor
@@ -4052,9 +4458,79 @@ final class BottomAnchoredTranscriptCollectionView: UICollectionView {
         }
         guard abs(contentOffset.y - bottomY) > 0.5 else { return }
 
+        // Viewport changes (keyboard, rotation) must land with the change itself.
+        if geometry.glidesToBottom(after: lastLaidOutGeometry), lastLaidOutWidth == bounds.width {
+            followBottom(animated: true)
+            return
+        }
+        stopBottomGlide()
         isRestoringBottomAnchor = true
         contentOffset = CGPoint(x: contentOffset.x, y: bottomY)
         isRestoringBottomAnchor = false
+    }
+
+    struct VisibleItem {
+        let itemID: String?
+        let indexPath: IndexPath
+        let minYInViewport: CGFloat
+        let contentOffsetY: CGFloat
+    }
+
+    static let estimatedRowHeight: CGFloat = 120
+
+    /// The first visible row the reader has actually seen measured. Uses the
+    /// cells' last frames; asking the layout here would apply pending size
+    /// changes before they can be measured against.
+    ///
+    /// A row still at its estimated height is skipped: scrolling up, it grows
+    /// as it is first measured, and the rows below it are what the reader is
+    /// looking at. Anchoring it would push those rows down by the difference.
+    func firstVisibleItem() -> VisibleItem? {
+        var first: (IndexPath, CGRect)?
+        for cell in visibleCells where cell.frame.intersects(bounds)
+            && abs(cell.frame.height - Self.estimatedRowHeight) > 0.5 {
+            // The "Load earlier" and working rows are not reading positions:
+            // anchoring "Load earlier" would show the loaded turns instead of
+            // keeping the reader's message in place.
+            guard let indexPath = indexPath(for: cell),
+                  readerItemID?(indexPath)?.hasPrefix("__t3-") != true else { continue }
+            if first.map({ indexPath < $0.0 }) ?? true { first = (indexPath, cell.frame) }
+        }
+        guard let (indexPath, frame) = first else { return nil }
+        return VisibleItem(itemID: readerItemID?(indexPath), indexPath: indexPath,
+                           minYInViewport: frame.minY - contentOffset.y, contentOffsetY: contentOffset.y)
+    }
+
+    /// When a row that starts above the viewport resizes, UIKit shifts the
+    /// offset by the whole size change. For a streaming reply that grows at its
+    /// bottom, that snaps the visible text by every chunk. Rows the reader can
+    /// see stay put; reaching new output at the bottom is the glide's job.
+    func keepOnScreen(_ item: VisibleItem) {
+        // A removed row (thread switch) has nothing to keep in place.
+        guard let indexPath = item.itemID.map({ readerIndexPath?($0) }) ?? item.indexPath,
+              let attributes = collectionViewLayout.layoutAttributesForItem(at: indexPath) else { return }
+        let geometry = viewportGeometry
+        // When the last rows shrink (the working row ends), UIKit clamps the
+        // offset in one frame. While following, keep the gap and glide it closed.
+        let limit = max(geometry.bottomOffset, maintainsBottomAnchor ? item.contentOffsetY : contentOffset.y)
+        let target = min(max(attributes.frame.minY - item.minYInViewport, -geometry.topInset), limit)
+        guard abs(contentOffset.y - target) > 0.5 else { return }
+        isRestoringBottomAnchor = true
+        contentOffset.y = target
+        isRestoringBottomAnchor = false
+    }
+
+    private func captureReaderAnchor() -> ReaderAnchor? {
+        var fallback: ReaderAnchor?
+        for indexPath in indexPathsForVisibleItems.sorted() {
+            guard let cell = cellForItem(at: indexPath), cell.frame.intersects(bounds) else { continue }
+            let text = TranscriptTextAnchor.capture(in: cell, viewport: self)
+            let anchor = ReaderAnchor(indexPath: indexPath, itemID: readerItemID?(indexPath),
+                                      offset: cell.frame.minY - contentOffset.y, text: text)
+            if text != nil { return anchor }
+            if fallback == nil { fallback = anchor }
+        }
+        return fallback
     }
 }
 
@@ -4251,89 +4727,17 @@ struct FeatureMessageView: View {
     var environmentID: String? = nil
     var agents: [FeatureThreadAgent] = []
     var onOpenThread: ((String) -> Void)? = nil
-    @SwiftUI.Environment(\.openURL) private var openURL
-    @SwiftUI.Environment(\.featureThreadPresentationDismissal) private var presentationDismissal
-    @State private var presentationID = UUID()
-    @State private var previewedContext: ComposerContextRecord?
-    @State private var contextAttachmentPresented = false
-    @State private var contextUnavailable = false
     @State private var showsWorkflowScript = false
 
+    /// Context-link handling (an `openURL` override, a preview sheet, and two
+    /// alerts) is SwiftUI graph work on every cell configuration while
+    /// scrolling, so only messages that can contain context links carry it.
     var body: some View {
-        messageBody
-            .environment(\.openURL, OpenURLAction { url in
-                guard let reference = ComposerContextReferences.parseHref(url.absoluteString) else {
-                    openURL(url)
-                    return .handled
-                }
-                guard let record = message.context?.records.first(where: { $0.contextId == reference.contextId }) else {
-                    contextUnavailable = true
-                    return .handled
-                }
-                if case let .mention(value) = record.payload, let path = FeatureComposerFileLinkSerializer.url(for: value.path) {
-                    openURL(path)
-                } else {
-                    previewedContext = record
-                }
-                return .handled
-            })
-            .onChange(of: previewedContext != nil) { _, presented in
-                if presented { presentationDismissal.onPresentationChange(presentationID, true) }
-            }
-            .onChange(of: presentationDismissal.requestID) { _, id in
-                if id != nil {
-                    if !contextAttachmentPresented { previewedContext = nil }
-                    contextUnavailable = false
-                }
-            }
-            .sheet(item: $previewedContext, onDismiss: {
-                presentationDismissal.onPresentationChange(presentationID, false)
-            }) { record in
-                NavigationStack {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 12) {
-                            if let binding = record.attachment,
-                               let attachment = message.attachments.first(where: { $0.id == binding.attachmentId }) {
-                                FeatureMessageAttachmentsView(attachments: [attachment], context: attachmentContext)
-                                    .environment(\.featureThreadPresentationDismissal,
-                                        FeatureThreadPresentationDismissal(requestID: presentationDismissal.requestID) { id, presented in
-                                            contextAttachmentPresented = presented
-                                            presentationDismissal.onPresentationChange(id, presented)
-                                            if !presented, presentationDismissal.requestID != nil {
-                                                previewedContext = nil
-                                            }
-                                        })
-                            } else {
-                                Text(ComposerContextReferences.providerPayload(record))
-                                    .font(T3Typography.tool)
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            if case let .reviewComment(value) = record.payload,
-                               let request = value.pullRequest,
-                               let url = URL(string: request.url), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
-                                Link("Open pull request #\(request.number)", destination: url)
-                            }
-                        }
-                        .padding()
-                    }
-                    .background(T3Colors.background)
-                    .navigationTitle(record.label)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Close", systemImage: "xmark") { previewedContext = nil }.labelStyle(.iconOnly)
-                        }
-                    }
-                    .t3NavigationChrome()
-                }
-                .preferredColorScheme(.dark)
-            }
-            .alert("Context unavailable", isPresented: $contextUnavailable) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("This message has a context link without its saved record.")
-            }
+        if message.context != nil || message.text.contains("t3-context://") {
+            messageBody.modifier(FeatureMessageContextLinks(message: message, attachmentContext: attachmentContext))
+        } else {
+            messageBody
+        }
     }
 
     private var renderedText: String {
@@ -4510,6 +4914,94 @@ struct FeatureMessageView: View {
         return [message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+private struct FeatureMessageContextLinks: ViewModifier {
+    let message: FeatureMessage
+    let attachmentContext: FeatureAttachmentContext?
+    @SwiftUI.Environment(\.openURL) private var openURL
+    @SwiftUI.Environment(\.featureThreadPresentationDismissal) private var presentationDismissal
+    @State private var presentationID = UUID()
+    @State private var previewedContext: ComposerContextRecord?
+    @State private var contextAttachmentPresented = false
+    @State private var contextUnavailable = false
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.openURL, OpenURLAction { url in
+                guard let reference = ComposerContextReferences.parseHref(url.absoluteString) else {
+                    openURL(url)
+                    return .handled
+                }
+                guard let record = message.context?.records.first(where: { $0.contextId == reference.contextId }) else {
+                    contextUnavailable = true
+                    return .handled
+                }
+                if case let .mention(value) = record.payload, let path = FeatureComposerFileLinkSerializer.url(for: value.path) {
+                    openURL(path)
+                } else {
+                    previewedContext = record
+                }
+                return .handled
+            })
+            .onChange(of: previewedContext != nil) { _, presented in
+                if presented { presentationDismissal.onPresentationChange(presentationID, true) }
+            }
+            .onChange(of: presentationDismissal.requestID) { _, id in
+                if id != nil {
+                    if !contextAttachmentPresented { previewedContext = nil }
+                    contextUnavailable = false
+                }
+            }
+            .sheet(item: $previewedContext, onDismiss: {
+                presentationDismissal.onPresentationChange(presentationID, false)
+            }) { record in
+                NavigationStack {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if let binding = record.attachment,
+                               let attachment = message.attachments.first(where: { $0.id == binding.attachmentId }) {
+                                FeatureMessageAttachmentsView(attachments: [attachment], context: attachmentContext)
+                                    .environment(\.featureThreadPresentationDismissal,
+                                        FeatureThreadPresentationDismissal(requestID: presentationDismissal.requestID) { id, presented in
+                                            contextAttachmentPresented = presented
+                                            presentationDismissal.onPresentationChange(id, presented)
+                                            if !presented, presentationDismissal.requestID != nil {
+                                                previewedContext = nil
+                                            }
+                                        })
+                            } else {
+                                Text(ComposerContextReferences.providerPayload(record))
+                                    .font(T3Typography.tool)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            if case let .reviewComment(value) = record.payload,
+                               let request = value.pullRequest,
+                               let url = URL(string: request.url), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+                                Link("Open pull request #\(request.number)", destination: url)
+                            }
+                        }
+                        .padding()
+                    }
+                    .background(T3Colors.background)
+                    .navigationTitle(record.label)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Close", systemImage: "xmark") { previewedContext = nil }.labelStyle(.iconOnly)
+                        }
+                    }
+                    .t3NavigationChrome()
+                }
+                .preferredColorScheme(.dark)
+            }
+            .alert("Context unavailable", isPresented: $contextUnavailable) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("This message has a context link without its saved record.")
+            }
     }
 }
 

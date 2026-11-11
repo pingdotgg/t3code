@@ -7,30 +7,56 @@ public struct FeatureFilesView: View {
     let initialPath: String?
     let initialLine: Int?
     let workspaceRoot: String?
+    let permissions: EnvironmentPermissionState?
+    let onClose: (() -> Void)?
 
-    @State private var browser = FeatureFileBrowserState()
+    @State private var browser: FeatureFileBrowserState
 
     public init(
         client: any FeatureClient,
         threadID: String,
         initialPath: String? = nil,
         initialLine: Int? = nil,
-        workspaceRoot: String? = nil
+        workspaceRoot: String? = nil,
+        permissions: EnvironmentPermissionState? = nil,
+        onClose: (() -> Void)? = nil
+    ) {
+        self.init(client: client, threadID: threadID, initialPath: initialPath, initialLine: initialLine,
+                  workspaceRoot: workspaceRoot, permissions: permissions, onClose: onClose,
+                  browser: FeatureFileBrowserState())
+    }
+
+    init(
+        client: any FeatureClient, threadID: String, initialPath: String? = nil, initialLine: Int? = nil,
+        workspaceRoot: String?, permissions: EnvironmentPermissionState?, onClose: (() -> Void)?,
+        browser: FeatureFileBrowserState
     ) {
         self.client = client
         self.threadID = threadID
         self.initialPath = initialPath
         self.initialLine = initialLine
         self.workspaceRoot = workspaceRoot
+        self.permissions = permissions
+        self.onClose = onClose
+        self.browser = browser
+    }
+
+    private var canRead: Bool {
+        (permissions ?? client.permissions(forThreadID: threadID))?.grants("filesystem:read") == true
+    }
+
+    private var permissionUnavailable: some View {
+        ContentUnavailableView(
+            "Files unavailable", systemImage: "folder.badge.questionmark",
+            description: Text("This connection needs the filesystem:read permission.")
+        )
+        .navigationTitle("Files")
     }
 
     public var body: some View {
         Group {
-            if client.permissions(forThreadID: threadID)?.grants("filesystem:read") != true {
-                ContentUnavailableView(
-                    "Files unavailable", systemImage: "folder.badge.questionmark",
-                    description: Text("This connection needs the filesystem:read permission.")
-                )
+            if !canRead {
+                permissionUnavailable
             } else if let initialPath {
                 FeatureFilePreviewView(
                     client: client,
@@ -59,6 +85,27 @@ public struct FeatureFilesView: View {
             }
         }
         .background(T3Colors.background)
+        .toolbar { FeatureToolCloseToolbar(close: onClose) }
+        .navigationDestination(for: FeatureFileEntry.self) { entry in
+            Group {
+                if !canRead {
+                    permissionUnavailable
+                } else if entry.kind == .directory {
+                    FeatureFileDirectoryView(
+                        client: client, browser: browser, threadID: threadID,
+                        path: entry.path, title: entry.name, workspaceRoot: workspaceRoot
+                    )
+                } else {
+                    FeatureFilePreviewView(
+                        client: client, threadID: threadID, entry: entry, workspaceRoot: workspaceRoot
+                    )
+                    .id(FeatureFileBrowserState.Directory(
+                        threadID: threadID, workspaceRoot: workspaceRoot, path: entry.path
+                    ))
+                }
+            }
+            .toolbar { FeatureToolCloseToolbar(close: onClose) }
+        }
     }
 }
 
@@ -136,11 +183,10 @@ private struct FeatureFileDirectoryView: View {
                     .foregroundStyle(T3Colors.textSecondary)
             }
             ForEach(filteredEntries) { entry in
-                NavigationLink {
-                    destination(for: entry)
-                } label: {
+                NavigationLink(value: entry) {
                     FeatureFileRow(entry: entry, showsPath: isSearching)
                 }
+                .listRowBackground(T3Colors.background)
             }
         }
         .listStyle(.plain)
@@ -167,30 +213,6 @@ private struct FeatureFileDirectoryView: View {
         }
         .task(id: directory) { await loadDirectory() }
         .task(id: searchRequest) { await loadSearch() }
-    }
-
-    @ViewBuilder
-    private func destination(for entry: FeatureFileEntry) -> some View {
-        if entry.kind == .directory {
-            FeatureFileDirectoryView(
-                client: client,
-                browser: browser,
-                threadID: threadID,
-                path: entry.path,
-                title: entry.name,
-                workspaceRoot: workspaceRoot
-            )
-        } else {
-            FeatureFilePreviewView(
-                client: client,
-                threadID: threadID,
-                entry: entry,
-                workspaceRoot: workspaceRoot
-            )
-            .id(FeatureFileBrowserState.Directory(
-                threadID: threadID, workspaceRoot: workspaceRoot, path: entry.path
-            ))
-        }
     }
 
     private var filteredEntries: [FeatureFileEntry] {
