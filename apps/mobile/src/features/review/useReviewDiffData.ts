@@ -1,7 +1,7 @@
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 
-import { countReviewCommentContexts, parseReviewInlineComments } from "./reviewCommentSelection";
+import { parseReviewInlineComments } from "./reviewCommentSelection";
 import { getCachedNativeReviewDiffData } from "./nativeReviewDiffAdapter";
 import { getCachedReviewParsedDiff } from "./reviewState";
 import {
@@ -14,6 +14,7 @@ import {
 
 import type {
   EnvironmentId,
+  OrchestrationMessageContext,
   ReviewDiffFileStat,
   ReviewDiffPreviewSource,
 } from "@t3tools/contracts";
@@ -126,8 +127,9 @@ export function useReviewDiffData(input: {
   readonly cwd: string | null;
   readonly selectedSection: ReviewSectionItem | null;
   readonly draftMessage: string;
+  readonly draftContext: OrchestrationMessageContext | undefined;
 }) {
-  const { draftMessage, selectedSection, threadKey } = input;
+  const { draftMessage, draftContext, selectedSection, threadKey } = input;
   const selectedSectionId = selectedSection?.id ?? null;
   const source = selectedSection?.source;
   const lazySource = source?.truncated && source.files ? source : null;
@@ -230,7 +232,7 @@ export function useReviewDiffData(input: {
     () => formatHeaderDiffSummary(parsedDiff, selectedSection?.files),
     [parsedDiff, selectedSection?.files],
   );
-  const inlineReviewComments = parseReviewInlineComments(draftMessage);
+  const inlineReviewComments = parseReviewInlineComments(draftMessage, draftContext);
   const selectedSectionInlineComments = useMemo(() => {
     if (!selectedSectionId || inlineReviewComments.length === 0) {
       return EMPTY_INLINE_REVIEW_COMMENTS;
@@ -241,7 +243,7 @@ export function useReviewDiffData(input: {
     parsedDiff,
     comments: selectedSectionInlineComments,
   });
-  const pendingReviewCommentCount = countReviewCommentContexts(draftMessage);
+  const pendingReviewCommentCount = inlineReviewComments.length;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records review perf marks and diagnostic logs once a parsed diff has committed
   useEffect(() => {
