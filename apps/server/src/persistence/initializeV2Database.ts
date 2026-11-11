@@ -224,9 +224,10 @@ export const replaceStaleV2Database = Effect.fn("replaceStaleV2Database")(functi
   const sourcePath = path.join(path.dirname(destinationPath), "state.sqlite");
   yield* Effect.gen(function* () {
     if (!(yield* fs.exists(sourcePath)) || !(yield* fs.exists(destinationPath))) return;
-    const state = yield* Effect.try(() => inspectStaleCopy(sourcePath, destinationPath)).pipe(
-      Effect.orElseSucceed(() => "current" as const),
-    );
+    const state = yield* Effect.try({
+      try: () => inspectStaleCopy(sourcePath, destinationPath),
+      catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
+    }).pipe(Effect.orElseSucceed(() => "current" as const));
     if (state === "current") return;
     if (state === "diverged") {
       yield* Effect.logWarning(
@@ -237,7 +238,10 @@ export const replaceStaleV2Database = Effect.fn("replaceStaleV2Database")(functi
     }
     const backupPath = `${destinationPath}.stale`;
     const moved = yield* Effect.gen(function* () {
-      yield* Effect.try(() => checkpointCopy(destinationPath));
+      yield* Effect.try({
+        try: () => checkpointCopy(destinationPath),
+        catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
+      });
       // A previous backup was also a copy without V2 work, so one backup is enough.
       for (const suffix of ["", "-wal", "-shm"]) {
         yield* fs.remove(backupPath + suffix, { force: true });
