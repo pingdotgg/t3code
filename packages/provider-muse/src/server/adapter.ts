@@ -2031,8 +2031,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         );
       });
       const resolveSkillSelector = Effect.fnUntraced(function* (text: string) {
-        // Muse fails a structured skill on a thread's first turn; that turn keeps the text form.
-        if (thread?.firstRunOrdinal == null) return undefined;
         const mentions = [...text.matchAll(SKILL_MENTION_PATTERN)];
         if (!mentions.length) return undefined;
         // An optional catalog timeout must not close the host needed for the text fallback.
