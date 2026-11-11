@@ -18,10 +18,7 @@ export function App() {
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-4 p-8">
       <h1 className="text-3xl font-bold">Vite on Prisma</h1>
-      <p>
-        A React app built with Vite, without a database or a separate API
-        service.
-      </p>
+      <p>A React app built with Vite, without a database or a separate API service.</p>
       <button type="button" onClick={() => setCount((value) => value + 1)}>
         count: {count}
       </button>

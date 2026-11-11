@@ -166,14 +166,15 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   );
 
   return OpenCodeServerOwner.of({
-    withServer: (use) =>
-      Effect.uninterruptibleMask((restore) =>
+    withServer: Effect.fn("OpenCodeServerOwner.withServer")(function (use) {
+      return Effect.uninterruptibleMask((restore) =>
         restore(acquireServer).pipe(
           Effect.flatMap((server) =>
             restore(use(server)).pipe(Effect.ensuring(releaseServer(server))),
           ),
         ),
-      ),
+      );
+    }),
   });
 });
 
