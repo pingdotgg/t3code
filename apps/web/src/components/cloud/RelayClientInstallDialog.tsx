@@ -176,7 +176,10 @@ export function RelayClientInstallDialog() {
             >
               Cancel
             </Button>
-            <DialogAction size="standard" onClick={() => respondToRelayClientInstallConfirmation(true)}>
+            <DialogAction
+              size="standard"
+              onClick={() => respondToRelayClientInstallConfirmation(true)}
+            >
               Download and install
             </DialogAction>
           </DialogFooter>
