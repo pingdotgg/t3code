@@ -270,7 +270,7 @@ function isMiseExecutablePath(commandPath: string): boolean {
 }
 
 /** The Nix store is read-only, so no updater can replace a CLI that lives there. */
-function isNixStoreCommandPath(commandPath: string): boolean {
+export function isNixStoreCommandPath(commandPath: string): boolean {
   return normalizeCommandPath(commandPath).startsWith("/nix/store/");
 }
 
