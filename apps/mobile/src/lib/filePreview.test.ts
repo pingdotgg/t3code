@@ -1,4 +1,12 @@
-import { act, createElement, useEffect, useMemo, type ReactNode } from "react";
+import {
+  act,
+  createElement,
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  type ReactNode,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -63,6 +71,7 @@ vi.mock("expo-audio", () => ({
 vi.mock("@react-navigation/native", () => ({
   useIsFocused: () => true,
   useNavigation: () => ({ navigate: audio.navigate }),
+  useRoute: () => ({ name: "Thread", params: {} }),
   useFocusEffect: (callback: () => (() => void) | undefined) => useEffect(callback, [callback]),
 }));
 vi.mock("react-native", () => ({
@@ -71,6 +80,10 @@ vi.mock("react-native", () => ({
   useWindowDimensions: () => ({ width: 390, height: 844, fontScale: 1 }),
   Text: ({ children }: { children?: ReactNode }) => createElement("span", null, children),
   AppState: { currentState: "active", addEventListener: () => ({ remove() {} }) },
+  AccessibilityInfo: {
+    isReduceMotionEnabled: async () => true,
+    addEventListener: () => ({ remove() {} }),
+  },
   View: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
   Pressable: (props: {
     children?: ReactNode;
@@ -205,6 +218,7 @@ vi.mock("react-native-reanimated", () => {
   return {
     default: { View: ({ children }: { children?: ReactNode }) => children },
     FadeIn: transition,
+    FadeInDown: transition,
     FadeInUp: transition,
   };
 });
@@ -221,11 +235,14 @@ vi.mock("../components/ui/NativePresentation", () => ({
 vi.mock("../components/ui/Menu", () => ({
   Menu: ({ children }: { children?: ReactNode }) => children,
 }));
-vi.mock("../components/FilePreviewGallery", () => ({
+vi.mock("../components/ui/FilePreviewGallery", () => ({
   FilePreviewGallery: ({ children }: { children?: ReactNode }) => children,
 }));
-vi.mock("../components/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
-vi.mock("../components/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
+vi.mock("../components/ui/FilePreviewModal", () => ({
+  FilePreviewModal: (props: { source: { name: string } | null }) =>
+    props.source ? createElement("div", { "data-file-preview": props.source.name }) : null,
+}));
+vi.mock("../components/ui/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
 vi.mock("../components/ComposerContextSheet", () => ({}));
 vi.mock("../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => vi.fn() }));
 vi.mock("../native/useMarkdownImageSource", () => ({ useMarkdownImageSource: () => vi.fn() }));
@@ -240,7 +257,10 @@ vi.mock("../native/NativeScrollViewMarker", () => ({
 vi.mock("../native/NativeWorkspaceColumns", () => ({
   useNativeWorkspaceColumnsSupported: () => false,
 }));
-vi.mock("../native/native-layout-metrics", () => ({ useDeviceType: () => "phone" }));
+vi.mock("../native/native-layout-metrics", () => ({
+  useDeviceType: () => "phone",
+  useNativeColumnLayoutMetrics: () => null,
+}));
 vi.mock("../features/layout/workspace-content-width", () => ({
   useWorkspaceSettledContentWidth: () => null,
 }));
@@ -256,14 +276,18 @@ vi.mock("./openExternalUrl", () => ({}));
 vi.mock("./attachmentDownload", () => ({}));
 vi.mock("./uuid", () => ({}));
 vi.mock("../features/threads/thread-context-divider", () => ({}));
-vi.mock("../features/threads/thread-handoff-row", () => ({}));
+vi.mock("../features/threads/thread-handoff-row", () => ({ ThreadModelSwitchDivider: () => null }));
 vi.mock("../features/threads/ThreadGuestShareBar", () => ({ useThreadGuestShare: () => null }));
 vi.mock("../features/threads/SecretRequestCard", () => ({}));
+vi.mock("../features/threads/LinkRequestCard", () => ({ LinkRequestCard: () => null }));
 vi.mock("../features/threads/worktree-setup-card", () => ({}));
 vi.mock("../features/threads/CopyTextButton", () => ({ CopyTextButton: () => null }));
 vi.mock("../features/threads/thread-work-log", () => ({ THREAD_DISCLOSURE_TRANSITION_MS: 100 }));
 vi.mock("../features/threads/HtmlRenderWebView", () => ({}));
 vi.mock("../features/threads/McpAppWebView", () => ({}));
+vi.mock("../features/layout/AdaptiveWorkspaceLayout", () => ({
+  useWorkspacePaneState: () => ({ fileInspector: { supported: false } }),
+}));
 vi.mock("../features/threads/thread-workflow-opening", () => ({ useWorkflowOpening: () => null }));
 vi.mock("../features/threads/useFileChipShare", () => ({ useFileChipShare: () => vi.fn() }));
 vi.mock("../features/threads/ThreadMarkdownImage", async () => {
@@ -420,6 +444,7 @@ describe("ThreadInlineFilePreview playback", () => {
           createElement(ThreadFeed, {
             environmentId,
             threadId,
+            detailRef: null,
             threadTitle: "preview",
             workspaceRoot: "/repo",
             feed,
@@ -427,7 +452,6 @@ describe("ThreadInlineFilePreview playback", () => {
             dispatchingMessageId: null,
             onEditPendingMessage: null,
             contentPresentation: { kind: "ready" },
-            agentLabel: "agent",
             latestRun: null,
             activeWorkStartedAt: null,
             listRef: { current: null },
@@ -436,7 +460,6 @@ describe("ThreadInlineFilePreview playback", () => {
               typeof ThreadFeed
             >[0]["contentInsetEndAdjustment"],
             anchorMessageId: null,
-            submittedMessageId: null,
             keyboardOffset: 0,
           }),
         ),
@@ -1301,5 +1324,106 @@ describe("inline file previews", () => {
     [{ name: "sound.mp3", mimeType: "application/pdf" }, null],
   ])("classifies %j as %s", (file, expected) => {
     expect(inlineFilePreviewKind(file)).toBe(expected);
+  });
+});
+
+describe("ThreadFeed previews", () => {
+  it("does not commit an open preview over a different thread", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const environmentId = EnvironmentId.make("environment-1");
+    const messageId = MessageId.make("message-1");
+    const timestamp = "2026-10-20T00:00:00.000Z";
+    const feedFor = (threadId: ThreadId): ThreadFeedEntry[] => [
+      {
+        type: "message",
+        id: messageId,
+        createdAt: timestamp,
+        message: {
+          id: messageId,
+          role: "user",
+          text: "report",
+          attachments: [
+            {
+              type: "file",
+              id: "report",
+              name: "report.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 12,
+            },
+          ],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          runId: null,
+          streaming: false,
+          visibility: "local",
+          sourceThreadId: threadId,
+        },
+      },
+    ];
+    const container = document.createElement("div");
+    // Records what each commit shows before passive effects get a chance to run.
+    const committedPreviews: Array<string | null> = [];
+    function CommitProbe() {
+      useLayoutEffect(() => {
+        committedPreviews.push(
+          container.querySelector("[data-file-preview]")?.getAttribute("data-file-preview") ?? null,
+        );
+      });
+      return null;
+    }
+    const element = (
+      threadId: ThreadId,
+      contentPresentation: Parameters<typeof ThreadFeed>[0]["contentPresentation"] = {
+        kind: "ready",
+      },
+    ) =>
+      createElement(
+        Fragment,
+        null,
+        createElement(ThreadFeed, {
+          environmentId,
+          threadId,
+          detailRef: null,
+          threadTitle: "preview",
+          workspaceRoot: "/repo",
+          feed: feedFor(threadId),
+          queuedMessages: [],
+          dispatchingMessageId: null,
+          onEditPendingMessage: null,
+          contentPresentation,
+          latestRun: null,
+          activeWorkStartedAt: null,
+          listRef: { current: null },
+          freeze: { value: false } as Parameters<typeof ThreadFeed>[0]["freeze"],
+          contentInsetEndAdjustment: { value: 0 } as Parameters<
+            typeof ThreadFeed
+          >[0]["contentInsetEndAdjustment"],
+          anchorMessageId: null,
+          keyboardOffset: 0,
+        }),
+        createElement(CommitProbe),
+      );
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(element(ThreadId.make("thread-1"))));
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Open report.pdf"]')!.click(),
+      );
+      expect(container.querySelector('[data-file-preview="report.pdf"]')).not.toBeNull();
+      committedPreviews.length = 0;
+      await act(async () => root.render(element(ThreadId.make("thread-2"))));
+      expect(committedPreviews[0]).toBeNull();
+
+      // A preview hidden by a presentation change stays closed when the content comes back.
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Open report.pdf"]')!.click(),
+      );
+      expect(container.querySelector('[data-file-preview="report.pdf"]')).not.toBeNull();
+      await act(async () => root.render(element(ThreadId.make("thread-2"), { kind: "loading" })));
+      await act(async () => root.render(element(ThreadId.make("thread-2"))));
+      expect(container.querySelector("[data-file-preview]")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+    }
   });
 });
