@@ -19,9 +19,7 @@ export interface SecondaryStorageService {
     value: string,
     ttlSeconds?: number,
   ) => Effect.Effect<void, BetterAuthStorageError, RuntimeContext>;
-  readonly delete: (
-    key: string,
-  ) => Effect.Effect<void, BetterAuthStorageError, RuntimeContext>;
+  readonly delete: (key: string) => Effect.Effect<void, BetterAuthStorageError, RuntimeContext>;
   /** Atomic read-and-delete. */
   readonly getAndDelete: (
     key: string,
@@ -52,10 +50,9 @@ export interface SecondaryStorageService {
  * propagation and rate-limit windows need atomic counters. A strongly
  * consistent Cloudflare option would be a Durable Object-backed layer.
  */
-export class SecondaryStorage extends Context.Service<
-  SecondaryStorage,
-  SecondaryStorageService
->()("BetterAuth.SecondaryStorage") {}
+export class SecondaryStorage extends Context.Service<SecondaryStorage, SecondaryStorageService>()(
+  "BetterAuth.SecondaryStorage",
+) {}
 
 /**
  * Bridge the Effect-native service to the promise interface Better Auth
@@ -68,10 +65,8 @@ export const toPromiseStorage = (
   runPromise: <A, E>(effect: Effect.Effect<A, E, RuntimeContext>) => Promise<A>,
 ) => ({
   get: (key: string) => runPromise(storage.get(key)),
-  set: (key: string, value: string, ttl?: number) =>
-    runPromise(storage.set(key, value, ttl)),
+  set: (key: string, value: string, ttl?: number) => runPromise(storage.set(key, value, ttl)),
   delete: (key: string) => runPromise(storage.delete(key)),
   getAndDelete: (key: string) => runPromise(storage.getAndDelete(key)),
-  increment: (key: string, ttl: number) =>
-    runPromise(storage.increment(key, ttl)),
+  increment: (key: string, ttl: number) => runPromise(storage.increment(key, ttl)),
 });
