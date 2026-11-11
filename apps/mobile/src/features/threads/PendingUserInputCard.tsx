@@ -305,7 +305,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
                   const description =
                     option.description !== option.label ? option.description : undefined;
-                  const preview = option.preview?.trim();
+                  const preview = option.preview?.trim() ? option.preview : undefined;
                   return (
                     <View key={optionValue} className="gap-1.5">
                       <Pressable
