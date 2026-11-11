@@ -104,6 +104,12 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           yield* writeTextFile(cwd, "custom-name", "hello");
           yield* writeTextFile(cwd, ".npmrc", "registry=test");
           yield* fs.makeDirectory(path.join(cwd, "folder.ts"));
+          // A path the server may not stat could still exist, so it is not reported missing.
+          const denied = path.join(cwd, "private");
+          yield* fs.makeDirectory(path.join(denied, "docs"), { recursive: true });
+          yield* writeTextFile(denied, "docs/guide.md", "guide");
+          yield* fs.chmod(denied, 0o600);
+          yield* Effect.addFinalizer(() => fs.chmod(denied, 0o755).pipe(Effect.ignore));
           const file = path.join(cwd, "custom-name");
           const result = yield* service.getMetadata({
             paths: [
@@ -113,6 +119,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
               file,
               path.join(cwd, "missing"),
               "relative-path",
+              path.join(denied, "docs", "guide.md"),
             ],
           });
           expect(result.entries).toEqual([
@@ -122,6 +129,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             { kind: "file", byteLength: 5 },
             null,
             null,
+            { kind: "other" },
           ]);
         }),
     );

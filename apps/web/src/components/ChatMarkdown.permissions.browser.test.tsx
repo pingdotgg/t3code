@@ -347,7 +347,6 @@ it("acts on a verified thread file and yields to a root file that appears", asyn
 
   await expectPanel("docs/readme.md");
   await settleMetadata("/work/docs/readme.md", AsyncResult.success(null));
-  await settleMetadata("/work/docs", AsyncResult.success(null));
   const candidateResults: MetadataResult[] = [
     AsyncResult.success(null),
     AsyncResult.failure(Cause.fail(new Error("Metadata failed"))),
@@ -378,7 +377,7 @@ it("acts on a verified thread file and yields to a root file that appears", asyn
   await expectPanel("docs/readme.md");
 });
 
-it("does not treat pending, failed, existing, unreadable, or possibly denied root metadata as missing", async () => {
+it("does not treat pending, failed, existing, or unreadable root metadata as missing", async () => {
   using _setup = setup();
   const candidate = "/other/docs/guide.md";
   await settleMetadata(candidate, AsyncResult.success({ kind: "file" }));
@@ -396,6 +395,8 @@ it("does not treat pending, failed, existing, unreadable, or possibly denied roo
     AsyncResult.waiting(AsyncResult.success(null)),
     AsyncResult.failure(Cause.fail(new Error("Disconnected or denied"))),
     AsyncResult.success({ kind: "file" }),
+    // The server's answer for a path it may not stat.
+    AsyncResult.success({ kind: "other" }),
   ];
   for (const rootResult of rootResults) {
     await settleMetadata("/work/docs/guide.md", rootResult);
@@ -411,10 +412,6 @@ it("does not treat pending, failed, existing, unreadable, or possibly denied roo
     state.canRead = true;
     for (const listener of state.listeners) listener();
   });
-  // The server also reports a file it may not stat as missing; an existing folder keeps the root.
-  await settleMetadata("/work/docs", AsyncResult.success({ kind: "directory" }));
-  await expectPanel("docs/guide.md");
-  await settleMetadata("/work/docs", AsyncResult.success(null));
   await expectPanel(candidate);
 });
 
@@ -443,7 +440,6 @@ it("verifies a <picture>'s theme source, not its fallback image", async () => {
   const candidate = "/other/docs/fallback.png";
   await settleMetadata(candidate, AsyncResult.success({ kind: "file" }));
   await settleMetadata("/work/docs/fallback.png", AsyncResult.success(null));
-  await settleMetadata("/work/docs", AsyncResult.success(null));
   await using screen = await render(
     <RegistryContext.Provider value={registry}>
       <HostImageUrlContext value={(path) => `https://host.test/image#${path}`}>

@@ -147,12 +147,19 @@ export const make = Effect.gen(function* () {
     // Chips ask as soon as an agent's message renders, and touching a network
     // path makes Windows sign in to its host with the user's NTLM credentials.
     if (!path.isAbsolute(expandedPath) || isNetworkPath(expandedPath)) return null;
-    const stat = yield* fileSystem.stat(expandedPath).pipe(Effect.option);
-    if (stat._tag === "None") return null;
-    if (stat.value.type === "Directory") return { kind: "directory" } as const;
-    if (stat.value.type !== "File") return { kind: "other" } as const;
+    // Null means missing; a path that cannot be inspected (e.g. EACCES) may still exist.
+    const stat = yield* fileSystem.stat(expandedPath).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          Effect.succeed(cause.reason._tag === "NotFound" ? null : ("unreadable" as const)),
+      }),
+    );
+    if (stat === null) return null;
+    if (stat === "unreadable") return { kind: "other" } as const;
+    if (stat.type === "Directory") return { kind: "directory" } as const;
+    if (stat.type !== "File") return { kind: "other" } as const;
     let mimeType: string | undefined;
-    if (path.extname(expandedPath) === "" && stat.value.size > 0) {
+    if (path.extname(expandedPath) === "" && stat.size > 0) {
       mimeType = yield* Effect.tryPromise({
         try: async () => {
           const handle = await NodeFSP.open(
@@ -173,7 +180,7 @@ export const make = Effect.gen(function* () {
     }
     return {
       kind: "file",
-      byteLength: Number(stat.value.size),
+      byteLength: Number(stat.size),
       ...(mimeType === undefined ? {} : { mimeType }),
     } satisfies FilesystemEntryMetadata;
   });
