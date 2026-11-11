@@ -1346,11 +1346,9 @@ export const make = Effect.gen(function* () {
           actions: capabilities?.actions ?? [],
           projectCount: projectCounts.get(result.host) ?? 1,
           projectIds: refinedProjectIdsByHost.get(result.host),
-          configured: isReadable(result.host),
-          detail:
-            result.error === null || isReadable(result.host)
-              ? null
-              : providerDetail(requirementOf, result.error),
+          // A host with no named viewer stays unconfigured so clients prefer a server that has one.
+          configured: result.viewer !== null,
+          detail: result.error === null ? null : providerDetail(requirementOf, result.error),
         };
       }),
       ...[...unimplemented].map(([host, { kind, projectCount }]) => ({

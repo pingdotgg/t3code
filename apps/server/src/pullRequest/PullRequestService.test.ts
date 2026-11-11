@@ -861,10 +861,12 @@ it.effect("lists a host whose credential cannot read the account, with no viewer
       [7],
     );
     assert.deepStrictEqual(result.viewers, {});
-    assert.deepStrictEqual(
-      result.providers.map(({ host, configured, detail }) => ({ host, configured, detail })),
-      [{ host: "bitbucket.org", configured: true, detail: null }],
-    );
+    for (const list of [result, mine, authored]) {
+      assert.deepStrictEqual(
+        list.providers.map(({ host, configured, detail }) => ({ host, configured, detail })),
+        [{ host: "bitbucket.org", configured: false, detail: "Bitbucket returned HTTP 403." }],
+      );
+    }
     assert.deepStrictEqual(mine.entries, []);
     assert.deepStrictEqual(authored.entries, []);
     assert.deepStrictEqual(authored.errors, []);
