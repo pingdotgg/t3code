@@ -11,11 +11,12 @@ import {
 } from "@t3tools/shared/assistantCitations";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
   captureComposerDraftInsertion,
   insertComposerDraftText,
 } from "../../state/use-composer-drafts";
-import { activeComposerDraftKey } from "../../state/use-thread-composer-state";
+import { getQueuedRunEdit, queuedEditDraftKey } from "../../state/queued-run-edit";
 
 export function citeAssistantText(
   source: {
@@ -31,10 +32,10 @@ export function citeAssistantText(
     Dialog.alert("Selection is too long to cite", "Select a shorter passage and try again.");
     return;
   }
-  const draftKey = activeComposerDraftKey({
-    environmentId: source.environmentId,
-    id: source.threadId,
-  });
+  // Same draft the composer shows: a queued message's edit draft while one is open.
+  const threadKey = scopedThreadKey(source.environmentId, source.threadId);
+  const edit = getQueuedRunEdit(threadKey);
+  const draftKey = edit === null ? threadKey : queuedEditDraftKey(threadKey, edit.runId);
   const insertion = captureComposerDraftInsertion(draftKey);
   const start = Math.max(0, selection.start);
   // Native offsets are per rendered block, not per message, and carry no surrounding context;

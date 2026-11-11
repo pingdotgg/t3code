@@ -153,7 +153,7 @@ export function appendReviewCommentToDraft(input: {
 }
 
 /** Resolve per call so callbacks created before editing still target the current draft. */
-export function activeComposerDraftKey(thread: {
+function activeComposerDraftKey(thread: {
   readonly environmentId: EnvironmentId;
   readonly id: ThreadId;
 }): string {
