@@ -421,6 +421,57 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "keeps configured npm registries' latest versions apart for one install",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-npm-registry-isolation");
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath = linkIntoPackage(tempDir, "package-tool", [
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+        let probes = 0;
+        const latest = (registry: string, version: string) =>
+          resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+            binaryPath,
+            env: { PATH: npmBinDir, NPM_CONFIG_REGISTRY: registry },
+          }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              stdoutSpawner(() => {
+                probes++;
+                return JSON.stringify(version);
+              }),
+            ),
+            Effect.tap((capabilities) =>
+              Effect.sync(() => {
+                expect(capabilities.latestVersionCacheKey ?? "").not.toContain("private-token");
+              }),
+            ),
+            Effect.flatMap(resolveLatestProviderVersion),
+          );
+        const first = "https://user:private-token@first.example.test";
+        const second = "https://second.example.test";
+        expect(yield* latest(first, "1.1.0")).toBe("1.1.0");
+        expect(yield* latest(second, "2.0.0")).toBe("2.0.0");
+        expect(yield* latest(first, "1.2.0")).toBe("1.1.0");
+        expect(probes).toBe(2);
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("configured registries must not use public npm")),
+        ),
+      ),
+  );
+
   it("pins the advertised stable version in a pnpm-global update command", () => {
     const advisoryFor = (
       maintenanceCapabilities: ReturnType<typeof makeProviderMaintenanceCapabilities>,
