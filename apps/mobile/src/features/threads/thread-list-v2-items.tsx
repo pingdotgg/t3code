@@ -31,7 +31,14 @@ import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
-import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
+import {
+  Platform,
+  Pressable,
+  Text as RNText,
+  useWindowDimensions,
+  View,
+  type AccessibilityActionEvent,
+} from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -64,7 +71,7 @@ import {
 } from "../../state/thread-pr-presentation";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { useSwipeRowDormant } from "../home/swipe-row-activation";
-import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { ThreadSwipeable, type ThreadSwipeAccessibility } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import { canTurnThreadIntoProject, turnThreadIntoProject } from "./turnThreadIntoProject";
 import { threadCanArchive } from "../home/threadArchive";
@@ -603,41 +610,47 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         simultaneousWith={props.simultaneousSwipeGesture}
         threadTitle={pendingTask.title}
       >
-        {() => (
-          <Menu
-            actions={isDraft ? DRAFT_TASK_MENU_ACTIONS : PENDING_TASK_MENU_ACTIONS}
-            onPressAction={handleMenuAction}
-            shouldOpenOnLongPress
-          >
-            <RowPressable
-              accessibilityHint={
-                isDraft
-                  ? `Opens the draft in the new task composer. Swipe left to ${deleteLabel.toLowerCase()}.`
-                  : `Sends when the environment reconnects. Opens the task for editing. Swipe left to ${deleteLabel.toLowerCase()}.`
-              }
-              accessibilityLabel={pendingTask.title}
-              accessibilityRole="button"
-              accessibilityState={{ selected: props.selected ?? false }}
-              key={pendingTask.key}
-              className={rowAppearance.className}
-              interactionClassName={rowAppearance.interactionClassName}
-              interactionOpacity={rowAppearance.interactionOpacity}
-              onPress={() => onSelectPendingTask(pendingTask)}
-              style={rowAppearance.cardStyle}
+        {(_close, swipeAccessibility) => {
+          // iOS exposes the native menu as the accessibility element, so it carries the row's semantics too.
+          const accessibility = {
+            ...swipeAccessibility,
+            accessibilityHint: isDraft
+              ? "Opens the draft in the new task composer."
+              : "Sends when the environment reconnects. Opens the task for editing.",
+            accessibilityLabel: pendingTask.title,
+            accessibilityRole: "button" as const,
+            accessibilityState: { selected: props.selected ?? false },
+          };
+          return (
+            <Menu
+              {...accessibility}
+              actions={isDraft ? DRAFT_TASK_MENU_ACTIONS : PENDING_TASK_MENU_ACTIONS}
+              onPressAction={handleMenuAction}
+              shouldOpenOnLongPress
             >
-              {sidebarPane ? (
-                rowContent
-              ) : (
-                <View>
-                  <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{rowContent}</View>
-                  {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
-                    <View className="ml-5 h-px bg-border-subtle" />
-                  ) : null}
-                </View>
-              )}
-            </RowPressable>
-          </Menu>
-        )}
+              <RowPressable
+                {...accessibility}
+                key={pendingTask.key}
+                className={rowAppearance.className}
+                interactionClassName={rowAppearance.interactionClassName}
+                interactionOpacity={rowAppearance.interactionOpacity}
+                onPress={() => onSelectPendingTask(pendingTask)}
+                style={rowAppearance.cardStyle}
+              >
+                {sidebarPane ? (
+                  rowContent
+                ) : (
+                  <View>
+                    <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{rowContent}</View>
+                    {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
+                      <View className="ml-5 h-px bg-border-subtle" />
+                    ) : null}
+                  </View>
+                )}
+              </RowPressable>
+            </Menu>
+          );
+        }}
       </ThreadSwipeable>
     </>
   );
@@ -1148,11 +1161,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : null,
     [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
-  const swipeAccessibilityHint = !canOperateThread
-    ? "Opens the thread"
-    : secondaryAction === null
-      ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
-      : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const cardContent = (
@@ -1420,22 +1428,32 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     cardContent
   );
 
-  const rowContent = (close: () => void) =>
+  // iOS exposes the native menu wrapping the row as the accessibility element, so the row's
+  // semantics go on both the Menu and the pressable.
+  const rowAccessibility = (swipeAccessibility?: ThreadSwipeAccessibility) => {
+    const ownActions = variant === "card" ? rowAccessibilityActions : [];
+    return {
+      accessibilityHint: "Opens the thread",
+      accessibilityLabel: rowAccessibilityLabel,
+      accessibilityRole: "button" as const,
+      accessibilityState: { selected },
+      accessibilityActions: [...ownActions, ...(swipeAccessibility?.accessibilityActions ?? [])],
+      onAccessibilityAction: (event: AccessibilityActionEvent) => {
+        if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
+        if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
+        swipeAccessibility?.onAccessibilityAction(event);
+      },
+    };
+  };
+
+  const rowContent = (close: () => void, accessibility: ReturnType<typeof rowAccessibility>) =>
     variant === "card" ? (
       <RowPressable
         key={`${thread.environmentId}:${thread.id}`}
         interactionClassName={rowAppearance.interactionClassName}
         interactionOpacity={rowAppearance.interactionOpacity}
         className={rowAppearance.className}
-        accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={rowAccessibilityLabel}
-        accessibilityRole="button"
-        accessibilityState={{ selected }}
-        accessibilityActions={rowAccessibilityActions}
-        onAccessibilityAction={(event) => {
-          if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
-          if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
-        }}
+        {...accessibility}
         onPress={() => {
           close();
           selectThread();
@@ -1458,10 +1476,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         key={`${thread.environmentId}:${thread.id}`}
         interactionClassName={rowAppearance.interactionClassName}
         interactionOpacity={rowAppearance.interactionOpacity}
-        accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={rowAccessibilityLabel}
-        accessibilityRole="button"
-        accessibilityState={{ selected }}
+        {...accessibility}
         className={rowAppearance.className}
         onPress={() => {
           close();
@@ -1545,7 +1560,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     );
 
   if (!canOperateThread)
-    return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+    return (
+      <View style={rowAppearance.swipeContainerStyle}>
+        {rowContent(() => {}, rowAccessibility())}
+      </View>
+    );
 
   return (
     <View collapsable={false}>
@@ -1570,11 +1589,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         simultaneousWith={props.simultaneousSwipeGesture}
         threadTitle={thread.title}
       >
-        {(close) => (
-          <Menu actions={menuActions} onPressAction={handleMenuAction} shouldOpenOnLongPress>
-            {rowContent(close)}
-          </Menu>
-        )}
+        {(close, swipeAccessibility) => {
+          const accessibility = rowAccessibility(swipeAccessibility);
+          return (
+            <Menu
+              {...accessibility}
+              actions={menuActions}
+              onPressAction={handleMenuAction}
+              shouldOpenOnLongPress
+            >
+              {rowContent(close, accessibility)}
+            </Menu>
+          );
+        }}
       </ThreadSwipeable>
     </View>
   );
