@@ -9038,7 +9038,14 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     }),
   );
 
-  it.effect.each(["snoozed", "snoozed, other provider", "settled", "settled after reset"] as const)(
+  const heldWakeScenarios = [
+    "snoozed",
+    "snoozed, other provider",
+    "settled",
+    "settled after reset",
+    "settled, unknown reset",
+  ] as const;
+  it.effect.each(heldWakeScenarios)(
     "handles background wakes on a %s usage-limited thread",
     (scenario) =>
       Effect.gen(function* () {
@@ -9117,7 +9124,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
                   message: "Plan limit reached.",
                   code: "usageLimitExceeded",
                   retryable: null,
-                  resetAt,
+                  resetAt: scenario === "settled, unknown reset" ? null : resetAt,
                 },
               },
             },
@@ -9127,7 +9134,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           snapshot.threads.find((thread) => thread.id === threadId),
         );
         const snoozed = scenario === "snoozed" || scenario === "snoozed, other provider";
-        if (scenario !== "settled after reset")
+        if (scenario !== "settled after reset" && scenario !== "settled, unknown reset")
           yield* orchestrator.dispatch(
             limitRecoveryCommand((yield* shellOf)!, true, DateTime.toEpochMillis(now), true)!,
           );
@@ -9164,8 +9171,12 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           creationSource: "provider",
         });
         const held = yield* orchestrator.getThreadProjection(threadId);
-        // Another provider's work is not held behind this provider's limit.
-        if (scenario === "settled after reset" || scenario === "snoozed, other provider") {
+        // Nothing holds another provider's work, or work after a passed or unknown reset.
+        if (
+          scenario === "settled after reset" ||
+          scenario === "settled, unknown reset" ||
+          scenario === "snoozed, other provider"
+        ) {
           assert.deepEqual(
             held.runs.map((run) => run.status),
             ["failed", "starting"],

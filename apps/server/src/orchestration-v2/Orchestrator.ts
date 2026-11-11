@@ -6011,12 +6011,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.settledOverride !== "settled" &&
         projection.thread.providerInstanceId === limitedRun.providerInstanceId &&
         !projection.runtimeRequests.some((request) => request.status === "pending");
-      // After a known reset, only a valid pending continuation takes priority
-      // over new work. Unknown reset times keep the existing queue protection.
+      // Hold only until a known reset, or while its continuation is pending. With no
+      // reset time nothing can drain the hold, so new work starts as before.
       if (
-        Number.isFinite(resetMs) &&
-        resetMs <= DateTime.toEpochMillis(yield* DateTime.now) &&
-        !autoResumePending
+        !Number.isFinite(resetMs) ||
+        (resetMs <= DateTime.toEpochMillis(yield* DateTime.now) && !autoResumePending)
       ) {
         limitedRun = null;
       }
