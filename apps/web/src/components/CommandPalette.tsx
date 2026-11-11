@@ -1912,11 +1912,6 @@ function OpenCommandPaletteDialog(props: {
           input: { projectId: existing.id, archived: false },
         }).then((result) => reportProjectFailure("Failed to unarchive project", result));
       }
-      if (isAgentsPage(pathname)) {
-        await navigate({ to: "/agents" });
-        setOpen(false);
-        return;
-      }
       const latestThread = getLatestThreadForProject(
         threads.filter((thread) => thread.environmentId === existing.environmentId),
         existing.id,
@@ -1981,17 +1976,6 @@ function OpenCommandPaletteDialog(props: {
           }),
         );
       }
-      return;
-    }
-
-    if (isAgentsPage(pathname)) {
-      await navigate({ to: "/agents" });
-      setOpen(false);
-      toastManager.add({
-        type: "success",
-        title: "Project added",
-        description: "Select it when starting your next agent chat.",
-      });
       return;
     }
 
