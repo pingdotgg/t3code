@@ -211,6 +211,7 @@ describe("DesktopShellEnvironment", () => {
               SSH_AUTH_SOCK: "/old-session.sock",
               JAVA_HOME: "/old/java",
               SSL_CERT_FILE: "/old/cert.pem",
+              CLAUDE_CODE_OAUTH_TOKEN: "cached-token",
             }),
         });
         const cachePath = `${stateDir}/shell-environment-cache.json`;
@@ -253,6 +254,7 @@ describe("DesktopShellEnvironment", () => {
               yield* service.installIntoProcess;
               assert.equal(env.PATH, "/old/bin:/usr/bin:/launcher/bin");
               assert.equal(env.SSH_AUTH_SOCK, "/current-session.sock");
+              assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "cached-token");
               const replay = yield* Stream.runHead(service.updates);
               assert.isTrue(Option.isSome(replay));
               if (Option.isSome(replay))
