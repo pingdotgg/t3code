@@ -1602,7 +1602,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
         <SettingsRow
           title="Clean up transcripts"
-          description="Off by default. Sends transcript text, never audio, to the cleanup model to fix punctuation and corrections."
+          description="Off by default. Sends the transcript and nearby draft text, never audio, to the cleanup model."
           control={
             <Switch
               aria-label="Clean up transcripts"

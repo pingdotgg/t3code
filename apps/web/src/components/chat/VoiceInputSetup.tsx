@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import {
+  isSystemDefaultDeviceId,
   microphoneOrder,
   preferMicrophone,
   preferredMicrophoneId,
@@ -171,7 +172,7 @@ export function VoiceInputSetup(props: {
                     updateMicrophoneOrder((order) =>
                       preferMicrophone(
                         order,
-                        value === "system-default"
+                        value === "system-default" || isSystemDefaultDeviceId(deviceId)
                           ? { kind: "default" }
                           : { kind: "device", deviceId, label },
                       ),

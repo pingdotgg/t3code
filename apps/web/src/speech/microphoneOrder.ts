@@ -9,6 +9,11 @@ const SYSTEM_DEFAULT: MicrophoneEntry = { kind: "default" };
 // Chromium lists the current default and Windows communications device under these ids too.
 const ALIAS_DEVICE_IDS = new Set(["", "default", "communications"]);
 
+/** True for ids that stand for the system default, including the id-less input shown before permission. */
+export function isSystemDefaultDeviceId(deviceId: string): boolean {
+  return ALIAS_DEVICE_IDS.has(deviceId);
+}
+
 export function microphoneEntryKey(entry: MicrophoneEntry): string {
   return entry.kind === "default" ? "default" : `device:${entry.deviceId}`;
 }

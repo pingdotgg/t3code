@@ -10,6 +10,20 @@ type PreparedBrowserTranscription = PreparedVoiceTranscription & {
   readonly streaming?: VoiceStreamingSession & { readonly feed: (pcm: Float32Array) => void };
 };
 
+/** Opens a microphone. A saved device the browser can no longer find falls back to System default. */
+export async function openMicrophone(microphoneId: string): Promise<MediaStream> {
+  if (!microphoneId) return navigator.mediaDevices.getUserMedia({ audio: true });
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: { exact: microphoneId } },
+    });
+  } catch (error) {
+    const name = typeof error === "object" && error !== null && "name" in error ? error.name : "";
+    if (name !== "OverconstrainedError" && name !== "NotFoundError") throw error;
+    return navigator.mediaDevices.getUserMedia({ audio: true });
+  }
+}
+
 export function createBrowserPcmCapture(
   input: {
     readonly getMicrophoneId: () => string | Promise<string>;
@@ -63,9 +77,7 @@ export function createBrowserPcmCapture(
       captureSignal.throwIfAborted();
       const captured = await new Promise<MediaStream>((resolve, reject) => {
         const onAbort = () => reject(captureSignal.reason);
-        const permission = navigator.mediaDevices.getUserMedia({
-          audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
-        });
+        const permission = openMicrophone(microphoneId);
         captureSignal.addEventListener("abort", onAbort, { once: true });
         void permission.then(
           (media) => {

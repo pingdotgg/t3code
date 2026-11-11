@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
-import { createBrowserPcmCapture } from "./browserPcmCapture";
+import { createBrowserPcmCapture, openMicrophone } from "./browserPcmCapture";
 
 it("records from the chosen microphone, cancels an unanswered prompt, and stops a late stream", async () => {
   let grantPermission!: (media: MediaStream) => void;
@@ -33,5 +33,20 @@ it("records from the chosen microphone, cancels an unanswered prompt, and stops 
     grantPermission({ getTracks: () => [{ stop }] } as unknown as MediaStream);
     await preparing;
   }
-  expect(stop).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+});
+
+it("falls back to the system default when the saved microphone is gone, and reports other failures", async () => {
+  const media = {} as MediaStream;
+  using microphone = vi
+    .spyOn(navigator.mediaDevices, "getUserMedia")
+    .mockRejectedValueOnce(new DOMException("gone", "OverconstrainedError"))
+    .mockResolvedValueOnce(media);
+  await expect(openMicrophone("blue-yeti")).resolves.toBe(media);
+  expect(microphone).toHaveBeenLastCalledWith({ audio: true });
+
+  const denied = new DOMException("denied", "NotAllowedError");
+  microphone.mockRejectedValueOnce(denied);
+  await expect(openMicrophone("blue-yeti")).rejects.toBe(denied);
+  expect(microphone).toHaveBeenCalledTimes(3);
 });
