@@ -419,6 +419,8 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       });
     }
 
+    const startedAtRef = yield* Ref.make<string | null>(null);
+    const settled = yield* Ref.make(false);
     const setUpdateState = (state: ServerProviderUpdateState | null) =>
       providerRegistry.setProviderMaintenanceActionState({
         instanceId,
@@ -436,9 +438,13 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
 
     const runProviderUpdate = Effect.fn("ProviderMaintenanceRunner.runProviderUpdate")(
       function* () {
+        // Uninterruptible, so a dropped request cannot leave settled set without the state.
         const finish = (state: ServerProviderUpdateState) =>
-          setUpdateState(state).pipe(Effect.map((providers) => ({ providers })));
-        const startedAtRef = yield* Ref.make<string | null>(null);
+          Ref.set(settled, true).pipe(
+            Effect.andThen(setUpdateState(state)),
+            Effect.map((providers) => ({ providers })),
+            Effect.uninterruptible,
+          );
 
         const runCommandAndVerify = Effect.fn("ProviderMaintenanceRunner.runCommandAndVerify")(
           function* () {
@@ -655,6 +661,21 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         run: runProviderUpdate(),
       })
       .pipe(
+        // A dropped request interrupts the update; a "running" state would spin until restart.
+        Effect.onInterrupt(() =>
+          Effect.gen(function* () {
+            // A finished state stays, even if the request drops while it is being written.
+            if (yield* Ref.get(settled)) return;
+            yield* setUpdateState(
+              makeUpdateState({
+                status: "failed",
+                startedAt: yield* Ref.get(startedAtRef),
+                finishedAt: yield* nowIso,
+                message: "Update stopped before it finished.",
+              }),
+            );
+          }).pipe(Effect.ignore),
+        ),
         Effect.mapError((error) =>
           isServerProviderUpdateError(error)
             ? new ServerProviderUpdateError({

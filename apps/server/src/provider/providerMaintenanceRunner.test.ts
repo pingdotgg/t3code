@@ -893,6 +893,66 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect("an interrupted update ends failed instead of running forever", () => {
+    const started = Deferred.makeUnsafe<void>();
+    return Effect.gen(function* () {
+      const { registry, updateStatesRef } = yield* makeRegistry(baseNativeCliProvider);
+      const updater = yield* makeTestRunner(registry);
+      const update = yield* updater.updateProvider(NATIVE_CLI_DRIVER).pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(update);
+      const last = (yield* Ref.get(updateStatesRef)).at(-1);
+      assert.deepStrictEqual(
+        [last?.status, last?.message],
+        ["failed", "Update stopped before it finished."],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => ({
+            exitCode: Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+          })),
+        ),
+      ),
+    );
+  });
+
+  it.effect("a request dropped while the final state is written still records it", () => {
+    const writing = Deferred.makeUnsafe<void>();
+    const release = Deferred.makeUnsafe<void>();
+    return Effect.gen(function* () {
+      const { registry, updateStatesRef } = yield* makeRegistry(baseNativeCliProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        setProviderMaintenanceActionState: (input) =>
+          input.state?.status === "succeeded"
+            ? Deferred.succeed(writing, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(registry.setProviderMaintenanceActionState(input)),
+              )
+            : registry.setProviderMaintenanceActionState(input),
+      });
+
+      const update = yield* updater.updateProvider(NATIVE_CLI_DRIVER).pipe(Effect.forkScoped);
+      yield* Deferred.await(writing);
+      update.interruptUnsafe();
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.await(update);
+
+      assert.strictEqual((yield* Ref.get(updateStatesRef)).at(-1)?.status, "succeeded");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => ({ stdout: "updated" })),
+        ),
+      ),
+    );
+  });
+
   it.effect("prevents concurrent updates for the same provider", () => {
     const startedLatch: { resolve: () => void } = { resolve: () => {} };
     const releaseLatch: { resolve: () => void } = { resolve: () => {} };
