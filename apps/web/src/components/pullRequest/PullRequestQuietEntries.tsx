@@ -145,7 +145,7 @@ export function PullRequestResolvedThreadRow({
   defaultOpen = false,
 }: {
   defaultOpen?: boolean;
-  path: string;
+  path: string | null;
   line: number | null | undefined;
   outdated: boolean;
   /** The thread is still open on the host, but the review that started it was dismissed. */
@@ -155,7 +155,7 @@ export function PullRequestResolvedThreadRow({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const label = `${path}${line ? `:${line}` : ""}`;
+  const label = path === null ? "Overview" : `${path}${line ? `:${line}` : ""}`;
   const comments = `${commentCount} ${commentCount === 1 ? "comment" : "comments"}`;
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
