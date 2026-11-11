@@ -603,8 +603,15 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   } else if (serviceInstalled && serviceCurrent) {
     yield* Console.log(`  Background service already on ${targetVersion}`);
   } else if (serviceInstalled) {
+    // A pending restart means the service already points at serviceVersion but runs an older one.
+    const running =
+      serviceVersion === undefined
+        ? "an unknown version"
+        : restartPending
+          ? `the version before ${serviceVersion}`
+          : serviceVersion;
     yield* Console.log(
-      `  Background service still running ${serviceVersion ?? "an unknown version"}. Run \`t3 service restart\` when you are ready to switch it to ${targetVersion}.`,
+      `  Background service still running ${running}. Run \`t3 service restart\` when you are ready to switch it to ${targetVersion}.`,
     );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(

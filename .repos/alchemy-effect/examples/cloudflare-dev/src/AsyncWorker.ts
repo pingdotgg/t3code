@@ -45,9 +45,7 @@ export default {
       case "/d1": {
         // The `greetings` table comes from ./migrations — no DDL here, so a
         // failing migration apply fails this route loudly.
-        await env.DB.prepare("INSERT INTO greetings (text) VALUES (?)")
-          .bind("hello from d1")
-          .run();
+        await env.DB.prepare("INSERT INTO greetings (text) VALUES (?)").bind("hello from d1").run();
         const row = await env.DB.prepare(
           "SELECT text FROM greetings ORDER BY id DESC LIMIT 1",
         ).first<{ text: string }>();

@@ -45,7 +45,7 @@ it.effect("failed installation cleans staging and exposes only a safe failure me
 );
 
 it.effect.each([
-  { npmReason: "NotFound", pnpmReason: "NotFound", reason: "package_manager_missing" },
+  { npmReason: "NotFound", pnpmReason: "NotFound", reason: "npm_not_found" },
   { npmReason: "NotFound", pnpmReason: "PermissionDenied", reason: undefined },
   { npmReason: "PermissionDenied", pnpmReason: "NotFound", reason: undefined },
 ] as const)(
