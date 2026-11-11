@@ -3613,6 +3613,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             event.type === "turn.terminal",
         );
       return {
+        adapter,
         attachmentsDir,
         runtime,
         providerThread,
@@ -8964,6 +8965,129 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("keeps each session on the window its own Claude process reports", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+        model: "claude-opus-5-5",
+      } satisfies ModelSelection;
+      const usage = { ...zeroUsage, input_tokens: 9_667, output_tokens: 2 };
+      const reportedWindow = (uuid: string, contextWindow: number) =>
+        makeResultFrame({
+          uuid,
+          result: "OK",
+          modelUsage: {
+            "claude-opus-5-5": {
+              inputTokens: 9_667,
+              outputTokens: 2,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              webSearchRequests: 0,
+              costUSD: 0,
+              contextWindow,
+              maxOutputTokens: 32_000,
+            },
+          },
+        });
+      const windows = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+        events.flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+            ? [event.providerTurn.tokenUsage.maxTokens]
+            : [],
+        );
+      const startTurn = (
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+        threadId: ThreadId,
+        providerThread: typeof harness.providerThread,
+        attemptId: string,
+      ) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(attemptId),
+              text: "Continue.",
+              attachments: [],
+              modelSelection,
+            }),
+          );
+        });
+
+      yield* startTurn(harness.runtime, harness.threadId, harness.providerThread, "attempt-a-1");
+      yield* Queue.offer(
+        harness.sdkMessages,
+        usageStreamFrame({ type: "message_start", message: { id: "msg_a1", usage } }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        reportedWindow("00000000-0000-4000-8000-000000000690", 200_000),
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+
+      const threadB = ThreadId.make("thread-claude-wake-b");
+      const runtimeB = yield* harness.adapter.openSession({
+        threadId: threadB,
+        providerSessionId: ProviderSessionId.make("provider-session-claude-wake-b"),
+        modelSelection,
+        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      });
+      const providerThreadB = yield* runtimeB.ensureThread({
+        threadId: threadB,
+        modelSelection,
+        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      });
+      const eventsB: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const terminalsB = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtimeB.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            eventsB.push(event);
+            if (event.type === "turn.terminal") yield* Queue.offer(terminalsB, event);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* startTurn(runtimeB, threadB, providerThreadB, "attempt-b-1");
+      const queueB = harness.processQueues.at(-1);
+      assert.isDefined(queueB);
+      assert.notStrictEqual(queueB, harness.sdkMessages);
+      yield* Queue.offer(
+        queueB,
+        usageStreamFrame({ type: "message_start", message: { id: "msg_b1", usage } }),
+      );
+      yield* Queue.offer(queueB, reportedWindow("00000000-0000-4000-8000-000000000691", 1_000_000));
+      yield* Queue.take(terminalsB);
+
+      yield* startTurn(harness.runtime, harness.threadId, harness.providerThread, "attempt-a-2");
+      yield* Queue.offer(
+        harness.sdkMessages,
+        usageStreamFrame({ type: "message_start", message: { id: "msg_a2", usage } }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        reportedWindow("00000000-0000-4000-8000-000000000692", 200_000),
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+
+      assert.deepEqual(windows(harness.events), [1_000_000, 200_000, 200_000]);
+      assert.deepEqual(windows(eventsB), [1_000_000, 1_000_000]);
+      assert.strictEqual(harness.runtime.getModelContextWindow?.(modelSelection), 200_000);
+      assert.strictEqual(runtimeB.getModelContextWindow?.(modelSelection), 1_000_000);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect("merges cumulative stream usage into the message_start counts", () =>
