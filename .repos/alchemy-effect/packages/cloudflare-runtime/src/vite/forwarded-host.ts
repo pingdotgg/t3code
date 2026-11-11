@@ -1,10 +1,10 @@
+import type { IncomingMessage } from "node:http";
+import type { IncomingHttpHeaders } from "node:http";
+import type { TLSSocket } from "node:tls";
 import {
   HEADER_ORIGINAL_URL,
   HEADER_PROXY_SHARED_SECRET,
 } from "../core/globals/ProxyHeaders.shared.ts";
-import type { IncomingMessage } from "node:http";
-import type { TLSSocket } from "node:tls";
-import type { IncomingHttpHeaders } from "node:http";
 
 /**
  * Resolves the client-facing host of an incoming dev-server request.
@@ -14,20 +14,13 @@ import type { IncomingHttpHeaders } from "node:http";
  * public host arrives in `X-Forwarded-Host`. Preferring the forwarded host
  * lets the worker see the URL the client actually requested.
  */
-export function resolveForwardedHost(
-  headers: IncomingHttpHeaders,
-  fallbackHost: string,
-): string {
+export function resolveForwardedHost(headers: IncomingHttpHeaders, fallbackHost: string): string {
   return (
-    firstHeaderValue(headers["x-forwarded-host"]) ??
-    firstHeaderValue(headers.host) ??
-    fallbackHost
+    firstHeaderValue(headers["x-forwarded-host"]) ?? firstHeaderValue(headers.host) ?? fallbackHost
   );
 }
 
-function firstHeaderValue(
-  value: string | Array<string> | undefined,
-): string | undefined {
+function firstHeaderValue(value: string | Array<string> | undefined): string | undefined {
   // Proxy chains may append to a single header ("host1, host2") instead of
   // repeating it; only the first entry is the client-facing host.
   const raw = Array.isArray(value) ? value[0] : value;
@@ -42,7 +35,7 @@ export function proxyRequestHeaders(
   proxySharedSecret: string,
 ): IncomingHttpHeaders {
   const original = new URL(target);
-  const protocol = firstHeaderValue(request.headers["x-forwarded-proto"]);
+  const protocol = firstHeaderValue(request.headers["x-forwarded-proto"])?.toLowerCase();
   original.protocol =
     protocol === "https" || protocol === "http"
       ? `${protocol}:`
@@ -52,6 +45,9 @@ export function proxyRequestHeaders(
   original.port = "";
   original.host = resolveForwardedHost(request.headers, target.host);
   return {
+    // The Worker sees the dev server's host in `X-Forwarded-Host` when the
+    // client sent none, as under `@cloudflare/vite-plugin`.
+    "x-forwarded-host": firstHeaderValue(request.headers.host) ?? target.host,
     ...request.headers,
     host: original.host,
     [HEADER_ORIGINAL_URL.toLowerCase()]: original.href,

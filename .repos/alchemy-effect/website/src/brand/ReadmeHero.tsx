@@ -19,11 +19,7 @@ export function ReadmeHero() {
         color: "#2a2620",
       }}
     >
-      <img
-        src={yantraSvg({ size: 280, output: "url" })}
-        width={280}
-        height={280}
-      />
+      <img src={yantraSvg({ size: 280, output: "url" })} width={280} height={280} />
       <div
         style={{
           fontStyle: "italic",

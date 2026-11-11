@@ -23,7 +23,8 @@ import {
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
@@ -631,15 +632,17 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   AcpRegistryCatalog["Service"],
   never,
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
   | ProviderHost.ProviderHost
 > {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digester = yield* Digest.Digest;
   const sha256Hex = (data: Uint8Array) =>
-    crypto.digest("SHA-256", data).pipe(Effect.map(Hex.encode), Effect.orDie);
+    digester.digest(Digest.sha256, data).pipe(Effect.map(Hex.encode), Effect.orDie);
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const httpClient = yield* HttpClient.HttpClient;
@@ -776,7 +779,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     .pipe(Effect.flatMap(decodeRegistryText), Effect.option);
 
   const writeRegistryCache = (text: string) =>
-    crypto.randomUUIDv4().pipe(
+    random.uuidV4().pipe(
       Effect.flatMap((id) => {
         const temporaryPath = `${registryCachePath}.${process.pid}-${id}.tmp`;
         return fileSystem
@@ -1390,6 +1393,27 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     };
   };
 
+  const hasInstalledBinaryVersion = Effect.fn("AcpRegistryCatalog.hasInstalledBinaryVersion")(
+    function* (agentId: string) {
+      const agentRoot = path.join(installsDirectory, agentId);
+      const versions = yield* fileSystem
+        .readDirectory(agentRoot)
+        .pipe(Effect.orElseSucceed((): Array<string> => []));
+      for (const version of versions) {
+        for (const candidateTarget of resolveAcpRegistryPlatformTargetCandidates(platformTarget)) {
+          if (
+            yield* fileSystem
+              .exists(path.join(agentRoot, version, candidateTarget))
+              .pipe(Effect.orElseSucceed(() => false))
+          ) {
+            return true;
+          }
+        }
+      }
+      return false;
+    },
+  );
+
   const installBinary = Effect.fn("AcpRegistryCatalog.installBinary")(function* (
     agent: AcpRegistryAgent,
     target: typeof AcpRegistryBinaryTarget.Type,
@@ -1770,7 +1794,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             const exists = yield* fileSystem
               .exists(paths.executablePath)
               .pipe(Effect.orElseSucceed(() => false));
-            if (!exists) {
+            // Any prepared version keeps the agent ready; resolve installs the current one on demand.
+            if (!exists && !(yield* hasInstalledBinaryVersion(agent.id))) {
               return {
                 status: "unprepared",
                 agentId,
@@ -1778,17 +1803,19 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                 distribution: "binary",
               } as const;
             }
-            yield* assertExecutableInRoot(paths.installRoot, paths.executablePath).pipe(
-              Effect.mapError((cause) =>
-                isAcpRegistryError(cause)
-                  ? cause
-                  : new AcpRegistryError({
-                      reason: "install_failed",
-                      detail: `Could not validate cached ACP Registry agent ${agent.id}.`,
-                      cause,
-                    }),
-              ),
-            );
+            if (exists) {
+              yield* assertExecutableInRoot(paths.installRoot, paths.executablePath).pipe(
+                Effect.mapError((cause) =>
+                  isAcpRegistryError(cause)
+                    ? cause
+                    : new AcpRegistryError({
+                        reason: "install_failed",
+                        detail: `Could not validate cached ACP Registry agent ${agent.id}.`,
+                        cause,
+                      }),
+                ),
+              );
+            }
             return {
               status: "ready",
               agentId,
