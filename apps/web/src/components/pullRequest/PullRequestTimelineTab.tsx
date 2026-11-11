@@ -246,7 +246,6 @@ function ConversationCard({
   onOpen,
   reactions,
   showPath = true,
-  reply = false,
   resolveButton = null,
 }: {
   event: PullRequestTimelineEvent;
@@ -255,8 +254,6 @@ function ConversationCard({
   onOpen: OpenOnHost;
   reactions: ReactionSurface;
   showPath?: boolean;
-  /** A reply goes with its conversation, from the card that heads it. */
-  reply?: boolean;
   resolveButton?: ReactNode;
 }) {
   const gt = useGT();
@@ -340,7 +337,7 @@ function ConversationCard({
             />
           ) : null}
           {resolveButton}
-          {event.body && event.comment && !reply ? (
+          {event.body && event.comment ? (
             <AddToChatButton comment={event.comment} reactions={reactions} />
           ) : null}
           {canReact || event.reactions.length > 0 ? (
@@ -605,7 +602,6 @@ function ReviewThreadEvent({
                   onOpen={onOpen}
                   reactions={reactions}
                   showPath={false}
-                  reply
                 />
               ))}
             </div>

@@ -714,6 +714,20 @@ function readableBody(raw: string): string | null {
   return readable === "" ? null : readable;
 }
 
+/** Moves collapsed `<details>` sections after the text a reader sees, so a bound keeps that text first. */
+function visibleTextFirst(body: string): string {
+  const shown: string[] = [];
+  const folded: string[] = [];
+  let depth = 0;
+  for (const line of body.split("\n")) {
+    const opens = /^\s*<details[\s>]/iu.test(line);
+    if (opens) depth += 1;
+    (depth > 0 ? folded : shown).push(line);
+    if (depth > 0 && /<\/details>\s*$/iu.test(line)) depth -= 1;
+  }
+  return folded.length === 0 ? body : [...shown, "", ...folded].join("\n").trim();
+}
+
 /**
  * Merged wins over closed: GitHub sets both timestamps on a merge, and reporting "closed" for a
  * merged pull request would misstate what happened.
@@ -1301,8 +1315,10 @@ export function buildPullRequestContext(input: PullRequestContextMetadata): Revi
   return pullRequestContextComment(input, []);
 }
 
-/** A remark the reader can bring into the chat: a conversation on a line, or one comment. */
-export type PullRequestChatSubject = Extract<PullRequestFinding, { kind: "thread" | "comment" }>;
+/** A remark the reader can bring into the chat: a whole conversation, or one comment. */
+export type PullRequestChatSubject =
+  | { readonly kind: "thread"; readonly thread: PullRequestConversationThread }
+  | { readonly kind: "comment"; readonly comment: PullRequestComment };
 
 /**
  * A remark or conversation brought into the chat to talk about, not to fix. Its id carries the
@@ -1318,36 +1334,57 @@ export function buildPullRequestCommentContext(
   subject: PullRequestChatSubject,
 ): ReviewCommentContext | null {
   const pullRequestNumber = pullRequest.number;
-  // Unlike a batch fix, one remark brought in to talk about travels whole.
-  if (subject.kind === "thread") {
-    const text = reviewThreadText(subject.thread);
-    return text === ""
-      ? null
-      : {
-          ...reviewThreadContext(subject.thread, pullRequestNumber),
-          id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`,
-          text,
-        };
+  if (subject.kind === "comment") {
+    const comment = subject.comment;
+    const body = readableBody(comment.body);
+    if (body === null) return null;
+    const author = comment.author?.login ?? "ghost";
+    return {
+      id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
+      sectionId: `pull-request:${pullRequestNumber}`,
+      sectionTitle: `PR #${pullRequestNumber} conversation`,
+      // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
+      filePath: comment.path ?? `@${author}`,
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "comment",
+      text: remarkText(`${author}: ${body}`.trim(), reviewLineComments(comment, pullRequest)),
+      diff: "",
+      ...(comment.path === null
+        ? {}
+        : { fenceLanguage: inferReviewCommentFenceLanguage(comment.path) }),
+    };
   }
-  const comment = subject.comment;
-  const body = readableBody(comment.body);
-  if (body === null) return null;
-  const author = comment.author?.login ?? "ghost";
+  const comments = subject.thread.comments;
+  // Bounded per comment so a long bot report cannot crowd the replies out of the thread.
+  const lines = comments.flatMap((comment) => {
+    const body = readableBody(comment.body);
+    return body === null
+      ? []
+      : [bounded(`${comment.author?.login ?? "ghost"}: ${visibleTextFirst(body)}`)];
+  });
+  const first = comments[0];
+  if (lines.length === 0 || first === undefined) return null;
+  const text = lines.join("\n");
+  if (subject.thread.path !== null) {
+    return {
+      ...reviewThreadContext(subject.thread, pullRequestNumber),
+      id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`,
+      text,
+    };
+  }
   return {
-    id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
+    id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
     // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
     sectionTitle: `PR #${pullRequestNumber} conversation`,
-    // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
-    filePath: comment.path ?? `@${author}`,
+    // The chip wears `filePath rangeLabel`: who opened a thread that names no file.
+    filePath: `@${first.author?.login ?? "ghost"}`,
     startIndex: 0,
     endIndex: 0,
-    rangeLabel: "comment",
-    text: remarkText(`${author}: ${body}`.trim(), reviewLineComments(comment, pullRequest)),
+    rangeLabel: "thread",
+    text,
     diff: "",
-    ...(comment.path === null
-      ? {}
-      : { fenceLanguage: inferReviewCommentFenceLanguage(comment.path) }),
   };
 }
 
