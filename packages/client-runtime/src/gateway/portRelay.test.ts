@@ -11,6 +11,7 @@ import type { GatewayRuntimePort } from "./port.ts";
 import type { GatewayGrants } from "./bridgeClient.ts";
 import {
   answerGatewayPortCall,
+  isGatewayRelayUnreachable,
   relayGrantsProblem,
   RosterRetrySchedule,
   serveGatewayPortRelays,
@@ -59,7 +60,7 @@ it("resubscribes after its relay fails and answers void calls in a form the wire
   try {
     const stop = serveGatewayPortRelays(
       Context.make(EnvironmentRegistry, registry),
-      { settleThread } as unknown as GatewayRuntimePort,
+      { settleThread, listEnvironments } as unknown as GatewayRuntimePort,
       { remote: ["lifecycle"] },
       (error) => failures.push(error),
     );
@@ -113,16 +114,22 @@ it("refuses a relayed call whose scope this app's grant for the environment lack
   stop();
 
   expect(sendMessage).not.toHaveBeenCalled();
+  // It did not run, so the server may try another app.
   expect(responses).toEqual([
     {
       connectionId: "connection",
       invocationId: "invocation",
       error: expect.stringContaining("send"),
+      unreachable: true,
     },
   ]);
 });
 
 const fullThread = { runtimeMode: "full-access", interactionMode: "default" };
+/** This app's own connection to the target. */
+const listEnvironments = async () => [
+  { environmentId: "remote", label: "Remote", targetKind: "bearer", connectionState: "connected" },
+];
 const FULL = { runtimeMode: "full-access", interactionMode: "default" } as const;
 
 it("runs a relayed call that carries no modes as the narrowest chat would", async () => {
@@ -130,6 +137,7 @@ it("runs a relayed call that carries no modes as the narrowest chat would", asyn
   const port = {
     sendMessage,
     getThread: async () => fullThread,
+    listEnvironments,
   } as unknown as GatewayRuntimePort;
   const send = { environmentId: "remote", threadId: "thread", text: "hi" };
 
@@ -241,7 +249,11 @@ it("caps a relayed call only where the target's own roster narrows the calling m
       Context.make(EnvironmentRegistry, registry).pipe(
         Context.add(RosterRetrySchedule, Schedule.forever),
       ),
-      { sendMessage, getThread: async () => fullThread } as unknown as GatewayRuntimePort,
+      {
+        sendMessage,
+        getThread: async () => fullThread,
+        listEnvironments,
+      } as unknown as GatewayRuntimePort,
       { caller: ["read", "send"], remote: remote ?? ["read", "send"] } as GatewayGrants,
       () => undefined,
     );
@@ -280,4 +292,39 @@ it("refuses to serve more grants than a server accepts, once and visibly", () =>
   expect(failures).toEqual([new Error(relayGrantsProblem(grants))]);
   expect(relayGrantsProblem(grants)).toContain("256");
   expect(relayGrantsProblem({ remote: ["read"] })).toBeUndefined();
+});
+
+it("says it could not run a call on an environment it is not connected to", async () => {
+  const sendMessage = vi.fn(async () => ({ status: "accepted" }));
+  const failure = vi.fn(async () => {
+    throw new Error("Thread not found.");
+  });
+  const port = (connectionState: string, send = sendMessage) =>
+    ({
+      sendMessage: send,
+      getThread: async () => fullThread,
+      listEnvironments: async () => [
+        { environmentId: "remote", label: "Remote", targetKind: "bearer", connectionState },
+      ],
+    }) as unknown as GatewayRuntimePort;
+  const send = { environmentId: "remote", threadId: "thread", text: "hi" };
+  const offline = await answerGatewayPortCall(
+    port("offline"),
+    { remote: ["send"] },
+    "sendMessage",
+    [send],
+    FULL,
+  ).catch((error: unknown) => error);
+  expect(sendMessage).not.toHaveBeenCalled();
+  expect(isGatewayRelayUnreachable(offline)).toBe(true);
+  // An error from the call itself is the environment's answer, not a failure to reach it.
+  const failed = await answerGatewayPortCall(
+    port("connected", failure),
+    { remote: ["send"] },
+    "sendMessage",
+    [send],
+    FULL,
+  ).catch((error: unknown) => error);
+  expect(failure).toHaveBeenCalledOnce();
+  expect(isGatewayRelayUnreachable(failed)).toBe(false);
 });

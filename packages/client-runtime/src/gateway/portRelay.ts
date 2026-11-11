@@ -12,6 +12,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { request, subscribe, subscribeDynamicWithSession } from "../rpc/client.ts";
@@ -38,6 +39,13 @@ export interface RosterCap {
   readonly scopes: ReadonlyArray<GatewayScope>;
   readonly why: string;
 }
+
+/** This app did not run the call: it cannot reach the environment or was not granted it there. */
+class GatewayRelayUnreachable extends Schema.TaggedError<GatewayRelayUnreachable>()(
+  "GatewayRelayUnreachable",
+  { message: Schema.String },
+) {}
+export const isGatewayRelayUnreachable = Schema.is(GatewayRelayUnreachable);
 
 /** A call that names no modes, as from an older server, runs as the narrowest chat would. */
 const NARROWEST: ModeLimit = { runtimeMode: "approval-required", interactionMode: "plan" };
@@ -70,21 +78,33 @@ export async function answerGatewayPortCall(
   }
   const ownUnmet = unmetGatewayScopes(grants, requirements);
   if (ownUnmet !== undefined) {
-    throw new Error(
-      grants[ownUnmet.environmentId] === undefined
-        ? `T3 Agents access is not granted for ${ownUnmet.environmentId} on this device.`
-        : `T3 Agents access to ${ownUnmet.environmentId} on this device does not include ${describeGatewayScopes(ownUnmet)}.`,
-    );
+    throw new GatewayRelayUnreachable({
+      message:
+        grants[ownUnmet.environmentId] === undefined
+          ? `T3 Agents access is not granted for ${ownUnmet.environmentId} on this device.`
+          : `T3 Agents access to ${ownUnmet.environmentId} on this device does not include ${describeGatewayScopes(ownUnmet)}.`,
+    });
   }
   for (const requirement of rosterCap === undefined ? [] : requirements) {
     const cap = await rosterCap!(requirement.environmentId);
     if (cap === undefined) continue;
     const held = grants[requirement.environmentId]!.filter((scope) => cap.scopes.includes(scope));
     if (unmetGatewayScopes({ [requirement.environmentId]: held }, [requirement]) !== undefined) {
-      throw new Error(
-        `${requirement.environmentId}'s device network ${cap.why}, so the calling machine may not ${describeGatewayScopes(requirement)} there.`,
-      );
+      throw new GatewayRelayUnreachable({
+        message: `${requirement.environmentId}'s device network ${cap.why}, so the calling machine may not ${describeGatewayScopes(requirement)} there.`,
+      });
     }
+  }
+  const connected = new Set(
+    (await port.listEnvironments())
+      .filter((environment) => environment.connectionState === "connected")
+      .map((environment) => environment.environmentId),
+  );
+  const offline = requirements.find(({ environmentId }) => !connected.has(environmentId));
+  if (offline !== undefined) {
+    throw new GatewayRelayUnreachable({
+      message: `This T3 app is not connected to ${offline.environmentId} right now.`,
+    });
   }
   const guarded = withinModes(port, modeCeiling);
   const run = guarded[method as keyof GatewayRuntimePort] as
@@ -188,6 +208,7 @@ export function serveGatewayPortRelays<R>(
               })
               .catch((error: unknown) => ({
                 error: error instanceof Error ? error.message : String(error),
+                ...(isGatewayRelayUnreachable(error) ? { unreachable: true as const } : {}),
               }))
               .then((outcome) =>
                 runResponse(

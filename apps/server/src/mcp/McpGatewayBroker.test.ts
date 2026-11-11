@@ -34,7 +34,10 @@ const serve = (
   broker: Broker,
   owner: string,
   grants: McpGatewayRelayGrants,
-  answer: (method: string, args: ReadonlyArray<unknown>) => { result?: unknown; error?: string },
+  answer: (
+    method: string,
+    args: ReadonlyArray<unknown>,
+  ) => { result?: unknown; error?: string; unreachable?: true },
   subject = CODE_PAIRED_SUBJECT,
 ) =>
   broker.connect(owner, grants, subject).pipe(
@@ -167,11 +170,15 @@ it.effect(
           summary("laptop", "connected"),
           summary("studio", "connected"),
         ]);
-        // Having timed out, the silent app no longer takes calls another app can run.
-        expect(yield* broker.forward("listProjects", ["laptop"], ["laptop"])).toEqual([
-          summary("laptop", "connected"),
-          summary("studio", "connecting"),
-        ]);
+        // A read the silent app leaves unanswered runs on the next app; the silent app then goes
+        // last for that environment.
+        const read = yield* broker
+          .forward("listProjects", ["laptop"], ["laptop"])
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* TestClock.adjust("60 seconds");
+        const fromLaptop = [summary("laptop", "connected"), summary("studio", "connecting")];
+        expect(yield* Fiber.join(read)).toEqual(fromLaptop);
+        expect(yield* broker.forward("listProjects", ["laptop"], ["laptop"])).toEqual(fromLaptop);
       }),
     ).pipe(Effect.provide(layerDependencies())),
 );
@@ -462,24 +469,6 @@ it.effect("runs a call on the earliest session paired by code whose own grant co
   ).pipe(Effect.provide(layerDependencies())),
 );
 
-it.effect("stops sending calls first to an app that answers each with an error", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const broker = yield* make;
-      yield* serve(broker, "broken", { elsewhere: ["read"] }, () => ({ error: "Broken." }));
-      yield* serve(broker, "laptop", { elsewhere: ["read"] }, (method) => ({
-        result: `laptop:${method}`,
-      }));
-      expect(
-        yield* failureMessage(broker.forward("listProjects", ["elsewhere"], ["elsewhere"])),
-      ).toBe("Broken.");
-      expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
-        "laptop:listProjects",
-      );
-    }),
-  ).pipe(Effect.provide(layerDependencies())),
-);
-
 it.effect("runs a call on another app only when it cannot have run on the first", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -524,7 +513,7 @@ it.effect("runs a call on another app only when it cannot have run on the first"
   ).pipe(Effect.provide(layerDependencies())),
 );
 
-it.effect("counts only what an app could relay when deciding who holds an environment", () =>
+it.effect("offers a call only to apps that could relay it, whoever connected first", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const broker = yield* make;
@@ -536,7 +525,7 @@ it.effect("counts only what an app could relay when deciding who holds an enviro
         access: "full-access",
       });
       yield* membership.putApp({ appId: "phone", label: "Phone", access: "full-access" });
-      // An app of the network does not relay a machine outside it, so it holds nothing there.
+      // An app of the network does not relay a machine outside it, so it is never offered one.
       const phone = yield* serve(
         broker,
         "phone",
@@ -655,4 +644,108 @@ it.effect(
         expect(preview.limit).toContain("read-only");
       }),
     ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect("gives a task watch its own longest wait before trying another app", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const watch = ["elsewhere", { action: "watch", input: {} }];
+      for (const [delay, answeredBy] of [
+        ["60001 millis", "desktop:threadTask"],
+        ["120001 millis", "laptop:threadTask"],
+      ] as const) {
+        const broker = yield* make;
+        yield* serve(broker, "laptop", { elsewhere: ["read"] }, (method) => ({
+          result: `laptop:${method}`,
+        }));
+        // The desktop app answers a quiet watch only when it ends.
+        yield* broker.connect("desktop", { elsewhere: ["read"] }, DESKTOP_APP_SUBJECT).pipe(
+          Stream.runForEach((event) =>
+            Effect.sleep(event.method === "threadTask" ? delay : "0 millis").pipe(
+              Effect.andThen(
+                broker.respond("desktop", {
+                  connectionId: event.connectionId,
+                  invocationId: event.invocationId,
+                  result: `desktop:${event.method}`,
+                }),
+              ),
+              Effect.ignore,
+            ),
+          ),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const watched = yield* broker
+          .forward("threadTask", watch, ["elsewhere"])
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* TestClock.adjust(delay);
+        expect(yield* Fiber.join(watched)).toBe(answeredBy);
+      }
+      // A watch that answers within its wait leaves its app first in line.
+      const broker = yield* make;
+      yield* serve(broker, "laptop", { elsewhere: ["read"] }, (method) => ({
+        result: `laptop:${method}`,
+      }));
+      yield* broker.connect("desktop", { elsewhere: ["read"] }, DESKTOP_APP_SUBJECT).pipe(
+        Stream.runForEach((event) =>
+          Effect.sleep(event.method === "threadTask" ? "60001 millis" : "0 millis").pipe(
+            Effect.andThen(
+              broker.respond("desktop", {
+                connectionId: event.connectionId,
+                invocationId: event.invocationId,
+                result: `desktop:${event.method}`,
+              }),
+            ),
+            Effect.ignore,
+          ),
+        ),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const watched = yield* broker
+        .forward("threadTask", watch, ["elsewhere"])
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* TestClock.adjust("60001 millis");
+      yield* Fiber.join(watched);
+      expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
+        "desktop:listProjects",
+      );
+    }),
+  ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect("routes around an app per environment it cannot reach, not for its errors", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      yield* serve(broker, "laptop", { c: ["read"] }, (method) => ({ result: `laptop:${method}` }));
+      yield* serve(
+        broker,
+        "phone",
+        { b: ["read"] },
+        (method) => ({ result: `phone:${method}` }),
+        DESKTOP_APP_SUBJECT,
+      );
+      let failNext = true;
+      // The desktop app goes first; it reaches c, but not b.
+      yield* serve(
+        broker,
+        "desktop",
+        { b: ["read"], c: ["read"] },
+        (method, args) =>
+          args[0] === "b"
+            ? { error: "b is not connected in this app.", unreachable: true }
+            : failNext
+              ? ((failNext = false), { error: "Project not found." })
+              : { result: `desktop:${method}` },
+        DESKTOP_APP_SUBJECT,
+      );
+      const list = (environmentId: string) =>
+        broker.forward("listProjects", [environmentId], [environmentId]);
+      // An application error goes back to the agent and leaves the app first in line.
+      expect(yield* failureMessage(list("c"))).toBe("Project not found.");
+      expect(yield* list("b")).toBe("phone:listProjects");
+      expect(yield* list("c")).toBe("desktop:listProjects");
+      expect(yield* list("b")).toBe("phone:listProjects");
+      expect(yield* list("c")).toBe("desktop:listProjects");
+    }),
+  ).pipe(Effect.provide(layerDependencies())),
 );

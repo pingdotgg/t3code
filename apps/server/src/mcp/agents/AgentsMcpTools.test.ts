@@ -720,7 +720,17 @@ it.effect(
               .getThread(String(event.args[0]), String(event.args[1]))
               .then((thread) => ({ ...thread, runtimeMode: "approval-required" }))
           : answerGatewayPortCall(
-              truth,
+              {
+                ...truth,
+                listEnvironments: async () => [
+                  {
+                    environmentId: remoteId,
+                    label: "Remote",
+                    targetKind: "bearer",
+                    connectionState: "connected",
+                  },
+                ],
+              },
               { [remoteId]: ["read", "create", "send"] },
               event.method,
               event.args,

@@ -190,9 +190,14 @@ capped on every call by this machine's own roster access. A member is relayed
 only by this machine's own desktop app (its `desktop-bootstrap` session) or a
 network app's session, within that app's access; a code-paired session cannot
 take a member's traffic. Each call goes to an app whose own grant covers it:
-those apps first, then code-paired sessions by connect time, with apps whose last
-call failed last. It moves to the next app only when it cannot have run: never
-taken, or a read left unanswered. A write that may have run is never sent twice.
+those apps first, then code-paired sessions by connect time, with an app that last
+failed to carry a call to that environment last. A code-paired session therefore
+runs a non-member's call whenever no desktop or network app covers it, or one that
+does could not run it. A call moves to the next app only when it cannot have run
+(never taken, or the app answered that it cannot reach or was not granted the
+environment) or is a read left unanswered; a write that may have run is never sent
+twice, and an app's ordinary error goes back to the agent. A call may wait its own
+declared maximum, such as a task watch, plus a fixed answer window.
 Each relayed call also carries the calling chat's modes, and the app answering
 it applies them against its own reads of the target, so a relaying server that
 was told a wrong thread mode cannot widen the call; a call with no modes runs as

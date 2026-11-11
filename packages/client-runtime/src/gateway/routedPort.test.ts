@@ -97,6 +97,7 @@ describe("answerGatewayPortCall", () => {
         received.push(args);
         return {};
       },
+      listEnvironments: async () => [environment("a")],
     } as unknown as GatewayRuntimePort;
     const request = { action: "read", input: {} };
     await answerGatewayPortCall(port, { a: ["read"] }, "threadTask", [

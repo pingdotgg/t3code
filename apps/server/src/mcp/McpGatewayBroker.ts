@@ -20,11 +20,12 @@ import {
   type McpGatewayRelayResponse,
   type McpGatewayRelayResult,
   type TailnetDeviceAccess,
+  THREAD_TASK_WATCH_MAX_MS,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
-import type * as Duration from "effect/Duration";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -97,27 +98,36 @@ interface Host {
    * paired by code, which is only itself.
    */
   readonly relayer: "desktop" | "app" | "paired";
-  readonly identity: string;
   readonly appId: string | undefined;
   readonly connectionId: string;
   readonly grants: McpGatewayRelayGrants;
   readonly requests: Queue.Queue<McpGatewayRelayEvent, Cause.Done>;
-  /** Its last call failed or went unanswered; apps that answer go first until it answers. */
-  failing: boolean;
 }
 interface Pending {
   readonly host: Host;
   readonly deferred: Deferred.Deferred<unknown, McpGatewayUnavailableError>;
   /** The app took it off its queue, so it may have run. */
   delivered: boolean;
-  answered: boolean;
+  /** The app answered, or said it could not run the call there (`unreachable`). */
+  answer: "none" | "answered" | "unreachable";
 }
-/** A relayed call that failed, and whether the app can have run it. */
+/**
+ * A relayed call that failed: it did not run there (never taken, or the app could not reach the
+ * environment), it may have run (taken, no answer), or the app answered with an error.
+ */
 interface AskFailure {
   readonly error: McpGatewayUnavailableError;
-  readonly delivered: boolean;
-  readonly answered: boolean;
+  readonly ran: "no" | "maybe" | "yes";
 }
+
+/** How long an app has to answer a call, beyond any wait the call itself declares. */
+const RELAY_ANSWER_WINDOW = Duration.seconds(60);
+/** The longest a call may wait by its own contract before it answers. */
+const declaredWait = (method: keyof GatewayRuntimePort, args: ReadonlyArray<unknown>) =>
+  method === "threadTask" &&
+  (args[1] as { readonly action?: unknown } | undefined)?.action === "watch"
+    ? Duration.millis(THREAD_TASK_WATCH_MAX_MS)
+    : Duration.zero;
 
 /**
  * Connected apps that run T3 Agents runtime port calls for this server's agents on the other
@@ -130,15 +140,18 @@ export const make = Effect.gen(function* () {
   const identity = yield* ServerEnvironmentIdentity;
   const hosts = new Map<string, Host>();
   const pending = new Map<string, Pending>();
+  /** Apps that last failed to carry a call to an environment, by connection and environment. */
+  const unreachable = new Set<string>();
+  const routeKey = (host: Host, environmentId: string) => `${host.connectionId} ${environmentId}`;
   /** Fires when an app connects, so queued cross-environment work can retry at once. */
   const connected = yield* PubSub.unbounded<void>();
-  const relayerOf = (owner: string, subject: string) => {
+  const relayerOf = (subject: string) => {
     const appId = subject.startsWith(NETWORK_APP_SUBJECT_PREFIX)
       ? subject.slice(NETWORK_APP_SUBJECT_PREFIX.length)
       : undefined;
     const relayer: Host["relayer"] =
       subject === DESKTOP_APP_SUBJECT ? "desktop" : appId === undefined ? "paired" : "app";
-    return { relayer, appId, identity: relayer === "paired" ? `session:${owner}` : subject };
+    return { relayer, appId };
   };
   /** `subject` is the registering session's: an app of the network relays as that app. */
   const connect = (owner: string, grants: McpGatewayRelayGrants, subject: string) =>
@@ -147,12 +160,11 @@ export const make = Effect.gen(function* () {
         const connectionId = yield* random.uuidV4();
         const requests = yield* Queue.unbounded<McpGatewayRelayEvent, Cause.Done>();
         const host: Host = {
-          ...relayerOf(owner, subject),
+          ...relayerOf(subject),
           owner,
           connectionId,
           grants,
           requests,
-          failing: false,
         };
         yield* Effect.acquireRelease(
           Effect.sync(() => hosts.set(connectionId, host)).pipe(
@@ -162,6 +174,9 @@ export const make = Effect.gen(function* () {
           () =>
             Effect.gen(function* () {
               hosts.delete(connectionId);
+              for (const key of unreachable) {
+                if (key.startsWith(`${connectionId} `)) unreachable.delete(key);
+              }
               for (const [id, call] of pending) {
                 if (call.host !== host) continue;
                 pending.delete(id);
@@ -301,12 +316,11 @@ export const make = Effect.gen(function* () {
     subject: string,
   ) {
     const candidate: Host = {
-      ...relayerOf(owner, subject),
+      ...relayerOf(subject),
       owner,
       connectionId: "preview",
       grants,
       requests: yield* Queue.unbounded<McpGatewayRelayEvent, Cause.Done>(),
-      failing: false,
     };
     const evaluated = yield* evaluate(undefined, [candidate]);
     return {
@@ -325,10 +339,11 @@ export const make = Effect.gen(function* () {
   ): Effect.fn.Return<unknown, AskFailure> {
     const invocationId = yield* random.uuidV4();
     const deferred = yield* Deferred.make<unknown, McpGatewayUnavailableError>();
-    const call: Pending = { host, deferred, delivered: false, answered: false };
+    const call: Pending = { host, deferred, delivered: false, answer: "none" };
     pending.set(invocationId, call);
     return yield* Effect.gen(function* () {
-      yield* Queue.offer(host.requests, {
+      // An app that left after this call was routed has an ended queue: fail now, not at timeout.
+      const offered = yield* Queue.offer(host.requests, {
         type: "invoke",
         connectionId: host.connectionId,
         invocationId,
@@ -336,6 +351,7 @@ export const make = Effect.gen(function* () {
         args: relayedArgs,
         ...(modeCeiling === undefined ? {} : { modeCeiling }),
       });
+      if (!offered) return yield* unavailable("The T3 app relaying this call disconnected.");
       return yield* Deferred.await(deferred);
     }).pipe(
       Effect.timeoutOrElse({
@@ -343,10 +359,15 @@ export const make = Effect.gen(function* () {
         orElse: () => Effect.fail(unavailable("The T3 app relaying this call did not answer.")),
       }),
       Effect.ensuring(Effect.sync(() => pending.delete(invocationId))),
-      Effect.mapError((error): AskFailure => {
-        host.failing = true;
-        return { error, delivered: call.delivered, answered: call.answered };
-      }),
+      Effect.mapError((error): AskFailure => ({
+        error,
+        ran:
+          !call.delivered || call.answer === "unreachable"
+            ? "no"
+            : call.answer === "answered"
+              ? "yes"
+              : "maybe",
+      })),
     );
   });
   /**
@@ -414,10 +435,10 @@ export const make = Effect.gen(function* () {
     const ordered = [...vouched.toReversed(), ...paired].filter(
       (candidate) => unmetGatewayScopes(bound.get(candidate)!.grants, requirements) === undefined,
     );
-    const holding = [
-      ...ordered.filter((candidate) => !candidate.failing),
-      ...ordered.filter((candidate) => candidate.failing),
-    ];
+    const envs = requirements.map((need) => need.environmentId);
+    const reaches = (candidate: Host) =>
+      envs.every((id) => !unreachable.has(routeKey(candidate, id)));
+    const holding = [...ordered.filter(reaches), ...ordered.filter((c) => !reaches(c))];
     const host = holding[0];
     if (!host) {
       const unmet = requirements.find(({ environmentId }) =>
@@ -450,22 +471,39 @@ export const make = Effect.gen(function* () {
     const reads = requirements.every(({ anyOf }) =>
       anyOf.every((set) => set.length === 1 && set[0] === "read"),
     );
-    // The next app runs the call only when the last cannot have: it never took it, or it is a
-    // read that went unanswered. A write that may have run is never run twice.
-    const attempt = (index: number): Effect.Effect<unknown, McpGatewayUnavailableError> =>
-      ask(holding[index]!, method, relayedArgs, "60 seconds", modeCeiling).pipe(
+    const deadline = Duration.sum(declaredWait(method, args), RELAY_ANSWER_WINDOW);
+    // Only a transport failure moves routing, per app and environment: an app's own error goes
+    // back to the agent. The next app runs the call only when the last cannot have run it, or it
+    // is a read left unanswered; a write that may have run is never run twice.
+    const route = (candidate: Host, reached: boolean) =>
+      Effect.sync(() => {
+        for (const id of envs) {
+          if (reached) unreachable.delete(routeKey(candidate, id));
+          else unreachable.add(routeKey(candidate, id));
+        }
+      });
+    const attempt = (index: number): Effect.Effect<unknown, McpGatewayUnavailableError> => {
+      const candidate = holding[index]!;
+      return ask(candidate, method, relayedArgs, deadline, modeCeiling).pipe(
+        Effect.tap(() => route(candidate, true)),
         Effect.catch((failure) =>
-          index + 1 < holding.length && (!failure.delivered || (reads && !failure.answered))
-            ? attempt(index + 1)
-            : Effect.fail(
-                failure.delivered && !failure.answered && !reads
-                  ? unavailable(
-                      `The T3 app relaying ${method} took it but did not answer, so it may have run; it was not run again on another app.`,
-                    )
-                  : failure.error,
-              ),
+          route(candidate, failure.ran === "yes").pipe(
+            Effect.andThen(
+              index + 1 < holding.length &&
+                (failure.ran === "no" || (reads && failure.ran === "maybe"))
+                ? attempt(index + 1)
+                : Effect.fail(
+                    failure.ran === "maybe" && !reads
+                      ? unavailable(
+                          `The T3 app relaying ${method} took it but did not answer, so it may have run; it was not run again on another app.`,
+                        )
+                      : failure.error,
+                  ),
+            ),
+          ),
         ),
       );
+    };
     return yield* attempt(0);
   });
   /**
@@ -510,8 +548,8 @@ export const make = Effect.gen(function* () {
       return yield* unavailable("Relay response does not belong to this connection.");
     }
     pending.delete(input.invocationId);
-    call.answered = true;
-    call.host.failing = input.error !== undefined;
+    call.answer =
+      input.error !== undefined && input.unreachable === true ? "unreachable" : "answered";
     if (input.error !== undefined) {
       yield* Deferred.fail(call.deferred, unavailable(input.error));
       return;
