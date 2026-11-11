@@ -1,6 +1,6 @@
 import * as Alchemy from "alchemy";
 import { adopt } from "alchemy/AdoptPolicy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { retain } from "alchemy/RemovalPolicy";
 import * as Effect from "effect/Effect";
 import * as NodeURL from "node:url";

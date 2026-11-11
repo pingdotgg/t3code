@@ -2,7 +2,7 @@
  * vinext data-cache adapter builder for Redis.
  *
  * Node Website.Vinext resources inject this adapter automatically.
- * The runtime factory uses {@link connect} from `alchemy/Redis` (the same
+ * The runtime factory uses {@link connect} from `@alchemy.run/redis` (the same
  * client Fly/Railway `*RedisHttp` layers use) and reads `REDIS_URL`
  * (or `urlEnv`) from the process environment.
  *
@@ -19,9 +19,7 @@ export const DEFAULT_REDIS_URL_ENV = "REDIS_URL";
 
 export const redisAdapter = (options?: RedisAdapterOptions) => {
   if (options?.urlEnv !== undefined && typeof options.urlEnv !== "string") {
-    throw new TypeError(
-      "[vinext] redisAdapter({ urlEnv }) must be a string env var name.",
-    );
+    throw new TypeError("[vinext] redisAdapter({ urlEnv }) must be a string env var name.");
   }
   return {
     adapter: fileURLToPath(new URL("./redis-runtime.js", import.meta.url)),

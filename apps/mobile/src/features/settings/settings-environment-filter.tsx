@@ -2,7 +2,6 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import {
   createContext,
-  useCallback,
   useContext,
   useMemo,
   useRef,
@@ -88,21 +87,18 @@ export function SettingsEnvironmentFilterProvider(props: {
     setSelectedIds(null);
     setSelectedProjectKey(null);
   }
-  const selectProject = useCallback((projectKey: string | null) => {
+  const selectProject = (projectKey: string | null) => {
     currentProjectKey.current = projectKey;
     setSelectedProjectKey(projectKey);
-  }, []);
-  const getSelectedProjectKey = useCallback(() => currentProjectKey.current, []);
-  const value = useMemo(
-    () => ({
-      selectedIds,
-      selectedProjectKey,
-      setSelectedIds,
-      selectProject,
-      getSelectedProjectKey,
-    }),
-    [selectedIds, selectedProjectKey, selectProject, getSelectedProjectKey],
-  );
+  };
+  const getSelectedProjectKey = () => currentProjectKey.current;
+  const value = {
+    selectedIds,
+    selectedProjectKey,
+    setSelectedIds,
+    selectProject,
+    getSelectedProjectKey,
+  };
   return (
     <SettingsEnvironmentSelectionContext value={value}>
       {props.children}

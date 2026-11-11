@@ -28,6 +28,7 @@ export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
   };
 
   // Measure every render: composer padding or expansion can move the anchor without resizing it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the anchor view after every commit and hands its popover content to the composer popover host
   useEffect(() => {
     measure();
     host?.setContent(
@@ -50,6 +51,7 @@ export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
   });
 
   const setHostContent = host?.setContent;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the popover host's content and shared height value when the anchor unmounts
   useEffect(
     () => () => {
       setHostContent?.(null);
