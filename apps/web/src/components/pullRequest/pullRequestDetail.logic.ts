@@ -573,6 +573,15 @@ function commentTimelineEvent(comment: PullRequestComment): PullRequestTimelineE
   };
 }
 
+export type PullRequestConversationThreadItem = {
+  readonly kind: "thread";
+  readonly id: string;
+  readonly createdAt: string;
+  readonly root: PullRequestComment;
+  readonly replies: ReadonlyArray<PullRequestComment>;
+  readonly thread: PullRequestConversationThread;
+} & PullRequestReplyAvailability;
+
 export type PullRequestConversationItem =
   | {
       readonly kind: "comment";
@@ -580,14 +589,17 @@ export type PullRequestConversationItem =
       readonly createdAt: string;
       readonly comment: PullRequestComment;
     }
-  | ({
-      readonly kind: "thread";
+  | PullRequestConversationThreadItem
+  | {
+      readonly kind: "review";
       readonly id: string;
       readonly createdAt: string;
-      readonly root: PullRequestComment;
-      readonly replies: ReadonlyArray<PullRequestComment>;
-      readonly thread: PullRequestConversationThread;
-    } & PullRequestReplyAvailability);
+      /** Null for a review the host leaves out of the conversation, such as GitHub's with no text. */
+      readonly review: PullRequestComment | null;
+      readonly author: PullRequestActor | null;
+      readonly url: string;
+      readonly threads: ReadonlyArray<PullRequestConversationThreadItem>;
+    };
 
 export function pullRequestConversationItems(
   comments: ReadonlyArray<PullRequestComment>,
@@ -595,7 +607,16 @@ export function pullRequestConversationItems(
 ): ReadonlyArray<PullRequestConversationItem> {
   const byId = new Map(comments.map((comment) => [comment.id, comment]));
   const claimed = new Set<string>();
-  const threads: PullRequestConversationItem[] = [];
+  const reviewKeys = new Set(
+    comments.flatMap((comment) =>
+      comment.kind === "review" && comment.url !== null ? [reviewKey(comment.url)] : [],
+    ),
+  );
+  const loose: PullRequestConversationItem[] = [];
+  const byReview = new Map<
+    string,
+    { readonly url: string; readonly threads: PullRequestConversationThreadItem[] }
+  >();
   for (const thread of reviewThreads) {
     // Keep the conversation's objects for editing/reactions; some hosts only include a
     // comment in the thread, so normalize that copy when the flat conversation lacks it.
@@ -614,7 +635,7 @@ export function pullRequestConversationItems(
     if (root === undefined) continue;
     for (const comment of ordered) claimed.add(comment.id);
     const moreReplies = Math.max(0, (thread.commentCount ?? ordered.length) - ordered.length);
-    threads.push({
+    const item: PullRequestConversationThreadItem = {
       kind: "thread",
       id: thread.id,
       createdAt: root.createdAt,
@@ -624,30 +645,75 @@ export function pullRequestConversationItems(
       moreReplies,
       hasMoreReplies: moreReplies > 0 || thread.nextCommentsCursor !== undefined,
       url: ordered.find((comment) => comment.url !== null)?.url ?? null,
+    };
+    // Only the root places a thread: each later reply posts as a review of its own.
+    const reviewUrl = thread.comments.find((comment) => comment.id === root.id)?.reviewUrl;
+    if (!reviewUrl) {
+      loose.push(item);
+      continue;
+    }
+    const key = reviewKey(reviewUrl);
+    const review = byReview.get(key);
+    if (review) review.threads.push(item);
+    else byReview.set(key, { url: reviewUrl, threads: [item] });
+  }
+  for (const [key, { url, threads }] of byReview) {
+    threads.sort((left, right) => instant(left.createdAt) - instant(right.createdAt));
+    if (reviewKeys.has(key)) continue;
+    const first = threads[0]!;
+    loose.push({
+      kind: "review",
+      id: `review:${url}`,
+      createdAt: first.createdAt,
+      review: null,
+      author: first.root.author,
+      url,
+      threads,
     });
   }
-  threads.sort((left, right) => instant(left.createdAt) - instant(right.createdAt));
+  loose.sort((left, right) => instant(left.createdAt) - instant(right.createdAt));
   const items: PullRequestConversationItem[] = [];
   let next = 0;
   // Preserve loose comments' existing order, inserting each thread at its finding's time.
   for (const comment of comments) {
     if (claimed.has(comment.id)) continue;
-    while (
-      next < threads.length &&
-      instant(threads[next]!.createdAt) < instant(comment.createdAt)
-    ) {
-      items.push(threads[next++]!);
+    while (next < loose.length && instant(loose[next]!.createdAt) < instant(comment.createdAt)) {
+      items.push(loose[next++]!);
     }
-    items.push({ kind: "comment", id: comment.id, createdAt: comment.createdAt, comment });
+    const url = comment.url;
+    const threads = url === null ? undefined : byReview.get(reviewKey(url))?.threads;
+    items.push(
+      comment.kind === "review" && url !== null && threads !== undefined
+        ? {
+            kind: "review",
+            id: comment.id,
+            createdAt: comment.createdAt,
+            review: comment,
+            author: comment.author,
+            url,
+            threads,
+          }
+        : { kind: "comment", id: comment.id, createdAt: comment.createdAt, comment },
+    );
   }
-  items.push(...threads.slice(next));
+  items.push(...loose.slice(next));
   return items;
+}
+
+/** GitHub review links differ only in their anchor between the review and its comments' copies. */
+function reviewKey(url: string): string {
+  return /#pullrequestreview-\d+$/i.exec(url)?.[0].toLowerCase() ?? url;
 }
 
 export function pullRequestConversationItemComments(
   item: PullRequestConversationItem,
 ): ReadonlyArray<PullRequestComment> {
-  return item.kind === "comment" ? [item.comment] : [item.root, ...item.replies];
+  if (item.kind === "comment") return [item.comment];
+  if (item.kind === "thread") return [item.root, ...item.replies];
+  return [
+    ...(item.review === null ? [] : [item.review]),
+    ...item.threads.flatMap(pullRequestConversationItemComments),
+  ];
 }
 
 export function isPullRequestCommentFinished(
@@ -668,26 +734,55 @@ export function filterPullRequestConversationItems(
   items: ReadonlyArray<PullRequestConversationItem>,
   filter: { readonly bots: boolean; readonly resolved: boolean },
 ): ReadonlyArray<PullRequestConversationItem> {
-  return items.filter((item) =>
-    // Matching any member keeps the finding beside a human reply to a bot.
-    pullRequestConversationItemComments(item).some(
-      (comment) =>
-        // A bot's approval or change request is a verdict, not chatter.
-        (filter.bots ||
-          comment.author?.isBot !== true ||
-          isPullRequestVerdict(comment.reviewState)) &&
-        (filter.resolved ||
-          !isPullRequestCommentFinished(comment, item.kind === "thread" ? item.thread : undefined)),
-    ),
-  );
+  const keeps = (comment: PullRequestComment, thread?: PullRequestConversationThread) =>
+    // A bot's approval or change request is a verdict, not chatter.
+    (filter.bots || comment.author?.isBot !== true || isPullRequestVerdict(comment.reviewState)) &&
+    (filter.resolved || !isPullRequestCommentFinished(comment, thread));
+  // Matching any member keeps the finding beside a human reply to a bot.
+  const matches = (item: PullRequestConversationItem) =>
+    pullRequestConversationItemComments(item).some((comment) =>
+      keeps(comment, item.kind === "thread" ? item.thread : undefined),
+    );
+  return items.flatMap((item): ReadonlyArray<PullRequestConversationItem> => {
+    if (item.kind !== "review") return matches(item) ? [item] : [];
+    const threads = item.threads.filter(matches);
+    // A summary the filter hides gives way to a bare header over the threads it kept.
+    const review = item.review !== null && keeps(item.review) ? item.review : null;
+    if (threads.length === 0) {
+      return review === null
+        ? []
+        : [{ kind: "comment", id: review.id, createdAt: review.createdAt, comment: review }];
+    }
+    return [
+      threads.length === item.threads.length && review === item.review
+        ? item
+        : { ...item, review, threads },
+    ];
+  });
 }
 
 export function pagePullRequestConversationItems(
   items: ReadonlyArray<PullRequestConversationItem>,
   count: number,
 ): { readonly shown: ReadonlyArray<PullRequestConversationItem>; readonly hidden: number } {
-  const shown = items.slice(Math.max(0, items.length - count));
-  return { shown, hidden: items.length - shown.length };
+  // A review counts each of its threads, so one with dozens of findings does not fill a page.
+  const weight = (item: PullRequestConversationItem) =>
+    item.kind === "review" ? item.threads.length : 1;
+  const shown: PullRequestConversationItem[] = [];
+  let left = count;
+  for (let index = items.length - 1; index >= 0 && left > 0; index--) {
+    const item = items[index]!;
+    if (item.kind === "review" && item.threads.length > left) {
+      // The page edge cuts the review's earliest threads; the next page brings them back.
+      shown.push({ ...item, threads: item.threads.slice(-left) });
+      left = 0;
+      break;
+    }
+    shown.push(item);
+    left -= weight(item);
+  }
+  const hidden = items.reduce((total, item) => total + weight(item), 0) - (count - left);
+  return { shown: shown.reverse(), hidden };
 }
 
 /**
@@ -848,24 +943,31 @@ export function buildPullRequestTimeline(
     ...pullRequestConversationItems(detail.comments, [
       ...(detail.reviewThreads ?? []),
       ...(detail.overviewThreads ?? []),
-    ]).map((item) => {
-      if (item.kind === "comment") return commentTimelineEvent(item.comment);
-      return {
-        ...commentTimelineEvent(item.root),
-        thread: {
-          id: item.thread.id,
-          ...(item.thread.canResolve === undefined ? {} : { canResolve: item.thread.canResolve }),
-          path: item.thread.path,
-          line: item.thread.line,
-          isResolved: item.thread.isResolved,
-          isOutdated: item.thread.isOutdated,
-          replies: item.replies.map(commentTimelineEvent),
-          moreReplies: item.moreReplies,
-          hasMoreReplies: item.hasMoreReplies,
-          url: item.url,
-        },
-      };
-    }),
+    ])
+      // The Timeline tab keeps a review's threads as rows of their own.
+      .flatMap((item) =>
+        item.kind === "review"
+          ? [...(item.review === null ? [] : [item.review]), ...item.threads]
+          : [item.kind === "comment" ? item.comment : item],
+      )
+      .map((item) => {
+        if (item.kind !== "thread") return commentTimelineEvent(item);
+        return {
+          ...commentTimelineEvent(item.root),
+          thread: {
+            id: item.thread.id,
+            ...(item.thread.canResolve === undefined ? {} : { canResolve: item.thread.canResolve }),
+            path: item.thread.path,
+            line: item.thread.line,
+            isResolved: item.thread.isResolved,
+            isOutdated: item.thread.isOutdated,
+            replies: item.replies.map(commentTimelineEvent),
+            moreReplies: item.moreReplies,
+            hasMoreReplies: item.hasMoreReplies,
+            url: item.url,
+          },
+        };
+      }),
     ...(detail.mergedAt
       ? [
           {
