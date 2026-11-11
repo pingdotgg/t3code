@@ -425,7 +425,7 @@ describe("GhosttyTerminalCore scrollback", () => {
     try {
       core.write(Array.from({ length: 1_200 }, (_, index) => `${index}\r\n`).join(""));
       const scrollbar = core.scrollbarState();
-      // The pinned ABI reads max_scrollback as bytes; a 10_000 budget kept ~600 rows here.
+      // max_scrollback is a byte budget in the pinned ABI, not a row count.
       expect(scrollbar!.total - scrollbar!.len).toBeGreaterThan(1_000);
     } finally {
       core.dispose();
