@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectCloneSnapshot, ScopedProjectRef } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { serverEnvironment } from "./server";
@@ -22,7 +21,7 @@ const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) 
     const result = get(sourceControlEnvironment.projectClones({ environmentId, input: {} }));
     // On subscription failure, let server dispatch guards decide rather than blocking Start until reconnect.
     if (result._tag === "Failure") return EMPTY_CLONES;
-    return Option.getOrElse(AsyncResult.value(result), () => "pending" as const);
+    return AsyncResult.getOrElse(result, () => "pending" as const);
   }).pipe(Atom.withLabel(`mobile-project-clones:${environmentId}`)),
 );
 

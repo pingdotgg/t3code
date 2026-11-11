@@ -30,7 +30,13 @@ export const removeCloudEnvironments = createRuntimeCommand(connectionAtomRuntim
     );
     // Backup failure must retain local file owners so a later sign-in can retry.
     yield* Effect.tryPromise({
-      try: () => archiveCloudComposerDrafts(accountId, environmentIds),
+      // Resolve draft owners against every environment, not just the removed ones.
+      try: () =>
+        archiveCloudComposerDrafts(
+          accountId,
+          environmentIds,
+          [...entries.values()].map((entry) => entry.target.environmentId),
+        ),
       catch: (cause) =>
         new CloudDraftArchiveError({
           environmentCount: environmentIds.size,

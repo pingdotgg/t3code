@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import type { EnvironmentTheme } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
@@ -29,7 +30,7 @@ import {
 } from "./lib/contextChipAccents";
 
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
-import { primaryServerEnvironmentThemesAtom } from "./state/server";
+import { themeServerEnvironmentThemesAtom } from "./state/server";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
@@ -314,7 +315,7 @@ export function publishedThemeDefinitions(
 // Every reconnect snapshot delivers a fresh but usually identical array; keeping the
 // previous one skips regenerating palettes and repainting the document for it.
 const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> => {
-  const next = get(primaryServerEnvironmentThemesAtom);
+  const next = get(themeServerEnvironmentThemesAtom);
   const previous = Option.getOrNull(get.self<ReadonlyArray<EnvironmentTheme>>());
   return previous !== null && Equal.equals(previous, next) ? previous : next;
 }).pipe(Atom.withLabel("web-published-environment-themes"));
@@ -395,7 +396,10 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 
 export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors {
   if (appearance === "dark") {
-    return (standardDarkThemeColors ??= decodeThemeColors(T3_CODE_DARK_THEME_COLORS));
+    return (standardDarkThemeColors ??= decodeThemeColors({
+      ...T3_CODE_DARK_THEME_COLORS,
+      canvas: "#000000",
+    }));
   }
   return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
 }
@@ -672,6 +676,17 @@ export function readableThemeColorOn(color: string, surface: string, minContrast
   return themeRgbToHexColor(themeOklchToRgb(solved));
 }
 
+/** A chip kind's per-theme contrast-solved lightness with `color`'s hue and chroma. */
+export function contextChipAccentWithHueOf(
+  kind: ContextChipAccentKind,
+  color: string,
+): string | null {
+  const parsed = parseThemeColor(color);
+  if (!parsed) return null;
+  const { C, h } = parsed.color;
+  return `oklch(from var(${contextChipColorVariable(kind)}) l ${formatThemeColorNumber(C, 4)} ${formatThemeColorNumber(h, 2)})`;
+}
+
 const CONTEXT_CHIP_CONTRAST = 5;
 const CONTEXT_CHIP_MESSAGE_VARIABLE = "--context-chip-message";
 const CONTEXT_CHIP_INVALID_VARIABLE = "--context-chip-invalid";
@@ -752,13 +767,12 @@ function standardStatusColors(canvas: ThemeRgbColor): {
   const surfaceOf = (value: string) =>
     mixThemeRgbColors(canvas, parseThemeRgbColor(value, canvas), surfaceMix);
   const readableOn = (foreground: string, surface: ThemeRgbColor) =>
-    themeOklchToThemeColor(
-      solveOklchLightness(
-        themeRgbToOklch(parseThemeRgbColor(foreground, canvas)),
-        [surface],
-        4.6,
-        appearance === "dark" ? "lighter" : "darker",
-      ),
+    pipe(
+      parseThemeRgbColor(foreground, canvas),
+      themeRgbToOklch,
+      (color) =>
+        solveOklchLightness(color, [surface], 4.6, appearance === "dark" ? "lighter" : "darker"),
+      themeOklchToThemeColor,
     );
   const errorSurface = surfaceOf(standard.error);
   const warningSurface = surfaceOf(standard.warning);
@@ -1217,13 +1231,20 @@ export function getThemePreferenceMode(theme: ThemePreference): ThemeAppearance 
 }
 
 export function themeIdFromName(name: string): string {
-  const normalized = name
-    .trim()
-    .toLowerCase()
+  const label = name.trim().toLowerCase();
+  const normalized = label
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
-  return normalized || "custom-theme";
+  if (normalized || !label) return normalized || "custom-theme";
+
+  // Names without ASCII letters or digits still need independent, stable ids.
+  let hash = 2_166_136_261;
+  for (let index = 0; index < label.length; index += 1) {
+    hash ^= label.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return `theme-${(hash >>> 0).toString(36)}`;
 }
 
 export class ThemeLibraryStorageError extends Schema.TaggedError<ThemeLibraryStorageError>()(
