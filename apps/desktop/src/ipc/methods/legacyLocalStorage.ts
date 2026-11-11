@@ -22,8 +22,7 @@ export const completeLegacyLocalStorage = makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.legacyLocalStorage.complete")(function* (_, event) {
     const legacy = yield* DesktopLegacyLocalStorage.DesktopLegacyLocalStorage;
-    // Chromium writes localStorage to disk lazily; persist the merge before
-    // the marker stops later launches from retrying it.
+    // Flush Chromium's lazy writes before the marker prevents migration retries.
     if (event) Electron.webContents.fromId(event.sender.id)?.session.flushStorageData();
     yield* legacy.complete;
   }),

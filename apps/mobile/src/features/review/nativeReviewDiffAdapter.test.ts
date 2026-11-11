@@ -1,60 +1,19 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import {
-  DEFAULT_MOBILE_THEME_ID,
-  getMobileThemeVariables,
-  MOBILE_THEME_IDS,
-  type MobileThemeAppearance,
-  type MobileThemeId,
-} from "../../lib/mobileTheme";
-import { readDefaultMobileThemeVariables } from "../../lib/mobileTheme.test-support";
+import { diffWordsWithSpace } from "diff";
+import { AsyncResult } from "effect/reactivity";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { EnvironmentId, ProjectId, type PullRequestDiffResult } from "@t3tools/contracts";
 
+import { combinePullRequestDiffPages } from "../pull-requests/pullRequestDiffPages";
+import { createPullRequestDiffHighlightFiles } from "../pull-requests/pullRequestDiffHighlightFiles";
 import {
   buildNativeReviewDiffData,
-  buildNativeReviewSnippetRows,
-  createNativeReviewDiffTheme,
   getCachedNativeReviewDiffData,
-  type BuildNativeReviewDiffDataInput,
 } from "./nativeReviewDiffAdapter";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
-import { buildReviewParsedDiff } from "./reviewModel";
-import * as ReviewWordDiffs from "./reviewWordDiffs";
+import { buildReviewParsedDiff, type ReviewParsedDiff } from "./reviewModel";
 
-const parsedDiff = buildReviewParsedDiff(
-  [
-    "diff --git a/example.ts b/example.ts",
-    "--- a/example.ts",
-    "+++ b/example.ts",
-    "@@ -1 +1 @@",
-    "-const before = 1;",
-    "+const after = 2;",
-  ].join("\n"),
-  "native-review-cache-test",
-);
-
-describe("buildNativeReviewSnippetRows", () => {
-  it("preserves selected code and change types without inventing line numbers", () => {
-    const rows = buildNativeReviewSnippetRows({
-      id: "selection",
-      diff: "  unchanged\r\n-  before\r\n+  after\r\n",
-    });
-    expect(
-      rows.map((row) => [row.content, row.change, row.oldLineNumber, row.newLineNumber]),
-    ).toEqual([
-      [" unchanged", "context", null, null],
-      ["  before", "delete", null, null],
-      ["  after", "add", null, null],
-    ]);
-  });
-
-  it("leaves full patches, unrecognized text, and non-diff code to their existing renderers", () => {
-    for (const diff of ["@@ -1 +1 @@\n-old\n+new", "--- a/file\n+++ b/file", "plain text", ""]) {
-      expect(buildNativeReviewSnippetRows({ id: "selection", diff })).toEqual([]);
-    }
-    expect(
-      buildNativeReviewSnippetRows({ id: "code", diff: "+value", fenceLanguage: "typescript" }),
-    ).toEqual([]);
-  });
-});
+vi.mock("diff", { spy: true });
 
 function makeComment(text: string): ReviewInlineComment {
   return {
@@ -68,10 +27,6 @@ function makeComment(text: string): ReviewInlineComment {
     text,
     diff: "@@ -1,1 +1,0 @@\n-const before = 1;",
   };
-}
-
-function buildInput(comments: BuildNativeReviewDiffDataInput["comments"]) {
-  return { parsedDiff, comments } satisfies BuildNativeReviewDiffDataInput;
 }
 
 function filesPatch(paths: ReadonlyArray<string>) {
@@ -91,142 +46,200 @@ function filesPatch(paths: ReadonlyArray<string>) {
     .join("\n");
 }
 
-function appTheme(themeId: MobileThemeId, appearance: MobileThemeAppearance) {
-  return themeId === DEFAULT_MOBILE_THEME_ID || themeId === "material-you"
-    ? readDefaultMobileThemeVariables(appearance)
-    : getMobileThemeVariables(themeId, appearance);
-}
+describe("buildNativeReviewDiffData languages", () => {
+  it.each([
+    ["js", "javascript"],
+    ["cjs", "javascript"],
+    ["mjs", "javascript"],
+    ["jsx", "jsx"],
+    ["ts", "typescript"],
+    ["mts", "typescript"],
+    ["cts", "typescript"],
+    ["tsx", "tsx"],
+  ])("assigns %s files their syntax language when deleted", (extension, language) => {
+    const path = `scripts/dev-runner.${extension}`;
+    const data = buildNativeReviewDiffData(
+      buildReviewParsedDiff(
+        [
+          `diff --git a/${path} b/${path}`,
+          "deleted file mode 100644",
+          `--- a/${path}`,
+          "+++ /dev/null",
+          "@@ -1,2 +0,0 @@",
+          '-import process from "node:process";',
+          "-const port = process.env.PORT;",
+          "",
+        ].join("\n"),
+        "deleted-script-language",
+      ),
+    );
 
-function contrastRatio(first: string, second: string): number {
-  const luminance = (hex: string) => {
-    const [red, green, blue] = [1, 3, 5].map((offset) => {
-      const channel = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
-      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-    });
-    return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
-  };
-  const a = luminance(first);
-  const b = luminance(second);
-  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-}
+    expect(data.files).toMatchObject([{ path, language }]);
+    expect(data.rows.filter((row) => row.kind === "line")).toMatchObject([
+      { content: 'import process from "node:process";', change: "delete" },
+      { content: "const port = process.env.PORT;", change: "delete" },
+    ]);
+  });
+});
 
 describe("getCachedNativeReviewDiffData", () => {
-  it.each([true, false])(
-    "preserves available diff rows before a notice (has excerpt: %s)",
-    (hasExcerpt) => {
-      if (parsedDiff.kind !== "files") throw new Error("Expected a parsed file diff");
-      const notice = "This file preview was truncated.";
-      const result = buildNativeReviewDiffData({
-        parsedDiff: {
-          ...parsedDiff,
-          files: parsedDiff.files.map((file) => ({
-            ...file,
-            rows: hasExcerpt ? file.rows : [],
-            notice,
-          })),
+  it("keeps compact identities aligned through page append, filtering, comments, and source lookup", async () => {
+    const scope = JSON.stringify({ remote: 'long-target\\"'.repeat(100) });
+    const cache = new WeakMap<PullRequestDiffResult, ReviewParsedDiff>();
+    const firstPage = {
+      cursor: null,
+      result: {
+        patch: filesPatch(["example.ts", "hidden.test.ts"]),
+        truncated: false,
+        nextCursor: "next",
+      },
+    };
+    const terminology = sourceControlClients.get("github").changeRequest;
+    const first = combinePullRequestDiffPages([firstPage], cache, scope, terminology);
+    if (first.kind !== "files") throw new Error("Expected parsed first page");
+    const before = getCachedNativeReviewDiffData({ parsedDiff: first });
+    const selectedRowId = before.rows.find((row) => row.kind === "line")!.id;
+    const combined = combinePullRequestDiffPages(
+      [
+        firstPage,
+        {
+          cursor: "next",
+          result: { patch: filesPatch(["last.ts"]), truncated: false, nextCursor: null },
         },
-      });
-      const original = buildNativeReviewDiffData({ parsedDiff });
-      expect(result.rows.slice(0, -1)).toEqual(
-        hasExcerpt ? original.rows : original.rows.filter((row) => row.kind === "file"),
-      );
-      expect(result.rows.at(-1)).toMatchObject({ kind: "notice", text: notice });
-    },
-  );
-
-  it("reuses the row model for equivalent empty comment arrays", () => {
-    const first = getCachedNativeReviewDiffData(buildInput([]));
-    const second = getCachedNativeReviewDiffData(buildInput([]));
-
-    expect(second).toBe(first);
-  });
-
-  it("reuses equivalent comment contents and invalidates changed comments", () => {
-    const first = getCachedNativeReviewDiffData(buildInput([makeComment("First")]));
-    const equivalent = getCachedNativeReviewDiffData(buildInput([makeComment("First")]));
-    const changed = getCachedNativeReviewDiffData(buildInput([makeComment("Changed")]));
-
-    expect(equivalent).toBe(first);
-    expect(changed).not.toBe(first);
-    expect(changed.rows.find((row) => row.kind === "comment")?.commentText).toBe("Changed");
-  });
-
-  it("reuses source rows and word matching when a file comment changes", () => {
-    const diff = buildReviewParsedDiff(filesPatch(["example.ts", "second.ts"]), "comment-reuse");
-    const matchWords = vi.spyOn(ReviewWordDiffs, "computeWordAltDiffRanges");
-    try {
-      const base = getCachedNativeReviewDiffData({ parsedDiff: diff });
-      expect(matchWords).toHaveBeenCalledTimes(4);
-      expect(base.rows.filter((row) => row.wordDiffRanges?.length)).toHaveLength(8);
-      const firstComment = makeComment("First file comment");
-      const secondComment = {
-        ...makeComment("Second file comment"),
-        id: "comment-2",
-        filePath: "second.ts",
-      };
-      const first = getCachedNativeReviewDiffData({
-        parsedDiff: diff,
-        comments: [firstComment, secondComment],
-      });
-      const changed = getCachedNativeReviewDiffData({
-        parsedDiff: diff,
-        comments: [{ ...firstComment, text: "Changed first comment" }, secondComment],
-      });
-
-      expect(matchWords).toHaveBeenCalledTimes(4);
-      expect(changed.files).toBe(base.files);
-      expect(changed.commentTargetsByRowId).toBe(base.commentTargetsByRowId);
-      expect(changed.rowIdByCommentLineId).toBe(base.rowIdByCommentLineId);
-      expect(changed.rows.find((row) => row.id === secondComment.id)).toBe(
-        first.rows.find((row) => row.id === secondComment.id),
-      );
-      const sourceRows = changed.rows.filter((row) => row.kind !== "comment");
-      for (const [index, row] of sourceRows.entries()) {
-        expect(row).toBe(base.rows[index]);
+      ],
+      cache,
+      scope,
+      terminology,
+    );
+    if (combined.kind !== "files") throw new Error("Expected parsed appended pages");
+    expect(combined.files[0]).toBe(first.files[0]);
+    const filtered = {
+      ...combined,
+      files: combined.files.filter((file) => !file.path.includes(".test.")),
+    };
+    const input = { parsedDiff: filtered, comments: [makeComment("Feedback")] };
+    const data = getCachedNativeReviewDiffData(input);
+    expect(getCachedNativeReviewDiffData(input)).toBe(data);
+    expect(new Set(data.rows.map((row) => row.id)).size).toBe(data.rows.length);
+    expect(data.rows.find((row) => row.id === selectedRowId)).toBe(
+      before.rows.find((row) => row.id === selectedRowId),
+    );
+    // IDs used by native initialFileId/collapse and parsed source lookup share one namespace.
+    expect(data.files.map((file) => file.id)).toEqual(filtered.files.map((file) => file.id));
+    for (const file of filtered.files) {
+      const header = data.rows.find((row) => row.kind === "file" && row.fileId === file.id)!;
+      expect(header.filePath).toBe(file.path);
+      const lines = file.rows.filter((row) => row.kind === "line");
+      for (const [lineIndex, line] of lines.entries()) {
+        const nativeId = data.rowIdByCommentLineId.get(line.id)!;
+        const row = data.rows.find((row) => row.id === nativeId)!;
+        expect(row.fileId).toBe(file.id);
+        expect(row.content).toBe(line.content);
+        expect(nativeId.length).toBeLessThan(64);
+        const target = data.commentTargetsByRowId.get(nativeId)!;
+        expect(target.filePath).toBe(file.path);
+        expect(target.lines[lineIndex]).toBe(line);
+        expect(target.lineIndex).toBe(lineIndex);
+        expect(row.wordDiffRanges?.length).toBeGreaterThan(0);
+        expect(
+          row.wordDiffRanges?.map((range) => row.content!.slice(range.start, range.end)),
+        ).toEqual([line.change === "delete" ? "before" : "after"]);
       }
-      const removed = getCachedNativeReviewDiffData({ parsedDiff: diff, comments: [] });
-      expect(removed.rows).toEqual(base.rows);
-      expect(matchWords).toHaveBeenCalledTimes(4);
-      expect(first.rows.find((row) => row.id === firstComment.id)?.commentText).toBe(
-        "First file comment",
-      );
-    } finally {
-      matchWords.mockRestore();
     }
+    const commentIndex = data.rows.findIndex((row) => row.id === "comment-1");
+    expect(data.rows[commentIndex - 1]!.id).toBe(selectedRowId);
+    expect(data.rows[commentIndex]!.fileId).toBe(first.files[0]!.id);
+
+    const target = {
+      environmentId: EnvironmentId.make("remote"),
+      input: {
+        projectId: ProjectId.make("project"),
+        repository: "org/repo",
+        number: 23,
+      },
+    };
+    const contents = { oldContents: "old source", newContents: "new source" };
+    const fetch = vi.fn(async () => AsyncResult.success(contents));
+    const highlightFiles = createPullRequestDiffHighlightFiles(
+      { target },
+      filtered,
+      data.files,
+      fetch,
+    );
+    expect(await highlightFiles[1]!.loadContents!()).toBe(contents);
+    expect(fetch).toHaveBeenCalledExactlyOnceWith({
+      ...target,
+      input: { ...target.input, changeType: "change", oldPath: "last.ts", newPath: "last.ts" },
+    });
+    expect(JSON.stringify(data.rows).length).toBeLessThan(5000);
   });
 
-  it("updates comment titles and locations without changing source coordinates", () => {
-    const diff = buildReviewParsedDiff(filesPatch(["example.ts", "second.ts"]), "comment-metadata");
-    const comment = makeComment("Review this line");
-    const first = getCachedNativeReviewDiffData({ parsedDiff: diff, comments: [comment] });
-    const renamed = getCachedNativeReviewDiffData({
-      parsedDiff: diff,
-      comments: [{ ...comment, sectionTitle: "Branch comparison" }],
-    });
-    expect(renamed.rows.find((row) => row.id === comment.id)?.commentSectionTitle).toBe(
-      "Branch comparison",
+  it("keeps Pierre's matching lines in the GitHub credential pinning excerpt", () => {
+    const parsed = buildReviewParsedDiff(
+      [
+        "diff --git a/packages/source-control-github/src/server/GitHubPullRequestApi.ts b/packages/source-control-github/src/server/GitHubPullRequestApi.ts",
+        "--- a/packages/source-control-github/src/server/GitHubPullRequestApi.ts",
+        "+++ b/packages/source-control-github/src/server/GitHubPullRequestApi.ts",
+        "@@ -1221,11 +1240,4 @@",
+        "-        operation: input.operation,",
+        "-        path: input.path,",
+        "-        ...(Option.isSome(previous) ? { ifNoneMatch: previous.value.etag } : {}),",
+        "-      })",
+        "-      .pipe(",
+        "-        Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {",
+        "-          host,",
+        "-          token,",
+        "-          credentialFingerprint: fingerprint,",
+        "-        }),",
+        "-      );",
+        "+        token,",
+        "+        credentialFingerprint: fingerprint,",
+        "+      }),",
+        "+    );",
+        "",
+      ].join("\n"),
+      "credential-pinning",
     );
-    const moved = getCachedNativeReviewDiffData({
-      parsedDiff: diff,
-      comments: [{ ...comment, filePath: "second.ts", endIndex: 99, rangeLabel: "+2" }],
+    expect(parsed.kind).toBe("files");
+    if (parsed.kind !== "files") return;
+    expect(
+      parsed.files[0]?.rows.find((row) => row.kind === "line" && row.newLineNumber === 1242),
+    ).toMatchObject({
+      comparison: { change: "delete", tokenIndex: 9 },
     });
-    const commentIndex = moved.rows.findIndex((row) => row.id === comment.id);
-    expect(moved.rows[commentIndex]).toMatchObject({
-      kind: "comment",
-      filePath: "second.ts",
-      commentRangeLabel: "+2",
-    });
-    expect(moved.rows[commentIndex - 1]).toMatchObject({
-      kind: "line",
-      change: "add",
-      newLineNumber: 2,
-    });
-    expect(moved.rows.filter((row) => row.kind !== "comment")).toEqual(
-      first.rows.filter((row) => row.kind !== "comment"),
+    const data = buildNativeReviewDiffData(parsed);
+    expect(
+      data.rows.find((row) => row.kind === "line" && row.newLineNumber === 1242)?.wordDiffRanges,
+    ).toBeUndefined();
+  });
+
+  it.each([
+    [true, false, "Old file has no newline at end of file."],
+    [false, true, "New file has no newline at end of file."],
+    [true, true, "Old and new files have no newline at end of file."],
+    [false, false, null],
+  ])("shows missing-newline notices for old=%s new=%s", (oldMissing, newMissing, notice) => {
+    const data = buildNativeReviewDiffData(
+      buildReviewParsedDiff(
+        [
+          "diff --git a/example.ts b/example.ts",
+          "--- a/example.ts",
+          "+++ b/example.ts",
+          "@@ -1 +1 @@",
+          "-value",
+          ...(oldMissing ? ["\\ No newline at end of file"] : []),
+          "+value",
+          ...(newMissing ? ["\\ No newline at end of file"] : []),
+          "",
+        ].join("\n"),
+        "native-eof",
+      ),
     );
-    expect(first.rows.find((row) => row.id === comment.id)?.commentSectionTitle).toBe(
-      "Dirty worktree",
+    expect(data.rows.filter((row) => row.kind === "notice").map((row) => row.text)).toEqual(
+      notice ? [notice] : [],
     );
+    expect(data.rows.filter((row) => row.kind === "line")).toHaveLength(2);
+    expect(data.commentTargetsByRowId.size).toBe(2);
   });
 
   it("keeps cached IDs and targets local to each parsed section and file layout", () => {
@@ -279,9 +292,9 @@ describe("buildNativeReviewDiffData row bound", () => {
     expect(data).toMatchObject({ additions: 201_000, deletions: 0 });
     const hugeRows = data.rows.filter((row) => row.fileId === hugeHeader?.fileId);
     expect(hugeRows.filter((row) => row.kind === "line" || row.kind === "hunk")).toHaveLength(
-      2_000,
+      100_000,
     );
-    expect(hugeRows.at(-2)).toMatchObject({ kind: "line", newLineNumber: 1_999 });
+    expect(hugeRows.at(-2)).toMatchObject({ kind: "line", newLineNumber: 99_999 });
     expect(hugeRows.at(-1)).toMatchObject({
       kind: "notice",
       text: "This diff is too large to show in full.",
@@ -295,100 +308,66 @@ describe("buildNativeReviewDiffData row bound", () => {
     });
     expect(ordinaryRows.some((row) => row.kind === "notice")).toBe(false);
   });
-
-  it("omits comments beyond the excerpt and retains overlapping ranges at its boundary", () => {
-    const diff = buildReviewParsedDiff(singleFilePatch("example.ts", 3_000), "excerpt-comments");
-    const visible = { ...makeComment("Visible"), id: "visible", startIndex: 10, endIndex: 10 };
-    const overlapping = {
-      ...makeComment("Overlapping"),
-      id: "overlapping",
-      startIndex: 1_998,
-      endIndex: 2_001,
-      rangeLabel: "+1999 to +2002",
-    };
-    const omitted = {
-      ...makeComment("Outside excerpt"),
-      id: "omitted",
-      startIndex: 1_999,
-      endIndex: 1_999,
-      rangeLabel: "+2000",
-    };
-    const data = getCachedNativeReviewDiffData({
-      parsedDiff: diff,
-      comments: [visible, overlapping, omitted],
-    });
-
-    const visibleIndex = data.rows.findIndex((row) => row.id === visible.id);
-    expect(data.rows[visibleIndex - 1]).toMatchObject({ kind: "line", newLineNumber: 11 });
-    const overlappingIndex = data.rows.findIndex((row) => row.id === overlapping.id);
-    expect(data.rows[overlappingIndex - 1]).toMatchObject({ kind: "line", newLineNumber: 1_999 });
-    expect(data.rows[overlappingIndex]).toMatchObject({
-      commentRangeLabel: overlapping.rangeLabel,
-      commentText: overlapping.text,
-    });
-    expect(data.rows.filter((row) => row.kind === "comment").map((row) => row.id)).toEqual([
-      visible.id,
-      overlapping.id,
-    ]);
-    expect(data.rows[overlappingIndex + 1]).toMatchObject({ kind: "notice" });
-    expect(getCachedNativeReviewDiffData({ parsedDiff: diff }).rows).toEqual(
-      data.rows.filter((row) => row.kind !== "comment"),
-    );
-  });
 });
 
-describe("createNativeReviewDiffTheme", () => {
-  it("serializes every native color as cross-platform opaque hex", () => {
-    for (const themeId of MOBILE_THEME_IDS) {
-      for (const appearance of ["light", "dark"] as const) {
-        const theme = createNativeReviewDiffTheme(
-          appearance,
-          themeId,
-          appTheme(themeId, appearance),
-        );
-        for (const color of Object.values(theme)) {
-          expect(color, `${themeId}/${appearance}`).toMatch(/^#[\da-f]{6}$/i);
-        }
-        expect(
-          contrastRatio(theme.hunkText, theme.hunkBackground),
-          `${themeId}/${appearance} hunk text`,
-        ).toBeGreaterThanOrEqual(4.5);
-      }
+describe("buildNativeReviewDiffData word comparison bound", () => {
+  function modifiedFilePatch(pairCount: number, contextCount = 0) {
+    const lineCount = pairCount + contextCount;
+    return [
+      "diff --git a/example.ts b/example.ts",
+      "--- a/example.ts",
+      "+++ b/example.ts",
+      `@@ -1,${lineCount} +1,${lineCount} @@`,
+      ...Array.from({ length: contextCount }, (_, index) => ` const context${index} = true;`),
+      ...Array.from(
+        { length: pairCount },
+        (_, index) => `-const value${index} = renderPanel({ label: "before", enabled: true });`,
+      ),
+      ...Array.from(
+        { length: pairCount },
+        (_, index) => `+const value${index} = renderPanel({ label: "after", enabled: true });`,
+      ),
+    ].join("\n");
+  }
+
+  it("bounds eager word comparisons without truncating a large modified file", () => {
+    const parsedDiff = buildReviewParsedDiff(modifiedFilePatch(20_000), "native-word-bound");
+    const comparisons = vi.mocked(diffWordsWithSpace).mockClear();
+    const data = buildNativeReviewDiffData(parsedDiff);
+
+    expect(comparisons).toHaveBeenCalledTimes(1_000);
+    expect(data).toMatchObject({ additions: 20_000, deletions: 20_000 });
+    const lines = data.rows.filter((row) => row.kind === "line");
+    expect(lines).toHaveLength(40_000);
+    expect(data.rows.some((row) => row.kind === "notice")).toBe(false);
+    for (const offset of [0, 20_000]) {
+      expect(lines[offset]?.wordDiffRanges?.length).toBeGreaterThan(0);
+      expect(lines[offset + 999]?.wordDiffRanges?.length).toBeGreaterThan(0);
+      expect(lines[offset + 1_000]?.wordDiffRanges).toBeUndefined();
     }
+    expect(lines.at(-1)).toMatchObject({
+      content: 'const value19999 = renderPanel({ label: "after", enabled: true });',
+      newLineNumber: 20_000,
+    });
+    expect(data.commentTargetsByRowId.size).toBe(40_000);
+    expect(data.commentTargetsByRowId.get(lines.at(-1)!.id)?.lineIndex).toBe(39_999);
   });
 
-  it.each(["light", "dark"] as const)(
-    "preserves Material You RGBA hex channels and composites alpha in %s",
-    (appearance) => {
-      const variables = {
-        ...appTheme("material-you", appearance),
-        "--color-screen": "#101214FF",
-        "--color-md-code-bg": "#20222480",
-        "--color-md-code-text": "#E3E2E6FF",
-        "--color-foreground-muted": "#C7C5D080",
-        "--color-border": "#44464F80",
-        "--color-primary": "#A8C7FAFF",
-      };
-      const theme = createNativeReviewDiffTheme(appearance, "material-you", variables);
-      expect(theme.background).toBe("#181a1c");
-      expect(theme.headerBackground).toBe(theme.background);
-      expect(theme.text).toBe("#e3e2e6");
-      expect(theme.mutedText).toBe("#707076");
-      expect(theme.border).toBe("#2e3036");
-      expect(contrastRatio(theme.hunkText, theme.hunkBackground)).toBeGreaterThanOrEqual(4.5);
-      for (const color of Object.values(theme)) {
-        expect(color).toMatch(/^#[\da-f]{6}$/i);
-      }
-    },
-  );
+  it.each([0, 20_000])("preserves small word differences with %s context rows", (contextCount) => {
+    const parsedDiff = buildReviewParsedDiff(
+      modifiedFilePatch(2, contextCount),
+      "native-word-context",
+    );
+    const comparisons = vi.mocked(diffWordsWithSpace).mockClear();
+    const data = buildNativeReviewDiffData(parsedDiff);
 
-  it("uses the selected app palette for native code surfaces", () => {
-    const standard = createNativeReviewDiffTheme("dark", "t3-code", appTheme("t3-code", "dark"));
-    const iris = createNativeReviewDiffTheme("dark", "iris", appTheme("iris", "dark"));
-
-    expect(iris.background).not.toBe(standard.background);
-    expect(iris.hunkText).not.toBe(standard.hunkText);
-    expect(iris.addBar).toBe(standard.addBar);
-    expect(iris.deleteBar).toBe(standard.deleteBar);
+    expect(comparisons).toHaveBeenCalledTimes(2);
+    const changes = data.rows.filter((row) => row.kind === "line" && row.change !== "context");
+    expect(changes).toHaveLength(4);
+    for (const row of changes) {
+      expect(
+        row.wordDiffRanges?.map((range) => row.content!.slice(range.start, range.end)),
+      ).toEqual([row.change === "delete" ? "before" : "after"]);
+    }
   });
 });

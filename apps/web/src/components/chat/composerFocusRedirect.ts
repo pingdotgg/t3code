@@ -1,5 +1,4 @@
-// Type-to-focus: printable keys and pastes that land on no editable target go to
-// the composer, so the user can start typing anywhere in the chat.
+import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 
 export const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -22,8 +21,7 @@ const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
   '[role="switch"]',
   '[role="tab"]',
 ].join(",");
-// Popups match only while open or closing: some stay mounted when closed,
-// such as the chat header actions menu.
+// Closed popups can stay mounted; match only open or closing layers.
 export const TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR = [
   '[role="dialog"][aria-modal="true"]',
   '[data-slot="alert-dialog-popup"]:is([data-open],[data-ending-style])',
@@ -47,11 +45,23 @@ export function eventPathContainsSelector(event: Event, selector: string): boole
 }
 
 const SECRET_REQUEST_SELECTOR = '[data-v2-item-type="secret_request"]';
+const SURFACE_LAUNCHER_KEYS_ATTRIBUTE = "data-surface-launcher-keys";
+
+// The right-panel launcher registers its own window capture listener when it
+// mounts. When the panel opens after page load that listener runs after ours,
+// so we must leave its letters alone or the composer takes them first.
+function isSurfaceLauncherKey(event: KeyboardEvent): boolean {
+  const launcherKeys = document
+    .querySelector(`[${SURFACE_LAUNCHER_KEYS_ATTRIBUTE}]`)
+    ?.getAttribute(SURFACE_LAUNCHER_KEYS_ATTRIBUTE)
+    ?.toLowerCase();
+  const key = surfaceShortcutKey(event);
+  return key !== null && (launcherKeys?.includes(key) ?? false);
+}
 
 export function shouldRedirectInputToComposer(event: Event): boolean {
   if (event.defaultPrevented) return false;
-  // Near a pending secret request, input is meant for its private field: it
-  // must never land in the composer draft, which is persisted and sent.
+  // Never persist or send secret-request typing through the composer.
   if (eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
@@ -64,6 +74,7 @@ export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
   if (event.key.length !== 1) return false;
   if (!shouldRedirectInputToComposer(event)) return false;
+  if (isSurfaceLauncherKey(event)) return false;
 
   return true;
 }

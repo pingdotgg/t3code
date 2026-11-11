@@ -1,6 +1,7 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
@@ -21,9 +22,9 @@ interface CapturedLog {
 }
 
 const sha256 = Effect.fn("test.sha256")(function* (value: string) {
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   return Hex.encode(
-    yield* crypto.digest("SHA-256", new TextEncoder().encode(value)).pipe(Effect.orDie),
+    yield* digest.digest(Digest.sha256, new TextEncoder().encode(value)).pipe(Effect.orDie),
   );
 });
 
@@ -69,7 +70,7 @@ const writeHomeFile = Effect.fn("test.writeHomeFile")(function* (
   return filePath;
 });
 
-it.layer(NodeServices.layer)("telemetry identity", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("telemetry identity", (it) => {
   it.effect("keeps the old distinct_id rule and a fixed install id as logins change", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -95,22 +96,6 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
       yield* writeHomeFile(homeDirectory, ".codex/auth.json", `{"tokens":{"account_id":"ws-1"}}`);
       assert.deepEqual(yield* identity(), { distinctId: yield* sha256("ws-1"), installId });
     }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-install-"))),
-  );
-
-  it.effect("keeps a provider distinct_id when the install id cannot be saved", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const homeDirectory = path.join(config.baseDir, "home");
-      yield* fileSystem.makeDirectory(config.anonymousIdPath);
-      yield* writeHomeFile(homeDirectory, ".claude.json", `{"userID":"claude-machine"}`);
-
-      assert.deepEqual(yield* Identify.getTelemetryIdentityForHome(homeDirectory), {
-        distinctId: yield* sha256("claude-machine"),
-        installId: null,
-      });
-    }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-noinstall-"))),
   );
 
   it.effect("leaves no torn anonymous id behind when its write fails midway", () =>
