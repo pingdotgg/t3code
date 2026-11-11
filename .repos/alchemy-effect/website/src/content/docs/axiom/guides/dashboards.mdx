@@ -16,7 +16,7 @@ a dataset to query ([ingest](/axiom/data/ingest)).
 ## Start with an empty dashboard
 
 ```typescript
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 
 yield* Axiom.Dashboard("ops", {
   dashboard: {
@@ -41,7 +41,7 @@ place, so the deployed dashboard always matches what's in your code.
 ## Add a chart
 
 ```typescript
-import type { Chart, LayoutCell } from "alchemy/Axiom";
+import type { Chart, LayoutCell } from "@alchemy.run/axiom";
 
 const errors: Chart = {
   id: "errors-5m",
