@@ -109,6 +109,7 @@ const LOGIN_SHELL_ENV_NAMES = [
   "NODE_EXTRA_CA_CERTS",
   "T3CODE_TELEMETRY_ENABLED",
   "T3CODE_GITHUB_APP_CLIENT_ID",
+  "CLAUDE_CODE_OAUTH_TOKEN",
   "__MISE_DIFF",
   "JAVA_HOME",
 ] as const;
@@ -486,6 +487,9 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "JAVA_HOME",
       "T3CODE_TELEMETRY_ENABLED",
       "T3CODE_GITHUB_APP_CLIENT_ID",
+      // The `claude setup-token` credential is usually exported from the shell
+      // profile, which a Dock launch never reads, so Claude reports no login.
+      "CLAUDE_CODE_OAUTH_TOKEN",
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
@@ -575,6 +579,8 @@ const CACHED_ENV_NAMES = [
   "SSL_CERT_FILE",
   "SSL_CERT_DIR",
   "NODE_EXTRA_CA_CERTS",
+  // The server builds Claude before discovery ends, so the token must already be in its spawn env.
+  "CLAUDE_CODE_OAUTH_TOKEN",
 ] as const;
 
 /** @public */

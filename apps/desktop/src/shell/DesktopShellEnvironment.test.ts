@@ -211,6 +211,7 @@ describe("DesktopShellEnvironment", () => {
               SSH_AUTH_SOCK: "/old-session.sock",
               JAVA_HOME: "/old/java",
               SSL_CERT_FILE: "/old/cert.pem",
+              CLAUDE_CODE_OAUTH_TOKEN: "cached-token",
             }),
         });
         const cachePath = `${stateDir}/shell-environment-cache.json`;
@@ -253,6 +254,7 @@ describe("DesktopShellEnvironment", () => {
               yield* service.installIntoProcess;
               assert.equal(env.PATH, "/old/bin:/usr/bin:/launcher/bin");
               assert.equal(env.SSH_AUTH_SOCK, "/current-session.sock");
+              assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "cached-token");
               const replay = yield* Stream.runHead(service.updates);
               assert.isTrue(Option.isSome(replay));
               if (Option.isSome(replay))
@@ -554,30 +556,34 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("hydrates missing CA trust variables from the login shell", () =>
-    Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = {
-        SHELL: "/bin/zsh",
-        PATH: "/usr/bin",
-        SSL_CERT_DIR: "/etc/ssl/certs",
-      };
+  it.effect(
+    "hydrates missing CA trust variables and the Claude OAuth token from the login shell",
+    () =>
+      Effect.gen(function* () {
+        const env: NodeJS.ProcessEnv = {
+          SHELL: "/bin/zsh",
+          PATH: "/usr/bin",
+          SSL_CERT_DIR: "/etc/ssl/certs",
+        };
 
-      yield* runShellEnvironment({
-        env,
-        platform: "darwin",
-        handler: () =>
-          envOutput({
-            PATH: "/opt/zerobrew/bin:/usr/bin",
-            SSL_CERT_FILE: "/opt/zerobrew/etc/ca-certificates/cacert.pem",
-            SSL_CERT_DIR: "/opt/zerobrew/etc/ca-certificates",
-            NODE_EXTRA_CA_CERTS: "/Users/me/corp-root.pem",
-          }),
-      });
+        yield* runShellEnvironment({
+          env,
+          platform: "darwin",
+          handler: () =>
+            envOutput({
+              PATH: "/opt/zerobrew/bin:/usr/bin",
+              SSL_CERT_FILE: "/opt/zerobrew/etc/ca-certificates/cacert.pem",
+              SSL_CERT_DIR: "/opt/zerobrew/etc/ca-certificates",
+              NODE_EXTRA_CA_CERTS: "/Users/me/corp-root.pem",
+              CLAUDE_CODE_OAUTH_TOKEN: "shell-profile-token",
+            }),
+        });
 
-      assert.equal(env.SSL_CERT_FILE, "/opt/zerobrew/etc/ca-certificates/cacert.pem");
-      assert.equal(env.SSL_CERT_DIR, "/etc/ssl/certs");
-      assert.equal(env.NODE_EXTRA_CA_CERTS, "/Users/me/corp-root.pem");
-    }),
+        assert.equal(env.SSL_CERT_FILE, "/opt/zerobrew/etc/ca-certificates/cacert.pem");
+        assert.equal(env.SSL_CERT_DIR, "/etc/ssl/certs");
+        assert.equal(env.NODE_EXTRA_CA_CERTS, "/Users/me/corp-root.pem");
+        assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "shell-profile-token");
+      }),
   );
 
   it.effect("keeps mise's PATH record with the login shell PATH", () =>

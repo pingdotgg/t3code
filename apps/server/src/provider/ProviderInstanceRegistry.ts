@@ -589,9 +589,25 @@ export const makeProviderInstanceRegistry = Effect.fn(
     },
   };
 
+  const rebuildDriver: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["rebuildDriver"] =
+    Effect.fn("ProviderInstanceRegistry.rebuildDriver")(
+      function* (driver) {
+        const configMap = yield* Ref.get(configMapRef);
+        const rebuild = new Set(
+          Object.entries(configMap).flatMap(([instanceId, entry]) =>
+            entry.driver === driver ? [ProviderInstanceId.make(instanceId)] : [],
+          ),
+        );
+        if (rebuild.size > 0) yield* reconcileWithR(configMap, rebuild);
+      },
+      (effect) => semaphore.withPermits(1)(effect),
+      Effect.provideContext(driverContext),
+    );
+
   const mutator: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape = {
     reconcile,
     reloadSecrets,
+    rebuildDriver,
   };
 
   return { registry, mutator };
