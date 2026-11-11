@@ -47,7 +47,7 @@ import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { CommandBlock } from "../CommandBlock";
 import { AccessOption, accessConfig } from "../auth/ConnectAgentSurface";
 import { useAccessEnvironment } from "../settings/useAccessEnvironment";
-import { Button } from "../ui/button";
+import { Button, ContentButton, InlineButton } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { RadioGroup } from "../ui/radio-group";
 import { Spinner } from "../ui/spinner";
@@ -76,7 +76,7 @@ export function UseInAnotherAppDialogHost() {
 
 function UseInAnotherAppDialog({ requested }: { readonly requested: EnvironmentId | null }) {
   const { environment, label } = useAccessEnvironment(requested);
-  const title = `Use T3 Code in another app (MCP) · ${label ?? "T3 Code"}`;
+  const title = `Use T3 Code in another app (MCP) (${label ?? "T3 Code"})`;
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : close())}>
       <WizardPopup>
@@ -146,7 +146,7 @@ function Wizard({
           <AppStep choice={choice} onChoose={setChoice} />
         ) : step === 1 ? (
           <section className="space-y-3">
-            <h3 className="text-sm font-medium">What can {appName} do?</h3>
+            <h3 className="text-label">What can {appName} do?</h3>
             <RadioGroup
               aria-label={`What can ${appName} do?`}
               value={access}
@@ -179,7 +179,7 @@ function Wizard({
           leading={step === 2 ? <ManageAccessButton environment={environment} /> : undefined}
         >
           {step === 1 ? (
-            <Button variant="outline" onClick={() => setStep(0)}>
+            <Button variant="secondary" onClick={() => setStep(0)}>
               Back
             </Button>
           ) : null}
@@ -363,7 +363,7 @@ function GateScreen({
   const turnOnHere = useT3ConnectTurnOn(environment.environmentId);
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   const retry = (onClick: () => void) => (
-    <Button variant="outline" onClick={onClick}>
+    <Button variant="secondary" onClick={onClick}>
       Check again
     </Button>
   );
@@ -371,7 +371,7 @@ function GateScreen({
   switch (gate.kind) {
     case "checking":
       return (
-        <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+        <p role="status" className="flex items-center gap-2 text-body text-muted-foreground">
           <Spinner size="sm" tone="muted" />
           Checking T3 Connect…
         </p>
@@ -454,11 +454,11 @@ function GateScreen({
                 {connecting ? "Connecting…" : "Turn on"}
               </Button>
               {operationError ? (
-                <p className="text-xs text-destructive-foreground">{operationError}</p>
+                <p className="text-meta text-destructive-foreground">{operationError}</p>
               ) : null}
               {tunnelLimit !== null ? (
                 <>
-                  <p className="text-sm text-destructive-foreground">
+                  <p className="text-body text-destructive-foreground">
                     Your T3 Connect account is out of tunnels.
                   </p>
                   <ManageAccessButton environment={environment} label="Manage tunnels" />
@@ -466,9 +466,9 @@ function GateScreen({
               ) : null}
             </div>
           ) : turnOnHere.kind === "policy" ? (
-            <p className="text-sm text-muted-foreground">{turnOnHere.reason}</p>
+            <p className="text-body text-muted-foreground">{turnOnHere.reason}</p>
           ) : (
-            <div className="space-y-2 text-sm">
+            <div className="space-y-2 text-body">
               <CommandBlock command="t3 connect link" />
               <p>Restart T3 Code on {name}.</p>
               {checkAgain}
@@ -493,9 +493,9 @@ function GateMessage({
 }) {
   return (
     <section className="space-y-3">
-      <h3 className="text-base font-medium">{title}</h3>
+      <h3 className="text-title">{title}</h3>
       {lines.length > 0 ? (
-        <div className="space-y-1 text-sm text-muted-foreground">
+        <div className="space-y-1 text-body text-muted-foreground">
           {lines.map((line) => (
             <p key={line}>{line}</p>
           ))}
@@ -515,35 +515,37 @@ function AppStep({
 }) {
   return (
     <section className="space-y-3">
-      <h3 className="text-sm font-medium">Which app?</h3>
+      <h3 className="text-label">Which app?</h3>
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
         {MCP_APPS.filter((app) => !app.hidden).map((app) => (
-          <button
+          <ContentButton
+            variant="selection-card"
             key={app.id}
             type="button"
             aria-pressed={choice === app}
             onClick={() => onChoose(app)}
-            className="flex min-w-0 flex-col items-center gap-2 rounded-lg border border-transparent px-1 py-3 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:border-primary aria-pressed:bg-primary/8"
+            className="min-w-0"
           >
-            <img
-              src={app.logo}
-              alt=""
-              className="size-10 rounded-lg ring-1 ring-black/10 dark:ring-white/12"
-            />
-            <span className="max-w-full truncate whitespace-nowrap text-xs font-medium">
-              {app.name}
+            <span className="flex flex-col items-center gap-2 px-1 py-3">
+              <img
+                src={app.logo}
+                alt=""
+                className="size-10 rounded-lg ring-1 ring-black/10 dark:ring-white/12"
+              />
+              <span className="max-w-full truncate whitespace-nowrap text-meta">{app.name}</span>
             </span>
-          </button>
+          </ContentButton>
         ))}
       </div>
-      <button
+      <ContentButton
+        variant="selection-card"
         type="button"
         aria-pressed={choice === "other"}
         onClick={() => onChoose("other")}
-        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:border-primary aria-pressed:bg-primary/8"
+        className="w-full"
       >
-        Something else…
-      </button>
+        <span className="block px-3 py-2.5 text-label">Something else…</span>
+      </ContentButton>
     </section>
   );
 }
@@ -564,7 +566,7 @@ function ConnectStep({
   const app = choice === "other" ? null : choice;
   const code =
     access === null ? (
-      <p className="text-sm text-muted-foreground">
+      <p className="text-body text-muted-foreground">
         When {app?.name ?? "the app"} opens the sign-in page, choose what it may do and approve with
         your T3 Connect account.
       </p>
@@ -582,13 +584,13 @@ function ConnectStep({
       <section className="space-y-4">
         <CopyRow label="URL" value={mcpUrl} />
         {message ? <CopyRow label="Message" value={message} /> : null}
-        <ol className="list-decimal space-y-1 ps-5 text-sm">
+        <ol className="list-decimal space-y-1 ps-5 text-body">
           {(app?.steps ?? OTHER_MCP_APP_STEPS).map((step) => (
             <li key={step}>{step}</li>
           ))}
         </ol>
         {app === null ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             Apps that require their own client ID cannot connect.
           </p>
         ) : app.docs ? (
@@ -622,15 +624,7 @@ function TextButton({
   readonly onClick: () => void;
   readonly children: ReactNode;
 }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="block text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:underline"
-    >
-      {children}
-    </button>
-  );
+  return <InlineButton onClick={onClick}>{children}</InlineButton>;
 }
 
 function openLink(url: string) {
@@ -647,7 +641,7 @@ function openLink(url: string) {
 
 function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl: string }) {
   const action = mcpHandoffAction(app, mcpUrl);
-  const note = app.note ? <p className="text-xs text-muted-foreground">{app.note}</p> : null;
+  const note = app.note ? <p className="text-meta text-muted-foreground">{app.note}</p> : null;
   if (action === null) {
     return (
       <div className="space-y-2">
@@ -656,7 +650,7 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
               .commands(mcpUrl)
               .map((command) => <CommandBlock key={command} command={command} />)
           : null}
-        <p className="text-xs text-muted-foreground">Run these where {app.name} runs.</p>
+        <p className="text-meta text-muted-foreground">Run these where {app.name} runs.</p>
         {note}
       </div>
     );
@@ -746,11 +740,11 @@ function ApprovalCode({
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm">
-          Code to approve <span className="font-medium">{accessConfig[access].label}</span>
+        <span className="text-body">
+          Code to approve <span className="text-label">{accessConfig[access].label}</span>
         </span>
         {live ? null : (
-          <Button size="sm" variant="outline" disabled={pending} onClick={() => void mint()}>
+          <Button size="sm" variant="secondary" disabled={pending} onClick={() => void mint()}>
             {pending ? "Getting code…" : code === null ? "Get code" : "New code"}
           </Button>
         )}
@@ -759,15 +753,16 @@ function ApprovalCode({
         live ? (
           <>
             <CopyRow label="Code" value={code.credential} />
-            <p className="text-xs text-muted-foreground">
-              Expires {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} · one use
+            <p className="text-meta text-muted-foreground">
+              Expires {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}
+              <span className="ms-2">one use</span>
             </p>
           </>
         ) : (
-          <p className="text-xs text-muted-foreground">The code expired.</p>
+          <p className="text-meta text-muted-foreground">The code expired.</p>
         )
       ) : null}
-      {error ? <p className="text-xs text-destructive-foreground">{error}</p> : null}
+      {error ? <p className="text-meta text-destructive-foreground">{error}</p> : null}
     </div>
   );
 }
@@ -776,8 +771,8 @@ function CopyRow({ label, value }: { readonly label: string; readonly value: str
   const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500, target: label });
   return (
     <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2">
-      <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
-      <span className="min-w-0 flex-1 truncate font-mono text-sm">{value}</span>
+      <span className="shrink-0 text-meta text-muted-foreground">{label}</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-body">{value}</span>
       <Button
         size="icon-xs"
         variant="ghost"
@@ -816,9 +811,9 @@ function LinkedLine({
     // A forwarded call keeps the lower of the app's level and the link's own.
     const level =
       access === null || levelRank(link.access) < levelRank(access) ? link.access : access;
-    return `${name} · ${link.status === "expired" ? "Expired" : accessConfig[level].label}`;
+    return `${name} (${link.status === "expired" ? "Expired" : accessConfig[level].label})`;
   });
-  return <p className="text-xs text-muted-foreground">Linked: {named.join(", ")}</p>;
+  return <p className="text-meta text-muted-foreground">Linked: {named.join(", ")}</p>;
 }
 
 /** Opens Sharing & access on this environment, where its clients and T3 Connect tunnels live. */
