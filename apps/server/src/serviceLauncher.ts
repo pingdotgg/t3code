@@ -103,9 +103,11 @@ export async function boundServiceLog(baseDir: string): Promise<void> {
     return;
   }
   // The archive is best effort: on a full disk the copy fails, and the truncate is what frees space.
-  await NodeFSP.copyFile(logPath, archivePath).catch(() =>
-    NodeFSP.rm(archivePath, { force: true }).catch(() => undefined),
-  );
+  // Copying aside first keeps the previous archive when the copy fails.
+  const pendingArchivePath = `${archivePath}.tmp`;
+  await NodeFSP.copyFile(logPath, pendingArchivePath)
+    .then(() => NodeFSP.rename(pendingArchivePath, archivePath))
+    .catch(() => NodeFSP.rm(pendingArchivePath, { force: true }).catch(() => undefined));
   await NodeFSP.truncate(logPath, 0).catch(() => undefined);
 }
 

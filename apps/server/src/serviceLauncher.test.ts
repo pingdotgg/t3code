@@ -256,20 +256,24 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
-  it.effect("truncates an oversized boot-service.log when the archive copy fails", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-log-" });
-      const logPath = path.join(root, "userdata", "logs", "boot-service.log");
-      yield* fs.makeDirectory(`${logPath}.1`, { recursive: true });
-      yield* writeSparseFile(logPath, 17 * 1024 * 1024);
+  it.effect(
+    "truncates an oversized boot-service.log and keeps the old archive when the copy fails",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-log-" });
+        const logPath = path.join(root, "userdata", "logs", "boot-service.log");
+        // A directory in the way of the pending copy makes the copy fail.
+        yield* fs.makeDirectory(`${logPath}.1.tmp`, { recursive: true });
+        yield* fs.writeFileString(`${logPath}.1`, "previous archive\n");
+        yield* writeSparseFile(logPath, 17 * 1024 * 1024);
 
-      yield* Effect.promise(() => boundServiceLog(root));
+        yield* Effect.promise(() => boundServiceLog(root));
 
-      assert.equal(Number((yield* fs.stat(logPath)).size), 0);
-      assert.equal((yield* fs.stat(`${logPath}.1`)).type, "Directory");
-    }),
+        assert.equal(Number((yield* fs.stat(logPath)).size), 0);
+        assert.equal(yield* fs.readFileString(`${logPath}.1`), "previous archive\n");
+      }),
   );
 
   it.effect("keeps bounding boot-service.log while the service runs", () =>
