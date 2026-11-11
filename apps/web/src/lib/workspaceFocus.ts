@@ -107,6 +107,16 @@ function isInScrollView(target: HTMLElement) {
 }
 
 /**
+ * Whether focus can go back to an element without surprising the user: it is still in a
+ * visible workspace area (a closing drawer drops its area) and in view, so no list scrolls.
+ */
+export function canReturnFocusTo(element: HTMLElement) {
+  return (
+    workspaceArea(element) !== null && isWorkspaceElementVisible(element) && isInScrollView(element)
+  );
+}
+
+/**
  * Brings a restored control into view, innermost scrolling list first.
  * scrollIntoView would also scroll overflow-hidden layout containers out of place.
  */
@@ -124,10 +134,28 @@ export function createWorkspaceFocusController(doc: Document) {
   const lastFocused = new Map<string, HTMLElement>();
   let lastArea: HTMLElement | undefined;
   let lastAreaKey: string | undefined;
+  // An area that took focus itself from the keyboard. Chromium's :focus-visible also matches
+  // a clicked area after any later key press, so the ring and window return read this mark.
+  let keyboardArea: HTMLElement | undefined;
+  let previousTarget: EventTarget | null = null;
+  const unmarkKeyboardArea = () => {
+    keyboardArea?.removeAttribute("data-workspace-keyboard-focus");
+    keyboardArea = undefined;
+  };
+  const markKeyboardArea = (area: HTMLElement) => {
+    if (!area.matches(":focus-visible")) return;
+    keyboardArea = area;
+    area.setAttribute("data-workspace-keyboard-focus", "");
+  };
   const remember = (event: FocusEvent) => {
+    if (event.target !== keyboardArea) unmarkKeyboardArea();
+    // Window activation refocuses the same element; only focus arriving from elsewhere counts.
+    const arrived = event.target !== previousTarget;
+    previousTarget = event.target;
     if (!(event.target instanceof HTMLElement)) return;
     const area = workspaceArea(event.target);
     if (!area?.dataset.workspaceArea) return;
+    if (arrived && event.target === area) markKeyboardArea(area);
     lastArea = area;
     const key = workspaceAreaKey(area);
     lastAreaKey = key;
@@ -140,18 +168,19 @@ export function createWorkspaceFocusController(doc: Document) {
   };
   doc.addEventListener("focusin", remember);
 
-  const focusArea = (area: HTMLElement, restore = true) => {
+  const focusArea = (area: HTMLElement, restore = true, nested = true) => {
     const key = workspaceAreaKey(area);
     const previous = restore ? lastFocused.get(key) : undefined;
-    const belongs = (element: HTMLElement) =>
-      workspaceArea(element) === area &&
-      isWorkspaceElementVisible(element) &&
-      !element.matches(":disabled");
+    const usable = (element: HTMLElement) =>
+      isWorkspaceElementVisible(element) && !element.matches(":disabled");
+    const belongs = (element: HTMLElement) => workspaceArea(element) === area && usable(element);
+    // A side chat's message input sits in its own area inside the panel. Opening the
+    // panel focuses it, but F6 visits that area on its own, so it moves past it here.
     const preferred = Array.from(
       area.querySelectorAll<HTMLElement>(
         '[data-workspace-focus-default], [data-sidebar-row][aria-current="page"], [data-settings-section][tabindex="0"], .xterm-helper-textarea, [contenteditable="true"]',
       ),
-    ).find(belongs);
+    ).find(nested ? usable : belongs);
     const fallback = Array.from(area.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
       (element) => element.tabIndex >= 0 && belongs(element),
     );
@@ -198,6 +227,8 @@ export function createWorkspaceFocusController(doc: Document) {
       if (active === target || (active && target.contains(active))) {
         claimWorkspacePane(area);
         if (target !== area && !isConversation) revealInScrollers(target);
+        // Focusing the already focused area fires no focusin, as when F6 has nowhere else to go.
+        if (target === area) markKeyboardArea(area);
         return true;
       }
     }
@@ -319,7 +350,7 @@ export function createWorkspaceFocusController(doc: Document) {
           : areas.length - 1
         : (current + direction + areas.length) % areas.length;
     const area = areas[index]!;
-    return focusArea(area);
+    return focusArea(area, true, false);
   };
 
   // Focus that drops to the body because its element was hidden, made inert, disabled, or removed
@@ -420,7 +451,11 @@ export function createWorkspaceFocusController(doc: Document) {
   const onUserInput = () => {
     if (cancelOnInput) cancelRequest();
   };
-  doc.addEventListener("pointerdown", onUserInput, true);
+  const onPointerDown = () => {
+    unmarkKeyboardArea();
+    onUserInput();
+  };
+  doc.addEventListener("pointerdown", onPointerDown, true);
   doc.addEventListener("keydown", onUserInput, true);
 
   return {
@@ -432,9 +467,10 @@ export function createWorkspaceFocusController(doc: Document) {
     request,
     dispose: () => {
       cancelRequest();
+      unmarkKeyboardArea();
       doc.removeEventListener("focusin", remember);
       doc.removeEventListener("focusout", recover);
-      doc.removeEventListener("pointerdown", onUserInput, true);
+      doc.removeEventListener("pointerdown", onPointerDown, true);
       doc.removeEventListener("keydown", onUserInput, true);
     },
   };

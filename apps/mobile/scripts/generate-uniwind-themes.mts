@@ -3,11 +3,15 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import tailwindColors from "tailwindcss/colors";
-import { BUILT_IN_THEME_IDS, type BuiltInThemeId } from "@t3tools/shared/themePalettes";
+import {
+  BUILT_IN_THEME_IDS,
+  T3_CODE_DARK_THEME_COLORS,
+  T3_CODE_LIGHT_THEME_COLORS,
+  type BuiltInThemeId,
+} from "@t3tools/shared/themePalettes";
 
 import {
   createMobileThemeVariables,
-  getMobileThemeColors,
   getMobileThemeVariables,
   DEFAULT_MOBILE_THEME_ID,
   type MobileThemeAppearance,
@@ -178,7 +182,7 @@ const variablesFor = (themeId: BuiltInThemeId, appearance: MobileThemeAppearance
 // Profile pages must match Clerk's build-time palette even with a named app theme.
 const clerkColorsFor = (appearance: MobileThemeAppearance) => {
   const variables = createMobileThemeVariables(
-    getMobileThemeColors(DEFAULT_MOBILE_THEME_ID, appearance),
+    appearance === "dark" ? T3_CODE_DARK_THEME_COLORS : T3_CODE_LIGHT_THEME_COLORS,
     appearance,
   );
   return {

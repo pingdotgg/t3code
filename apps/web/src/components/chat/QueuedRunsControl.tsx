@@ -623,7 +623,9 @@ function QueuedMessage(props: {
             {props.previewText ? (
               <p
                 className={
-                  fold && expanded ? "min-w-0 whitespace-pre-wrap wrap-anywhere" : "truncate"
+                  fold && expanded
+                    ? "min-w-0 whitespace-pre-wrap wrap-anywhere"
+                    : "truncate max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:wrap-anywhere"
                 }
               >
                 {props.previewText}
