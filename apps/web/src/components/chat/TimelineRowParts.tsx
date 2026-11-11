@@ -17,8 +17,18 @@ const fadesInFlight = new Map<string, { opacity: number; at: number }>();
  * A message's text moves from the answer row into the work window when a tool call follows,
  * which remounts it. The new copy resumes the fade the old one was in the middle of.
  */
-export function useCarriedTextFade(messageId: string) {
+export function useCarriedTextFade(messageId: string, streaming: boolean) {
   const ref = useRef<HTMLDivElement>(null);
+  // Blocks fade only while streaming (see index.css). Settled rows skip the opacity read, which
+  // forces a style recalc for every row a thread switch unmounts.
+  const fadingUntil = useRef(streaming ? Infinity : 0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks when the last streamed block's fade can still be running, read by the unmount below
+  useLayoutEffect(() => {
+    if (streaming) fadingUntil.current = Infinity;
+    else if (fadingUntil.current === Infinity) {
+      fadingUntil.current = performance.now() + TEXT_FADE_MS;
+    }
+  }, [streaming]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads and resumes the old copy's computed opacity across a remount
   useLayoutEffect(() => {
     const root = ref.current;
@@ -32,6 +42,7 @@ export function useCarriedTextFade(messageId: string) {
       );
     }
     return () => {
+      if (performance.now() > fadingUntil.current) return;
       const block = lastBlock();
       const opacity = block ? Number(getComputedStyle(block).opacity) : 1;
       if (opacity < 1) fadesInFlight.set(messageId, { opacity, at: performance.now() });
