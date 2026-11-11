@@ -274,6 +274,21 @@ export class ProviderAdapterThreadInUseError extends Schema.TaggedError<Provider
   }
 }
 
+/**
+ * The user sent `/compact` to a driver whose session has no native compaction.
+ */
+export class ProviderCompactionUnsupportedError extends Schema.TaggedError<ProviderCompactionUnsupportedError>()(
+  "ProviderCompactionUnsupportedError",
+  {
+    driver: ProviderDriverKind,
+    providerThreadId: ProviderThreadId,
+  },
+) {
+  override get message(): string {
+    return "This provider does not support /compact. Start a new thread to continue with a fresh context.";
+  }
+}
+
 export class ProviderAdapterEnsureThreadError extends Schema.TaggedError<ProviderAdapterEnsureThreadError>()(
   "ProviderAdapterEnsureThreadError",
   {
