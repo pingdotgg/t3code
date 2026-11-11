@@ -38,10 +38,7 @@ export interface ModelTotals {
   readonly tokenShare: number;
 }
 
-/**
- * A model whose every record lacked rates has an unknown cost, not a zero one.
- * Clients must not present its `costUsd` as a real dollar figure.
- */
+/** When every record lacks rates, costUsd is unknown and must not be displayed as a dollar figure. */
 export function isModelCostUnknown(model: ModelTotals): boolean {
   return model.records > 0 && model.unpricedRecords >= model.records;
 }
@@ -111,10 +108,7 @@ export interface MergedUsage {
   readonly contractMismatches: readonly UsageContractMismatch[];
 }
 
-/**
- * `volumeId` is what stops two machines that happen to share a hostname and a home path, which is
- * every Mac in a fleet, from collapsing into one source and having one of them silently dropped.
- */
+// volumeId distinguishes machines sharing a hostname and home path.
 function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
   return [
     fingerprint.hostId,
@@ -124,16 +118,10 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
   ].join(" ");
 }
 
-/**
- * Maps each fingerprint to one key per physical directory. The legacy key cannot
- * match one directory read natively by Windows and through a WSL mount, since
- * path and `dev:ino` both differ, so `physicalSourceId` joins the two and wins
- * over the legacy key: two installations whose legacy keys collide stay apart
- * when their physical sources differ. A server that omits it adopts the one
- * physical source seen at its legacy key. When that key carries several, the
- * reading cannot be attributed and keeps its legacy key, counting separately
- * rather than silently dropping one directory's usage.
- */
+// physicalSourceId joins one directory read natively by Windows and through a WSL mount
+// (path and dev:ino both differ) and wins over the legacy key. A fingerprint without one
+// adopts the single physical source seen at its legacy key; when that key carries several,
+// it keeps its legacy key and counts separately rather than dropping a directory's usage.
 function sourceIdentity(
   environments: readonly EnvironmentUsage[],
 ): (fingerprint: UsageSourceFingerprint) => string {
@@ -213,17 +201,18 @@ function claimSources(
     }
   }
 
-  // A newer partial scan may contain usage recorded after an older complete
-  // scan. Keep cells absent from the complete scan. Aggregated cells do not
-  // reveal enough to reconcile overlapping records without double counting.
+  // Keep cells unique to newer partial scans; aggregates cannot reconcile overlapping records without double-counting.
   for (const environment of ordered) {
     for (const source of environment.summary.sources) {
       if (source.status !== "partial") continue;
       const key = sourceKey(source.fingerprint);
       const owner = ownerScanByFingerprint.get(key);
+      // A scan under another model filter counts different records, so its cells are not missing ones.
       if (
         owner?.source.status !== "ok" ||
-        Date.parse(environment.summary.readAt) <= Date.parse(owner.environment.summary.readAt)
+        Date.parse(environment.summary.readAt) <= Date.parse(owner.environment.summary.readAt) ||
+        JSON.stringify(environment.summary.modelFilter) !==
+          JSON.stringify(owner.environment.summary.modelFilter)
       ) {
         continue;
       }
@@ -281,8 +270,7 @@ function ownedContribution(
       const provider = source.fingerprint.provider;
       ownedProviders.add(provider);
       ownedSources.add(`${provider}\u0000${source.fingerprint.resolvedHomePath}`);
-      // Distinct within a directory. Summing per-bucket session counts instead
-      // would count a session once per day and model it spans.
+      // Count distinct sessions per directory; bucket sums overcount sessions spanning days/models.
       sessionsByProvider.set(
         provider,
         (sessionsByProvider.get(provider) ?? 0) +
