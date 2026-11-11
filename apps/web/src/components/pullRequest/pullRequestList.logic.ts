@@ -493,6 +493,25 @@ export type PullRequestDiffStats = ReadonlyMap<
   { readonly additions: number; readonly deletions: number }
 >;
 
+export interface PullRequestSortStats {
+  readonly key: string;
+  readonly stats: PullRequestDiffStats;
+  readonly settled: boolean;
+}
+
+export function settlePullRequestSortStats(
+  previous: PullRequestSortStats | null,
+  key: string,
+  knownStats: PullRequestDiffStats,
+  eagerStats: ReadonlyArray<EnvironmentPullRequestStat> | null,
+  settled: boolean,
+): PullRequestSortStats {
+  const snapshot = previous?.key === key ? previous : { key, stats: knownStats, settled: false };
+  if (snapshot.settled || !settled) return snapshot;
+  // Only the requested eager batches may change positions after the list first appears.
+  return { key, stats: mergePullRequestDiffStats(snapshot.stats, eagerStats ?? []), settled: true };
+}
+
 /** New stats queries must not blank existing counts. */
 export function mergePullRequestDiffStats(
   previous: PullRequestDiffStats,
@@ -793,15 +812,44 @@ export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
   );
 }
 
-export function withDiffStat<
-  Entry extends PullRequestListEntry & { readonly environmentId: string },
->(
+function withDiffStat<Entry extends PullRequestListEntry & { readonly environmentId: string }>(
   entry: Entry,
   statsByRow: ReadonlyMap<string, { readonly additions: number; readonly deletions: number }>,
 ): Entry {
   if (entry.additions !== 0 || entry.deletions !== 0) return entry;
   const stat = statsByRow.get(pullRequestDiffStatKey(entry));
   return stat === undefined ? entry : { ...entry, ...stat };
+}
+
+export function displayPullRequestGroups<Entry extends EnvironmentPullRequestEntry>(
+  groups: ReadonlyArray<PullRequestGroup<Entry>>,
+  sort: PullRequestListSort,
+  searchText: string,
+  statsByRow: PullRequestDiffStats,
+  sortStatsByRow: PullRequestDiffStats,
+  involvement: PullRequestInvolvement,
+): ReadonlyArray<PullRequestGroup<Entry>> {
+  const displayed = new Map(
+    groups.flatMap((group) =>
+      group.entries.map(
+        (entry) => [pullRequestEntryKey(entry), withDiffStat(entry, statsByRow)] as const,
+      ),
+    ),
+  );
+  return sortPullRequestGroups(
+    groups.map((group) => ({
+      ...group,
+      entries: group.entries.map((entry) => withDiffStat(entry, sortStatsByRow)),
+    })),
+    sort,
+    searchText,
+    (entry) =>
+      entry.additions + entry.deletions > 0 || sortStatsByRow.has(pullRequestDiffStatKey(entry)),
+    involvement,
+  ).map((group) => ({
+    ...group,
+    entries: group.entries.map((entry) => displayed.get(pullRequestEntryKey(entry)) ?? entry),
+  }));
 }
 
 export interface PullRequestListOverride {

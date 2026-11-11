@@ -30,6 +30,8 @@ import {
   rankPullRequestsBlockedOnAuthor,
   rankPullRequestsByMergeReadiness,
   sortPullRequestGroups,
+  displayPullRequestGroups,
+  settlePullRequestSortStats,
   resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
@@ -281,6 +283,66 @@ describe("default merge-readiness ranking", () => {
       groups,
     );
   });
+
+  it.each(["ready", "largest", "smallest"] as const)(
+    "%s uses loaded counts but keeps late detail counts in place",
+    (sort) => {
+      const rows = [1, 2, 3].map((number) => entry({ number, additions: 0, deletions: 0 }));
+      const groups = [{ key: "others", label: "Others", entries: rows }] as const;
+      const batches = [
+        { ...rows[0]!, additions: 100, deletions: 0 },
+        { ...rows[1]!, additions: 10, deletions: 0 },
+      ];
+      const loadedStats = mergePullRequestDiffStats(new Map(), batches);
+      const initial = settlePullRequestSortStats(null, sort, new Map(), null, false);
+      const partialStats = mergePullRequestDiffStats(new Map(), batches.slice(0, 1));
+      const partial = settlePullRequestSortStats(
+        initial,
+        sort,
+        partialStats,
+        batches.slice(0, 1),
+        false,
+      );
+      expect(partial).toBe(initial);
+      const settling = displayPullRequestGroups(
+        groups,
+        sort,
+        "",
+        partialStats,
+        partial.stats,
+        "all",
+      )[0]!.entries;
+      expect(settling.map((row) => row.number)).toEqual([1, 2, 3]);
+      expect(settling[0]!.additions).toBe(100);
+
+      const settled = settlePullRequestSortStats(partial, sort, loadedStats, batches, true);
+      const display = (stats: typeof loadedStats) =>
+        displayPullRequestGroups(groups, sort, "", stats, settled.stats, "all")[0]!.entries;
+      const expected = sort === "largest" ? [1, 2, 3] : [2, 1, 3];
+      expect(display(loadedStats).map((row) => row.number)).toEqual(expected);
+
+      const detail = { ...rows[2]!, additions: sort === "largest" ? 1_000 : 1, deletions: 0 };
+      const detailStats = mergePullRequestDiffStats(loadedStats, [detail]);
+      expect(
+        settlePullRequestSortStats(settled, sort, detailStats, [...batches, detail], true),
+      ).toBe(settled);
+      const filled = display(detailStats);
+      expect(filled.map((row) => row.number)).toEqual(expected);
+      expect(filled.find((row) => row.number === 3)?.additions).toBe(detail.additions);
+      const reset = settlePullRequestSortStats(
+        settled,
+        `${sort}:refetched`,
+        detailStats,
+        null,
+        false,
+      );
+      expect(
+        displayPullRequestGroups(groups, sort, "", detailStats, reset.stats, "all")[0]!.entries.map(
+          (row) => row.number,
+        ),
+      ).toEqual(sort === "largest" ? [3, 1, 2] : [3, 2, 1]);
+    },
+  );
 
   // regression: #9453 authored pull requests were not prioritized
   it("keeps authored work first and ranks each group by readiness", () => {
