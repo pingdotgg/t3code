@@ -46,7 +46,6 @@ import { PORTS } from "../src/ports.ts";
 import {
   at,
   DevServer,
-  dockerAvailable,
   fetchJson,
   fetchOk,
   freePinnedPorts,
@@ -104,8 +103,7 @@ let cfSiteUrl: string;
 let cleanCursor = 0;
 
 /** URL on a floci host-routed address (`*.localhost.floci.io`). */
-const at2 = (host: string, port: number, path: string) =>
-  new URL(path, `http://${host}:${port}`);
+const at2 = (host: string, port: number, path: string) => new URL(path, `http://${host}:${port}`);
 
 const echo = (path: string) => at(PORTS.echo, path);
 const api = (path: string) => at(PORTS.api, path);
@@ -176,8 +174,7 @@ const expectLambdaHotSwapStillWorks = async (context: string) => {
   );
 };
 
-const messageModule = (value: string) =>
-  `export const message = () => ${JSON.stringify(value)};\n`;
+const messageModule = (value: string) => `export const message = () => ${JSON.stringify(value)};\n`;
 
 /** Is a port refusing connections (i.e. nothing is serving there)? */
 const isClosed = async (url: URL) => {
@@ -207,15 +204,6 @@ const stoppedServing = async (url: URL, marker: string) => {
 };
 
 beforeAll(async () => {
-  // Docker is a hard requirement, not a reason to skip: floci hosts the
-  // whole AWS half and the Container and MicroVM are real containers. A
-  // machine without it must fail this suite, not quietly pass it.
-  if (!dockerAvailable) {
-    throw new Error(
-      "dev-stress requires Docker (floci, Cloudflare Containers, MicroVMs). " +
-        "Start the Docker daemon and re-run.",
-    );
-  }
   resetFlociEmulator();
   freePinnedPorts(Object.values(PORTS));
   const cwd = makeScratchProject(STAGE);
@@ -250,9 +238,9 @@ test(
     server.assertAlive("boot");
 
     // ── Cloudflare, Effect-native worker ──
-    expect(
-      await fetchJson<{ marker: string }>(echo("/marker")),
-    ).toEqual({ marker: "echo-v1" });
+    expect(await fetchJson<{ marker: string }>(echo("/marker"))).toEqual({
+      marker: "echo-v1",
+    });
 
     expect(await fetchJson<{ value: string }>(echo("/kv?key=boot"))).toEqual({
       value: "kv:boot",
@@ -290,9 +278,10 @@ test(
     expect(hostFetch.body).toContain("aws-site-env-v1");
 
     // ── Cloudflare, path-`main` worker ──
-    expect(
-      await fetchJson<{ marker: string; message: string }>(api("/marker")),
-    ).toEqual({ marker: "api-v1", message: "message-v1" });
+    expect(await fetchJson<{ marker: string; message: string }>(api("/marker"))).toEqual({
+      marker: "api-v1",
+      message: "message-v1",
+    });
 
     const env = await fetchJson<{
       API_VARIABLE: string;
@@ -303,11 +292,10 @@ test(
     expect(env.AWS_LAMBDA_URL).toContain("localhost:4566");
 
     // ── CROSS-CLOUD: local workerd → the floci-hosted Lambda URL ──
-    const lambda = await fetchJson<{ marker: string; variable: string }>(
-      api("/aws/"),
-      undefined,
-      { tries: 120, delayMs: 1_000 },
-    );
+    const lambda = await fetchJson<{ marker: string; variable: string }>(api("/aws/"), undefined, {
+      tries: 120,
+      delayMs: 1_000,
+    });
     expect(lambda).toEqual({
       marker: "lambda-v1",
       variable: "lambda-variable-v1",
@@ -338,22 +326,15 @@ test(
     // ── AWS ECS: floci runs the services' tasks as real containers on
     // the host daemon; bridge networking publishes the baked ports. First
     // contact can wait out the image build + scheduler launch.
-    await waitForText(
-      "the context-built ECS service to serve",
-      ecs("/"),
-      "ecs-site-v1",
-      { tries: 300 },
-    );
+    await waitForText("the context-built ECS service to serve", ecs("/"), "ecs-site-v1", {
+      tries: 300,
+    });
     await waitForText(
       "the ECS service's baked Dockerfile marker",
       ecs("/baked.txt"),
       "dockerfile-v1",
     );
-    await waitForText(
-      "the ECS service's task-definition env",
-      ecs("/env.txt"),
-      "ecs-env-v1",
-    );
+    await waitForText("the ECS service's task-definition env", ecs("/env.txt"), "ecs-env-v1");
     await waitForText(
       "the inline-Dockerfile ECS service to serve",
       ecsInline("/"),
@@ -363,9 +344,7 @@ test(
 
     // ── AWS Website: the dev-command child, on its pinned port ──
     expect(await (await fetchOk(awsSite("/"))).text()).toContain("aws-site-v1");
-    const siteEnv = await fetchJson<{ marker: string; pid: number }>(
-      awsSite("/__dev-env"),
-    );
+    const siteEnv = await fetchJson<{ marker: string; pid: number }>(awsSite("/__dev-env"));
     expect(siteEnv.marker).toBe("aws-site-env-v1");
 
     // ── Cloudflare Website: build mode, served by a local Worker ──
@@ -375,9 +354,7 @@ test(
       { tries: 60, delayMs: 1_000, server },
     );
     expect(cfSiteUrl).toMatch(/^http:\/\/localhost:\d+/);
-    expect(await (await fetchOk(new URL("/", cfSiteUrl))).text()).toContain(
-      "cf-site-v1",
-    );
+    expect(await (await fetchOk(new URL("/", cfSiteUrl))).text()).toContain("cf-site-v1");
 
     // Nothing in a clean boot may look like a failure.
     expect(server.output).not.toContain("alchemy dev: run failed");
@@ -418,9 +395,7 @@ test(
   "hot reload (bundler path): editing a file the stack never imports swaps the script without re-running the stack",
   async () => {
     const plansBefore = server.planCount;
-    const counterBefore = (
-      await fetchJson<{ count: number }>(echo("/counter"))
-    ).count;
+    const counterBefore = (await fetchJson<{ count: number }>(echo("/counter"))).count;
 
     server.write("src/api/marker.ts", markerModule("API_MARKER", "api-v2"));
 
@@ -439,8 +414,7 @@ test(
     server.assertAlive("bundler hot swap");
 
     // And nothing else moved: the sibling worker's DO kept its state.
-    const counterAfter = (await fetchJson<{ count: number }>(echo("/counter")))
-      .count;
+    const counterAfter = (await fetchJson<{ count: number }>(echo("/counter"))).count;
     expect(counterAfter).toBe(counterBefore + 1);
   },
   PHASE_TIMEOUT,
@@ -452,9 +426,7 @@ test(
     const plansBefore = server.planCount;
     // The dev-command child lives in the provider sidecar, which is meant
     // to survive user-code restarts. Its pid is the proof.
-    const sitePidBefore = (
-      await fetchJson<{ pid: number }>(awsSite("/__dev-env"))
-    ).pid;
+    const sitePidBefore = (await fetchJson<{ pid: number }>(awsSite("/__dev-env"))).pid;
 
     server.write("src/echo/marker.ts", markerModule("ECHO_MARKER", "echo-v2"));
 
@@ -470,14 +442,11 @@ test(
     server.assertAlive("watch-path reload");
 
     // The sidecar-hosted dev server was NOT bounced by a user-code reload.
-    const sitePidAfter = (await fetchJson<{ pid: number }>(awsSite("/__dev-env")))
-      .pid;
+    const sitePidAfter = (await fetchJson<{ pid: number }>(awsSite("/__dev-env"))).pid;
     expect(sitePidAfter).toBe(sitePidBefore);
 
     // The bundler-path worker was not disturbed either.
-    expect(
-      (await fetchJson<{ marker: string }>(api("/marker"))).marker,
-    ).toBe("api-v2");
+    expect((await fetchJson<{ marker: string }>(api("/marker"))).marker).toBe("api-v2");
   },
   PHASE_TIMEOUT,
 );
@@ -485,10 +454,7 @@ test(
 test(
   "hot reload (AWS): editing the Lambda's source hot-swaps its code in the emulator",
   async () => {
-    server.write(
-      "src/lambda/marker.ts",
-      markerModule("LAMBDA_MARKER", "lambda-v2"),
-    );
+    server.write("src/lambda/marker.ts", markerModule("LAMBDA_MARKER", "lambda-v2"));
 
     // Observed THROUGH the cross-cloud hop, so this also re-proves that the
     // Worker → Lambda edge still resolves after both sides reloaded.
@@ -501,9 +467,7 @@ test(
 
     server.assertAlive("lambda hot swap");
     // Bindings survived the swap.
-    expect((await fetchJson<{ text: string }>(api("/aws/s3"))).text).toBe(
-      "hello from s3",
-    );
+    expect((await fetchJson<{ text: string }>(api("/aws/s3"))).text).toBe("hello from s3");
   },
   PHASE_TIMEOUT,
 );
@@ -528,9 +492,7 @@ test(
     // What must hold is that the dev server lives and every unrelated
     // resource is untouched.
     server.assertAlive("broken import window");
-    expect(
-      (await fetchJson<{ marker: string }>(echo("/marker"))).marker,
-    ).toBe("echo-v2");
+    expect((await fetchJson<{ marker: string }>(echo("/marker"))).marker).toBe("echo-v2");
     expect(await (await fetchOk(awsSite("/"))).text()).toContain("aws-site-v1");
 
     // Complete the move, with a NEW value so "the rebuild happened" cannot
@@ -583,9 +545,7 @@ test(
     // EchoWorker is down (its bundle no longer builds), but every resource
     // that does not depend on the broken module keeps serving: they live in
     // the provider sidecar, which the exec child's crash does not touch.
-    expect(
-      (await fetchJson<{ marker: string }>(api("/marker"))).marker,
-    ).toBe("api-v2");
+    expect((await fetchJson<{ marker: string }>(api("/marker"))).marker).toBe("api-v2");
     expect(await (await fetchOk(awsSite("/"))).text()).toContain("aws-site-v1");
 
     // Recovery on the next save.
@@ -614,9 +574,7 @@ test(
     await pollUntil(
       "the CLI to report the failed run",
       () =>
-        server.since(cleanCursor).includes("deliberate module-scope failure")
-          ? true
-          : undefined,
+        server.since(cleanCursor).includes("deliberate module-scope failure") ? true : undefined,
       { tries: 120, delayMs: 500, server },
     );
     server.assertAlive("module-scope throw");
@@ -649,24 +607,16 @@ test(
 
     await pollUntil(
       "the CLI to report the failed apply",
-      () =>
-        /alchemy dev: apply failed/.test(server.since(cleanCursor)) ||
-        undefined,
+      () => /alchemy dev: apply failed/.test(server.since(cleanCursor)) || undefined,
       { tries: 240, delayMs: 500, server },
     );
     server.assertAlive("apply failure");
     expect(server.since(cleanCursor)).toContain("already in use");
 
     // Everything healthy is still healthy.
-    expect(
-      (await fetchJson<{ marker: string }>(echo("/marker"))).marker,
-    ).toBe("echo-v4");
-    expect(
-      (await fetchJson<{ marker: string }>(api("/marker"))).marker,
-    ).toBe("api-v2");
-    expect((await fetchJson<{ text: string }>(api("/aws/s3"))).text).toBe(
-      "hello from s3",
-    );
+    expect((await fetchJson<{ marker: string }>(echo("/marker"))).marker).toBe("echo-v4");
+    expect((await fetchJson<{ marker: string }>(api("/marker"))).marker).toBe("api-v2");
+    expect((await fetchJson<{ text: string }>(api("/aws/s3"))).text).toBe("hello from s3");
 
     server.patchRegion("alchemy.run.ts", "EXTRA", "");
     server.remove("src/extra/squatter.ts");
@@ -695,11 +645,7 @@ test(
   async () => {
     // ── add ──
     server.write("src/extra/extra-worker.ts", extraWorkerSource("extra-v1"));
-    server.patchRegion(
-      "alchemy.run.ts",
-      "EXTRA",
-      extraWorkerDeclaration("ExtraWorker", "extra"),
-    );
+    server.patchRegion("alchemy.run.ts", "EXTRA", extraWorkerDeclaration("ExtraWorker", "extra"));
     server.patchRegion("alchemy.run.ts", "EXTRA_OUTPUTS", extraWorkerOutput);
     await waitForJson<{ marker: string }>(
       "the added ExtraWorker to serve",
@@ -709,11 +655,11 @@ test(
     );
     // The worker serves before the stack's re-apply prints its outputs —
     // the output line is the proof the ENGINE saw the new resource.
-    await pollUntil(
-      "extraUrl in the stack outputs",
-      () => server.outputUrl("extraUrl"),
-      { tries: 120, delayMs: 500, server },
-    );
+    await pollUntil("extraUrl in the stack outputs", () => server.outputUrl("extraUrl"), {
+      tries: 120,
+      delayMs: 500,
+      server,
+    });
     server.assertAlive("worker added");
 
     // ── rename (a new logical id is a create + a delete) ──
@@ -746,16 +692,13 @@ test(
     server.remove("src/extra/extra-worker.ts");
     await pollUntil(
       "the removed worker to stop serving",
-      async () =>
-        (await stoppedServing(extraAlt("/"), "extra-v2")) ? true : undefined,
+      async () => ((await stoppedServing(extraAlt("/"), "extra-v2")) ? true : undefined),
       { tries: 240, delayMs: 500, server },
     );
     server.assertAlive("worker removed");
 
     // The survivors are untouched.
-    expect(
-      (await fetchJson<{ marker: string }>(echo("/marker"))).marker,
-    ).toBe("echo-v5");
+    expect((await fetchJson<{ marker: string }>(echo("/marker"))).marker).toBe("echo-v5");
     cleanCursor = server.mark();
   },
   PHASE_TIMEOUT,
@@ -766,10 +709,7 @@ test(
   async () => {
     // ── add: a new module, a new top-level import in the stack, a new
     // Function resource, a new Bucket resource, and two new bindings ──
-    server.write(
-      "src/extra/ReportFunction.ts",
-      reportFunctionSource("report-v1"),
-    );
+    server.write("src/extra/ReportFunction.ts", reportFunctionSource("report-v1"));
     server.patchRegion("alchemy.run.ts", "EXTRA_IMPORTS", reportFunctionImport);
     server.patchRegion("alchemy.run.ts", "EXTRA", reportFunctionDeclaration);
     server.patchRegion("alchemy.run.ts", "EXTRA_OUTPUTS", reportFunctionOutput);
@@ -792,10 +732,7 @@ test(
 
     // ── change it: a new marker means a new bundle for a Function that
     // only came into existence a moment ago ──
-    server.write(
-      "src/extra/ReportFunction.ts",
-      reportFunctionSource("report-v2"),
-    );
+    server.write("src/extra/ReportFunction.ts", reportFunctionSource("report-v2"));
     await waitForJson<{ marker: string }>(
       "the added Lambda to hot-swap to report-v2",
       new URL("/report", reportUrl),
@@ -825,9 +762,7 @@ test(
     server.assertAlive("lambda removed");
 
     // The original Lambda is untouched by its sibling's whole lifecycle.
-    expect((await fetchJson<{ text: string }>(api("/aws/s3"))).text).toBe(
-      "hello from s3",
-    );
+    expect((await fetchJson<{ text: string }>(api("/aws/s3"))).text).toBe("hello from s3");
     cleanCursor = server.mark();
   },
   PHASE_TIMEOUT,
@@ -857,10 +792,7 @@ test(
     await server.waitForPlanAfter(plansBefore, { tries: 480 });
     await pollUntil(
       "the re-apply that registers the Queue, consumer and DO to finish",
-      () =>
-        /\[EchoQueueConsumer\] created/.test(server.since(cleanCursor))
-          ? true
-          : undefined,
+      () => (/\[EchoQueueConsumer\] created/.test(server.since(cleanCursor)) ? true : undefined),
       { tries: 480, delayMs: 500, server },
     );
 
@@ -891,11 +823,8 @@ test(
     server.assertAlive("queue + consumer + DO added");
 
     // The Worker's pre-existing bindings still work after the graft.
-    expect((await fetchJson<{ value: string }>(echo("/kv?key=graft"))).value)
-      .toBe("kv:graft");
-    expect(
-      (await fetchJson<{ count: number }>(echo("/counter"))).count,
-    ).toBeGreaterThan(0);
+    expect((await fetchJson<{ value: string }>(echo("/kv?key=graft"))).value).toBe("kv:graft");
+    expect((await fetchJson<{ count: number }>(echo("/counter"))).count).toBeGreaterThan(0);
 
     // ── and back out again: the routes, the consumer, the Queue and the
     // DO class all disappear from a running Worker ──
@@ -922,9 +851,7 @@ test(
       { tries: 480, delayMs: 500, server },
     );
     server.assertAlive("queue + consumer + DO removed");
-    expect(
-      (await fetchJson<{ marker: string }>(echo("/marker"))).marker,
-    ).toBe("echo-v5");
+    expect((await fetchJson<{ marker: string }>(echo("/marker"))).marker).toBe("echo-v5");
     cleanCursor = server.mark();
   },
   PHASE_TIMEOUT,
@@ -933,16 +860,8 @@ test(
 test(
   "graph churn: a second S3 bucket and its bindings are added to the LIVE Lambda, then removed",
   async () => {
-    server.patchRegion(
-      "src/ApiFunction.ts",
-      "LAMBDA_BINDINGS",
-      lambdaArchiveBindings,
-    );
-    server.patchRegion(
-      "src/ApiFunction.ts",
-      "LAMBDA_ROUTES",
-      lambdaArchiveRoutes,
-    );
+    server.patchRegion("src/ApiFunction.ts", "LAMBDA_BINDINGS", lambdaArchiveBindings);
+    server.patchRegion("src/ApiFunction.ts", "LAMBDA_ROUTES", lambdaArchiveRoutes);
 
     // Driven through the cross-cloud hop, so this also re-proves the
     // Worker → Lambda edge after the Lambda's binding set changed.
@@ -956,9 +875,7 @@ test(
     server.assertAlive("lambda bucket added");
 
     // Pre-existing bindings survived the change.
-    expect((await fetchJson<{ text: string }>(api("/aws/dynamo"))).text).toBe(
-      "hello from dynamo",
-    );
+    expect((await fetchJson<{ text: string }>(api("/aws/dynamo"))).text).toBe("hello from dynamo");
     // The engine just UPDATED the Function — hot swap must still work.
     await expectLambdaHotSwapStillWorks("archive-added");
 
@@ -990,11 +907,7 @@ test(
   async () => {
     // ── 1. a file in the build context (the classic watch path) ──
     server.write("site/ecs/index.html", "ecs-site-v2\n");
-    await waitForText(
-      "the ECS service to serve the edited context file",
-      ecs("/"),
-      "ecs-site-v2",
-    );
+    await waitForText("the ECS service to serve the edited context file", ecs("/"), "ecs-site-v2");
     server.assertAlive("ecs context reload");
 
     // ── 2. the Dockerfile ITSELF (also a file in the context, but the
@@ -1022,16 +935,8 @@ test(
     // task-definition revision, and the running task must roll onto it;
     // regression: only file-watch triggers restarted tasks, so prop-driven
     // updates left containers serving the old revision forever) ──
-    server.patchRegion(
-      "alchemy.run.ts",
-      "ECS_ENV",
-      '        STRESS_ENV: "ecs-env-v2",\n',
-    );
-    await waitForText(
-      "the ECS task to roll onto the new env",
-      ecs("/env.txt"),
-      "ecs-env-v2",
-    );
+    server.patchRegion("alchemy.run.ts", "ECS_ENV", '        STRESS_ENV: "ecs-env-v2",\n');
+    await waitForText("the ECS task to roll onto the new env", ecs("/env.txt"), "ecs-env-v2");
     server.assertAlive("ecs env-prop reload");
 
     // ── 4. an INLINE Dockerfile (a pure prop change that is nonetheless a
@@ -1050,12 +955,7 @@ test(
     server.assertAlive("ecs inline-dockerfile reload");
 
     // The sibling service was untouched by the inline rebuild.
-    await waitForText(
-      "the context service to still serve",
-      ecs("/"),
-      "ecs-site-v2",
-      { tries: 30 },
-    );
+    await waitForText("the context service to still serve", ecs("/"), "ecs-site-v2", { tries: 30 });
     cleanCursor = server.mark();
   },
   PHASE_TIMEOUT,
@@ -1066,11 +966,11 @@ test(
   async () => {
     // The box's address comes from floci: `i-….localhost.floci.io`
     // resolves to 127.0.0.1 and the mux publishes the SG app port.
-    const dns = await pollUntil(
-      "ec2Dns in the stack outputs",
-      () => server.outputValue("ec2Dns"),
-      { tries: 240, delayMs: 500, server },
-    );
+    const dns = await pollUntil("ec2Dns in the stack outputs", () => server.outputValue("ec2Dns"), {
+      tries: 240,
+      delayMs: 500,
+      server,
+    });
     expect(dns).toMatch(/\.localhost\.floci\.io$/);
     const marker = at2(dns, PORTS.ec2, "/marker");
 
@@ -1094,9 +994,7 @@ test(
       (body) => body.marker === "ec2-v2",
       { tries: 150, delayMs: 1_000, server },
     );
-    console.log(
-      `ec2 hosted-program reload -> serving ec2-v2 in ${Date.now() - reloadStartedAt}ms`,
-    );
+    console.log(`ec2 hosted-program reload -> serving ec2-v2 in ${Date.now() - reloadStartedAt}ms`);
     // Same box, same address — the update was in place, not a replacement.
     expect(server.outputValue("ec2Dns")).toBe(dns);
     server.assertAlive("ec2 hot reload");
@@ -1127,11 +1025,10 @@ test(
     server.assertAlive("container hot reload");
 
     // The #1334 loopback rewrite still holds on the rebuilt container.
-    const hostFetch = await fetchJson<{ body: string }>(
-      echo("/sandbox/host-fetch"),
-      undefined,
-      { tries: 60, delayMs: 1_000 },
-    );
+    const hostFetch = await fetchJson<{ body: string }>(echo("/sandbox/host-fetch"), undefined, {
+      tries: 60,
+      delayMs: 1_000,
+    });
     expect(hostFetch.body).toContain("aws-site-env-v1");
     cleanCursor = server.mark();
   },
@@ -1160,9 +1057,7 @@ test(
     const replacedCursor = server.mark();
     await pollUntil(
       "the engine to plan the table replacement",
-      () =>
-        /\[StressTable\] replace/.test(server.plain(replacedCursor)) ||
-        undefined,
+      () => /\[StressTable\] replace/.test(server.plain(replacedCursor)) || undefined,
       { tries: 240, delayMs: 500, server },
     );
     // A replacement prints `creating replacement` → `created` and then
@@ -1170,9 +1065,8 @@ test(
     await pollUntil(
       "the replaced table to finish",
       () =>
-        /\[StressTable\] Replaced resource cleanup complete/.test(
-          server.plain(replacedCursor),
-        ) || undefined,
+        /\[StressTable\] Replaced resource cleanup complete/.test(server.plain(replacedCursor)) ||
+        undefined,
       { tries: 480, delayMs: 500, server },
     );
     await waitForJson<{ text: string }>(
@@ -1190,9 +1084,8 @@ test(
     await pollUntil(
       "the table's second replacement to finish",
       () =>
-        /\[StressTable\] Replaced resource cleanup complete/.test(
-          server.plain(restoredCursor),
-        ) || undefined,
+        /\[StressTable\] Replaced resource cleanup complete/.test(server.plain(restoredCursor)) ||
+        undefined,
       { tries: 480, delayMs: 500, server },
     );
     await waitForJson<{ text: string }>(
@@ -1217,16 +1110,8 @@ test(
     server.write("src/extra/WorkerImage.ts", secondImageSource("worker-vm-v1"));
     server.patchRegion("alchemy.run.ts", "EXTRA_IMPORTS", secondImageImport);
     server.patchRegion("alchemy.run.ts", "EXTRA_LAYERS", secondImageLayer);
-    server.patchRegion(
-      "src/MicrovmWorker.ts",
-      "VM_IMPORTS",
-      secondImageWorkerImport,
-    );
-    server.patchRegion(
-      "src/MicrovmWorker.ts",
-      "VM_BINDINGS",
-      secondImageBindings,
-    );
+    server.patchRegion("src/MicrovmWorker.ts", "VM_IMPORTS", secondImageWorkerImport);
+    server.patchRegion("src/MicrovmWorker.ts", "VM_BINDINGS", secondImageBindings);
     server.patchRegion("src/MicrovmWorker.ts", "VM_ROUTES", secondImageRoutes);
 
     const booted = await waitForJson<{ microvmId: string }>(
@@ -1241,11 +1126,10 @@ test(
     // The FIRST image still works — adding a sibling did not disturb it.
     expect(
       (
-        await fetchJson<{ marker: string }>(
-          microvm("/roundtrip?message=sibling"),
-          undefined,
-          { tries: 300, delayMs: 1_000 },
-        )
+        await fetchJson<{ marker: string }>(microvm("/roundtrip?message=sibling"), undefined, {
+          tries: 300,
+          delayMs: 1_000,
+        })
       ).marker,
     ).toBe("vm-v1");
 
@@ -1305,12 +1189,8 @@ test(
     server.assertAlive("aws half deleted");
 
     // Cloudflare is completely unaffected by the AWS half vanishing.
-    expect(
-      (await fetchJson<{ marker: string }>(echo("/marker"))).marker,
-    ).toBe("echo-v5");
-    expect((await fetchJson<{ text: string }>(echo("/r2"))).text).toBe(
-      "hello from r2",
-    );
+    expect((await fetchJson<{ marker: string }>(echo("/marker"))).marker).toBe("echo-v5");
+    expect((await fetchJson<{ text: string }>(echo("/r2"))).text).toBe("hello from r2");
     expect(await (await fetchOk(awsSite("/"))).text()).toContain("aws-site-v1");
 
     // ── restore the whole subsystem ──
@@ -1321,9 +1201,7 @@ test(
       (body) => body.marker.startsWith("lambda-"),
       { tries: 900, delayMs: 500, server },
     );
-    expect((await fetchJson<{ text: string }>(api("/aws/s3"))).text).toBe(
-      "hello from s3",
-    );
+    expect((await fetchJson<{ text: string }>(api("/aws/s3"))).text).toBe("hello from s3");
     server.assertAlive("aws half restored");
     // A brand-new Function generation must get a working watch loop.
     await expectLambdaHotSwapStillWorks("aws-half-restored");
@@ -1349,11 +1227,7 @@ test(
     );
 
     // A brand-new binding on a Worker that is already running.
-    server.patchRegion(
-      "alchemy.run.ts",
-      "API_EXTRA_ENV",
-      '        API_EXTRA: "api-extra-v1",\n',
-    );
+    server.patchRegion("alchemy.run.ts", "API_EXTRA_ENV", '        API_EXTRA: "api-extra-v1",\n');
     await waitForJson<{ API_EXTRA: string | null }>(
       "ApiWorker to gain a binding it never had",
       api("/env"),
@@ -1372,8 +1246,7 @@ test(
 
     // `Command.Dev`'s restart surface: a change to the resolved config must
     // restart the child (new pid), not silently leave the old one running.
-    const pidBefore = (await fetchJson<{ pid: number }>(awsSite("/__dev-env")))
-      .pid;
+    const pidBefore = (await fetchJson<{ pid: number }>(awsSite("/__dev-env"))).pid;
     server.patchRegion(
       "alchemy.run.ts",
       "SITE_MARKER",
@@ -1407,10 +1280,7 @@ test(
     const plansBefore = server.planCount;
     const BURST = 25;
     for (let i = 1; i <= BURST; i++) {
-      server.write(
-        "src/api/marker.ts",
-        markerModule("API_MARKER", `api-storm-${i}`),
-      );
+      server.write("src/api/marker.ts", markerModule("API_MARKER", `api-storm-${i}`));
       await Bun.sleep(40);
     }
 
@@ -1433,10 +1303,7 @@ test(
     const plansBefore = server.planCount;
     const BURST = 15;
     for (let i = 1; i <= BURST; i++) {
-      server.write(
-        "src/echo/marker.ts",
-        markerModule("ECHO_MARKER", `echo-storm-${i}`),
-      );
+      server.write("src/echo/marker.ts", markerModule("ECHO_MARKER", `echo-storm-${i}`));
       await Bun.sleep(60);
     }
 
@@ -1468,10 +1335,7 @@ test(
     // half, and the stack graph itself.
     server.write("src/api/marker.ts", markerModule("API_MARKER", "api-final"));
     server.write("src/echo/marker.ts", markerModule("ECHO_MARKER", "echo-final"));
-    server.write(
-      "src/lambda/marker.ts",
-      markerModule("LAMBDA_MARKER", "lambda-final"),
-    );
+    server.write("src/lambda/marker.ts", markerModule("LAMBDA_MARKER", "lambda-final"));
     server.patchRegion(
       "alchemy.run.ts",
       "API_VARIABLE",
@@ -1517,14 +1381,9 @@ test(
     server.assertAlive("final health check");
 
     // Cloudflare
-    expect((await fetchJson<{ value: string }>(echo("/kv?key=final"))).value)
-      .toBe("kv:final");
-    expect((await fetchJson<{ text: string }>(echo("/r2"))).text).toBe(
-      "hello from r2",
-    );
-    expect(
-      (await fetchJson<{ count: number }>(echo("/counter"))).count,
-    ).toBeGreaterThan(0);
+    expect((await fetchJson<{ value: string }>(echo("/kv?key=final"))).value).toBe("kv:final");
+    expect((await fetchJson<{ text: string }>(echo("/r2"))).text).toBe("hello from r2");
+    expect((await fetchJson<{ count: number }>(echo("/counter"))).count).toBeGreaterThan(0);
     const finalSandbox = await fetchJson<{ greeting: string; marker: string }>(
       echo("/sandbox"),
       undefined,
@@ -1534,9 +1393,7 @@ test(
     expect(finalSandbox.marker).toBe("sandbox-v2");
 
     // AWS, through the cross-cloud hop
-    expect((await fetchJson<{ text: string }>(api("/aws/dynamo"))).text).toBe(
-      "hello from dynamo",
-    );
+    expect((await fetchJson<{ text: string }>(api("/aws/dynamo"))).text).toBe("hello from dynamo");
     const message = { id: crypto.randomUUID() };
     await fetchOk(api("/aws/queue/send"), {
       method: "POST",
@@ -1554,27 +1411,20 @@ test(
     await waitForText("the ECS service post-churn", ecs("/"), "ecs-site-v2", {
       tries: 60,
     });
-    await waitForText(
-      "the inline ECS service post-churn",
-      ecsInline("/"),
-      "ecs-inline-v2",
-      { tries: 60 },
-    );
+    await waitForText("the inline ECS service post-churn", ecsInline("/"), "ecs-inline-v2", {
+      tries: 60,
+    });
 
     // Websites. The Cloudflare site's port is not pinned (a
     // `Website.StaticSite` owns its Worker's dev options), so re-read the
     // newest value the CLI printed rather than trusting the boot one.
     expect(await (await fetchOk(awsSite("/"))).text()).toContain("aws-site-v1");
     cfSiteUrl = server.outputUrl("cfSiteUrl") ?? cfSiteUrl;
-    expect(await (await fetchOk(new URL("/", cfSiteUrl))).text()).toContain(
-      "cf-site-v1",
-    );
+    expect(await (await fetchOk(new URL("/", cfSiteUrl))).text()).toContain("cf-site-v1");
 
     // No failure was logged since the last phase that expected one.
     expect(server.since(cleanCursor)).not.toContain("alchemy dev: run failed");
-    expect(server.since(cleanCursor)).not.toContain(
-      "alchemy dev: apply failed",
-    );
+    expect(server.since(cleanCursor)).not.toContain("alchemy dev: apply failed");
   },
   PHASE_TIMEOUT,
 );
@@ -1586,11 +1436,10 @@ test(
     expect(server.output).not.toContain("[StressMicrovm] replace");
     expect(
       (
-        await fetchJson<{ marker: string }>(
-          microvm("/roundtrip?message=post-churn"),
-          undefined,
-          { tries: 240, delayMs: 1_000 },
-        )
+        await fetchJson<{ marker: string }>(microvm("/roundtrip?message=post-churn"), undefined, {
+          tries: 240,
+          delayMs: 1_000,
+        })
       ).marker,
     ).toBe("vm-v1");
 

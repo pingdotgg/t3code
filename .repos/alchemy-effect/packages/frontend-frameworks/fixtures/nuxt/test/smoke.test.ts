@@ -1,7 +1,7 @@
-import * as Playwright from "@alchemy.run/cloudflare-test-tools/e2e/Playwright";
-import { expect, test } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import * as Playwright from "@alchemy.run/cloudflare-test-tools/e2e/Playwright";
+import { expect, test } from "@playwright/test";
 
 const SECRET = "s3cret-from-binding";
 
@@ -13,33 +13,23 @@ for (const mode of Playwright.SERVER_METHODS) {
   test.describe(mode, () => {
     const it = Playwright.make(mode);
 
-    it("server-renders the home page with the cloudflare env binding", async ({
-      page,
-      server,
-    }) => {
+    it("server-renders the home page with the cloudflare env binding", async ({ page, server }) => {
       const response = await page.goto(server.url.toString());
       expect(response?.status()).toBe(200);
       await expect(page.getByTestId("page-marker")).toHaveText("NUXT_FIXTURE");
       // `runtimeConfig.public.fixtureMarker` comes from the user's own
       // nuxt.config.ts — proves the config file loaded natively (in dev
       // too: the dev driver injects only the overrides layer).
-      await expect(page.getByTestId("config-marker")).toHaveText(
-        "user-nuxt-config-loaded",
-      );
+      await expect(page.getByTestId("config-marker")).toHaveText("user-nuxt-config-loaded");
       // Read during SSR from event.context.cloudflare.env.
-      await expect(page.getByTestId("env-secret")).toHaveText(
-        `secret:${SECRET}`,
-      );
+      await expect(page.getByTestId("env-secret")).toHaveText(`secret:${SECRET}`);
     });
 
     it("hydrates the client-interactive counter", async ({ page, server }) => {
       await page.goto(new URL("/counter", server.url).toString());
       await expect(page.locator("#count")).toHaveText("count:0");
       // wait for hydration before interacting (onMounted flips the marker)
-      await expect(page.locator("#increment")).toHaveAttribute(
-        "data-hydrated",
-        "true",
-      );
+      await expect(page.locator("#increment")).toHaveAttribute("data-hydrated", "true");
       await page.click("#increment");
       await expect(page.locator("#count")).toHaveText("count:1");
       await page.click("#increment");
@@ -60,9 +50,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(await response.text()).toContain("User-agent: *");
     });
 
-    it("runs the API route with the cloudflare runtime context", async ({
-      server,
-    }) => {
+    it("runs the API route with the cloudflare runtime context", async ({ server }) => {
       const body = await server.fetchJson<{
         marker: string;
         secret: string | null;
@@ -73,24 +61,17 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(body.hasWaitUntil).toBe(true);
     });
 
-    it("round-trips KV through event.context.cloudflare.env", async ({
-      server,
-    }) => {
+    it("round-trips KV through event.context.cloudflare.env", async ({ server }) => {
       // Random payload data (not a resource name) — fine per the naming
       // doctrine, and proves the read observes THIS run's write.
       const value = `value-${Math.random().toString(36).slice(2)}`;
       const put = await fetch(
-        new URL(
-          `/api/kv?key=e2e-key&value=${encodeURIComponent(value)}`,
-          server.url,
-        ),
+        new URL(`/api/kv?key=e2e-key&value=${encodeURIComponent(value)}`, server.url),
         { method: "POST" },
       );
       expect(put.status).toBe(200);
       expect(((await put.json()) as { put: boolean }).put).toBe(true);
-      const read = await server.fetchJson<{ value: string | null }>(
-        "/api/kv?key=e2e-key",
-      );
+      const read = await server.fetchJson<{ value: string | null }>("/api/kv?key=e2e-key");
       expect(read.value).toBe(value);
     });
 
@@ -128,12 +109,8 @@ for (const mode of Playwright.SERVER_METHODS) {
       // Dev-only: a server-route edit is reflected on the next request
       // (nitro dev rebuild + worker-thread replacement; the bridge plugin
       // reconnects on its own with binding state intact).
-      it("reflects a server-route edit on the next request", async ({
-        server,
-      }) => {
-        const file = fileURLToPath(
-          new URL("../server/api/hmr.ts", import.meta.url),
-        );
+      it("reflects a server-route edit on the next request", async ({ server }) => {
+        const file = fileURLToPath(new URL("../server/api/hmr.ts", import.meta.url));
         const source = await readFile(file, "utf8");
         const edited = source.replace('"hmr-marker-v1"', '"hmr-marker-v2"');
         expect(edited).not.toBe(source);
@@ -143,18 +120,14 @@ for (const mode of Playwright.SERVER_METHODS) {
         const pollFor = async (expected: string) => {
           for (let attempt = 0; attempt < 30; attempt++) {
             try {
-              const body = await server.fetchJson<{ marker: string }>(
-                "/api/hmr",
-              );
+              const body = await server.fetchJson<{ marker: string }>("/api/hmr");
               if (body.marker === expected) return;
             } catch {
               // mid-rebuild — retry
             }
             await new Promise((resolve) => setTimeout(resolve, 500));
           }
-          throw new Error(
-            `timed out waiting for /api/hmr to serve "${expected}"`,
-          );
+          throw new Error(`timed out waiting for /api/hmr to serve "${expected}"`);
         };
 
         await pollFor("hmr-marker-v1");
@@ -168,9 +141,7 @@ for (const mode of Playwright.SERVER_METHODS) {
         await pollFor("hmr-marker-v1");
 
         // The bridge survived the reloads: bindings still resolve.
-        const hello = await server.fetchJson<{ secret: string | null }>(
-          "/api/hello",
-        );
+        const hello = await server.fetchJson<{ secret: string | null }>("/api/hello");
         expect(hello.secret).toBe(SECRET);
       });
     }

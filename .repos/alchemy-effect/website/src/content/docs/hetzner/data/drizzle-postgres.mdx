@@ -8,8 +8,8 @@ Alchemy's Hetzner provider has no managed Postgres resource; this guide runs the
 ## Install the database dependencies
 
 ```sh
-pnpm add drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-pg pg
-pnpm add -D drizzle-kit@1.0.0-rc.5-ab785fc
+pnpm add @alchemy.run/drizzle drizzle-orm@1.0.0-rc.5 @effect/sql-pg
+pnpm add -D drizzle-kit@1.0.0-rc.5
 ```
 
 The Drizzle versions match the repository's Effect integration.
@@ -55,7 +55,7 @@ Commit the schema, SQL, and snapshots together; do not generate migration histor
 
 ```typescript
 // src/db.ts
-import * as Neon from "alchemy/Neon";
+import * as Neon from "@alchemy.run/neon";
 
 export const Db = Neon.Project("Db", {
   region: "aws-eu-central-1",
@@ -68,7 +68,7 @@ The project's default branch hosts the database; see [Neon connections](/neon/da
 
 ```diff lang="typescript"
  // alchemy.run.ts
-+import * as Neon from "alchemy/Neon";
++import * as Neon from "@alchemy.run/neon";
 +import * as Layer from "effect/Layer";
 
 -  providers: Hetzner.providers(),
@@ -96,20 +96,6 @@ Effect.gen(function* () {
 
 The URL is server-side configuration, not browser configuration; protect the state backend and never expose it as a public Stack output.
 
-## Install the driver on the Server
-
-```diff lang="typescript"
- return {
-   server,
-   main: import.meta.url,
-   port: 3000,
-+  build: { install: ["pg"] },
-   env: { DATABASE_URL: database.pooledConnectionUri },
- };
-```
-
-Hetzner's Service packaging installs `pg` beside the bundle, preserving its CommonJS exports.
-
 ## Provision before the first migration
 
 ```sh
@@ -130,7 +116,7 @@ Supply the Neon project's `connectionUri` as secret `DATABASE_URL` in the migrat
 
 ```diff lang="typescript"
  // src/api.ts
-+import * as Drizzle from "alchemy/Drizzle/Postgres";
++import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 +import * as Config from "effect/Config";
 
  Effect.gen(function* () {
