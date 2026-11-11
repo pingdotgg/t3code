@@ -63,9 +63,10 @@ const layerCheckpointRollbackService = CheckpointRollbackService.layer.pipe(
       Layer.mock(ServerConfig.ServerConfig)({ worktreesDir: "/synthetic-worktrees" } as never),
       ServerSettings.layerTest(),
       Layer.mock(GitWorkflow.GitWorkflowService)({
-        isRepository: (cwd) =>
+        repositoryRoot: (cwd) =>
           FileSystem.FileSystem.pipe(
             Effect.flatMap((fileSystem) => fileSystem.exists(`${cwd}/.git`)),
+            Effect.map((isRepository) => (isRepository ? cwd : null)),
             Effect.provide(NodeServices.layer),
             Effect.orDie,
           ),

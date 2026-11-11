@@ -309,7 +309,10 @@ export const layer: Layer.Layer<
       if (
         input.restoreFiles !== false &&
         checkpoint.status !== "ready" &&
-        (yield* gitWorkflow.isRepository(scope.cwd).pipe(Effect.orElseSucceed(() => true)))
+        (yield* gitWorkflow.repositoryRoot(scope.cwd).pipe(
+          Effect.map((root) => root !== null),
+          Effect.orElseSucceed(() => true),
+        ))
       ) {
         return yield* rollbackError("repository-checkpoint-unavailable", {
           repository: repositoryLabel(scope),

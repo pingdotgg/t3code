@@ -890,8 +890,7 @@ function useChatMarkdownState({
         const match =
           fileLinkMeta.workspaceLookupPath !== null &&
           cwd &&
-          (needsWorkspaceBasenameLookup(panelPath) ||
-            stripRepeatedWorkspacePrefix(panelPath, cwd) !== null)
+          workspaceLinkLookupQuery(panelPath, cwd) !== null
             ? await findWorkspaceFileMatch(fileLinkMeta)
             : null;
         if (!isLatestLookup()) return;

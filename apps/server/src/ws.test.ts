@@ -1411,6 +1411,7 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       workspaceRoot,
       defaultModelSelection: null,
       scripts: [],
+      trackedFolders: [],
       createdAt: "2026-11-07T00:00:00.000Z",
       updatedAt: "2026-11-07T00:00:00.000Z",
     } satisfies OrchestrationProjectShell;
