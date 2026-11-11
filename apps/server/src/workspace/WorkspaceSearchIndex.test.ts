@@ -158,19 +158,8 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         yield* fs.makeDirectory(path.join(home, "OneDrive", "Remix"), { recursive: true });
         yield* fs.writeFileString(path.join(home, "OneDrive", "Remix", "part.stl"), "solid part\n");
         yield* Effect.acquireRelease(
-          Effect.sync(() => {
-            const originalHome = process.env.HOME;
-            process.env.HOME = home;
-            return originalHome;
-          }),
-          (originalHome) =>
-            Effect.sync(() => {
-              if (originalHome === undefined) {
-                delete process.env.HOME;
-              } else {
-                process.env.HOME = originalHome;
-              }
-            }),
+          Effect.sync(() => vi.stubEnv("HOME", home)),
+          () => Effect.sync(() => vi.unstubAllEnvs()),
         );
 
         const result = yield* WorkspaceSearchIndex.make(home).pipe(
