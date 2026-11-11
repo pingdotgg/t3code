@@ -149,21 +149,14 @@ const readLoginShellOutput = Effect.fn("readLoginShellOutput")(
       [Stream.mkString(Stream.decodeText(child.stdout)), child.exitCode],
       { concurrency: 2 },
     );
-    return exitCode === 0 ? stdout : "";
+    if (exitCode === 0) return stdout;
+    yield* Effect.logWarning(
+      `Login shell ${shell} exited with code ${exitCode} while reading PATH.`,
+    );
+    return "";
   },
   Effect.scoped,
   Effect.timeoutOption(LOGIN_SHELL_TIMEOUT),
-  (effect, shell) =>
-    Effect.flatMap(
-      effect,
-      Option.match({
-        onSome: Effect.succeed,
-        onNone: () =>
-          Effect.logWarning(
-            `Timed out reading PATH from login shell ${shell} after ${Duration.format(LOGIN_SHELL_TIMEOUT)}.`,
-          ).pipe(Effect.as("")),
-      }),
-    ),
 );
 
 /**
@@ -181,11 +174,19 @@ export const refreshPathFromLoginShell = Effect.fn("refreshPathFromLoginShell")(
     const output = yield* readLoginShellOutput(shell).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning(`Failed to read PATH from login shell ${shell}.`, cause).pipe(
-          Effect.as(""),
+          Effect.as(Option.some("")),
         ),
       ),
     );
-    const shellEnvironment = extractEnvironmentValues(output, LOGIN_SHELL_ENV_NAMES);
+    // A slow profile is the user's real environment; a fallback shell's PATH
+    // would not be, and trying it would multiply the wait.
+    if (Option.isNone(output)) {
+      yield* Effect.logWarning(
+        `Timed out reading PATH from login shell ${shell} after ${Duration.format(LOGIN_SHELL_TIMEOUT)}; PATH is unchanged.`,
+      );
+      return;
+    }
+    const shellEnvironment = extractEnvironmentValues(output.value, LOGIN_SHELL_ENV_NAMES);
     if (shellEnvironment.PATH) {
       applyLoginShellEnvironment(env, platform, shellEnvironment);
       return;

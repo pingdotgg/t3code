@@ -77,9 +77,9 @@ export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  // A rescan is how a user tells us they installed something. Updating the
-  // server's own PATH also reaches every later spawn: PR CLIs, providers,
-  // terminals. Concurrent rescans share one in-flight shell.
+  // Every discovery (page open, Rescan, Publish) re-reads the login shell so a
+  // tool installed since launch resolves here and in every later spawn.
+  // Clients cache discovery; concurrent calls share one in-flight shell.
   const refreshPath = yield* refreshPathFromLoginShell().pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.cachedWithTTL(Duration.zero),
