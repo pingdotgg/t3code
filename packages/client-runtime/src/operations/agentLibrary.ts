@@ -367,6 +367,46 @@ export async function runAgentLibrarySync(
   return results.every(Boolean);
 }
 
+const libraryFingerprint = (library: AgentLibraryInput | undefined) =>
+  JSON.stringify([
+    library?.mcpGatewayProfiles.map((item) => [item.profileId, item.name, item.updatedAt]),
+    library?.agentSkills?.map((item) => [item.skillId, item.updatedAt]),
+    library?.mcpGatewayProfileDeletedAt,
+    library?.agentSkillDeletedAt,
+  ]);
+
+/**
+ * Sends each target's patch once until it fails or that target's library changes. An older
+ * server that drops part of a patch (an exact-name repeat) would otherwise get it on every pass.
+ */
+export function createAgentLibrarySyncGate() {
+  const inFlight = new Set<string>();
+  const delivered = new Map<string, string>();
+  return {
+    take(plan: AgentLibrarySyncPlan, sources: ReadonlyArray<AgentLibrarySource>) {
+      const keyed = plan.targets.flatMap((target) => {
+        const own = sources.find((source) => source.environmentId === target.environmentId);
+        const key = JSON.stringify([target.patch, libraryFingerprint(own?.library)]);
+        const id = `${target.environmentId}:${key}`;
+        return inFlight.has(id) || delivered.get(target.environmentId) === key
+          ? []
+          : [{ target, key, id }];
+      });
+      for (const { id } of keyed) inFlight.add(id);
+      return {
+        targets: keyed.map(({ target }) => target),
+        settle(accepted: boolean) {
+          for (const { target, key, id } of keyed) {
+            inFlight.delete(id);
+            if (accepted) delivered.set(target.environmentId, key);
+            else delivered.delete(target.environmentId);
+          }
+        },
+      };
+    },
+  };
+}
+
 const withoutServerOwned = <T extends { revision: number; createdAt: string; updatedAt: string }>({
   revision: _revision,
   createdAt: _createdAt,

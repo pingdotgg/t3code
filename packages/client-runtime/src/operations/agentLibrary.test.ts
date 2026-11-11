@@ -32,6 +32,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   agentLibraryOperationsFromPatch,
   completeAgentLibraryPatch,
+  createAgentLibrarySyncGate,
   planAgentLibrarySync,
   syncAgentLibraryBeforeUse,
   withAgentSkillBodies,
@@ -378,6 +379,43 @@ it("converges with servers that predate case-insensitive agent names", () => {
   expect(modern.mcpGatewayProfiles.map((item) => item.name)).toEqual(["Doug", "doug (2)"]);
   expect(old.mcpGatewayProfiles.map((item) => item.name).toSorted()).toEqual(["Doug", "doug"]);
   expect(plan().targets).toEqual([]);
+});
+
+it("sends a patch an older server keeps dropping once per change of its library", () => {
+  const agent = (id: string, updatedAt: string): McpGatewayProfile => ({
+    profileId: id,
+    name: "Doug",
+    revision: 1,
+    runtimeMode: "auto",
+    interactionMode: "default",
+    createdAt: updatedAt,
+    updatedAt,
+  });
+  const legacy = { agentLibrarySync: true, agentSkillsSync: true };
+  let old = { mcpGatewayProfiles: [agent("p2", "2026-01-02")] };
+  const sources = (): ReadonlyArray<AgentLibrarySource> => [
+    {
+      environmentId: EnvironmentId.make("modern"),
+      library: { mcpGatewayProfiles: [agent("p1", "2026-01-01")] },
+      capabilities: { ...legacy, agentLibraryMutations: true },
+      live: true,
+    },
+    { environmentId: EnvironmentId.make("old"), library: old, capabilities: legacy, live: true },
+  ];
+  const gate = createAgentLibrarySyncGate();
+  const pass = (accepted: boolean) => {
+    const current = sources();
+    const batch = gate.take(planAgentLibrarySync(current), current);
+    batch.settle(accepted);
+    return batch.targets.map((target) => target.environmentId);
+  };
+  // The older server drops p1 for repeating the exact name "Doug", so every plan targets it.
+  expect(pass(true)).toContain("old");
+  expect(pass(true)).not.toContain("old");
+  old = { mcpGatewayProfiles: [...old.mcpGatewayProfiles, agent("p3", "2026-01-03")] };
+  expect(pass(false)).toContain("old");
+  expect(pass(true)).toContain("old");
+  expect(pass(true)).not.toContain("old");
 });
 
 it("turns a whole-library patch into per-item operations based on the revisions the editor opened", () => {

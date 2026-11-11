@@ -14,6 +14,7 @@ import {
   agentLibrarySources,
   loadAgentSkills,
   missingAgentSkills,
+  createAgentLibrarySyncGate,
   planAgentLibrarySync,
   runAgentLibrarySync,
   type AgentLibrarySyncIo,
@@ -140,21 +141,16 @@ export function useAgentLibrary() {
 export function AgentLibrarySync() {
   const { environments } = useEnvironments();
   const io = useAgentLibraryIo("agent library sync");
-  const pending = useRef(new Set<string>());
+  const gate = useRef(createAgentLibrarySyncGate());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- replicates the merged agent library to connected servers when their streamed settings change
   useEffect(() => {
-    const plan = planAgentLibrarySync(agentLibrarySources(environments));
-    const keyed = plan.targets.map((target) => ({
-      target,
-      key: `${target.environmentId}:${JSON.stringify(target.patch)}`,
-    }));
-    const fresh = keyed.filter(({ key }) => !pending.current.has(key));
-    if (fresh.length === 0) return;
-    for (const { key } of fresh) pending.current.add(key);
-    void runAgentLibrarySync({ ...plan, targets: fresh.map(({ target }) => target) }, io).finally(
-      () => {
-        for (const { key } of fresh) pending.current.delete(key);
-      },
+    const sources = agentLibrarySources(environments);
+    const plan = planAgentLibrarySync(sources);
+    const batch = gate.current.take(plan, sources);
+    if (batch.targets.length === 0) return;
+    void runAgentLibrarySync({ ...plan, targets: batch.targets }, io).then(
+      (accepted) => batch.settle(accepted),
+      () => batch.settle(false),
     );
   }, [environments, io]);
   return null;

@@ -77,7 +77,12 @@ interface Fence {
  * A fence a line opens. Chat drafts often end a sentence with ``` and put the code below,
  * so a trailing unpaired backtick fence counts as an opener too.
  */
-function fenceOpenedBy(line: string): Fence | null {
+// Fences may sit inside blockquotes and list items; their markers come before the fence.
+const withoutContainerMarkers = (line: string) =>
+  line.replace(/^(?:[ \t]*(?:>|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t])))*/, "");
+
+function fenceOpenedBy(rawLine: string): Fence | null {
+  const line = withoutContainerMarkers(rawLine);
   const opener = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(line);
   if (opener && !(opener[1]!.startsWith("`") && opener[2]!.includes("`"))) {
     return { marker: opener[1]![0]!, length: opener[1]!.length };
@@ -91,7 +96,7 @@ function fenceOpenedBy(line: string): Fence | null {
 }
 
 function closesFence(line: string, fence: Fence): boolean {
-  const closer = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(line)?.[1];
+  const closer = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(withoutContainerMarkers(line))?.[1];
   return closer !== undefined && closer[0] === fence.marker && closer.length >= fence.length;
 }
 
