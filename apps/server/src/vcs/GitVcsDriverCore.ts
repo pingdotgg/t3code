@@ -123,7 +123,7 @@ const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
 // the signed request. Unlike `-v`, LogLevel lets a ControlPersist master close stderr.
 const SSH_SIGN_REQUEST_LINE_PREFIX = "debug1: Server accepts key:";
 const SSH_SIGNING_LINE = /^debug\d: (?:input_userauth_pk_ok|sign_and_send_pubkey): /;
-const SSH_KEY_APPROVAL_WAIT_MS = 10_000;
+const GIT_COMMAND_TIMEOUT_DETAIL = "Git command timed out.";
 const SSH_KEY_APPROVAL_TIMEOUT_DETAIL =
   "SSH key authorization timed out. Approve or unlock the SSH key on the computer running T3 Code, then retry, or use an HTTPS remote.";
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
@@ -1099,7 +1099,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             () =>
               new GitCommandError({
                 ...gitCommandContext(commandInput),
-                detail: "Git command timed out.",
+                detail: GIT_COMMAND_TIMEOUT_DETAIL,
               }),
           ),
         ),
@@ -4618,7 +4618,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           !(yield* fileSystem.exists(path.join(root.trim(), ".gitmodules")))
         );
       }).pipe(Effect.orElseSucceed(() => false)));
-    const approvalDeadline = yield* Ref.make(Infinity);
     const args = ["fetch", "--quiet", "--", input.remoteName];
     const options = {
       env: STATUS_UPSTREAM_REFRESH_ENV,
@@ -4629,30 +4628,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         keepLineCallbacksAfterTruncation: true,
       }),
     };
-    const approvalTimedOut = Effect.fn("GitVcsDriver.fetchRemote.approvalTimedOut")(function* (
-      fetchArgs: readonly string[],
-    ) {
-      let remainingMs = 1000;
-      while (remainingMs > 0) {
-        yield* Effect.sleep(Math.min(remainingMs, 1000));
-        remainingMs = (yield* Ref.get(approvalDeadline)) - (yield* Clock.currentTimeMillis);
-      }
-      return yield* new GitCommandError({
-        ...gitCommandContext({
-          operation: "GitVcsDriver.fetchRemote",
-          cwd: input.cwd,
-          args: fetchArgs,
-        }),
-        detail: SSH_KEY_APPROVAL_TIMEOUT_DETAIL,
-      });
-    });
     // Another fetch in the same repository, such as the background status
     // poll, can win the race for a remote-tracking ref. The loser fails, but
     // the ref is free again by the time a rerun needs it, so retry once.
     const runFetch = (fetchArgs: readonly string[]) => {
-      const fetched = Effect.gen(function* () {
+      const run = Effect.gen(function* () {
         // SSH debug noise must not crowd Git's retry and failure diagnostics out of the cap.
         let diagnostics = "";
+        let awaitingApproval = false;
         const result = yield* executeGitWithStableDiagnostics(
           "GitVcsDriver.fetchRemote",
           input.cwd,
@@ -4671,24 +4654,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                       DEFAULT_MAX_OUTPUT_BYTES - diagnostics.length,
                     );
                   }
-                  const now = yield* Clock.currentTimeMillis;
-                  yield* Ref.update(approvalDeadline, (deadline) =>
-                    line.startsWith(SSH_SIGN_REQUEST_LINE_PREFIX)
-                      ? now + SSH_KEY_APPROVAL_WAIT_MS
-                      : SSH_SIGNING_LINE.test(line)
-                        ? deadline
-                        : Infinity,
-                  );
+                  awaitingApproval = line.startsWith(SSH_SIGN_REQUEST_LINE_PREFIX)
+                    ? true
+                    : awaitingApproval && SSH_SIGNING_LINE.test(line);
                 }),
               },
             }),
           },
+        ).pipe(
+          // Keep the command deadline; only explain it when ssh was still waiting to sign.
+          Effect.mapError((error) =>
+            awaitingApproval && error.detail === GIT_COMMAND_TIMEOUT_DETAIL
+              ? new GitCommandError({
+                  ...gitCommandContext({
+                    operation: "GitVcsDriver.fetchRemote",
+                    cwd: input.cwd,
+                    args: fetchArgs,
+                  }),
+                  detail: SSH_KEY_APPROVAL_TIMEOUT_DETAIL,
+                  cause: error,
+                })
+              : error,
+          ),
         );
         return watchSshApproval ? { ...result, stderr: diagnostics } : result;
       });
-      const run = watchSshApproval
-        ? Effect.raceFirst(fetched, approvalTimedOut(fetchArgs))
-        : fetched;
       return run.pipe(
         Effect.filterOrElse(
           (result) => !(result.exitCode !== 0 && isRefLockFailure(result.stderr)),

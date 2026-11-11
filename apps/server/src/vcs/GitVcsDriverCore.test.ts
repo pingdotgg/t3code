@@ -6216,11 +6216,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         return { fetching, stderrRead, exit, released, fetches, attempts };
       });
 
-      it.effect("reports pending approval before the command timeout and releases the fetch", () =>
+      it.effect("reports pending approval at the command timeout and releases the fetch", () =>
         Effect.gen(function* () {
           const fetch = yield* startFetch(Stream.make(signing));
           yield* Deferred.await(fetch.stderrRead);
-          yield* TestClock.adjust("15 seconds");
+          yield* TestClock.adjust("31 seconds");
           assert.isTrue(yield* Deferred.isDone(fetch.released));
           const result = yield* Fiber.join(fetch.fetching);
           assert.isTrue(Result.isFailure(result));
@@ -6232,6 +6232,25 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           }
           assert.lengthOf(fetch.fetches, 1);
           assert.isFalse(yield* Deferred.isDone(fetch.exit));
+        }),
+      );
+
+      it.effect("lets an approval that arrives before the command timeout finish", () =>
+        Effect.gen(function* () {
+          const approved = yield* Deferred.make<void>();
+          const fetch = yield* startFetch(
+            Stream.concat(
+              Stream.make(signing),
+              Stream.fromEffect(
+                Deferred.await(approved).pipe(Effect.as("debug3: send packet: type 50\n")),
+              ),
+            ),
+          );
+          yield* TestClock.adjust("15 seconds");
+          yield* Deferred.succeed(approved, undefined);
+          yield* Deferred.await(fetch.stderrRead);
+          yield* Deferred.succeed(fetch.exit, undefined);
+          assert.deepEqual(yield* Fiber.join(fetch.fetching), Result.succeed(undefined));
         }),
       );
 
