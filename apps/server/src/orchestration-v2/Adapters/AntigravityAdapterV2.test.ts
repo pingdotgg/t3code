@@ -17,7 +17,6 @@ import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -25,7 +24,6 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -1247,7 +1245,7 @@ describe("AntigravityAdapterV2 session system prompt", () => {
   );
 });
 
-describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
+describe("AntigravityAdapterV2 commands started during a turn", () => {
   const pidIsRunning = (pid: number) => {
     try {
       process.kill(pid, 0);
@@ -1257,11 +1255,7 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
     }
   };
 
-  const openMockSession = (
-    label: string,
-    env: Record<string, string>,
-    crashBeforeSettlement = false,
-  ) =>
+  const openMockSession = (label: string) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1279,34 +1273,19 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
           for (const pid of commandPids) if (pidIsRunning(pid)) process.kill(pid, "SIGKILL");
         }),
       );
-      // The mock publishes the PID once the command has spawned, before it answers.
+      // The mock publishes the PID once the command has spawned, before it reports the command.
       const readCommandPid = Effect.gen(function* () {
         const pid = Number(yield* fileSystem.readFileString(commandPidPath));
         commandPids.push(pid);
         return pid;
       });
-      // A deferred finish waits out a debounce; the hook says how far to move the clock.
-      const finishArmed = yield* Deferred.make<Duration.Input>();
-      const terminationHandled = yield* Deferred.make<void>();
-      const promptSettledWithBackgroundWork = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make(`antigravity-${label}`);
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
-        testHooks: {
-          onDeferredFinalizeScheduled: (debounce) =>
-            Deferred.succeed(finishArmed, debounce).pipe(Effect.asVoid),
-          afterPromptSettledWithBackgroundWork: () =>
-            Deferred.succeed(promptSettledWithBackgroundWork, undefined).pipe(Effect.asVoid),
-        },
         makeRuntime: (input) =>
           makeAntigravityAcpRuntime({
             ...input,
-            onTermination: (error) =>
-              (input.onTermination?.(error) ?? Effect.void).pipe(
-                Effect.andThen(Deferred.succeed(terminationHandled, undefined)),
-                Effect.asVoid,
-              ),
             childProcessSpawner,
             spawn: {
               command: process.execPath,
@@ -1316,35 +1295,10 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
                 T3_ACP_ANTIGRAVITY: "1",
                 T3_ACP_RUNNING_COMMAND_PID_PATH: commandPidPath,
                 T3_ACP_AGENT_PID_PATH: agentPidPath,
-                ...env,
+                T3_ACP_EMIT_RUNNING_COMMAND_THEN_HANG: "1",
               },
             },
-          }).pipe(
-            Effect.provideService(SecureRandom.SecureRandom, crypto),
-            Effect.map((runtime) => {
-              if (!crashBeforeSettlement) return runtime;
-              return {
-                ...runtime,
-                prompt: (...args: Parameters<typeof runtime.prompt>) =>
-                  runtime.prompt(...args).pipe(
-                    Effect.tap(() =>
-                      Effect.gen(function* () {
-                        if (!crashBeforeSettlement) return;
-                        crashBeforeSettlement = false;
-                        // Hold a genuine successful response while termination wins the
-                        // adapter callback permit. The prompt consumer lives in session scope.
-                        const commandPid = yield* readCommandPid;
-                        const agentPid = Number(yield* fileSystem.readFileString(agentPidPath));
-                        assert.isTrue(pidIsRunning(commandPid));
-                        assert.isTrue(pidIsRunning(agentPid));
-                        process.kill(agentPid, "SIGKILL");
-                        yield* Deferred.await(terminationHandled);
-                      }).pipe(Effect.orDie),
-                    ),
-                  ),
-              };
-            }),
-          ),
+          }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto)),
         withProcess: (_stop, task) => task,
         defaultModel: Effect.undefined,
       });
@@ -1377,11 +1331,11 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
           Effect.tap((event) => Effect.sync(() => seen.push(event))),
           Effect.repeat({ until: predicate }),
         );
-      const waitForReply = waitFor(
+      const waitForCommand = waitFor(
         (event) =>
-          event.type === "message.updated" &&
-          event.message.role === "assistant" &&
-          !event.message.streaming,
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "command_execution" &&
+          event.turnItem.nativeItemRef?.nativeId?.includes("running-command") === true,
       );
       const waitForTerminal = waitFor((event) => event.type === "turn.terminal").pipe(
         Effect.map((event) => (event.type === "turn.terminal" ? event.status : undefined)),
@@ -1446,118 +1400,43 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
         session,
         providerThread,
         startTurn,
-        waitForReply,
+        waitForCommand,
         waitForTerminal,
         readCommandPid,
         readAgentPid: fileSystem.readFileString(agentPidPath).pipe(Effect.map(Number)),
         commandItem,
-        finishArmed,
-        promptSettledWithBackgroundWork,
       };
     });
 
-  it.effect("keeps the turn open until the running command reports its end", () =>
-    Effect.gen(function* () {
-      const mock = yield* openMockSession("command-finishes", {
-        T3_ACP_EMIT_COMMAND_OUTLIVING_PROMPT: "1",
-        T3_ACP_REPORT_OUTLIVING_COMMAND_EXIT: "1",
-      });
-      yield* mock.startTurn(1);
-
-      // The agent has answered end_turn; the command it started is still running,
-      // next to a second command still awaiting approval.
-      yield* mock.waitForReply;
-      const commandPid = yield* mock.readCommandPid;
-      assert.isTrue(pidIsRunning(commandPid));
-
-      // The mock reports the command's terminal update when it exits. Only then
-      // may the turn arm its finish; ending before it means it never waited.
-      process.kill(commandPid);
-      const turnEndedEarly = mock.waitForTerminal.pipe(
-        Effect.flatMap((status) =>
-          Effect.sync(() =>
-            assert.fail(`the turn ended (${status}) before its command reported its end`),
-          ),
-        ),
-      );
-      const debounce = yield* Effect.raceFirst(Deferred.await(mock.finishArmed), turnEndedEarly);
-      yield* TestClock.adjust(debounce);
-      assert.equal(yield* mock.waitForTerminal, "completed");
-      assert.equal(mock.commandItem("command-outliving-prompt")?.status, "completed");
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
-  );
-
-  it.effect.each(["Stop", "fallback restart", "agent crash", "agent crash before settlement"])(
+  it.effect.each(["Stop", "fallback restart"])(
     "lets %s end the running command and respawns the agent for the next turn",
     (action) =>
       Effect.gen(function* () {
-        const crashBeforeSettlement = action === "agent crash before settlement";
-        const crashed = action === "agent crash" || crashBeforeSettlement;
-        const mock = yield* openMockSession(
-          "command-stopped",
-          { T3_ACP_EMIT_COMMAND_OUTLIVING_PROMPT: "1" },
-          crashBeforeSettlement,
-        );
+        const mock = yield* openMockSession("command-stopped");
         yield* mock.startTurn(1);
-
-        if (!crashBeforeSettlement) {
-          yield* mock.waitForReply;
-          assert.isTrue(pidIsRunning(yield* mock.readCommandPid));
-          const agentPid = yield* mock.readAgentPid;
-          assert.isTrue(pidIsRunning(agentPid));
-          const providerTurnId = mock.commandItem("command-outliving-prompt")?.providerTurnId;
-          if (providerTurnId == null) return yield* Effect.die("missing command item");
-
-          if (action === "agent crash") {
-            process.kill(agentPid, "SIGKILL");
-          } else {
-            yield* mock.session.interruptTurn({
-              providerThread: mock.providerThread,
-              providerTurnId,
-              ...(action === "Stop" ? { requestRuntimeRestart: true } : {}),
-            });
-          }
-        }
-        const terminal = crashBeforeSettlement
-          ? Effect.raceFirst(
-              mock.waitForTerminal,
-              Deferred.await(mock.promptSettledWithBackgroundWork).pipe(
-                Effect.andThen(
-                  Effect.sync(() =>
-                    assert.fail("the terminated agent left the turn waiting for background work"),
-                  ),
-                ),
-              ),
-            )
-          : mock.waitForTerminal;
-        assert.equal(yield* terminal, crashed ? "failed" : "interrupted");
+        yield* mock.waitForCommand;
         const commandPid = yield* mock.readCommandPid;
+        assert.isTrue(pidIsRunning(commandPid));
         const agentPid = yield* mock.readAgentPid;
-        const commandStatus = mock.commandItem("command-outliving-prompt")?.status;
-        if (crashed) {
-          assert.oneOf(commandStatus, ["failed", "interrupted"]);
-        } else {
-          assert.equal(commandStatus, "interrupted");
-        }
+        assert.isTrue(pidIsRunning(agentPid));
+        const providerTurnId = mock.commandItem("running-command")?.providerTurnId;
+        if (providerTurnId == null) return yield* Effect.die("missing command item");
+
+        yield* mock.session.interruptTurn({
+          providerThread: mock.providerThread,
+          providerTurnId,
+          ...(action === "Stop" ? { requestRuntimeRestart: true } : {}),
+        });
+        assert.equal(yield* mock.waitForTerminal, "interrupted");
         assert.isFalse(pidIsRunning(commandPid), `${action} ends the command`);
         assert.isFalse(pidIsRunning(agentPid), `${action} ends the ACP agent`);
 
         yield* mock.startTurn(2);
-        yield* mock.waitForReply;
+        yield* mock.waitForCommand;
         assert.isTrue(pidIsRunning(yield* mock.readCommandPid), "turn 2 starts a command");
         const nextAgentPid = yield* mock.readAgentPid;
         assert.notEqual(nextAgentPid, agentPid, "turn 2 respawns the ACP agent");
         assert.isTrue(pidIsRunning(nextAgentPid));
       }).pipe(Effect.provide(layerSession), Effect.scoped),
-  );
-
-  it.effect("completes a turn whose only open work is a subagent batch", () =>
-    Effect.gen(function* () {
-      const mock = yield* openMockSession("subagent-batch", {
-        T3_ACP_EMIT_SUBAGENT_LAUNCH_THEN_END_TURN: "1",
-      });
-      yield* mock.startTurn(1);
-      assert.equal(yield* mock.waitForTerminal, "completed");
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });

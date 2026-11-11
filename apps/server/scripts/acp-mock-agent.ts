@@ -57,9 +57,7 @@ const emitTrackedToolCallKindThenHang = process.env.T3_ACP_EMIT_TRACKED_TOOL_CAL
 const clientFsProbePath = process.env.T3_ACP_CLIENT_FS_PROBE_PATH;
 const clientFsProbeLogPath = process.env.T3_ACP_CLIENT_FS_PROBE_LOG_PATH;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-const emitCommandOutlivingPrompt = process.env.T3_ACP_EMIT_COMMAND_OUTLIVING_PROMPT === "1";
-const reportOutlivingCommandExit = process.env.T3_ACP_REPORT_OUTLIVING_COMMAND_EXIT === "1";
-const emitSubagentLaunchThenEndTurn = process.env.T3_ACP_EMIT_SUBAGENT_LAUNCH_THEN_END_TURN === "1";
+const emitRunningCommandThenHang = process.env.T3_ACP_EMIT_RUNNING_COMMAND_THEN_HANG === "1";
 const runningCommandPidPath = process.env.T3_ACP_RUNNING_COMMAND_PID_PATH;
 const agentPidPath = process.env.T3_ACP_AGENT_PID_PATH;
 const emitEmptySuccessfulBash = process.env.T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH === "1";
@@ -1357,9 +1355,8 @@ const program = Effect.gen(function* () {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 
-      if (emitCommandOutlivingPrompt) {
-        // Antigravity can answer end_turn while a command it started keeps running.
-        // A long-lived Node child stands in for the command on every platform.
+      if (emitRunningCommandThenHang) {
+        // The command is a long-lived Node child so the scenario runs on every platform.
         const command = NodeChildProcess.spawn(
           process.execPath,
           ["-e", "setInterval(() => {}, 1 << 30)"],
@@ -1375,78 +1372,18 @@ const program = Effect.gen(function* () {
         if (agentPidPath !== undefined) {
           NodeFS.writeFileSync(agentPidPath, String(process.pid));
         }
-        if (reportOutlivingCommandExit) {
-          yield* Effect.callback<void>((resume) => {
-            command.once("exit", () => resume(Effect.void));
-          }).pipe(
-            Effect.andThen(
-              agent.client.sessionUpdate({
-                sessionId: requestedSessionId,
-                update: {
-                  sessionUpdate: "tool_call_update",
-                  toolCallId: "command-outliving-prompt",
-                  status: "completed",
-                },
-              }),
-            ),
-            Effect.ignore,
-            Effect.forkDetach,
-          );
-        }
-        // Awaiting approval: not started, so it must not hold the turn open.
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "tool_call_update",
-            toolCallId: "command-awaiting-approval",
-            title: "run_command",
-            kind: "execute",
-            status: "pending",
-            rawInput: { command: "npm test" },
-          },
-        });
-        yield* agent.client.sessionUpdate({
-          sessionId: requestedSessionId,
-          update: {
-            sessionUpdate: "tool_call_update",
-            toolCallId: "command-outliving-prompt",
+            toolCallId: "running-command",
             title: "run_command",
             kind: "execute",
             status: "in_progress",
             rawInput: { command: "npm run dev" },
           },
         });
-        yield* agent.client.sessionUpdate({
-          sessionId: requestedSessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "Started the command." },
-          },
-        });
-        return yield* finishPrompt(requestedSessionId, "end_turn");
-      }
-
-      if (emitSubagentLaunchThenEndTurn) {
-        // ACP 1.1.1 batch launch: completes at once and never reports the children.
-        yield* agent.client.sessionUpdate({
-          sessionId: requestedSessionId,
-          update: {
-            sessionUpdate: "tool_call_update",
-            toolCallId: "subagent-launch",
-            title: "Running start_subagent",
-            kind: "other",
-            status: "completed",
-            rawOutput: "Started two agents.",
-          },
-        });
-        yield* agent.client.sessionUpdate({
-          sessionId: requestedSessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "Started the agents." },
-          },
-        });
-        return yield* finishPrompt(requestedSessionId, "end_turn");
+        return yield* Effect.never;
       }
 
       if (emitTrackedToolCallKindThenHang !== undefined) {

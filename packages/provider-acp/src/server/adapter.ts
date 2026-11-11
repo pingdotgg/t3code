@@ -1936,10 +1936,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
         const runtimeRestartRequired = yield* Ref.make(false);
-        const runtimeTermination = yield* Ref.make<{
-          readonly generation: number;
-          readonly error: EffectAcpErrors.AcpError;
-        } | null>(null);
         const runtimeTeardownState = yield* Ref.make<AcpRuntimeTeardownState>({ _tag: "Idle" });
         const runtimeCallbackGeneration = yield* Ref.make(0);
         const runtimeCallbackGenerationCounter = yield* Ref.make(0);
@@ -2316,50 +2312,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? notePromptProgress()
               : Effect.void,
           );
-        const failTurnAfterRuntimeTermination = Effect.fnUntraced(function* (
-          context: ActiveAcpTurn,
-          runtimeGeneration: number,
-          error: EffectAcpErrors.AcpError,
-        ) {
-          yield* quarantineStoppedRun();
-          yield* cancelPendingRuntimeRequests();
-          const terminatedScope = runtimeScope;
-          // Return from the transport callback before closing its own scope.
-          yield* Effect.gen(function* () {
-            if (terminatedScope !== undefined) {
-              yield* Scope.close(terminatedScope, Exit.fail(error));
-            }
-            yield* runRuntimeCallbackAtGeneration(
-              runtimeGeneration,
-              Effect.gen(function* () {
-                if (context.finalized) return;
-                yield* terminalizeOpenRunOwnedItems(context, { terminalizeSubagents: true });
-                yield* finalizeTurn(
-                  context,
-                  "failed",
-                  flavor.promptFailure?.(error) ??
-                    makeProviderFailure({ cause: error, class: "provider_error" }),
-                );
-              }),
-            );
-          }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
-        });
-        const handleRuntimeTerminationAtGeneration = (
-          runtimeGeneration: number,
-          error: EffectAcpErrors.AcpError,
-        ) =>
+        const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
           runRuntimeCallbackAtGeneration(
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
-              yield* Ref.set(runtimeTermination, { generation: runtimeGeneration, error });
-              if (!followsAgentWorkState) {
-                const context = yield* Ref.get(activeTurn);
-                // In-flight prompts report termination through their existing failure path.
-                if (context === null || !context.promptSettled || context.finalized) return;
-                yield* failTurnAfterRuntimeTermination(context, runtimeGeneration, error);
-                return;
-              }
+              if (!followsAgentWorkState) return;
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
                 if (child.status !== "running") continue;
@@ -2393,8 +2351,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           agentRequests: Set<string>,
           mcpContext: AcpMcpContext,
           resumeSessionId?: string,
-          onTermination: AcpAdapterV2RuntimeInput["onTermination"] = (error) =>
-            handleRuntimeTerminationAtGeneration(runtimeGeneration, error),
+          onTermination: AcpAdapterV2RuntimeInput["onTermination"] = () =>
+            handleRuntimeTerminationAtGeneration(runtimeGeneration),
         ): AcpAdapterV2RuntimeInput => {
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
@@ -3795,13 +3753,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running") return true;
           }
-          // Batch launches without child completion signals go idle when the
-          // root turn ends, so they must not hold it open.
-          if (flavor.subagentsIdleOnTurnCompletion !== true) {
-            for (const subagent of context.subagents.values()) {
-              if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
-                return true;
-              }
+          for (const subagent of context.subagents.values()) {
+            if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
+              return true;
             }
           }
           return false;
@@ -6989,10 +6943,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               candidateLifecycle,
               (current): readonly [Effect.Effect<void>, CandidateLifecycle] => {
                 if (current._tag === "Committed") {
-                  return [
-                    handleRuntimeTerminationAtGeneration(replacementGeneration, error),
-                    current,
-                  ];
+                  return [handleRuntimeTerminationAtGeneration(replacementGeneration), current];
                 }
                 return [
                   Effect.void,
@@ -8092,18 +8043,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const restartRequired = yield* Ref.get(runtimeRestartRequired);
           if (!restartRequired) return false;
-          yield* runtimeCallbackPermit.withPermit(
-            Effect.gen(function* () {
-              yield* quarantineNativeTransportAtGeneration(
-                yield* Ref.get(runtimeCallbackGeneration),
-              );
-              yield* advanceRuntimeCallbackGeneration;
-              const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
-              yield* quarantineStoppedRun();
-              yield* terminalizeCarryoverSubagents(carryover);
-              yield* Ref.set(endedBackgroundTaskIds, new Set());
-            }),
-          );
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
@@ -8524,16 +8463,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       !context.interrupted &&
                       hasDeferredBackgroundWork(context)
                     ) {
-                      // A session-scoped consumer can hold a successful result past runtime exit.
-                      const termination = yield* Ref.get(runtimeTermination);
-                      if (termination?.generation === promptGeneration) {
-                        yield* failTurnAfterRuntimeTermination(
-                          context,
-                          promptGeneration,
-                          termination.error,
-                        );
-                        return;
-                      }
                       yield* closeTextStreams(context);
                       yield* (
                         options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
