@@ -18,6 +18,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -65,6 +66,7 @@ const thread = (
     readonly archivedAt?: DateTime.Utc;
     readonly deletedAt?: DateTime.Utc;
     readonly subagentOf?: ThreadId;
+    readonly sideChatOf?: ThreadId;
     readonly title?: string;
     readonly settledAt?: DateTime.Utc;
     readonly linkedPullRequest?: ThreadLinkedPullRequest;
@@ -97,7 +99,14 @@ const thread = (
           relationshipToParent: "subagent",
           rootThreadId: overrides.subagentOf,
         }
-      : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      : overrides.sideChatOf
+        ? {
+            parentThreadId: overrides.sideChatOf,
+            relationshipToParent: "fork",
+            rootThreadId: overrides.sideChatOf,
+            sideChat: true,
+          }
+        : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     forkedFrom: null,
     createdAt: at(0),
     updatedAt: at(0),
@@ -141,6 +150,119 @@ const message = (
   },
 });
 
+it.effect.each([true, false])(
+  "ThreadSearch excludes bootstrap text before the hit and candidate limits (indexed: %s)",
+  (indexed) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:attachments");
+      const threadId = ThreadId.make("thread:attachments");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(threadId, project),
+          message(threadId, "ordinary", "user", "Review the attached files in context", {
+            minute: 1,
+          }),
+          message(threadId, "attachment", "user", ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, { minute: 2 }),
+          message(
+            threadId,
+            "ultrathink",
+            "user",
+            `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+            { minute: 3 },
+          ),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      if (!indexed) {
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
+        yield* sql`DROP TABLE orchestration_v2_message_search`;
+      }
+      assert.deepEqual((yield* search.search({ query: "conversation context" })).matches, []);
+      assert.deepEqual((yield* search.search({ query: "ultrathink" })).matches, []);
+      assert.deepEqual(
+        (yield* search.search({ query: "attached files" })).matches.map((match) => [
+          match.messageId,
+          match.snippet,
+        ]),
+        [[MessageId.make("ordinary"), "Review the attached files in context"]],
+      );
+      for (const text of [
+        ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+        `uLtRaThInK:\r\n\t\u00a0${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+      ]) {
+        yield* sql`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${indexed ? 10_000 : 2000})
+          INSERT INTO orchestration_v2_projection_messages
+            (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+          SELECT 'attachment-limit:' || i, ${threadId}, 'user', 0,
+            ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', ${text})
+          FROM n
+        `;
+        assert.deepEqual(
+          (yield* search.search({ query: "context" })).matches.map((match) => match.messageId),
+          [MessageId.make("ordinary")],
+        );
+        yield* sql`
+          DELETE FROM orchestration_v2_projection_messages WHERE message_id LIKE 'attachment-limit:%'
+        `;
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("ThreadSearch excludes legacy placeholders still in the index", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const search = yield* ThreadSearch.ThreadSearch;
+    const sql = yield* SqlClient.SqlClient;
+    const project = ProjectId.make("project:legacy-attachments");
+    const threadId = ThreadId.make("thread:legacy-attachments");
+    yield* createProject(project);
+    // Simulate the pre-upgrade trigger, which indexed attachment placeholders.
+    yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+    yield* sql`
+      CREATE TRIGGER orchestration_v2_message_search_insert
+      AFTER INSERT ON orchestration_v2_projection_messages
+      BEGIN
+        INSERT INTO orchestration_v2_message_search (rowid, text)
+        VALUES (new.rowid, json_extract(new.payload_json, '$.text'));
+      END
+    `;
+    yield* Effect.forEach(
+      [
+        thread(threadId, project),
+        message(threadId, "ordinary", "user", "Review the attached files in context"),
+        message(threadId, "attachment", "user", ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
+        message(
+          threadId,
+          "ultrathink",
+          "user",
+          `uLtRaThInK:\r\n\t\u00a0${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+        ),
+      ],
+      projections.apply,
+      { discard: true },
+    );
+    assert.lengthOf(
+      yield* sql`SELECT rowid FROM orchestration_v2_message_search WHERE orchestration_v2_message_search MATCH '"context"'`,
+      3,
+    );
+    assert.deepEqual((yield* search.search({ query: "conversation context" })).matches, []);
+    assert.deepEqual((yield* search.search({ query: "ultrathink" })).matches, []);
+    assert.deepEqual(
+      (yield* search.search({ query: "context" })).matches.map((match) => match.messageId),
+      [MessageId.make("ordinary")],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.layer(layerTest)("ThreadSearch", (it) => {
   it.effect("reads the newest hits without sorting all of them", () =>
     Effect.gen(function* () {
@@ -148,11 +270,20 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       for (const match of ['"needle"', null]) {
         const plan = yield* sql<{
           readonly detail: string;
-        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
         assert.isFalse(
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
         );
+        if (match !== null) {
+          assert.lengthOf(
+            plan.filter((row) =>
+              row.detail.startsWith("SEARCH messages USING INTEGER PRIMARY KEY"),
+            ),
+            1,
+            plan.map((row) => row.detail).join("\n"),
+          );
+        }
       }
     }),
   );
@@ -243,13 +374,14 @@ it.layer(layerTest)("ThreadSearch", (it) => {
     }),
   );
 
-  it.effect("matches inside identifiers and skips subagent threads and short tokens", () =>
+  it.effect("matches inside identifiers and skips hidden threads and short tokens", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const search = yield* ThreadSearch.ThreadSearch;
       const project = ProjectId.make("project:search-tokens");
       const parent = ThreadId.make("thread:tokens-parent");
       const subagent = ThreadId.make("thread:tokens-subagent");
+      const sideChat = ThreadId.make("thread:tokens-side-chat");
       yield* createProject(project);
       yield* Effect.forEach(
         [
@@ -257,6 +389,8 @@ it.layer(layerTest)("ThreadSearch", (it) => {
           message(parent, "parent", "user", "Rename ThreadSearchService before shipping"),
           thread(subagent, project, { subagentOf: parent }),
           message(subagent, "subagent", "assistant", "ThreadSearchService renamed"),
+          thread(sideChat, project, { sideChatOf: parent, title: "ThreadSearchService question" }),
+          message(sideChat, "side-chat", "user", "Why rename ThreadSearchService?"),
         ],
         projections.apply,
         { discard: true },
@@ -594,6 +728,85 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
       yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE thread_id = ${busy}`;
       yield* insertBusy(10_000);
       assert.deepEqual(yield* threadIds("kestrel ci"), []);
+    }),
+  );
+});
+
+it.effect.each([true, false])(
+  "ThreadSearch narrows short words outside ASCII before the hit limit (indexed: %s)",
+  (indexed) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:short-limit");
+      const older = ThreadId.make("thread:short-older");
+      const newer = ThreadId.make("thread:short-newer");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(older, project),
+          message(older, "older", "user", "В логах ошибка"),
+          thread(newer, project),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      if (!indexed) {
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
+        yield* sql`DROP TABLE orchestration_v2_message_search`;
+      }
+      // More newer hits for the long word than one read holds, none with the short one.
+      yield* sql`
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+        INSERT INTO orchestration_v2_projection_messages
+          (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+        SELECT 'short-newer-' || i, ${newer}, 'assistant', 0, ${DateTime.formatIso(at(5))},
+          ${DateTime.formatIso(at(5))}, json_object('text', 'ошибка здесь')
+        FROM n
+      `;
+      const { matches } = yield* search.search({ query: "ошибка в" });
+      assert.deepEqual(
+        matches.map((match) => match.threadId),
+        [older],
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
+  it.effect("finds them in any case or accent, with or without the index", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:short-non-ascii");
+      const russian = ThreadId.make("thread:short-russian");
+      const french = ThreadId.make("thread:short-french");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(russian, project),
+          message(russian, "russian", "user", "В логах ошибка"),
+          thread(french, project),
+          message(french, "french", "user", "École fermée à Lyon"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+
+      const assertMatches = Effect.gen(function* () {
+        assert.deepEqual(yield* threadIds("ошибка в"), [russian]);
+        assert.deepEqual(yield* threadIds("fermée éc"), [french]);
+        // They still narrow: a word the message lacks rules it out.
+        assert.deepEqual(yield* threadIds("ошибка я"), []);
+      });
+      yield* assertMatches;
+      yield* sql`DROP TABLE orchestration_v2_message_search`;
+      yield* assertMatches;
     }),
   );
 });

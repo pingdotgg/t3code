@@ -21,7 +21,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
+import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 
 import { BinaryFilePreview } from "./BinaryFilePreview";
@@ -55,7 +55,16 @@ const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
 
 const STALE_URL_MS = 5 * 60_000;
 
-export function ReadOnlySourcePreview(props: { name: string; text: string }) {
+const blobKeys = new WeakMap<Blob, string>();
+let nextBlobKey = 0;
+
+function blobKey(blob: Blob) {
+  const key = blobKeys.get(blob) ?? `blob:${nextBlobKey++}`;
+  blobKeys.set(blob, key);
+  return key;
+}
+
+export function ReadOnlySourcePreview(props: { name: string; text: string; wordWrap?: boolean }) {
   return (
     <Suspense fallback={<FileSurfaceLoading className="p-4" />}>
       <SourcePreview {...props} />
@@ -214,7 +223,9 @@ export function AttachmentFilePreview(props: {
     return () => controller.abort();
   }, [url, needsText, streamsText, revision, props.sizeBytes, props.file, refresh]);
   const failure = error ?? (needsText ? contentError : null);
-  const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
+  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
+  const wordWrap = wordWrapOverride ?? defaultWordWrap;
   const showsRawText =
     failure === null &&
     needsText &&
@@ -272,6 +283,7 @@ export function AttachmentFilePreview(props: {
         onRetry={() => setRevision((value) => value + 1)}
         delimiter={rendered ? delimiter : null}
         copyContents={copyContents}
+        wordWrap={wordWrap}
       />
     </Suspense>
   ) : !url || (needsText && !content) ? (
@@ -292,7 +304,7 @@ export function AttachmentFilePreview(props: {
         />
       </ScrollArea>
     ) : (
-      <ReadOnlySourcePreview name={props.name} text={content.text} />
+      <ReadOnlySourcePreview name={props.name} text={content.text} wordWrap={wordWrap} />
     )
   ) : kind === "archive" || kind === "sqlite" ? (
     <BinaryFilePreview
@@ -322,6 +334,17 @@ export function AttachmentFilePreview(props: {
       pdf={kind === "pdf"}
       htmlRender={props.htmlRender === true}
       threadRef={props.threadRef}
+      // Each mount signs or creates a new URL, so the URL cannot identify the file across visits.
+      // A draft keeps its Blob key after upload, so finishing the upload does not reload the PDF.
+      documentKey={
+        kind !== "pdf"
+          ? undefined
+          : props.file
+            ? blobKey(props.file)
+            : props.asset && "attachmentId" in props.asset
+              ? `${props.asset.environmentId}:${props.asset.attachmentId}`
+              : undefined
+      }
     />
   ) : kind === "audio" ? (
     <AudioPreview src={url} name={props.name} onError={() => setError("Unable to load audio.")} />
@@ -387,7 +410,7 @@ export function AttachmentFilePreview(props: {
           <FileSurfaceAction
             label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
             pressed={wordWrap}
-            onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+            onPress={() => setWordWrapOverride(!wordWrap)}
           >
             <WrapTextIcon className="size-3.5" />
           </FileSurfaceAction>

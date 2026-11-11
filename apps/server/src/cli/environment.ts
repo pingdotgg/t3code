@@ -16,6 +16,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -29,7 +30,7 @@ const runWithPeerLinks = Effect.fn("environment.runWithPeerLinks")(function* <A,
   options?: { readonly quietLogs?: boolean },
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const config = yield* resolveCliAuthConfig(flags, logLevel, options);
   return yield* PeerLinks.PeerLinks.pipe(
     Effect.flatMap(run),
     Effect.provide(
@@ -44,7 +45,13 @@ const runWithPeerLinks = Effect.fn("environment.runWithPeerLinks")(function* <A,
         Layer.provide(ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer))),
         Layer.provide(
           ServerSettings.layer.pipe(
-            Layer.provide(Layer.mergeAll(ServerSecretStore.layer, SqlitePersistence.layerConfig)),
+            Layer.provide(
+              Layer.mergeAll(
+                ServerSecretStore.layer,
+                SqlitePersistence.layerConfig,
+                ManagedPolicy.layer,
+              ),
+            ),
           ),
         ),
         Layer.provide(ServerConfig.layer(config)),

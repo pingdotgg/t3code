@@ -44,7 +44,7 @@ vi.mock("@react-navigation/native", () => ({
 vi.mock("../../state/use-remote-environment-registry", () => ({
   pairEnvironment: harness.pair,
 }));
-vi.mock("../workspace/workspace-selection-store", () => ({
+vi.mock("../layout/workspace/workspace-selection-store", () => ({
   workspaceHasColumns: () => harness.columns,
 }));
 vi.mock("../../lib/rootNavigation", () => ({
@@ -89,7 +89,7 @@ it("pairs from a nested settings link once, reports failure, and closes the form
 
   const state = settingsLink({ pairingUrl: ` ${PAIRING_URL} `, autoConnect: "1" });
   expect(startDevAutoConnect(state)).toBe(state);
-  expect(harness.pair).toHaveBeenCalledExactlyOnceWith(PAIRING_URL, undefined);
+  expect(harness.pair).toHaveBeenCalledExactlyOnceWith(PAIRING_URL);
   expect(appAtomRegistry.get(devAutoConnectAttemptAtom)).toEqual({
     pairingUrl: PAIRING_URL,
     status: "connecting",

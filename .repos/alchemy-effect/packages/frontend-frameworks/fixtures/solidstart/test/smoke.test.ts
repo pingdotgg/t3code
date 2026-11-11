@@ -19,14 +19,12 @@ for (const method of Playwright.SERVER_METHODS) {
     });
 
     it("renders the homepage", async ({ page, server }) => {
-      const response = await page
-        .goto(server.url.toString())
-        .then(async (response) => {
-          // solidstart has a bug where the first request is not always successful in dev mode.
-          // Retry the request if it is not successful as a temporary workaround.
-          if (response?.ok()) return response;
-          return page.goto(server.url.toString());
-        });
+      const response = await page.goto(server.url.toString()).then(async (response) => {
+        // solidstart has a bug where the first request is not always successful in dev mode.
+        // Retry the request if it is not successful as a temporary workaround.
+        if (response?.ok()) return response;
+        return page.goto(server.url.toString());
+      });
       expect(response?.status()).toBe(200);
       await page.waitForLoadState("networkidle");
       await page.evaluate(() => document.fonts.ready);
@@ -51,27 +49,19 @@ for (const method of Playwright.SERVER_METHODS) {
       });
     });
 
-    it("serves a direct navigation to /about (SSR)", async ({
-      page,
-      server,
-    }) => {
+    it("serves a direct navigation to /about (SSR)", async ({ page, server }) => {
       // Raw fetch: the about markup is server-rendered.
       const raw = await server.fetch("/about");
       expect(raw.status).toBe(200);
       expect(await raw.text()).toContain(">About</h1>");
 
       // Hard browser navigation straight to the route.
-      const response = await page.goto(
-        new URL("/about", server.url).toString(),
-      );
+      const response = await page.goto(new URL("/about", server.url).toString());
       expect(response?.status()).toBe(200);
       await expect(page.locator("h1")).toHaveText("About");
     });
 
-    it("renders the [...404] route for unmatched paths", async ({
-      page,
-      server,
-    }) => {
+    it("renders the [...404] route for unmatched paths", async ({ page, server }) => {
       // The [...404].tsx catch-all renders server-side. NOTE: despite the
       // route's <HttpStatusCode code={404} />, SolidStart 2.0.0-alpha.3's
       // streaming response commits status 200 in both modes (observed live
@@ -79,9 +69,7 @@ for (const method of Playwright.SERVER_METHODS) {
       const raw = await server.fetch("/definitely/not/a/route");
       expect(await raw.text()).toContain("Page Not Found");
 
-      await page.goto(
-        new URL("/definitely/not/a/route", server.url).toString(),
-      );
+      await page.goto(new URL("/definitely/not/a/route", server.url).toString());
       await expect(page.locator("h1")).toHaveText("Page Not Found");
     });
 
@@ -92,9 +80,7 @@ for (const method of Playwright.SERVER_METHODS) {
     });
 
     it("runs the API route server-side (GET)", async ({ server }) => {
-      const body = await server.fetchJson<{ method: string; server: boolean }>(
-        "/api/echo",
-      );
+      const body = await server.fetchJson<{ method: string; server: boolean }>("/api/echo");
       expect(body).toMatchObject({ method: "GET", server: true });
     });
 
