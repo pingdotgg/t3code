@@ -145,4 +145,20 @@ describe("course reference fetch", () => {
     const result = await extractPdf(Buffer.from(pdf), [1]);
     assert.strictEqual(result.images.length, 0);
   });
+
+  it("skips a page with too many image objects before decoding them", async () => {
+    let images = "";
+    for (let index = 5; index < 15; index += 1)
+      images += `${index} 0 obj << /Type /XObject /Subtype /Image /Width 4000 /Height 4000 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 0 >> stream\nendstream endobj\n`;
+    const pdf =
+      "%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n" +
+      "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n" +
+      "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /XObject << /Im 5 0 R >> >> /Contents 4 0 R >> endobj\n" +
+      "4 0 obj << /Length 33 >> stream\nq 100 0 0 100 0 0 cm /Im Do Q\nendstream endobj\n" +
+      images +
+      "trailer << /Root 1 0 R /Size 15 >>\n%%EOF";
+    const result = await extractPdf(Buffer.from(pdf), [1]);
+    assert.strictEqual(result.images.length, 0);
+    assert.isAbove(result.skippedImages ?? 0, 8);
+  });
 });
