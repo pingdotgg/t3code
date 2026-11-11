@@ -8,6 +8,7 @@ import {
   type OrchestrationProjectShell,
   type PullRequestActionInput,
   type PullRequestActivity,
+  type PullRequestListInput,
   type PullRequestDetail,
   type PullRequestRef,
   type PullRequestReviewGuideResult,
@@ -786,6 +787,70 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect("pages a long conversation and the PR list through the cursors they return", () =>
+    Effect.gen(function* () {
+      const comment = (body: string) =>
+        ({ id: body.slice(0, 8), author: null, body, createdAt: "2026-11-01T00:00:00Z" }) as never;
+      const long = (id: string) => ({
+        ...reviewThread(id, false),
+        comments: [comment("x".repeat(20_000))],
+      });
+      const listed: Array<PullRequestListInput> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          activity: () =>
+            Effect.succeed({
+              ...activity,
+              reviewThreads: [
+                { ...long("first"), nextCommentsCursor: "later" },
+                long("second"),
+                reviewThread("done-thread", true),
+              ],
+            }),
+          threadComments: (input) =>
+            Effect.succeed(
+              input.cursor === "later"
+                ? { comments: [comment("reply")], nextCursor: null }
+                : { comments: [], nextCursor: null },
+            ),
+          list: (input) =>
+            Effect.sync(() => listed.push(input)).pipe(
+              Effect.as({
+                viewers: {},
+                providers: [],
+                entries: [],
+                errors: [],
+                truncated: input.cursors === undefined,
+                nextCursors: input.cursors === undefined ? { "t3tools/t3code": "page-2" } : {},
+              }),
+            ),
+        },
+      });
+      const first = yield* harness.call("pull_request_read", { sections: ["conversation"] });
+      expect(first.conversation?.reviewThreads).toMatchObject([
+        { id: "first", moreComments: false, comments: [{}, { body: "reply" }] },
+      ]);
+      const cursor = first.conversation?.nextCursor;
+      expect(cursor).toEqual(expect.any(String));
+      const second = yield* harness.call("pull_request_read", { cursor: cursor! });
+      expect(second.summary).toBeUndefined();
+      expect(second.conversation?.reviewThreads.map((thread) => thread.id)).toEqual(["second"]);
+      expect(second.conversation?.nextCursor).toBeNull();
+
+      const page = yield* harness.call("pull_request_list", {});
+      yield* harness.call("pull_request_list", { cursor: page.nextCursor! });
+      expect(listed.map((input) => input.cursors)).toEqual([
+        undefined,
+        { "t3tools/t3code": "page-2" },
+      ]);
+      const invalid = yield* harness
+        .call("pull_request_read", { cursor: "not-a-cursor" })
+        .pipe(Effect.flip);
+      expect(invalid._tag).toBe("PullRequestCursorInvalidError");
+    }),
+  );
+
   it.effect("asks for a number when the thread's branch has no PR", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -855,73 +920,39 @@ describe("source control tools", () => {
     }),
   );
 
-  it.effect(
-    "opens a PR from the thread's worktree, links it even if dismissed, and drafts it",
-    () =>
-      Effect.gen(function* () {
-        const actions: Array<PullRequestActionInput> = [];
-        const opened: Array<string> = [];
-        const harness = yield* makeHarness({
-          thread: {
-            ...makeThread([makeLink(43, { source: "stack-dismissed" })]),
-            worktreePath: "/workspace/worktree",
-          },
-          git: {
-            createPullRequest: (input) =>
-              Effect.sync(() => opened.push(input.cwd)).pipe(
-                Effect.as({
-                  status: "created" as const,
-                  url: "https://github.com/t3tools/t3code/pull/43",
-                  number: 43,
-                  baseBranch: "main",
-                  headBranch: "tools",
-                  title: input.title,
-                }),
-              ),
-          },
-          pullRequests: { runAction: (input) => Effect.sync(() => void actions.push(input)) },
-        });
-        const result = yield* harness.call("pull_request_create", {
-          title: "Add tools",
-          body: "Adds tools.",
-          draft: true,
-        });
-        expect(result).toMatchObject({ number: 43, created: true });
-        expect(opened).toEqual(["/workspace/worktree"]);
-        expect(actions).toMatchObject([{ number: 43, action: "draft" }]);
-        expect(yield* Ref.get(harness.commands)).toMatchObject([
-          { type: "thread.pull-request.link", number: 43, source: "created" },
-        ]);
-
-        // A retry after a failed draft finds the open PR and still drafts it.
-        const retried = yield* makeHarness({
-          thread: { ...makeThread([]), worktreePath: "/workspace/worktree" },
-          git: {
-            createPullRequest: (input) =>
-              Effect.succeed({
-                status: "opened_existing" as const,
+  it.effect("opens a PR from the thread's worktree and links it even if dismissed", () =>
+    Effect.gen(function* () {
+      const opened: Array<{ readonly cwd: string; readonly draft: boolean | undefined }> = [];
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(43, { source: "stack-dismissed" })]),
+          worktreePath: "/workspace/worktree",
+        },
+        git: {
+          createPullRequest: (input) =>
+            Effect.sync(() => opened.push({ cwd: input.cwd, draft: input.draft })).pipe(
+              Effect.as({
+                status: "created" as const,
                 url: "https://github.com/t3tools/t3code/pull/43",
                 number: 43,
                 baseBranch: "main",
                 headBranch: "tools",
                 title: input.title,
               }),
-          },
-          pullRequests: {
-            summary: () => Effect.succeed({ state: "open", isDraft: false } as never),
-            runAction: (input) => Effect.sync(() => void actions.push(input)),
-          },
-        });
-        yield* retried.call("pull_request_create", {
-          title: "Add tools",
-          body: "Adds tools.",
-          draft: true,
-        });
-        expect(actions).toMatchObject([
-          { number: 43, action: "draft" },
-          { number: 43, action: "draft" },
-        ]);
-      }),
+            ),
+        },
+      });
+      const result = yield* harness.call("pull_request_create", {
+        title: "Add tools",
+        body: "Adds tools.",
+        draft: true,
+      });
+      expect(result).toMatchObject({ number: 43, created: true });
+      expect(opened).toEqual([{ cwd: "/workspace/worktree", draft: true }]);
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", number: 43, source: "created" },
+      ]);
+    }),
   );
 
   it.effect("replies to and resolves a review thread, and refuses resolving without one", () =>

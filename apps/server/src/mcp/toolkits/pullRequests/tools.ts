@@ -153,6 +153,15 @@ export class PullRequestBranchHasNoneError extends Schema.TaggedError<PullReques
   }
 }
 
+export class PullRequestCursorInvalidError extends Schema.TaggedError<PullRequestCursorInvalidError>()(
+  "PullRequestCursorInvalidError",
+  {},
+) {
+  override get message(): string {
+    return "This cursor is not from this tool. Pass a nextCursor from its last result.";
+  }
+}
+
 export class PullRequestNothingToDoError extends Schema.TaggedError<PullRequestNothingToDoError>()(
   "PullRequestNothingToDoError",
   { detail: Schema.String },
@@ -182,6 +191,7 @@ export const PullRequestToolError = Schema.Union([
   PullRequestForgeError,
   PullRequestBranchHasNoneError,
   PullRequestNothingToDoError,
+  PullRequestCursorInvalidError,
 ]);
 export type PullRequestToolError = typeof PullRequestToolError.Type;
 
@@ -524,6 +534,7 @@ export const ReadPullRequestResult = Schema.Struct({
       ),
       hiddenResolvedThreads: Schema.Int,
       truncated: Schema.Boolean,
+      nextCursor: Schema.NullOr(Schema.String),
     }),
   ),
   diff: Schema.optional(
@@ -553,6 +564,7 @@ export const ListPullRequestsResult = Schema.Struct({
     }),
   ),
   truncated: Schema.Boolean,
+  nextCursor: Schema.NullOr(Schema.String),
 });
 export type ListPullRequestsResult = typeof ListPullRequestsResult.Type;
 
@@ -581,17 +593,16 @@ export const MergePullRequestResult = Schema.Struct({
 export type MergePullRequestResult = typeof MergePullRequestResult.Type;
 
 const ReadPullRequestTool = Tool.make("pull_request_read", {
-  description:
-    "Read a PR in this thread's repository. Use instead of gh or cafe for PR state, checks, review comments, or diff.",
+  description: "Read a PR's state, checks, review comments, or diff. Use instead of gh or cafe.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     sections: Schema.optional(
       Schema.Array(PullRequestReadSection).annotate({
-        description: "Default: summary, checks. conversation: comments, review threads.",
+        description: "Default: summary, checks. conversation has review threads.",
       }),
     ),
     includeResolved: Schema.optional(Schema.Boolean),
-    diffCursor: Schema.optional(TrimmedNonEmptyString),
+    cursor: Schema.optional(TrimmedNonEmptyString),
   }),
   success: ReadPullRequestResult,
   failure: PullRequestToolError,
@@ -611,6 +622,7 @@ const ListPullRequestsTool = Tool.make("pull_request_list", {
     involvement: Schema.optional(PullRequestInvolvement),
     query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
     limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
+    cursor: Schema.optional(TrimmedNonEmptyString),
   }),
   success: ListPullRequestsResult,
   failure: PullRequestToolError,
@@ -623,8 +635,7 @@ const ListPullRequestsTool = Tool.make("pull_request_list", {
   .annotate(Tool.OpenWorld, true);
 
 const CreatePullRequestTool = Tool.make("pull_request_create", {
-  description:
-    "Open a PR from this thread's pushed branch and link it. Returns the branch's open PR if one exists.",
+  description: "Open a PR from this thread's pushed branch and link it, or return its open PR.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     title: TrimmedNonEmptyString,
@@ -643,7 +654,7 @@ const CreatePullRequestTool = Tool.make("pull_request_create", {
   .annotate(Tool.OpenWorld, true);
 
 const UpdatePullRequestTool = Tool.make("pull_request_update", {
-  description: "Change a PR's title or body, or mark it ready (ready=false: back to draft).",
+  description: "Edit a PR's title or body, or set ready (false: back to draft).",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     title: Schema.optional(TrimmedNonEmptyString),
@@ -662,7 +673,7 @@ const UpdatePullRequestTool = Tool.make("pull_request_update", {
 
 const RespondToPullRequestTool = Tool.make("pull_request_respond", {
   description:
-    "Reply to a review thread from pull_request_read, resolve or reopen it, or both. Without reviewThreadId, comment on the PR.",
+    "Reply to, resolve, or reopen a review thread. Without reviewThreadId, comment on the PR.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     reviewThreadId: Schema.optional(TrimmedNonEmptyString),
@@ -681,14 +692,14 @@ const RespondToPullRequestTool = Tool.make("pull_request_respond", {
 
 const MergePullRequestTool = Tool.make("pull_request_merge", {
   description:
-    "Merge a PR only when asked to land it. Refuses if the head is no longer expectedHeadSha, the summary headSha you checked.",
+    "Merge only when asked to land. Refuses if the head moved from expectedHeadSha (summary.headSha).",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     expectedHeadSha: TrimmedNonEmptyString,
     method: Schema.optional(PullRequestMergeMethod),
     auto: Schema.optional(
       Schema.Boolean.annotate({
-        description: "Merge once required checks pass, with any commits pushed by then.",
+        description: "Merge when required checks pass, including later pushes.",
       }),
     ),
   }),

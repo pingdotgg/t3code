@@ -80,6 +80,8 @@ import {
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import { createdPullRequestKey } from "./linkCreatedPullRequest.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
@@ -181,9 +183,11 @@ export class GitManager extends Context.Service<
     /** Opens a PR for the checkout's pushed branch, or returns the one already open. */
     readonly createPullRequest: (input: {
       readonly cwd: string;
+      readonly projectId: ProjectId;
       readonly title: string;
       readonly body: string;
       readonly baseBranch?: string | undefined;
+      readonly draft?: boolean | undefined;
     }) => Effect.Effect<GitCreatePullRequestResult, GitManagerServiceError>;
     readonly subscribePullRequestStateChanges: Effect.Effect<
       Stream.Stream<ThreadPullRequestKey>,
@@ -708,6 +712,7 @@ export const make = Effect.gen(function* () {
     );
   });
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
+  const pullRequests = yield* PullRequestService.PullRequestService;
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectSettingsFor = Effect.fnUntraced(function* (input: {
@@ -2540,8 +2545,41 @@ export const make = Effect.gen(function* () {
     );
     // The thread's branch PR comes from status, which may hold the lookup from before.
     if (result.status === "created") yield* invalidateStatus(input.cwd);
+    if (input.draft === true) yield* draftOpened(input, result);
     return result;
   });
+
+  /** A retry after a failed draft finds the PR it opened, so an open one is checked too. */
+  const draftOpened = Effect.fn("GitManager.draftOpened")(
+    function* (
+      input: { readonly cwd: string; readonly projectId: ProjectId },
+      result: GitCreatePullRequestResult,
+    ) {
+      const project = yield* projects.getShell(input.projectId).pipe(
+        Effect.map(Option.getOrUndefined),
+        Effect.orElseSucceed(() => undefined),
+      );
+      const key = createdPullRequestKey({ pr: result }, project);
+      if (key === null) return;
+      const ref = { projectId: input.projectId, ...key };
+      const isDraft =
+        result.status === "opened_existing" &&
+        (yield* pullRequests.summary({ ...ref, allowStale: false })).isDraft;
+      if (!isDraft) yield* pullRequests.runAction({ ...ref, action: "draft" });
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "createPullRequest",
+              cwd: input.cwd,
+              detail: `Opened the pull request, but could not make it a draft: ${cause.message}`,
+              cause,
+            }),
+        ),
+      ),
+  );
 
   const localStatus: GitManager["Service"]["localStatus"] = Effect.fn("localStatus")(
     function* (input) {

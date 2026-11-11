@@ -1,15 +1,22 @@
 import {
   CommandId,
+  NonNegativeInt,
+  type PullRequestActivity,
+  PullRequestListCursors,
   type PullRequestRef,
+  type PullRequestReviewThread,
   type OrchestrationProjectShell,
   type OrchestrationV2ThreadShell,
   type ThreadId,
   type ThreadPullRequestLink,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as GitManager from "../../../git/GitManager.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
@@ -34,6 +41,7 @@ import { threadNotFound } from "../../threadAccess.ts";
 import {
   type ListThreadPullRequestsResult,
   PullRequestBranchHasNoneError,
+  PullRequestCursorInvalidError,
   PullRequestForgeError,
   PullRequestNothingToDoError,
   type PullRequestReadSection,
@@ -50,6 +58,85 @@ import {
   type ThreadPullRequestEntry,
   CHILD_PULL_REQUEST_REPORT_NEXT,
 } from "./tools.ts";
+
+const ReadCursor = Schema.Union([
+  Schema.Struct({ diff: TrimmedNonEmptyString }),
+  Schema.Struct({
+    threads: NonNegativeInt,
+    comments: NonNegativeInt,
+    includeResolved: Schema.Boolean,
+  }),
+]);
+type ReadCursor = typeof ReadCursor.Type;
+
+const ReadCursorJson = Schema.fromJsonString(ReadCursor);
+const ListCursorsJson = Schema.fromJsonString(PullRequestListCursors);
+const encodeReadCursorJson = Schema.encodeSync(ReadCursorJson);
+const encodeListCursorsJson = Schema.encodeSync(ListCursorsJson);
+const decodeReadCursorJson = Schema.decodeUnknownEffect(ReadCursorJson);
+const decodeListCursorsJson = Schema.decodeUnknownEffect(ListCursorsJson);
+
+const decodeCursorText = (cursor: string) =>
+  Effect.fromResult(Base64Url.decodeString(cursor)).pipe(
+    Effect.mapError(() => new PullRequestCursorInvalidError({})),
+  );
+
+const readCursors = {
+  encode: (value: ReadCursor) => Base64Url.encode(encodeReadCursorJson(value)),
+  decode: (cursor: string) =>
+    decodeCursorText(cursor).pipe(
+      Effect.flatMap(decodeReadCursorJson),
+      Effect.mapError(() => new PullRequestCursorInvalidError({})),
+    ),
+};
+
+const listCursors = {
+  encode: (value: PullRequestListCursors) => Base64Url.encode(encodeListCursorsJson(value)),
+  decode: (cursor: string) =>
+    decodeCursorText(cursor).pipe(
+      Effect.flatMap(decodeListCursorsJson),
+      Effect.mapError(() => new PullRequestCursorInvalidError({})),
+    ),
+};
+
+/** Keeps one conversation page near the size of a capped CI log. */
+const CONVERSATION_PAGE_CHARS = 32_000;
+const THREAD_COMMENT_PAGES = 4;
+
+function conversationPage(
+  activity: PullRequestActivity,
+  start: { readonly threads: number; readonly comments: number },
+  includeResolved: boolean,
+) {
+  const threads = activity.reviewThreads.filter((thread) => includeResolved || !thread.isResolved);
+  const pageThreads: Array<PullRequestReviewThread> = [];
+  const pageComments: Array<PullRequestActivity["comments"][number]> = [];
+  let size = 0;
+  let thread = start.threads;
+  let comment = start.comments;
+  const fits = (item: unknown) => {
+    const next = size + JSON.stringify(item).length;
+    if (next > CONVERSATION_PAGE_CHARS && pageThreads.length + pageComments.length > 0) {
+      return false;
+    }
+    size = next;
+    return true;
+  };
+  // Review threads come first: they hold the feedback an agent acts on.
+  while (thread < threads.length && fits(threads[thread])) pageThreads.push(threads[thread++]!);
+  if (thread === threads.length) {
+    while (comment < activity.comments.length && fits(activity.comments[comment])) {
+      pageComments.push(activity.comments[comment++]!);
+    }
+  }
+  const done = thread === threads.length && comment === activity.comments.length;
+  return {
+    threads: pageThreads,
+    comments: pageComments,
+    hiddenResolvedThreads: includeResolved ? 0 : activity.reviewThreads.length - threads.length,
+    next: done ? null : { threads: thread, comments: comment, includeResolved },
+  };
+}
 
 function entryOf(
   link: ThreadPullRequestLink,
@@ -317,13 +404,32 @@ const make = Effect.gen(function* () {
     url: target.url,
   });
 
+  /** The thread's comments past its first page, when the host pages them. */
+  const restOfThread = Effect.fn("PullRequestsToolkit.restOfThread")(function* (
+    ref: PullRequestRef,
+    thread: PullRequestReviewThread,
+  ) {
+    const comments: Array<PullRequestReviewThread["comments"][number]> = [];
+    let cursor = thread.nextCommentsCursor;
+    for (let page = 0; cursor !== undefined && page < THREAD_COMMENT_PAGES; page += 1) {
+      const read = yield* pullRequests
+        .threadComments({ ...ref, threadId: thread.id, cursor })
+        .pipe(Effect.option);
+      if (Option.isNone(read)) break;
+      comments.push(...read.value.comments);
+      cursor = read.value.nextCursor ?? undefined;
+    }
+    return { comments, moreComments: cursor !== undefined };
+  });
+
   const readSections = Effect.fn("PullRequestsToolkit.readSections")(function* (
     ref: PullRequestRef,
     sections: ReadonlyArray<PullRequestReadSection>,
     includeResolved: boolean,
-    diffCursor: string | undefined,
+    cursor: ReadCursor | undefined,
   ) {
     const wants = (section: PullRequestReadSection) => sections.includes(section);
+    const diffCursor = cursor !== undefined && "diff" in cursor ? cursor.diff : undefined;
     const [detail, activity, diff] = yield* Effect.all(
       [
         // Agents pin merges to this headSha, so it must not come from a stale snapshot.
@@ -339,6 +445,18 @@ const make = Effect.gen(function* () {
       ],
       { concurrency: "unbounded" },
     ).pipe(Effect.mapError(forgeFailure));
+    const page = Option.map(activity, (value) =>
+      conversationPage(
+        value,
+        cursor !== undefined && "threads" in cursor ? cursor : { threads: 0, comments: 0 },
+        includeResolved,
+      ),
+    );
+    const threadRests = Option.isSome(page)
+      ? yield* Effect.forEach(page.value.threads, (thread) => restOfThread(ref, thread), {
+          concurrency: 4,
+        })
+      : [];
     const result: Omit<ReadPullRequestResult, "host" | "repository" | "number" | "url"> = {
       ...(Option.isSome(detail) && wants("summary")
         ? {
@@ -363,10 +481,10 @@ const make = Effect.gen(function* () {
           }
         : {}),
       ...(Option.isSome(detail) && wants("checks") ? { checks: detail.value.checks } : {}),
-      ...(Option.isSome(activity)
+      ...(Option.isSome(activity) && Option.isSome(page)
         ? {
             conversation: {
-              comments: activity.value.comments.map((comment) => ({
+              comments: page.value.comments.map((comment) => ({
                 id: comment.id,
                 kind: comment.kind,
                 author: comment.author?.login ?? null,
@@ -375,26 +493,23 @@ const make = Effect.gen(function* () {
                 path: comment.path,
                 reviewState: comment.reviewState,
               })),
-              reviewThreads: activity.value.reviewThreads
-                .filter((thread) => includeResolved || !thread.isResolved)
-                .map((thread) => ({
-                  id: thread.id,
-                  path: thread.path,
-                  line: thread.line,
-                  isResolved: thread.isResolved,
-                  isOutdated: thread.isOutdated,
-                  comments: thread.comments.map((comment) => ({
-                    author: comment.author?.login ?? null,
-                    body: comment.body,
-                    createdAt: comment.createdAt,
-                  })),
-                  moreComments: thread.nextCommentsCursor !== undefined,
+              reviewThreads: page.value.threads.map((thread, index) => ({
+                id: thread.id,
+                path: thread.path,
+                line: thread.line,
+                isResolved: thread.isResolved,
+                isOutdated: thread.isOutdated,
+                comments: [...thread.comments, ...threadRests[index]!.comments].map((comment) => ({
+                  author: comment.author?.login ?? null,
+                  body: comment.body,
+                  createdAt: comment.createdAt,
                 })),
-              hiddenResolvedThreads: includeResolved
-                ? 0
-                : activity.value.reviewThreads.filter((thread) => thread.isResolved).length,
+                moreComments: threadRests[index]!.moreComments,
+              })),
+              hiddenResolvedThreads: page.value.hiddenResolvedThreads,
               truncated:
                 activity.value.commentsTruncated || activity.value.reviewThreadsTruncated === true,
+              nextCursor: page.value.next === null ? null : readCursors.encode(page.value.next),
             },
           }
         : {}),
@@ -403,7 +518,10 @@ const make = Effect.gen(function* () {
             diff: {
               patch: diff.value.patch,
               truncated: diff.value.truncated,
-              nextCursor: diff.value.nextCursor,
+              nextCursor:
+                diff.value.nextCursor === null
+                  ? null
+                  : readCursors.encode({ diff: diff.value.nextCursor }),
             },
           }
         : {}),
@@ -689,11 +807,23 @@ const make = Effect.gen(function* () {
     ),
     pull_request_read: McpToolAccess.reads((input) =>
       Effect.gen(function* () {
+        const cursor =
+          input.cursor === undefined ? undefined : yield* readCursors.decode(input.cursor);
         const { target, ref } = yield* locate(input);
-        const sections = input.sections ?? ["summary", "checks"];
+        // A cursor continues the one section it came from, with that read's options.
+        const sections: ReadonlyArray<PullRequestReadSection> =
+          cursor === undefined
+            ? (input.sections ?? ["summary", "checks"])
+            : "diff" in cursor
+              ? ["diff"]
+              : ["conversation"];
+        const includeResolved =
+          cursor !== undefined && "includeResolved" in cursor
+            ? cursor.includeResolved
+            : input.includeResolved === true;
         return {
           ...identityOf(target),
-          ...(yield* readSections(ref, sections, input.includeResolved === true, input.diffCursor)),
+          ...(yield* readSections(ref, sections, includeResolved, cursor)),
         };
       }),
     ),
@@ -707,6 +837,9 @@ const make = Effect.gen(function* () {
             involvement: input.involvement ?? "all",
             limit: input.limit ?? 30,
             ...(input.query === undefined ? {} : { query: input.query }),
+            ...(input.cursor === undefined
+              ? {}
+              : { cursors: yield* listCursors.decode(input.cursor) }),
           })
           .pipe(Effect.mapError(forgeFailure));
         const failure = listed.errors[0];
@@ -728,6 +861,10 @@ const make = Effect.gen(function* () {
             updatedAt: entry.updatedAt,
           })),
           truncated: listed.truncated,
+          nextCursor:
+            Object.keys(listed.nextCursors).length === 0
+              ? null
+              : listCursors.encode(listed.nextCursors),
         };
       }),
     ),
@@ -741,9 +878,11 @@ const make = Effect.gen(function* () {
         const created = yield* git
           .createPullRequest({
             cwd: thread.worktreePath ?? project.workspaceRoot,
+            projectId: project.id,
             title: input.title,
             body: input.body,
             baseBranch: input.base,
+            draft: input.draft,
           })
           .pipe(Effect.mapError(forgeFailure));
         if (created.url === undefined) {
@@ -754,24 +893,6 @@ const make = Effect.gen(function* () {
         }
         const target = yield* resolveTarget({ url: created.url }, project);
         yield* linkToThread(thread, target);
-        const ref = {
-          projectId: project.id,
-          host: target.host,
-          repository: target.repository,
-          number: target.number,
-        };
-        // A retry after a failed draft finds the PR it opened, so it checks the draft state.
-        const needsDraft =
-          input.draft === true &&
-          (created.status === "created" ||
-            !(yield* pullRequests
-              .summary({ ...ref, allowStale: false })
-              .pipe(Effect.mapError(forgeFailure))).isDraft);
-        if (needsDraft) {
-          yield* pullRequests
-            .runAction({ ...ref, action: "draft" })
-            .pipe(Effect.mapError(forgeFailure));
-        }
         return {
           ...identityOf(target),
           created: created.status === "created",
