@@ -1978,7 +1978,7 @@ export function retargetNewTaskDraft(
       return current;
     }
     const { workspaceSelection, ...retained } = normalizeDraft(existing);
-    // A PR worktree names no local path, so it carries to the same repository on another machine.
+    // The PR checkout is recreated on the target machine, so only the old local path is dropped.
     const keptWorkspaceSelection =
       options?.keepPullRequestWorkspace && workspaceSelection?.pullRequestReference !== undefined
         ? { ...workspaceSelection, worktreePath: null }

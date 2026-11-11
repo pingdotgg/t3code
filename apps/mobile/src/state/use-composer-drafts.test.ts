@@ -1935,16 +1935,17 @@ describe("mobile composer drafts", () => {
     const pullRequestSelection = {
       mode: "worktree" as const,
       branch: "feature/pr-head",
-      worktreePath: null,
+      worktreePath: "/old-machine/worktrees/pr-42",
       startFromOrigin: false,
       pullRequestReference: "https://github.com/acme/repo/pull/42",
     };
     updateComposerDraftSettings(key, { workspaceSelection: pullRequestSelection });
     retargetNewTaskDraft(key, from, { keepPullRequestWorkspace: true });
-    expect(getComposerDraftSnapshot(key).workspaceSelection).toEqual(pullRequestSelection);
-    retargetNewTaskDraft(key, to, { keepPullRequestWorkspace: true });
-    expect(getComposerDraftSnapshot(key).workspaceSelection).toEqual(pullRequestSelection);
-    retargetNewTaskDraft(key, from);
+    expect(getComposerDraftSnapshot(key).workspaceSelection).toEqual({
+      ...pullRequestSelection,
+      worktreePath: null,
+    });
+    retargetNewTaskDraft(key, to);
     expect(getComposerDraftSnapshot(key).workspaceSelection).toBeUndefined();
   });
 
