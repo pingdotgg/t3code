@@ -2,6 +2,7 @@
 import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeSea from "node:sea";
 import * as NodeChildProcess from "node:child_process";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -125,7 +126,8 @@ const driveRewrite = (url: URL) => {
 const workerScript = () =>
   import.meta.url.endsWith(".ts")
     ? NodePath.resolve(new URL("./course-pdf-worker.ts", import.meta.url).pathname)
-    : NodePath.resolve(new URL("./course-pdf-worker.mjs", import.meta.url).pathname);
+    : // The server is bundled at dist/; the worker entry is emitted under dist/course/.
+      NodePath.resolve(new URL("./course/course-pdf-worker.mjs", import.meta.url).pathname);
 
 const childRssBytes = async (pid: number): Promise<number | undefined> => {
   // The watchdog is deliberately outside Effect so it can kill a blocked worker.
@@ -162,10 +164,16 @@ const runPdfWorker = async (
     readonly readRss?: (pid: number) => Promise<number | undefined>;
   } = {},
 ) => {
+  // A single executable hosts the worker itself; a built server runs the sibling script.
   const args = import.meta.url.endsWith(".ts")
     ? ["--experimental-strip-types", workerScript()]
-    : ["__course-pdf"];
-  const child = spawnImpl(process.execPath, args, { stdio: ["pipe", "pipe", "pipe"] });
+    : NodeSea.isSea()
+      ? ["__course-pdf"]
+      : [workerScript()];
+  const child = spawnImpl(process.execPath, args, {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+  });
   const output: Buffer[] = [];
   child.stdout?.on("data", (value: Buffer) => output.push(value));
   child.stdin?.end(
