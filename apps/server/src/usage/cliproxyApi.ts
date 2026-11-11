@@ -23,6 +23,7 @@ import {
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
+import { claudeResetCreditsToContract } from "../provider/claudeResetCredits.ts";
 import {
   antigravityAccountFingerprint,
   antigravitySummaryWindows,
@@ -78,6 +79,7 @@ const ClaudeUsage = Schema.Struct({
   five_hour: Schema.optional(Schema.NullOr(ClaudeWindow)),
   seven_day: Schema.optional(Schema.NullOr(ClaudeWindow)),
   spend: Schema.optional(Schema.Unknown),
+  cedar_ember: Schema.optional(Schema.Unknown),
   extra_usage: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -291,6 +293,7 @@ const CODEX_HUB: HubProvider = {
 };
 
 const GROK_CLI_VERSION = "1.0.77";
+const CLAUDE_CLI_VERSION = "2.1.310";
 const ANTIGRAVITY_SUMMARY_URL =
   "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
 
@@ -304,12 +307,13 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
       header: () => ({
         Authorization: "Bearer $TOKEN$",
         "anthropic-beta": "oauth-2025-04-20",
-        // The OAuth usage endpoint can return 429 without a Claude Code user agent.
-        "User-Agent": "claude-code/2.1.273",
+        // Without a current Claude Code user agent the usage endpoint can answer 429 and
+        // withholds reset credits.
+        "User-Agent": `claude-cli/${CLAUDE_CLI_VERSION} (external, cli)`,
       }),
       read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
         const usage = yield* decodeClaudeUsage(
-          yield* call("https://api.anthropic.com/api/oauth/usage"),
+          yield* call("https://api.anthropic.com/api/oauth/usage?cedar_ember=1"),
         );
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
@@ -329,13 +333,17 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
           spend: usage.spend,
           extra_usage: usage.extra_usage ?? null,
         };
+        const resetCredits = claudeResetCreditsToContract(usage.cedar_ember, Date.parse(checkedAt));
         return {
           ...listedIdentity(account),
           plan: "Claude Subscription",
-          usageLimits: claudeUsageResponseToLimits({
-            checkedAt,
-            response: { rate_limits_available: true, rate_limits: rateLimits },
-          }).limits,
+          usageLimits: {
+            ...claudeUsageResponseToLimits({
+              checkedAt,
+              response: { rate_limits_available: true, rate_limits: rateLimits },
+            }).limits,
+            ...(resetCredits ? { resetCredits } : {}),
+          },
         };
       }),
     },
