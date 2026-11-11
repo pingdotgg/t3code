@@ -1,8 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo, useCallback, type Dispatch, type SetStateAction } from "react";
 
-import { useProjects, useServerConfigs } from "../../state/entities";
+import { useProjects, useServerConfigs, useThreadShell } from "../../state/entities";
+import { useEnvironmentQuery } from "../../state/query";
+import { threadFamilies } from "../../state/threads";
 import { createDraft, scheduledTaskDefaultModel } from "./scheduledTaskDraft";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
@@ -15,6 +18,26 @@ import {
   readScheduledTaskEditor,
   type ScheduledTaskEditor,
 } from "./scheduled-task-editor-state";
+
+export const NEW_THREAD_DESTINATION_LABEL = "New thread each run";
+
+export function useScheduledTaskDestinationLabel(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+): string {
+  const ref =
+    environmentId === null || threadId === null ? null : scopeThreadRef(environmentId, threadId);
+  const shell = useThreadShell(ref);
+  // The shell can omit older settled threads; their family read still carries the title.
+  const family = useEnvironmentQuery(
+    ref !== null && shell === null
+      ? threadFamilies.familyAtom(ref.environmentId, ref.threadId)
+      : null,
+  );
+  const thread = shell ?? family.data?.threads.find((row) => row.id === threadId);
+  if (ref === null) return NEW_THREAD_DESTINATION_LABEL;
+  return thread?.title.trim() || `Thread ${ref.threadId}`;
+}
 
 /** The form draft lives in an atom, so it survives while its native picker routes are on top. */
 export function useScheduledTaskEditor() {
@@ -37,7 +60,11 @@ export function useScheduledTaskEditor() {
             (member) =>
               member.project.environmentId === environmentId && member.project.id === project.id,
           ),
-        ) ?? environmentProjects[0];
+        ) ??
+        environmentProjects.find(
+          (project) => project.pinnedAt != null && project.archivedAt == null,
+        ) ??
+        environmentProjects.find((project) => project.archivedAt == null);
       return createDraft(
         project?.id ?? null,
         scheduledTaskDefaultModel(configs.get(environmentId) ?? null, project ?? null),
