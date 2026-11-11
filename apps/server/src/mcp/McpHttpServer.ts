@@ -666,6 +666,44 @@ interface MultiImageToolResult {
   readonly [key: string]: unknown;
 }
 
+export const imageToolContent = (encodedResult: unknown, includeImage = true) => {
+  const result = encodedResult as ImageToolResult | MultiImageToolResult;
+  const metadata =
+    "images" in result
+      ? {
+          ...result,
+          images: result.images.map(({ data: _data, type: _type, ...image }) => image),
+        }
+      : (() => {
+          const { screenshot, ...rest } = result as ImageToolResult;
+          return {
+            ...rest,
+            screenshot: {
+              mimeType: screenshot.mimeType,
+              width: screenshot.width,
+              height: screenshot.height,
+            },
+          };
+        })();
+  const images =
+    "images" in result
+      ? result.images
+      : [{ data: result.screenshot.data, mimeType: result.screenshot.mimeType }];
+  return {
+    metadata,
+    content: [
+      { type: "text" as const, text: JSON.stringify(metadata) },
+      ...(includeImage
+        ? images.map((image) => ({
+            type: "image" as const,
+            data: new Uint8Array(Buffer.from(image.data, "base64")),
+            mimeType: image.mimeType,
+          }))
+        : []),
+    ],
+  };
+};
+
 /** Expose only undescribed failures' tags; remote messages may contain renderer or device output. */
 const imageToolFailure =
   <E>(toolName: string, operation: string, failureText: string | ((error: E) => string)) =>
@@ -761,50 +799,15 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
           Effect.matchCauseEffect({
             onFailure: imageToolFailure(tool.name, operation, failureText),
             onSuccess: ({ encodedResult }) => {
-              const result = encodedResult as ImageToolResult | MultiImageToolResult;
               const includeImage =
                 (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !==
                 false;
-              const metadata =
-                "images" in result
-                  ? {
-                      ...result,
-                      images: result.images.map(({ data: _data, type: _type, ...image }) => image),
-                    }
-                  : (() => {
-                      const { screenshot, ...rest } = result as ImageToolResult;
-                      return {
-                        ...rest,
-                        screenshot: {
-                          mimeType: screenshot.mimeType,
-                          width: screenshot.width,
-                          height: screenshot.height,
-                        },
-                      };
-                    })();
-              const images =
-                "images" in result
-                  ? result.images
-                  : [
-                      {
-                        data: (result as ImageToolResult).screenshot.data,
-                        mimeType: (result as ImageToolResult).screenshot.mimeType,
-                      },
-                    ];
+              const { metadata, content } = imageToolContent(encodedResult, includeImage);
               return Effect.succeed(
                 new McpSchema.CallToolResult({
                   isError: false,
                   structuredContent: metadata,
-                  content: [
-                    { type: "text", text: JSON.stringify(metadata) },
-                    ...(includeImage
-                      ? images.map((image) => ({
-                          type: "image" as const,
-                          data: new Uint8Array(Buffer.from(image.data, "base64")),
-                          mimeType: image.mimeType,
-                        }))
-                      : []),
-                  ],
+                  content,
                 }),
               );
             },
