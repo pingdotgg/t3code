@@ -122,8 +122,8 @@ describe("launchLocalEditor", () => {
           [["--goto", `${file}:12:3`]],
         );
         // Zed's `direct-path` style keeps the position on the path argument.
-        yield* fs.writeFileString(path.join(directory, "bin", "zed"), "#!/bin/sh\n");
-        yield* fs.chmod(path.join(directory, "bin", "zed"), 0o755);
+        yield* fs.writeFileString(path.join(directory, "bin", "zeditor"), "#!/bin/sh\n");
+        yield* fs.chmod(path.join(directory, "bin", "zeditor"), 0o755);
         records.length = 0;
         yield* launchLocalEditor({ editor: "zed", path: `${file}:12:3` });
         assert.deepEqual(records[0]?.args, [`${file}:12:3`]);
