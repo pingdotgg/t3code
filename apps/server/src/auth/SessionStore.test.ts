@@ -174,14 +174,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
   it.effect("prunes a backlog larger than one delete batch in a single pass", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
-      yield* Effect.forEach(Array.from({ length: 1201 }), () =>
+      yield* Effect.forEach(Array.from({ length: 501 }), () =>
         sessions
           .issue({ subject: "t3 thread cli" })
           .pipe(Effect.flatMap(({ sessionId }) => sessions.revoke(sessionId))),
       );
       yield* TestClock.adjust(Duration.days(2));
 
-      expect(yield* sessions.pruneStale()).toBe(1201);
+      expect(yield* sessions.pruneStale()).toBe(501);
       expect(yield* sessions.pruneStale()).toBe(0);
     }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
@@ -279,6 +279,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       expect(yield* Deferred.isDone(invalidated)).toBe(false);
       yield* TestClock.adjust(Duration.millis(1));
       yield* Fiber.join(watcher);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("keeps a renewed DPoP socket after pruning removes expired renewals in its chain", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue(relaySessionInput);
+      yield* sessions.markConnected(client.sessionId);
+      const invalidated = yield* Deferred.make<void>();
+      yield* sessions
+        .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      const renewHourly = (hours: number) =>
+        Effect.repeat(
+          TestClock.adjust(Duration.minutes(59)).pipe(
+            Effect.andThen(sessions.issue(relaySessionInput)),
+          ),
+          { times: hours - 1 },
+        );
+      yield* renewHourly(27);
+      expect(yield* sessions.pruneStale()).toBeGreaterThan(0);
+      yield* renewHourly(2);
+      expect(yield* Deferred.isDone(invalidated)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 

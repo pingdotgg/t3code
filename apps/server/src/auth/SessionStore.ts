@@ -1103,7 +1103,8 @@ const make = Effect.gen(function* () {
         let current = original.value;
         while (true) {
           const rows = yield* Effect.forEach(chain, readRow);
-          if (rows.some((row) => Option.isNone(row) || row.value.revokedAt !== null)) return;
+          // A missing row was pruned after expiring, which ends nothing for a socket that renewed past it.
+          if (rows.some((row) => Option.isSome(row) && row.value.revokedAt !== null)) return;
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
