@@ -1914,10 +1914,10 @@ export function makeClaudeQueryOptions(input: {
 }
 
 /**
- * Checks the append launch arguments the way the Claude CLI would and reads
- * the file relative to the process cwd, expanding a leading ~.
- * makeClaudeQueryOptions folds these flags out of extraArgs, so a value the CLI
- * would have rejected has to be rejected here or it silently disappears.
+ * Checks the append launch arguments the way the Claude CLI would and reads the
+ * file (leading ~ expanded) relative to the thread's cwd. makeClaudeQueryOptions
+ * folds these flags out of extraArgs, so a value the CLI would have rejected has
+ * to be rejected here or it silently disappears.
  */
 const readClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: {
   readonly settings: ClaudeSettings | undefined;
@@ -1959,7 +1959,8 @@ const decodeClaudeLaunchArgSettings = Schema.decodeUnknownEffect(
 
 /**
  * Reads the --settings launch argument: a value starting with a brace is inline
- * JSON, anything else is a file path relative to the cwd, expanding a leading ~.
+ * JSON, anything else is a file path that expands a leading ~ and is otherwise
+ * relative to the thread's cwd (the project or its worktree).
  * makeClaudeQueryOptions merges the result beneath T3's own settings.
  */
 const readClaudeLaunchArgSettings = Effect.fn("ClaudeAdapterV2.readLaunchArgSettings")(
