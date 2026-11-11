@@ -19,7 +19,9 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Result from "effect/Result";
@@ -1574,6 +1576,234 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
   }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );
 
+it.effect.each([false, true])(
+  "drops a stale question wake (missed terminal event: %s)",
+  (missedEvent) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const reactor = yield* DelegatedTaskQuestionReactor.DelegatedTaskQuestionReactor;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const parentThreadId = ThreadId.make("thread:stale-question-parent");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-stale-question-parent"),
+        threadId: parentThreadId,
+        projectId: ProjectId.make("project:stale-question"),
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("start-stale-question-parent"),
+        threadId: parentThreadId,
+        messageId: MessageId.make("message:stale-question-parent"),
+        text: "Delegate the proof",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const parentRun = (yield* projections.getThreadProjection(parentThreadId)).runs[0]!;
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("delegate-stale-question-task"),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Capture the proof",
+        completionWake: "settled_only",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const task = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!;
+      const childRun = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"]))
+        .runs[0]!;
+      const now = yield* DateTime.now;
+      const question = {
+        id: EventId.make("event:stale-question"),
+        type: "runtime-request.updated",
+        threadId: task.childThreadId!,
+        runId: childRun.id,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make("request:stale-question"),
+          nodeId: childRun.rootNodeId!,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      } satisfies OrchestrationV2DomainEvent;
+      yield* eventSink.write({ events: [question] });
+      yield* reactor.handle(question);
+      const wake = (yield* projections.getThreadRecords(parentThreadId, [
+        "messages",
+      ])).messages.find((message) => message.notification !== undefined)!;
+      const wakeRun = () =>
+        projections
+          .getThreadRecords(parentThreadId, ["runs"])
+          .pipe(Effect.map(({ runs }) => runs.find((run) => run.userMessageId === wake.id)));
+      assert.equal((yield* wakeRun())?.status, "queued");
+
+      // The child finishes without ever resolving its message-capability question.
+      const childCompleted = {
+        id: EventId.make("event:stale-question-child-completed"),
+        type: "run.updated",
+        threadId: task.childThreadId!,
+        runId: childRun.id,
+        occurredAt: now,
+        payload: { ...childRun, status: "completed", completedAt: now },
+      } satisfies OrchestrationV2DomainEvent;
+      const taskCompleted = {
+        id: EventId.make("event:stale-question-task-completed"),
+        type: "subagent.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: { ...task, status: "completed", result: "Proof captured.", completedAt: now },
+      } satisfies OrchestrationV2DomainEvent;
+      yield* eventSink.write({
+        commandId: CommandId.make("command:runtime-reconcile:stale-question"),
+        events: [childCompleted, taskCompleted],
+      });
+      yield* reactor.handle(childCompleted);
+      if (missedEvent) {
+        // An acknowledged result drops the task from the parent's command projection.
+        yield* orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make("ack-stale-question-task"),
+          parentThreadId,
+          taskId: task.id,
+          observedByRunId: parentRun.id,
+        });
+        // Persisted terminal state can predate the reactor subscription after restart.
+        yield* projections.apply({
+          id: EventId.make("event:stale-question-parent-finished"),
+          type: "run.updated",
+          threadId: parentThreadId,
+          occurredAt: now,
+          payload: { ...parentRun, status: "completed", completedAt: now },
+        });
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make("resume-stale-question"),
+          threadId: parentThreadId,
+        });
+      } else {
+        yield* reactor.handle(taskCompleted);
+      }
+      assert.equal((yield* wakeRun())?.status, "cancelled");
+      if (missedEvent) {
+        const before = (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs.length;
+        const delayedQuestion = {
+          ...question,
+          id: EventId.make("event:delayed-question"),
+          payload: { ...question.payload, id: RuntimeRequestId.make("request:delayed-question") },
+        };
+        yield* eventSink.write({ events: [delayedQuestion] });
+        yield* reactor.handle(delayedQuestion);
+        // A stale delivery is accepted without starting work, not rejected.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("stale-question-redelivery"),
+          threadId: parentThreadId,
+          messageId: MessageId.make("message:stale-question-redelivery"),
+          text: "Answer the delegated question",
+          notification: {
+            source: {
+              kind: "delegated_task",
+              taskIds: [task.id],
+              childThreadId: task.childThreadId!,
+            },
+            outcome: "updated",
+            summary: "Delegated task has a question",
+          },
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+        });
+        assert.equal(
+          (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs.length,
+          before,
+        );
+        return;
+      }
+
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("stale-question-followup"),
+        threadId: task.childThreadId!,
+        messageId: MessageId.make("message:stale-question-followup"),
+        text: "Capture another proof",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const followup = (yield* projections.getThreadRecords(task.childThreadId!, [
+        "runs",
+      ])).runs.find((run) => run.userMessageId === "message:stale-question-followup")!;
+      const followupQuestion = {
+        ...question,
+        id: EventId.make("event:stale-question-followup"),
+        runId: followup.id,
+        payload: {
+          ...question.payload,
+          id: RuntimeRequestId.make("request:stale-question-followup"),
+          nodeId: followup.rootNodeId!,
+        },
+      };
+      yield* eventSink.write({ events: [followupQuestion] });
+      yield* reactor.handle(followupQuestion);
+      const followupWake = (yield* projections.getThreadRecords(parentThreadId, [
+        "runs",
+      ])).runs.find(
+        (run) =>
+          run.userMessageId ===
+          `message:delegated-task-question:${parentThreadId}:${followupQuestion.payload.id}`,
+      )!;
+      assert.equal(followupWake.status, "queued");
+      yield* reactor.handle(taskCompleted);
+      assert.equal(
+        (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs.find(
+          (run) => run.id === followupWake.id,
+        )?.status,
+        "queued",
+      );
+      yield* projections.apply({
+        id: EventId.make("event:followup-question-parent-finished"),
+        type: "run.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: { ...parentRun, status: "completed", completedAt: now },
+      });
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("resume-followup-question"),
+        threadId: parentThreadId,
+      });
+      assert.equal(
+        (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs.find(
+          (run) => run.id === followupWake.id,
+        )?.status,
+        "starting",
+      );
+    }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
+);
+
 it.effect.each([false, true])("rejects thread.create for an existing id (deleted: %s)", (deleted) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1855,3 +2085,76 @@ it.effect("dispatch records the command outcome and its duration", () =>
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("a user message dispatched first stays run 1 when its lineage read is slow", () => {
+  const threadId = ThreadId.make("thread:dispatch-order");
+  // A file database serves projection reads from a reader worker, so the lineage read a user
+  // dispatch makes before taking the thread lock can yield. This gate holds it open instead.
+  const lineageReadEntered = Deferred.makeUnsafe<void>();
+  const lineageReadRelease = Deferred.makeUnsafe<void>();
+  let gateArmed = false;
+  const layerGatedLineageRead = ProviderReplayHarness.layerWithRegistry(
+    { name: "dispatch-order" },
+    ProviderAdapterRegistry.layerFromAdapters([adapter]),
+    {
+      runEffectWorker: false,
+      wrapProjectionStore: (store) => ({
+        ...store,
+        getThread: (id) => {
+          if (!gateArmed || id !== threadId) return store.getThread(id);
+          gateArmed = false;
+          return Deferred.succeed(lineageReadEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(lineageReadRelease)),
+            Effect.andThen(store.getThread(id)),
+          );
+        },
+      }),
+    },
+  );
+  return Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-dispatch-order"),
+      threadId,
+      projectId: ProjectId.make("project:dispatch-order"),
+      title: "Dispatch order",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const message = (id: string, createdBy: "user" | "agent") =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        threadId,
+        messageId: MessageId.make(id),
+        text: id,
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy,
+        creationSource: createdBy === "user" ? "web" : "server",
+      });
+
+    gateArmed = true;
+    const user = yield* message("message:user-first", "user").pipe(Effect.forkChild);
+    yield* Deferred.await(lineageReadEntered);
+    // Agent messages skip the lineage read, so this one would take a free thread lock first.
+    const agent = yield* message("message:agent-second", "agent").pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Deferred.succeed(lineageReadRelease, undefined);
+    yield* Fiber.join(agent);
+    yield* Fiber.join(user);
+
+    const { runs } = yield* orchestrator.getThreadProjection(threadId);
+    assert.deepEqual(
+      runs.toSorted((left, right) => left.ordinal - right.ordinal).map((run) => run.userMessageId),
+      [MessageId.make("message:user-first"), MessageId.make("message:agent-second")],
+    );
+  }).pipe(Effect.provide(layerGatedLineageRead));
+});
