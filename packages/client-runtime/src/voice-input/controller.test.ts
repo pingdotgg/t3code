@@ -234,12 +234,31 @@ describe("resolveTranscriptCommit", () => {
   it.each([
     ["Hello", "world", "Hello world"],
     ["Hello", "世界", "Hello世界"],
+    ["Hello", "𝟚", "Hello 𝟚"],
     ["你好", "世界", "你好世界"],
   ])(
     "preserves script boundaries with an autodetected language: %s + %s",
     (text, spoken, expected) => {
       const captured = draft({ text, selection: { start: text.length, end: text.length } });
       expect(resolveTranscriptCommit(captured, captured, spoken, "auto")).toMatchObject({
+        kind: "commit",
+        text: expected,
+      });
+    },
+  );
+
+  it.each([
+    ["Korean", "코드를", 3, "검토해 주세요", "ko_KR", "코드를 검토해 주세요"],
+    ["a supplementary letter", "𞤀", 2, "𞤦", "ff-Adlm", "𞤀 𞤦"],
+    ["a trailing combining mark", "नमस्ते", 6, "दुनिया", "hi-IN", "नमस्ते दुनिया"],
+    ["a non-ASCII word after the caret", "Änderungen", 0, "Weitere", "de_DE", "Weitere Änderungen"],
+    ["spaceless Japanese", "修正キャッシュ", 7, "テストも", "ja-JP", "修正キャッシュテストも"],
+    ["spaceless Thai", "โลก", 0, "สวัสดี", "th-TH", "สวัสดีโลก"],
+  ])(
+    "inserts at a caret with the recorded language's word spacing: %s",
+    (_case, text, caret, spoken, locale, expected) => {
+      const captured = draft({ text, selection: { start: caret, end: caret } });
+      expect(resolveTranscriptCommit(captured, captured, spoken, locale)).toMatchObject({
         kind: "commit",
         text: expected,
       });
@@ -290,7 +309,9 @@ describe("VoiceInputController", () => {
       code: "unavailable",
       message: "This device requires iOS 26 or later.",
     });
+    const configureRecording = vi.fn(async () => undefined);
     const unavailable = createHarness({
+      configureRecording,
       getTranscriber: () => ({
         prepare: async () => {
           throw reason;
@@ -299,6 +320,8 @@ describe("VoiceInputController", () => {
     });
     await unavailable.controller.start();
     expect(unavailable.controller.currentState.error).toBe(reason.message);
+    // Environment and web transcribers gate capture on consent checked during preparation.
+    expect(configureRecording).not.toHaveBeenCalled();
     expect(unavailable.recorder.record).not.toHaveBeenCalled();
 
     const denied = createHarness({

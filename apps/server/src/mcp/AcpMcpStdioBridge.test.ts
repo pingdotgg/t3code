@@ -9,8 +9,10 @@ import { vi } from "vite-plus/test";
 
 import { mcpToolSession, runAcpMcpCliFastPath, runAcpMcpStdioBridge } from "./AcpMcpStdioBridge.ts";
 
-function makeHarness(responder: (request: Request) => Promise<Response> | Response) {
-  const input = new NodeStream.PassThrough();
+function makeHarness(
+  responder: (request: Request) => Promise<Response> | Response,
+  input = new NodeStream.PassThrough(),
+) {
   const written: Array<string> = [];
   const requests: Array<{ readonly headers: Headers; readonly body: string }> = [];
   const bridge = runAcpMcpStdioBridge({
@@ -160,6 +162,36 @@ describe("AcpMcpStdioBridge", () => {
         id: null,
         error: { code: -32700, message: "Parse error" },
       });
+    }),
+  );
+
+  it.effect("keeps U+2028 and U+2029 inside a message instead of splitting it", () =>
+    Effect.gen(function* () {
+      const { input, written, requests, bridge } = makeHarness(
+        () => Response.json({ jsonrpc: "2.0", id: 4, result: { ok: true } }),
+        // Object mode keeps the two writes as separate chunks instead of one buffered read.
+        new NodeStream.PassThrough({ objectMode: true }),
+      );
+      const fiber = yield* Effect.forkChild(bridge);
+      // JSON.stringify leaves both separators unescaped, as MCP stdio clients send them.
+      const message = JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: { name: "echo", arguments: { text: "a\u2028b\u2029c\u{1f30d}" } },
+      });
+
+      // Split inside the emoji's UTF-8 bytes and leave the last line unterminated, as stdin may.
+      const bytes = Buffer.from(message);
+      const split = bytes.indexOf(Buffer.from("\u{1f30d}")) + 2;
+      input.write(bytes.subarray(0, split));
+      input.end(bytes.subarray(split));
+      yield* Fiber.join(fiber);
+
+      expect(requests.map((request) => request.body)).toEqual([message]);
+      expect(written.map((chunk) => JSON.parse(chunk))).toEqual([
+        { jsonrpc: "2.0", id: 4, result: { ok: true } },
+      ]);
     }),
   );
 
