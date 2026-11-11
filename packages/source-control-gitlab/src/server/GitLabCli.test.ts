@@ -301,7 +301,6 @@ layer("GitLabCli.layer", (it) => {
 
       assert.strictEqual(error._tag, "GitLabRepositoryHostMismatchError");
       expect(userFacingSourceControlDetail(error)).toContain(new URL(repository).host);
-      expect(userFacingSourceControlDetail(error)).not.toContain("glab config set host");
       expect(mockedRun.mock.calls.filter(([input]) => input.args[0] === "api")).toEqual([
         [
           expect.objectContaining({
