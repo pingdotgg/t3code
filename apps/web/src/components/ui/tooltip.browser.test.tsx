@@ -41,3 +41,63 @@ it.each([
   if (c.keptOpen) await expect.element(page.getByText("Description")).toBeVisible();
   else await expect.element(page.getByText("Description")).not.toBeInTheDocument();
 });
+
+it("keeps a focused tooltip tracked when the pointer enters a disabled tooltip", async () => {
+  await using screen = await render(
+    <TooltipScrollDismissArea
+      dismissFocused
+      data-testid="scroller"
+      className="h-32 overflow-y-auto"
+    >
+      <Tooltip>
+        <TooltipTrigger>Focused action</TooltipTrigger>
+        <TooltipPopup>Focused description</TooltipPopup>
+      </Tooltip>
+      <Tooltip disabled>
+        <TooltipTrigger render={<span />}>Unavailable action</TooltipTrigger>
+        <TooltipPopup>Disabled description</TooltipPopup>
+      </Tooltip>
+      <div className="h-96" />
+    </TooltipScrollDismissArea>,
+  );
+  await userEvent.keyboard("{Tab}");
+  await expect.element(page.getByText("Focused description")).toBeVisible();
+  await userEvent.hover(screen.getByText("Unavailable action"));
+  await expect.element(page.getByText("Focused description")).toBeVisible();
+  screen.getByTestId("scroller").element().scrollTop = 20;
+  await expect.element(page.getByText("Focused description")).not.toBeInTheDocument();
+  await expect.element(screen.getByRole("button", { name: "Focused action" })).toHaveFocus();
+});
+
+it("keeps a tooltip through focus scrolling and dismisses it on the next scroll", async () => {
+  const onScroll = vi.fn();
+  await using screen = await render(
+    <>
+      <button>Start navigation</button>
+      <TooltipScrollDismissArea
+        dismissFocused
+        data-testid="scroller"
+        onScrollCapture={onScroll}
+        className="h-32 overflow-y-auto"
+      >
+        <div className="h-96" />
+        <Tooltip>
+          <TooltipTrigger>Offscreen action</TooltipTrigger>
+          <TooltipPopup>Offscreen description</TooltipPopup>
+        </Tooltip>
+        <div className="h-96" />
+      </TooltipScrollDismissArea>
+    </>,
+  );
+  const scroller = screen.getByTestId("scroller").element();
+  await userEvent.click(screen.getByRole("button", { name: "Start navigation" }));
+  await userEvent.keyboard("{Tab}");
+  await vi.waitFor(() => {
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    expect(onScroll).toHaveBeenCalled();
+  });
+  await expect.element(screen.getByRole("button", { name: "Offscreen action" })).toHaveFocus();
+  await expect.element(page.getByText("Offscreen description")).toBeVisible();
+  scroller.scrollTop += 20;
+  await expect.element(page.getByText("Offscreen description")).not.toBeInTheDocument();
+});
