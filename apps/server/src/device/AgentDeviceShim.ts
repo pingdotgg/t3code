@@ -152,12 +152,16 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
 ];
 
 /**
- * agent-device 0.21.31 commands that pick their device from selectors: open, those that check its
- * claim themselves, and read-only listings. Any other command given a selector and a session the
- * daemon does not hold runs on that device without a claim check, even while another session holds it.
+ * agent-device 0.21.36 commands that pick their device from selectors: open, those that check its
+ * claim themselves, read-only listings, and batch/replay/test, whose steps inherit them (an open step
+ * needs them). Any other command given a selector and a session the daemon does not hold runs on that
+ * device without a claim check, even while another session holds it.
  */
 const SELECTING_COMMANDS: ReadonlyArray<string> = [
   "open",
+  "batch",
+  "replay",
+  "test",
   "launch",
   "relaunch",
   "apps",

@@ -221,16 +221,20 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           ["--platform=android", "close", "com.example"],
           ["close", "com.example"],
         ],
-        [
-          ["batch", "--steps-file", "/s.json", "--device", "Pixel", "--target", "mobile"],
-          ["batch", "--steps-file", "/s.json"],
-        ],
       ];
       for (const [args, passed] of unselected) {
         expect(yield* Effect.promise(() => launch(args))).toEqual([...passed, ...owned]);
       }
       // Commands that choose a device take its selectors; those that mutate it check its claim.
-      for (const args of [["open", "com.example"], ["Relaunch"], ["apps"], ["install", "a.app"]]) {
+      // batch, replay and test pass them to their steps, so an open step opens the bound device.
+      for (const args of [
+        ["open", "com.example"],
+        ["Relaunch"],
+        ["apps"],
+        ["install", "a.app"],
+        ["batch", "--steps-file", "/s.json"],
+        ["replay", "flow.ad"],
+      ]) {
         expect(yield* Effect.promise(() => launch(args))).toEqual([...args, ...selected]);
       }
       // agent-device 0.21.31 rejects these flags with "unknown option" or "not supported for command".
