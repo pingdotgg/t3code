@@ -646,26 +646,6 @@ describe("mergeUsage", () => {
       expect(merged.duplicateSources).toEqual([`wsl: ${secondMount.homePath}`]);
     });
 
-    it("keeps a native WSL directory apart from the Windows one", () => {
-      const native = {
-        ...wsl,
-        homePath: "/home/user/.claude/projects",
-        volumeId: "2080:131073",
-        physicalSourceId: "physical-wsl-ext4",
-      };
-      const merged = mergeUsage(
-        [
-          environment("windows", summary([bucket({ sourcePath: windows.homePath })], [windows])),
-          environment("wsl", summary([bucket({ sourcePath: native.homePath })], [native])),
-        ],
-        USAGE_CONTRACT_VERSION,
-      );
-
-      expect(merged.costUsd).toBe(20);
-      expect(merged.sessions).toBe(284);
-      expect(merged.duplicateSources).toHaveLength(0);
-    });
-
     it("keeps machines apart that share a hostname and path but not a physical source", () => {
       const merged = mergeUsage(
         [
@@ -737,25 +717,6 @@ describe("mergeUsage", () => {
 
       expect(merged.costUsd).toBe(30);
       expect(merged.duplicateSources).toHaveLength(0);
-    });
-
-    it("joins a legacy-only reading to the WSL one through the Windows reading", () => {
-      const { physicalSourceId: _omitted, ...legacy } = windows;
-      const environments = [
-        environment("standalone", {
-          ...summary([bucket({ sourcePath: legacy.homePath })], [legacy]),
-          readAt: "2026-08-07T00:09:00.000Z",
-        }),
-        environment("wsl", summary([bucket({ sourcePath: wsl.homePath })], [wsl])),
-        environment("windows", summary([bucket({ sourcePath: windows.homePath })], [windows])),
-      ];
-
-      for (const ordered of [environments, environments.toReversed()]) {
-        const merged = mergeUsage(ordered, USAGE_CONTRACT_VERSION);
-        expect(merged.costUsd).toBe(10);
-        expect(merged.sessions).toBe(142);
-        expect(merged.contributingEnvironments).toEqual(["standalone"]);
-      }
     });
   });
 

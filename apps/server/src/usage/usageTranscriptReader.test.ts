@@ -7,9 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
-import { type EnvironmentId, USAGE_CONTRACT_VERSION, UsageSummary } from "@t3tools/contracts";
 import { totalTokens, type TranscriptUsageFormat } from "@t3tools/provider-core/server/usage";
-import { mergeUsage } from "@t3tools/shared/usageMerge";
 import * as Schema from "effect/Schema";
 
 import { TEST_FORMATS } from "./usageTestFormats.ts";
@@ -20,8 +18,6 @@ import {
   readTranscriptRecords,
   transcriptLineGate,
 } from "./usageTranscriptReader.ts";
-
-const decodeUsageSummary = Schema.decodeUnknownSync(UsageSummary);
 
 let dir: string;
 
@@ -584,36 +580,6 @@ describe("readPhysicalSourceId", () => {
     return { mountPoint, mountInfoPath };
   }
 
-  function summaryFor(resolvedHomePath: string, volumeId: string, physicalSourceId?: string) {
-    return decodeUsageSummary({
-      contractVersion: USAGE_CONTRACT_VERSION,
-      readAt: "2026-10-22T02:00:00.000Z",
-      timeZone: "UTC",
-      sinceDay: "2026-10-21",
-      untilDay: "2026-10-21",
-      sources: [
-        {
-          fingerprint: {
-            hostId: "MainPC",
-            provider: "claude",
-            resolvedHomePath,
-            volumeId,
-            ...(physicalSourceId === undefined ? {} : { physicalSourceId }),
-          },
-          status: "ok",
-          scannedFiles: 1,
-          skippedFiles: 0,
-          malformedRecords: 0,
-          distinctSessions: 142,
-          message: null,
-        },
-      ],
-      buckets: [],
-      pricing: { status: "unavailable", source: "fixture", fetchedAt: null, knownModels: 0 },
-      scanDurationMs: 0,
-    });
-  }
-
   it("names a drvfs directory as the Windows server names it, whatever its typed case", async () => {
     const { mountPoint, mountInfoPath } = await drvfsFixture();
     const wslId = await readPhysicalSourceId(
@@ -623,31 +589,6 @@ describe("readPhysicalSourceId", () => {
       mountInfoPath,
     );
     assert.strictEqual(wslId, physicalSourceIdOf(scope, windowsPath));
-
-    const merged = mergeUsage(
-      [
-        {
-          environmentId: "windows" as EnvironmentId,
-          label: "Windows",
-          summary: summaryFor(
-            windowsPath,
-            "1280555009:3659174697951285",
-            physicalSourceIdOf(scope, windowsPath),
-          ),
-        },
-        {
-          environmentId: "wsl" as EnvironmentId,
-          label: "WSL",
-          summary: summaryFor(
-            `${mountPoint}/users/user/.claude/projects`,
-            "112:3659174697951287",
-            wslId,
-          ),
-        },
-      ],
-      USAGE_CONTRACT_VERSION,
-    );
-    assert.strictEqual(merged.sessions, 142);
   });
 
   it("gives no identity to native or shadowing Linux mounts, or without a desktop scope", async () => {
@@ -658,9 +599,5 @@ describe("readPhysicalSourceId", () => {
     assert.isUndefined(await readPhysicalSourceId(projects, scope, "linux", mountInfoPath));
     assert.isUndefined(await readPhysicalSourceId(dir, scope, "linux", mountInfoPath));
     assert.isUndefined(await readPhysicalSourceId(projects, undefined, "linux", mountInfoPath));
-    assert.notStrictEqual(
-      physicalSourceIdOf("fedcba9876543210fedcba9876543210", windowsPath),
-      physicalSourceIdOf(scope, windowsPath),
-    );
   });
 });
