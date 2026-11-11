@@ -1323,7 +1323,11 @@ export default function GitActionsControl({
                 <SourceControlIcon />
                 <MenuItemLabel>Git actions</MenuItemLabel>
               </MenuTrigger>
-              <MenuPopup side="right" align="start">
+              <MenuPopup
+                side="right"
+                align="start"
+                collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "end" }}
+              >
                 {gitItems}
               </MenuPopup>
             </Menu>
