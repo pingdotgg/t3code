@@ -17,7 +17,7 @@ import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hoo
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 import { readEnvironmentScope } from "./state/session";
-import { openDeviceLocalEditor, useLocalEditors, useRemoteOpenState } from "./remoteOpen";
+import { launchDeviceLocalEditor, useLocalEditors, useRemoteOpenState } from "./remoteOpen";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
@@ -44,6 +44,11 @@ export class PreferredEditorUnavailableError extends Schema.TaggedError<Preferre
     return `No available editor can open ${this.targetPath} in environment ${this.environmentId}.`;
   }
 }
+
+export class DeviceLocalEditorLaunchError extends Schema.TaggedError<DeviceLocalEditorLaunchError>()(
+  "DeviceLocalEditorLaunchError",
+  { message: Schema.String },
+) {}
 
 export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
@@ -84,6 +89,7 @@ export function useOpenInPreferredEditor(
       | OpenInEditorError
       | PreferredEditorEnvironmentRequiredError
       | PreferredEditorUnavailableError
+      | DeviceLocalEditorLaunchError
       | EnvironmentAuthorizationError
     >
   > => {
@@ -98,8 +104,11 @@ export function useOpenInPreferredEditor(
     }
     if (remote.mode === "device-local") {
       const editor = resolveAndPersistPreferredEditor(clientEditors);
-      if (editor && (await openDeviceLocalEditor(editor, targetPath))) {
-        return AsyncResult.success(editor);
+      if (editor) {
+        const failure = await launchDeviceLocalEditor(editor, targetPath);
+        return failure === null
+          ? AsyncResult.success(editor)
+          : AsyncResult.failure(Cause.fail(new DeviceLocalEditorLaunchError({ message: failure })));
       }
       return AsyncResult.failure(
         Cause.fail(

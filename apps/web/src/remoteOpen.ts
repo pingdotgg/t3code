@@ -276,23 +276,32 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   return true;
 }
 
-export async function openDeviceLocalEditor(editor: EditorId, path: string): Promise<boolean> {
+/** Resolves null on success, otherwise the reason to show the user. */
+export async function launchDeviceLocalEditor(
+  editor: EditorId,
+  path: string,
+): Promise<string | null> {
   try {
     const result = await window.desktopBridge?.openLocalEditor?.({ editor, path });
-    if (result?.ok) return true;
-    toastManager.add({
-      type: "error",
-      title: "Could not open editor on this device",
-      description:
-        result?.reason === "path-missing"
-          ? `Path does not exist on this device: ${path}. Local paths must match the environment.`
-          : result?.reason === "unsupported-launcher"
-            ? "This editor's launcher cannot be started without a shell on this system."
-            : `Local editor opening failed (${result?.reason ?? "desktop bridge unavailable"}). No server-side fallback was attempted.`,
-    });
+    if (result?.ok) return null;
+    return result?.reason === "path-missing"
+      ? `Path does not exist on this device: ${path}. Local paths must match the environment.`
+      : result?.reason === "unsupported-launcher"
+        ? "This editor's launcher cannot be started without a shell on this system."
+        : `Local editor opening failed (${result?.reason ?? "desktop bridge unavailable"}). No server-side fallback was attempted.`;
   } catch {
-    toastManager.add({ type: "error", title: "Could not open editor on this device" });
+    return "Local editor opening failed.";
   }
+}
+
+export async function openDeviceLocalEditor(editor: EditorId, path: string): Promise<boolean> {
+  const failure = await launchDeviceLocalEditor(editor, path);
+  if (failure === null) return true;
+  toastManager.add({
+    type: "error",
+    title: "Could not open editor on this device",
+    description: failure,
+  });
   return false;
 }
 

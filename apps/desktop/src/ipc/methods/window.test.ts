@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ManagedPolicyLimits } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
@@ -519,5 +520,15 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "kiro");
       assert.include(editors, "trae");
       assert.notInclude(editors, "file-manager");
+      // A shell-only Windows launcher is not offered, since openLocalEditor refuses it.
+      yield* fs.writeFileString(path.join(bin, "code.cmd"), "@echo off\r\n");
+      const windowsEditors = yield* probeLocalEditors.handler(undefined).pipe(
+        Effect.provideService(HostProcess.Environment, { PATH: bin, PATHEXT: ".CMD;.EXE" }),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(SpawnExecutableResolution, (command) =>
+          command === "code" ? path.join(bin, "code.cmd") : undefined,
+        ),
+      );
+      assert.notInclude(windowsEditors, "vscode");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

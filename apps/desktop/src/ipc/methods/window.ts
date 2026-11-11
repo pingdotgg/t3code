@@ -19,6 +19,7 @@ import {
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -420,7 +421,11 @@ export const probeLocalEditors = DesktopIpc.makeIpcMethod({
     const env = yield* HostProcess.Environment;
     for (const editor of EDITORS) {
       if (editor.commands === null) continue;
-      if (Option.isSome(yield* resolveEditorCommand(editor, env))) available.push(editor.id);
+      const resolved = yield* resolveEditorCommand(editor, env);
+      if (Option.isNone(resolved)) continue;
+      // openLocalEditor refuses shell-only Windows launchers, so do not offer them.
+      const spawn = yield* resolveSpawnCommand(resolved.value.command, [], { env });
+      if (!spawn.shell) available.push(editor.id);
     }
     return available;
   }),

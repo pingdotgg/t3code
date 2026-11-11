@@ -19,7 +19,7 @@ vi.mock("./remoteOpen", () => ({
   useRemoteOpenState: () => ({ mode: "local-exec" }),
   useRemoteCapableEditors: () => [],
   useLocalEditors: () => [],
-  openDeviceLocalEditor: vi.fn(),
+  launchDeviceLocalEditor: vi.fn(),
 }));
 vi.mock("./state/shell", () => ({ shellEnvironment: { openInEditor: "openInEditor" } }));
 vi.mock("./state/use-atom-command", () => ({ useAtomCommand: () => state.run }));
