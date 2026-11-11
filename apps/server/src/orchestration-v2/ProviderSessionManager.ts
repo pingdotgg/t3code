@@ -2676,9 +2676,11 @@ export const layerWithOptions = (
           });
           // Scope, not presence: open can install a replacement under the same id meanwhile, and
           // a kept entry is rewritten with the same scope.
-          return (
-            before !== undefined && (yield* Ref.get(sessions)).get(key)?.scope !== before.scope
-          );
+          const released =
+            before !== undefined && (yield* Ref.get(sessions)).get(key)?.scope !== before.scope;
+          // The stopped turn's markBusy cancelled the idle timer and its markIdle may never come.
+          if (!released) yield* scheduleIdleReleaseInternal(input.providerSessionId);
+          return released;
         }),
         otherWorkingThreads: Effect.fn("ProviderSessionManager.otherWorkingThreads")(
           function* (input) {
