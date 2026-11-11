@@ -13,6 +13,7 @@ import * as NetAddress from "effect/net/NetAddress";
 
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import { SERVICE_LAUNCHER_PROTOCOL } from "./cloud/serviceProtocol.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -146,6 +147,7 @@ it.effect("parks automatic pull until activation without delaying command readin
         Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
           managed: true,
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
           prepareTrial: Deferred.succeed(prepared, undefined).pipe(
             Effect.andThen(Deferred.await(commitTrial)),
             Effect.as(undefined),
