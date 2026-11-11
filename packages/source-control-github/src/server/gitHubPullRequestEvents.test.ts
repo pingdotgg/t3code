@@ -8,7 +8,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as GitHubPullRequestEvents from "./gitHubPullRequestEvents.ts";
-import { GitHubApiResponseError } from "./GitHubRequestPolicy.ts";
+import { GitHubApiNotFoundError, GitHubApiResponseError } from "./GitHubRequestPolicy.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 
 const target = { host: "github.com", repository: "pingdotgg/t3code", number: 15 };
@@ -17,7 +17,9 @@ const sse = (...frames: ReadonlyArray<readonly [string, string]>) =>
   frames.map(([event, data]) => `event: ${event}\ndata: ${data}\n\n`).join("");
 
 function fakeRest(
-  subscribe: (count: number) => Effect.Effect<string, GitHubApiResponseError>,
+  subscribe: (
+    count: number,
+  ) => Effect.Effect<string, GitHubApiResponseError | GitHubApiNotFoundError>,
   signedIn = true,
 ) {
   const posts: Array<unknown> = [];
@@ -177,5 +179,17 @@ it.effect("leaves users without the app sign-in, other hosts, and refusals to po
     yield* TestClock.adjust("61 minutes");
     assert.equal(yield* Stream.runCount(events(target)), 0);
     assert.equal(refused.posts.length, 2);
+
+    const missing = fakeRest(() =>
+      Effect.fail(
+        new GitHubApiNotFoundError({ host: "github.com", operation: "subscribePullRequestEvents" }),
+      ),
+    );
+    const missingEvents = yield* eventsOf(missing.rest, httpClient);
+    assert.equal(yield* Stream.runCount(missingEvents(target)), 0);
+    assert.equal(yield* Stream.runCount(missingEvents(target)), 0);
+    assert.equal(missing.posts.length, 1, "a pull request it cannot see is not asked again");
+    assert.equal(yield* Stream.runCount(missingEvents({ ...target, number: 16 })), 0);
+    assert.equal(missing.posts.length, 2, "other pull requests on the host still subscribe");
   }),
 );

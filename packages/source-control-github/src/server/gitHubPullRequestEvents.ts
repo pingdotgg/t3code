@@ -90,14 +90,14 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.asSome,
         Effect.catchTags({
+          GitHubApiNotFoundError: () =>
+            pause(resourceUrl, REFUSED_PAUSE).pipe(Effect.as(Option.none())),
           GitHubApiResponseError: (error) =>
             (error.status === 403
               ? pause(input.host, REFUSED_PAUSE)
-              : error.status === 404
-                ? pause(resourceUrl, REFUSED_PAUSE)
-                : error.status === 422
-                  ? pause(input.host, LIMIT_PAUSE)
-                  : Effect.void
+              : error.status === 422
+                ? pause(input.host, LIMIT_PAUSE)
+                : Effect.void
             ).pipe(Effect.as(Option.none())),
         }),
         Effect.catch((error) =>
