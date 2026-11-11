@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
@@ -45,7 +46,11 @@ import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   makeProviderEventRoutingState,
@@ -65,11 +70,18 @@ const layerTestEventSink = EventSink.layer.pipe(
 
 const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "ingestor-git-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
-const makeLayerTest = <E>(ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, E>) =>
+const layerEmptyInstances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+  getInstance: () => Effect.undefined,
+});
+const makeLayerTest = <E>(
+  ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, E>,
+  instances = layerEmptyInstances,
+) =>
   Layer.mergeAll(
+    instances,
     layerTestDatabase,
     layerTestStores,
     layerTestEventSink,
@@ -79,6 +91,7 @@ const makeLayerTest = <E>(ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, 
     ProviderEventIngestor.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          instances,
           layerTestStores,
           ingestorEventSink,
           IdAllocator.layer,
@@ -217,13 +230,111 @@ function threadCreatedEvent(
 
 const layer = it.layer(layerTest);
 
+it.effect("refreshes the failing instance snapshot after a committed usage_limit terminal", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const refreshed = yield* Deferred.make<void>();
+      const adapter = yield* ProviderAdapter.ProviderAdapterV2.pipe(
+        Effect.provide(
+          Layer.mock(ProviderAdapter.ProviderAdapterV2)({
+            instanceId: ProviderInstanceId.make("cursor-work"),
+            driver: ProviderDriverKind.make("cursor"),
+          }),
+        ),
+      );
+      const instance: ProviderInstance = {
+        instanceId: ProviderInstanceId.make("cursor-work"),
+        driverKind: ProviderDriverKind.make("cursor"),
+        continuationIdentity: {
+          driverKind: ProviderDriverKind.make("cursor"),
+          continuationKey: "work",
+        },
+        enabled: true,
+        displayName: undefined,
+        orchestrationAdapter: adapter,
+        textGeneration: {
+          generateBranchName: () => Effect.die("unused"),
+          generateCommitMessage: () => Effect.die("unused"),
+          generatePrContent: () => Effect.die("unused"),
+          generateThreadTitle: () => Effect.die("unused"),
+          generateReviewGuide: () => Effect.die("unused"),
+          generateTranscriptionPostProcessing: () => Effect.die("unused"),
+        },
+        snapshot: {
+          refreshUsage: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
+          getSnapshot: Effect.die("unused"),
+          refresh: Effect.die("unused"),
+          resolveMaintenance: () => Effect.die("unused"),
+          applyUsageLimits: () => Effect.die("unused"),
+          streamChanges: Stream.empty,
+        },
+      };
+      const lookups: ProviderInstanceId[] = [];
+      const instances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+        getInstance: (id) =>
+          Effect.sync(() => {
+            lookups.push(id);
+            return id === instance.instanceId ? instance : undefined;
+          }),
+      });
+      yield* Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const threadEvent = yield* threadCreatedEvent(now);
+        yield* eventSink.write({ events: [threadEvent] });
+        const input = {
+          providerSessionId: yield* idAllocator.allocate.providerSession({
+            providerInstanceId: instance.instanceId,
+            threadId: threadEvent.threadId,
+          }),
+          providerInstanceId: instance.instanceId,
+          threadId: threadEvent.threadId,
+        };
+        for (const failureClass of ["validation_error", "usage_limit"] as const) {
+          const stored = yield* ingestor.ingestNormalized({
+            ...input,
+            event: {
+              type: "turn.terminal",
+              driver: instance.driverKind,
+              providerThreadId: idAllocator.derive.providerThread({
+                driver: instance.driverKind,
+                nativeThreadId: "limited",
+              }),
+              providerTurnId: idAllocator.derive.providerTurn({
+                driver: instance.driverKind,
+                nativeTurnId: failureClass,
+              }),
+              runOrdinal: 1,
+              failureItemOrdinal: 1,
+              status: "failed",
+              failure: makeProviderFailure({
+                class: failureClass,
+                message: "Provider rejected turn.",
+              }),
+              threadDisposition: "reusable",
+            },
+          });
+          assert.equal(stored.length, 1);
+          if (failureClass === "validation_error") assert.deepEqual(lookups, []);
+        }
+        assert.deepEqual(lookups, [instance.instanceId]);
+        yield* Deferred.await(refreshed);
+      }).pipe(Effect.provide(makeLayerTest(layerTestEventSink, instances)));
+    }),
+  ),
+);
+
 it.effect("records accepted billed turn usage once without billing the context window", () => {
-  const recorded: Array<Readonly<Record<string, unknown>>> = [];
-  const layerAnalytics = Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
-    record: (properties: Readonly<Record<string, unknown>>) =>
+  const recorded: Array<ProviderUsageAnalytics.ProviderTurnReport> = [];
+  const layerAnalytics = Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
+    runStarted: () => Effect.void,
+    turnCompleted: (report) =>
       Effect.sync(() => {
-        recorded.push(properties);
+        recorded.push(report);
       }),
+    runSettled: () => Effect.void,
   });
   return Effect.gen(function* () {
     const now = yield* DateTime.now;
@@ -306,23 +417,9 @@ it.effect("records accepted billed turn usage once without billing the context w
     assert.isEmpty(ignored);
     assert.lengthOf(recorded, 1);
     assert.deepEqual(recorded[0], {
-      provider: CODEX_DRIVER,
-      terminalStatus: "completed",
-      usageStatus: "complete",
-      usageScope: "main_agent",
-      hasSubagents: false,
-      inputTokens: 40,
-      cachedInputTokens: 30,
-      outputTokens: 10,
-      model: modelSelection.model,
-      mixedModels: false,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      createdBy: "agent",
-      creationSource: "provider",
-      scheduled: false,
-      subagent: true,
-      durationMs: 120,
+      driver: CODEX_DRIVER,
+      providerTurn,
+      context: input.analyticsContext,
     });
   }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
 });
@@ -449,8 +546,12 @@ layer("ProviderEventIngestorV2", (it) => {
           event: { type: "node.updated", driver: CODEX_DRIVER, node: sent },
         });
 
-      assert.lengthOf(yield* ingestNode(node), 1);
-      assert.isEmpty(yield* ingestNode({ ...node }));
+      yield* eventSink.withProviderBatch(
+        Effect.gen(function* () {
+          assert.lengthOf(yield* ingestNode(node), 1);
+          assert.isEmpty(yield* ingestNode({ ...node }));
+        }),
+      );
       yield* eventSink.write({
         events: [
           {
@@ -1538,6 +1639,73 @@ layer("ProviderEventIngestorV2", (it) => {
         ),
         [{ mimeType: "image/png", data: screenshotBase64 }],
       );
+    }),
+  );
+
+  it.effect("keeps a steered message pending until the provider reports it read", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const runId = RunId.make("run:steer-read");
+      const messageId = MessageId.make("message:steer-read");
+      const steer: OrchestrationV2TurnItem = {
+        id: idAllocator.derive.userTurnItem({ messageId }),
+        threadId: threadEvent.threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "user_message",
+        createdBy: "user",
+        creationSource: "web",
+        messageId,
+        inputIntent: "steer",
+        text: "Steer behind a command",
+        attachments: [],
+      };
+      yield* eventSink.write({ events: [threadEvent] });
+      const ingest = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event,
+        });
+      const projected = projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: steer.id,
+      });
+      const steerUpdated = (status: "pending" | "completed") =>
+        ingest({
+          type: "steer.updated",
+          driver: CODEX_DRIVER,
+          threadId: threadEvent.threadId,
+          runId,
+          messageId,
+          status,
+        });
+
+      yield* ingest({ type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: steer });
+      yield* steerUpdated("pending");
+      assert.deepInclude(yield* projected, { status: "pending", completedAt: null });
+      yield* steerUpdated("completed");
+      assert.equal((yield* projected)?.status, "completed");
     }),
   );
 

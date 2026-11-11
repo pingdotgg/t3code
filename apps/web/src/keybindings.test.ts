@@ -15,13 +15,13 @@ import {
   effectiveShortcutsForCommand,
   formatShortcutLabel,
   isRichTextBoldShortcut,
-  isThreadNavigationShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   resolveChatShortcutCommand,
   resolveShortcutCommand,
   shouldShowThreadJumpHintsForModifiers,
   shortcutLabelForCommand,
+  terminalNavigationShortcutData,
   type ShortcutEventLike,
 } from "./keybindings";
 
@@ -35,6 +35,31 @@ function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
     ...overrides,
   };
 }
+
+describe("terminal word navigation", () => {
+  it.each(["Win32", "Linux x86_64"])(
+    "leaves Ctrl+Arrow to the terminal encoder on %s",
+    (platform) => {
+      for (const key of ["ArrowLeft", "ArrowRight"]) {
+        assert.equal(terminalNavigationShortcutData(event({ key, ctrlKey: true }), platform), null);
+      }
+    },
+  );
+
+  it.each(["Win32", "Linux x86_64", "MacIntel"])(
+    "preserves Alt+Arrow word navigation on %s",
+    (platform) => {
+      assert.equal(
+        terminalNavigationShortcutData(event({ key: "ArrowLeft", altKey: true }), platform),
+        "\u001bb",
+      );
+      assert.equal(
+        terminalNavigationShortcutData(event({ key: "ArrowRight", altKey: true }), platform),
+        "\u001bf",
+      );
+    },
+  );
+});
 
 function modShortcut(
   key: string,
@@ -369,32 +394,6 @@ describe("thread navigation helpers", () => {
           platform: "MacIntel",
           context: { isDesktop: true },
         },
-      ),
-    );
-  });
-});
-
-describe("isThreadNavigationShortcut", () => {
-  it("leaves a key to a focused terminal when the user's binding excludes it", () => {
-    const next = event({ key: "}", code: "BracketRight", ctrlKey: true, shiftKey: true });
-    const terminal = { platform: "Linux x86_64", context: { terminalFocus: true } };
-    assert.isTrue(isThreadNavigationShortcut(next, DEFAULT_RESOLVED_KEYBINDINGS, terminal));
-    assert.isFalse(
-      isThreadNavigationShortcut(
-        next,
-        mergeWithDefaultKeybindings(
-          compileResolvedKeybindingsConfig([
-            { key: "mod+shift+]", command: "thread.next", when: "!terminalFocus" },
-          ]),
-        ),
-        terminal,
-      ),
-    );
-    assert.isFalse(
-      isThreadNavigationShortcut(
-        event({ key: "o", ctrlKey: true }),
-        DEFAULT_RESOLVED_KEYBINDINGS,
-        terminal,
       ),
     );
   });
@@ -768,6 +767,23 @@ describe("isRichTextBoldShortcut", () => {
 });
 
 describe("composer and pull request shortcuts", () => {
+  it("uses the dictation chord outside the terminal and preserves terminal split", () => {
+    const chord = event({ key: "d", ctrlKey: true, shiftKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "composer.dictation",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "terminal.splitVertical",
+    );
+  });
   it("fills missing number shortcuts without replacing the saved URL binding", () => {
     const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(
       (binding) =>
