@@ -8,11 +8,17 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
-import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useState,
+  type ComponentProps,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { findProjectOnChangeRequestHost } from "@t3tools/client-runtime/change-request-links";
 
+import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useProjects } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -62,21 +68,9 @@ function ThreadDetailsPrLinkRow({
   );
 }
 
-export function ThreadDetailsPrRows({
-  threadRef,
-  links,
-  currentLink,
-  onOpenLink,
-  ...row
-}: ComponentProps<typeof ThreadDetailsPrRow> & {
-  threadRef: ScopedThreadRef;
-  links: ReadonlyArray<ThreadPullRequestLink>;
-  currentLink: ThreadPullRequestLink | null;
-  onOpenLink: (event: ReactMouseEvent<HTMLElement>, url: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
+function useStopWatchingPullRequest(threadRef: ScopedThreadRef) {
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
-  const stopWatching = (link: ThreadPullRequestLink | null) =>
+  return (link: ThreadPullRequestLink | null) =>
     link?.watch === undefined
       ? undefined
       : () =>
@@ -90,7 +84,26 @@ export function ThreadDetailsPrRows({
               watching: false,
             },
           });
-  const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
+}
+
+function PrRowsWithMore({
+  environmentId,
+  links,
+  currentLink,
+  currentRow,
+  onOpenLink,
+  onActed,
+  stopWatching,
+}: {
+  environmentId: EnvironmentId;
+  links: ReadonlyArray<ThreadPullRequestLink>;
+  currentLink: ThreadPullRequestLink | null;
+  currentRow: ReactNode;
+  onOpenLink: (event: ReactMouseEvent<HTMLElement>, url: string) => void;
+  onActed?: (() => void) | undefined;
+  stopWatching: ReturnType<typeof useStopWatchingPullRequest>;
+}) {
+  const [expanded, setExpanded] = useState(false);
   const rest =
     currentLink === null
       ? []
@@ -107,10 +120,10 @@ export function ThreadDetailsPrRows({
           {rest.map((link) => (
             <ThreadDetailsPrLinkRow
               key={threadPullRequestKeyOf(link)}
-              environmentId={row.environmentId}
+              environmentId={environmentId}
               link={link}
               onOpen={(event) => onOpenLink(event, link.url)}
-              onActed={row.onActed}
+              onActed={onActed}
               onStopWatching={stopWatching(link)}
             />
           ))}
@@ -133,5 +146,62 @@ export function ThreadDetailsPrRows({
         {expanded ? "Show less" : `Show ${rest.length} more`}
       </ThreadDetailsControl>
     </>
+  );
+}
+
+export function ThreadDetailsPrRows({
+  threadRef,
+  links,
+  currentLink,
+  onOpenLink,
+  ...row
+}: ComponentProps<typeof ThreadDetailsPrRow> & {
+  threadRef: ScopedThreadRef;
+  links: ReadonlyArray<ThreadPullRequestLink>;
+  currentLink: ThreadPullRequestLink | null;
+  onOpenLink: (event: ReactMouseEvent<HTMLElement>, url: string) => void;
+}) {
+  const stopWatching = useStopWatchingPullRequest(threadRef);
+  return (
+    <PrRowsWithMore
+      environmentId={row.environmentId}
+      links={links}
+      currentLink={currentLink}
+      currentRow={<ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />}
+      onOpenLink={onOpenLink}
+      onActed={row.onActed}
+      stopWatching={stopWatching}
+    />
+  );
+}
+
+/** The thread's linked pull requests for a workspace with no branch to hang them on. */
+export function ThreadDetailsLinkedPrRows({
+  threadRef,
+  links,
+  currentLink,
+}: {
+  threadRef: ScopedThreadRef;
+  links: ReadonlyArray<ThreadPullRequestLink>;
+  currentLink: ThreadPullRequestLink;
+}) {
+  const stopWatching = useStopWatchingPullRequest(threadRef);
+  const openPrLink = useOpenPrLink(threadRef);
+  return (
+    <PrRowsWithMore
+      environmentId={threadRef.environmentId}
+      links={links}
+      currentLink={currentLink}
+      currentRow={
+        <ThreadDetailsPrLinkRow
+          environmentId={threadRef.environmentId}
+          link={currentLink}
+          onOpen={(event) => openPrLink(event, currentLink.url)}
+          onStopWatching={stopWatching(currentLink)}
+        />
+      }
+      onOpenLink={openPrLink}
+      stopWatching={stopWatching}
+    />
   );
 }

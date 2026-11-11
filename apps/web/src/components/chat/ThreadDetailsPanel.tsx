@@ -20,6 +20,10 @@ import { memo, useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { ThreadDetailsLinkedPrRows } from "./ThreadDetailsPrRows";
+import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
+import { useSupportsMultiplePullRequests } from "../../hooks/useSupportsMultiplePullRequests";
+import { useQuietThreadShell } from "../../state/entities";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
@@ -95,6 +99,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.activeProjectScripts && visible.scripts ? props.gitCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
+  const linkedPullRequests = useQuietThreadShell(activeThreadRef)?.pullRequests ?? [];
+  const currentLinkedPullRequest = useSupportsMultiplePullRequests(props.environmentId)
+    ? resolveThreadCurrentPullRequestLink(linkedPullRequests)
+    : null;
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -155,6 +163,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
           scripts: visible.scripts && props.activeProjectScripts !== undefined,
           branch: props.gitCwd !== null && props.isGitRepo && visible.branch,
+          linkedPullRequests:
+            visible.branch &&
+            !(props.gitCwd !== null && props.isGitRepo) &&
+            currentLinkedPullRequest !== null,
           git:
             props.gitCwd !== null &&
             props.activeProjectName !== undefined &&
@@ -213,7 +225,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 </ThreadDetailsSection>
               ) : null}
 
-              {props.gitCwd && (show.branch || show.git) ? (
+              {(props.gitCwd && (show.branch || show.git)) || show.linkedPullRequests ? (
                 <ThreadDetailsSection
                   headingId="thread-details-version-control-heading"
                   title="Version Control"
@@ -221,10 +233,17 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   separated={density === "full"}
                 >
                   <div className="flex flex-col">
+                    {show.linkedPullRequests && currentLinkedPullRequest ? (
+                      <ThreadDetailsLinkedPrRows
+                        threadRef={activeThreadRef}
+                        links={linkedPullRequests}
+                        currentLink={currentLinkedPullRequest}
+                      />
+                    ) : null}
                     {show.branch ? (
                       <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
                     ) : null}
-                    {show.git ? (
+                    {show.git && props.gitCwd ? (
                       <GitActionsControl
                         compact={density !== "full"}
                         showActions={visible.gitActions}
