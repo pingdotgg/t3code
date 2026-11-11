@@ -2,10 +2,9 @@ import { useAtomValue } from "@effect/atom-react";
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
 import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
-import { ListFilterMenu } from "../workspace/ListFilterMenu";
+import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
 import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
@@ -79,7 +78,7 @@ function useProjectsInSidebarOrder<Project extends { id: string; environmentId: 
 ) {
   const { sidebarProjectGroupingMode } = useMobileProjectGroupingSettings();
   const scopes = useAtomValue(sidebarProjectOrderFamily(sidebarProjectGroupingMode));
-  return useMemo(() => sortProjectsByGroupOrder(projects, scopes), [projects, scopes]);
+  return sortProjectsByGroupOrder(projects, scopes);
 }
 
 export interface PullRequestFilterMenu {
@@ -358,6 +357,7 @@ export function PullRequestListFilters(props: {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={{ overflow: "visible" }}
       // In the Android sidebar the first pill lines up with the rows' content instead
       // (8dp row margin + 12dp padding).
       contentContainerStyle={

@@ -1,0 +1,94 @@
+---
+title: VPC & private networking
+description: Give Cloud Run services Direct VPC egress to reach private IPs like Memorystore, and create your own VPC networks and subnets.
+---
+
+Most Google APIs, like Firestore, Pub/Sub, and Cloud Storage, are
+reached over their public endpoints, so a Cloud Run service needs no
+network setup. Some resources only have a private IP: Memorystore,
+AlloyDB, Filestore, and VMs without a public address. To reach those,
+give the service an interface on your VPC.
+
+## Direct VPC egress
+
+Add `vpcAccess` to the service's template:
+
+```typescript
+export default class Api extends GCP.Function<Api>()(
+  "Api",
+  {
+    main: import.meta.url,
+    template: {
+      vpcAccess: {
+        egress: "PRIVATE_RANGES_ONLY",
+        networkInterfaces: [{ network: "default", subnetwork: "default" }],
+      },
+    },
+  },
+  Effect.gen(function* () {
+    const redis = yield* GCP.Redis.ReadWriteRedis(Cache);
+    return {
+      fetch: redis.get("greeting").pipe(
+        Effect.map((value) => HttpServerResponse.text(value ?? "hello")),
+        Effect.orDie,
+      ),
+    };
+  }).pipe(Effect.provide(GCP.Redis.ReadWriteRedisHttp)),
+) {}
+```
+
+`PRIVATE_RANGES_ONLY` sends traffic for private addresses through the
+VPC. Everything else, including Google APIs, leaves the normal way.
+Use `ALL_TRAFFIC` to send everything through the VPC, for example to
+leave through a fixed NAT address.
+
+## Create your own network
+
+The `default` network works for most projects. Create a dedicated one
+when you need your own address ranges:
+
+```typescript
+// src/network.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+
+export const Network = GCP.Compute.Network("Vpc", {});
+
+export const Subnet = Effect.gen(function* () {
+  const network = yield* Network;
+  return yield* GCP.Compute.Subnetwork("Private", {
+    network: network.networkName,
+    ipCidrRange: "10.0.0.0/24",
+    privateIpGoogleAccess: true,
+  });
+});
+```
+
+New networks are in custom mode: you choose every subnet. Point the
+service at them:
+
+```typescript
+networkInterfaces: [
+  { network: network.networkName, subnetwork: subnet.subnetworkName },
+],
+```
+
+## Firewall rules
+
+Allow traffic between your own ranges with a firewall rule:
+
+```typescript
+yield* GCP.Compute.Firewall("AllowInternal", {
+  network: network.networkName,
+  sourceRanges: ["10.0.0.0/8"],
+  allowed: [{ protocol: "tcp" }],
+});
+```
+
+## Where next
+
+- [Memorystore](/gcp/data/memorystore) — Redis on a private IP.
+- [Private services](/gcp/networking/private-services) — services that
+  only other services can call.
+- [Compute reference](/providers/gcp/compute#network) — networks,
+  subnets, firewalls, and load balancers.
