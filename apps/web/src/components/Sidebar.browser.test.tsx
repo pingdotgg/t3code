@@ -83,6 +83,7 @@ describe("sidebar header new thread", () => {
       activeDraftThread: null,
       activeThread: null,
       defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
       handleNewThread: vi.fn().mockResolvedValue(null),
       routeDraftId: null,
       routeThreadRef: null,
