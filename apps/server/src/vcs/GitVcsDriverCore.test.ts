@@ -2235,6 +2235,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["submodule", "update", "--init", "--recursive"]);
           yield* git(cwd, ["submodule", "deinit", "-f", "--", "uninitialized"]);
           const child = NodePath.join(cwd, "packages/auth service");
+          yield* git(child, ["config", "user.email", "test@test.com"]);
+          yield* git(child, ["config", "user.name", "Test"]);
           yield* writeTextFile(child, "committed.txt", "child commit\n");
           yield* git(child, ["add", "committed.txt"]);
           yield* git(child, ["commit", "-m", "Child change"]);
