@@ -57,7 +57,8 @@ const emitTrackedToolCallKindThenHang = process.env.T3_ACP_EMIT_TRACKED_TOOL_CAL
 const clientFsProbePath = process.env.T3_ACP_CLIENT_FS_PROBE_PATH;
 const clientFsProbeLogPath = process.env.T3_ACP_CLIENT_FS_PROBE_LOG_PATH;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-const emitRunningCommandThenHang = process.env.T3_ACP_EMIT_RUNNING_COMMAND_THEN_HANG === "1";
+// "hang" keeps the prompt running after the command starts; "end_turn" answers while it runs.
+const emitRunningCommand = process.env.T3_ACP_EMIT_RUNNING_COMMAND;
 const runningCommandPidPath = process.env.T3_ACP_RUNNING_COMMAND_PID_PATH;
 const agentPidPath = process.env.T3_ACP_AGENT_PID_PATH;
 const emitEmptySuccessfulBash = process.env.T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH === "1";
@@ -1355,7 +1356,7 @@ const program = Effect.gen(function* () {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 
-      if (emitRunningCommandThenHang) {
+      if (emitRunningCommand !== undefined) {
         // The command is a long-lived Node child so the scenario runs on every platform.
         const command = NodeChildProcess.spawn(
           process.execPath,
@@ -1383,6 +1384,8 @@ const program = Effect.gen(function* () {
             rawInput: { command: "npm run dev" },
           },
         });
+        if (emitRunningCommand === "end_turn")
+          return yield* finishPrompt(requestedSessionId, "end_turn");
         return yield* Effect.never;
       }
 

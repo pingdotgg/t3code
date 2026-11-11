@@ -240,6 +240,12 @@ export function makeAntigravityAcpAdapterFlavor(
     subagentsIdleOnTurnCompletion: true,
     restartRuntimeOnEveryInterrupt: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
+    // A started command can outlive end_turn. Its item stays running after the turn
+    // completes so Stop can still reach it; the turn itself does not wait for it.
+    extractBackgroundTaskId: (toolCall) =>
+      toolCall.kind === "execute" && toolCall.status !== undefined && toolCall.status !== "pending"
+        ? toolCall.toolCallId
+        : undefined,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,

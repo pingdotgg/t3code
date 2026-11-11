@@ -1255,7 +1255,7 @@ describe("AntigravityAdapterV2 commands started during a turn", () => {
     }
   };
 
-  const openMockSession = (label: string) =>
+  const openMockSession = (label: string, runningCommand: "hang" | "end_turn") =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1295,7 +1295,7 @@ describe("AntigravityAdapterV2 commands started during a turn", () => {
                 T3_ACP_ANTIGRAVITY: "1",
                 T3_ACP_RUNNING_COMMAND_PID_PATH: commandPidPath,
                 T3_ACP_AGENT_PID_PATH: agentPidPath,
-                T3_ACP_EMIT_RUNNING_COMMAND_THEN_HANG: "1",
+                T3_ACP_EMIT_RUNNING_COMMAND: runningCommand,
               },
             },
           }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto)),
@@ -1408,11 +1408,31 @@ describe("AntigravityAdapterV2 commands started during a turn", () => {
       };
     });
 
+  it.effect("keeps a command running past end_turn reachable by Stop", () =>
+    Effect.gen(function* () {
+      const mock = yield* openMockSession("command-outlives-turn", "end_turn");
+      yield* mock.startTurn(1);
+      assert.equal(yield* mock.waitForTerminal, "completed");
+      const commandPid = yield* mock.readCommandPid;
+      assert.isTrue(pidIsRunning(commandPid));
+      const command = mock.commandItem("running-command");
+      assert.equal(command?.status, "running");
+      if (command?.providerTurnId == null) return yield* Effect.die("missing command item");
+
+      yield* mock.session.interruptTurn({
+        providerThread: mock.providerThread,
+        providerTurnId: command.providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.isFalse(pidIsRunning(commandPid), "Stop ends the command");
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
   it.effect.each(["Stop", "fallback restart"])(
     "lets %s end the running command and respawns the agent for the next turn",
     (action) =>
       Effect.gen(function* () {
-        const mock = yield* openMockSession("command-stopped");
+        const mock = yield* openMockSession("command-stopped", "hang");
         yield* mock.startTurn(1);
         yield* mock.waitForCommand;
         const commandPid = yield* mock.readCommandPid;
