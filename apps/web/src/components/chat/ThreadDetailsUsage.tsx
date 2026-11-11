@@ -104,7 +104,7 @@ export function ThreadDetailsStats({
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
         {contextWindow ? <ContextRow usage={contextWindow} /> : null}
-        {cost ? <CostRow key={`${cost.environmentId}:${cost.threadId}`} {...cost} /> : null}
+        {cost ? <CostRow {...cost} /> : null}
       </div>
     </ThreadDetailsSection>
   );

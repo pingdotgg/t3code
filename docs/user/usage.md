@@ -154,7 +154,10 @@ Turn on **Cost** to show what the thread's model usage so far would cost at API 
 same estimate as the Usage tab, narrowed to the thread, so on a subscription it is not a charge.
 Hover the row to see the cost by token type. It covers the thread's own conversations, including
 subagents the provider runs inside them, but not other threads it started. The row appears once
-the provider's usage for the thread is recorded, and updates when a turn ends.
+the provider's usage for the thread is recorded, and updates when a turn ends. If the provider had
+to start a fresh conversation in the thread, such as after a failed resume, usage before it is left
+out. The row stays hidden when the saved usage does not name the thread's conversation, when your
+session cannot read usage, and on a server too old to narrow usage to a thread.
 
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials

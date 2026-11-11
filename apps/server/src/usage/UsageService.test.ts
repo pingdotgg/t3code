@@ -23,6 +23,7 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -2723,7 +2724,7 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("narrows a summary to one conversation's sessions from when it began", () =>
+  it.effect("narrows a summary to a thread's sessions from when it was created", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
       // A fork's transcript repeats the source's history under the fork's id, then adds its own turn.
@@ -2735,24 +2736,33 @@ describe("UsageService", () => {
             claudeLine(3, 7, "orbit-1", "fork").replace("T10:00:00Z", "T12:00:00Z"),
         ),
       );
-      const forkFilter = { sessionIds: ["fork", "unknown"], sinceTime: "2026-08-01T11:00:00Z" };
+      // The thread was forked at 11:00 and has started no conversation on its second provider.
+      const forkSessions = UsageService.threadUsageSessions({
+        thread: { createdAt: DateTime.makeUnsafe("2026-08-01T11:00:00Z") },
+        providerThreads: [
+          {
+            nativeThreadRef: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              nativeId: "fork",
+              strength: "strong",
+            },
+          },
+          { nativeThreadRef: null },
+        ],
+      });
       const outputTokens = (summary: UsageSummary) =>
         summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
 
       yield* Effect.gen(function* () {
         const service = yield* UsageService.make;
         // Same service, concurrent reads: the in-flight key must keep these scans apart.
-        const [all, source, fork, invalid] = yield* Effect.all(
+        const [all, source, fork, none] = yield* Effect.all(
           [
             service.readSummary(WINDOW),
-            service.readSummary({ ...WINDOW, sessionFilter: { sessionIds: ["source"] } }),
-            service.readSummary({ ...WINDOW, sessionFilter: forkFilter }),
-            service
-              .readSummary({
-                ...WINDOW,
-                sessionFilter: { sessionIds: ["fork"], sinceTime: "yesterday" },
-              })
-              .pipe(Effect.flip),
+            service.readSummary(WINDOW, { ids: new Set(["source"]), sinceTimeMs: 0 }),
+            service.readSummary(WINDOW, forkSessions),
+            // A thread with no conversation yet has no usage, not everyone's.
+            service.readSummary(WINDOW, { ids: new Set(), sinceTimeMs: 0 }),
           ],
           { concurrency: "unbounded" },
         );
@@ -2761,7 +2771,7 @@ describe("UsageService", () => {
         assert.strictEqual(outputTokens(source), 3);
         assert.strictEqual(outputTokens(fork), 7);
         assert.strictEqual(fork.sources[0]?.distinctSessions, 1);
-        assert.strictEqual(invalid.reason, "invalidWindow");
+        assert.strictEqual(outputTokens(none), 0);
       }).pipe(
         Effect.scoped,
         Effect.provide(

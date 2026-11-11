@@ -1,6 +1,11 @@
 import * as Schema from "effect/Schema";
 
-import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  ForwardCompatibleArray,
+  NonNegativeInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 /** Bump for incompatible UsageSummary changes; skipped unknown array variants need no bump. */
 export const USAGE_CONTRACT_VERSION = 6 as const;
@@ -126,14 +131,6 @@ export const UsageModelFilter = Schema.Struct({
 });
 export type UsageModelFilter = typeof UsageModelFilter.Type;
 
-/** Narrows usage to one conversation, such as a thread: its provider sessions, from when it began. */
-export const UsageSessionFilter = Schema.Struct({
-  sessionIds: Schema.Array(TrimmedNonEmptyString),
-  /** A forked session repeats its source's earlier records; this instant leaves them out. */
-  sinceTime: Schema.optional(TrimmedNonEmptyString),
-});
-export type UsageSessionFilter = typeof UsageSessionFilter.Type;
-
 export const UsageSummaryInput = Schema.Struct({
   sinceDay: UsageDay,
   untilDay: UsageDay,
@@ -146,7 +143,8 @@ export const UsageSummaryInput = Schema.Struct({
   /** Accept an immediate answer from the last scan; its sources are marked refreshing. */
   provisional: Schema.optional(Schema.Boolean),
   modelFilter: Schema.optional(UsageModelFilter),
-  sessionFilter: Schema.optional(UsageSessionFilter),
+  /** Narrows usage to one thread: its provider sessions, from when it was created. */
+  threadId: Schema.optional(ThreadId),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 

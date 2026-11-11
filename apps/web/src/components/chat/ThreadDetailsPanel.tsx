@@ -176,6 +176,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             offersGit &&
             props.activeProjectName !== undefined &&
             (visible.gitActions || (visible.changes && props.isGitRepo)),
+          context: visible.context ? props.usage.contextWindow : null,
+          cost: visible.cost && !props.draftId,
         };
         return (
           <>
@@ -286,12 +288,11 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
               {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
 
-              {(visible.context && props.usage.contextWindow) ||
-              (visible.cost && !props.draftId) ? (
+              {show.context || show.cost ? (
                 <ThreadDetailsStats
-                  contextWindow={visible.context ? props.usage.contextWindow : null}
+                  contextWindow={show.context}
                   cost={
-                    visible.cost && !props.draftId
+                    show.cost
                       ? { environmentId: props.environmentId, threadId: props.threadId }
                       : null
                   }
