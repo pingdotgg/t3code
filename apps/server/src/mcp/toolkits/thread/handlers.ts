@@ -6,8 +6,11 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  ProofJudgeId,
+  OPEN_PROOF_JUDGE_STATUSES,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -328,6 +331,82 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               type: "queued-run.cancel",
               runId,
             }));
+        }
+      }),
+    ),
+  ),
+  t3_proof_judge: McpToolAccess.either(
+    (input) => input.action === "list" || input.action === "read",
+    McpToolAccess.reads((input) =>
+      Effect.gen(function* () {
+        const { projection } = yield* readThread(input.threadId);
+        const judges = projection.thread.proofJudges ?? [];
+        if (input.action === "list") {
+          return {
+            judges:
+              input.openOnly === true
+                ? judges.filter((judge) => OPEN_PROOF_JUDGE_STATUSES.has(judge.status))
+                : judges,
+          };
+        }
+        const judgeId = yield* required(input.judgeId, "judgeId");
+        const judge = judges.find((candidate) => candidate.id === judgeId);
+        return (
+          judge ??
+          (yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "The proof judge was not found.",
+          }))
+        );
+      }),
+    ),
+    writesThread((input) =>
+      Effect.gen(function* () {
+        const { projection, caller } = yield* readThread(input.threadId);
+        const actorThreadId = caller?.id ?? projection.thread.id;
+        switch (input.action) {
+          case "request": {
+            const name = yield* required(input.name, "name");
+            const random = yield* SecureRandom.SecureRandom;
+            const judgeId =
+              input.judgeId ?? ProofJudgeId.make(`proof-judge:${yield* random.uuidV4()}`);
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "proof-judge.request",
+              judgeId,
+              name,
+              criteria: input.criteria ?? "",
+              requestedByThreadId: actorThreadId,
+            }));
+          }
+          case "accept": {
+            const judgeId = yield* required(input.judgeId, "judgeId");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "proof-judge.accept",
+              judgeId,
+              note: input.note,
+              actorThreadId,
+            }));
+          }
+          case "reject": {
+            const judgeId = yield* required(input.judgeId, "judgeId");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "proof-judge.reject",
+              judgeId,
+              note: input.note,
+              actorThreadId,
+            }));
+          }
+          default: {
+            const judgeId = yield* required(input.judgeId, "judgeId");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "proof-judge.reopen",
+              judgeId,
+            }));
+          }
         }
       }),
     ),

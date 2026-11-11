@@ -164,6 +164,12 @@ describe("isAutoSettlementCandidate", () => {
     expect(ThreadSettlementService.isSnoozed(snoozed, NOW_MS)).toBe(false);
   });
 
+  it("never settles a thread with an open proof judge", () => {
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(shell({ openProofJudgeCount: 1 }), NOW_MS),
+    ).toBe(false);
+  });
+
   it("keeps snoozed threads parked until a fresh failure or timer wake", () => {
     const snoozed = shell({
       snoozedUntil: at(60 * 60 * 1_000),

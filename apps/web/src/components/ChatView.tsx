@@ -182,6 +182,7 @@ import {
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
+import { ProofJudgesPanel } from "./chat/ProofJudgesPanel";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { ComposerContextPermissions } from "./ComposerContextPermissions";
@@ -2973,6 +2974,10 @@ export default function ChatView(props: ChatViewProps) {
       message.status === "pending" ? [message.id] : [],
     ) ?? [];
   const pendingGuestMessageCount = pendingGuestMessageIds.length;
+  const openProofJudgeCount =
+    serverProjection?.thread.proofJudges?.filter(
+      (judge) => judge.status === "requested" || judge.status === "rejected",
+    ).length ?? 0;
   const pendingGuestMessageKey = pendingGuestMessageIds.join(",");
   const previousPendingGuestMessagesRef = useRef({
     threadKey: routeThreadKey,
@@ -3091,6 +3096,7 @@ export default function ChatView(props: ChatViewProps) {
     !hasThreadNow &&
     threadStatusLine === null &&
     pendingGuestMessageCount === 0 &&
+    openProofJudgeCount === 0 &&
     !hasQueuedTurns ? null : (
       <>
         {pendingHandoff === null ? null : (
@@ -3116,6 +3122,11 @@ export default function ChatView(props: ChatViewProps) {
             threadRef={scopeThreadRef(activeThread.environmentId, activeThread.id)}
             onImageExpand={onExpandTimelineImageStable}
             onFileOpen={openFileAttachmentStable}
+          />
+        ) : null}
+        {openProofJudgeCount > 0 && isServerThread && activeThread ? (
+          <ProofJudgesPanel
+            threadRef={scopeThreadRef(activeThread.environmentId, activeThread.id)}
           />
         ) : null}
         {hasQueuedTurns ? queuedRunsControl : null}

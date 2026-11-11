@@ -15,6 +15,8 @@ import {
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
+  ProofJudge,
+  ProofJudgeId,
   ThreadId,
   RunId,
   NonNegativeInt,
@@ -104,6 +106,28 @@ const QueueTool = Tool.make("t3_queue", {
   success: Schema.Union([
     Schema.Struct({ items: Schema.Array(queueEntry), nextCursor: Schema.NullOr(NonNegativeInt) }),
     queueEntry,
+    OrchestrationV2DispatchCommandResult,
+  ]),
+}).annotate(Tool.Destructive, true);
+
+const PROOF_JUDGE_READ_ACTIONS = ["list", "read"] as const;
+const ProofJudgeTool = Tool.make("t3_proof_judge", {
+  ...commandTool,
+  description:
+    "Named proof judges on a thread: work is not finished until they accept (OpenRig-style). Omit `threadId` for this thread. list/read. request: `name` (+ optional `criteria`). accept/reject/reopen: `judgeId` (+ optional `note`).",
+  parameters: Schema.Struct({
+    action: Schema.Literals([...PROOF_JUDGE_READ_ACTIONS, "request", "accept", "reject", "reopen"]),
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    threadId: Schema.optional(ThreadId),
+    judgeId: Schema.optional(ProofJudgeId),
+    name: Schema.optional(TrimmedNonEmptyString),
+    criteria: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    note: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    openOnly: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Union([
+    Schema.Struct({ judges: Schema.Array(ProofJudge) }),
+    ProofJudge,
     OrchestrationV2DispatchCommandResult,
   ]),
 }).annotate(Tool.Destructive, true);
@@ -245,4 +269,5 @@ export const ThreadToolkit = Toolkit.make(
   ThreadOrganizeTool,
   PendingRequestTool,
   QueueTool,
+  ProofJudgeTool,
 );

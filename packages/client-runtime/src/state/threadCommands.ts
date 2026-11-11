@@ -23,6 +23,7 @@ import {
   archiveThread,
   closeGuestShare,
   resolveGuestMessage,
+  decideProofJudge,
   cancelQueuedRun,
   createThread,
   deleteThread,
@@ -141,6 +142,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     resolveGuestMessage: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:resolve-guest-message",
       execute: resolveGuestMessage,
+      scheduler,
+      concurrency,
+    }),
+    decideProofJudge: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:decide-proof-judge",
+      execute: decideProofJudge,
       scheduler,
       concurrency,
     }),
