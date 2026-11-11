@@ -31,6 +31,66 @@ export interface PullRequestWatchReport {
 const isFailedCheck = (check: PullRequestCheck) =>
   check.status === "failure" || check.status === "cancelled";
 
+type CheckRun = { readonly name: string; readonly url: string };
+
+// A rerun of a known check replaces its URL; extra or missing names are not reruns. Keeps a
+// partial read from making a full read of an unchanged job look new.
+function reranKnownCheck(
+  previous: ReadonlyArray<CheckRun>,
+  gate: ReadonlyArray<PullRequestCheck>,
+): boolean {
+  const urls = new Map<string, Set<string>>();
+  for (const run of previous) {
+    const known = urls.get(run.name) ?? new Set<string>();
+    known.add(run.url);
+    urls.set(run.name, known);
+  }
+  return gate.some((check) => {
+    if (!check.url) return false;
+    const known = urls.get(check.name);
+    return known !== undefined && !known.has(check.url);
+  });
+}
+
+// Partial reads omit stages and URL-less checks, so their identities keep their last URLs.
+// Observed names take this read's URLs instead, which bounds the history across retries.
+function nextPassedCheckRuns(
+  previous: ReadonlyArray<CheckRun>,
+  checks: ReadonlyArray<PullRequestCheck>,
+): Array<CheckRun> {
+  const observed = new Map<string, Array<CheckRun>>();
+  for (const check of checks) {
+    if (!check.url) continue;
+    const runs = observed.get(check.name) ?? [];
+    if (!runs.some((run) => run.url === check.url)) {
+      runs.push({ name: check.name, url: check.url });
+    }
+    observed.set(check.name, runs);
+  }
+  const next: Array<CheckRun> = [];
+  const seen = new Set<string>();
+  const add = (run: CheckRun) => {
+    const key = JSON.stringify([run.name, run.url]);
+    if (seen.has(key)) return;
+    seen.add(key);
+    next.push(run);
+  };
+  const replaced = new Set<string>();
+  for (const run of previous) {
+    const runs = observed.get(run.name);
+    if (!runs) {
+      add(run);
+    } else if (!replaced.has(run.name)) {
+      replaced.add(run.name);
+      runs.forEach(add);
+    }
+  }
+  for (const [name, runs] of observed) {
+    if (!replaced.has(name)) runs.forEach(add);
+  }
+  return next;
+}
+
 // A GitHub Actions job's URL extends its workflow run's URL; their names need not match.
 const workflowRunOf = (url: string | null) => url?.match(/^.*\/actions\/runs\/\d+/)?.[0] ?? null;
 const approvalKey = (check: PullRequestCheck) => workflowRunOf(check.url) ?? check.name;
@@ -112,11 +172,7 @@ export function evaluatePullRequestWatch(
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
     // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
     const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
-    const runChanged = gate.some(
-      (check) =>
-        check.url &&
-        passedCheckRuns.some((run) => run.name === check.name && run.url !== check.url),
-    );
+    const runChanged = reranKnownCheck(passedCheckRuns, gate);
     // Other checks still pending when required ones passed are owed one wake when all settle.
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
     const owed =
@@ -131,13 +187,19 @@ export function evaluatePullRequestWatch(
       checks.every((check) => check.status !== "pending");
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew || runChanged)) {
-      changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
-      owedChecks =
-        required.length > 0
-          ? checks
-              .filter((check) => check.required !== true && check.status === "pending")
-              .map((check) => check.name)
-          : [];
+      // A rerun that lands with the owed checks settling is one all-checks result, not two.
+      if (runChanged && settled && owed.length > 0) {
+        changes.push({ kind: "checks-passed", count: checks.length, required: false });
+        owedChecks = [];
+      } else {
+        changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+        owedChecks =
+          required.length > 0
+            ? checks
+                .filter((check) => check.required !== true && check.status === "pending")
+                .map((check) => check.name)
+            : [];
+      }
     } else if (settled && owed.length > 0) {
       changes.push({ kind: "checks-passed", count: checks.length, required: false });
       owedChecks = [];
@@ -145,9 +207,7 @@ export function evaluatePullRequestWatch(
     passed = passedNow;
     passedChecks = passedNow ? gateNames : [];
     if (passedNow) {
-      passedCheckRuns = gate.flatMap((check) =>
-        check.url ? [{ name: check.name, url: check.url }] : [],
-      );
+      passedCheckRuns = nextPassedCheckRuns(passedCheckRuns, gate);
     }
   }
 
