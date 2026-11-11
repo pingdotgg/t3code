@@ -41,11 +41,7 @@
  * connecting to workerd's own port directly, they wait out their timeout.
  */
 import { XMLBuilder, XMLParser, XMLValidator } from "fast-xml-parser";
-import {
-  assert,
-  hexEncode,
-  type Awaitable,
-} from "../../internal/shared.worker.ts";
+import { assert, hexEncode, type Awaitable } from "../../internal/shared.worker.ts";
 import {
   BINDING_R2_S3_BUCKETS,
   BINDING_R2_S3_UPSTREAM,
@@ -141,10 +137,7 @@ function safeDecode(value: string): string {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (
-      url.pathname !== PATH_R2_S3 &&
-      !url.pathname.startsWith(`${PATH_R2_S3}/`)
-    ) {
+    if (url.pathname !== PATH_R2_S3 && !url.pathname.startsWith(`${PATH_R2_S3}/`)) {
       return env[BINDING_R2_S3_UPSTREAM].fetch(request);
     }
     if (request.method === "OPTIONS") {
@@ -157,15 +150,9 @@ export default {
       response = await listBuckets(c);
     } else {
       const separator = rest.indexOf("/");
-      const bucketId = safeDecode(
-        separator === -1 ? rest : rest.slice(0, separator),
-      );
+      const bucketId = safeDecode(separator === -1 ? rest : rest.slice(0, separator));
       const rawKey = separator === -1 ? "" : rest.slice(separator + 1);
-      response = await dispatch(
-        c,
-        bucketId,
-        rawKey === "" ? undefined : safeDecode(rawKey),
-      );
+      response = await dispatch(c, bucketId, rawKey === "" ? undefined : safeDecode(rawKey));
     }
     return withCors(request, response);
   },
@@ -192,11 +179,7 @@ const xmlParser = new XMLParser({
   parseTagValue: false,
 });
 
-function xmlResponse(
-  root: string,
-  content: Record<string, unknown>,
-  status = 200,
-): Response {
+function xmlResponse(root: string, content: Record<string, unknown>, status = 200): Response {
   const body = `<?xml version="1.0" encoding="UTF-8"?>${xmlBuilder.build({
     [root]: { "@_xmlns": XMLNS, ...content },
   })}`;
@@ -250,11 +233,9 @@ function errorResponse(
 const noSuchBucket = () =>
   errorResponse(404, "NoSuchBucket", "The specified bucket does not exist.");
 
-const notImplemented = (message: string) =>
-  errorResponse(501, "NotImplemented", message);
+const notImplemented = (message: string) => errorResponse(501, "NotImplemented", message);
 
-const routeNotFound = () =>
-  errorResponse(404, "RouteNotFound", "No route matches this url.");
+const routeNotFound = () => errorResponse(404, "RouteNotFound", "No route matches this url.");
 
 // -----------------------------------------------------------------------------
 // SigV4 verification (`s3/auth.worker.ts`)
@@ -299,15 +280,12 @@ function awsUriEncode(value: string): string {
   );
 }
 
-const invalidArgument = (message: string) =>
-  errorResponse(400, "InvalidArgument", message);
+const invalidArgument = (message: string) => errorResponse(400, "InvalidArgument", message);
 
 const unauthorized = () => errorResponse(401, "Unauthorized", "Unauthorized");
 
 function byteDump(value: string): string {
-  return Array.from(encoder.encode(value), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join(" ");
+  return Array.from(encoder.encode(value), (byte) => byte.toString(16).padStart(2, "0")).join(" ");
 }
 
 interface ComputedSignature {
@@ -316,10 +294,7 @@ interface ComputedSignature {
   stringToSign: string;
 }
 
-function signatureDoesNotMatch(
-  computed: ComputedSignature,
-  provided: string,
-): Response {
+function signatureDoesNotMatch(computed: ComputedSignature, provided: string): Response {
   return errorResponse(
     403,
     "SignatureDoesNotMatch",
@@ -334,8 +309,7 @@ function signatureDoesNotMatch(
   );
 }
 
-const unsupportedAlgorithm = () =>
-  errorResponse(400, "InvalidRequest", `Please use ${ALGORITHM}`);
+const unsupportedAlgorithm = () => errorResponse(400, "InvalidRequest", `Please use ${ALGORITHM}`);
 
 interface ParsedCredential {
   accessKeyId: string;
@@ -348,9 +322,7 @@ interface ParsedCredential {
  * Parses `<access-key-id>/<yyyymmdd>/<region>/<service>/aws4_request`,
  * validating in R2's order: part count, service, termination string.
  */
-function parseCredential(
-  credential: string,
-): ParsedCredential | { error: Response } {
+function parseCredential(credential: string): ParsedCredential | { error: Response } {
   const parts = credential.split("/");
   if (parts.length < 5) {
     return {
@@ -420,15 +392,10 @@ function canonicalQueryString(url: URL, excludeSignature: boolean): string {
  * spaces collapsed. Repeated headers can't be recovered from `Headers`, so
  * signing one produces a mismatch (same as upstream).
  */
-function canonicalHeaders(
-  request: Request,
-  url: URL,
-  signedHeaders: Array<string>,
-): string {
+function canonicalHeaders(request: Request, url: URL, signedHeaders: Array<string>): string {
   let result = "";
   for (const name of signedHeaders) {
-    const value =
-      request.headers.get(name) ?? (name === "host" ? url.host : "");
+    const value = request.headers.get(name) ?? (name === "host" ? url.host : "");
     result += `${name}:${value.trim().replace(/ +/g, " ")}\n`;
   }
   return result;
@@ -447,9 +414,7 @@ function canonicalUris(url: URL): Array<string> {
     .split("/")
     .map((segment) => awsUriEncode(safeDecode(segment)))
     .join("/");
-  return normalized === url.pathname
-    ? [url.pathname]
-    : [url.pathname, normalized];
+  return normalized === url.pathname ? [url.pathname] : [url.pathname, normalized];
 }
 
 async function computeSignature(
@@ -480,10 +445,7 @@ async function computeSignature(
     await sha256Hex(encoder.encode(canonicalRequest)),
   ].join("\n");
 
-  let key = await hmac(
-    encoder.encode(`AWS4${secretAccessKey}`),
-    credential.date,
-  );
+  let key = await hmac(encoder.encode(`AWS4${secretAccessKey}`), credential.date);
   key = await hmac(key, credential.region);
   key = await hmac(key, credential.service);
   key = await hmac(key, "aws4_request");
@@ -527,9 +489,7 @@ function checkCredentialScope(
   return credential;
 }
 
-function parseSignedHeaders(
-  field: string,
-): Array<string> | { error: Response } {
+function parseSignedHeaders(field: string): Array<string> | { error: Response } {
   const signedHeaders = field.split(";").map((name) => name.toLowerCase());
   if (!signedHeaders.includes("host")) {
     return { error: unauthorized() };
@@ -590,9 +550,7 @@ async function verifyAuthorizationHeader(
   }
   const date = parseAmzDate(amzDate);
   if (date === undefined) {
-    return invalidArgument(
-      `Date provided in ${dateSource} (${amzDate}) didn't parse successfully`,
-    );
+    return invalidArgument(`Date provided in ${dateSource} (${amzDate}) didn't parse successfully`);
   }
   if (Math.abs(Date.now() - date.getTime()) > MAX_SKEW_MILLIS) {
     return errorResponse(
@@ -608,10 +566,7 @@ async function verifyAuthorizationHeader(
     for (const component of authorization.slice(ALGORITHM.length).split(",")) {
       const separator = component.indexOf("=");
       if (separator === -1) continue;
-      fields.set(
-        component.slice(0, separator).trim(),
-        component.slice(separator + 1).trim(),
-      );
+      fields.set(component.slice(0, separator).trim(), component.slice(separator + 1).trim());
     }
   }
   const credentialField = fields.get("Credential");
@@ -625,11 +580,7 @@ async function verifyAuthorizationHeader(
     return unsupportedAlgorithm();
   }
 
-  const credential = checkCredentialScope(
-    credentialField,
-    amzDate,
-    credentials,
-  );
+  const credential = checkCredentialScope(credentialField, amzDate, credentials);
   if ("error" in credential) return credential.error;
 
   const signedHeaders = parseSignedHeaders(signedHeadersField);
@@ -681,9 +632,7 @@ async function verifyPresigned(
     return invalidArgument(`Required search parameter ${missing[0]} missing`);
   }
   if (missing.length > 1) {
-    return invalidArgument(
-      `Required search parameters ${missing.join(",  ")} missing`,
-    );
+    return invalidArgument(`Required search parameters ${missing.join(",  ")} missing`);
   }
 
   if (params.get("X-Amz-Algorithm") !== ALGORITHM) {
@@ -695,31 +644,21 @@ async function verifyPresigned(
   const signedHeadersParam = params.get("X-Amz-SignedHeaders");
   const provided = params.get("X-Amz-Signature");
   assert(
-    amzDate !== null &&
-      expiresParam !== null &&
-      signedHeadersParam !== null &&
-      provided !== null,
+    amzDate !== null && expiresParam !== null && signedHeadersParam !== null && provided !== null,
   );
 
   const date = parseAmzDate(amzDate);
   if (date === undefined) {
-    return invalidArgument(
-      `Date provided in X-Amz-Date (${amzDate}) didn't parse successfully`,
-    );
+    return invalidArgument(`Date provided in X-Amz-Date (${amzDate}) didn't parse successfully`);
   }
 
   const credentialParam = params.get("X-Amz-Credential");
   assert(credentialParam !== null);
-  const credential = checkCredentialScope(
-    credentialParam,
-    amzDate,
-    credentials,
-  );
+  const credential = checkCredentialScope(credentialParam, amzDate, credentials);
   if ("error" in credential) return credential.error;
 
   // `Number("")` is 0, but an empty X-Amz-Expires must be rejected
-  const expires =
-    expiresParam.trim() === "" ? Number.NaN : Number(expiresParam);
+  const expires = expiresParam.trim() === "" ? Number.NaN : Number(expiresParam);
   if (Number.isNaN(expires)) {
     return invalidArgument("X-Amz-Expires should be a number");
   }
@@ -750,10 +689,7 @@ async function verifyPresigned(
 }
 
 /** Timing-safe comparison of credential pairs */
-function credentialsEqual(
-  expected: S3Credentials,
-  provided: S3Credentials,
-): boolean {
+function credentialsEqual(expected: S3Credentials, provided: S3Credentials): boolean {
   return (
     timingSafeStringsEqual(expected.accessKeyId, provided.accessKeyId) &&
     timingSafeStringsEqual(expected.secretAccessKey, provided.secretAccessKey)
@@ -762,10 +698,7 @@ function credentialsEqual(
 
 /** Whether the request carries either SigV4 authentication method */
 function hasAuthentication(request: Request, params: URLSearchParams): boolean {
-  return (
-    request.headers.get("Authorization") !== null ||
-    params.has("X-Amz-Credential")
-  );
+  return request.headers.get("Authorization") !== null || params.has("X-Amz-Credential");
 }
 
 /**
@@ -832,9 +765,7 @@ async function listBucketsInner(c: S3Context): Promise<Response> {
 
   for (const name of new URL(c.req.url).searchParams.keys()) {
     if (!isScreenedParam(name)) {
-      return notImplemented(
-        `ListBuckets search parameter ${name} not implemented`,
-      );
+      return notImplemented(`ListBuckets search parameter ${name} not implemented`);
     }
   }
 
@@ -880,9 +811,7 @@ async function dispatchInner(
     !params.has("delete") &&
     !hasAuthentication(c.req.raw, params)
   ) {
-    return notImplemented(
-      "Presigned post requests are not yet implemented not implemented",
-    );
+    return notImplemented("Presigned post requests are not yet implemented not implemented");
   }
 
   const authError = await verifyRequest(c.req.raw, credentials);
@@ -894,7 +823,11 @@ async function dispatchInner(
   const screenError = screenHeaders(c, detected.operation, detected.rules);
   if (screenError !== undefined) return screenError;
 
-  return detected.run();
+  try {
+    return await detected.run();
+  } catch (error) {
+    return bindingError(error);
+  }
 }
 
 interface BoundOperation {
@@ -947,8 +880,7 @@ function bind<Operation extends S3Operation, Context>(
 // Operation detection (`s3/detect.worker.ts`)
 // -----------------------------------------------------------------------------
 
-const notImplementedOperation = (name: string) =>
-  notImplemented(`${name} not implemented`);
+const notImplementedOperation = (name: string) => notImplemented(`${name} not implemented`);
 
 type BucketOperation =
   | "HeadBucket"
@@ -1072,13 +1004,7 @@ const BUCKET_GET_STATIC: Partial<Record<string, BucketOperation>> = {
   replication: "GetBucketReplication",
 };
 
-const LIST_OBJECTS_PARAMS = new Set([
-  "prefix",
-  "delimiter",
-  "marker",
-  "max-keys",
-  "encoding-type",
-]);
+const LIST_OBJECTS_PARAMS = new Set(["prefix", "delimiter", "marker", "max-keys", "encoding-type"]);
 const LIST_OBJECTS_V2_PARAMS = new Set([
   "list-type",
   "prefix",
@@ -1094,20 +1020,14 @@ function isScreenedParam(name: string): boolean {
   return name.startsWith("X-Amz-") || name === "x-id";
 }
 
-function detectListOperation(
-  params: URLSearchParams,
-): BucketOperation | Response {
+function detectListOperation(params: URLSearchParams): BucketOperation | Response {
   const listType = params.get("list-type");
   if (listType !== null && listType !== "2") {
     return notImplementedOperation(`ListObjectsV${listType}`);
   }
   const v2 = listType === "2";
   if (!v2 && params.has("continuation-token")) {
-    return errorResponse(
-      400,
-      "InvalidArgument",
-      "continuation-token not supported in ListObjects",
-    );
+    return errorResponse(400, "InvalidArgument", "continuation-token not supported in ListObjects");
   }
   const allowed = v2 ? LIST_OBJECTS_V2_PARAMS : LIST_OBJECTS_PARAMS;
   for (const name of params.keys()) {
@@ -1136,9 +1056,7 @@ function detectBucketMutation(
     const operation = subresources[name];
     if (operation !== undefined) return notImplementedOperation(operation);
   }
-  const unsupported = [...new Set(params.keys())].filter(
-    (name) => !isScreenedParam(name),
-  );
+  const unsupported = [...new Set(params.keys())].filter((name) => !isScreenedParam(name));
   if (unsupported.length > 0) {
     return errorResponse(
       400,
@@ -1159,25 +1077,13 @@ function detectBucketOperation(
     case "HEAD":
       return "HeadBucket";
     case "PUT":
-      return detectBucketMutation(
-        "PUT",
-        params,
-        BUCKET_PUT_NOT_IMPLEMENTED,
-        "CreateBucket",
-      );
+      return detectBucketMutation("PUT", params, BUCKET_PUT_NOT_IMPLEMENTED, "CreateBucket");
     case "DELETE":
-      return detectBucketMutation(
-        "DELETE",
-        params,
-        BUCKET_DELETE_NOT_IMPLEMENTED,
-        "DeleteBucket",
-      );
+      return detectBucketMutation("DELETE", params, BUCKET_DELETE_NOT_IMPLEMENTED, "DeleteBucket");
     case "POST":
       // ?delete is DeleteObjects; any other bucket-level POST gets an
       // empty 200
-      return params.has("delete")
-        ? "DeleteObjects"
-        : new Response(null, { status: 200 });
+      return params.has("delete") ? "DeleteObjects" : new Response(null, { status: 200 });
     case "GET": {
       if (params.has("uploads")) {
         return notImplementedOperation("ListMultipartUploads");
@@ -1209,10 +1115,7 @@ function detectBucketOperation(
   }
 }
 
-function objectSubresourceError(
-  params: URLSearchParams,
-  method: string,
-): Response | undefined {
+function objectSubresourceError(params: URLSearchParams, method: string): Response | undefined {
   for (const name of params.keys()) {
     const subresource = OBJECT_SUBRESOURCES[name]?.[method];
     if (subresource !== undefined) return notImplementedOperation(subresource);
@@ -1242,9 +1145,7 @@ function detectObjectOperation(
         if (partNumber === null) break;
         return {
           operation:
-            c.req.header("x-amz-copy-source") !== undefined
-              ? "UploadPartCopy"
-              : "UploadPart",
+            c.req.header("x-amz-copy-source") !== undefined ? "UploadPartCopy" : "UploadPart",
           uploadId,
         };
       case "POST":
@@ -1276,9 +1177,7 @@ function detectObjectOperation(
     case "PUT": {
       const subresource = objectSubresourceError(params, method);
       if (subresource !== undefined) return subresource;
-      return c.req.header("x-amz-copy-source") !== undefined
-        ? "CopyObject"
-        : "PutObject";
+      return c.req.header("x-amz-copy-source") !== undefined ? "CopyObject" : "PutObject";
     }
     case "POST":
       // R2 treats POST on an object key as PutObject, ignoring subresources
@@ -1391,8 +1290,7 @@ async function serveR2Object(
       const parsed = parsedRange ?? parseRangeHeader(rangeHeader);
       if (
         !("error" in parsed) &&
-        (object.size === 0 ||
-          (parsed.start !== undefined && parsed.start >= object.size))
+        (object.size === 0 || (parsed.start !== undefined && parsed.start >= object.size))
       ) {
         if (body !== null) void body.cancel();
         return handlers.invalidRange();
@@ -1410,10 +1308,7 @@ async function serveR2Object(
       offset = normalized.offset ?? 0;
       length = normalized.length ?? object.size - offset;
     }
-    headers.set(
-      "Content-Range",
-      `bytes ${offset}-${offset + length - 1}/${object.size}`,
-    );
+    headers.set("Content-Range", `bytes ${offset}-${offset + length - 1}/${object.size}`);
     headers.set("Content-Length", `${length}`);
     return new Response(body, { status: 206, headers });
   }
@@ -1448,8 +1343,7 @@ const NO_SUCH_UPLOAD: S3Error = {
   message: "The specified multipart upload does not exist.",
 };
 
-const s3Error = (error: S3Error) =>
-  errorResponse(error.status, error.code, error.message);
+const s3Error = (error: S3Error) => errorResponse(error.status, error.code, error.message);
 
 const noSuchKey = () => s3Error(NO_SUCH_KEY);
 const preconditionFailed = () => s3Error(PRECONDITION_FAILED);
@@ -1462,11 +1356,7 @@ const malformedXml = () =>
   );
 
 const notImplementedHeader = (name: string, value: string) =>
-  errorResponse(
-    501,
-    "NotImplemented",
-    `Header '${name}' with value '${value}' not implemented`,
-  );
+  errorResponse(501, "NotImplemented", `Header '${name}' with value '${value}' not implemented`);
 
 /**
  * R2 binding errors carry a stable v4 code at the end of their message
@@ -1477,8 +1367,12 @@ const BINDING_ERRORS: Partial<Record<number, S3Error>> = {
   10011: {
     status: 400,
     code: "EntityTooSmall",
-    message:
-      "Your proposed upload is smaller than the minimum allowed object size.",
+    message: "Your proposed upload is smaller than the minimum allowed object size.",
+  },
+  10012: {
+    status: 400,
+    code: "MetadataTooLarge",
+    message: "Your metadata headers exceed the maximum allowed metadata size.",
   },
   10024: NO_SUCH_UPLOAD,
   10025: {
@@ -1613,9 +1507,7 @@ function screenSSECHeaders(
     const algorithmName = `${prefix}server-side-encryption-customer-algorithm`;
     const algorithm = c.req.header(algorithmName);
     const key = c.req.header(`${prefix}server-side-encryption-customer-key`);
-    const keyMd5 = c.req.header(
-      `${prefix}server-side-encryption-customer-key-MD5`,
-    );
+    const keyMd5 = c.req.header(`${prefix}server-side-encryption-customer-key-MD5`);
     if (algorithm === undefined && key === undefined && keyMd5 === undefined) {
       continue;
     }
@@ -1678,10 +1570,7 @@ async function verifiedRequestBody(
   return digestError ?? buffered;
 }
 
-async function verifyContentMD5(
-  c: S3Context,
-  body: ArrayBuffer,
-): Promise<Response | undefined> {
+async function verifyContentMD5(c: S3Context, body: ArrayBuffer): Promise<Response | undefined> {
   const contentMd5 = c.req.header("Content-MD5");
   if (contentMd5 === undefined) return undefined;
   let provided: Uint8Array;
@@ -1718,11 +1607,7 @@ function parseStorageClass(c: S3Context): string | undefined | Response {
       // The simulator can't persist storage classes
       return notImplementedHeader("x-amz-storage-class", header);
     default:
-      return errorResponse(
-        400,
-        "InvalidStorageClass",
-        "The storage class specified is not valid.",
-      );
+      return errorResponse(400, "InvalidStorageClass", "The storage class specified is not valid.");
   }
 }
 
@@ -1778,11 +1663,7 @@ function copySourceConditionals(c: S3Context): Headers | undefined {
   return headers;
 }
 
-function serveObject(
-  c: S3Context,
-  bucket: R2Bucket,
-  key: string,
-): Awaitable<Response> {
+function serveObject(c: S3Context, bucket: R2Bucket, key: string): Awaitable<Response> {
   const rangeHeader = c.req.header("Range");
   const range = rangeHeader === undefined ? {} : parseRangeHeader(rangeHeader);
   if ("error" in range) {
@@ -1797,11 +1678,7 @@ function serveObject(
       case "inverted":
         return errorResponse(400, "InvalidArgument", "range must be positive.");
       case "unsatisfiable":
-        return errorResponse(
-          416,
-          "InvalidRange",
-          "The requested range is not satisfiable",
-        );
+        return errorResponse(416, "InvalidRange", "The requested range is not satisfiable");
     }
   }
 
@@ -1816,15 +1693,9 @@ function serveObject(
       notFound: noSuchKey,
       preconditionFailed,
       invalidRange: () =>
-        errorResponse(
-          416,
-          "InvalidRange",
-          "The requested range is not satisfiable",
-        ),
+        errorResponse(416, "InvalidRange", "The requested range is not satisfiable"),
       decorateHeaders(object, headers) {
-        for (const [name, value] of Object.entries(
-          object.customMetadata ?? {},
-        )) {
+        for (const [name, value] of Object.entries(object.customMetadata ?? {})) {
           headers.set(`x-amz-meta-${name}`, value);
         }
         for (const [name, value] of overrides) headers.set(name, value);
@@ -1861,20 +1732,16 @@ async function listObjects(
 ): Promise<Response> {
   const encodingType = params.get("encoding-type");
   if (encodingType !== null && encodingType !== "url") {
-    return notImplemented(
-      `Unrecognized encoding-type "${encodingType}" not implemented`,
-    );
+    return notImplemented(`Unrecognized encoding-type "${encodingType}" not implemented`);
   }
-  const encode = (value: string) =>
-    encodingType === "url" ? awsUriEncode(value) : value;
+  const encode = (value: string) => (encodingType === "url" ? awsUriEncode(value) : value);
 
   // R2 floors fractional values and allows 0 and values above the limit
   // (clamping the page size but echoing the requested MaxKeys)
   let maxKeys = MAX_LIST_KEYS;
   const maxKeysParam = params.get("max-keys");
   if (maxKeysParam !== null) {
-    const value =
-      maxKeysParam.trim() === "" ? Number.NaN : Number(maxKeysParam);
+    const value = maxKeysParam.trim() === "" ? Number.NaN : Number(maxKeysParam);
     if (!Number.isFinite(value) || value < 0) {
       return errorResponse(
         400,
@@ -1890,9 +1757,7 @@ async function listObjects(
   const delimiter = params.get("delimiter") ?? undefined;
   const marker = v2 ? undefined : (params.get("marker") ?? undefined);
   const startAfter = v2 ? (params.get("start-after") ?? undefined) : marker;
-  const continuationToken = v2
-    ? (params.get("continuation-token") ?? undefined)
-    : undefined;
+  const continuationToken = v2 ? (params.get("continuation-token") ?? undefined) : undefined;
 
   let objects: Array<R2Object> = [];
   let delimitedPrefixes: Array<string> = [];
@@ -1914,8 +1779,7 @@ async function listObjects(
   }
 
   if (limit === 0) {
-    truncated =
-      result.objects.length > 0 || result.delimitedPrefixes.length > 0;
+    truncated = result.objects.length > 0 || result.delimitedPrefixes.length > 0;
   } else {
     objects = result.objects;
     delimitedPrefixes = result.delimitedPrefixes;
@@ -1939,8 +1803,7 @@ async function listObjects(
   const lastObjectKey = objects[objects.length - 1]?.key;
   const lastPrefix = delimitedPrefixes[delimitedPrefixes.length - 1];
   const lastKey =
-    lastPrefix !== undefined &&
-    (lastObjectKey === undefined || lastPrefix > lastObjectKey)
+    lastPrefix !== undefined && (lastObjectKey === undefined || lastPrefix > lastObjectKey)
       ? lastPrefix
       : lastObjectKey;
 
@@ -1953,19 +1816,13 @@ async function listObjects(
     ...(delimiter !== undefined ? { Delimiter: encode(delimiter) } : {}),
     ...(v2
       ? {
-          ...(startAfter !== undefined
-            ? { StartAfter: encode(startAfter) }
-            : {}),
-          ...(continuationToken !== undefined
-            ? { ContinuationToken: continuationToken }
-            : {}),
+          ...(startAfter !== undefined ? { StartAfter: encode(startAfter) } : {}),
+          ...(continuationToken !== undefined ? { ContinuationToken: continuationToken } : {}),
           ...(cursor !== undefined ? { NextContinuationToken: cursor } : {}),
         }
       : {
           Marker: encode(marker ?? ""),
-          ...(truncated && lastKey !== undefined
-            ? { NextMarker: encode(lastKey) }
-            : {}),
+          ...(truncated && lastKey !== undefined ? { NextMarker: encode(lastKey) } : {}),
         }),
     MaxKeys: maxKeys,
     ...(v2 ? { KeyCount: contents.length + commonPrefixes.length } : {}),
@@ -2010,9 +1867,7 @@ const OBJECT_OPERATIONS: Record<
       if (storageClass instanceof Response) return storageClass;
       const body = await verifiedRequestBody(c);
       if (body instanceof Response) return body;
-      const hasConditional = CONDITIONAL_HEADERS.some(
-        (name) => c.req.header(name) !== undefined,
-      );
+      const hasConditional = CONDITIONAL_HEADERS.some((name) => c.req.header(name) !== undefined);
       const object = await bucket.put(key, body, {
         httpMetadata: c.req.raw.headers,
         customMetadata: collectCustomMetadata(c),
@@ -2035,11 +1890,7 @@ const OBJECT_OPERATIONS: Record<
     async handle({ c, bucket, bucketId, key }) {
       const directive = c.req.header("x-amz-metadata-directive") ?? "COPY";
       if (directive !== "COPY" && directive !== "REPLACE") {
-        return errorResponse(
-          400,
-          "InvalidArgument",
-          `metadata directive ${directive}.`,
-        );
+        return errorResponse(400, "InvalidArgument", `metadata directive ${directive}.`);
       }
       const storageClass = parseStorageClass(c);
       if (storageClass instanceof Response) return storageClass;
@@ -2053,12 +1904,9 @@ const OBJECT_OPERATIONS: Record<
       if (!("body" in sourceObject)) return preconditionFailed();
 
       const object = await bucket.put(key, sourceObject.body, {
-        httpMetadata:
-          directive === "COPY" ? sourceObject.httpMetadata : c.req.raw.headers,
+        httpMetadata: directive === "COPY" ? sourceObject.httpMetadata : c.req.raw.headers,
         customMetadata:
-          directive === "COPY"
-            ? sourceObject.customMetadata
-            : collectCustomMetadata(c),
+          directive === "COPY" ? sourceObject.customMetadata : collectCustomMetadata(c),
         storageClass,
       });
       if (object === null) return preconditionFailed();
@@ -2119,11 +1967,7 @@ const MULTIPART_OPERATIONS: Record<
     },
   },
   UploadPartCopy: {
-    unsupportedHeaders: [
-      ...BUCKET_OWNER,
-      ...SOURCE_BUCKET_OWNER,
-      ...COPY_SOURCE_CONDITIONALS,
-    ],
+    unsupportedHeaders: [...BUCKET_OWNER, ...SOURCE_BUCKET_OWNER, ...COPY_SOURCE_CONDITIONALS],
     ssec: "write",
     async handle({ c, bucket, bucketId, key, uploadId, params }) {
       const partNumber = parsePartNumber(params);
@@ -2144,11 +1988,7 @@ const MULTIPART_OPERATIONS: Record<
         const offset = Number(match[1]);
         const end = Number(match[2]);
         if (end < offset) {
-          return errorResponse(
-            400,
-            "InvalidArgument",
-            "x-amz-copy-source-range must be positive.",
-          );
+          return errorResponse(400, "InvalidArgument", "x-amz-copy-source-range must be positive.");
         }
         range = { offset, length: end - offset + 1 };
       }
@@ -2180,9 +2020,8 @@ const MULTIPART_OPERATIONS: Record<
       if (XMLValidator.validate(text) !== true) return malformedXml();
 
       const parsed: unknown = xmlParser.parse(text);
-      const request = (
-        parsed as { CompleteMultipartUpload?: { Part?: unknown } }
-      ).CompleteMultipartUpload;
+      const request = (parsed as { CompleteMultipartUpload?: { Part?: unknown } })
+        .CompleteMultipartUpload;
       if (request === undefined) return malformedXml();
 
       const parts: Array<R2UploadedPart> = [];
@@ -2280,8 +2119,7 @@ const BUCKET_OPERATIONS: Record<
   },
   GetBucketTagging: {
     unsupportedHeaders: BUCKET_OWNER,
-    handle: () =>
-      errorResponse(404, "NoSuchTagSet", "The TagSet does not exist."),
+    handle: () => errorResponse(404, "NoSuchTagSet", "The TagSet does not exist."),
   },
   GetObjectLockConfiguration: {
     unsupportedHeaders: BUCKET_OWNER,
@@ -2303,13 +2141,11 @@ const BUCKET_OPERATIONS: Record<
   },
   ListObjects: {
     unsupportedHeaders: BUCKET_OWNER,
-    handle: ({ params, bucket, bucketId }) =>
-      listObjects(params, bucket, bucketId, false),
+    handle: ({ params, bucket, bucketId }) => listObjects(params, bucket, bucketId, false),
   },
   ListObjectsV2: {
     unsupportedHeaders: BUCKET_OWNER,
-    handle: ({ params, bucket, bucketId }) =>
-      listObjects(params, bucket, bucketId, true),
+    handle: ({ params, bucket, bucketId }) => listObjects(params, bucket, bucketId, true),
   },
   DeleteObjects: {
     unsupportedHeaders: [...BUCKET_OWNER, ...MFA_AND_LOCK_BYPASS],
@@ -2322,9 +2158,7 @@ const BUCKET_OPERATIONS: Record<
       if (XMLValidator.validate(text) !== true) return malformedXml();
 
       const parsed: unknown = xmlParser.parse(text);
-      const request = (
-        parsed as { Delete?: { Object?: unknown; Quiet?: unknown } }
-      ).Delete;
+      const request = (parsed as { Delete?: { Object?: unknown; Quiet?: unknown } }).Delete;
       if (request === undefined) return malformedXml();
 
       const keys: Array<string> = [];
@@ -2337,11 +2171,7 @@ const BUCKET_OPERATIONS: Record<
         return malformedXml();
       }
       // R2 validates Quiet strictly but then ignores it
-      if (
-        request.Quiet !== undefined &&
-        request.Quiet !== "true" &&
-        request.Quiet !== "false"
-      ) {
+      if (request.Quiet !== undefined && request.Quiet !== "true" && request.Quiet !== "false") {
         return malformedXml();
       }
 

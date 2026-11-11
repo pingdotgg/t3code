@@ -1,0 +1,33 @@
+import type * as neptunegraph from "@distilled.cloud/aws/neptune-graph";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Graph } from "./Graph.ts";
+
+/**
+ * Runtime binding for the `CancelQuery` operation (IAM action `neptune-graph:CancelQuery`),
+ * scoped to one {@link Graph}.
+ *
+ * Cancels a query running on the bound graph by its query id — e.g. kill a runaway openCypher traversal found via {@link ListQueries}. Provide the implementation with
+ * `Effect.provide(AWS.NeptuneGraph.CancelQueryHttp)`.
+ * ### Managing Queries
+ * **Example:** Cancel a runaway query
+ * ```typescript
+ * const cancelQuery = yield* NeptuneGraph.CancelQuery(graph);
+ *
+ * yield* cancelQuery({ queryId });
+ * ```
+ *
+ * @binding
+ */
+export interface CancelQuery extends Binding.Service<
+  CancelQuery,
+  "AWS.NeptuneGraph.CancelQuery",
+  (
+    graph: Graph,
+  ) => Effect.Effect<
+    (
+      request: Omit<neptunegraph.CancelQueryInput, "graphIdentifier">,
+    ) => Effect.Effect<neptunegraph.CancelQueryResponse, neptunegraph.CancelQueryError>
+  >
+> {}
+export const CancelQuery = Binding.Service<CancelQuery>("AWS.NeptuneGraph.CancelQuery");

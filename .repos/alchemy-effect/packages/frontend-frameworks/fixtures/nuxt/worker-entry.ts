@@ -24,9 +24,7 @@ export class Counter extends DurableObject {
 
   async get(): Promise<number> {
     this.#ensureTable();
-    const rows = this.ctx.storage.sql
-      .exec("SELECT value FROM counter WHERE id = 0")
-      .toArray();
+    const rows = this.ctx.storage.sql.exec("SELECT value FROM counter WHERE id = 0").toArray();
     return Number(rows[0]?.value ?? 0);
   }
 
