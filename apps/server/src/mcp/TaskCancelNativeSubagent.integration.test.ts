@@ -393,7 +393,7 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
 );
 
 // The root Claude turn ends while a background native subagent it started still
-// runs and delegates (#16808).
+// runs and delegates.
 it.effect("a native background subagent delegates after its parent's run completes", () =>
   Effect.scoped(
     Effect.gen(function* () {
