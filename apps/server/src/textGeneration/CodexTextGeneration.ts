@@ -305,6 +305,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
           ...(mcpServersOff ? ["--config", mcpServersOff] : []),
+          // Titles and branch names only need the prompt, not the checkout's AGENTS.md.
+          ...(operation === "generateThreadTitle" || operation === "generateBranchName"
+            ? ["--config", "project_doc_max_bytes=0"]
+            : []),
           "--ephemeral",
           "--skip-git-repo-check",
           "-s",

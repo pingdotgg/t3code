@@ -389,7 +389,8 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       {
         output: JSON.stringify({ branch: "remove-default-shapes" }),
         mcpServers: 2,
-        requireArg: "--config features.plugins=false --config features.apps=false --ephemeral",
+        requireArg:
+          "--config features.plugins=false --config features.apps=false --config project_doc_max_bytes=0 --ephemeral",
         forbidArg: "mcp_servers=",
       },
       (textGeneration) =>
@@ -410,7 +411,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
         output: JSON.stringify({ title: "Remove default shapes" }),
         launchArgs: "--config features.plugins=true --config features.apps=true",
         requireArg:
-          "--config features.plugins=true --config features.apps=true --config features.plugins=false --config features.apps=false --ephemeral",
+          "--config features.plugins=true --config features.apps=true --config features.plugins=false --config features.apps=false --config project_doc_max_bytes=0 --ephemeral",
       },
       (textGeneration) =>
         Effect.gen(function* () {

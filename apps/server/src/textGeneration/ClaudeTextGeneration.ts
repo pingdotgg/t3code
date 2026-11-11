@@ -201,12 +201,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       noSessionPersistence: boolean,
     ) {
       const workingDirectory =
-        operation === "generateThreadTitle"
+        operation === "generateThreadTitle" || operation === "generateBranchName"
           ? yield* fileSystem
-              .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
+              .makeTempDirectoryScoped({ prefix: "t3code-claude-prompt-only-" })
               .pipe(
                 Effect.mapError((cause) =>
-                  normalizeCliError("claude", operation, cause, "Failed to create title directory"),
+                  normalizeCliError("claude", operation, cause, "Failed to create temp directory"),
                 ),
               )
           : cwd;
