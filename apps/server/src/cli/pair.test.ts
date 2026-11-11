@@ -755,6 +755,9 @@ describe("auth mcp", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-mcp-"));
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => NodeFS.rmSync(baseDir, { recursive: true, force: true })),
+          );
           const issue = (access: string, ttl: string) =>
             captureStdout(
               runCli([
@@ -825,6 +828,9 @@ describe("auth mcp", () => {
           const denied = (yield* callTool(readOnly.token, "change")).result;
           assert.isTrue(denied?.isError);
           assert.include(JSON.stringify(denied), "capability_denied");
+          assert.deepInclude((yield* callTool(fullAccess.token, "access")).result, {
+            structuredContent: { access: "full-access" },
+          });
           assert.deepInclude((yield* callTool(fullAccess.token, "change")).result, {
             structuredContent: { changed: true },
           });

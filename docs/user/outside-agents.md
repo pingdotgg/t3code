@@ -129,8 +129,9 @@ Give the agent the MCP URL and send the token as `Authorization: Bearer <token>`
 `--access` takes the same levels as the sign-in page: `read-only`,
 `approval-required` (Supervised), `auto-accept-edits`, `auto` or `full-access`.
 The token lasts 30 days unless you pass `--ttl`, such as `--ttl 90d`. Anyone who
-holds it gets that access, so keep it in the agent's secret settings.
-`t3 auth mcp list` shows every agent's credential, including OAuth sign-ins, and
+holds it gets that access within the environment's managed policy limits, so
+keep it in the agent's secret settings. `t3 auth mcp list` shows active MCP client
+credentials, including OAuth sign-ins, linked environments and `t3 thread`.
 `t3 auth mcp revoke <id>` cuts one off at its next request.
 
 ## Scripts on the host
