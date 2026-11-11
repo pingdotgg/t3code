@@ -2327,6 +2327,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           Layer.provide(
             Layer.mergeAll(
               NodeServices.layer,
+              NodeCrypto.layer,
               layerRegistry,
               layerSettings,
               providerRegistryLayer([
