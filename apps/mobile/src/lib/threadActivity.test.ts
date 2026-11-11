@@ -1632,7 +1632,7 @@ describe("subagent continued by a later turn", () => {
       new Set(),
     );
     expect(presented.find((entry) => entry.id === `run-fold:${runId}`)).toMatchObject({
-      label: "Worked for 3.0s",
+      label: "Worked for 3s",
     });
   });
 });

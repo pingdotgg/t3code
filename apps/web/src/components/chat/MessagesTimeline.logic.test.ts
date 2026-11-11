@@ -4593,10 +4593,10 @@ describe("subagent continued by a later turn", () => {
       rows.map((row) => (row.kind === "turn-fold" ? `${row.id}: ${row.label}` : row.id)),
     ).toEqual([
       "prompt-1",
-      `turn-fold:${run1}: Worked for 3.0s`,
+      `turn-fold:${run1}: Worked for 3s`,
       "answer-1",
       "finished",
-      `turn-fold:${run2}: Worked for 2.0s`,
+      `turn-fold:${run2}: Worked for 2s`,
       "answer-2",
     ]);
   });
@@ -4648,8 +4648,8 @@ describe("subagent continued by a later turn", () => {
     expect(
       rows.flatMap((row) => (row.kind === "turn-fold" ? [`${row.id}: ${row.label}`] : [])),
     ).toEqual([
-      `turn-fold:${run1}: Worked for 5.0s`,
-      `turn-fold:${run1}:steer:steer-1: Continued for 3.0s`,
+      `turn-fold:${run1}: Worked for 5s`,
+      `turn-fold:${run1}:steer:steer-1: Continued for 3s`,
     ]);
   });
 });
