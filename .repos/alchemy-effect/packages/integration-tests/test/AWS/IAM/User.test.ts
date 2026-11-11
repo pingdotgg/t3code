@@ -1,0 +1,42 @@
+import * as AWS from "@alchemy.run/aws";
+import { User } from "@alchemy.run/aws/IAM";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as IAM from "@distilled.cloud/aws/iam";
+import * as Provider from "alchemy/Provider";
+import * as Effect from "effect/Effect";
+
+const { test } = Test.make({ providers: AWS.providers() });
+
+test.provider(
+  "list enumerates the deployed user",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const user = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* User("ListUser", {
+            tags: {
+              env: "test",
+            },
+          });
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(User);
+      const all = yield* provider.list();
+
+      const found = all.find((u) => u.userName === user.userName);
+      expect(found).toBeDefined();
+      expect(found?.userArn).toBe(user.userArn);
+
+      yield* stack.destroy();
+
+      const deleted = yield* IAM.getUser({
+        UserName: user.userName,
+      }).pipe(Effect.option);
+      expect(deleted._tag).toBe("None");
+    }),
+  { tags: ["provider:aws", "provider:aws:iam", "live"] },
+);

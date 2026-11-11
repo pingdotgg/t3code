@@ -1,16 +1,13 @@
 import { createContext, use, useSyncExternalStore } from "react";
 
 /**
- * Full swipe rows (pan gesture, animated actions, hidden action buttons) only
- * exist around the viewport. Every other Home row renders a dormant frame that
- * paints the same content with a fraction of the native views, so a row the
- * list rebuilds while scrolling is cheap.
+ * Only rows around the viewport enable swipe gestures and render actions.
+ * Dormant rows keep the same child views so waking them preserves touches.
  */
 export function createSwipeRowActivation() {
   let activeKeys = new Set<string>();
-  // Swapping a row's frame remounts it, which would cancel a press or long
-  // press in progress, so changes wait until every finger that started on the
-  // list has lifted.
+  // Turning a row's swipe gesture off ends a swipe in progress, so changes
+  // wait until every finger that started on the list has lifted.
   const listTouches = new Set<string>();
   let pendingKeys: ReadonlyArray<string> | null = null;
   const listeners = new Set<() => void>();

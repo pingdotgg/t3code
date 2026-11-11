@@ -21,8 +21,7 @@ const weightsPath = NodePath.join(serverDir, "src/testUtils/shardWeights.json");
 const reportDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-server-test-report-"));
 const reportPath = NodePath.join(reportDir, "report.json");
 
-// `node --run` puts the package's own `vp` on PATH, on every platform. Failing
-// tests still report their duration, so the exit code is not checked.
+// `node --run` finds the package's vp; failed tests still report durations, so ignore exit status.
 NodeChildProcess.spawnSync(
   process.execPath,
   ["--run", "test", "--", "--reporter=json", `--outputFile=${reportPath}`],
