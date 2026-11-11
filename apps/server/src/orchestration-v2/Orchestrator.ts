@@ -5917,8 +5917,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               task.id === taskId &&
               task.origin === "app_owned" &&
               task.childThreadId === source.childThreadId &&
-              task.completionDelivery?.state !== "disposed" &&
-              !isTerminalDelegatedTaskStatus(task.status),
+              task.completionDelivery?.state !== "disposed",
           ),
         )
       ) {

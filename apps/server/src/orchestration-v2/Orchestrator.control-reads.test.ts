@@ -1348,6 +1348,15 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
         },
       ],
     });
+    // An async question outlives its child's completion, so a late event still notifies.
+    const lateAsyncQuestion = requestEvent("event:late-async-question", "request:late-async");
+    yield* eventSink.write({ events: [lateAsyncQuestion] });
+    yield* reactor.handle(lateAsyncQuestion);
+    assert.isTrue(
+      (yield* projections.getThreadRecords(parentThreadId, ["messages"])).messages.some((message) =>
+        message.text.includes(`requestId ${lateAsyncQuestion.payload.id}.`),
+      ),
+    );
     yield* orchestrator.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make("question-followup"),

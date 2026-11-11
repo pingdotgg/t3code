@@ -163,7 +163,6 @@ const make = Effect.gen(function* () {
         task === undefined ||
         task.childThreadId !== child.id ||
         task.completionDelivery?.state === "disposed" ||
-        isTerminalTask(task) ||
         parent.thread.archivedAt !== null ||
         parent.thread.deletedAt !== null
       ) {
