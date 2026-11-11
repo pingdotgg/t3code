@@ -1872,6 +1872,37 @@ describe("ClaudeAdapterV2 attachments", () => {
       resumed: false,
       budget: "none",
     },
+    // https://git.cafe/pingdotgg/t3code/issues/24667
+    {
+      name: "another agent's mid-sentence skill as text",
+      prompt: "please $implement fixes",
+      expectedText: "please $implement fixes",
+      command: undefined,
+      ultrathink: false,
+      resumed: false,
+      budget: "none",
+      agent: true,
+    },
+    {
+      name: "another agent's prompt-leading skill command as text",
+      prompt: "/implement fixes",
+      expectedText: "\u2060/implement fixes",
+      command: undefined,
+      ultrathink: false,
+      resumed: false,
+      budget: "none",
+      agent: true,
+    },
+    {
+      name: "another agent's leading path",
+      prompt: "/tmp holds the output",
+      expectedText: "/tmp holds the output",
+      command: undefined,
+      ultrathink: false,
+      resumed: false,
+      budget: "none",
+      agent: true,
+    },
     {
       name: "resumed history without persisted counters",
       prompt: "Inspect this file",
@@ -1883,7 +1914,7 @@ describe("ClaudeAdapterV2 attachments", () => {
     },
   ])(
     "preserves $name with native PDFs, images, and paths on sends and steering",
-    ({ prompt, expectedText, command, ultrathink, resumed, budget }) =>
+    ({ prompt, expectedText, command, ultrathink, resumed, budget, ...row }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -2021,16 +2052,23 @@ describe("ClaudeAdapterV2 attachments", () => {
           const attemptId = RunAttemptId.make("attempt-claude-attachments");
           const now = yield* DateTime.now;
 
+          const baseTurnInput = makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId,
+            modelSelection,
+            text: prompt,
+            attachments: resumed ? [attachment] : [attachment, document],
+          });
           const turnInput = {
-            ...makeClaudeTestTurnInput({
-              threadId,
-              providerThread,
-              now,
-              attemptId,
-              modelSelection,
-              text: prompt,
-              attachments: resumed ? [attachment] : [attachment, document],
-            }),
+            ...baseTurnInput,
+            message: {
+              ...baseTurnInput.message,
+              ...("agent" in row
+                ? { createdBy: "agent" as const, senderThreadId: ThreadId.make("thread:sender") }
+                : {}),
+            },
             nativeThreadHasTurns: resumed,
           };
           if (budget === "cancelled-send" || budget === "cancelled-steer") {
@@ -2276,10 +2314,8 @@ describe("ClaudeAdapterV2 attachments", () => {
             providerThread,
             providerTurnId,
             message: {
-              createdBy: "user",
-              creationSource: "web",
+              ...turnInput.message,
               messageId: MessageId.make("message-claude-attachments-steer"),
-              text: prompt,
               attachments: resumed ? [attachment] : [attachment, document],
             },
           });

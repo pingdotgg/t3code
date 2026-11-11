@@ -69,16 +69,6 @@ import * as ServerSettings from "../serverSettings.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
-// Another agent's message must not invoke the recipient's skills, which may be project-local and
-// unknown here. A word joiner after a sigil breaks any skill-shaped mention (Codex reads `$name`
-// even inside punctuation); one before a leading `/word` stops Claude's native command without
-// touching the word. Uppercase shell vars, amounts, and paths stay byte-identical.
-const SKILL_SIGIL = /\p{Sc}(?=[a-z])/gu;
-const LEADING_SLASH_COMMAND = /^(\s*)(?=\/[^\s/]+(?:\s|$))/u;
-
-const breakAgentSkillSyntax = (text: string) =>
-  text.replace(SKILL_SIGIL, "$&\u2060").replace(LEADING_SLASH_COMMAND, "$1\u2060");
-
 export interface ThreadManagementProvenance {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
@@ -593,6 +583,7 @@ const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
       receipts.getByCommandId(input.commandId).pipe(
@@ -869,7 +860,7 @@ const make = Effect.gen(function* () {
       messageId: input.messageId,
       ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
       ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
-      text: input.senderThreadId === undefined ? input.text : breakAgentSkillSyntax(input.text),
+      text: input.text,
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.freshContext ? { freshContext: true } : {}),

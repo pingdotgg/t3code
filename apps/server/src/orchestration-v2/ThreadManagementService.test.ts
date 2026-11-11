@@ -16,7 +16,6 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -32,7 +31,6 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { planClaudeSkillDispatch } from "../provider/Drivers/ClaudeSkillDispatch.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -703,150 +701,6 @@ it.effect.each([
     yield* Fiber.join(fiber);
     expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
   }),
-);
-
-// https://git.cafe/pingdotgg/t3code/issues/24667
-const SHELL_TEXT = 'Run printf "%s" "$HOME" > /tmp/report.txt, then budget $20, $1.5k, and $5M.';
-const J = "\u2060";
-it.effect.each([
-  {
-    text: "PREFIX: $technical-writing mid-sentence. SUFFIX",
-    sent: `PREFIX: $${J}technical-writing mid-sentence. SUFFIX`,
-    mode: "auto",
-    agent: true,
-  },
-  {
-    text: "PREFIX: €technical-writing mid-sentence. SUFFIX",
-    sent: `PREFIX: €${J}technical-writing mid-sentence. SUFFIX`,
-    mode: "steer",
-    agent: true,
-  },
-  // A project skill the server has not scanned.
-  { text: "Run $prepare-pr next.", sent: `Run $${J}prepare-pr next.`, mode: "auto", agent: true },
-  {
-    text: "/technical-writing PREFIX: report the text.",
-    sent: `${J}/technical-writing PREFIX: report the text.`,
-    mode: "auto",
-    agent: true,
-  },
-  {
-    text: `${SHELL_TEXT} Use $technical-writing now.`,
-    sent: `${SHELL_TEXT} Use $${J}technical-writing now.`,
-    mode: "steer",
-    agent: true,
-  },
-  { text: SHELL_TEXT, sent: SHELL_TEXT, mode: "auto", agent: true },
-  {
-    text: "/tmp/report.txt holds the output. SUFFIX",
-    sent: "/tmp/report.txt holds the output. SUFFIX",
-    mode: "steer",
-    agent: true,
-  },
-  { text: "/tmp holds the output.", sent: `${J}/tmp holds the output.`, mode: "auto", agent: true },
-  {
-    text: 'Keep "$TECH_DIR" and use ($technical-writing).',
-    sent: `Keep "$TECH_DIR" and use ($${J}technical-writing).`,
-    mode: "auto",
-    agent: true,
-  },
-  {
-    text: "See [$technical-writing](/skills/writing/SKILL.md).",
-    sent: `See [$${J}technical-writing](/skills/writing/SKILL.md).`,
-    mode: "steer",
-    agent: true,
-  },
-  {
-    text: "PREFIX: $technical-writing mid-sentence. SUFFIX",
-    sent: "PREFIX: $technical-writing mid-sentence. SUFFIX",
-    mode: "auto",
-    agent: false,
-  },
-] as const)(
-  "sendToThread with agent=$agent mode=$mode keeps skill dispatch only for the user: $text",
-  ({ text, sent: expected, mode, agent }) =>
-    Effect.gen(function* () {
-      const projectId = ProjectId.make("project:thread-management:agent-skill-mention");
-      const threadId = ThreadId.make("thread:thread-management:agent-skill-mention");
-      const runId = RunId.make("run:thread-management:agent-skill-mention");
-      const messageId = MessageId.make("message:thread-management:agent-skill-mention");
-      const steering = mode === "steer";
-      const sentTexts: Array<string> = [];
-      const layerTest = ThreadManagementService.layer.pipe(
-        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
-        Layer.provide(
-          Layer.mock(Orchestrator.OrchestratorV2)({
-            getThreadRecords: () =>
-              Effect.succeed({
-                thread: {
-                  id: threadId,
-                  projectId,
-                  deletedAt: null,
-                  archivedAt: null,
-                  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
-                },
-                runs: [
-                  {
-                    id: runId,
-                    ordinal: 1,
-                    status: steering ? "running" : "queued",
-                    activeAttemptId: steering ? "attempt-1" : null,
-                  },
-                ],
-                providerTurns: steering ? [{ runAttemptId: "attempt-1", status: "running" }] : [],
-                messages: [{ id: messageId, runId }],
-                turnItems: steering
-                  ? [{ type: "user_message", messageId, inputIntent: "steer" }]
-                  : [],
-              } as unknown as OrchestrationV2ThreadProjection),
-            dispatch: (command) =>
-              Effect.sync(() => {
-                if (command.type === "message.dispatch") sentTexts.push(command.text);
-                return { sequence: 1, storedEvents: [] } as never;
-              }),
-          }),
-        ),
-        Layer.provide(ServerSettings.layerTest()),
-        Layer.provide(layerReceiptsTest),
-      );
-      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
-        Effect.provide(layerTest),
-      );
-
-      const sent = yield* service.sendToThread({
-        projectId,
-        commandId: CommandId.make("command:thread-management:agent-skill-mention"),
-        threadId,
-        messageId,
-        text,
-        attachments: [],
-        mode,
-        ...(agent
-          ? {
-              senderThreadId: ThreadId.make("thread:thread-management:sender"),
-              createdBy: "agent" as const,
-              creationSource: "mcp" as const,
-            }
-          : { createdBy: "user" as const, creationSource: "web" as const }),
-      });
-      expect(sent.delivery).toBe(steering ? "steered" : "queued");
-
-      const [providerText = ""] = sentTexts;
-      expect(providerText).toBe(expected);
-      const names = ["technical-writing", "prepare-pr"];
-      const skills = new Map(names.map((name) => [name, { path: `/skills/${name}` }]));
-      // Claude: a currency-sign mention becomes `/name`, and a leading `/name` runs natively.
-      // Codex: the same mention pattern is rewritten to `$name`, and Codex expands `$name` even
-      // inside punctuation or a `[$name](path)` link.
-      const dispatchesSkill =
-        planClaudeSkillDispatch(providerText, skills) !== undefined ||
-        names.some(
-          (name) => providerText.startsWith(`/${name} `) || providerText.includes(`$${name}`),
-        ) ||
-        [...providerText.matchAll(SKILL_MENTION_PATTERN)].some(([, , name = ""]) =>
-          names.includes(name),
-        );
-      expect(dispatchesSkill).toBe(!agent);
-    }),
 );
 
 it.effect.each([

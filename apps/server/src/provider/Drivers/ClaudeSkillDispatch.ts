@@ -56,3 +56,17 @@ export function planClaudeSkillDispatch(
     commandText: `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
   };
 }
+
+/**
+ * Text another agent sent must not run the recipient's skills. T3 dispatch is skipped for it, and
+ * a word joiner before a leading `/name` for a real skill stops Claude's native command.
+ */
+export function neutralizeAgentClaudeSkill(
+  prompt: string,
+  skills: ReadonlyMap<string, ClaudeSkillTarget>,
+): string {
+  const match = /^(\s*)\/([^\s/]+)(?=\s|$)/u.exec(prompt);
+  if (!match || !skills.has(match[2] ?? "")) return prompt;
+  const indent = match[1] ?? "";
+  return `${indent}\u2060${prompt.slice(indent.length)}`;
+}
