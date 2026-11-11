@@ -67,24 +67,6 @@ export function relayEnvironmentRegistration(
   return state.listed ? "unregistered" : "unknown";
 }
 
-export type RelayEnvironmentStanding = RelayEnvironmentRegistration | "superseded";
-
-/** "superseded" when the account lists a newer link under the same label, as a reinstalled host leaves. */
-export function relayEnvironmentStanding(
-  state: RelayEnvironmentDiscoveryState,
-  environmentId: string,
-): RelayEnvironmentStanding {
-  const own = state.environments.get(environmentId)?.environment;
-  if (own === undefined) return relayEnvironmentRegistration(state, environmentId);
-  const linkedAt = Date.parse(own.linkedAt);
-  for (const { environment } of state.environments.values()) {
-    if (environment.label === own.label && Date.parse(environment.linkedAt) > linkedAt) {
-      return "superseded";
-    }
-  }
-  return "registered";
-}
-
 function validateStatus(
   environment: RelayClientEnvironmentRecord,
   status: RelayEnvironmentStatusResponse,

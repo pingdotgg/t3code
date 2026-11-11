@@ -310,30 +310,6 @@ describe("RelayEnvironmentDiscovery", () => {
     }),
   );
 
-  it("reports a listed environment as superseded by a newer link under the same label", () => {
-    const reinstalled = {
-      ...environments[0]!,
-      environmentId: EnvironmentId.make("environment-1-reinstalled"),
-      linkedAt: "2026-07-01T00:00:00.000Z",
-    };
-    const state = {
-      ...RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
-      listed: true,
-      environments: new Map(
-        [...environments, reinstalled].map((environment) => [
-          environment.environmentId,
-          { environment, availability: "online", status: Option.none(), error: Option.none() },
-        ]),
-      ),
-    } satisfies RelayEnvironmentDiscovery.RelayEnvironmentDiscoveryState;
-    const standing = (environmentId: string) =>
-      RelayEnvironmentDiscovery.relayEnvironmentStanding(state, environmentId);
-    expect(standing(environments[0]!.environmentId)).toBe("superseded");
-    expect(standing(reinstalled.environmentId)).toBe("registered");
-    expect(standing(environments[1]!.environmentId)).toBe("registered");
-    expect(standing("deregistered-environment")).toBe("unregistered");
-  });
-
   it.effect(
     "preserves discovered rows while offline and refreshes after connectivity returns",
     () =>

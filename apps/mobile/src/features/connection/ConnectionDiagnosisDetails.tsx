@@ -44,7 +44,7 @@ export function useConnectionDiagnosis(
     state,
     via: relayOnly ? "relay" : "direct",
     relayRegistration: hasRelayRoute(presentation.entry)
-      ? Discovery.relayEnvironmentStanding(discovery, environmentId)
+      ? Discovery.relayEnvironmentRegistration(discovery, environmentId)
       : "unknown",
     clientVersion: Constants.expoConfig?.version,
     serverVersion: presentation.serverConfig?.environment.serverVersion,

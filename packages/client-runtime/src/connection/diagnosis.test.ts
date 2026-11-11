@@ -139,7 +139,7 @@ describe("presentConnectionDiagnosis", () => {
         traceId: "trace-1",
       }),
     );
-    const withRegistration = (relayRegistration: "registered" | "unregistered" | "superseded") =>
+    const withRegistration = (relayRegistration: "registered" | "unregistered") =>
       presentConnectionDiagnosis({
         hostLabel: "Mac mini",
         state: backoff(failure),
@@ -153,9 +153,6 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnosis?.headline).toContain("no longer on your T3 Connect account");
     expect(diagnosis?.steps[0]).toContain("turn T3 Connect on");
     expect(diagnosis?.steps[1]).toContain("remove it from this device");
-    const superseded = withRegistration("superseded");
-    expect(superseded?.headline).toContain("A newer link to Mac mini replaced this one");
-    expect(superseded?.steps.join(" ")).not.toContain("turn T3 Connect on");
   });
 
   it("blames this device, not the host, while its own T3 Connect sign-in loads", () => {

@@ -47,7 +47,7 @@ export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
           // With a direct route as well, the relay's health says nothing about the route in use.
           relayStatus: relayOnly ? Option.getOrNull(relayStatus ?? Option.none()) : null,
           relayRegistration: hasRelayRoute(environment.entry)
-            ? Discovery.relayEnvironmentStanding(discovery, environmentId)
+            ? Discovery.relayEnvironmentRegistration(discovery, environmentId)
             : "unknown",
           clientVersion: APP_VERSION,
           serverVersion: environment.serverConfig?.environment.serverVersion,
