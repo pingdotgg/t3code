@@ -17,9 +17,7 @@ vi.mock("electron", () => ({
   },
   ipcRenderer: {
     sendSync,
-    invoke: vi.fn(async (channel: string) =>
-      channel === IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL ? true : [],
-    ),
+    invoke: vi.fn(async () => undefined),
     on: vi.fn(),
     removeListener: vi.fn(),
   },
@@ -28,38 +26,30 @@ vi.mock("electron", () => ({
 }));
 vi.mock("@clerk/electron/preload", () => ({ exposeClerkBridge: vi.fn() }));
 
-it("polling topology reads do not block the renderer on synchronous IPC each time", async () => {
+it("topology polling reads the cache and refreshes it without synchronous IPC", async () => {
   vi.stubGlobal("window", {
     addEventListener: () => {},
     localStorage: { getItem: () => null, setItem: () => {} },
+  });
+  vi.stubGlobal("document", {
+    addEventListener: () => {},
+    fullscreenElement: null,
+    documentElement: { style: { setProperty: () => {} } },
   });
   await import("./preload.ts");
   const bridge = exposed.get("desktopBridge") as DesktopBridge;
   sendSync.mockClear();
 
-  // The renderer's platform poll reads these every few seconds; ipcRenderer.sendSync
-  // freezes the renderer for as long as the main process takes to answer.
+  // sendSync freezes the renderer until main answers; only the first read may use it.
   for (let poll = 0; poll < 5; poll += 1) {
     bridge.getLocalEnvironmentBootstraps();
-    bridge.getLocalEnvironmentEnabled?.();
+    bridge.getLocalEnvironmentEnabled();
   }
-
   const syncCalls = (channel: string) =>
     sendSync.mock.calls.filter(([called]) => called === channel).length;
-  // Each read may block once at startup; later polls must not.
-  expect
-    .soft(syncCalls(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL))
-    .toBeLessThanOrEqual(1);
-  expect.soft(syncCalls(IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL)).toBeLessThanOrEqual(1);
-});
+  expect(syncCalls(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL)).toBeLessThanOrEqual(1);
+  expect(syncCalls(IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL)).toBeLessThanOrEqual(1);
 
-it("an async topology refresh replaces the bootstraps later reads return", async () => {
-  vi.stubGlobal("window", {
-    addEventListener: () => {},
-    localStorage: { getItem: () => null, setItem: () => {} },
-  });
-  await import("./preload.ts");
-  const bridge = exposed.get("desktopBridge") as DesktopBridge;
   const wsl = {
     id: "wsl:Ubuntu",
     label: "WSL (Ubuntu)",
@@ -69,7 +59,6 @@ it("an async topology refresh replaces the bootstraps later reads return", async
   };
   vi.mocked(ipcRenderer.invoke).mockResolvedValueOnce([wsl]).mockResolvedValueOnce([]);
   sendSync.mockClear();
-
   await bridge.refreshLocalEnvironmentBootstraps?.();
   expect(bridge.getLocalEnvironmentBootstraps()).toEqual([wsl]);
   await bridge.refreshLocalEnvironmentBootstraps?.();
