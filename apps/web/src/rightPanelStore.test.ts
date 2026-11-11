@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { useClosedViewStore } from "./closedViewStore";
 import { reopenClosedView } from "./reopenClosedView";
 import {
+  hostRightPanel,
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
@@ -39,6 +40,23 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("opens a hosted side chat's panel actions in its parent's panel until unhosted", () => {
+    const store = useRightPanelStore.getState();
+    const unhost = hostRightPanel(refB, refA);
+    store.openFile(refB, "src/app.ts");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)?.id).toBe(
+      "file:src/app.ts",
+    );
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+    ).toEqual([]);
+    unhost();
+    store.openFile(refB, "src/app.ts");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refB)?.id).toBe(
+      "file:src/app.ts",
+    );
+  });
+
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
     const pr = pullRequestSurface({
@@ -991,6 +1009,45 @@ describe("rightPanelStore", () => {
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
     ).toMatchObject({ url });
     expect(state.surfaces[1]).not.toHaveProperty("url");
+    expect(state.surfaces[0]).not.toHaveProperty("revealUrl");
+  });
+
+  it("holds a clicked link until the panel settles it, and a later link replaces it", async () => {
+    const pr = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
+    const id = pullRequestSurfaceId(pr);
+    const url = "https://github.com/pingdotgg/t3code/pull/4909";
+    const surface = () =>
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    const comment = (n: number) => `${url}#issuecomment-${n}`;
+    const store = useRightPanelStore.getState();
+    store.openPullRequest(refA, { ...pr, url: comment(1), revealUrl: comment(1) });
+    expect(surface()).toMatchObject({ url: comment(1), revealUrl: comment(1) });
+    store.openPullRequest(refA, { ...pr, url });
+    expect(surface()).not.toHaveProperty("revealUrl");
+    store.openPullRequest(refA, { ...pr, url: comment(2), revealUrl: comment(2) });
+    // A host read started for an earlier link settles only that link.
+    store.settlePullRequestReveal(refA, id, comment(1));
+    expect(surface()).toMatchObject({ revealUrl: comment(2) });
+    store.settlePullRequestReveal(refA, id, comment(2));
+    expect(surface()).toMatchObject({ url: comment(2) });
+    expect(surface()).not.toHaveProperty("revealUrl");
+    // Reopening a closed tab hands back its surface, whose url still names the comment.
+    store.openPullRequest(refA, { ...pr, url: comment(2) });
+    expect(surface()).not.toHaveProperty("revealUrl");
+    store.openPullRequest(refA, { ...pr, url: comment(3), revealUrl: comment(3) });
+    await reloadRightPanelStore();
+    expect(surface()).toMatchObject({ url: comment(3) });
+    expect(surface()).not.toHaveProperty("revealUrl");
+    store.openPullRequest(refA, { ...pr, url: comment(4), revealUrl: comment(4) });
+    store.closeSurface(refA, id);
+    await reopenClosedView(useClosedViewStore.getState().entries[0]!, {
+      workspaceAvailable: true,
+      openPreview: () => {
+        throw new Error("A PR tab must not create a browser session");
+      },
+    });
+    expect(surface()).toMatchObject({ url: comment(4) });
+    expect(surface()).not.toHaveProperty("revealUrl");
   });
 
   it("restores each environment, thread and PR surface's detail tab after reload and URL reopen", async () => {
