@@ -22,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -70,6 +71,7 @@ import {
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
+import { FileLinksExpect, gradeFileLinks } from "./file-link-grading.ts";
 import {
   AGENT_DEVICE_SHELL,
   deviceFailure,
@@ -81,6 +83,8 @@ import {
 import {
   argvForm,
   gradeSecret,
+  scriptsBefore,
+  UNKNOWN_SCRIPT,
   scriptSources,
   SecretExpect,
   secretDiagnostics,
@@ -111,6 +115,15 @@ const isPricedModel = (model: ShellModel): model is PricedModel => model in PRIC
 const T3_PREFIX = "mcp__t3-code__";
 const RUNTIME_MARKER = "<runtime_info>";
 const TOOL_LOADED = "Tool loaded.";
+
+class EvalToolCallError extends Schema.TaggedError<EvalToolCallError>()("EvalToolCallError", {
+  tool: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `The ${this.tool} tool call failed.`;
+  }
+}
 const DEFERRED_LIST =
   /(The following deferred tools are now available via ToolSearch\.[^\n]*\n)((?:[^\n]+\n)*)/;
 const MODEL_LINE = /You are powered by the model named .+?\. The exact model ID is [\w.-]+\./;
@@ -142,6 +155,8 @@ export type SampleRun = {
   readonly finalText?: string;
   /** PRs linked to the thread when the sample ends, by the agent or by T3. */
   readonly linked?: ReadonlyArray<string>;
+  /** The thread's working directory, which chat resolves relative file pills against. */
+  readonly cwd?: string;
   /** The `agent-device` commands T3's device_open returned, prior turns included. */
   readonly launchers?: ReadonlyArray<string>;
 };
@@ -171,6 +186,8 @@ type McpToolUseCall = typeof McpToolUseCall.Type;
 const McpToolUseExpect = Schema.Struct({
   /** Each entry needs one matching call. */
   calls: Schema.optional(Schema.Array(McpToolUseCall)),
+  /** Each entry matches a different call, and no call matches two entries; tool names are exact. */
+  distinctCalls: Schema.optional(Schema.Array(McpToolUseCall)),
   /** No call may match any entry. */
   callsMustNot: Schema.optional(Schema.Array(McpToolUseCall)),
   notCalls: Schema.optional(Schema.Array(Schema.String)),
@@ -208,6 +225,8 @@ const McpToolUseExpect = Schema.Struct({
    * files request_secret returned were read. See `SecretExpect` in secret-grading.ts.
    */
   secret: Schema.optional(SecretExpect),
+  /** File pills in the final answer resolve against the thread cwd to `world.files` entries. */
+  fileLinks: Schema.optional(FileLinksExpect),
 });
 
 /**
@@ -1021,7 +1040,7 @@ const codexModel = (id: string) => ({ id, options: [{ id: "reasoningEffort", val
 const PROVIDERS = [
   {
     providerInstanceId: "claudeAgent",
-    models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-haiku-5-5"].map(
+    models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-haiku-5-5"].map(
       claudeModel,
     ),
   },
@@ -1277,10 +1296,10 @@ const withProductFields = (name: string, value: unknown, child: boolean): unknow
     return typeof id === "string"
       ? {
           ...thread,
-          link: formatThreadLink({
-            environmentId: EVAL_ENVIRONMENT_ID,
-            threadId: ThreadId.make(id),
-          }),
+          link: formatThreadLink(
+            { environmentId: EVAL_ENVIRONMENT_ID, threadId: ThreadId.make(id) },
+            typeof thread.title === "string" ? thread.title : undefined,
+          ),
         }
       : thread;
   };
@@ -1558,6 +1577,16 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     if (found.length === 0) return toolResult(call.id, "No matching deferred tools found");
     return loadTools(tools, call.id, found);
   }
+  // T3 refuses a page call without exactly one source before any mocked result.
+  const sources = [input.html, input.path].filter(
+    (source) => source !== undefined && source !== null,
+  );
+  if (isPageTool(name) && (sources.length !== 1 || typeof sources[0] !== "string")) {
+    return failed("Pass exactly one of html or path.");
+  }
+  if (isPageTool(name) && typeof input.path === "string" && !input.path.startsWith("/")) {
+    return failed(`${input.path} is not a readable HTML document. Pass an absolute path.`);
+  }
   const mock = testCase.setup.mocks?.[name];
   // T3 answers device calls from the world. A mock that is a T3 device error fails inside T3.
   const failure = deviceFailure(mock);
@@ -1673,6 +1702,10 @@ const withOptionsObject = (input: unknown) => {
 };
 
 /** What the user wrote in the case's thread: its context, prior user turns and the prompt. */
+/** `world.files` keys: paths relative to the thread cwd, or absolute. */
+export const worldFilePaths = ({ setup }: Pick<McpToolUseCase, "setup">) =>
+  Object.keys(isRecord(setup.world?.files) ? setup.world.files : {});
+
 export const pastedText = ({ prompt, setup }: Pick<McpToolUseCase, "prompt" | "setup">) =>
   [
     setup.context ?? "",
@@ -1680,19 +1713,84 @@ export const pastedText = ({ prompt, setup }: Pick<McpToolUseCase, "prompt" | "s
     prompt,
   ].join("\n");
 
+const isPageTool = (tool: string) => tool === "html_preview" || tool === "html_render";
+
+/** `page` is the HTML a page tool shows: its inline `html`, or the file the agent wrote at `path`. */
+const withPage = (tool: string, input: unknown, files: ReadonlyMap<string, string>) => {
+  if (!isPageTool(tool) || !isRecord(input)) return input;
+  const path = valueText(input.path);
+  // A patch may name the file relative to the agent's working directory. When written files that
+  // could be this one differ, the page is unknown, so page checks fail rather than grade a stale copy.
+  const written = [...files].filter(
+    ([file]) =>
+      file === path ||
+      (!file.startsWith("/") && path.endsWith(`/${file.replace(/^(?:\.\/)+/, "")}`)),
+  );
+  const pages = new Set(written.map(([, page]) => page));
+  const page =
+    typeof input.html === "string"
+      ? input.html
+      : pages.size === 1 && !pages.has(UNKNOWN_SCRIPT)
+        ? written[0]![1]
+        : undefined;
+  // The grader derives `page`; a call cannot supply its own.
+  return { ...input, page };
+};
+
 /** `pasted` is the thread's user text (`pastedText`), for request_secret's `value`. */
-export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") => {
+export const gradeSample = (
+  expect: McpToolUseCase["expect"],
+  run: SampleRun,
+  pasted = "",
+  worldFiles: ReadonlyArray<string> = [],
+) => {
   const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
-  const calls = run.calls.map((call) => ({ ...call, input: withOptionsObject(call.input) }));
+  const written = scriptsBefore(run.calls, true);
+  // A refused page call showed nothing, so it neither previews nor renders, and no file stands in
+  // for its page. Inline HTML it sent still counts against callsMustNot.
+  const attempted = run.calls.map((call, index) => ({
+    ...call,
+    input: withPage(
+      call.tool,
+      withOptionsObject(call.input),
+      call.failed ? new Map() : written[index]!,
+    ),
+  }));
+  const calls = attempted.filter((call) => !(call.failed && isPageTool(call.tool)));
   const count = (tool: string) => calls.filter((call) => call.tool === tool).length;
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request".
-  const found = ({ tool, args = {} }: McpToolUseCall) =>
-    calls.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
+  const found = ({ tool, args = {} }: McpToolUseCall, among = calls) =>
+    among.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
   const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
-  for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
-  for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);
+  if (expect.distinctCalls !== undefined) {
+    const expected = expect.distinctCalls.map(({ tool, args }) => ({ tool, input: args ?? {} }));
+    add(
+      "distinctCalls",
+      calls.every((call) => expected.filter((entry) => matches(entry, call)).length <= 1) &&
+        matchesDistinct(
+          expected,
+          calls.map((request) => ({ request, brief: "" })),
+        ),
+    );
+  }
+  for (const call of expect.callsMustNot ?? [])
+    add(`callsMustNot ${label(call)}`, !found(call, attempted));
+  // A page check must not pass because the grader never saw the file a path call shows.
+  const pageTools = [...(expect.calls ?? []), ...(expect.callsMustNot ?? [])].flatMap((call) =>
+    call.args?.page === undefined ? [] : call.tool.split("|"),
+  );
+  for (const call of calls)
+    if (
+      pageTools.includes(call.tool) &&
+      isRecord(call.input) &&
+      call.input.path !== undefined &&
+      call.input.page === undefined
+    )
+      add(`page known ${call.tool} ${valueText(call.input.path)}`, false);
+  for (const tool of expect.notCalls ?? [])
+    add(`notCalls ${tool}`, !attempted.some((call) => call.tool === tool));
   if (expect.order !== undefined) {
     const firsts = expect.order.map((tool) => calls.findIndex((call) => call.tool === tool));
     const inOrder = firsts.every((at, i) => at > (firsts[i - 1] ?? -1));
@@ -1744,6 +1842,14 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
     add("linkedNumbers", exact === valueText(expect.linkedNumbers.toSorted((a, b) => a - b)));
   }
   checks.push(...gradeDevice(expect.device, run));
+  checks.push(
+    ...gradeFileLinks(
+      expect.fileLinks,
+      run.stopReason === "end_turn" ? run.finalText : undefined,
+      run.cwd,
+      worldFiles,
+    ),
+  );
   checks.push(...gradeSecret(expect.secret, run, pasted));
   return checks;
 };
@@ -1753,7 +1859,15 @@ const SETTLED =
   /^(?:(?:notCalls|callsMustNot|shellMustNot|maxCalls|textMustNot) |secret\.(?:chatAsk|askTools|values|fileUse|noCardDemand|afterDecline) )/;
 /** True once the sample has failed for good, so the rest of it cannot change the result. */
 export const failedEarly = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") =>
-  gradeSample(expect, run, pasted).some((check) => !check.pass && SETTLED.test(check.check));
+  gradeSample(
+    expect,
+    // A page call T3 has not answered yet may still be refused, so it is graded once it settles.
+    {
+      ...run,
+      calls: run.calls.filter((call) => !isPageTool(call.tool) || call.failed !== undefined),
+    },
+    pasted,
+  ).some((check) => !check.pass && SETTLED.test(check.check));
 
 const requestBody = ({ base, tools }: Sample, effort: string, messages: unknown) => ({
   model: base.model,
@@ -2062,24 +2176,27 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
             runPromise,
           );
         };
-        return yield* Effect.tryPromise(async () => {
-          const output =
-            use.name === "exec"
-              ? await executeCodex(
-                  valueText(use.input),
-                  codexCatalog(base),
-                  answer,
-                  sample.codeStore,
-                )
-              : await answer(use.name, use.input, false);
-          const item = {
-            type: use.name === "exec" ? "custom_tool_call_output" : "function_call_output",
-            call_id: use.id,
-            output: valueText(output),
-          };
-          input.push(item);
-          transcript.push(item);
-          return toolResult(use.id, output);
+        return yield* Effect.tryPromise({
+          try: async () => {
+            const output =
+              use.name === "exec"
+                ? await executeCodex(
+                    valueText(use.input),
+                    codexCatalog(base),
+                    answer,
+                    sample.codeStore,
+                  )
+                : await answer(use.name, use.input, false);
+            const item = {
+              type: use.name === "exec" ? "custom_tool_call_output" : "function_call_output",
+              call_id: use.id,
+              output: valueText(output),
+            };
+            input.push(item);
+            transcript.push(item);
+            return toolResult(use.id, output);
+          },
+          catch: (cause) => new EvalToolCallError({ tool: use.name, cause }),
         });
       }),
     );
@@ -2103,6 +2220,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
     text: said.join("\n\n"),
     stopReason,
     finalText,
+    cwd: base.environment.cwd,
     linked: [...sample.linked],
     ...(sample.devices ? { launchers: [...sample.devices.launchers] } : {}),
     usage,
@@ -2403,7 +2521,7 @@ const main = Effect.gen(function* () {
     }
     return;
   }
-  const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
+  const apiKey = yield* Config.String("ANTHROPIC_API_KEY").pipe(Config.withDefault(""));
   const out = flags.out;
   if ((!apiKey && !codex) || out === undefined) {
     const message =
@@ -2428,11 +2546,16 @@ const main = Effect.gen(function* () {
   // Only a case that passed every baseline sample can stop a run; flaky ones are just reported.
   const passedBefore = (id: string) => baseline.get(id) === 1;
   // Before the paid runs, so a missing git cannot lose their results.
-  const commit = yield* Effect.try(() =>
-    NodeChildProcess.execFileSync("git", ["describe", "--always", "--dirty"], {
-      encoding: "utf8",
-    }).trim(),
-  ).pipe(Effect.orElseSucceed(() => "unknown"));
+  const commit = yield* Effect.sync(() =>
+    Option.getOrElse(
+      Option.liftThrowable(() =>
+        NodeChildProcess.execFileSync("git", ["describe", "--always", "--dirty"], {
+          encoding: "utf8",
+        }).trim(),
+      )(),
+      () => "unknown",
+    ),
+  );
   const inFlight = yield* Semaphore.make(flags.concurrency);
   const runOne = (testCase: McpToolUseCase) => {
     const { id, kind, pattern } = testCase;
@@ -2455,7 +2578,12 @@ const main = Effect.gen(function* () {
           ),
         }),
         onSuccess: (sample) => {
-          const checks = gradeSample(testCase.expect, sample, pastedText(testCase));
+          const checks = gradeSample(
+            testCase.expect,
+            sample,
+            pastedText(testCase),
+            worldFilePaths(testCase),
+          );
           const { secret } = testCase.expect;
           return {
             ...identity,
