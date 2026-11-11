@@ -1,8 +1,5 @@
 import type { DeviceToolVersions } from "@t3tools/contracts";
-/**
- * npm extracts files before it finishes, so an entry file alone does not prove
- * a usable tree.
- */
+// npm exposes entry files before extraction completes; their presence does not prove a usable tree.
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -211,6 +208,19 @@ export const isDeviceHubInstalled = (baseDir: string) =>
 
 export const isAgentDeviceInstalled = (baseDir: string) =>
   isToolInstalled(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
+
+/** Entry of the first installed agent-device among `versions`; never installs. */
+export const installedAgentDeviceEntry = Effect.fn("DeviceToolchain.installedAgentDeviceEntry")(
+  function* (baseDir: string, versions: ReadonlyArray<string>) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const version of versions) {
+      const paths = toolPaths(path, baseDir, { ...AGENT_DEVICE_SPEC, version });
+      if (yield* isInstalled(fs, paths, version)) return paths.entryPath;
+    }
+    return null;
+  },
+);
 
 export const deviceToolVersions = Effect.fn("DeviceToolchain.versions")(function* (
   baseDir: string,

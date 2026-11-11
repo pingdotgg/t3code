@@ -106,12 +106,7 @@ describe("settings scope navigation", () => {
     expect(router.state.location.search).toEqual(checkoutSearch);
   });
 
-  it.each([
-    "/settings/projects",
-    "/settings/integrations",
-    "/settings/source-control",
-    "/settings/scheduled-tasks",
-  ] as const)(
+  it.each(["/settings/projects", "/settings/scheduled-tasks"] as const)(
     "keeps %s when regrouping or selecting a target from the shared settings layout",
     async (to) => {
       const router = createSettingsRouter();

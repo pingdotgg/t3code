@@ -23,10 +23,7 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
     readonly byteCap: number;
     readonly tail?: boolean;
     readonly configDir?: string;
-    /**
-     * Read only complete lines from this byte offset of the file `identity`
-     * names. A different file (shrunk or another inode) is read from 0.
-     */
+    /** Reads complete lines from a byte offset; resets to zero after shrinkage or inode changes. */
     readonly fromOffset?: {
       readonly offset: number;
       readonly identity: WorkflowFileIdentity | null;
@@ -50,8 +47,7 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
         }),
     });
 
-    // Realpath the FILE itself (not just its directory): a symlink named
-    // like a transcript inside a contained directory must not escape.
+    // Resolve the file itself; contained directories can still hold escaping symlinks.
     const resolved = yield* Effect.tryPromise({
       try: () => NodeFSP.realpath(input.path),
       catch: (cause) =>
@@ -68,8 +64,7 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
       });
     }
 
-    // fd inode vs path inode catches a swapped leaf, not a swapped intermediate
-    // dir; root is 0700 ~/.claude, so that already needs the uid we run as.
+    // Inode checks catch leaf swaps, not intermediate directory swaps; the 0700 ~/.claude root restricts those to our uid.
     const read = yield* Effect.tryPromise({
       try: async () => {
         const handle = await NodeFSP.open(
@@ -98,14 +93,12 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
             const buffer = Buffer.alloc(Math.min(stat.size - start, input.byteCap));
             const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
             const read = buffer.subarray(0, bytesRead);
-            // A writer may be mid-line; leave it for the next read. A single
-            // line over the cap is skipped so the cursor can't stall on it.
+            // Defer partial lines; skip single over-cap lines so the cursor can advance.
             const lineEnd = read.lastIndexOf(0x0a) + 1;
             const consumed = lineEnd === 0 && bytesRead === input.byteCap ? bytesRead : lineEnd;
             return {
               contents: read.subarray(0, lineEnd).toString("utf8"),
-              // Only the cap can leave complete lines unread; a half-written
-              // last line is not truncation.
+              // Only the cap signals truncation; a half-written last line does not.
               truncated: stat.size - start > input.byteCap,
               startOffset: start,
               endOffset: start + consumed,

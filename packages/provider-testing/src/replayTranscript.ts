@@ -159,10 +159,7 @@ export function decodeProviderReplayNdjson(
   });
 }
 
-/**
- * Conversion goes through the `Path` service so drive-letter and UNC fixture
- * URLs resolve to native paths on Windows instead of `/C:/...` pathname strings.
- */
+/** Use Path to resolve Windows drive/UNC fixture URLs into native paths. */
 export const readProviderReplayTranscript = Effect.fn("readProviderReplayTranscript")(function* (
   file: URL,
 ) {
