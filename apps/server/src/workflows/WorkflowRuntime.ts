@@ -33,18 +33,25 @@ const isDefinition = (value: unknown): value is WorkflowDefinition =>
   typeof (value as WorkflowDefinition).version === "number" &&
   typeof (value as WorkflowDefinition).body === "function";
 
-const loadDefinitions = Effect.fn("WorkflowRuntime.loadDefinitions")(function* (module: string) {
+/** A definitions module exports its workflows, or a function from the author API to them. */
+export const loadDefinitions = Effect.fn("WorkflowRuntime.loadDefinitions")(function* (
+  module: string,
+) {
   const path = yield* Path.Path;
   const url = NodeURL.pathToFileURL(path.resolve(module)).href;
-  const loaded = yield* Effect.tryPromise({
-    try: () => import(url) as Promise<{ readonly default?: unknown }>,
+  const definitions = yield* Effect.tryPromise({
+    try: async () => {
+      const loaded = (await import(url)) as { readonly default?: unknown };
+      return typeof loaded.default === "function"
+        ? ((await loaded.default(await import("./api.ts"))) as unknown)
+        : loaded.default;
+    },
     catch: (cause) => new WorkflowDefinitionsLoadError({ module, cause }),
   });
-  const definitions = loaded.default;
   if (!Array.isArray(definitions) || !definitions.every(isDefinition)) {
     return yield* new WorkflowDefinitionsLoadError({
       module,
-      cause: "Its default export is not an array of workflow definitions.",
+      cause: "It does not export an array of workflow definitions, or a function that returns one.",
     });
   }
   return definitions as ReadonlyArray<WorkflowDefinition>;
