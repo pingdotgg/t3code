@@ -38,7 +38,10 @@ export function presentationFace(family: string, bold: boolean, italic: boolean)
 /** The face Excel's cells draw a family with when it is missing: its metric-compatible or bundled face, if any. */
 export function sheetFace(family: string, bold: boolean, italic: boolean) {
   return (
-    resolveMetricCompatFace(family, bold, italic) ?? resolveBundledFamilyFace(family, bold, italic)
+    resolveMetricCompatFace(family, bold, italic) ??
+    resolveBundledFamilyFace(family, bold, italic) ??
+    resolveBundledFamilyFace(family, bold, false) ??
+    resolveBundledFamilyFace(family, false, false)
   );
 }
 
