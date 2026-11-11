@@ -932,6 +932,10 @@ export function BranchToolbarBranchSelector({
           : {}),
         align: "start",
         side: displayMode === "panel" ? "right" : "top",
+        collisionAvoidance:
+          displayMode === "panel"
+            ? { side: "flip", align: "shift", fallbackAxisSide: "end" }
+            : undefined,
         className: cn(
           "flex flex-col",
           displayMode === "panel" ? "w-(--anchor-width)" : "min-w-0 w-90",
