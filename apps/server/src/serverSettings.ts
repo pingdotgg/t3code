@@ -799,7 +799,7 @@ function checkBaseRevision(
 }
 
 /** Applies every operation or none; deleting a skill also unassigns it from agents. */
-export function applyAgentLibraryOperations(
+function applyAgentLibraryOperations(
   current: ServerSettings,
   operations: ReadonlyArray<AgentLibraryOperation>,
   now: string,

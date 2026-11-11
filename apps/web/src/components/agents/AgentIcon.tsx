@@ -67,7 +67,7 @@ import type { McpGatewayProfile } from "@t3tools/contracts";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { resolveAgentIconId, type AgentIconId } from "@t3tools/client-runtime/state/agentIdentity";
 
-export const agentIconGlyphs = {
+const agentIconGlyphs = {
   orb: null,
   bot: BotIcon,
   sparkles: SparklesIcon,

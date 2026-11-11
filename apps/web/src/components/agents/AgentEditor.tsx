@@ -79,7 +79,9 @@ export function AgentEditor({
         : `${PRESET_SKILL_PREFIX}${index}`),
   );
   const updatedSkillIds = new Set(
-    presetSkills.flatMap((skill) => (skill.choice?.kind === "update" ? [skill.choice.skillId] : [])),
+    presetSkills.flatMap((skill) =>
+      skill.choice?.kind === "update" ? [skill.choice.skillId] : [],
+    ),
   );
   const skillOptions = [
     ...skills.map((skill) => ({
