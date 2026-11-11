@@ -15,19 +15,19 @@ export function settingsScopeEnvironmentAddress(environment: ScopeEnvironment) {
 
 export function settingsScopeEnvironmentLabels(
   environment: ScopeEnvironment,
-  environments?: readonly ScopeEnvironment[],
+  environments: readonly ScopeEnvironment[],
 ) {
-  const duplicates = environments?.filter(
+  const duplicates = environments.filter(
     (other) =>
       other.environmentId !== environment.environmentId && other.label === environment.label,
   );
   const address = settingsScopeEnvironmentAddress(environment);
-  const secondary = duplicates?.some((other) => settingsScopeEnvironmentAddress(other) === address)
+  const secondary = duplicates.some((other) => settingsScopeEnvironmentAddress(other) === address)
     ? environment.displayUrl || environment.environmentId
     : address;
   return {
     primary: environment.label,
-    secondary: environments === undefined || duplicates?.length ? secondary : "",
+    secondary: duplicates.length ? secondary : "",
   };
 }
 
