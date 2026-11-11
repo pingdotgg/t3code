@@ -243,6 +243,7 @@ export const parseOcwZipEntries = (
     }),
   );
   const pageOrder = new Map<string, number>();
+  const pageVideoOrder = new Map<string, Map<string, number>>();
   for (const section of sections) {
     const page = pages.get(section);
     const children = [
@@ -259,12 +260,27 @@ export const parseOcwZipEntries = (
     for (const slug of [section, ...children]) {
       const title = stringValue(pages.get(slug)?.title);
       if (title && !pageOrder.has(title)) pageOrder.set(title, pageOrder.size);
+      if (title) {
+        const content = stringValue(pages.get(slug)?.content) ?? "";
+        const ids = [...content.matchAll(/[_-]([A-Za-z0-9-]+)\.(?:vtt|srt)\b/gi)].map(
+          (match) => match[1]!,
+        );
+        pageVideoOrder.set(title, new Map(ids.map((id, position) => [id, position])));
+      }
     }
   }
   const order = (record: Record<string, unknown>) => {
     const gallery = galleryOrder.get(stringValue(record.uid) ?? "");
-    const page = pageOrder.get(stringValue(record.parent_title) ?? "");
-    return gallery ?? (page === undefined ? Number.MAX_SAFE_INTEGER : galleryOrder.size + page);
+    const parent = stringValue(record.parent_title) ?? "";
+    const page = pageOrder.get(parent);
+    const youtubeId = resourceYoutubeId(record);
+    const withinPage = pageVideoOrder.get(parent)?.get(youtubeId ?? "");
+    return (
+      gallery ??
+      (page === undefined
+        ? Number.MAX_SAFE_INTEGER
+        : galleryOrder.size + page * 1_000_000 + (withinPage ?? 100_000))
+    );
   };
   const videos = records
     .filter(({ name }) => /(?:^|\/)resources\/[^/]+\/data\.json$/i.test(name))

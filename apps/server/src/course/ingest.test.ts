@@ -141,7 +141,13 @@ describe("course ingestion parsers", () => {
           content: '<a href="../../pages/second/child/index.html">Child</a>',
         }),
       ],
-      ["course/pages/first/child/data.json", JSON.stringify({ title: "First child" })],
+      [
+        "course/pages/first/child/data.json",
+        JSON.stringify({
+          title: "First child",
+          content: '<track src="../../_v5.vtt"><track src="../../_v4.vtt">',
+        }),
+      ],
       [
         "course/pages/first/data.json",
         JSON.stringify({
@@ -166,6 +172,7 @@ describe("course ingestion parsers", () => {
           uid: "v2",
           title: "Lecture 2",
           parent_title: "First child",
+          video_metadata: { youtube_id: "v2" },
         }),
       ],
       [
@@ -175,6 +182,27 @@ describe("course ingestion parsers", () => {
           uid: "v1",
           title: "Lecture 1",
           parent_title: "First",
+          video_metadata: { youtube_id: "v1" },
+        }),
+      ],
+      [
+        "course/resources/d/data.json",
+        JSON.stringify({
+          resourcetype: "Video",
+          uid: "v4",
+          title: "Lecture 4",
+          parent_title: "First child",
+          video_metadata: { youtube_id: "v4" },
+        }),
+      ],
+      [
+        "course/resources/e/data.json",
+        JSON.stringify({
+          resourcetype: "Video",
+          uid: "v5",
+          title: "Lecture 5",
+          parent_title: "First child",
+          video_metadata: { youtube_id: "v5" },
         }),
       ],
     ]);
@@ -182,12 +210,12 @@ describe("course ingestion parsers", () => {
       parseOcwZipEntries(entries, "https://ocw.mit.edu/courses/tiny/").units.map(
         (unit) => unit.title,
       );
-    expect(titles()).toEqual(["Lecture 1", "Lecture 2", "Lecture 3"]);
+    expect(titles()).toEqual(["Lecture 1", "Lecture 5", "Lecture 4", "Lecture 2", "Lecture 3"]);
     entries.set(
       "course/video_galleries/lectures/data.json",
       JSON.stringify({ videos: [{ uid: "v3" }, { uid: "v1" }, { uid: "v2" }] }),
     );
-    expect(titles()).toEqual(["Lecture 3", "Lecture 1", "Lecture 2"]);
+    expect(titles()).toEqual(["Lecture 3", "Lecture 1", "Lecture 2", "Lecture 5", "Lecture 4"]);
   });
 
   it.effect("uses top-level PDF outline entries as units", () =>
@@ -212,6 +240,7 @@ describe("course ingestion parsers", () => {
         NodePath.join(import.meta.dirname, "fixtures/tiny-ocw.zip"),
         "https://ocw.mit.edu/courses/tiny/",
       );
+      expect(course.units.map((unit) => unit.title)).toEqual(["Lecture 1", "Lecture 0"]);
       expect(course.units[0]?.text).toBe("[00:00] Tiny caption");
     }),
   );

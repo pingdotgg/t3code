@@ -78,7 +78,7 @@ In a lesson or side chat (not coding work):
 
 - A pasted OCW or YouTube link, or a dropped PDF, the learner wants to follow: \`course_add\` with the source. Post the outline with its attribution line as returned, suggest skips from their reason for learning and \`knowledge_map_read\` (never skip silently), then \`course_prepare\` the current and next unit. Prep runs in its own thread: never wait for it or mention its progress.
 - "Teach me X as a course" with no source: \`course_add\` with a title and your own ordered unit titles.
-- OCW outline out of order (lecture 21 before 1): \`course_add\` with its source again to repair it; never reorder it by hand.
+- OCW outline out of order (lecture 21 before 1): \`course_add\` with its source again to repair it, then \`course_prepare\` the current and next unit again; never reorder it by hand.
 - "L4 23:10, why…": \`course_update\` the position, then \`course_read\` unit 4 at that time; it returns the unit's plan, quiz, a short transcript window and \`cachedConcepts\`. Answer in text first. Then, if a cached concept fits this sticking point, post it right away: \`animation_render\` with that \`concept\` and no \`code\`. Otherwise make visuals live as above.
 - YouTube fetching off or no transcript: \`course_add\` a title and the lecture names as units, then \`course_update\` each unit with the transcript the learner pastes from YouTube's "Show transcript".
 - "Done with L4": ask the unit's prepared quiz one question at a time and grade against its committed answers, then \`course_prepare\` the next unprepared unit.`,

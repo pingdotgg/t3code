@@ -229,7 +229,8 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
         const { taken, courses } = yield* readAll;
         const linked = courses.filter((course) => course.lessonThreadId === input.lessonThreadId);
         const same = linked.find((course) => course.title === title);
-        if (same && "ingested" in input) return yield* repair(same, source);
+        if (same && "ingested" in input && same.kind === source.kind)
+          return yield* repair(same, source);
         if (same) return same;
         const base = slug(title);
         let id = base;
@@ -335,6 +336,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
       }),
     );
     let { course, text } = loaded;
+    let resultIndex = index;
     if (!text && loaded.unit.youtubeId) {
       const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const ytDlp =
@@ -347,20 +349,26 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
           Effect.mapError((error) => failure(error.message)),
         );
         text = fetched;
-        course = yield* locked(
+        const repaired = yield* locked(
           Effect.gen(function* () {
             const current = yield* read(input.courseId);
-            yield* fs.writeFileString(unitFile(current.id, input.unit, "txt"), fetched);
+            const currentIndex = current.units.findIndex(
+              (candidate) => candidate.youtubeId === loaded.unit.youtubeId,
+            );
+            if (currentIndex < 0) return { course: current, index: -1 };
+            yield* fs.writeFileString(unitFile(current.id, currentIndex + 1, "txt"), fetched);
             const next = {
               ...current,
               units: current.units.map((candidate, i) =>
-                i === index ? { ...candidate, hasText: true } : candidate,
+                i === currentIndex ? { ...candidate, hasText: true } : candidate,
               ),
             };
             yield* write(next);
-            return next;
+            return { course: next, index: currentIndex };
           }),
         );
+        resultIndex = repaired.index < 0 ? index : repaired.index;
+        course = repaired.course;
       } else {
         text =
           "No transcript is cached. Ask the learner to paste it, then save it with course_update transcript.";
@@ -368,8 +376,8 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
     }
     return {
       course,
-      unit: course.units[index] ?? loaded.unit,
-      index,
+      unit: course.units[resultIndex] ?? loaded.unit,
+      index: resultIndex,
       text: input.at === undefined ? text.slice(0, 4000) : transcriptWindow(text, input.at, 180),
       ...(loaded.plan ? { plan: loaded.plan } : {}),
       ...(loaded.quiz ? { quiz: loaded.quiz } : {}),
