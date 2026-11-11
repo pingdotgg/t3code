@@ -591,7 +591,18 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
         .filter((account) => account.limits.windows.length === 0)
         .map((account) => (
           <div key={account.key} className="flex items-center gap-3 rounded-xl border p-4">
-            <AccountName account={account} className="min-w-0 flex-1 text-sm font-medium" />
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <AccountName account={account} className="min-w-0 text-sm font-medium" />
+              {account.email ? (
+                <RedactedSensitiveText
+                  value={account.email}
+                  ariaLabel="Toggle account email visibility"
+                  revealTooltip="Click to reveal email"
+                  hideTooltip="Click to hide email"
+                  className="truncate"
+                />
+              ) : null}
+            </div>
             <span className="text-xs text-muted-foreground">Limits unavailable</span>
           </div>
         ))}
