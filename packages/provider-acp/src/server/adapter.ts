@@ -554,6 +554,7 @@ export interface AcpAdapterV2Flavor {
   readonly enablePostSettleContinuation?: boolean;
   /** Settle on native idle after the accepted user echo, only on negotiated ACP v2. */
   readonly followAgentWorkState?: boolean;
+  /** Settle on the agent's root idle/wake extension events on ACP v1, while the prompt RPC stays open. */
   readonly followForegroundEvents?: boolean;
   /**
    * Grok CLI currently accepts and vision-processes image blocks while still
@@ -1944,8 +1945,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.followForegroundEvents === true &&
             setup.initializeResult.protocolVersion === 1;
           followsAgentWorkState =
-            continuationRequests !== undefined &&
             flavor.followAgentWorkState === true &&
+            continuationRequests !== undefined &&
             setup.initializeResult.protocolVersion === 2;
           agentWork = null;
           foregroundWork = null;
