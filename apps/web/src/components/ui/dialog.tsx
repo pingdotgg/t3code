@@ -1,8 +1,17 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { useRender } from "@base-ui/react/use-render";
 import { XIcon } from "lucide-react";
-import { type ComponentProps, createContext, type ReactNode, use, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  type CSSProperties,
+  createContext,
+  type ReactNode,
+  use,
+  useRef,
+  useState,
+} from "react";
 import { cn } from "~/lib/utils";
+import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
 import { Button, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_BACKDROP_CLASS,
@@ -139,6 +148,8 @@ function DialogPopup({
       </DialogPrimitive.Popup>
     ),
   });
+  // macOS has no CSS window-controls overlay, so use the platform titlebar height.
+  const nativeTitlebarHeight = useNativeTitlebarHeight();
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
@@ -149,6 +160,11 @@ function DialogPopup({
           variant === "media" &&
             "z-[60] grid-rows-1 place-items-center px-4 pb-6 pt-[calc(var(--native-titlebar-height,0px)+1.5rem)]",
         )}
+        style={
+          variant === "media"
+            ? ({ "--native-titlebar-height": `${nativeTitlebarHeight}px` } as CSSProperties)
+            : undefined
+        }
       >
         {popup}
       </DialogViewport>
