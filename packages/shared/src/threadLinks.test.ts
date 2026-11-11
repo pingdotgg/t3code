@@ -20,6 +20,16 @@ const ref = (environmentId: string, threadId = "chat-1") => ({
 const v1 = (threadId: string) => ({ environmentId: null, threadId: ThreadId.make(threadId) });
 const local = EnvironmentId.make("local");
 
+it("respects opening bracket escape parity", () => {
+  const local = EnvironmentId.make("one");
+  for (const count of [1, 2, 3, 4]) {
+    const prefix = String.fromCharCode(92).repeat(count);
+    const source = prefix + "[old](https://app.t3.codes/threads/one/same)";
+    expect(relabelThreadLinks(source, local, () => "Title")).toBe(
+      count % 2 === 0 ? prefix + "[Title](t3-thread://v2/one/same)" : source,
+    );
+  }
+});
 describe("Markdown code boundaries", () => {
   const link = "[x](https://app.t3.codes/threads/env/thread)";
   it.each([
@@ -323,6 +333,7 @@ describe("hosted thread links", () => {
           "See https://app.t3.codes/threads/there/t1.",
           "[old](https://app.t3.codes/threads/there/t1)",
           '[`old`](https://app.t3.codes/threads/there/t1 "title")',
+          "[draft \\[old](https://app.t3.codes/threads/there/t1)",
           "<https://app.t3.codes/threads/there/t1>",
           "`https://app.t3.codes/threads/there/t1`",
           "https://app.t3.codes/threads/there/t1?prompt=go",
@@ -335,6 +346,7 @@ describe("hosted thread links", () => {
         "See [There](t3-thread://v2/there/t1).",
         "[There](t3-thread://v2/there/t1)",
         '[`old`](https://app.t3.codes/threads/there/t1 "title")',
+        "[There](t3-thread://v2/there/t1)",
         "[There](t3-thread://v2/there/t1)",
         "`https://app.t3.codes/threads/there/t1`",
         "https://app.t3.codes/threads/there/t1?prompt=go",
@@ -355,6 +367,7 @@ describe("hosted thread links", () => {
       "[Example](<https://example.com/?next=https://app.t3.codes/threads/one/same>)",
       "[ https://app.t3.codes/threads/one/same ](https://example.com)",
       '[Example](https://example.com "https://app.t3.codes/threads/one/same")',
+      "[x `](https://example.com) https://app.t3.codes/threads/one/same `",
     ].join("\n");
     expect(relabelThreadLinks(nested, local, () => "Title")).toBe(nested);
     expect(threadLinkRefs(nested, local)).toEqual([]);

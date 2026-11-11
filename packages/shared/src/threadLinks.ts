@@ -16,7 +16,7 @@ const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${H
 // Every inline link is taken whole, so a hosted URL in another link's label or href stays as written.
 // Labels and destinations stop at the next `[`, while titles may contain literal brackets.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
-  String.raw`\[(?<label>[^[\]\n]*)\]\((?:<(?<angleHref>[^\s<>[]*)>|(?<href>[^\s<>)[]*))(?<title>\s+(?:"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|\((?:\\[^\n]|[^()\\\n])*\))[ \t]*)?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`\[(?<label>(?:[^[\]\\\n]|\\.)*)\]\((?:<(?<angleHref>[^\s<>[]*)>|(?<href>[^\s<>)[]*))(?<title>\s+(?:"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|\((?:\\[^\n]|[^()\\\n])*\))[ \t]*)?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
   "g",
 );
 
@@ -46,6 +46,11 @@ function* threadLinkMatches(markdown: string) {
   let rangeIndex = 0;
   const mayContainCode = /[`~\t]| {4}/.test(markdown);
   for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
+    if (match.groups?.label !== undefined) {
+      let start = match.index;
+      while (start > 0 && markdown.charCodeAt(start - 1) === 92) start--;
+      if ((match.index - start) % 2 !== 0) continue;
+    }
     // Most messages need no Markdown parse; defer it until a candidate and code syntax coexist.
     if (!mayContainCode) {
       yield match;
