@@ -1,7 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import type { GatewayRuntimePort } from "@t3tools/client-runtime/gateway";
+import { answerGatewayPortCall, type GatewayRuntimePort } from "@t3tools/client-runtime/gateway";
 import {
   EnvironmentId,
   type OrchestrationV2RunStatus,
@@ -25,6 +25,7 @@ import * as ServerConfig from "../../config.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import * as PeerForwarding from "../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
+import * as Membership from "../../peer/Membership.ts";
 import * as PeerLinks from "../../peer/PeerLinks.ts";
 import * as TailnetDevices from "../../peer/TailnetDevices.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
@@ -53,7 +54,11 @@ import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
 import { ProjectToolkit } from "../toolkits/project/tools.ts";
 import { LocalGatewayPort } from "./LocalGatewayPort.ts";
-import { CODE_PAIRED_SUBJECT, layerDependencies } from "../McpGatewayBroker.testkit.ts";
+import {
+  CODE_PAIRED_SUBJECT,
+  DESKTOP_APP_SUBJECT,
+  layerDependencies,
+} from "../McpGatewayBroker.testkit.ts";
 
 // The 2026-10-22 shape: Captain on dev-box launching Cody on the MacBook.
 const devBox = EnvironmentId.make("environment-dev-box");
@@ -194,8 +199,27 @@ const makeMacBook = (
 const makeLayer = (
   macbook: ReturnType<typeof makeMacBook>,
   record: TestRecord,
-  self?: TailnetDeviceAccess,
+  options: {
+    readonly self?: TailnetDeviceAccess;
+    /**
+     * The MacBook is a member of this machine's network, reached through this machine's own
+     * desktop app, which answers each call the way a real app does: through its own port.
+     */
+    readonly member?: boolean;
+  } = {},
 ) => {
+  const { self, member = false } = options;
+  const macbookPort = new Proxy(
+    {},
+    {
+      get:
+        (_, method) =>
+        async (...args: ReadonlyArray<unknown>) => {
+          macbook.calls.push({ method: String(method), args });
+          return macbook.answer(String(method), args);
+        },
+    },
+  ) as GatewayRuntimePort;
   const localPort = {
     listEnvironments: async () => [
       {
@@ -211,10 +235,36 @@ const makeLayer = (
     McpGatewayBroker,
     Effect.gen(function* () {
       const broker = yield* McpGatewayBrokerModule.make;
+      const grants = { [macBook]: ["read", "create", "send"] } as const;
+      if (member) {
+        const membership = yield* Membership.Membership;
+        for (const environmentId of [devBox, macBook]) {
+          yield* membership
+            .put({ environmentId, label: environmentId, nodeId: null, access: "full-access" })
+            .pipe(Effect.orDie);
+        }
+      }
       yield* broker
-        .connect("desktop", { [macBook]: ["read", "create", "send"] }, CODE_PAIRED_SUBJECT)
+        .connect("desktop", grants, member ? DESKTOP_APP_SUBJECT : CODE_PAIRED_SUBJECT)
         .pipe(
           Stream.runForEach((event) => {
+            const ids = { connectionId: event.connectionId, invocationId: event.invocationId };
+            if (member) {
+              return Effect.promise(() =>
+                answerGatewayPortCall(
+                  macbookPort,
+                  grants,
+                  event.method,
+                  event.args,
+                  event.modeCeiling,
+                ).then(
+                  (result) => ({ result }),
+                  (error: Error) => ({ error: error.message }),
+                ),
+              ).pipe(
+                Effect.flatMap((outcome) => broker.respond("desktop", { ...ids, ...outcome })),
+              );
+            }
             macbook.calls.push({ method: event.method, args: event.args });
             const reply = (() => {
               try {
@@ -223,11 +273,7 @@ const makeLayer = (
                 return { error: (error as Error).message };
               }
             })();
-            return broker.respond("desktop", {
-              connectionId: event.connectionId,
-              invocationId: event.invocationId,
-              ...reply,
-            });
+            return broker.respond("desktop", { ...ids, ...reply });
           }),
           Effect.forkScoped({ startImmediately: true }),
         );
@@ -493,9 +539,27 @@ it.effect(
       expect(message).toContain("read-only");
       expect(message).not.toContain("T3 app grants");
       expect(macbook.called("createThread")).toEqual([]);
-    }).pipe(Effect.provide(makeLayer(macbook, record, "read-only")));
+    }).pipe(Effect.provide(makeLayer(macbook, record, { self: "read-only" })));
   },
 );
+
+it.effect("a member refuses a launch's message to a thread above the calling chat's modes", () => {
+  const macbook = makeMacBook();
+  const record = newRecord({ caller: { runtimeMode: "approval-required" } });
+  return Effect.gen(function* () {
+    // Nothing here reads the new thread before its first message, so no local check can stop
+    // it; the MacBook's own port runs that thread full-access and must refuse the message.
+    const output = yield* launch({
+      environmentId: macBook,
+      projectId: "project:macbook",
+      title: "Configure Accessibility",
+      message: "Turn on the six permissions.",
+    });
+    const sent = macbook.calls.filter((call) => call.method === "sendMessage");
+    expect(sent).toEqual([]);
+    expect(JSON.stringify(output.result)).toContain("broader than this chat's");
+  }).pipe(Effect.provide(makeLayer(macbook, record, { member: true })));
+});
 
 it.effect("a remote launch refuses what it cannot honor there instead of dropping it", () => {
   const macbook = makeMacBook();

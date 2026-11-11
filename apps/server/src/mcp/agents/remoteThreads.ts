@@ -32,13 +32,16 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { DispatchModeLimit } from "../../orchestration-v2/DispatchModeLimit.ts";
-import { isTerminalRunStatus } from "../../orchestration-v2/ThreadManagementService.ts";
+import {
+  isTerminalRunStatus,
+  type ThreadManagementService,
+} from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadTaskService from "../../threadTask/ThreadTaskService.ts";
 import { McpGatewayBroker, type McpGatewayAccess } from "../McpGatewayBroker.ts";
-import type { McpInvocationScope } from "../McpInvocationContext.ts";
+import type { McpInvocationContext, McpInvocationScope } from "../McpInvocationContext.ts";
 import { clampWaitTimeoutMs } from "../OrchestratorMcpService.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "../delegatedTaskModes.ts";
-import { newCommandId } from "../threadAccess.ts";
+import { loadCaller, newCommandId } from "../threadAccess.ts";
 import { LocalGatewayPort } from "./LocalGatewayPort.ts";
 
 // Agents in a thread act with every scope on their own machine; other machines apply the
@@ -97,6 +100,8 @@ export interface RemoteEnvironment {
   readonly caller: { readonly environmentId: string; readonly threadId: string } | undefined;
   /** Why this machine may only read there, when the network caps it. */
   readonly limit?: string | undefined;
+  /** The calling chat's modes, which the app answering each call applies there. */
+  readonly modeCeiling?: ModeLimit | undefined;
 }
 
 const invalid = (message: string) =>
@@ -111,7 +116,11 @@ export const resolveEnvironment = Effect.fn("remoteThreads.resolveEnvironment")(
   gateway: Gateway | undefined,
   scope: McpInvocationScope,
   environmentId: EnvironmentId | undefined,
-): Effect.fn.Return<RemoteEnvironment | undefined, OrchestratorMcpFailure> {
+): Effect.fn.Return<
+  RemoteEnvironment | undefined,
+  OrchestratorMcpFailure,
+  McpInvocationContext | ThreadManagementService
+> {
   if (environmentId === undefined || environmentId === scope.environmentId) return undefined;
   if (gateway === undefined || environmentId === gateway.environmentId) {
     return yield* invalid(
@@ -142,6 +151,7 @@ export const resolveEnvironment = Effect.fn("remoteThreads.resolveEnvironment")(
     gateway,
     environmentId,
     limit,
+    modeCeiling: (yield* loadCaller()).limits,
     caller:
       scope.thread === undefined
         ? undefined
@@ -174,7 +184,7 @@ const gatewayFailure = (environmentId: EnvironmentId, error: unknown, limit?: st
 const callRemote = (remote: RemoteEnvironment, name: string, args: Record<string, unknown>) =>
   Effect.promise(() =>
     runGatewayTool(
-      remote.gateway.context,
+      remote.gateway.contextFor(remote.modeCeiling),
       name,
       { ...args, environmentId: remote.environmentId },
       { caller: remote.caller },
@@ -317,7 +327,7 @@ const decodeSummaries = Schema.decodeUnknownEffect(McpGatewayRelayThreadList);
 /** Whether the environment's thread list still shows this run active: a small read per poll. */
 const stillActive = (remote: RemoteEnvironment, threadId: ThreadId, runId: RunId) =>
   Effect.tryPromise({
-    try: () => remote.gateway.context.port.listThreads(remote.environmentId),
+    try: () => remote.gateway.contextFor(remote.modeCeiling).port.listThreads(remote.environmentId),
     catch: (cause) => new RemoteThreadListError({ cause }),
   }).pipe(
     Effect.flatMap(decodeSummaries),
