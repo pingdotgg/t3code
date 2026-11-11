@@ -162,6 +162,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
+  neutralizeAgentClaudeSkill,
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
@@ -5166,6 +5167,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       ),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+    );
+
+  const claudePrompt = (
+    message: { readonly text: string; readonly senderThreadId?: ThreadId | undefined },
+    cwd: string | null,
+  ) =>
+    userInvocableSkills(cwd).pipe(
+      Effect.map((skills) =>
+        message.senderThreadId === undefined
+          ? { text: message.text, skills }
+          : { text: neutralizeAgentClaudeSkill(message.text, skills), skills: undefined },
+      ),
     );
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -11465,12 +11478,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               pdfBudgets.get(nativeThreadId)!,
               persistAttachmentBudget(nativeThreadId),
             );
+            const prompt = yield* claudePrompt(turnInput.message, turnInput.runtimePolicy.cwd);
             const userMessage =
               promptUuid === null
                 ? null
                 : yield* makeClaudeUserMessageWithAttachments({
                     text: applyClaudePromptEffortPrefix(
-                      turnInput.message.text,
+                      prompt.text,
                       compileClaudeModelSelection(turnInput.modelSelection, modelCatalog)
                         .promptEffort,
                     ),
@@ -11478,7 +11492,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     attachmentsDir,
                     fileSystem,
                     pdfReservation,
-                    skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
+                    ...(prompt.skills === undefined ? {} : { skills: prompt.skills }),
                     uuid: promptUuid,
                   }).pipe(
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -11945,9 +11959,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               persistAttachmentBudget(existing.nativeThreadId),
             );
+            const prompt = yield* claudePrompt(
+              turnInput.message,
+              currentTurn.input.runtimePolicy.cwd,
+            );
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
-                turnInput.message.text,
+                prompt.text,
                 compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
                   .promptEffort,
               ),
@@ -11957,7 +11975,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               attachmentsDir,
               fileSystem,
               pdfReservation,
-              skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
+              ...(prompt.skills === undefined ? {} : { skills: prompt.skills }),
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),

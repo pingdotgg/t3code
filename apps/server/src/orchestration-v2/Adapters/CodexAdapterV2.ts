@@ -446,6 +446,20 @@ function codexSkillMentionText(text: string): string {
   return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
 }
 
+/**
+ * Text another agent sent must not run the recipient's skills. Codex expands `$name` even inside
+ * punctuation, so a word joiner breaks each mention of a skill it has (every `$name` when the
+ * skill list is unavailable); other `$` text is kept.
+ */
+function neutralizeAgentCodexSkills(
+  text: string,
+  skillNames: ReadonlySet<string> | undefined,
+): string {
+  return text.replace(/\$([a-zA-Z0-9_:-]+)/gu, (match, name: string) =>
+    skillNames === undefined || skillNames.has(name) ? `$\u2060${name}` : match,
+  );
+}
+
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
 const BACKGROUND_COMMAND_DETAIL_OUTPUT_TAIL_MAX_LENGTH = 1_000;
 
@@ -3386,6 +3400,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        const sessionCwd = input.runtimePolicy.cwd;
+        const codexSkillNames =
+          sessionCwd === null
+            ? Effect.undefined
+            : ensureInitialized.pipe(
+                Effect.andThen(client.request("skills/list", { cwds: [sessionCwd] })),
+                Effect.map(
+                  (response) =>
+                    new Set(
+                      response.data.flatMap((entry) => entry.skills.map((skill) => skill.name)),
+                    ),
+                ),
+                Effect.orElseSucceed(() => undefined),
+              );
+
         const toCodexInput = Effect.fn("CodexAdapterV2.toCodexInput")(function* (
           turnInput: Pick<
             | ProviderAdapter.ProviderAdapterV2TurnInput
@@ -3395,7 +3424,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
           const text = yield* providerMessageTextWithAttachmentPaths({
-            text: codexSkillMentionText(turnInput.message.text),
+            text:
+              turnInput.message.senderThreadId === undefined
+                ? codexSkillMentionText(turnInput.message.text)
+                : neutralizeAgentCodexSkills(turnInput.message.text, yield* codexSkillNames),
             attachments: turnInput.message.attachments,
             resolveExtractedTextPath: (path) =>
               DocumentText.resolveExtractedTextPath(path).pipe(
