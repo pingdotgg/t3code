@@ -291,7 +291,7 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
 
       yield* reader.invalidate;
       expect((yield* read(active))?.availableCount).toBe(1);
-      yield* reader.invalidate;
+      yield* TestClock.adjust("1 minute");
       expect(yield* read(respond(401, {}))).toBeUndefined();
       yield* TestClock.adjust("1 minute");
       expect(yield* read(respond(429, {}))).toBeUndefined();
