@@ -509,10 +509,8 @@ function Sidebar({
           <SheetPopup
             keepMounted
             {...(panelAnimationsActive ? {} : { transitionDurationMs: 0 })}
-            // The sheet paints the popover surface. In light, black chrome it is
-            // chrome like the desktop sidebar, so it takes the black, grain and keycaps.
             className={cn(
-              "w-(--sidebar-width) max-w-none p-0 text-sidebar-foreground [.black-chrome_&]:bg-(--app-chrome-background) [.black-chrome_&]:surface-grain [.black-chrome_&]:[--kbd-background:initial]",
+              "w-(--sidebar-width) max-w-none bg-(--app-chrome-background) bg-(image:--surface-grain) p-0 surface-grain text-sidebar-foreground [.black-chrome_&]:[--kbd-background:initial]",
               className,
             )}
             data-mobile="true"
