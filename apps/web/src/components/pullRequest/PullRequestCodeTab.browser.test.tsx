@@ -13,7 +13,7 @@ import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, pagedDiffAtom, filesViewedAtom, allowed, denied } = await vi.hoisted(async () => {
+const { diffAtom, pagedDiffAtom, allowed, denied } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -53,7 +53,6 @@ const { diffAtom, pagedDiffAtom, filesViewedAtom, allowed, denied } = await vi.h
     pagedDiffAtom: Atom.family((cursor: string) =>
       Atom.make(() => AsyncResult.success(pages[cursor]!)),
     ),
-    filesViewedAtom: Atom.make(() => AsyncResult.success({ files: [], truncated: false })),
     allowed: Atom.make(true),
     denied: Atom.make(false),
   };
@@ -63,12 +62,40 @@ const mocks = vi.hoisted(() => ({
   paged: false,
   diffCommits: [] as Array<string | undefined>,
   canMarkViewed: true,
+  viewedPaths: null as ReadonlySet<string> | null,
+  viewedListeners: new Set<() => void>(),
 }));
+
+function deliverViewedPaths(paths: ReadonlySet<string> | null) {
+  mocks.viewedPaths = paths;
+  for (const listener of mocks.viewedListeners) listener();
+}
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => vi.fn()) as never,
 }));
+vi.mock(import("./usePullRequestFilesViewed"), async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    mocks.viewedListeners.add(listener);
+    return () => mocks.viewedListeners.delete(listener);
+  };
+  return {
+    usePullRequestFilesViewed: () => {
+      const viewedPaths = useSyncExternalStore(subscribe, () => mocks.viewedPaths);
+      return {
+        enabled: viewedPaths !== null,
+        isViewed: (path: string) => viewedPaths?.has(path) === true,
+        isStale: () => false,
+        setViewed: () => {},
+        truncated: false,
+        error: null,
+        refresh: () => {},
+      };
+    },
+  };
+});
 vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
   return {
@@ -79,7 +106,6 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
         mocks.diffCommits.push(input.commit);
         return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
       }) as never,
-      filesViewed: (() => filesViewedAtom) as never,
       setFilesViewed: {
         ...actual.pullRequestEnvironment.setFilesViewed,
         permissionAtom: () => (mocks.canMarkViewed ? allowed : denied),
@@ -143,17 +169,14 @@ const detail: PullRequestDetailView = {
   },
 };
 
-const viewedDetail: PullRequestDetailView = {
-  ...detail,
-  capabilities: { ...detail.capabilities, viewedFiles: "host" },
-};
-
 function setup({ paged, canMarkViewed = true }: { paged: boolean; canMarkViewed?: boolean }) {
   window.localStorage.removeItem("t3code.diffHideTestFiles");
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
   mocks.diffCommits = [];
   mocks.canMarkViewed = canMarkViewed;
+  mocks.viewedPaths = null;
+  mocks.viewedListeners.clear();
 }
 
 const tab = (
@@ -161,15 +184,14 @@ const tab = (
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
   revealUrl?: string,
   onRevealSettled?: (url: string) => void,
-  pullRequest: PullRequestDetailView = detail,
   environmentConnected = true,
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
     environmentConnected={environmentConnected}
-    reference={pullRequest}
-    detail={pullRequest}
+    reference={detail}
+    detail={detail}
     selectedCommitOid={null}
     onSelectedCommitChange={() => {}}
     onRefresh={() => {}}
@@ -193,6 +215,30 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+// regression: #13279 a Viewed answer that lands after a link reveals a file must not fold it
+it("keeps a revealed file open when its Viewed mark loads afterwards", async () => {
+  setup({ paged: false });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  mocks.viewedPaths = new Set();
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0, { path: "a.ts", nonce: 1 }), { container });
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+
+  deliverViewedPaths(new Set(["a.ts"]));
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeChecked();
+
+  await expect
+    .element(screen.getByRole("button", { name: "Collapse diff" }))
+    .toHaveAttribute("aria-expanded", "true");
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
 });
 
 function pagedContainer() {
@@ -289,26 +335,24 @@ it("never requests the diff of a selected commit the pull request no longer has"
 
 it("disables the Viewed checkbox on a connection that cannot mark files viewed", async () => {
   setup({ paged: false, canMarkViewed: false });
+  mocks.viewedPaths = new Set();
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
-  await using screen = await render(tab(0, null, undefined, undefined, viewedDetail), {
-    container,
-  });
+  await using screen = await render(tab(0), { container });
 
   await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeDisabled();
 });
 
 it("disables the Viewed checkbox while the environment is disconnected, then enables it on reconnect", async () => {
   setup({ paged: false });
+  mocks.viewedPaths = new Set();
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
-  await using screen = await render(tab(0, null, undefined, undefined, viewedDetail, false), {
-    container,
-  });
+  await using screen = await render(tab(0, null, undefined, undefined, false), { container });
 
   await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeDisabled();
 
-  await screen.rerender(tab(0, null, undefined, undefined, viewedDetail, true));
+  await screen.rerender(tab(0, null, undefined, undefined, true));
 
   await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeEnabled();
 });
