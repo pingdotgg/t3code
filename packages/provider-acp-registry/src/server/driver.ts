@@ -15,6 +15,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -65,6 +66,53 @@ const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 // Cache only successful authenticated probes so sign-in changes remain visible.
 const PROBE_SUCCESS_TTL_MS = 15 * 60 * 1_000;
+const PROBE_PROVISIONAL_TTL_MS = 30 * 1_000;
+
+function acpRegistryProbeTtlMs(provider: ServerProvider): number {
+  const discoveredModels = provider.models.filter((model) => !model.isCustom);
+  return discoveredModels.length <= 1 ? PROBE_PROVISIONAL_TTL_MS : PROBE_SUCCESS_TTL_MS;
+}
+
+interface AcpRegistryEnrichmentCache {
+  readonly generation: number;
+  readonly entry: {
+    readonly provider: ServerProvider;
+    readonly expiresAt: number;
+  } | null;
+}
+
+export function updateAcpRegistryEnrichmentCache(input: {
+  readonly cache: AcpRegistryEnrichmentCache;
+  readonly configuration: AcpRegistryLiveConfiguration;
+  readonly customModels: ReadonlyArray<string>;
+  readonly now: number;
+}): AcpRegistryEnrichmentCache {
+  const { cache, configuration, customModels, now } = input;
+  if (cache.entry === null) {
+    // No probe has landed yet, but the live session published its
+    // configuration to the snapshot. Advance the cache epoch so a probe that
+    // was still in flight cannot overwrite that newer state when it lands.
+    return { ...cache, generation: cache.generation + 1 };
+  }
+  const provider = applyAcpRegistryLiveConfiguration(
+    cache.entry.provider,
+    configuration,
+    customModels,
+  );
+  if (Equal.equals(provider, cache.entry.provider)) return cache;
+  return {
+    ...cache,
+    // The live session advanced the provider past what an in-flight probe
+    // started from; bump the epoch so the probe discards its stale result
+    // instead of overwriting this entry and publishing it.
+    generation: cache.generation + 1,
+    entry: {
+      ...cache.entry,
+      provider,
+      expiresAt: now + acpRegistryProbeTtlMs(provider),
+    },
+  };
+}
 const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   provider: DRIVER_KIND,
@@ -266,26 +314,59 @@ export function applyAcpRegistryLiveConfiguration(
   // session/load may omit models (Kimi returns `{}`); keep the probed list
   // and apply any live option descriptors to it.
   const probedModels = provider.models.filter((model) => !model.isCustom);
-  const discovery =
-    configuration.models.length > 0
-      ? configuration
-      : {
-          ...configuration,
-          models: probedModels.map((model) => ({
-            id: model.slug,
-            name: model.name,
-            description: null,
-          })),
-          currentModelId: probedModels.find((model) => model.isDefault)?.slug ?? null,
-        };
+  // A cold-start session can report one placeholder model before its catalog
+  // settles, while the probe may already have observed the full catalog. A
+  // single model enumerated by an explicit select is not that fallback but
+  // the agent's deliberate statement, so it wins over the probe catalog.
+  const liveCatalogIsProvisional =
+    configuration.models.length === 1 &&
+    !configuration.modelsFromModelSelect &&
+    probedModels.length > 1;
+  const useLiveCatalog =
+    configuration.models.length > 1 ||
+    (configuration.models.length === 1 && !liveCatalogIsProvisional);
+  const selectedProbedModelId =
+    configuration.currentModelId !== null &&
+    probedModels.some((model) => model.slug === configuration.currentModelId)
+      ? configuration.currentModelId
+      : (probedModels.find((model) => model.isDefault)?.slug ?? null);
+  const discovery = useLiveCatalog
+    ? configuration
+    : {
+        ...configuration,
+        models: probedModels.map((model) => ({
+          id: model.slug,
+          name: model.name,
+          description: null,
+        })),
+        currentModelId: selectedProbedModelId,
+      };
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
-    models:
-      configuration.models.length === 0 && configuration.configOptions.length === 0
-        ? provider.models
+    models: useLiveCatalog
+      ? modelsFromDiscovery(discovery, customModels)
+      : configuration.configOptions.length === 0
+        ? withAcpRegistryDefaultModel(provider.models, selectedProbedModelId)
         : modelsFromDiscovery(discovery, customModels),
   };
+}
+
+function withAcpRegistryDefaultModel(
+  models: ReadonlyArray<ServerProviderModel>,
+  currentModelId: string | null,
+): ReadonlyArray<ServerProviderModel> {
+  if (currentModelId === null) return models;
+  let changed = false;
+  const next = models.map((model) => {
+    if (model.isCustom) return model;
+    const isDefault = model.slug === currentModelId;
+    if ((model.isDefault ?? false) === isDefault) return model;
+    changed = true;
+    const { isDefault: _previous, ...rest } = model;
+    return isDefault ? { ...rest, isDefault: true } : rest;
+  });
+  return changed ? next : models;
 }
 
 function applyAcpRegistryUrlAuthAction(
@@ -601,13 +682,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(SecureRandom.SecureRandom, random),
     );
-    const enrichmentCache = yield* Ref.make<{
-      readonly generation: number;
-      readonly entry: {
-        readonly provider: ServerProvider;
-        readonly expiresAt: number;
-      } | null;
-    }>({ generation: 0, entry: null });
+    const enrichmentCache = yield* Ref.make<AcpRegistryEnrichmentCache>({
+      generation: 0,
+      entry: null,
+    });
     const liveSnapshotSemaphore = yield* Semaphore.make(1);
     const invalidateEnrichmentCache = Ref.update(enrichmentCache, (current) => ({
       generation: current.generation + 1,
@@ -631,13 +709,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       }
       const enriched = yield* enrichProvider;
       if (enriched.status === "ready") {
+        const completedAt = yield* Clock.currentTimeMillis;
         yield* Ref.update(enrichmentCache, (current) =>
           current.generation === cacheState.generation
             ? {
                 ...current,
                 entry: {
                   provider: enriched,
-                  expiresAt: now + PROBE_SUCCESS_TTL_MS,
+                  expiresAt: completedAt + acpRegistryProbeTtlMs(enriched),
                 },
               }
             : current,
@@ -709,15 +788,26 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           (configuration) =>
             liveSnapshotSemaphore.withPermit(
               getSnapshot.pipe(
-                Effect.flatMap((current) =>
-                  publishSnapshot(
-                    applyAcpRegistryLiveConfiguration(
-                      current,
-                      configuration,
-                      effectiveConfig.customModels,
+                Effect.flatMap((current) => {
+                  const updated = applyAcpRegistryLiveConfiguration(
+                    current,
+                    configuration,
+                    effectiveConfig.customModels,
+                  );
+                  return Clock.currentTimeMillis.pipe(
+                    Effect.flatMap((now) =>
+                      Ref.update(enrichmentCache, (cache) =>
+                        updateAcpRegistryEnrichmentCache({
+                          cache,
+                          configuration,
+                          customModels: effectiveConfig.customModels,
+                          now,
+                        }),
+                      ),
                     ),
-                  ),
-                ),
+                    Effect.andThen(publishSnapshot(updated)),
+                  );
+                }),
               ),
             ),
         );

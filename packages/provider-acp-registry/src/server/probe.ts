@@ -45,6 +45,9 @@ const MAX_COMMAND_LINE_LENGTH = 2_048;
 const PROBE_TIMEOUT_SECONDS = 60;
 const PROBE_TIMEOUT = `${PROBE_TIMEOUT_SECONDS} seconds`;
 const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
+// Agents that fetch their catalog after session setup (Qoder CLI, OpenCode)
+// settle it in seconds, not milliseconds; commands arrive much sooner.
+const MODEL_ADVERTISEMENT_GRACE = "5 seconds";
 const PROBE_SESSION_DELETE_TIMEOUT = "5 seconds";
 
 const boundedText = (value: string, maximumLength: number): string =>
@@ -168,6 +171,13 @@ export interface AcpRegistryLiveConfiguration {
   readonly models: ReadonlyArray<AcpRegistryProbeModel>;
   readonly currentModelId: string | null;
   readonly configOptions: AcpRegistryProbeResult["configOptions"];
+  /**
+   * True when the models were enumerated by an explicit model select option
+   * rather than the session's model state. A single-model select is then the
+   * agent's deliberate statement (for example an entitlement change), not a
+   * cold-start fallback, and reconciliation must honor it.
+   */
+  readonly modelsFromModelSelect: boolean;
 }
 
 export function normalizeAcpRegistryLiveConfiguration(
@@ -201,6 +211,7 @@ export function normalizeAcpRegistryLiveConfiguration(
       ? boundedCurrentModelId
       : null,
     configOptions: acpProviderOptionDescriptors({ configOptions, modeState }),
+    modelsFromModelSelect: modelOption !== undefined,
   };
 }
 
@@ -208,6 +219,31 @@ const emptyAcpRegistryAvailableCommands = (): AcpRegistryAvailableCommands => ({
   slashCommands: [],
   skills: [],
 });
+
+export function acpRegistryAdvertisesModelCatalog(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+  modelState?: EffectAcpSchema.SessionModelState | null,
+): boolean {
+  const modelOption = findModelConfigOption(configOptions);
+  return (
+    (modelOption !== undefined && flattenSelectChoices(modelOption.options).length > 1) ||
+    (modelState?.availableModels?.length ?? 0) > 1
+  );
+}
+
+export function resolveAcpRegistryProbeLiveConfiguration(input: {
+  readonly notifiedConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined;
+  readonly runtimeConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly modeState: Parameters<typeof normalizeAcpRegistryLiveConfiguration>[1];
+  readonly modelState: Parameters<typeof normalizeAcpRegistryLiveConfiguration>[2];
+}): AcpRegistryLiveConfiguration {
+  // config_option_update replaces the full option set, so an empty notice is authoritative.
+  return normalizeAcpRegistryLiveConfiguration(
+    input.notifiedConfigOptions ?? input.runtimeConfigOptions,
+    input.modeState,
+    input.modelState,
+  );
+}
 
 export function normalizeAcpRegistryCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
@@ -249,12 +285,15 @@ export function acpRegistryProbeResult(
   started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
   icon: string | null = null,
   spawn?: AcpRegistryAuthSpawnContext,
+  liveConfiguration?: AcpRegistryLiveConfiguration,
 ): AcpRegistryProbeResult {
-  const liveConfiguration = normalizeAcpRegistryLiveConfiguration(
-    started.sessionSetupResult.configOptions ?? [],
-    parseSessionModeState(started.sessionSetupResult),
-    started.sessionSetupResult.models,
-  );
+  const configuration =
+    liveConfiguration ??
+    normalizeAcpRegistryLiveConfiguration(
+      started.sessionSetupResult.configOptions ?? [],
+      parseSessionModeState(started.sessionSetupResult),
+      started.sessionSetupResult.models,
+    );
   return AcpRegistryProbeResult.make({
     instanceId,
     ready: true,
@@ -268,7 +307,7 @@ export function acpRegistryProbeResult(
       canDelete: started.initializeResult.agentCapabilities?.sessionCapabilities?.delete != null,
       canConfigureProviders: started.initializeResult.agentCapabilities?.providers != null,
     },
-    ...liveConfiguration,
+    ...configuration,
   });
 }
 
@@ -373,6 +412,10 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         emptyAcpRegistryAvailableCommands(),
       );
       const commandsAdvertised = yield* Deferred.make<void>();
+      const configOptionsRef = yield* Ref.make<
+        ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined
+      >(undefined);
+      const modelsAdvertised = yield* Deferred.make<void>();
       yield* runtime.handleElicitation((request) =>
         Effect.gen(function* () {
           if (
@@ -404,12 +447,23 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       );
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
-        return update.sessionUpdate === "available_commands_update"
-          ? Ref.set(commandsRef, normalizeAcpRegistryCommands(update.availableCommands)).pipe(
-              Effect.andThen(Deferred.succeed(commandsAdvertised, undefined)),
-              Effect.asVoid,
-            )
-          : Effect.void;
+        if (update.sessionUpdate === "available_commands_update") {
+          return Ref.set(commandsRef, normalizeAcpRegistryCommands(update.availableCommands)).pipe(
+            Effect.andThen(Deferred.succeed(commandsAdvertised, undefined)),
+            Effect.asVoid,
+          );
+        }
+        if (update.sessionUpdate === "config_option_update") {
+          const hasAdvertisedModels = acpRegistryAdvertisesModelCatalog(update.configOptions);
+          return Ref.set(configOptionsRef, update.configOptions).pipe(
+            Effect.andThen(
+              hasAdvertisedModels
+                ? Deferred.succeed(modelsAdvertised, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          );
+        }
+        return Effect.void;
       });
       const startResult = yield* Effect.result(runtime.start());
       if (Result.isFailure(startResult)) {
@@ -427,10 +481,39 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
           .deleteSession(started.sessionId)
           .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
       );
-      yield* Deferred.await(commandsAdvertised).pipe(
-        Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
+      const hasInitialModels = acpRegistryAdvertisesModelCatalog(
+        started.sessionSetupResult.configOptions,
+        started.sessionSetupResult.models,
       );
-      return { resolved, started, commands: yield* Ref.get(commandsRef) };
+
+      yield* Effect.all(
+        [
+          hasInitialModels
+            ? Effect.void
+            : Deferred.await(modelsAdvertised).pipe(
+                Effect.timeoutOption(MODEL_ADVERTISEMENT_GRACE),
+              ),
+          Deferred.await(commandsAdvertised).pipe(
+            Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      const liveConfiguration = resolveAcpRegistryProbeLiveConfiguration({
+        notifiedConfigOptions: yield* Ref.get(configOptionsRef),
+        runtimeConfigOptions: yield* runtime.getConfigOptions,
+        modeState:
+          (yield* runtime.getModeState) ?? parseSessionModeState(started.sessionSetupResult),
+        modelState: started.sessionSetupResult.models,
+      });
+
+      return {
+        resolved,
+        started,
+        commands: yield* Ref.get(commandsRef),
+        liveConfiguration,
+      };
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
@@ -456,6 +539,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
           command: result.resolved.spawn.command,
           args: result.resolved.spawn.args,
         },
+        result.liveConfiguration,
       ),
       slashCommands: result.commands.slashCommands,
       skills: result.commands.skills,
