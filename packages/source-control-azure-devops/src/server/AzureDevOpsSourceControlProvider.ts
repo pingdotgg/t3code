@@ -53,6 +53,22 @@ export const discovery = {
     "Install the Azure command-line tools (`az`), then enable Azure DevOps support with `az extension add --name azure-devops`.",
 } satisfies SourceControlCliDiscoverySpec;
 
+/**
+ * The repository name a remote ends in; `az` takes it decoded and finds org and project itself.
+ * Azure clone URLs carry no `.git` suffix, so a trailing `.git` is part of the name.
+ */
+function repositoryNameFromRemote(remoteUrl: string): string | null {
+  const path = URL.parse(remoteUrl.trim())?.pathname ?? remoteUrl.trim();
+  const encoded = path.replace(/\/+$/u, "").split(/[/:]/u).at(-1);
+  if (!encoded) return null;
+  let name = encoded;
+  try {
+    name = decodeURIComponent(encoded);
+  } catch {}
+  // `az` replaces any argument value starting with `@` by the contents of that local file.
+  return name.startsWith("@") ? null : name;
+}
+
 function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): ChangeRequest {
   return {
     provider: SourceControlProviderKind.make("azure-devops"),
@@ -76,6 +92,11 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("azure-devops"),
+    // Azure lists fork pull requests by source branch with no owner filter, so read a full page.
+    headBranchProbe: ({ headSelectors }) => ({
+      headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+      limit: 100,
+    }),
     listChangeRequests: Effect.fn("AzureDevOpsSourceControlProvider.listChangeRequests")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
@@ -200,7 +221,10 @@ export const make = Effect.gen(function* () {
     ),
     getDefaultBranch: Effect.fn("AzureDevOpsSourceControlProvider.getDefaultBranch")(
       function (input) {
-        return azure.getDefaultBranch({ cwd: input.cwd }).pipe(
+        const repository =
+          input.context === undefined ? null : repositoryNameFromRemote(input.context.remoteUrl);
+        if (repository === null) return Effect.succeed(null);
+        return azure.getDefaultBranch({ cwd: input.cwd, repository }).pipe(
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({

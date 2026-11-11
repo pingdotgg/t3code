@@ -138,6 +138,7 @@ import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { ProjectsSettings } from "./ProjectsSettings";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
+import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { validateSettingsScopeSearch, type SettingsScopeSearch } from "./settingsScope";
 import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
 
@@ -531,6 +532,48 @@ describe("project identity reset", () => {
       },
     ]);
   });
+});
+
+it("opens the fallback search target across all environments from a checkout", async () => {
+  setup();
+  const root = createRootRoute();
+  const settings = createRoute({
+    getParentRoute: () => root,
+    path: "settings",
+    validateSearch: validateSettingsRouteSearch,
+    search: { middlewares: [retainSettingsScope] },
+  });
+  const threads = createRoute({
+    getParentRoute: () => settings,
+    path: "threads",
+    component: () => (
+      <SettingsScopeProvider search={settings.useSearch()} onChange={() => {}}>
+        <SettingsScopeNotice target="all" targetId="fallback-model">
+          Choose all environments to edit the fallback model.
+        </SettingsScopeNotice>
+      </SettingsScopeProvider>
+    ),
+  });
+  const query = new URLSearchParams({
+    project: projectKey(),
+    machine: primaryId,
+    checkout: "primary:/work/primary",
+  });
+  const router = createRouter({
+    routeTree: root.addChildren([settings.addChildren([threads])]),
+    history: createMemoryHistory({ initialEntries: [`/settings/threads?${query}#fallback-model`] }),
+  });
+  await router.load();
+  // This route needs the real scope-retention middleware used by settings search.
+  await using _screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <RouterProvider router={router} />
+    </RegistryContext.Provider>,
+    { router: false },
+  );
+  await userEvent.click(page.getByRole("button", { name: "Open all environments" }));
+  await vi.waitFor(() => expect(router.state.location.search).toEqual({}));
+  expect(router.state.location.hash).toBe("fallback-model");
 });
 
 describe("project settings scope", () => {
