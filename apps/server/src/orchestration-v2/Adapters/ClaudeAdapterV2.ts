@@ -5109,14 +5109,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       cwd ?? undefined,
       adapterOptions.environment,
     ).pipe(
-      Effect.map(
-        (skills) =>
-          new Map(
-            skills
-              .filter((skill) => skill.enabled && skill.userInvocable !== false)
-              .map((skill) => [skill.name, skill]),
-          ),
-      ),
+      Effect.map((skills) => {
+        // Discovery keeps every same-name file in precedence order; the first is the one Claude runs.
+        const byName = new Map<string, ClaudeSkillTarget>();
+        for (const skill of skills) {
+          if (skill.enabled && skill.userInvocable !== false && !byName.has(skill.name)) {
+            byName.set(skill.name, skill);
+          }
+        }
+        return byName;
+      }),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );

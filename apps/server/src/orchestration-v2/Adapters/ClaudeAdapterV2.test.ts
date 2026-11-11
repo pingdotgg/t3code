@@ -4847,6 +4847,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             `---\nname: ${name}\ndisable-model-invocation: ${userOnly}\n---\nFollow the ${name} instructions.\n`,
           );
         }
+        // A same-name project copy must not replace the user copy Claude Code runs.
+        const projectCopy = path.join(homePath, ".claude", "skills", "interrogate");
+        yield* fs.makeDirectory(projectCopy, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(projectCopy, "SKILL.md"),
+          "---\nname: interrogate\ndisable-model-invocation: true\n---\n",
+        );
         const harness = yield* makeWakeHarnessWithOptions({
           settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath },
         });
