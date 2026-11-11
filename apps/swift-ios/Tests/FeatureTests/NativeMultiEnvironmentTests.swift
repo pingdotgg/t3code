@@ -28,7 +28,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let initial = try await fixture.client.initialSnapshot()
+        let initial = try await fixture.client.hydratedInitialSnapshot()
         let project = try XCTUnwrap(initial.projects.first { $0.environmentID == "two" })
         XCTAssertEqual(initial.preferencesByEnvironment?["one"]?.defaultRuntimeMode, .approvalRequired)
         XCTAssertEqual(initial.preferencesByEnvironment?["two"]?.defaultRuntimeMode, .autoAcceptEdits)
@@ -64,7 +64,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
         try await fixture.client.updateServerPreferences(environmentID: "one", change: .autoResumeLimitedThreads(true))
         try await fixture.client.updateServerPreferences(environmentID: "one", change: .snoozeLimitedThreads(true))
         let hosts = await server.updatedHosts()
@@ -94,7 +94,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             snapshotSequence: source.snapshotSequence, projects: source.projects,
             threads: [child], updatedAt: source.updatedAt
         ), host: "two.example")
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let mapped = try XCTUnwrap(snapshot.threads.first { $0.wireID == "child" })
         XCTAssertTrue(mapped.isSubagent)
         let restored = try JSONDecoder.t3.decode(FeatureSnapshot.self, from: JSONEncoder.t3.encode(snapshot))
@@ -116,7 +116,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             rpcConnectionWaitTimeout: .seconds(2)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
         let id = try await fixture.client.ensureScratchProject(environmentID: "two")
         XCTAssertEqual(id, FeatureScopedID.project(environmentID: "two", wireID: "scratch"))
         let hosts = await server.scratchHosts()
@@ -134,7 +134,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             rpcConnectionWaitTimeout: .seconds(2)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
         try await fixture.client.updateServerPreferences(environmentID: "two", change: .storageCleanup(["logsAfterDays": .number(14)]))
         try await fixture.client.updateServerPreferences(environmentID: "two", change: .worktreeSubmodules(WorktreeSubmodules.none))
         let hosts = await server.updatedHosts()
@@ -161,7 +161,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             projectID: "project-shared", threadID: "thread-shared", title: "Remote files",
             workspaceRoot: #"C:\work\project"#, worktreePath: #"D:\worktrees\feature"#
         ), host: "two.example")
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
 
         let root = try await fixture.client.listFiles(threadID: thread.id, path: nil)
@@ -193,7 +193,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             rpcConnectionWaitTimeout: .seconds(2)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "one" })
 
         let root = try await fixture.client.listFiles(threadID: thread.id, path: nil)
@@ -238,7 +238,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let project = try XCTUnwrap(snapshot.projects.first { $0.environmentID == "two" })
         XCTAssertEqual(project.defaultSelection?.modelID, environmentDefault.model)
         _ = try await fixture.client.createThread(projectID: project.id, title: "Task", selection: nil)
@@ -268,7 +268,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let project = try XCTUnwrap(snapshot.projects.first { $0.environmentID == "two" })
         XCTAssertEqual(project.defaultSelection?.modelID, environmentDefault.model)
         XCTAssertEqual(project.supportsProjectSettingsOverrides, true)
@@ -340,7 +340,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             snapshotSequence: source.snapshotSequence, projects: [wireProject],
             threads: source.threads, updatedAt: source.updatedAt
         ), host: "two.example")
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let project = try XCTUnwrap(snapshot.projects.first { $0.environmentID == "two" })
         let preferences = try await fixture.client.projectPreferences(projectID: project.id)
         XCTAssertEqual(preferences.environment.defaultModelSelection?.model, "environment-model")
@@ -358,7 +358,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let project = try XCTUnwrap(snapshot.projects.first { $0.environmentID == "two" })
         do {
             try await fixture.client.updateProjectPreferences(projectID: project.id, change: .init(
@@ -386,7 +386,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
         try await fixture.client.updateServerPreferences(environmentID: "two", change: .responseStreamingMode(.token))
         let saved = try await fixture.client.serverPreferences(environmentID: "two")
         XCTAssertEqual(saved.responseStreamingMode, .token)
@@ -414,7 +414,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 ),
                 host: "two.example"
             )
-            let snapshot = try await fixture.client.initialSnapshot()
+            let snapshot = try await fixture.client.hydratedInitialSnapshot()
             let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
             let monitor = Task {
                 for await _ in client.sourceControlStatusEvents(threadID: thread.id) {}
@@ -440,7 +440,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             await client.disconnect()
             try? FileManager.default.removeItem(at: directory)
         }
-        let snapshot = try await client.initialSnapshot()
+        let snapshot = try await client.hydratedInitialSnapshot()
         let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
         let other = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "one" })
 
@@ -566,7 +566,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
 
         XCTAssertEqual(Set(snapshot.projects.map(\.environmentID)), ["one", "two"])
         XCTAssertEqual(Set(snapshot.threads.compactMap(\.wireID)), ["thread-one", "thread-two"])
@@ -632,7 +632,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             aggregateRefreshInterval: .seconds(60)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
 
         let providers = try await fixture.client.refreshProviders(environmentID: "two")
         XCTAssertEqual(providers.map(\.id), ["codex-two.example"])
@@ -684,7 +684,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             aggregateRefreshInterval: .seconds(60)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
 
         try await fixture.client.updateServerPreferences(
             environmentID: "two", change: .environmentIcon("mac-mini")
@@ -721,7 +721,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             snapshotSequence: source.snapshotSequence, projects: [project],
             threads: source.threads, updatedAt: source.updatedAt
         ), host: "two.example")
-        let initial = try await fixture.client.initialSnapshot()
+        let initial = try await fixture.client.hydratedInitialSnapshot()
         XCTAssertNil(initial.projects.first { $0.environmentID == "two" }?.defaultSelection)
         let localDefault = initial.projects.first { $0.environmentID == "one" }?.defaultSelection
 
@@ -736,7 +736,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         }
 
         await fixture.transport.setShell(source, host: "two.example")
-        let overridden = try await fixture.client.initialSnapshot()
+        let overridden = try await fixture.client.hydratedInitialSnapshot()
         XCTAssertEqual(overridden.projects.first { $0.environmentID == "two" }?.defaultSelection?.modelID, "gpt-5.6-sol")
         await fixture.client.disconnect()
     }
@@ -751,7 +751,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             aggregateRefreshInterval: .seconds(60)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
 
         try await fixture.client.updateServerPreferences(
             environmentID: "one", change: .defaultThreadEnvMode(.worktree)
@@ -780,7 +780,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             aggregateRefreshInterval: .seconds(60)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         XCTAssertEqual(snapshot.preferencesByEnvironment?["one"]?.continueThreadsAfterServerUpdate, false)
         XCTAssertNil(snapshot.preferencesByEnvironment?["two"]?.continueThreadsAfterServerUpdate)
 
@@ -826,7 +826,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             host: "one.example"
         )
 
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try XCTUnwrap(
             snapshot.threads.first(where: { $0.wireID == "thread-one" })
         )
@@ -869,7 +869,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             host: "two.example"
         )
 
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
         let detail = try await fixture.client.loadThread(id: thread.id)
 
@@ -901,7 +901,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             host: "two.example"
         )
 
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
         let detail = try await fixture.client.loadThread(id: thread.id)
 
@@ -947,7 +947,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             host: "two.example"
         )
 
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
         XCTAssertTrue(thread.isRegeneratingTitle)
 
@@ -975,7 +975,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         let fixture = try await Self.makeFixture(repositoryIdentity: identity)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let groups = DailyUXCreationContext.projectGroups(in: snapshot)
 
         XCTAssertEqual(Set(snapshot.projects.compactMap(\.repositoryIdentity?.canonicalKey)), [
@@ -990,10 +990,10 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
         await fixture.transport.setReachable(false, host: "two.example")
 
-        let passiveFailure = try await fixture.client.initialSnapshot()
+        let passiveFailure = try await fixture.client.hydratedInitialSnapshot()
         XCTAssertEqual(
             Set(passiveFailure.threads.compactMap(\.wireID)),
             ["thread-one", "thread-two"]
@@ -1007,7 +1007,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.transport.setReachable(false, host: "one.example")
         await fixture.transport.setReachable(true, host: "two.example")
 
-        let activeFailure = try await fixture.client.initialSnapshot()
+        let activeFailure = try await fixture.client.hydratedInitialSnapshot()
         XCTAssertEqual(
             Set(activeFailure.threads.compactMap(\.wireID)),
             ["thread-one", "thread-two"]
@@ -1021,10 +1021,49 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testColdStartDoesNotWaitForAPassiveComputerAndPublishesItAfterwards() async throws {
+        let fixture = try await Self.makeFixture(
+            fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        await fixture.transport.holdNextShellRead(host: "two.example")
+
+        let activeStartup = expectation(description: "Active startup must return before a passive computer answers")
+        var startupReturned = false
+        let startup = Task {
+            let snapshot = try await fixture.client.initialSnapshot()
+            startupReturned = true
+            activeStartup.fulfill()
+            return snapshot
+        }
+        await fixture.transport.waitForHeldShellRead()
+        await fulfillment(of: [activeStartup], timeout: 2)
+        let returnedBeforeRelease = startupReturned
+        // Release even when the expectation fails so the old startup path can
+        // finish and does not leave the transport continuation suspended.
+        await fixture.transport.releaseShellRead()
+        let initial = try await startup.value
+        guard returnedBeforeRelease else {
+            await fixture.client.disconnect()
+            return
+        }
+        XCTAssertEqual(Set(initial.threads.compactMap(\.wireID)), ["thread-one"])
+        XCTAssertEqual(initial.connection.state, .connected)
+        XCTAssertNil(initial.environments.first(where: { $0.id == "two" })?.connectionState)
+
+        let settled = await fixture.client.settledStartupSnapshot()
+        let passive = try XCTUnwrap(settled)
+        XCTAssertEqual(Set(passive.threads.compactMap(\.wireID)), ["thread-one", "thread-two"])
+        XCTAssertEqual(passive.environments.first(where: { $0.id == "two" })?.connectionState, .connected)
+        XCTAssertEqual(passive.connection.state, .connected)
+        XCTAssertEqual(passive.connection.environmentName, "Left Book")
+        await fixture.client.disconnect()
+    }
+
     func testCachedShellRowsApplySettlementAndRemoveDeletedRoutes() async throws {
         let fixture = try await Self.makeFixture(threadSettlementAvailable: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let initial = try await fixture.client.initialSnapshot()
+        let initial = try await fixture.client.hydratedInitialSnapshot()
         let original = try XCTUnwrap(initial.threads.first { $0.environmentID == "two" })
         let updated = multiEnvironmentShell(
             projectID: "project-two", threadID: "thread-two", title: "Remote work",
@@ -1033,7 +1072,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             settledOverride: "settled", settledAt: "2026-07-31T12:01:00.000Z"
         )
         await fixture.transport.setShell(updated, host: "two.example")
-        let refreshed = try await fixture.client.initialSnapshot()
+        let refreshed = try await fixture.client.hydratedInitialSnapshot()
         let settled = try XCTUnwrap(refreshed.threads.first { $0.id == original.id })
         XCTAssertEqual(settled.updatedAt, original.updatedAt)
         XCTAssertEqual(settled.supportsSettlement, true)
@@ -1056,7 +1095,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             ),
             host: "two.example"
         )
-        let removed = try await fixture.client.initialSnapshot()
+        let removed = try await fixture.client.hydratedInitialSnapshot()
         XCTAssertFalse(removed.threads.contains { $0.id == original.id })
         XCTAssertEqual(removed.projects.first { $0.environmentID == "two" }?.threadCount, 0)
         do {
@@ -1071,7 +1110,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     func testOlderHTTPSnapshotCannotReplaceNewerEnvironmentState() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
 
         let newer = multiEnvironmentShell(
             projectID: "project-one",
@@ -1116,7 +1155,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     func testThreadCreationCannotReplaceNewerEnvironmentStateWithAnOlderShell() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
 
         let newer = multiEnvironmentShell(
             projectID: "project-one",
@@ -1229,7 +1268,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
 
         await loader.waitForCallCount(2)
         let retryCallCount = await loader.callCount
@@ -1247,7 +1286,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
         await loader.waitForCallCount(1)
 
         _ = try await fixture.client.initialSnapshot()
@@ -1263,7 +1302,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         let fixture = try await Self.makeFixture(duplicateIDs: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         XCTAssertEqual(snapshot.projects.count, 2)
         XCTAssertEqual(snapshot.threads.count, 2)
         XCTAssertEqual(Set(snapshot.projects.map(\.id)).count, 2)
@@ -1286,7 +1325,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let remoteProject = try XCTUnwrap(
             snapshot.projects.first(where: { $0.environmentID == "two" })
         )
@@ -1320,7 +1359,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     func testPassiveCreateRecoversACommittedThreadAfterItsReplyIsLost() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let project = try XCTUnwrap(
             snapshot.projects.first(where: { $0.environmentID == "two" })
         )
@@ -1345,7 +1384,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     func testUnarchiveImmediatelyRestoresLiveThreadWhenRefreshIsUnavailable() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let initial = try await fixture.client.initialSnapshot()
+        let initial = try await fixture.client.hydratedInitialSnapshot()
         let thread = try XCTUnwrap(
             initial.threads.first(where: { $0.environmentID == "one" })
         )
@@ -1384,7 +1423,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             fallbackPollingInterval: .seconds(2)
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
         let current = multiEnvironmentShell(
             projectID: "project-one",
             threadID: "thread-one",
@@ -1653,7 +1692,7 @@ struct NativeGitHubRoutingTests {
             webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
             rpcConnectionWaitTimeout: .seconds(2)
         )
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
         for id in includeThird ? ["one", "two", "three"] : ["one", "two"] {
             try await fixture.client.setGitHubRoutingPermission(environmentID: id, permission: .readWrite)
         }
@@ -1676,7 +1715,7 @@ struct NativePassiveThreadRefreshTests {
             }
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let initial = try await fixture.client.initialSnapshot()
+        let initial = try await fixture.client.hydratedInitialSnapshot()
         let thread = try #require(
             initial.threads.first(where: { $0.environmentID == "two" })
         )
@@ -1718,7 +1757,7 @@ struct NativePassiveThreadRefreshTests {
             }
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
 
         let firstCadence = await refreshSleep.waitUntilRequested(count: 1)
         #expect(firstCadence == .seconds(5))
@@ -1738,7 +1777,7 @@ struct NativePassiveThreadRefreshTests {
             }
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        _ = try await fixture.client.hydratedInitialSnapshot()
         let initialShellReads = await fixture.transport.shellReadCount(host: "three.example")
         let initialPeerReads = await fixture.transport.shellReadCount(host: "two.example")
         #expect(initialShellReads == 1)
@@ -2062,6 +2101,15 @@ private actor ControllableAggregateRefreshSleep {
     func resume() {
         sleepContinuation?.resume()
         sleepContinuation = nil
+    }
+}
+
+extension NativeFeatureClient {
+    /// Cold start returns once the active computer loads; passive computers
+    /// publish afterwards. Returns the snapshot once they have.
+    func hydratedInitialSnapshot() async throws -> FeatureSnapshot {
+        let initial = try await initialSnapshot()
+        return await settledStartupSnapshot() ?? initial
     }
 }
 
