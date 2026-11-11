@@ -32,7 +32,7 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
-import { useProject, useQuietThreadShell } from "../state/entities";
+import { useProject, useQuietThreadProjection, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "../state/threads";
@@ -138,25 +138,30 @@ export function BranchToolbarBranchSelector({
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  // The shell omits archived threads; their loaded detail carries the same git context.
+  const offShellThread =
+    useQuietThreadProjection(serverThread === null && draftThread === null ? threadRef : null)
+      ?.projection.thread ?? null;
+  const serverThreadContext = serverThread ?? offShellThread;
 
-  const activeProjectRef = serverThread
-    ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+  const activeProjectRef = serverThreadContext
+    ? scopeProjectRef(environmentId, serverThreadContext.projectId)
     : draftThread
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const activeProject = useProject(activeProjectRef);
 
-  const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
+  const activeThreadId = serverThreadContext?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch =
     activeThreadBranchOverride !== undefined
       ? activeThreadBranchOverride
-      : (serverThread?.branch ?? draftThread?.branch ?? null);
+      : (serverThreadContext?.branch ?? draftThread?.branch ?? null);
   const activeWorktreePath = forceNewWorktree
     ? null
-    : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
+    : (serverThreadContext?.worktreePath ?? draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
-  const hasServerThread = serverThread !== null;
+  const hasServerThread = serverThreadContext !== null;
   const canUpdateThreadBranch = !hasServerThread || canOperateThread;
   const canChangeThreadBranch = canWriteSourceControl && canUpdateThreadBranch;
   const effectiveEnvMode =
