@@ -10,7 +10,7 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { page } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
@@ -47,7 +47,7 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
 }));
 
 it("imports Pi conversations through the environment RPC and can retry a changed project", async () => {
-  using _environment = installFakeEnvironment([]);
+  using _environment = installFakeEnvironment([], { acceptCommands: true });
   const scan = vi.fn(() =>
     Effect.succeed({
       candidates: [
@@ -81,6 +81,15 @@ it("imports Pi conversations through the environment RPC and can retry a changed
             get(target, method, receiver) {
               if (method === WS_METHODS.agentSessionsScan) return scan;
               if (method === WS_METHODS.agentSessionsImport) return importSessions;
+              if (method === WS_METHODS.projectsReadFile)
+                return ({ relativePath }: { relativePath: string }) =>
+                  Effect.succeed({
+                    relativePath,
+                    contents: "",
+                    byteLength: 0,
+                    truncated: false,
+                    exists: false,
+                  });
               return Reflect.get(target, method, receiver);
             },
           }),
@@ -92,31 +101,46 @@ it("imports Pi conversations through the environment RPC and can retry a changed
   const router = getRouter(createMemoryHistory({ initialEntries: ["/welcome"] }));
   await router.load();
   await using _app = await render(<AppRoot router={router} />, { router: false });
+  await page.getByRole("button", { name: "Review all 1", exact: true }).click();
   await expect.element(page.getByRole("img", { name: "Pi", exact: true })).toBeVisible();
   await expect.element(page.getByRole("img", { name: "Claude Code", exact: true })).toBeVisible();
   await expect.element(page.getByRole("img", { name: "Codex", exact: true })).toBeVisible();
-  const importButton = page.getByRole("button", { name: "Import Terminal sessions", exact: true });
-  await userEvent.click(importButton);
-  await expect.element(page.getByText(/changed directories/)).toBeVisible();
+  await page.getByText("Import projects and their threads", { exact: true }).click();
+  await page.getByRole("button", { name: "Import threads and start", exact: true }).click();
+  await expect
+    .element(page.getByText("Could not import thread history.", { exact: true }))
+    .toBeVisible();
+  await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(2));
+
+  expect(importSessions).toHaveBeenCalledTimes(1);
+  await expect
+    .element(page.getByRole("heading", { name: "Welcome to T3 Code" }))
+    .not.toBeInTheDocument();
   changed = false;
-  await userEvent.click(importButton);
-  await expect.element(page.getByText("Terminal sessions: 2 imported, 1 skipped.")).toBeVisible();
+  await router.navigate({ to: "/welcome" });
+  await expect.element(page.getByRole("heading", { name: "Welcome to T3 Code" })).toBeVisible();
+  await page.getByText("Import projects and their threads", { exact: true }).click();
+  await page.getByRole("button", { name: "Import threads and start", exact: true }).click();
+  await expect
+    .element(page.getByText("Imported 2 threads. 1 thread could not be imported.", { exact: true }))
+    .toBeVisible();
+  expect(importSessions).toHaveBeenCalledTimes(2);
   expect(importSessions).toHaveBeenLastCalledWith({
     projectId: PROJECT_ID,
     expectedWorkspaceRoot: "/workspace/render",
   });
-  await userEvent.click(page.getByRole("button", { name: "Refresh", exact: true }));
-  await expect.poll(() => scan.mock.calls.length).toBe(2);
-  await userEvent.click(page.getByRole("link", { name: "Back to app" }));
   await expect
-    .element(page.getByRole("heading", { name: "Import conversations" }))
+    .element(page.getByRole("heading", { name: "Welcome to T3 Code" }))
     .not.toBeInTheDocument();
 });
 
 it("a new draft does not load its reserved thread before the server lists it", async () => {
   using _environment = installFakeEnvironment([]);
   using fetchSpy = vi.spyOn(globalThis, "fetch");
-  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
   const draftId = DraftId.make("draft-27443");
   const threadId = ThreadId.make("thread-27443");
   useComposerDraftStore
