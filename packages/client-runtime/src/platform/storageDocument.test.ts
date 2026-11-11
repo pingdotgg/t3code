@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
+  ConnectionProfile,
   BearerConnectionRegistration,
   SshConnectionProfile,
   SshConnectionRegistration,
@@ -14,6 +15,7 @@ import {
 import {
   BearerConnectionTarget,
   ConnectionTransientError,
+  PersistedConnectionTarget,
   PrimaryConnectionTarget,
   SshConnectionTarget,
 } from "../connection/model.ts";
@@ -24,6 +26,7 @@ import {
 import {
   ConnectionCatalogDocument,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
+  StoredConnectionCredential,
   catalogRoutes,
   setRoutesInCatalog,
   clearConnectOnlyEnvironments,
@@ -330,6 +333,23 @@ describe("ConnectionCatalogDocument", () => {
   });
 });
 
+// The document as 8b1b2e0507, the last build with T3 Connect, requires it. Its targets and
+// profiles were supersets of today's, so only the top-level fields need copying here.
+const PreviousBuildCatalogDocument = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  targets: Schema.Array(PersistedConnectionTarget),
+  profiles: Schema.Array(ConnectionProfile),
+  credentials: Schema.Array(StoredConnectionCredential),
+  remoteDpopTokens: Schema.Array(
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      accessToken: Schema.String,
+      expiresAtEpochMs: Schema.Number,
+    }),
+  ),
+});
+const decodePreviousBuildCatalog = Schema.decodeUnknownSync(PreviousBuildCatalogDocument);
+
 describe("ConnectionCatalogDocument T3 Connect migration", () => {
   const encode = Schema.encodeSync(ConnectionCatalogDocument);
   const OFFICE_ID = EnvironmentId.make("environment-office");
@@ -388,6 +408,19 @@ describe("ConnectionCatalogDocument T3 Connect migration", () => {
     ]);
     expect(decoded.disabledEnvironmentIds).toEqual([]);
     expect(decoded).not.toHaveProperty("remoteDpopTokens");
+  });
+
+  it("writes a document the previous build still reads, keeping direct routes and their tokens", () => {
+    const upgraded = clearConnectOnlyEnvironments(decodeCatalogDocument(legacyDocument()));
+
+    const rolledBack = decodePreviousBuildCatalog(encode(upgraded));
+
+    expect(rolledBack.targets).toEqual([BEARER_TARGET]);
+    expect(rolledBack.profiles).toEqual([BEARER_PROFILE]);
+    expect(rolledBack.credentials).toEqual([
+      { connectionId: BEARER_TARGET.connectionId, credential: BEARER_CREDENTIAL },
+    ]);
+    expect(rolledBack.remoteDpopTokens).toEqual([]);
   });
 
   it("records an environment reached only through T3 Connect once, until shown or re-paired", () => {

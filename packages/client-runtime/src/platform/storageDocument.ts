@@ -61,6 +61,9 @@ const StoredConnectionCatalogDocument = Schema.Struct({
   ...catalogDocumentFields,
   targets: Schema.Array(Schema.Union([LegacyRelayConnectionTarget, PersistedConnectionTarget])),
   profiles: Schema.Array(Schema.Union([LegacyConnectAuthorizedProfile, ConnectionProfile])),
+  // Builds with T3 Connect require this key, so it is always written, empty, to keep a rollback
+  // from discarding the whole catalog. Its relay-minted tokens are never read.
+  remoteDpopTokens: Schema.optionalKey(Schema.Array(Schema.Unknown)),
 });
 
 type StoredConnectionCatalogDocument = typeof StoredConnectionCatalogDocument.Type;
@@ -73,9 +76,10 @@ const isLegacyConnectProfile = Schema.is(LegacyConnectAuthorizedProfile);
  * Drops T3 Connect records, keeping direct routes and their tokens. An environment left
  * with no route is recorded in `connectOnlyEnvironments` so the client can say why it is gone.
  */
-function withoutConnectRecords(
-  stored: StoredConnectionCatalogDocument,
-): CurrentConnectionCatalogDocument {
+function withoutConnectRecords({
+  remoteDpopTokens: _relayTokens,
+  ...stored
+}: StoredConnectionCatalogDocument): CurrentConnectionCatalogDocument {
   const connectProfileIds = new Set(
     stored.profiles.flatMap((profile) =>
       isLegacyConnectProfile(profile) ? [profile.connectionId] : [],
@@ -126,7 +130,10 @@ export const ConnectionCatalogDocument = StoredConnectionCatalogDocument.pipe(
     Schema.toType(CurrentConnectionCatalogDocument),
     SchemaTransformation.transform({
       decode: withoutConnectRecords,
-      encode: (document): StoredConnectionCatalogDocument => document,
+      encode: (document): StoredConnectionCatalogDocument => ({
+        ...document,
+        remoteDpopTokens: [],
+      }),
     }),
   ),
 );
