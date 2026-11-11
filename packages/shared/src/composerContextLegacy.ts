@@ -10,9 +10,7 @@ import * as Schema from "effect/Schema";
 
 import { formatComposerContextReference } from "./composerContextReferences.ts";
 
-/**
- * Event history is never rewritten; this runs in memory on read.
- */
+/** Converts in memory on read; never rewrites event history. */
 
 export interface UpgradedLegacyContext {
   text: string;
@@ -156,10 +154,7 @@ function elementRecord(entry: ParsedEntry, index: number): ElementContextRecord 
 
 function previewRecord(body: string, index: number): PreviewAnnotationContextRecord | null {
   const lines = body.split("\n");
-  // A legacy comment was written verbatim, so it can run over several lines and hold blank
-  // lines and markup of its own. Its value is every line up to the next field or the block that
-  // follows it — anything else is text the author typed, and dropping it loses instructions the
-  // chip that replaces this block cannot show.
+  // Preserve multiline comments, including blank lines and markup, until the next field or context block.
   const FIELD_PREFIXES = ["Preview annotation:", "Id: ", "Page: ", "Comment: ", "Targets: "];
   const BLOCK_DELIMITER =
     /^<\/?(?:terminal_context|element_context|preview_annotation|review_comment)\b/;
@@ -331,10 +326,7 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
     return `${reviewToken}${reviews.length - 1}${reviewToken}`;
   });
 
-  // Blocks were appended in send order (terminal, element, preview, review), so they peel
-  // off the end in reverse. Each peel exposes the next block as trailing.
-  // Peel reviews only when they hide another trailing context block. A review at the end
-  // of ordinary prose can still be inline; keep its original spacing and line breaks.
+  // Peel appended blocks in reverse send order. Peel reviews only to expose context blocks, preserving inline prose spacing.
   const trailingReviewTokens: number[] = [];
   const tokens = trailingReviewTokenPattern.exec(rest);
   if (tokens && tokens[0].length > 0) {
@@ -408,9 +400,12 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
     if (placedTerminals.has(record)) continue;
     const label = inlineTerminalLabel(record);
     let at = body.indexOf(label);
+    // Alternation instead of a character class: on Electron 44's V8 (15.2) a class
+    // directly before `$` with the `u` flag never matches a code point outside the
+    // BMP, so `𐐀@build:7` would become a chip.
     while (
       at !== -1 &&
-      (/[\p{L}\p{N}\p{M}_@.-]$/u.test(body.slice(0, at)) ||
+      (/(?:\p{L}|\p{N}|\p{M}|[_@.-])$/u.test(body.slice(0, at)) ||
         /^(?:[\p{L}\p{N}\p{M}_-]|[.@]+[\p{L}\p{N}\p{M}_-])/u.test(body.slice(at + label.length)))
     ) {
       at = body.indexOf(label, at + 1);

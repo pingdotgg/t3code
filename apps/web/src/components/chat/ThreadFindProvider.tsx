@@ -1,55 +1,31 @@
-import {
-  createContext,
-  use,
-  useImperativeHandle,
-  useLayoutEffect,
-  type ReactNode,
-  type ComponentProps,
-  type Ref,
-} from "react";
+import { createContext, use, type ReactNode, type ComponentProps } from "react";
 import { useThreadFind } from "./useThreadFind";
 import { ThreadFindBar } from "./ThreadFindBar";
 import { ChatCanvas } from "./ChatCanvas";
 
 type Find = ReturnType<typeof useThreadFind>;
-export type ThreadFindControls = Pick<Find, "open" | "close">;
 export const ThreadFindTimelineContext = createContext<Find["timelineProps"] | null>(null);
 const ThreadFindBarContext = createContext<Find["barProps"] | null>(null);
 
 export function ThreadFindCanvas({
   findOptions,
-  controlsRef,
-  onOpenChange,
   ...canvasProps
 }: ComponentProps<typeof ChatCanvas> & {
   findOptions: Parameters<typeof useThreadFind>[0];
-  controlsRef: Ref<ThreadFindControls>;
-  onOpenChange: (open: boolean) => void;
 }) {
   return (
-    <ThreadFindProvider {...findOptions} controlsRef={controlsRef} onOpenChange={onOpenChange}>
+    <ThreadFindProvider {...findOptions}>
       <ChatCanvas {...canvasProps} />
     </ThreadFindProvider>
   );
 }
 
 /** Owns search updates below the chat view so cycling does not rerender the composer and panels. */
-export function ThreadFindProvider({
-  controlsRef,
-  onOpenChange,
+function ThreadFindProvider({
   children,
   ...options
-}: Parameters<typeof useThreadFind>[0] & {
-  controlsRef: Ref<ThreadFindControls>;
-  onOpenChange: (open: boolean) => void;
-  children: ReactNode;
-}) {
+}: Parameters<typeof useThreadFind>[0] & { children: ReactNode }) {
   const find = useThreadFind(options);
-  useImperativeHandle(controlsRef, () => ({ open: find.open, close: find.close }), [
-    find.open,
-    find.close,
-  ]);
-  useLayoutEffect(() => onOpenChange(find.isOpen), [find.isOpen, onOpenChange]);
   return (
     <ThreadFindBarContext value={find.barProps}>
       <ThreadFindTimelineContext value={find.timelineProps}>{children}</ThreadFindTimelineContext>

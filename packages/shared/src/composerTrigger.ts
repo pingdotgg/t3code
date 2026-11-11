@@ -75,10 +75,7 @@ export function continueComposerPathTrigger(
   };
 }
 
-/**
- * A slash word with a second slash, such as `/tmp/build.sh`, is a path, not a
- * command. The whole word counts, so a caret before the second slash still sees it.
- */
+/** A second slash makes the whole word a path, even when the caret precedes that slash. */
 export function isPathWord(
   text: string,
   wordStart: number,
@@ -90,6 +87,15 @@ export function isPathWord(
     wordEnd += 1;
   }
   return text.slice(wordStart + 1, wordEnd).includes("/");
+}
+
+/**
+ * `$5`, `€9.99` and `$10k` are money, not skills. Matches the amounts the inline skill
+ * token regexes already refuse to render as skills, plus the punctuation prose puts after
+ * one (`$10k.`, `($5)`).
+ */
+export function isCurrencyAmountQuery(query: string): boolean {
+  return /^\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*$/.test(query);
 }
 
 export function detectComposerTrigger(
@@ -124,7 +130,7 @@ export function detectComposerTrigger(
       };
     }
 
-    const modelMatch = /^\/model(?:\s+(.*))?$/.exec(linePrefix);
+    const modelMatch = /^\/model(?:\s+(.*))?$/i.exec(linePrefix);
     if (modelMatch) {
       return {
         kind: "slash-model",
@@ -162,6 +168,7 @@ export function detectComposerTrigger(
     };
   const skillPrefix = /^\p{Sc}/u.exec(token);
   if (skillPrefix) {
+    if (isCurrencyAmountQuery(token.slice(skillPrefix[0].length))) return null;
     return {
       kind: "skill",
       query: token.slice(skillPrefix[0].length),
@@ -191,4 +198,15 @@ export function replaceTextRange(
   const safeEnd = Math.max(safeStart, Math.min(text.length, rangeEnd));
   const nextText = `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
   return { text: nextText, cursor: safeStart + replacement.length };
+}
+
+/** `/clear` as the whole message arms a fresh session instead of sending. */
+export function isClearComposerCommand(text: string): boolean {
+  return /^\/clear\s*$/i.test(text.trim());
+}
+
+/** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message. */
+export function parseSideChatCommand(text: string): { prompt: string } | null {
+  const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  return match ? { prompt: match[1]?.trim() ?? "" } : null;
 }

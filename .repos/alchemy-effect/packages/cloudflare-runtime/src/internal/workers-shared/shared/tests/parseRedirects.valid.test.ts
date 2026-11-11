@@ -47,9 +47,7 @@ test("parseRedirects should ignore comments", ({ expect }) => {
   });
 });
 
-test("parseRedirects should handle a single comment-only line", ({
-  expect,
-}) => {
+test("parseRedirects should handle a single comment-only line", ({ expect }) => {
   const input = `# This is just a comment`;
   const result = parseRedirects(input);
   expect(result).toEqual({
@@ -58,9 +56,7 @@ test("parseRedirects should handle a single comment-only line", ({
   });
 });
 
-test("parseRedirects should handle an indented comment-only line", ({
-  expect,
-}) => {
+test("parseRedirects should handle an indented comment-only line", ({ expect }) => {
   const input = `  # indented comment`;
   const result = parseRedirects(input);
   expect(result).toEqual({
@@ -69,9 +65,7 @@ test("parseRedirects should handle an indented comment-only line", ({
   });
 });
 
-test("parseRedirects should handle multiple consecutive comment lines", ({
-  expect,
-}) => {
+test("parseRedirects should handle multiple consecutive comment lines", ({ expect }) => {
   const input = `
 # First comment
 # Second comment
@@ -154,9 +148,7 @@ test("parseRedirects should preserve fragments", ({ expect }) => {
   });
 });
 
-test("parseRedirects should preserve fragments which contain a hash sign", ({
-  expect,
-}) => {
+test("parseRedirects should preserve fragments which contain a hash sign", ({ expect }) => {
   const input = `
   /a /b##blah-1 302
 `;
@@ -205,9 +197,7 @@ test("parseRedirects should accept 200 (proxying) redirects", ({ expect }) => {
   });
 });
 
-test("parseRedirects should accept absolute URLs that end with index.html", ({
-  expect,
-}) => {
+test("parseRedirects should accept absolute URLs that end with index.html", ({ expect }) => {
   const input = `
 	/foo https://bar.com/index.html 302
 `;
@@ -225,9 +215,7 @@ test("parseRedirects should accept absolute URLs that end with index.html", ({
   });
 });
 
-test("parseRedirects should accept going to absolute URLs with ports", ({
-  expect,
-}) => {
+test("parseRedirects should accept going to absolute URLs with ports", ({ expect }) => {
   const input = `
 	/foo https://bar.com:123/index.html 302
 	/cat https://cat.com:12345 302
@@ -259,9 +247,7 @@ test("parseRedirects should accept going to absolute URLs with ports", ({
   });
 });
 
-test("parseRedirects should accept relative URLs that don't point to .html files", ({
-  expect,
-}) => {
+test("parseRedirects should accept relative URLs that don't point to .html files", ({ expect }) => {
   const input = `
 	/* /foo 200
 `;
@@ -288,9 +274,7 @@ test("parseRedirects should support inline comments", ({ expect }) => {
   });
 });
 
-test("parseRedirects should support inline comments without status code", ({
-  expect,
-}) => {
+test("parseRedirects should support inline comments without status code", ({ expect }) => {
   const input = `/a /b # redirect with default status`;
   const result = parseRedirects(input);
   expect(result).toEqual({
@@ -299,9 +283,7 @@ test("parseRedirects should support inline comments without status code", ({
   });
 });
 
-test("parseRedirects should support inline comments after URL fragments", ({
-  expect,
-}) => {
+test("parseRedirects should support inline comments after URL fragments", ({ expect }) => {
   const input = `/a /b#section 301 # redirect to section`;
   const result = parseRedirects(input);
   expect(result).toEqual({
@@ -310,9 +292,7 @@ test("parseRedirects should support inline comments after URL fragments", ({
   });
 });
 
-test("parseRedirects should support inline comments without space after hash", ({
-  expect,
-}) => {
+test("parseRedirects should support inline comments without space after hash", ({ expect }) => {
   const input = `/a /b 301 #no space comment`;
   const result = parseRedirects(input);
   expect(result).toEqual({
@@ -321,9 +301,7 @@ test("parseRedirects should support inline comments without space after hash", (
   });
 });
 
-test("parseRedirects should support multiple rules with inline comments", ({
-  expect,
-}) => {
+test("parseRedirects should support multiple rules with inline comments", ({ expect }) => {
   const input = `
     /a /b 301 # first rule
     /c /d # second rule with default status
@@ -347,16 +325,12 @@ test("parseRedirects should support inline comments with absolute URLs containin
   const input = `/a https://x.com/b#c # comment`;
   const result = parseRedirects(input);
   expect(result).toEqual({
-    rules: [
-      { from: "/a", status: 302, to: "https://x.com/b#c", lineNumber: 1 },
-    ],
+    rules: [{ from: "/a", status: 302, to: "https://x.com/b#c", lineNumber: 1 }],
     invalid: [],
   });
 });
 
-test("parseRedirects should support empty inline comments (just hash)", ({
-  expect,
-}) => {
+test("parseRedirects should support empty inline comments (just hash)", ({ expect }) => {
   const input = `/a /b #`;
   const result = parseRedirects(input);
   expect(result).toEqual({
