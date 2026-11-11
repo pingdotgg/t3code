@@ -805,6 +805,18 @@ describe("source control tools", () => {
       });
       yield* harness.call("pull_request_read", { sections: ["summary"] });
       expect(asked).toMatchObject([{ number: 43 }]);
+
+      // After a switch to another branch, the PR opened from the old one is not the branch's.
+      const switched = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(43, { source: "created", headBranch: "old" })]),
+          branch: "new",
+        },
+      });
+      const error = yield* switched
+        .call("pull_request_update", { title: "New title" })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestBranchHasNoneError");
     }),
   );
 

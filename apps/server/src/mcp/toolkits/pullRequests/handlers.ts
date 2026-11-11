@@ -273,10 +273,15 @@ const make = Effect.gen(function* () {
     if (project === undefined) {
       return yield* new PullRequestProjectNotFoundError({ repository: input.repository ?? "" });
     }
-    // Status sync sets branchPullRequest later, so a PR this thread just opened counts too.
+    // Status sync sets branchPullRequest later, so a PR this thread just opened counts too,
+    // unless its snapshot shows it is another branch's.
     const branchPullRequest =
       thread.branchPullRequest ??
-      threadPullRequestsOf(thread).findLast((link) => link.source === "created") ??
+      threadPullRequestsOf(thread).findLast(
+        (link) =>
+          link.source === "created" &&
+          (link.snapshot === null || link.snapshot.headBranch === thread.branch),
+      ) ??
       null;
     const branchRepository =
       project.repositoryIdentity == null
