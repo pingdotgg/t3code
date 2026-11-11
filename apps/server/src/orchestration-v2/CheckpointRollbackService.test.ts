@@ -400,7 +400,7 @@ it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
             Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as never),
             ServerSettings.layerTest(),
             Layer.mock(ProjectStore.ProjectStoreV2)({
-              get: () => Effect.succeed(Option.some({ workspaceRoot } as never)),
+              get: () => Effect.succeedSome({ workspaceRoot } as never),
             }),
             Layer.mock(GitWorkflow.GitWorkflowService)({}),
             Layer.mock(CheckpointService.CheckpointServiceV2)({
