@@ -102,45 +102,37 @@ const detail: PullRequestDetailView = {
   },
 };
 
-it.each(["pointer", "keyboard"])(
-  "dismisses a media tooltip after %s preview and PR scroll",
-  async (input) => {
-    setup();
-    const url = "https://github.com/user-attachments/assets/7195f963-51a9-4331-be74-3e06be760422";
-    await using screen = await render({
-      ...detail,
-      body: `![Screenshot](${url})\n\n${"Paragraph\n\n".repeat(40)}`,
-    });
-    const scroller = screen.container.querySelector<HTMLElement>(
-      "[data-pull-request-summary-scroll]",
-    )!;
-    scroller.style.height = "600px";
-    const link = screen.getByRole("button", { name: "Preview Screenshot", exact: true });
-    await expect.element(screen.getByAltText("Screenshot")).toBeVisible();
-    if (input === "pointer") {
-      await userEvent.click(link);
-    } else {
-      await act(() => (link.element() as HTMLElement).focus());
-      await userEvent.keyboard("{Enter}");
-    }
-    await expect.element(page.getByRole("dialog")).toBeVisible();
-    // Leave the opener while the dialog is up: scrolling must not depend on mouseleave.
-    await userEvent.hover(page.getByRole("button", { name: "Close image preview" }));
-    await userEvent.keyboard("{Escape}");
-    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-    expect(document.activeElement).toBe(link.element());
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(url),
-    );
-    await act(() => {
-      scroller.scrollTop = 100;
-    });
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-slot="tooltip-popup"]')).toBeNull(),
-    );
-    expect(document.activeElement).toBe(link.element());
-  },
-);
+// Mouse-opened previews restore focus without focus-visible, so only keyboard reopens the tooltip.
+it("dismisses a media tooltip after keyboard preview and PR scroll", async () => {
+  setup();
+  const url = "https://github.com/user-attachments/assets/7195f963-51a9-4331-be74-3e06be760422";
+  await using screen = await render({
+    ...detail,
+    body: `![Screenshot](${url})\n\n${"Paragraph\n\n".repeat(40)}`,
+  });
+  const scroller = screen.container.querySelector<HTMLElement>(
+    "[data-pull-request-summary-scroll]",
+  )!;
+  scroller.style.height = "600px";
+  const link = screen.getByRole("button", { name: "Preview Screenshot", exact: true });
+  await expect.element(screen.getByAltText("Screenshot")).toBeVisible();
+  await act(() => (link.element() as HTMLElement).focus());
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("dialog")).toBeVisible();
+  // Leave the opener while the dialog is up: scrolling must not depend on mouseleave.
+  await userEvent.hover(page.getByRole("button", { name: "Close image preview" }));
+  await userEvent.keyboard("{Escape}");
+  await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+  expect(document.activeElement).toBe(link.element());
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(url),
+  );
+  await act(() => {
+    scroller.scrollTop = 100;
+  });
+  await vi.waitFor(() => expect(document.querySelector('[data-slot="tooltip-popup"]')).toBeNull());
+  expect(document.activeElement).toBe(link.element());
+});
 
 // The comment filter persists to localStorage, so tests that touch it start and end empty.
 
