@@ -329,18 +329,16 @@ describe("environment RPC", () => {
   );
 
   it.effect("resubscribes on the same session after a transport failure", () =>
-    Effect.gen(function* () {
-      yield* resumesOnTheSameSession(
-        Stream.fail(
-          new RpcClientError.RpcClientError({
-            reason: new RpcClientError.RpcClientDefect({
-              message: "stream failed",
-              cause: new Error("stream failed"),
-            }),
+    resumesOnTheSameSession(
+      Stream.fail(
+        new RpcClientError.RpcClientError({
+          reason: new RpcClientError.RpcClientDefect({
+            message: "stream failed",
+            cause: new Error("stream failed"),
           }),
-        ),
-      );
-    }),
+        }),
+      ),
+    ),
   );
 
   it.effect("resubscribes on the same session after a stream chunk fails to decode", () =>
