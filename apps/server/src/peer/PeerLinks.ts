@@ -309,6 +309,7 @@ const make = Effect.gen(function* () {
       const resource = `${origin}/mcp`;
       const decided = yield* client.mcpOAuth
         .decision({
+          headers: {},
           payload: {
             authorization: {
               response_type: "code",
