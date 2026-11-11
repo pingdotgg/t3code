@@ -5,6 +5,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
 import { dismissContextMenu } from "~/contextMenuFallback";
 import { isMacPlatform } from "~/lib/utils";
+import { dispatchPreviewAction } from "../preview/previewActionBus";
 import { render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
 
@@ -134,6 +135,30 @@ describe("FileBrowserPanel", () => {
 
     const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
     await userEvent.keyboard(`{${modifier}>}f{/${modifier}}`);
+
+    await expect.element(page.getByRole("searchbox", { name: "Search repo files" })).toHaveFocus();
+  });
+
+  it("the panel find command focuses the file search when focus is outside the panel", async () => {
+    await using _screen = await render(
+      <>
+        <button type="button">Add tab</button>
+        <FileBrowserPanel
+          environmentId={EnvironmentId.make("env-files")}
+          cwd="/repo"
+          projectName="repo"
+          selectedPath={null}
+          selectedPathRevealId={0}
+          onOpenFile={() => {}}
+          workspaceMutationId={null}
+          answersPanelFind
+        />
+      </>,
+    );
+    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+    page.getByRole("button", { name: "Add tab" }).element().focus();
+
+    dispatchPreviewAction("find");
 
     await expect.element(page.getByRole("searchbox", { name: "Search repo files" })).toHaveFocus();
   });
