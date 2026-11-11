@@ -34,6 +34,7 @@ import {
   type ThreadTaskRemoteOwnerActionInput,
   type ThreadSettleAfterTurnInput,
   type ThreadSettleRequest,
+  type McpGatewayRelayEvent,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { threadShellHasActiveWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -738,7 +739,7 @@ export const make = Effect.gen(function* () {
       if (caller.kind === "thread" && caller.threadId !== mirror.ownerThreadId) {
         return yield* fail("scope_denied", "Only a task's owner can change it from here.");
       }
-      return yield* forwardOwnerAction(mirror, input);
+      return yield* forwardOwnerAction(caller, mirror, input);
     },
   );
 
@@ -1216,11 +1217,26 @@ export const make = Effect.gen(function* () {
       `Environment ${environmentId} could not be reached; nothing changed there. ${reason}`,
     );
 
-  const callPeer = (environmentId: EnvironmentId, request: ThreadTaskRemoteRequest) =>
+  /** The modes of the chat behind a call, which the environment it reaches applies there. */
+  const callerModes = (caller: ThreadTaskCaller) =>
+    caller.kind === "thread"
+      ? requireShell(caller.threadId).pipe(
+          Effect.map((shell) => ({
+            runtimeMode: shell.runtimeMode,
+            interactionMode: shell.interactionMode,
+          })),
+        )
+      : Effect.undefined;
+
+  const callPeer = (
+    environmentId: EnvironmentId,
+    request: ThreadTaskRemoteRequest,
+    modeCeiling?: McpGatewayRelayEvent["modeCeiling"],
+  ) =>
     transport === undefined
       ? Effect.fail(unreachable(environmentId, "No connected T3 app relays to it."))
       : transport
-          .call(environmentId, request)
+          .call(environmentId, request, modeCeiling)
           .pipe(Effect.mapError((reason) => unreachable(environmentId, reason)));
 
   const decodeView = Schema.decodeUnknownEffect(ThreadTaskViewSchema);
@@ -1366,10 +1382,11 @@ export const make = Effect.gen(function* () {
           : { remoteContinuationLive: ownLink.remoteContinuationLive }),
       })
       .pipe(Effect.catch(unavailable));
-    const reply = yield* callPeer(workerEnvironmentId, {
-      action: "remoteAssign",
-      input: request,
-    });
+    const reply = yield* callPeer(
+      workerEnvironmentId,
+      { action: "remoteAssign", input: request },
+      yield* callerModes(caller),
+    );
     const remote = yield* decodeView(reply).pipe(
       Effect.mapError(invalidPeerReply(workerEnvironmentId)),
     );
@@ -1380,6 +1397,7 @@ export const make = Effect.gen(function* () {
 
   /** Owner side: send accept, consent or an owner edit to the worker's environment. */
   const forwardOwnerAction = Effect.fn("ThreadTaskService.forwardOwnerAction")(function* (
+    caller: ThreadTaskCaller,
     mirror: ThreadTask,
     input: ThreadTaskUpdateInput,
   ) {
@@ -1390,14 +1408,18 @@ export const make = Effect.gen(function* () {
     if (link === undefined || transport === undefined) {
       return yield* unreachable(peer, "This environment holds no delivery link for the task.");
     }
-    const reply = yield* callPeer(peer, {
-      action: "remoteOwnerAction",
-      input: {
-        ownerEnvironmentId: transport.localEnvironmentId,
-        capability: link.capability,
-        update: { ...input, threadId: mirror.workerThreadId },
+    const reply = yield* callPeer(
+      peer,
+      {
+        action: "remoteOwnerAction",
+        input: {
+          ownerEnvironmentId: transport.localEnvironmentId,
+          capability: link.capability,
+          update: { ...input, threadId: mirror.workerThreadId },
+        },
       },
-    });
+      yield* callerModes(caller),
+    );
     const remote = yield* decodeView(reply).pipe(Effect.mapError(invalidPeerReply(peer)));
     yield* record(mirror.workerThreadId, "owner_action", remote.task.revision);
     yield* applyRemoteView(peer, remote);

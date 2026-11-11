@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { MCP_GATEWAY_BASELINE_SCOPES } from "../../mcpGatewayState";
-import type { TailnetDevicesSnapshot } from "@t3tools/contracts";
+import {
+  MCP_GATEWAY_BASELINE_SCOPES,
+  MCP_GATEWAY_CONFIGURABLE_SCOPES,
+} from "../../mcpGatewayState";
+import type { McpGatewayRelayPreview } from "@t3tools/contracts";
 
 import {
-  mcpGrantCeiling,
+  mcpGrantCeilings,
   toggleMcpGatewayGrantForAll,
   updateMcpGatewayGrant,
 } from "./McpGatewaySettings";
@@ -66,30 +69,51 @@ describe("MCP environment grants", () => {
 });
 
 describe("MCP grant ceiling", () => {
-  const snapshot = (fields: object) =>
-    ({
-      selfMember: { access: "full-access" },
-      callerAppId: null,
-      apps: [],
-      ...fields,
-    }) as unknown as TailnetDevicesSnapshot;
+  const preview = (serverId: string, fields: Partial<McpGatewayRelayPreview>) => ({
+    serverId,
+    preview: { grants: {}, refusals: {}, ...fields },
+  });
+  const all = [...MCP_GATEWAY_CONFIGURABLE_SCOPES];
 
   it.each([
-    ["a machine in no network", { selfMember: null }, undefined],
-    ["a session paired by code", {}, undefined],
-    ["a revoked machine", { selfMember: { access: "revoked" } }, []],
+    ["no server answered", [], undefined, undefined],
     [
-      "a full-access app",
-      { callerAppId: "phone", apps: [{ appId: "phone", access: "full-access" }] },
+      "a server relays everything",
+      [preview("laptop", { grants: { [macbook]: all } })],
+      undefined,
       undefined,
     ],
     [
-      "a read-only app",
-      { callerAppId: "phone", apps: [{ appId: "phone", access: "read-only" }] },
-      ["read"],
+      "a server refuses it, in its own words",
+      [preview("laptop", { refusals: { [macbook]: "Revoked." } })],
+      [],
+      "Revoked.",
     ],
-    ["an app the roster dropped", { callerAppId: "phone", apps: [] }, []],
-  ])("caps %s the way the server does", (_label, fields, scopes) => {
-    expect(mcpGrantCeiling(snapshot(fields))?.scopes).toEqual(scopes);
+    [
+      "a server caps it at reading",
+      [preview("laptop", { grants: { [macbook]: ["read"] }, limit: "Only reads." })],
+      ["read"],
+      "Only reads.",
+    ],
+    [
+      "another server relays what one refuses",
+      [
+        preview("laptop", { refusals: { [macbook]: "Revoked." } }),
+        preview("studio", { grants: { [macbook]: all } }),
+      ],
+      undefined,
+      undefined,
+    ],
+    // A server's answer about itself is not what other servers relay.
+    [
+      "only the machine itself answered",
+      [preview(macbook, { refusals: { [macbook]: "No." } })],
+      undefined,
+      undefined,
+    ],
+  ] as const)("shows what servers relay when %s", (_label, previews, scopes, reason) => {
+    const ceiling = mcpGrantCeilings(previews, [macbook])[macbook];
+    expect(ceiling?.scopes).toEqual(scopes);
+    expect(ceiling?.reason).toEqual(reason);
   });
 });

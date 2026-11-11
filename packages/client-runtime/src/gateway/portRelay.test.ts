@@ -1,13 +1,20 @@
 import { McpGatewayRelayResponse, WS_METHODS } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { expect, it, vi } from "vite-plus/test";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import type { GatewayRuntimePort } from "./port.ts";
-import { answerGatewayPortCall, serveGatewayPortRelays } from "./portRelay.ts";
+import type { GatewayGrants } from "./bridgeClient.ts";
+import {
+  answerGatewayPortCall,
+  relayGrantsProblem,
+  RosterRetrySchedule,
+  serveGatewayPortRelays,
+} from "./portRelay.ts";
 
 it("resubscribes after its relay fails and answers void calls in a form the wire can encode", async () => {
   // The relay RPC encodes each response as JSON, which rejects `{ result: undefined }`.
@@ -146,21 +153,40 @@ it("caps a relayed call only where the target's own roster narrows the calling m
   });
   const cases = [
     // The roster there narrowed or revoked the calling machine, whatever its own roster says.
-    { held: inNetwork([device("read-only", { access: "read-only" })]), sent: false },
-    { held: inNetwork([device("revoked", { access: "revoked" })]), sent: false },
-    { held: inNetwork([device("full-access", { access: "full-access" })]), sent: true },
+    {
+      held: inNetwork([device("read-only", { access: "read-only" })]),
+      refused: "gives the calling machine read-only access",
+    },
+    { held: inNetwork([device("revoked", { access: "revoked" })]), refused: "revoked" },
+    { held: inNetwork([device("full-access", { access: "full-access" })]) },
+    // This app's own grant, not the network, is what lacks the scope.
+    {
+      held: inNetwork([device("full-access", { access: "full-access" })]),
+      remote: ["read"],
+      refused: "on this device does not include send",
+    },
     // A caller the roster there does not list, such as one reached by code, keeps its grant.
-    { held: inNetwork([]), sent: true },
-    { held: { selfMember: null, devices: [] }, sent: true },
+    { held: inNetwork([]) },
+    { held: { selfMember: null, devices: [] } },
+    // A roster push that fails is followed again, not dropped for the rest of the relay.
+    {
+      held: inNetwork([device("read-only", { access: "read-only" })]),
+      failsFirst: true,
+      refused: "read-only",
+    },
     // With no pushed roster yet, one is read; a failed read lets it do nothing.
-    { read: inNetwork([device("full-access", { access: "full-access" })]), sent: true },
-    { read: undefined, sent: false },
+    { read: inNetwork([device("full-access", { access: "full-access" })]) },
+    { read: undefined, refused: "could not be read" },
   ];
-  for (const { held, read, sent } of cases as ReadonlyArray<{
+  for (const { held, read, remote, failsFirst, refused } of cases as ReadonlyArray<{
     held?: object;
     read?: object;
-    sent: boolean;
+    remote?: ReadonlyArray<string>;
+    failsFirst?: boolean;
+    refused?: string;
   }>) {
+    const sent = refused === undefined;
+    let rosterAttempts = 0;
     const answered = Promise.withResolvers<unknown>();
     const pushed = Promise.withResolvers<void>();
     if (held === undefined) pushed.resolve();
@@ -180,11 +206,15 @@ it("caps a relayed call only where the target's own roster narrows the calling m
         follows.set(environmentId, count + 1);
         if (count % 2 === 1) {
           return environmentId === "remote" && held !== undefined
-            ? Stream.make(held).pipe(
-                Stream.concat(
-                  Stream.fromEffect(Effect.sync(() => pushed.resolve())).pipe(Stream.drain),
-                ),
-                Stream.concat(Stream.never),
+            ? Stream.suspend(() =>
+                failsFirst === true && rosterAttempts++ === 0
+                  ? Stream.fail("dropped")
+                  : Stream.make(held).pipe(
+                      Stream.concat(
+                        Stream.fromEffect(Effect.sync(() => pushed.resolve())).pipe(Stream.drain),
+                      ),
+                      Stream.concat(Stream.never),
+                    ),
               )
             : Stream.never;
         }
@@ -208,9 +238,11 @@ it("caps a relayed call only where the target's own roster narrows the calling m
     } as unknown as EnvironmentRegistry["Service"];
     const sendMessage = vi.fn(async () => ({ status: "accepted" }));
     const stop = serveGatewayPortRelays(
-      Context.make(EnvironmentRegistry, registry),
+      Context.make(EnvironmentRegistry, registry).pipe(
+        Context.add(RosterRetrySchedule, Schedule.forever),
+      ),
       { sendMessage, getThread: async () => fullThread } as unknown as GatewayRuntimePort,
-      { caller: ["read", "send"], remote: ["read", "send"] },
+      { caller: ["read", "send"], remote: remote ?? ["read", "send"] } as GatewayGrants,
       () => undefined,
     );
     const response = await answered.promise;
@@ -224,7 +256,28 @@ it("caps a relayed call only where the target's own roster narrows the calling m
     expect(response).toEqual(
       sent
         ? expect.not.objectContaining({ error: expect.anything() })
-        : expect.objectContaining({ error: expect.any(String) }),
+        : expect.objectContaining({ error: expect.stringContaining(refused) }),
     );
   }
+});
+
+it("refuses to serve more grants than a server accepts, once and visibly", () => {
+  const followStream = vi.fn(() => Stream.never);
+  const failures: Array<unknown> = [];
+  const grants = Object.fromEntries(
+    Array.from({ length: 257 }, (_, index) => [`env-${index}`, ["read"] as const]),
+  );
+  const stop = serveGatewayPortRelays(
+    Context.make(EnvironmentRegistry, {
+      followStream,
+    } as unknown as EnvironmentRegistry["Service"]),
+    {} as GatewayRuntimePort,
+    grants,
+    (error) => failures.push(error),
+  );
+  stop();
+  expect(followStream).not.toHaveBeenCalled();
+  expect(failures).toEqual([new Error(relayGrantsProblem(grants))]);
+  expect(relayGrantsProblem(grants)).toContain("256");
+  expect(relayGrantsProblem({ remote: ["read"] })).toBeUndefined();
 });

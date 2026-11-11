@@ -1,13 +1,15 @@
 import {
   EnvironmentId,
   type GatewayScope,
+  MCP_GATEWAY_RELAY_GRANTS_MAX,
   NETWORK_ACCESS_CEILING,
   type TailnetDevicesSnapshot,
   toMcpGatewayRelayJson,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import type * as Context from "effect/Context";
+import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -17,6 +19,25 @@ import { GATEWAY_PORT_METHODS, type GatewayGrants } from "./bridgeClient.ts";
 import type { GatewayEnvironmentSummary, GatewayRuntimePort } from "./port.ts";
 import { type ModeLimit, withinModes } from "./portModes.ts";
 import { describeGatewayScopes, gatewayPortCallScopes, unmetGatewayScopes } from "./portScopes.ts";
+
+/** How a target's roster push is followed again after it fails; tests step it by hand. */
+export const RosterRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>(
+  "t3/gateway/portRelay/RosterRetrySchedule",
+  {
+    defaultValue: () =>
+      Schedule.exponential("1 second").pipe(
+        Schedule.modifyDelay(({ duration }) =>
+          Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+        ),
+      ),
+  },
+);
+
+/** What a target's roster lets the calling machine do there, and why. */
+export interface RosterCap {
+  readonly scopes: ReadonlyArray<GatewayScope>;
+  readonly why: string;
+}
 
 /** A call that names no modes, as from an older server, runs as the narrowest chat would. */
 const NARROWEST: ModeLimit = { runtimeMode: "approval-required", interactionMode: "plan" };
@@ -32,7 +53,7 @@ export async function answerGatewayPortCall(
   method: string,
   args: ReadonlyArray<unknown>,
   modeCeiling: ModeLimit = NARROWEST,
-  rosterCap?: (environmentId: string) => Promise<ReadonlyArray<GatewayScope> | undefined>,
+  rosterCap?: (environmentId: string) => Promise<RosterCap | undefined>,
 ): Promise<unknown> {
   if (!GATEWAY_PORT_METHODS.has(method as keyof GatewayRuntimePort)) {
     throw new Error(`Unknown T3 Agents call ${method}.`);
@@ -47,23 +68,23 @@ export async function answerGatewayPortCall(
   if (requirements === undefined) {
     throw new Error("T3 Agents access is not granted for this call on this device.");
   }
-  const capped: Record<string, ReadonlyArray<GatewayScope>> = { ...grants };
-  for (const { environmentId } of rosterCap === undefined ? [] : requirements) {
-    const cap = await rosterCap!(environmentId);
-    const held = capped[environmentId];
-    if (cap !== undefined && held !== undefined) {
-      capped[environmentId] = held.filter((scope) => cap.includes(scope));
-    }
-  }
-  const unmet = unmetGatewayScopes(capped, requirements);
-  if (unmet !== undefined) {
+  const ownUnmet = unmetGatewayScopes(grants, requirements);
+  if (ownUnmet !== undefined) {
     throw new Error(
-      grants[unmet.environmentId] === undefined
-        ? `T3 Agents access is not granted for ${unmet.environmentId} on this device.`
-        : capped[unmet.environmentId] !== grants[unmet.environmentId]
-          ? `${unmet.environmentId}'s device network does not let the calling machine ${describeGatewayScopes(unmet)} there.`
-          : `T3 Agents access to ${unmet.environmentId} on this device does not include ${describeGatewayScopes(unmet)}.`,
+      grants[ownUnmet.environmentId] === undefined
+        ? `T3 Agents access is not granted for ${ownUnmet.environmentId} on this device.`
+        : `T3 Agents access to ${ownUnmet.environmentId} on this device does not include ${describeGatewayScopes(ownUnmet)}.`,
     );
+  }
+  for (const requirement of rosterCap === undefined ? [] : requirements) {
+    const cap = await rosterCap!(requirement.environmentId);
+    if (cap === undefined) continue;
+    const held = grants[requirement.environmentId]!.filter((scope) => cap.scopes.includes(scope));
+    if (unmetGatewayScopes({ [requirement.environmentId]: held }, [requirement]) !== undefined) {
+      throw new Error(
+        `${requirement.environmentId}'s device network ${cap.why}, so the calling machine may not ${describeGatewayScopes(requirement)} there.`,
+      );
+    }
   }
   const guarded = withinModes(port, modeCeiling);
   const run = guarded[method as keyof GatewayRuntimePort] as
@@ -72,6 +93,14 @@ export async function answerGatewayPortCall(
   if (run === undefined) throw new Error(`${method} is not available on this device.`);
   // A relayed call never carries a calling chat: this app acts as its user.
   return run.call(guarded, ...(method === "threadTask" ? args.slice(0, 2) : args));
+}
+
+/** Why a server would refuse to register these grants, if it would. */
+export function relayGrantsProblem(grants: GatewayGrants): string | undefined {
+  const count = Object.keys(grants).length;
+  return count > MCP_GATEWAY_RELAY_GRANTS_MAX
+    ? `T3 Agents relays at most ${MCP_GATEWAY_RELAY_GRANTS_MAX} environments, and ${count} are granted, so this app relays none. Turn some off in Settings > MCP Gateway.`
+    : undefined;
 }
 
 /**
@@ -86,6 +115,12 @@ export function serveGatewayPortRelays<R>(
   grants: GatewayGrants,
   onFailure: (error: unknown) => void,
 ) {
+  // Every server would refuse the registration, so retrying it would only repeat the refusal.
+  const problem = relayGrantsProblem(grants);
+  if (problem !== undefined) {
+    onFailure(new Error(problem));
+    return () => undefined;
+  }
   const abort = new AbortController();
   const rosters = new Map<string, TailnetDevicesSnapshot>();
   for (const id of Object.keys(grants)) {
@@ -103,11 +138,19 @@ export function serveGatewayPortRelays<R>(
             ? registry.run(EnvironmentId.make(target), request(WS_METHODS.tailnetDevicesList, {}))
             : Effect.succeed(held)
           ).pipe(
-            Effect.map((snapshot): ReadonlyArray<GatewayScope> | undefined => {
+            Effect.map((snapshot): RosterCap | undefined => {
               const access = snapshot.devices.find((device) => device.environmentId === id)?.access;
-              return access ? NETWORK_ACCESS_CEILING[access].gateway : undefined;
+              return access
+                ? {
+                    scopes: NETWORK_ACCESS_CEILING[access].gateway,
+                    why:
+                      access === "revoked"
+                        ? "revoked the calling machine"
+                        : `gives the calling machine ${access} access`,
+                  }
+                : undefined;
             }),
-            Effect.orElseSucceed(() => []),
+            Effect.orElseSucceed(() => ({ scopes: [], why: "could not be read" })),
           ),
         );
       };
@@ -115,10 +158,13 @@ export function serveGatewayPortRelays<R>(
         EnvironmentId.make(id),
         subscribeDynamicWithSession(WS_METHODS.mcpGatewayConnect, () => Effect.succeed({ grants })),
       );
-      // A target that cannot push its roster is read on each call instead.
+      // A target that cannot push its roster is read on each call until the push is back.
+      const retry = yield* RosterRetrySchedule;
       yield* registry
         .followStream(EnvironmentId.make(id), subscribe(WS_METHODS.subscribeTailnetDevices, {}))
         .pipe(
+          Stream.tapError(() => Effect.sync(() => rosters.delete(id))),
+          Stream.retry(retry),
           Stream.runForEach((snapshot) => Effect.sync(() => rosters.set(id, snapshot))),
           Effect.ensuring(Effect.sync(() => rosters.delete(id))),
           Effect.ignore,

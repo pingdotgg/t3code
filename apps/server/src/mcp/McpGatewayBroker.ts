@@ -102,12 +102,21 @@ interface Host {
   readonly connectionId: string;
   readonly grants: McpGatewayRelayGrants;
   readonly requests: Queue.Queue<McpGatewayRelayEvent, Cause.Done>;
-  /** Timed out since it last answered; other apps that reach the environment go first. */
-  stalled: boolean;
+  /** Its last call failed or went unanswered; apps that answer go first until it answers. */
+  failing: boolean;
 }
 interface Pending {
   readonly host: Host;
   readonly deferred: Deferred.Deferred<unknown, McpGatewayUnavailableError>;
+  /** The app took it off its queue, so it may have run. */
+  delivered: boolean;
+  answered: boolean;
+}
+/** A relayed call that failed, and whether the app can have run it. */
+interface AskFailure {
+  readonly error: McpGatewayUnavailableError;
+  readonly delivered: boolean;
+  readonly answered: boolean;
 }
 
 /**
@@ -123,26 +132,27 @@ export const make = Effect.gen(function* () {
   const pending = new Map<string, Pending>();
   /** Fires when an app connects, so queued cross-environment work can retry at once. */
   const connected = yield* PubSub.unbounded<void>();
+  const relayerOf = (owner: string, subject: string) => {
+    const appId = subject.startsWith(NETWORK_APP_SUBJECT_PREFIX)
+      ? subject.slice(NETWORK_APP_SUBJECT_PREFIX.length)
+      : undefined;
+    const relayer: Host["relayer"] =
+      subject === DESKTOP_APP_SUBJECT ? "desktop" : appId === undefined ? "paired" : "app";
+    return { relayer, appId, identity: relayer === "paired" ? `session:${owner}` : subject };
+  };
   /** `subject` is the registering session's: an app of the network relays as that app. */
   const connect = (owner: string, grants: McpGatewayRelayGrants, subject: string) =>
     Stream.unwrap(
       Effect.gen(function* () {
         const connectionId = yield* random.uuidV4();
         const requests = yield* Queue.unbounded<McpGatewayRelayEvent, Cause.Done>();
-        const appId = subject.startsWith(NETWORK_APP_SUBJECT_PREFIX)
-          ? subject.slice(NETWORK_APP_SUBJECT_PREFIX.length)
-          : undefined;
-        const relayer =
-          subject === DESKTOP_APP_SUBJECT ? "desktop" : appId === undefined ? "paired" : "app";
         const host: Host = {
+          ...relayerOf(owner, subject),
           owner,
-          relayer,
-          identity: relayer === "paired" ? `session:${owner}` : subject,
-          appId,
           connectionId,
           grants,
           requests,
-          stalled: false,
+          failing: false,
         };
         yield* Effect.acquireRelease(
           Effect.sync(() => hosts.set(connectionId, host)).pipe(
@@ -164,7 +174,15 @@ export const make = Effect.gen(function* () {
               yield* refresh;
             }),
         );
-        return Stream.fromQueue(requests);
+        // A call its caller gave up on before the app took it is dropped, so it never runs late.
+        return Stream.fromQueue(requests).pipe(
+          Stream.rechunk(1),
+          Stream.filter((event) => {
+            const call = pending.get(event.invocationId);
+            if (call !== undefined) call.delivered = true;
+            return call !== undefined;
+          }),
+        );
       }),
     );
   /**
@@ -176,6 +194,7 @@ export const make = Effect.gen(function* () {
   const evaluate = Effect.fn("McpGatewayBroker.evaluate")(function* (
     /** Only these environments, so a call reads the roster for what it touches. */
     only?: ReadonlySet<string>,
+    over: Iterable<Host> = hosts.values(),
   ) {
     const enabled = yield* settings.getSettings.pipe(
       Effect.map((current) => current.linkedEnvironmentsEnabled),
@@ -193,7 +212,7 @@ export const make = Effect.gen(function* () {
     const refusals: Record<string, string> = {};
     const bound = new Map<Host, { grants: HostGrants; uncapped: HostGrants }>();
     if (blocked !== undefined) {
-      for (const host of hosts.values()) {
+      for (const host of over) {
         for (const environmentId of Object.keys(host.grants)) {
           refusals[environmentId] = blocked.message;
         }
@@ -201,7 +220,7 @@ export const make = Effect.gen(function* () {
       return { blocked, hosts: bound, refusals, ceilingNote } satisfies Evaluated;
     }
     const targets = new Map<string, Option.Option<TailnetDeviceAccess>>();
-    for (const host of hosts.values()) {
+    for (const host of over) {
       // An app the roster no longer lists relays nothing.
       const appScopes =
         host.appId === undefined
@@ -243,30 +262,6 @@ export const make = Effect.gen(function* () {
       }
       bound.set(host, { grants, uncapped });
     }
-    // A session paired by code vouches only for itself: it never takes an environment from
-    // this machine's desktop app or an app of the network, nor from the earliest connected
-    // session paired by code that still answers. Leaving frees it.
-    const holder = new Map<string, Host>();
-    for (const [host, { uncapped }] of bound) {
-      for (const environmentId of Object.keys(uncapped)) {
-        const held = holder.get(environmentId);
-        if (
-          held === undefined ||
-          (held.relayer === "paired" &&
-            (host.relayer !== "paired" || (held.stalled && !host.stalled)))
-        ) {
-          holder.set(environmentId, host);
-        }
-      }
-    }
-    for (const [host, { grants, uncapped }] of bound) {
-      if (host.relayer !== "paired") continue;
-      for (const environmentId of Object.keys(uncapped)) {
-        if (holder.get(environmentId)?.identity === host.identity) continue;
-        delete grants[environmentId];
-        delete uncapped[environmentId];
-      }
-    }
     for (const { grants } of bound.values()) {
       for (const environmentId of Object.keys(grants)) delete refusals[environmentId];
     }
@@ -296,6 +291,30 @@ export const make = Effect.gen(function* () {
     ),
   );
   const refresh = Effect.asVoid(access);
+  /**
+   * What this server would let the asking session relay if it registered `grants` now, and why
+   * not the rest: the same evaluation each call gets, so clients show what is enforced.
+   */
+  const preview = Effect.fn("McpGatewayBroker.preview")(function* (
+    owner: string,
+    grants: McpGatewayRelayGrants,
+    subject: string,
+  ) {
+    const candidate: Host = {
+      ...relayerOf(owner, subject),
+      owner,
+      connectionId: "preview",
+      grants,
+      requests: yield* Queue.unbounded<McpGatewayRelayEvent, Cause.Done>(),
+      failing: false,
+    };
+    const evaluated = yield* evaluate(undefined, [candidate]);
+    return {
+      grants: evaluated.hosts.get(candidate)?.grants ?? {},
+      refusals: evaluated.refusals,
+      ...(evaluated.ceilingNote === undefined ? {} : { limit: evaluated.ceilingNote }),
+    } satisfies McpGatewayAccess;
+  });
   /** Sends one call to one app and waits for its answer. */
   const ask = Effect.fn("McpGatewayBroker.ask")(function* (
     host: Host,
@@ -303,10 +322,11 @@ export const make = Effect.gen(function* () {
     relayedArgs: ReadonlyArray<unknown>,
     timeout: Duration.Input,
     modeCeiling?: McpGatewayRelayEvent["modeCeiling"],
-  ) {
+  ): Effect.fn.Return<unknown, AskFailure> {
     const invocationId = yield* random.uuidV4();
     const deferred = yield* Deferred.make<unknown, McpGatewayUnavailableError>();
-    pending.set(invocationId, { host, deferred });
+    const call: Pending = { host, deferred, delivered: false, answered: false };
+    pending.set(invocationId, call);
     return yield* Effect.gen(function* () {
       yield* Queue.offer(host.requests, {
         type: "invoke",
@@ -320,18 +340,13 @@ export const make = Effect.gen(function* () {
     }).pipe(
       Effect.timeoutOrElse({
         duration: timeout,
-        orElse: () =>
-          Effect.sync(() => {
-            host.stalled = true;
-          }).pipe(
-            Effect.andThen(
-              Effect.fail(
-                unavailable("The T3 app relaying this call timed out; it was not retried."),
-              ),
-            ),
-          ),
+        orElse: () => Effect.fail(unavailable("The T3 app relaying this call did not answer.")),
       }),
       Effect.ensuring(Effect.sync(() => pending.delete(invocationId))),
+      Effect.mapError((error): AskFailure => {
+        host.failing = true;
+        return { error, delivered: call.delivered, answered: call.answered };
+      }),
     );
   });
   /**
@@ -391,13 +406,19 @@ export const make = Effect.gen(function* () {
     const evaluated = yield* evaluate(new Set(requirements.map((need) => need.environmentId)));
     if (evaluated.blocked !== undefined) return yield* evaluated.blocked;
     const bound = evaluated.hosts;
-    // The newest app whose own grant covers the call runs it, preferring one that answers; a
-    // grant another app holds never widens it.
-    const holding = [...bound]
-      .toReversed()
-      .filter(([, { grants }]) => unmetGatewayScopes(grants, requirements) === undefined)
-      .map(([candidate]) => candidate);
-    const host = holding.find((candidate) => !candidate.stalled) ?? holding[0];
+    // Only an app whose own grant covers the call runs it, so a grant another app holds never
+    // widens it: apps that answer first, then this machine's desktop app and apps of the network,
+    // newest first, then sessions paired by code, earliest first.
+    const vouched = [...bound.keys()].filter((candidate) => candidate.relayer !== "paired");
+    const paired = [...bound.keys()].filter((candidate) => candidate.relayer === "paired");
+    const ordered = [...vouched.toReversed(), ...paired].filter(
+      (candidate) => unmetGatewayScopes(bound.get(candidate)!.grants, requirements) === undefined,
+    );
+    const holding = [
+      ...ordered.filter((candidate) => !candidate.failing),
+      ...ordered.filter((candidate) => candidate.failing),
+    ];
+    const host = holding[0];
     if (!host) {
       const unmet = requirements.find(({ environmentId }) =>
         [...bound.values()].every(({ grants }) => grants[environmentId] === undefined),
@@ -426,7 +447,26 @@ export const make = Effect.gen(function* () {
       try: () => toMcpGatewayRelayJson(sent) as ReadonlyArray<unknown>,
       catch: () => unavailable(`The arguments of ${method} cannot be relayed to a T3 app.`),
     });
-    return yield* ask(host, method, relayedArgs, "60 seconds", modeCeiling);
+    const reads = requirements.every(({ anyOf }) =>
+      anyOf.every((set) => set.length === 1 && set[0] === "read"),
+    );
+    // The next app runs the call only when the last cannot have: it never took it, or it is a
+    // read that went unanswered. A write that may have run is never run twice.
+    const attempt = (index: number): Effect.Effect<unknown, McpGatewayUnavailableError> =>
+      ask(holding[index]!, method, relayedArgs, "60 seconds", modeCeiling).pipe(
+        Effect.catch((failure) =>
+          index + 1 < holding.length && (!failure.delivered || (reads && !failure.answered))
+            ? attempt(index + 1)
+            : Effect.fail(
+                failure.delivered && !failure.answered && !reads
+                  ? unavailable(
+                      `The T3 app relaying ${method} took it but did not answer, so it may have run; it was not run again on another app.`,
+                    )
+                  : failure.error,
+              ),
+        ),
+      );
+    return yield* attempt(0);
   });
   /**
    * One of this server's own calls on another environment, with its arguments and answer checked
@@ -435,14 +475,16 @@ export const make = Effect.gen(function* () {
   const call = <M extends McpGatewayRelayMethod>(
     method: M,
     args: McpGatewayRelayArgs<M>,
+    /** The chat's modes when one made the call; otherwise this server's own call runs unlimited. */
+    modeCeiling: McpGatewayRelayEvent["modeCeiling"] = SERVER_MODES,
   ): Effect.Effect<McpGatewayRelayResult<M>, McpGatewayUnavailableError> => {
     const codec = relayCodecs[method];
     const environmentId = args[0];
     return codec.encodeArgs(args).pipe(
       Effect.mapError(() => unavailable(`The arguments of ${method} do not match its contract.`)),
       Effect.flatMap((encoded) =>
-        // No chat makes these calls; the app answering runs a call without modes at the narrowest.
-        invoke(method, encoded as ReadonlyArray<unknown>, [environmentId], SERVER_MODES),
+        // The app answering runs a call without modes at the narrowest, so they are always sent.
+        invoke(method, encoded as ReadonlyArray<unknown>, [environmentId], modeCeiling),
       ),
       Effect.flatMap((answer) =>
         codec
@@ -468,7 +510,8 @@ export const make = Effect.gen(function* () {
       return yield* unavailable("Relay response does not belong to this connection.");
     }
     pending.delete(input.invocationId);
-    call.host.stalled = false;
+    call.answered = true;
+    call.host.failing = input.error !== undefined;
     if (input.error !== undefined) {
       yield* Deferred.fail(call.deferred, unavailable(input.error));
       return;
@@ -494,6 +537,7 @@ export const make = Effect.gen(function* () {
      */
     forward: invoke,
     respond,
+    preview,
     available: () => hosts.size > 0,
     hostConnected: Stream.fromPubSub(connected),
   };

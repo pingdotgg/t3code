@@ -47,3 +47,36 @@ it("refuses a library sync that would change an agent there broader than the cal
   ).rejects.toThrow("full-access");
   expect(untouched.replicateProfiles).not.toHaveBeenCalled();
 });
+
+it("lets a chat's task call from another server touch only threads within its modes", async () => {
+  const threadTask = vi.fn(async () => ({}));
+  const modes = {
+    "worker-edits": EDITS,
+    "worker-wide": { runtimeMode: "full-access", interactionMode: "default" },
+  };
+  const port = {
+    threadTask,
+    getThread: async (_environmentId: string, threadId: keyof typeof modes) => ({
+      id: threadId,
+      ...modes[threadId],
+    }),
+  } as unknown as GatewayRuntimePort;
+  const guarded = withinModes(port, EDITS);
+  const assign = (workerThreadId: string) => ({
+    action: "remoteAssign",
+    input: { workerThreadId },
+  });
+  const ownerAction = (threadId: string) => ({
+    action: "remoteOwnerAction",
+    input: { update: { threadId } },
+  });
+  await guarded.threadTask!("remote", assign("worker-edits") as never);
+  await guarded.threadTask!("remote", ownerAction("worker-edits") as never);
+  await expect(guarded.threadTask!("remote", assign("worker-wide") as never)).rejects.toThrow(
+    "full-access",
+  );
+  await expect(guarded.threadTask!("remote", ownerAction("worker-wide") as never)).rejects.toThrow(
+    "full-access",
+  );
+  expect(threadTask).toHaveBeenCalledTimes(2);
+});

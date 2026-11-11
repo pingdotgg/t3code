@@ -189,8 +189,10 @@ calls relayed through a connected app (`McpGatewayBroker`). A relayed call is
 capped on every call by this machine's own roster access. A member is relayed
 only by this machine's own desktop app (its `desktop-bootstrap` session) or a
 network app's session, within that app's access; a code-paired session cannot
-take a member's traffic, nor an environment one of those apps, or an earlier
-connected code-paired session, relays while it stays connected.
+take a member's traffic. Each call goes to an app whose own grant covers it:
+those apps first, then code-paired sessions by connect time, with apps whose last
+call failed last. It moves to the next app only when it cannot have run: never
+taken, or a read left unanswered. A write that may have run is never sent twice.
 Each relayed call also carries the calling chat's modes, and the app answering
 it applies them against its own reads of the target, so a relaying server that
 was told a wrong thread mode cannot widen the call; a call with no modes runs as

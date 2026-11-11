@@ -287,7 +287,12 @@ export const PORT_MODE_POLICIES = {
       case "settleAfterTurn":
         if (request.input.cancel === true) return;
         return guard.threads([thread(environmentId, request.input.threadId)]);
-      // Server-to-server calls for a task split across machines; no chat makes them.
+      // A chat's assignment or owner action, relayed by its server with the chat's modes.
+      case "remoteAssign":
+        return guard.threads([thread(environmentId, request.input.workerThreadId)]);
+      case "remoteOwnerAction":
+        return guard.threads([thread(environmentId, request.input.update.threadId)]);
+      // Server-to-server deliveries for a task split across machines; no chat makes them.
       default:
         return writesEnvironment(`The task call ${request.action}`)(guard);
     }

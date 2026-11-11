@@ -64,6 +64,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsMutate]: AuthOrchestrationOperateScope,
   [WS_METHODS.mcpGatewayConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.mcpGatewayRespond]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpGatewayPreview]: AuthOrchestrationReadScope,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetNpmRelease]: AuthOrchestrationReadScope,

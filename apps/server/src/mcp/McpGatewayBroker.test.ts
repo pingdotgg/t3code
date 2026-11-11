@@ -440,30 +440,86 @@ it.effect(
     ).pipe(Effect.provide(layerDependencies())),
 );
 
-it.effect("never lets a session paired by code take an environment another session relays", () =>
+it.effect("runs a call on the earliest session paired by code whose own grant covers it", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const broker = yield* make;
       yield* serve(broker, "laptop", { elsewhere: ["read"] }, (method) => ({
         result: `laptop:${method}`,
       }));
-      yield* serve(broker, "intruder", { elsewhere: ["read", "create"] }, (method) => ({
-        result: `intruder:${method}`,
+      yield* serve(broker, "studio", { elsewhere: ["read", "create"] }, (method) => ({
+        result: `studio:${method}`,
       }));
       expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
         "laptop:listProjects",
       );
+      // A grant that only reads never blocks one that covers the call.
       const elsewhere = { ...createThread, environmentId: "elsewhere" };
-      expect(
-        yield* failureMessage(broker.forward("createThread", [elsewhere], ["elsewhere"])),
-      ).not.toBe("ok");
-      // The same session connecting again keeps what it relays.
-      yield* serve(broker, "laptop", { elsewhere: ["read"] }, (method) => ({
-        result: `laptop-again:${method}`,
-      }));
-      expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
-        "laptop-again:listProjects",
+      expect(yield* broker.forward("createThread", [elsewhere], ["elsewhere"])).toBe(
+        "studio:createThread",
       );
+    }),
+  ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect("stops sending calls first to an app that answers each with an error", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      yield* serve(broker, "broken", { elsewhere: ["read"] }, () => ({ error: "Broken." }));
+      yield* serve(broker, "laptop", { elsewhere: ["read"] }, (method) => ({
+        result: `laptop:${method}`,
+      }));
+      expect(
+        yield* failureMessage(broker.forward("listProjects", ["elsewhere"], ["elsewhere"])),
+      ).toBe("Broken.");
+      expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
+        "laptop:listProjects",
+      );
+    }),
+  ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect("runs a call on another app only when it cannot have run on the first", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      const elsewhere = { ...createThread, environmentId: "elsewhere" };
+      const laptopCalls: Array<string> = [];
+      yield* serve(broker, "laptop", { elsewhere: ["read", "create"] }, (method) => {
+        laptopCalls.push(method);
+        return { result: `laptop:${method}` };
+      });
+      // This machine's desktop app goes first, takes one call at a time, and never answers.
+      yield* broker.connect("desktop", { elsewhere: ["read", "create"] }, DESKTOP_APP_SUBJECT).pipe(
+        Stream.runForEach(() => Effect.never),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const read = yield* broker
+        .forward("listProjects", ["elsewhere"], ["elsewhere"])
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      // Queued behind the read, this write never reaches the desktop app.
+      const queued = yield* broker
+        .forward("createThread", [elsewhere], ["elsewhere"])
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* TestClock.adjust("60 seconds");
+      expect(yield* Fiber.join(read)).toBe("laptop:listProjects");
+      expect(yield* Fiber.join(queued)).toBe("laptop:createThread");
+
+      // A write the app received but never answered may have run, so it is not run again.
+      yield* broker
+        .connect("desktop-again", { elsewhere: ["read", "create"] }, DESKTOP_APP_SUBJECT)
+        .pipe(
+          Stream.runForEach(() => Effect.never),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      laptopCalls.length = 0;
+      const delivered = yield* broker
+        .forward("createThread", [elsewhere], ["elsewhere"])
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* TestClock.adjust("60 seconds");
+      expect(yield* failureMessage(Fiber.join(delivered))).toContain("may have run");
+      expect(laptopCalls).toEqual([]);
     }),
   ).pipe(Effect.provide(layerDependencies())),
 );
@@ -587,6 +643,16 @@ it.effect(
         expect(access.grants).toEqual({ elsewhere: ["read"] });
         expect(access.refusals.remote).toContain("network");
         expect(broker.view()).toEqual(access);
+        // An app is shown what this server would relay for it, by the same rules.
+        yield* membership.putApp({ appId: "phone", label: "Phone", access: "full-access" });
+        const preview = yield* broker.preview(
+          "phone-session",
+          { remote: ["read", "create"], elsewhere: ["read"] },
+          "network-app:phone",
+        );
+        expect(preview.grants).toEqual({ remote: ["read"] });
+        expect(preview.refusals.elsewhere).toContain("not in the network");
+        expect(preview.limit).toContain("read-only");
       }),
     ).pipe(Effect.provide(layerDependencies())),
 );

@@ -1,20 +1,25 @@
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { type GatewayScope, type GatewayStatusSnapshot } from "@t3tools/client-runtime/gateway";
+import {
+  type GatewayScope,
+  type GatewayStatusSnapshot,
+  relayGrantsProblem,
+} from "@t3tools/client-runtime/gateway";
 import {
   EnvironmentId,
-  GATEWAY_SCOPE_VALUES,
-  NETWORK_ACCESS_CEILING,
-  type TailnetDevicesSnapshot,
+  type McpGatewayRelayPreview,
+  MCP_GATEWAY_RELAY_GRANTS_MAX,
+  WS_METHODS,
 } from "@t3tools/contracts";
+import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
 import { ChevronDownIcon } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 
 import { useEnvironments } from "../../state/environments";
-import { tailnetDevices } from "../../state/tailnetDevices";
+import { connectionAtomRuntime } from "../../connection/runtime";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
@@ -91,49 +96,58 @@ export interface McpGrantEnvironmentRow {
 }
 
 /**
- * What the environment's own device network lets agents reach through this app, from its
- * snapshot. Undefined when it sets no cap; servers still check each call.
+ * What servers would relay for this app on each environment, from their own answers: a scope is
+ * open where any other server would honor it, and the reason is a server's own.
  */
-export function mcpGrantCeiling(
-  snapshot: TailnetDevicesSnapshot | null,
-): McpGrantCeiling | undefined {
-  if (snapshot === null || snapshot.selfMember === null) return undefined;
-  if (snapshot.selfMember.access === "revoked") {
-    return { scopes: [], reason: "Revoked from the device network, so agents cannot reach it." };
-  }
-  if (snapshot.callerAppId === null) return undefined;
-  const access =
-    snapshot.apps.find((app) => app.appId === snapshot.callerAppId)?.access ?? "revoked";
-  const scopes = NETWORK_ACCESS_CEILING[access].gateway;
-  if (scopes.length === GATEWAY_SCOPE_VALUES.length) return undefined;
-  return {
-    scopes,
-    reason:
-      scopes.length === 0
-        ? "This app is no longer in the device network, so agents cannot reach it through this app."
-        : `This app has ${access} access in the device network, so agents may only read here.`,
-  };
+export function mcpGrantCeilings(
+  previews: ReadonlyArray<{ readonly serverId: string; readonly preview: McpGatewayRelayPreview }>,
+  environmentIds: ReadonlyArray<string>,
+): Record<string, McpGrantCeiling | undefined> {
+  return Object.fromEntries(
+    environmentIds.map((environmentId) => {
+      const others = previews.filter(({ serverId }) => serverId !== environmentId);
+      const scopes = [
+        ...new Set(others.flatMap(({ preview }) => preview.grants[environmentId] ?? [])),
+      ];
+      if (others.length === 0 || MCP_GATEWAY_CONFIGURABLE_SCOPES.every((s) => scopes.includes(s))) {
+        return [environmentId, undefined];
+      }
+      const reason =
+        others.map(({ preview }) => preview.refusals[environmentId]).find((r) => r !== undefined) ??
+        others.map(({ preview }) => preview.limit).find((r) => r !== undefined) ??
+        "No connected server relays more here through this app.";
+      return [environmentId, { scopes, reason }];
+    }),
+  );
 }
 
+const relayPreview = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "mcp-gateway:relay-preview",
+  tag: WS_METHODS.mcpGatewayPreview,
+  staleTimeMs: 10_000,
+});
+
 const grantCeilingsAtom = Atom.family((key: string) =>
-  Atom.make((get) =>
-    Object.fromEntries(
-      (JSON.parse(key) as ReadonlyArray<string>).map((environmentId) => [
-        environmentId,
-        mcpGrantCeiling(
-          AsyncResult.getOrElse(
-            get(
-              tailnetDevices.snapshot({
-                environmentId: EnvironmentId.make(environmentId),
-                input: {},
-              }),
-            ),
-            () => null,
-          ),
-        ),
-      ]),
-    ),
-  ),
+  Atom.make((get) => {
+    const { servers, environments } = JSON.parse(key) as {
+      readonly servers: ReadonlyArray<string>;
+      readonly environments: ReadonlyArray<string>;
+    };
+    const grants = Object.fromEntries(
+      environments
+        .slice(0, MCP_GATEWAY_RELAY_GRANTS_MAX)
+        .map((environmentId) => [environmentId, MCP_GATEWAY_CONFIGURABLE_SCOPES]),
+    );
+    // A server too old to answer is left out; it still checks each call itself.
+    const previews = servers.flatMap((serverId) => {
+      const answer = AsyncResult.getOrElse(
+        get(relayPreview({ environmentId: EnvironmentId.make(serverId), input: { grants } })),
+        () => null,
+      );
+      return answer === null ? [] : [{ serverId, preview: answer }];
+    });
+    return mcpGrantCeilings(previews, environments);
+  }),
 );
 
 function deviceConnectionText(environment: McpGrantEnvironmentRow): string {
@@ -614,16 +628,18 @@ export function McpGatewaySettings() {
     copyToClipboard(value, value);
   };
 
+  const grantsProblem = relayGrantsProblem(pendingGrants ?? savedGrants);
   const grantsDirty =
     pendingGrants !== null && JSON.stringify(pendingGrants) !== JSON.stringify(savedGrants);
 
   const ceilings = useAtomValue(
     grantCeilingsAtom(
-      JSON.stringify(
-        environments
+      JSON.stringify({
+        servers: environments
           .filter((environment) => environment.connection.phase === "connected")
           .map((environment) => environment.environmentId),
-      ),
+        environments: environments.map((environment) => environment.environmentId),
+      }),
     ),
   );
   const environmentRows: ReadonlyArray<McpGrantEnvironmentRow> = environments.map(
@@ -749,6 +765,11 @@ export function McpGatewaySettings() {
           ) : undefined
         }
       >
+        {grantsProblem !== undefined ? (
+          <p role="alert" className="mb-3 text-sm text-destructive">
+            {grantsProblem}
+          </p>
+        ) : null}
         <McpEnvironmentGrantMatrix
           environments={environmentRows}
           registryReady={registryReady}

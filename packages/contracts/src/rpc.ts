@@ -13,6 +13,7 @@ import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 
 import {
   McpGatewayConnectInput,
+  McpGatewayRelayPreview,
   McpGatewayRelayEvent,
   McpGatewayRelayResponse,
   McpGatewayUnavailableError,
@@ -553,6 +554,7 @@ export const WS_METHODS = {
   previewReportStatus: "preview.reportStatus",
   mcpGatewayConnect: "mcpGateway.connect",
   mcpGatewayRespond: "mcpGateway.respond",
+  mcpGatewayPreview: "mcpGateway.preview",
   previewStopLocalServer: "preview.stopLocalServer",
 
   deviceConfigure: "device.configure",
@@ -1875,6 +1877,11 @@ const WsMcpGatewayRespondRpc = Rpc.make(WS_METHODS.mcpGatewayRespond, {
   payload: McpGatewayRelayResponse,
   error: Schema.Union([McpGatewayUnavailableError, EnvironmentAuthorizationError]),
 });
+const WsMcpGatewayPreviewRpc = Rpc.make(WS_METHODS.mcpGatewayPreview, {
+  payload: McpGatewayConnectInput,
+  success: McpGatewayRelayPreview,
+  error: Schema.Union([McpGatewayUnavailableError, EnvironmentAuthorizationError]),
+});
 
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
@@ -2569,6 +2576,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewReportStatusRpc,
   WsMcpGatewayConnectRpc,
   WsMcpGatewayRespondRpc,
+  WsMcpGatewayPreviewRpc,
   WsClientsConnectFocusRpc,
   WsServerGetBackgroundPolicyRpc,
   WsClientsListRpc,

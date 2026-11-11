@@ -69,14 +69,24 @@ export const NETWORK_ACCESS_CEILING = {
 >;
 
 /** Per-environment T3 Agents scopes a connected app grants to agents relayed through it. */
+/** The most environments one app may relay; a larger registration is refused whole. */
+export const MCP_GATEWAY_RELAY_GRANTS_MAX = 256;
 export const McpGatewayRelayGrants = Schema.Record(
   Schema.String,
   Schema.Array(GatewayScope).check(Schema.isMaxLength(GATEWAY_SCOPE_VALUES.length)),
-).check(Schema.isMaxProperties(256));
+).check(Schema.isMaxProperties(MCP_GATEWAY_RELAY_GRANTS_MAX));
 export type McpGatewayRelayGrants = typeof McpGatewayRelayGrants.Type;
 
 export const McpGatewayConnectInput = Schema.Struct({ grants: McpGatewayRelayGrants });
 export type McpGatewayConnectInput = typeof McpGatewayConnectInput.Type;
+
+/** What a server would relay for the asking app under these grants, and why not the rest. */
+export const McpGatewayRelayPreview = Schema.Struct({
+  grants: Schema.Record(Schema.String, Schema.Array(GatewayScope)),
+  refusals: Schema.Record(Schema.String, Schema.String),
+  limit: Schema.optionalKey(Schema.String),
+});
+export type McpGatewayRelayPreview = typeof McpGatewayRelayPreview.Type;
 
 /** A runtime port call an agent on this server needs a connected app to run on another environment. */
 export const McpGatewayRelayEvent = Schema.Struct({

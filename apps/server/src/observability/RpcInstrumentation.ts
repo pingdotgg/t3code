@@ -243,6 +243,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverGetBackgroundPolicy]: "server",
   [WS_METHODS.mcpGatewayConnect]: "mcp-gateway",
   [WS_METHODS.mcpGatewayRespond]: "mcp-gateway",
+  [WS_METHODS.mcpGatewayPreview]: "mcp-gateway",
   [WS_METHODS.clientsConnectFocus]: "clients",
   [WS_METHODS.clientsList]: "clients",
   [WS_METHODS.clientsFocus]: "clients",

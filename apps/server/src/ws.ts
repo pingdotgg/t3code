@@ -3364,6 +3364,8 @@ export const layerWsRpc = (
           mcpGatewayBroker.connect(currentSessionId, input.grants, currentSession.subject),
         [WS_METHODS.mcpGatewayRespond]: (input) =>
           mcpGatewayBroker.respond(currentSessionId, input),
+        [WS_METHODS.mcpGatewayPreview]: (input) =>
+          mcpGatewayBroker.preview(currentSessionId, input.grants, currentSession.subject),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
         [WS_METHODS.deviceSimlockIdentity]: (input) => deviceService.simlockIdentity(input),
         [WS_METHODS.deviceList]: (input) =>
