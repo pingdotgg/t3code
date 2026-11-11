@@ -696,6 +696,18 @@ function pendingThreadTitleGenerationEffect(
   };
 }
 
+function providerThreadRenameEffect(
+  commandId: CommandId,
+  threadId: ThreadId,
+): PendingOrchestrationEffectV2 {
+  return {
+    id: `effect:${commandId}:provider-thread.rename`,
+    commandId,
+    threadId,
+    request: { type: "provider-thread.rename" },
+  };
+}
+
 function delegatedTasksStopEffect(command: {
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
@@ -4623,6 +4635,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
+
+    if (updatedThread.title !== thread.title) {
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        providerThreadRenameEffect(command.commandId, command.threadId),
+      ]);
+    }
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [

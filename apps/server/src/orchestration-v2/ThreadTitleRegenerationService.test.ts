@@ -358,6 +358,12 @@ describe("ThreadTitleRegenerationService", () => {
         });
         const renamed = yield* threads.getThreadProjection(threadId);
         assert.equal(renamed.thread.title, "Manual title");
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(CommandId.make("command:title:arm:rename"))).map(
+            (effect) => effect.request,
+          ),
+          [{ type: "provider-thread.rename" }],
+        );
         assert.isNotOk(renamed.thread.titleRegeneration);
       }).pipe(Effect.provide(harness.layer));
     }),

@@ -762,6 +762,7 @@ it.effect.each([
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           isLive: () => Effect.succeed(true),
           otherWorkingThreads: () => Effect.succeed(others.map((id) => ThreadId.make(id))),
+          renameNativeThread: () => Effect.void,
           releaseUnlessBusy: () =>
             Effect.sync(() => teardowns.push("release")).pipe(
               Effect.andThen(

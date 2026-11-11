@@ -45,6 +45,7 @@ import {
   type ForkSessionOptions,
   type ForkSessionResult,
   getSessionMessages,
+  renameSession as renameClaudeSession,
   getSubagentMessages,
   type HookCallback,
   type McpServerStatus as ClaudeMcpServerStatus,
@@ -684,6 +685,11 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   readonly subagentLaunchToolUseId: (
     input: ClaudeAgentSdkSubagentLookupInput,
   ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
+  /** Appends a name to a session transcript no process holds open. */
+  readonly renamePersistedSession: (input: {
+    readonly sessionId: string;
+    readonly title: string;
+  }) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly assertComplete: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -1673,6 +1679,14 @@ export const layerQueryRunner: Layer.Layer<
             payload: { type: "subagent.found", toolUseId },
           });
           return toolUseId;
+        },
+      ),
+      renamePersistedSession: Effect.fn("ClaudeAgentSdkQueryRunner.renamePersistedSession")(
+        function* ({ sessionId, title }: { readonly sessionId: string; readonly title: string }) {
+          yield* Effect.tryPromise({
+            try: () => renameClaudeSession(sessionId, title),
+            catch: (cause) => queryRunnerError(cause, "renamePersistedSession"),
+          });
         },
       ),
       assertComplete: Effect.void,
@@ -4943,6 +4957,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     adapterOptions.settings.homePath.trim().length > 0 ||
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
   const announcedBypassDowngrades = new Set<ThreadId>();
+  // Live processes by native session, so a rename between turns reaches the process holding it.
+  const liveQueriesByNativeThread = new Map<string, ClaudeLiveQueryContext>();
+  const renameLiveQuery = (context: ClaudeLiveQueryContext, title: string) =>
+    context.query.renameSession({ sessionId: context.nativeThreadId, title }).pipe(
+      Effect.timeout("5 seconds"),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          context.nativeTitle = title;
+        }),
+      ),
+    );
   const readBypassSettings = (filePath: string) =>
     fileSystem.readFileString(filePath).pipe(
       Effect.flatMap(decodeClaudeBypassSettings),
@@ -5148,6 +5173,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     }),
     planSelectionTransition: Effect.fn("ClaudeAdapterV2.planSelectionTransition")(function () {
       return Effect.succeed(turnScopedSelectionTransition());
+    }),
+    renameThread: Effect.fn("ClaudeAdapterV2.renameThread")(function* ({ providerThread, title }) {
+      const nativeThreadId = yield* getNativeThreadId(providerThread);
+      const live = liveQueriesByNativeThread.get(nativeThreadId);
+      // A live process keeps its own name and writes it back, so it must be told directly.
+      const rename =
+        live !== undefined && !live.stopping
+          ? live.nativeTitle === title
+            ? Effect.void
+            : renameLiveQuery(live, title)
+          : queryRunner.renamePersistedSession({ sessionId: nativeThreadId, title });
+      yield* rename.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CLAUDE_PROVIDER,
+              detail: "Claude could not rename its session.",
+              cause,
+            }),
+        ),
+      );
     }),
     openSession: Effect.fn("ClaudeAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
@@ -11172,6 +11218,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return context;
           });
+          liveQueriesByNativeThread.set(nativeThreadId, context);
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
@@ -11249,6 +11296,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
+                if (liveQueriesByNativeThread.get(nativeThreadId) === context) {
+                  liveQueriesByNativeThread.delete(nativeThreadId);
+                }
                 const heldContext = yield* Ref.get(activeTurn);
                 if (
                   (yield* Ref.get(queryContext))?.query === querySession &&
@@ -11356,19 +11406,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             if (querySession.nativeTitle !== turnInput.appThread.title) {
-              yield* querySession.query
-                .renameSession({ sessionId: nativeThreadId, title: turnInput.appThread.title })
-                .pipe(
-                  Effect.timeout("5 seconds"),
-                  Effect.tap(() =>
-                    Effect.sync(() => {
-                      querySession.nativeTitle = turnInput.appThread.title;
-                    }),
-                  ),
-                  Effect.catchCause((cause) =>
-                    Effect.logWarning("Claude session rename failed", { nativeThreadId, cause }),
-                  ),
-                );
+              yield* renameLiveQuery(querySession, turnInput.appThread.title).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Claude session rename failed", { nativeThreadId, cause }),
+                ),
+              );
             }
             const autoCompactWindow = yield* resolveAutoCompactWindow(
               querySession.settingsCwd,

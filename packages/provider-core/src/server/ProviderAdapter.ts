@@ -743,5 +743,10 @@ export class ProviderAdapterV2 extends Context.Service<
     readonly openSession: (
       input: ProviderAdapterV2OpenSessionInput,
     ) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderAdapterV2Error, Scope.Scope>;
+    /** Names the native session after the app thread, whether or not a session is live. */
+    readonly renameThread?: (input: {
+      readonly providerThread: OrchestrationV2ProviderThread;
+      readonly title: string;
+    }) => Effect.Effect<void, ProviderAdapterV2Error>;
   }
 >()("@t3tools/provider-core/server/ProviderAdapter/ProviderAdapterV2") {}

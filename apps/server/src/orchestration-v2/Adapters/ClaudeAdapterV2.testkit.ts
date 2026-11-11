@@ -943,6 +943,7 @@ function replayQueryRunnerService(
     open: (input) => replay(() => queryRunner.open(input)),
     forkSession: (input) => replay(() => queryRunner.forkSession(input)),
     subagentLaunchToolUseId: (input) => replay(() => queryRunner.subagentLaunchToolUseId(input)),
+    renamePersistedSession: () => Effect.void,
     assertComplete: replay(() => queryRunner.assertComplete()),
   });
 }
@@ -2844,6 +2845,7 @@ export function makeClaudeRestartReplayHarness(transcript: ClaudeAgentSdkReplayT
       makeProviderAdapterRegistryLayer: (replayed) =>
         layerClaudeProviderAdapterRegistryReplay(replayed, { queryRunner }),
     } satisfies typeof ClaudeOrchestratorReplayHarness,
+    renamePersistedSession: () => Effect.void,
     assertComplete: replayQueryRunnerService(transcript, queryRunner).assertComplete,
   };
 }

@@ -555,6 +555,8 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-thread.rename":
+            return providerSessions.renameNativeThread(effect.threadId);
           case "delegated-tasks.stop":
             return threads
               .stopDelegatedTasks({

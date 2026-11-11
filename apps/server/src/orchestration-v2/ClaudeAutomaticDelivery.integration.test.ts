@@ -180,6 +180,7 @@ it.effect.each(deliveries)(
               }),
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            renamePersistedSession: () => Effect.void,
             assertComplete: Effect.void,
           },
         });

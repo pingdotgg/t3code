@@ -212,6 +212,8 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
   }) => Effect.Effect<ReadonlyArray<ThreadId>>;
+  /** Gives the thread's native provider session the thread's title; best effort. */
+  readonly renameNativeThread: (threadId: ThreadId) => Effect.Effect<void>;
   /** The thread's latest predicted next prompt, then each replacement. */
   readonly subscribePromptSuggestion: (
     threadId: ThreadId,
@@ -2662,6 +2664,28 @@ export const layerWithOptions = (
           // Identity, not presence: open can install a replacement under the same id meanwhile.
           return before !== undefined && (yield* Ref.get(sessions)).get(key) !== before;
         }),
+        renameNativeThread: Effect.fn("ProviderSessionManager.renameNativeThread")(
+          function* (threadId: ThreadId) {
+            const records = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
+            const providerThread = records.providerThreads.find(
+              (candidate) => candidate.id === records.thread.activeProviderThreadId,
+            );
+            if (providerThread === undefined) return;
+            const adapter = yield* registry.get(providerThread.providerInstanceId);
+            yield* (
+              adapter.renameThread?.({ providerThread, title: records.thread.title }) ?? Effect.void
+            );
+          },
+          (effect, threadId) =>
+            effect.pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("orchestration-v2.native-thread-rename-failed", {
+                  threadId,
+                  cause,
+                }),
+              ),
+            ),
+        ),
         otherWorkingThreads: Effect.fn("ProviderSessionManager.otherWorkingThreads")(
           function* (input) {
             const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));

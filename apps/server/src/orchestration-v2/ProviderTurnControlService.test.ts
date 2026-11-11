@@ -294,6 +294,7 @@ it.effect(
           release: () => Effect.void,
           detach: () => Effect.void,
           otherWorkingThreads: () => Effect.succeed([]),
+          renameNativeThread: () => Effect.void,
           releaseUnlessBusy: () => Effect.succeed(true),
           subscribePromptSuggestion: () => Stream.empty,
         }),

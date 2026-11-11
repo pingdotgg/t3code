@@ -113,6 +113,7 @@ function layerExecutorFor(input: {
         release: () => record("release"),
         detach: () => record("detach"),
         otherWorkingThreads: () => Effect.succeed([]),
+        renameNativeThread: () => Effect.void,
         releaseUnlessBusy: () => Effect.succeed(true),
         subscribePromptSuggestion: () => Stream.empty,
       }),
