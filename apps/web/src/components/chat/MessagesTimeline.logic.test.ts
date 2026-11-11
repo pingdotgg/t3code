@@ -55,6 +55,143 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it.each([
+    ["html-render", "reply-run", true],
+    ["mcp-app", "reply-run", true],
+    ["html-render", "other-run", false],
+    ["html-render", null, false],
+    [null, null, false],
+  ] as const)("suppresses the empty fallback for %s in %s: %s", (kind, renderRun, expected) => {
+    const at = "2026-11-06T00:00:00Z";
+    const runId = RunId.make("reply-run");
+    const renderBase = {
+      id: "render",
+      createdAt: at,
+      runId: renderRun ? RunId.make(renderRun) : null,
+    };
+    const embedded: TimelineEntry[] =
+      kind === "html-render"
+        ? [
+            {
+              ...renderBase,
+              kind,
+              htmlRender: { attachmentId: "preview", title: "Preview", height: 420 },
+            },
+          ]
+        : kind === "mcp-app"
+          ? [
+              {
+                ...renderBase,
+                kind,
+                sourceThreadId: ThreadId.make("thread"),
+                itemId: TurnItemId.make("app"),
+                revision: "1",
+                mcpApp: {
+                  attachmentId: "app",
+                  server: "weather",
+                  tool: "weather",
+                  resourceUri: "ui://weather",
+                },
+              },
+            ]
+          : [];
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        ...embedded,
+        {
+          kind: "message",
+          id: "reply",
+          createdAt: at,
+          message: {
+            id: MessageId.make("reply"),
+            role: "assistant",
+            runId,
+            text: "",
+            streaming: false,
+            createdAt: at,
+            updatedAt: at,
+          },
+        },
+      ],
+      latestRun: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    const reply = rows.find((row) => row.kind === "message" && row.id === "reply");
+    expect(reply).toMatchObject({ suppressEmptyResponse: expected });
+  });
+
+  it.each(["alone", "before tool", "before commentary and tool"])(
+    "keeps an unfinished task update static %s",
+    (placement) => {
+      const runId = RunId.make("task-update-run");
+      const at = "2026-11-06T00:00:00Z";
+      const tasks: TimelineEntry = {
+        kind: "work",
+        id: "tasks",
+        createdAt: at,
+        entry: {
+          id: "tasks",
+          runId,
+          createdAt: at,
+          itemType: "todo_list",
+          tone: "info",
+          label: "Tasks 0/1 · Inspect the captures",
+          toolLifecycleStatus: "inProgress",
+        },
+      };
+      const commentary: TimelineEntry = {
+        kind: "message",
+        id: "commentary",
+        createdAt: at,
+        message: {
+          id: MessageId.make("commentary"),
+          role: "assistant",
+          text: "Checking the rendering.",
+          runId,
+          streaming: false,
+          createdAt: at,
+          updatedAt: at,
+        },
+      };
+      const tool: TimelineEntry = {
+        kind: "work",
+        id: "tool",
+        createdAt: at,
+        entry: {
+          id: "tool",
+          runId,
+          createdAt: at,
+          label: "Running sed",
+          command: "sed",
+          tone: "tool",
+          toolLifecycleStatus: "inProgress",
+        },
+      };
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: [
+          tasks,
+          ...(placement === "before commentary and tool" ? [commentary] : []),
+          ...(placement === "alone" ? [] : [tool]),
+        ],
+        runningRunId: runId,
+        isWorking: true,
+        activeTurnStartedAt: at,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      expect(rows.find((row) => row.id === "tasks")).toMatchObject({
+        kind: "work",
+        groupedEntries: [tasks.entry],
+      });
+      expect(rows.filter((row) => row.kind === "work-live" && row.active)).toEqual(
+        placement === "alone" ? [] : [expect.objectContaining({ entry: tool.entry })],
+      );
+    },
+  );
+
   it("stops stranded thinking after a steer and follows the next thought or tool", () => {
     const runId = RunId.make("steered-run");
     const at = "2026-10-01T06:19:10Z";
@@ -2071,6 +2208,105 @@ describe("deriveMessagesTimelineRows", () => {
       "work:question",
       "work-live:after + running",
     ]);
+  });
+
+  it("shows images the agent viewed outside their collapsed tool group", () => {
+    const threadId = ThreadId.make("viewed-images-thread");
+    const runId = RunId.make("viewed-images-run");
+    const at = (second: number) =>
+      DateTime.makeUnsafe(new Date(Date.UTC(2026, 10, 4, 12, 0, second)).toISOString());
+    const base = (id: string, ordinal: number) => ({
+      id: TurnItemId.make(id),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: "completed" as const,
+      title: null,
+      startedAt: at(ordinal),
+      completedAt: at(ordinal),
+      updatedAt: at(ordinal),
+    });
+    const read = (id: string, ordinal: number, filePath: string) => ({
+      ...base(id, ordinal),
+      type: "dynamic_tool" as const,
+      toolName: "Read",
+      // The Claude adapter tags reads of image files.
+      ...(filePath.endsWith(".png") ? { viewedImagePath: filePath } : {}),
+      input: { file_path: filePath },
+    });
+    const items = (settled: boolean) =>
+      [
+        {
+          ...base("prompt", 0),
+          type: "user_message" as const,
+          messageId: MessageId.make("prompt"),
+          text: "Show me the mockups",
+          attachments: [],
+          inputIntent: "turn_start" as const,
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+        },
+        read("read-sidebar", 1, "/repo/docs/sidebar.png"),
+        read("read-notes", 2, "/repo/docs/notes.md"),
+        read("read-sidebar-again", 3, "/repo/docs/sidebar.png"),
+        read("read-topbar", 4, "/repo/docs/topbar.png"),
+        settled
+          ? {
+              ...base("answer", 5),
+              type: "assistant_message" as const,
+              messageId: MessageId.make("answer"),
+              text: "Here are both layouts",
+              streaming: false,
+            }
+          : {
+              ...base("ask-again", 5),
+              status: "waiting" as const,
+              completedAt: null,
+              type: "user_input_request" as const,
+              requestId: RuntimeRequestId.make("layout-question"),
+              questions: [],
+            },
+      ].map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      }));
+    const viewedImages = (settled: boolean, expandedRunIds?: ReadonlySet<RunId>) => {
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: items(settled),
+          optimisticMessages: [],
+        }),
+        latestRun: {
+          runId,
+          status: settled ? "completed" : "running",
+          startedAt: DateTime.formatIso(at(0)),
+          completedAt: settled ? DateTime.formatIso(at(5)) : null,
+        },
+        runningRunId: settled ? null : runId,
+        isWorking: !settled,
+        activeTurnStartedAt: settled ? null : DateTime.formatIso(at(0)),
+        ...(expandedRunIds === undefined ? {} : { expandedRunIds }),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      return rows.flatMap((row, index) =>
+        row.kind === "viewed-images" ? [{ after: rows[index - 1]?.kind, paths: row.paths }] : [],
+      );
+    };
+    const paths = ["/repo/docs/sidebar.png", "/repo/docs/topbar.png"];
+
+    expect(viewedImages(false)).toEqual([{ after: "work-live", paths }]);
+    // A settled turn's fold keeps hiding its work, images included, until it is opened.
+    expect(viewedImages(true)).toEqual([]);
+    expect(viewedImages(true, new Set([runId]))).toEqual([{ after: "work-toggle", paths }]);
   });
 
   it("keeps imported V1 turns folded once the thread's first V2 run starts", () => {
