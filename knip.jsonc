@@ -31,8 +31,6 @@
         "linux-after-pack.ts",
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",
-        // Run by hand to seed an isolated .t3 for issue #23245 verification.
-        "seed-issue-23245.mjs",
         // e2e loads its config and the scenarios by path, and starts the app script.
         "e2e.config.ts",
         "prove-scenario.ts",
