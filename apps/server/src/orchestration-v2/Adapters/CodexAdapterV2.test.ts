@@ -9933,7 +9933,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.deepEqual(
           [write, read, network].map((request) => {
             const item = approvalItem(harness.events, request);
-            return [request.kind, item?.requestKind, item?.prompt, item?.reason];
+            return [request.kind, item?.requestKind, item?.prompt, item?.reason, item?.permissions];
           }),
           [
             [
@@ -9941,9 +9941,29 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               "file-change",
               "read /w/src\nwrite glob /w/out/**\ndeny /w/secrets",
               undefined,
+              {
+                network: false,
+                fileSystem: [
+                  { access: "read", path: "/w/src" },
+                  { access: "write", path: "/w/out/**", glob: true },
+                  { access: "deny", path: "/w/secrets" },
+                ],
+              },
             ],
-            ["file-read", "file-read", "read glob /w/docs/**", undefined],
-            ["command", "command", "Network access", "Need to fetch a dependency"],
+            [
+              "file-read",
+              "file-read",
+              "read glob /w/docs/**",
+              undefined,
+              { network: false, fileSystem: [{ access: "read", path: "/w/docs/**", glob: true }] },
+            ],
+            [
+              "command",
+              "command",
+              "Network access",
+              "Need to fetch a dependency",
+              { network: true, fileSystem: [] },
+            ],
           ],
         );
       }).pipe(

@@ -2396,7 +2396,11 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
             type: "approval_request",
             requestId: request("approval:pending", nodeId, "command").id,
             requestKind: "command",
-            prompt: "rm -rf build",
+            prompt: "Network access\nread /w/docs",
+            permissions: {
+              network: true,
+              fileSystem: [{ access: "read", path: "/w/docs" }],
+            },
           },
           {
             ...itemBase(runId, nodeId, "question:resolved"),
@@ -2485,6 +2489,11 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
         pendingCardIds,
       );
       for (const id of pendingCardIds) assert.notInclude(visibleIds, id);
+      const approval = projection.turnItems.find((item) => item.id === pendingCardIds[1]);
+      assert.deepEqual(approval?.type === "approval_request" ? approval.permissions : undefined, {
+        network: true,
+        fileSystem: [{ access: "read", path: "/w/docs" }],
+      });
     }
   }).pipe(Effect.provide(layerTest)),
 );

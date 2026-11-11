@@ -76,6 +76,18 @@ export const ProviderApprovalOption = Schema.Struct({
 });
 export type ProviderApprovalOption = typeof ProviderApprovalOption.Type;
 
+export const ProviderApprovalPermissions = Schema.Struct({
+  network: Schema.Boolean,
+  fileSystem: Schema.Array(
+    Schema.Struct({
+      access: Schema.Literals(["read", "write", "deny"]),
+      path: Schema.String,
+      glob: Schema.optional(Schema.Literal(true)),
+    }),
+  ),
+});
+export type ProviderApprovalPermissions = typeof ProviderApprovalPermissions.Type;
+
 export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
 export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 
