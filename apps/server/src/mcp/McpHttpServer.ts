@@ -87,7 +87,12 @@ import { KnowledgeToolkit } from "./toolkits/knowledge/tools.ts";
 import * as QuizHandlers from "./toolkits/quiz/handlers.ts";
 import { QuizToolkit } from "./toolkits/quiz/tools.ts";
 import * as CourseHandlers from "./toolkits/course/handlers.ts";
-import { CourseToolkit } from "./toolkits/course/tools.ts";
+import {
+  CourseReferenceFetchTool,
+  CourseReferenceToolkit,
+  CourseToolkit,
+} from "./toolkits/course/tools.ts";
+import * as CourseService from "../course/CourseService.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   requestUrl(request).pipe(
@@ -662,6 +667,69 @@ interface ImageToolResult {
   readonly [key: string]: unknown;
 }
 
+interface MultiImageToolResult {
+  readonly images: ReadonlyArray<{
+    readonly type: "image";
+    readonly mimeType: "image/png";
+    readonly data: string;
+    readonly width: number;
+    readonly height: number;
+  }>;
+  readonly [key: string]: unknown;
+}
+
+export const imageToolContent = (encodedResult: unknown, includeImage = true) => {
+  const result = encodedResult as ImageToolResult | MultiImageToolResult | Record<string, unknown>;
+  const screenshot =
+    "screenshot" in result ? (result.screenshot as ImageToolResult["screenshot"]) : undefined;
+  const images = Array.isArray(result.images)
+    ? (result.images as MultiImageToolResult["images"])
+    : screenshot === undefined
+      ? []
+      : [
+          {
+            data: screenshot.data,
+            mimeType: screenshot.mimeType,
+            width: screenshot.width,
+            height: screenshot.height,
+          },
+        ];
+  const { screenshot: _screenshot, ...rest } = result;
+  const metadata = {
+    ...rest,
+    images: images.map((image) => {
+      const {
+        data: _data,
+        type: _type,
+        ...restImage
+      } = image as MultiImageToolResult["images"][number];
+      return restImage;
+    }),
+    ...(screenshot === undefined
+      ? {}
+      : {
+          screenshot: {
+            mimeType: screenshot.mimeType,
+            width: screenshot.width,
+            height: screenshot.height,
+          },
+        }),
+  };
+  return {
+    metadata,
+    content: [
+      { type: "text" as const, text: JSON.stringify(metadata) },
+      ...(includeImage
+        ? images.map((image) => ({
+            type: "image" as const,
+            data: new Uint8Array(Buffer.from(image.data, "base64")),
+            mimeType: image.mimeType,
+          }))
+        : []),
+    ],
+  };
+};
+
 /** Expose only undescribed failures' tags; remote messages may contain renderer or device output. */
 const imageToolFailure =
   <E>(toolName: string, operation: string, failureText: string | ((error: E) => string)) =>
@@ -757,34 +825,15 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
           Effect.matchCauseEffect({
             onFailure: imageToolFailure(tool.name, operation, failureText),
             onSuccess: ({ encodedResult }) => {
-              const { screenshot, ...rest } = encodedResult as ImageToolResult;
               const includeImage =
                 (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !==
                 false;
-              const metadata = {
-                ...rest,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
-              };
+              const { metadata, content } = imageToolContent(encodedResult, includeImage);
               return Effect.succeed(
                 new McpSchema.CallToolResult({
                   isError: false,
                   structuredContent: metadata,
-                  content: [
-                    { type: "text", text: JSON.stringify(metadata) },
-                    ...(includeImage
-                      ? [
-                          {
-                            type: "image" as const,
-                            data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                            mimeType: screenshot.mimeType,
-                          },
-                        ]
-                      : []),
-                  ],
+                  content,
                 }),
               );
             },
@@ -847,6 +896,31 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
         : "HTML preview failed.",
   );
 });
+
+const registerCourseReferenceFetch = Effect.fn("McpHttpServer.registerCourseReferenceFetch")(
+  function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const courses = yield* CourseService.CourseService;
+    const built = yield* decodeAsAdvertised(CourseReferenceToolkit);
+    yield* registerImageTool(
+      CourseReferenceFetchTool,
+      (payload) =>
+        built
+          .handle("course_reference_fetch", payload)
+          .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+      (effect) =>
+        effect.pipe(
+          Effect.provideService(ServerConfig.ServerConfig, config),
+          Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+          Effect.provideService(CourseService.CourseService, courses),
+        ),
+      "reference_fetch",
+      (error) =>
+        isOrchestratorMcpFailure(error) ? error.message : "Course reference fetch failed.",
+    );
+  },
+);
 
 /**
  * Tools that hand work to another thread's agent: they create it, message it,
@@ -1164,6 +1238,10 @@ const layerQuizToolkit = toolkitRegistration(QuizToolkit, QuizHandlers.layer);
 const layerCourseToolkit = toolkitRegistration(CourseToolkit, CourseHandlers.layer).pipe(
   Layer.provide(OrchestratorMcpService.layer),
 );
+const layerCourseReferenceToolkit = imageToolRegistration(
+  registerCourseReferenceFetch(),
+  CourseHandlers.referenceLayer,
+);
 
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
@@ -1282,6 +1360,7 @@ export const layerTools = Layer.mergeAll(
   layerKnowledgeToolkit,
   layerQuizToolkit,
   layerCourseToolkit,
+  layerCourseReferenceToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);

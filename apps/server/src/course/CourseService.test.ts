@@ -81,6 +81,123 @@ describe("CourseService", () => {
     ),
   );
 
+  it.effect("stores published references and carries them through repair", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const ingested = {
+          kind: "ocw" as const,
+          title: "References",
+          source: "source",
+          units: [
+            { title: "A", section: "Week" },
+            { title: "B", section: "Week" },
+          ],
+          problemSets: [{ title: "Pset", section: "Week", text: "Problem" }],
+        };
+        const course = yield* service.add({ lessonThreadId: threadId, ingested });
+        const references = [
+          {
+            label: "Student scan",
+            url: "https://example.com/pset.pdf",
+            answers: "1b: 7.3 m (using v² = v₀² + 2aΔy)",
+          },
+        ];
+        yield* service.update({ courseId: course.id, pset: 1, references });
+        const revealed = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
+        assert.deepStrictEqual(revealed.problemSets[0]?.references, references);
+        assert.include(revealed.problemSets[0]?.note ?? "", "published solution references");
+        const repaired = yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            ...ingested,
+            units: [
+              { title: "B", section: "Week" },
+              { title: "A", section: "Week" },
+            ],
+          },
+        });
+        assert.deepStrictEqual(
+          (yield* service.problems({ courseId: repaired.id, pset: 1, reveal: true })).problemSets[0]
+            ?.references,
+          references,
+        );
+      }),
+    ),
+  );
+
+  it.effect("says when no published solution was found", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const course = yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            kind: "ocw",
+            title: "No references",
+            source: "source",
+            units: [{ title: "Week", section: "Week" }],
+            problemSets: [{ title: "Pset", section: "Week", text: "Problem" }],
+          },
+        });
+        yield* service.update({ courseId: course.id, pset: 1, references: [] });
+        const result = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
+        assert.include(result.problemSets[0]?.note ?? "", "no published solution was found online");
+      }),
+    ),
+  );
+
+  it.effect("carries each pset reference by title when psets reorder", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const source = {
+          kind: "ocw" as const,
+          title: "Reordered psets",
+          source: "source",
+          units: [{ title: "Week", section: "Week" }],
+          problemSets: [
+            { title: "Pset A", section: "Week", text: "A" },
+            { title: "Pset B", section: "Week", text: "B" },
+          ],
+        };
+        const course = yield* service.add({ lessonThreadId: threadId, ingested: source });
+        const refs = [{ label: "B scan", url: "https://example.com/b", answers: "B" }];
+        yield* service.update({ courseId: course.id, pset: 2, references: refs });
+        yield* service.add({
+          lessonThreadId: threadId,
+          ingested: { ...source, problemSets: [source.problemSets[1]!, source.problemSets[0]!] },
+        });
+        const result = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
+        assert.deepStrictEqual(result.problemSets[0]?.references, refs);
+        assert.deepStrictEqual(
+          (yield* service.get({ id: course.id })).problemSets?.[0]?.references,
+          [{ label: "B scan", url: "https://example.com/b" }],
+        );
+      }),
+    ),
+  );
+
+  it.effect("rejects unknown problem sets", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const course = yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            kind: "ocw",
+            title: "Unknown pset",
+            source: "source",
+            units: [{ title: "Week", section: "Week" }],
+            problemSets: [{ title: "Pset 1", section: "Week", text: "Problem" }],
+          },
+        });
+        const failure = yield* service.problems({ courseId: course.id, pset: 2 }).pipe(Effect.flip);
+        assert.include(String(failure), "Problem set 2 was not found");
+        const saveFailure = yield* service
+          .update({ courseId: course.id, pset: 2, references: [] })
+          .pipe(Effect.flip);
+        assert.include(String(saveFailure), "Problem set 2 was not found");
+      }),
+    ),
+  );
+
   it.effect("returns only the transcript window", () =>
     withService((service) =>
       Effect.gen(function* () {
