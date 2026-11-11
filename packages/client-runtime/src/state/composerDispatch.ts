@@ -10,8 +10,6 @@ export type ComposerLocalCommand =
   | "side-chat-unavailable"
   | "side-chat-text-only"
   | "clear"
-  | "plan"
-  | "build"
   | "feedback"
   | "usage-limits";
 

@@ -91,8 +91,6 @@ const LOCAL_COMMAND_LABELS: Record<ComposerLocalCommand, string> = {
   "side-chat-unavailable": "Side chat unavailable",
   "side-chat-text-only": "Side chat requires text only",
   clear: "Start fresh session",
-  plan: "Switch to Plan",
-  build: "Switch to Build",
   feedback: "Submit feedback",
   "usage-limits": "Show usage limits",
 };
