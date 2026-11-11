@@ -9265,6 +9265,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   new Map(current).set(message.task_id, {
                     ...registered,
                     confirmedOutcome: undefined,
+                    handbackText: null,
                     task: {
                       ...priorTask,
                       status: "running",
