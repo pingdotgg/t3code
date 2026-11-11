@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { openZipArchive } from "../zipArchive.ts";
+import { auditDownload, type DownloadAuditContext } from "./downloadAudit.ts";
 
 export class CourseIngestError extends Schema.TaggedError<CourseIngestError>()(
   "CourseIngestError",
@@ -46,6 +47,7 @@ export interface IngestedCourse {
 export interface IngestOptions {
   readonly ytDlp: boolean;
   readonly workDir: string;
+  readonly audit?: DownloadAuditContext;
 }
 
 const MAX_ZIP_BYTES = 300 * 1024 * 1024;
@@ -570,7 +572,7 @@ export const parseOcwZip = (zipPath: string, source: string) =>
     }),
   );
 
-const boundedDownload = (url: string, destination: string) =>
+const boundedDownload = (url: string, destination: string, audit?: DownloadAuditContext) =>
   Effect.tryPromise({
     try: async (signal) => {
       const response = await fetch(url, {
@@ -584,6 +586,7 @@ const boundedDownload = (url: string, destination: string) =>
         throw new Error("The OCW download is larger than the 300 MB limit.");
       const handle = await NodeFSP.open(destination, "w");
       let total = 0;
+      const chunks: Uint8Array[] = [];
       try {
         const reader = response.body.getReader();
         while (true) {
@@ -593,15 +596,25 @@ const boundedDownload = (url: string, destination: string) =>
           if (total > MAX_ZIP_BYTES)
             throw new Error("The OCW download is larger than the 300 MB limit.");
           await handle.write(value);
+          chunks.push(value);
         }
       } finally {
         await handle.close();
       }
+      if (audit)
+        await auditDownload(audit, {
+          url,
+          hops: [{ url, status: response.status, ips: [] }],
+          status: response.status,
+          bytes: total,
+          contentType: response.headers.get("content-type"),
+          body: Buffer.concat(chunks),
+        });
     },
     catch: (cause) => new CourseIngestError({ message: String(cause) }),
   });
 
-const ocwDownloadUrl = (source: string) =>
+const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) =>
   Effect.tryPromise({
     try: async (signal) => {
       const fetchPage = (url: URL, redirect: "follow" | "error" = "follow") =>
@@ -624,6 +637,15 @@ const ocwDownloadUrl = (source: string) =>
       const response = await fetchPage(page, "error");
       if (!response.ok) throw new Error(`OCW download page returned HTTP ${response.status}.`);
       const html = await response.text();
+      if (audit)
+        await auditDownload(audit, {
+          url: page.toString(),
+          hops: [{ url: page.toString(), status: response.status, ips: [] }],
+          status: response.status,
+          bytes: Buffer.byteLength(html),
+          contentType: response.headers.get("content-type"),
+          body: Buffer.from(html),
+        });
       const match = html.match(/href=["']([^"']+\.zip(?:\?[^"']*)?)["']/i);
       if (!match) throw new Error("The OCW download page did not contain a course zip.");
       return onOcw(new URL(match[1]!, page)).toString();
@@ -634,14 +656,18 @@ const ocwDownloadUrl = (source: string) =>
       }),
   });
 
-const ingestOcw = Effect.fn("course.ingestOcw")(function* (source: string, workDir: string) {
-  const zipUrl = yield* ocwDownloadUrl(source);
+const ingestOcw = Effect.fn("course.ingestOcw")(function* (
+  source: string,
+  workDir: string,
+  audit?: DownloadAuditContext,
+) {
+  const zipUrl = yield* ocwDownloadUrl(source, audit);
   const directory = yield* tryIo("Could not make a temp folder", async () => {
     await NodeFSP.mkdir(workDir, { recursive: true });
     return NodeFSP.mkdtemp(NodePath.join(workDir, "ocw-"));
   });
   const zipPath = NodePath.join(directory, "course.zip");
-  return yield* boundedDownload(zipUrl, zipPath).pipe(
+  return yield* boundedDownload(zipUrl, zipPath, audit).pipe(
     Effect.andThen(parseOcwZip(zipPath, source)),
     Effect.ensuring(
       Effect.promise(() =>
@@ -693,7 +719,7 @@ const ingestYoutube = Effect.fn("course.ingestYoutube")(function* (
   const ocw = description.match(/https?:\/\/ocw\.mit\.edu\/(?:courses\/[^\s)]+|[^\s)]+)/i)?.[0];
   const units = youtubeUnits(source, listing);
   if (!ocw) return units;
-  return yield* ingestOcw(ocw.replace(/[.,]+$/, ""), options.workDir).pipe(
+  return yield* ingestOcw(ocw.replace(/[.,]+$/, ""), options.workDir, options.audit).pipe(
     Effect.catch((error) =>
       Effect.logWarning("OCW course download failed; using the YouTube units", error).pipe(
         Effect.as(units),
@@ -801,7 +827,7 @@ export const ingestCourse = (
     );
   }
   return parsed.type === "ocw"
-    ? ingestOcw(source, options.workDir)
+    ? ingestOcw(source, options.workDir, options.audit)
     : ingestYoutube(source, options);
 };
 

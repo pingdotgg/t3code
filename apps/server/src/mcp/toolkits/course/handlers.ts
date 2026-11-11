@@ -15,7 +15,7 @@ import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import { loadCaller } from "../../threadAccess.ts";
 import { CourseToolkit } from "./tools.ts";
 
-const PREP_BRIEF = `You are a course preparation thread. Work only on the requested units for course {{courseId}} (units: {{units}}). For each unit, call course_read with courseId and its unit number. Write 2–3 likely sticking points, ranked by what the unit needs that knowledge_map_read lacks, what the learner asked before, the transcript, and common misconceptions. Write a four-question quiz with answers first. Save both with course_update using courseId. Do not message, wake, or delegate into the lesson thread; this is background preparation.`;
+const PREP_BRIEF = `You are a course preparation thread. Work only on the requested units for course {{courseId}} (units: {{units}}). For each unit, call course_read with courseId and its unit number. Write 2–3 likely sticking points, ranked by what the unit needs that knowledge_map_read lacks, what the learner asked before, the transcript, and common misconceptions. Write a four-question quiz with answers first. Save both with course_update using courseId. Do not message, wake, or delegate into the lesson thread; this is background preparation.{{solutionLeads}}`;
 const isCourseIngestError = Schema.is(CourseIngestError);
 const isCourseReferenceFetchError = Schema.is(CourseReferenceFetchError);
 const fail = (e: { readonly message: string }) =>
@@ -93,6 +93,7 @@ const handlers = {
       const ingested = yield* ingestCourse(source, {
         ytDlp: settings.courseYtDlp,
         workDir: path.join(config.stateDir, "courses", ".tmp"),
+        audit: { stateDir: config.stateDir, threadId: thread.threadId, courseId: null },
       }).pipe(Effect.mapError(fail));
       return yield* service
         .add({ lessonThreadId: thread.threadId, ingested })
@@ -159,6 +160,20 @@ const handlers = {
       const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "course_prepare");
       const service = yield* CourseService.CourseService;
       const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
+      const solutionLeads = [...new Set(input.solutionLeads ?? [])];
+      if (solutionLeads.length > 10 || solutionLeads.some((url) => !/^https?:\/\//i.test(url)))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "solutionLeads must contain at most 10 http(s) URLs",
+        });
+      if (input.solutionLeads !== undefined && solutionLeads.length === 0 && course.problemSets) {
+        for (const [index, pset] of course.problemSets.entries()) {
+          if (!pset.hasSolution && pset.references === undefined)
+            yield* service
+              .update({ courseId: course.id, pset: index + 1, references: [] })
+              .pipe(Effect.mapError(fail));
+        }
+      }
       const units = [...new Set(input.units)].sort((a, b) => a - b);
       if (units.length === 0 || units.some((unit) => unit < 1 || unit > course.units.length))
         return yield* new OrchestratorMcpFailure({
@@ -168,10 +183,13 @@ const handlers = {
       const first = units[0];
       const last = units[units.length - 1];
       const title = `Prep: ${course.title} L${first}–${last}`;
-      const prompt = PREP_BRIEF.replace("{{courseId}}", course.id).replace(
-        "{{units}}",
-        units.join(", "),
-      );
+      const solutionBrief =
+        solutionLeads.length > 0
+          ? ` Open each solution lead with course_reference_fetch (follow index-page links to the matching pset file), read PDF page images, transcribe each problem's final answers and key steps, and save them with course_update {pset, references}. For psets with no official solution where nothing was found, save references []. Leads: ${solutionLeads.join(", ")}.`
+          : "";
+      const prompt = PREP_BRIEF.replace("{{courseId}}", course.id)
+        .replace("{{units}}", units.join(", "))
+        .replace("{{solutionLeads}}", solutionBrief);
       const clientRequestId = `course-prep:${course.id}:${DateTime.toEpochMillis(yield* DateTime.now)}`;
       // Recorded before the prep turn starts, so its first course_read is already allowed.
       yield* service
