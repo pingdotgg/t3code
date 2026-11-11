@@ -614,6 +614,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["speech voice stt advanced gpu cpu acceleration memory unload idle"],
   },
   {
+    id: "speech-streaming",
+    title: "Streaming transcription",
+    to: "/settings/voice",
+    searchTerms: ["speech voice stt advanced native live preview batch after stopping slow lag"],
+  },
+  {
     id: "microphone-test",
     title: "Test microphone",
     to: "/settings/voice",

@@ -14,6 +14,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
+import { readBrowserClientSettings } from "../../clientPersistenceStorage";
 import {
   useEnvironmentSpeechInput,
   useVoiceTranscriptionDestination,
@@ -120,7 +121,7 @@ it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accel
       modelId: "both",
       model: "Bilingual",
       size: 100,
-      supportsStreaming: false,
+      supportsStreaming: true,
       supportsTranslation: false,
       acceleration: "auto",
       modelUnloadTimeout: "never",
@@ -170,6 +171,10 @@ it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accel
         prepared,
       }),
       async () => {
+        const previous = getClientSettings();
+        using cleanup = new DisposableStack();
+        cleanup.defer(() => __setClientSettingsForTests(previous));
+        __setClientSettingsForTests({ ...previous, speechStreaming: true });
         const panel = () => (
           <SettingsScopeProvider search={{}} onChange={() => {}}>
             <VoiceSettingsPanel />
@@ -177,6 +182,13 @@ it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accel
         );
         await using screen = await render(panel());
         await expect.element(screen.getByText(cpuBenchmark)).toBeVisible();
+        await userEvent.click(screen.getByRole("button", { name: "Advanced", exact: true }));
+        const streaming = screen.getByRole("switch", { name: "Streaming transcription" });
+        await expect.element(streaming).toBeEnabled();
+        await expect.element(streaming).toBeChecked();
+        streaming.element().focus();
+        await userEvent.keyboard(" ");
+        await vi.waitFor(() => expect(readBrowserClientSettings()?.speechStreaming).toBe(false));
         prepared = remote;
         await screen.rerender(panel());
         await remoteRequested.promise;
@@ -184,15 +196,28 @@ it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accel
         remoteStatus.resolve(
           Response.json({
             ...status,
+            supportsStreaming: false,
             benchmarkTier: "accelerated",
             gpuDevices: [{ id: "gpu", name: "Remote GPU" }],
           }),
         );
         await expect.element(screen.getByText(gpuBenchmark)).toBeVisible();
+        await userEvent.click(screen.getByRole("button", { name: "Advanced", exact: true }));
+        await expect.element(streaming).toBeDisabled();
+        await expect.element(streaming).not.toBeChecked();
+        await expect
+          .element(screen.getByText("This model doesn’t support native streaming."))
+          .toBeVisible();
         prepared = local;
         await screen.rerender(panel());
         await expect.element(screen.getByText(cpuBenchmark)).toBeVisible();
+        await userEvent.click(screen.getByRole("button", { name: "Advanced", exact: true }));
         await expect.element(screen.getByText(gpuBenchmark)).not.toBeInTheDocument();
+        await expect.element(streaming).toBeEnabled();
+        await expect.element(streaming).not.toBeChecked();
+        streaming.element().focus();
+        await userEvent.keyboard(" ");
+        await vi.waitFor(() => expect(readBrowserClientSettings()?.speechStreaming).toBe(true));
       },
     );
   },
@@ -510,6 +535,7 @@ it("recovers from a failed download progress poll without notifying, but reports
 it.each([
   ["speech-models", "voice-transcription-destination"],
   ["speech-hardware", "voice-transcription-destination"],
+  ["speech-streaming", "voice-transcription-destination"],
   ["transcription-test", "voice-transcription-destination"],
   ["speech-correction-word", "speech-post-processing"],
   ["speech-post-processing-model", "speech-post-processing"],

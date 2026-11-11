@@ -264,6 +264,28 @@ it("decodes complete stable chunks before Stop and returns the ordered final tai
   }
 });
 
+it("uses bounded offline chunks for a native streaming model without opening a session", async () => {
+  const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+    export const TranscribeModel = { load: async () => ({
+      capabilities: { supportsStreaming: true, maxAudioMs: 4000 },
+      supports: () => false,
+      createSession: () => { throw new Error("Offline inference must not open a stream"); },
+      transcribe: async pcm => {
+        if (pcm.length > 32000) throw new Error("Model input limit exceeded");
+        return { text: String(pcm.length) };
+      },
+    }) };
+  `)}`;
+  const model = await loadNativeSpeechModel("asr.gguf", new AbortController().signal, moduleUrl);
+  try {
+    expect(
+      await model.transcribe(new Float32Array(48002).fill(0.8), { timestamps: "none" }, false),
+    ).toEqual({ text: "32000 16002" });
+  } finally {
+    await model.dispose();
+  }
+});
+
 it("preserves withheld audio on VAD failure while keeping ASR failures distinct", async () => {
   for (const streaming of [false, true]) {
     const model = await loadNativeSpeechModel(
