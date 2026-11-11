@@ -557,6 +557,13 @@ describe("review thread conversations", () => {
     expect(pullRequestQuoteReply({ ...loose, author: null }, "  picked\nlines ")).toBe(
       "> picked\n> lines\n\n",
     );
+    expect(
+      pullRequestQuoteReply({
+        ...loose,
+        author: null,
+        body: "Use `<!-- x -->`:\n```html\n<!-- keep -->\n```<!-- drop -->",
+      }),
+    ).toBe("> Use `<!-- x -->`:\n> ```html\n> <!-- keep -->\n> ```\n\n");
   });
 
   it("keeps a timeline finding and its replies in one row at the finding time", () => {
