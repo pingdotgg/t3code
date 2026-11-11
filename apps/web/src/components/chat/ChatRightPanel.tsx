@@ -27,7 +27,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     layoutControls,
     ...tabs
   } = props;
-  const inlineSize = usePreviewPanelInlineSize(undefined, {
+  const inlineSize = usePreviewPanelInlineSize({
     container: workspaceLayoutElement,
     widthStorageKey,
   });
