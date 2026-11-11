@@ -175,6 +175,7 @@ import type {
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
+import { CompactBeforeSendNotice } from "./CompactBeforeSendNotice";
 import { FreshSessionNotice } from "./FreshSessionNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
@@ -244,6 +245,12 @@ export interface ThreadDetailScreenProps {
   readonly providerSubagentStatus?: ProviderSubagentStatus | null;
   readonly extensionStatuses?: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
   readonly isCompacting: boolean;
+  /** Set while the next send compacts the thread first. */
+  readonly compactBeforeSend?: {
+    readonly tokens: number;
+    readonly keepFullHistory: boolean;
+    readonly onToggleKeepFullHistory: () => void;
+  } | null;
   readonly creationState:
     | {
         readonly kind: "preparing";
@@ -1680,6 +1687,14 @@ function ThreadDetailBody(
                     ))}
                     {freshSessionAvailable ? (
                       <FreshSessionNotice threadKey={selectedThreadKey} />
+                    ) : null}
+                    {props.compactBeforeSend && !props.draftMode ? (
+                      <CompactBeforeSendNotice
+                        tokens={props.compactBeforeSend.tokens}
+                        keepFullHistory={props.compactBeforeSend.keepFullHistory}
+                        disabled={!props.canOperateThread}
+                        onToggleKeepFullHistory={props.compactBeforeSend.onToggleKeepFullHistory}
+                      />
                     ) : null}
                     {props.canOperateThread ? (
                       <ManagedRuntimeModeNotice

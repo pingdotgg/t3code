@@ -71,6 +71,7 @@ vi.mock("react", () => ({
   useLayoutEffect: () => {},
   useRef: <A>(current: A) => ({ current }),
   useMemo: <A>(factory: () => A) => factory(),
+  useSyncExternalStore: <A>(_subscribe: unknown, getSnapshot: () => A) => getSnapshot(),
   useState: <A>(initial: A | (() => A)) => [
     typeof initial === "function" ? (initial as () => A)() : initial,
     vi.fn(),
@@ -79,7 +80,7 @@ vi.mock("react", () => ({
 vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
 vi.mock("@t3tools/client-runtime/state/context-window", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/context-window")>()),
-  shouldCompactBeforeSend: () => state.compactDue,
+  resolveCompactBeforeSendTokens: () => (state.compactDue ? 250_000 : null),
 }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));

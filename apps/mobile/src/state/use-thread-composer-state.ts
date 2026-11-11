@@ -3,7 +3,7 @@ import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "./session";
 import { useAtomValue } from "@effect/atom-react";
-import { shouldCompactBeforeSend } from "@t3tools/client-runtime/state/context-window";
+import { resolveCompactBeforeSendTokens } from "@t3tools/client-runtime/state/context-window";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
@@ -42,6 +42,7 @@ import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLega
 import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
+import { useNowMinuteMs } from "../lib/clock";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
@@ -402,6 +403,57 @@ export function useThreadComposerState(input: {
     ? (selectedThreadRuntime?.activeRunId ?? null)
     : null;
 
+  const resolveThreadCompactBeforeSendTokens = (send: {
+    readonly modelSelection: ModelSelection;
+    readonly text: string;
+    readonly now: string;
+  }) =>
+    selectedEnvironmentRuntime?.connectionState === "connected" &&
+    selectedThreadProjection !== null &&
+    serverConfig != null
+      ? resolveCompactBeforeSendTokens({
+          projection: selectedThreadProjection.projection,
+          visibleTurnItems: selectedThreadVisibleTurnItems,
+          selection: send.modelSelection,
+          providers: serverConfig.providers,
+          settings: serverConfig.settings,
+          text: send.text,
+          threadIdle:
+            !activeThreadBusy &&
+            !runlessWorkActive &&
+            !isCompacting &&
+            selectedThreadQueuedMessages.length === 0,
+          now: send.now,
+        })
+      : null;
+  const nowMinuteMs = useNowMinuteMs();
+  const compactBeforeSendTokens =
+    modelSelection === null || queuedRunEdit !== null || selectedDraft.freshContext === true
+      ? null
+      : resolveThreadCompactBeforeSendTokens({
+          modelSelection,
+          text: "",
+          now: new Date(nowMinuteMs).toISOString(),
+        });
+  // Per thread and for one send, as on web: the next send compacts again unless kept again.
+  const [fullHistoryThreadKeys, setFullHistoryThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const keepFullHistory =
+    selectedThreadKey !== null && fullHistoryThreadKeys.has(selectedThreadKey);
+  const setKeepFullHistory = (threadKey: string, keep: boolean) => {
+    setFullHistoryThreadKeys((current) => {
+      if (current.has(threadKey) === keep) return current;
+      const next = new Set(current);
+      if (keep) next.add(threadKey);
+      else next.delete(threadKey);
+      return next;
+    });
+  };
+  const toggleKeepFullHistory = () => {
+    if (selectedThreadKey !== null) setKeepFullHistory(selectedThreadKey, !keepFullHistory);
+  };
+
   const cancelQueuedRunEdit = () => {
     if (selectedThreadKey === null || savingQueuedEditRef.current) return;
     endQueuedRunEdit(selectedThreadKey);
@@ -734,24 +786,10 @@ export function useThreadComposerState(input: {
     // A fresh session drops the context a compaction would summarize.
     const compactBeforeSend =
       !freshContext &&
+      !keepFullHistory &&
       followUpDispatchMode === null &&
-      selectedEnvironmentRuntime?.connectionState === "connected" &&
-      selectedThreadProjection !== null &&
-      serverConfig != null &&
-      shouldCompactBeforeSend({
-        projection: selectedThreadProjection.projection,
-        visibleTurnItems: selectedThreadVisibleTurnItems,
-        selection: modelSelection,
-        providers: serverConfig.providers,
-        settings: serverConfig.settings,
-        text,
-        threadIdle:
-          !activeThreadBusy &&
-          !runlessWorkActive &&
-          !isCompacting &&
-          selectedThreadQueuedMessages.length === 0,
-        now: metadata.createdAt,
-      });
+      resolveThreadCompactBeforeSendTokens({ modelSelection, text, now: metadata.createdAt }) !==
+        null;
     const messageId = MessageId.make(metadata.messageId);
     onWillEnqueue?.();
     clearThreadComposerError(threadKey);
@@ -776,6 +814,7 @@ export function useThreadComposerState(input: {
     });
     clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
     if (freshContext) setFreshSessionPending(threadKey, false);
+    if (keepFullHistory) setKeepFullHistory(threadKey, false);
     enqueuePromise.then(
       () => scheduleUnusedComposerAttachmentCleanup(attachments),
       (error: unknown) => {
@@ -861,6 +900,9 @@ export function useThreadComposerState(input: {
     ),
     providerSubagentStatus,
     isCompacting,
+    compactBeforeSendTokens,
+    keepFullHistory,
+    toggleKeepFullHistory,
     composerDraftKey,
     followUpBehavior,
     canSteerActiveTurn,
