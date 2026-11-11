@@ -28,6 +28,7 @@ export const PinnedGitHubCredential = Context.Reference<{
   readonly host: string;
   readonly token: Redacted.Redacted<string>;
   readonly credentialFingerprint: string;
+  readonly source?: GitHubCredentials.GitHubCredentialSource;
 } | null>("@t3tools/source-control-github/server/GitHubRequestPolicy/PinnedGitHubCredential", {
   defaultValue: () => null,
 });
@@ -65,7 +66,12 @@ export class GitHubApiRateLimitError extends Schema.TaggedError<GitHubApiRateLim
 
 export class GitHubApiNotFoundError extends Schema.TaggedError<GitHubApiNotFoundError>()(
   "GitHubApiNotFoundError",
-  { host: Schema.String, operation: Schema.String },
+  {
+    host: Schema.String,
+    operation: Schema.String,
+    /** The source of the credential the refused request carried, when known. */
+    credential: Schema.optionalKey(GitHubCredentials.GitHubCredentialSource),
+  },
 ) {
   override get message(): string {
     return "GitHub could not find the requested resource, or the credential cannot see it.";
@@ -79,6 +85,7 @@ export class GitHubApiResponseError extends Schema.TaggedError<GitHubApiResponse
     operation: Schema.String,
     status: Schema.Int,
     githubErrors: Schema.optionalKey(Schema.Array(Schema.String)),
+    githubErrorTypes: Schema.optionalKey(Schema.Array(Schema.NullOr(Schema.String))),
   },
 ) {
   override get message(): string {
@@ -140,7 +147,11 @@ function retryAtFrom(
   return Number.isFinite(reset) && reset > now ? reset : undefined;
 }
 
-/** HTTP 200 GraphQL rate limits use RATE_LIMITED or untyped errors with quota headers. */
+/**
+ * HTTP 200 GraphQL rate limits use RATE_LIMITED or untyped errors with quota headers. A 403 is a
+ * limit only when its quota, body or GraphQL errors name one (older hosts say "abuse detection
+ * mechanism"): a proxy in front of GitHub Enterprise can refuse with `Retry-After` alone.
+ */
 export function isRateLimited(input: {
   readonly status: number;
   readonly headers: Readonly<Record<string, string | undefined>>;
@@ -160,9 +171,13 @@ export function isRateLimited(input: {
         ))) ||
     (status === 403 &&
       (headers["x-ratelimit-remaining"] === "0" ||
-        headers["retry-after"] !== undefined ||
-        /rate limit/i.test(input.body ?? "")))
+        namesLimit(input.body) ||
+        (errors ?? []).some((error) => namesLimit(error.message))))
   );
+}
+
+function namesLimit(text: unknown): boolean {
+  return typeof text === "string" && /rate limit|abuse detection mechanism/i.test(text);
 }
 
 export type GitHubAnswer<A> = {
@@ -193,10 +208,16 @@ export interface GitHubRequest {
 export class GitHubRequestPolicy extends Context.Service<
   GitHubRequestPolicy,
   {
-    /** send receives auth/version headers; its failures pass through unchanged. */
+    /**
+     * send receives auth/version headers and the source of the credential they carry; its
+     * failures pass through unchanged.
+     */
     readonly request: <A, E, R>(
       input: GitHubRequest,
-      send: (headers: Readonly<Record<string, string>>) => Effect.Effect<GitHubAnswer<A>, E, R>,
+      send: (
+        headers: Readonly<Record<string, string>>,
+        source: GitHubCredentials.GitHubCredentialSource | undefined,
+      ) => Effect.Effect<GitHubAnswer<A>, E, R>,
     ) => Effect.Effect<A, E | GitHubApiError, R>;
     /**
      * The credential requests to `host` use: a token saved in Settings, else the app sign-in,
@@ -214,6 +235,7 @@ export class GitHubRequestPolicy extends Context.Service<
 >()("@t3tools/source-control-github/server/GitHubRequestPolicy") {}
 
 export interface GitHubHeldCredential {
+  readonly source?: GitHubCredentials.GitHubCredentialSource;
   readonly token: Redacted.Redacted<string>;
   readonly fingerprint: string;
 }
@@ -255,6 +277,7 @@ export const make = Effect.gen(function* () {
       Effect.map((held): ChosenCredential => ({
         token: held.token,
         fingerprint: held.fingerprint,
+        source: held.source,
         fromApp: false,
       })),
     );
@@ -265,6 +288,7 @@ export const make = Effect.gen(function* () {
     const token = yield* appSignIn.token(normalizeHost(host));
     if (Option.isNone(token)) return Option.none();
     return Option.some({
+      source: "app" as const,
       token: Redacted.make(token.value),
       fingerprint: yield* credentials.fingerprint(normalizeHost(host), token.value),
     });
@@ -279,12 +303,18 @@ export const make = Effect.gen(function* () {
       return {
         token: pinned.token,
         fingerprint: pinned.credentialFingerprint,
+        ...(pinned.source === undefined ? {} : { source: pinned.source }),
         fromApp: false,
       } satisfies ChosenCredential;
     }
     const saved = yield* credentials.saved(host);
     if (Option.isSome(saved)) {
-      return { token: saved.value.token, fingerprint: saved.value.fingerprint, fromApp: false };
+      return {
+        token: saved.value.token,
+        fingerprint: saved.value.fingerprint,
+        source: saved.value.source,
+        fromApp: false,
+      };
     }
     if (personal) return yield* personalCredential(host);
     const app = yield* Effect.result(appCredential(host));
@@ -298,13 +328,20 @@ export const make = Effect.gen(function* () {
 
   const credential: GitHubRequestPolicy["Service"]["credential"] = (host, options) =>
     choose(normalizeHost(host), options?.personal === true).pipe(
-      Effect.map(({ token, fingerprint }) => ({ token, fingerprint })),
+      Effect.map(({ token, fingerprint, source }) => ({
+        token,
+        fingerprint,
+        ...(source === undefined ? {} : { source }),
+      })),
     );
 
   // The REST/GraphQL transport span owns request and quota metadata.
   const request: GitHubRequestPolicy["Service"]["request"] = Effect.fnUntraced(function* <A, E, R>(
     input: GitHubRequest,
-    send: (headers: Readonly<Record<string, string>>) => Effect.Effect<GitHubAnswer<A>, E, R>,
+    send: (
+      headers: Readonly<Record<string, string>>,
+      source: GitHubCredentials.GitHubCredentialSource | undefined,
+    ) => Effect.Effect<GitHubAnswer<A>, E, R>,
   ) {
     const host = normalizeHost(input.host);
     const context = { host, operation: input.operation };
@@ -321,7 +358,7 @@ export const make = Effect.gen(function* () {
     const settle = Effect.fnUntraced(function* (
       lease: number,
       answer: GitHubAnswer<A>,
-      token: Redacted.Redacted<string>,
+      held: ChosenCredential,
     ) {
       yield* quota.observe(host, answer.headers);
       yield* Effect.annotateCurrentSpan({
@@ -346,11 +383,14 @@ export const make = Effect.gen(function* () {
         }
         case "Unauthorized":
           // The source may hold a newer token than the one that was refused.
-          yield* appSignIn.invalidate(host, Redacted.value(token));
+          yield* appSignIn.invalidate(host, Redacted.value(held.token));
           yield* credentials.invalidate(host);
           return yield* new GitHubApiAuthenticationError(context);
         case "NotFound":
-          return yield* new GitHubApiNotFoundError(context);
+          return yield* new GitHubApiNotFoundError({
+            ...context,
+            ...(held.source === undefined ? {} : { credential: held.source }),
+          });
         case "Failed":
           return yield* new GitHubApiResponseError({
             ...context,
@@ -380,10 +420,10 @@ export const make = Effect.gen(function* () {
               );
             // One deadline covers the headers and the body: a host that answers headers and then
             // stalls must not hold a shared slot for undici's own five-minute body timeout.
-            const answer = yield* send({
-              ...REQUEST_HEADERS,
-              authorization: `Bearer ${Redacted.value(held.token)}`,
-            }).pipe(
+            const answer = yield* send(
+              { ...REQUEST_HEADERS, authorization: `Bearer ${Redacted.value(held.token)}` },
+              held.source,
+            ).pipe(
               Effect.timeoutOrElse({
                 duration: input.timeout ?? DEFAULT_TIMEOUT,
                 orElse: () =>
@@ -401,7 +441,7 @@ export const make = Effect.gen(function* () {
                 return { _tag: "Retry", with: personal.value } as const;
               }
             }
-            return { _tag: "Done", value: yield* settle(lease, answer, held.token) } as const;
+            return { _tag: "Done", value: yield* settle(lease, answer, held) } as const;
           }),
         )
         // The rate-limit scope follows the credential, so a pause on one account never blocks another.

@@ -22,6 +22,10 @@ allowing a modern custom UI.
 - `pnpm deploy`
 - `pnpm destroy`
 
+The dev server makes copy editable in the browser on the home page only. Set
+`ALCHEMY_DOCS_EDIT=1` when launching it (e.g. `ALCHEMY_DOCS_EDIT=1 pnpm dev:site`)
+to also edit docs and reference pages in place.
+
 ## Benchmark Snapshot
 
 Measured locally on 2026-04-02:
