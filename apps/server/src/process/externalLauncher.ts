@@ -66,6 +66,7 @@ interface TargetPathAndPosition {
 // cmd shims reparse %* after escaping is gone; newlines and quotes can expose shell operators.
 const WINDOWS_SHIM_UNSAFE_ARG_PATTERN = /[\u0000-\u001f\u007f"]/;
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
+// Behavior-based antivirus kills PowerShell started with -EncodedCommand or -ExecutionPolicy Bypass.
 const POWERSHELL_ARGUMENTS_PREFIX = ["-NoProfile", "-NonInteractive", "-Command"] as const;
 
 // Detached Windows PowerShell exits 0 without executing; only WSL interop keeps detached launches.

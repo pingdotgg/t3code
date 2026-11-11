@@ -344,7 +344,6 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// Antivirus heuristics kill PowerShell started with -EncodedCommand or -ExecutionPolicy Bypass.
 it.effect("opens a Windows browser through a plain PowerShell command", () =>
   Effect.gen(function* () {
     let spawned: ChildProcess.StandardCommand | undefined;
