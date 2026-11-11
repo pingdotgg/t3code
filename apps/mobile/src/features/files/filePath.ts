@@ -91,6 +91,12 @@ export function resolveNestedFileLinkPath(
   return relativePath === null ? null : resolveWorkspaceFilePath(root, relativePath);
 }
 
+// Saved mentions are relative to the file route's root; home-relative ones stay as they are.
+export function resolveMentionFilePath(root: string | null | undefined, path: string): string {
+  if (!root || path === "~" || path.startsWith("~/") || path.startsWith("~\\")) return path;
+  return resolveWorkspaceFilePath(root, path);
+}
+
 export function resolveWorkspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
   targetPath: string,

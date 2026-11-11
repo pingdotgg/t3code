@@ -4,6 +4,7 @@ import {
   fileRoutePathSegments,
   needsWorkspaceFileContents,
   resolveFileLinkPath,
+  resolveMentionFilePath,
   resolveNestedFileLinkPath,
   resolveWorkspaceRelativeFilePath,
 } from "./filePath";
@@ -23,6 +24,17 @@ describe("resolveNestedFileLinkPath", () => {
   it("keeps the flat behavior when the cwd is the checkout", () => {
     expect(resolveNestedFileLinkPath("/wt", "/wt", "src/a.ts")).toBe("src/a.ts");
     expect(resolveNestedFileLinkPath("/wt", "/wt", "../x.ts")).toBeNull();
+  });
+});
+
+describe("resolveMentionFilePath", () => {
+  it.each([
+    ["/home/alice/repo", "src/a.ts", "/home/alice/repo/src/a.ts"],
+    ["/home/alice/repo", "~/.agents/AGENTS.md", "~/.agents/AGENTS.md"],
+    ["/home/alice/repo", "/etc/hosts", "/etc/hosts"],
+    [null, "src/a.ts", "src/a.ts"],
+  ])("resolves mention %s + %s", (root, path, expected) => {
+    expect(resolveMentionFilePath(root, path)).toBe(expected);
   });
 });
 

@@ -260,6 +260,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import {
   fileRoutePathSegments,
+  resolveMentionFilePath,
   resolveNestedFileLinkPath,
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
@@ -2985,9 +2986,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
     onLinkPress: onMarkdownLinkPress,
     onMentionPress: (path) =>
-      onMarkdownLinkPress(
-        props.fileRouteRoot ? resolveWorkspaceFilePath(props.fileRouteRoot, path) : path,
-      ),
+      onMarkdownLinkPress(resolveMentionFilePath(props.fileRouteRoot, path)),
     linkCustomization: enrichedThreadLinkCustomization,
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,
