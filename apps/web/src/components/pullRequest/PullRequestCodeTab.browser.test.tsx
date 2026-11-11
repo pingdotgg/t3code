@@ -273,10 +273,10 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
       __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     },
   };
+  window.localStorage.setItem("t3code.diffHideTestFiles", "true");
   const container = pagedContainer();
   await using screen = await render(tab(0), { container });
   await expectFileHeaderShown(screen, container, "early-0.ts");
-  await screen.getByRole("button", { name: "Hide test files" }).click();
 
   const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode("late.test.ts")))}R4-R5`;
   const settled = vi.fn();
