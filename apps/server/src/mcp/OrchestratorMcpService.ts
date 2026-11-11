@@ -2673,6 +2673,13 @@ const make = Effect.gen(function* () {
       let { runtimeMode, interactionMode } = yield* resolveModes(parent.thread);
       // A replayed receipt starts nothing new, so it needs no second answer.
       if (!isRetryOfAcceptedDelegation) {
+        // A fresh child resolves the default to whatever it is then, which need not be the parent's model.
+        if (target.modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL) {
+          return yield* failure(
+            "target_required",
+            `${ANTIGRAVITY_DEFAULT_MODEL} names whichever model the child picks when it starts. Pass a concrete target.model from orchestrator_capabilities.`,
+          );
+        }
         const authorized = yield* resolveTarget({
           parent: { thread: { ...parent.thread, modelSelection: parentRun.modelSelection } },
           target: undefined,

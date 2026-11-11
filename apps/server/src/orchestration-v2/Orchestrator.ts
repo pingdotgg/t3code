@@ -8369,6 +8369,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Parent run ${command.parentRunId} is stopping.`,
         });
       }
+      // Archive keeps the run active until its session detaches.
+      if (
+        parentProjection.thread.archivedAt !== null ||
+        parentProjection.thread.deletedAt !== null
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Parent thread ${command.parentThreadId} is archived or deleted.`,
+        });
+      }
       const parentNode = parentProjection.nodes.find(
         (candidate) => candidate.id === command.parentNodeId,
       );
@@ -9512,15 +9523,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (
-      (existing === undefined ||
-        (existing.approvalStatus === "pending" && command.approvalStatus === "approved")) &&
-      (!isActiveRun(run) || (yield* stopReachedRun(command, command.threadId, run.id)))
+      existing === undefined ||
+      (existing.approvalStatus === "pending" && command.approvalStatus === "approved")
     ) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `Run ${command.runId} is not active.`,
-      });
+      // Archive keeps the run active until its session detaches, so it needs its own check.
+      if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is archived or deleted.`,
+        });
+      }
+      if (!isActiveRun(run) || (yield* stopReachedRun(command, command.threadId, run.id))) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Run ${command.runId} is not active.`,
+        });
+      }
     }
     const nodeId = existing?.nodeId ?? command.nodeId;
     const now = yield* DateTime.now;

@@ -3210,6 +3210,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     /**
      * Stands in for the user: each new card is answered with `decide`, as the
      * client's answer would record it, before the waiting call reads it back.
+     * A card left pending is answered later with `answer`, through its stored event.
      */
     const harness = (input: {
       readonly decide: (command: { readonly proposed: unknown }) => Decision;
@@ -3221,12 +3222,16 @@ describe("OrchestratorMcpService provider resolution", () => {
       readonly threadSelection?: Parameters<typeof parentProjection>[1];
       /** What the parent's thread and run start on, instead of `inherited`. */
       readonly selection?: Parameters<typeof parentProjection>[1];
+      /** The request was already accepted, so this call replays its receipt. */
+      readonly acceptedReceipt?: boolean;
     }) =>
       Effect.gen(function* () {
         const commands: Array<OrchestrationV2ServerCommand> = [];
         const remoteDelegations: Array<unknown> = [];
         const cards = new Map<string, Card>();
-        const waiting = yield* Deferred.make<void>();
+        // One entry per call that subscribed to its card's events after its first read.
+        const subscribed = yield* Queue.unbounded<void>();
+        const cardEvents = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
         let parentRunEnded = false;
         let parentModes = {};
         const task = {
@@ -3261,11 +3266,17 @@ describe("OrchestratorMcpService provider resolution", () => {
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            hasReceipt: () => Effect.succeed(false),
+            hasReceipt: () => Effect.succeed(input.acceptedReceipt === true),
             assertProviderInstanceEnabled: () => Effect.void,
             getThreadEventSequence: () => Effect.succeed(0),
-            streamStoredEventsFrom: () =>
-              Stream.unwrap(Deferred.succeed(waiting, undefined).pipe(Effect.as(Stream.never))),
+            streamStoredEventsFrom: (filter) =>
+              filter?.eventType === "turn-item.updated"
+                ? Stream.unwrap(
+                    Queue.offer(subscribed, undefined).pipe(
+                      Effect.as(Stream.fromQueue(cardEvents)),
+                    ),
+                  )
+                : Stream.never,
             getThreadRecords: (threadId) =>
               Effect.succeed(threadId === parentThreadId ? parent() : childProjection),
             dispatch: (command) =>
@@ -3352,7 +3363,28 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
         const approvals = () =>
           commands.filter((command) => command.type === "delegation_approval.record");
-        return { service, commands, delegations, approvals, cards, remoteDelegations, waiting };
+        const answer = (approvalStatus: "approved" | "declined") =>
+          Effect.forEach(
+            [...cards.values()].filter((card) => card.approvalStatus === "pending"),
+            (card) => {
+              card.approvalStatus = approvalStatus;
+              return Queue.offer(cardEvents, {
+                sequence: commands.length + 1,
+                event: { type: "turn-item.updated", threadId: parentThreadId, payload: card },
+              } as unknown as OrchestrationV2StoredEvent);
+            },
+            { discard: true },
+          );
+        return {
+          service,
+          commands,
+          delegations,
+          approvals,
+          cards,
+          remoteDelegations,
+          subscribed,
+          answer,
+        };
       });
 
     const delegate = (
@@ -3537,13 +3569,17 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     it.effect("an approval covers only the exact target it showed the user", () =>
       Effect.gen(function* () {
-        const { service, delegations, cards, waiting } = yield* harness({
-          decide: (command) =>
-            (command.proposed as { options?: unknown }).options === undefined
-              ? "approved"
-              : "pending",
+        const { service, delegations, cards, subscribed, answer } = yield* harness({
+          decide: () => "pending",
         });
-        yield* delegate(service, { model: "other-model" }, "same-key");
+        const approved = yield* delegate(service, { model: "other-model" }, "same-key").pipe(
+          Effect.forkChild,
+        );
+        // The answer lands after the call's first read, so only its stored event can start the task.
+        yield* Effect.raceFirst(Queue.take(subscribed), Fiber.await(approved));
+        assert.deepEqual(delegations(), []);
+        yield* answer("approved");
+        yield* Fiber.join(approved);
         // The same request key with another target needs its own answer.
         const changed = yield* delegate(
           service,
@@ -3551,7 +3587,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           "same-key",
         ).pipe(Effect.forkChild);
         // The call waits on its own card; abandoning it closes that card unanswered.
-        yield* Effect.raceFirst(Deferred.await(waiting), Fiber.await(changed));
+        yield* Effect.raceFirst(Queue.take(subscribed), Fiber.await(changed));
         yield* Fiber.interrupt(changed);
         assert.equal(delegations().length, 1);
         assert.deepEqual(
@@ -3561,86 +3597,109 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
-    it.effect("asks before forwarding a changed target to a linked environment", () =>
-      Effect.gen(function* () {
-        const proposed = { instanceId: codexInstanceId, model: "other-model", options: [] };
-        for (const decision of ["declined", "approved"] as const) {
+    it.effect(
+      "asks before a linked environment runs a changed target, and refuses an unpinned default",
+      () =>
+        Effect.gen(function* () {
+          const proposed = { instanceId: codexInstanceId, model: "other-model", options: [] };
+          for (const decision of ["declined", "approved"] as const) {
+            const { service, approvals, remoteDelegations } = yield* harness({
+              decide: () => decision,
+            });
+            const result = yield* delegate(
+              service,
+              { environmentId: remoteEnvironmentId, model: "other-model", options: [] },
+              `remote-${decision}`,
+            ).pipe(Effect.result);
+            assert.deepEqual(
+              approvals().map(
+                (command) =>
+                  command.type === "delegation_approval.record" && [
+                    command.environmentId,
+                    command.proposed,
+                  ],
+              ),
+              [[remoteEnvironmentId, proposed]],
+            );
+            // An approved task goes there with the exact selection the card showed.
+            assert.deepEqual(
+              remoteDelegations.map(
+                (delegated) => (delegated as { modelSelection: unknown }).modelSelection,
+              ),
+              decision === "approved" ? [proposed] : [],
+            );
+            if (decision === "declined") assert.isTrue(Result.isFailure(result));
+          }
+          // The inherited target goes there without a card.
           const { service, approvals, remoteDelegations } = yield* harness({
-            decide: () => decision,
+            decide: () => "pending",
           });
-          const result = yield* delegate(
-            service,
-            { environmentId: remoteEnvironmentId, model: "other-model", options: [] },
-            `remote-${decision}`,
-          ).pipe(Effect.result);
-          assert.deepEqual(
-            approvals().map(
-              (command) =>
-                command.type === "delegation_approval.record" && [
-                  command.environmentId,
-                  command.proposed,
-                ],
-            ),
-            [[remoteEnvironmentId, proposed]],
+          yield* delegate(service, { environmentId: remoteEnvironmentId }, "remote-inherited").pipe(
+            Effect.result,
           );
-          // An approved task goes there with the exact selection the card showed.
+          assert.deepEqual(approvals(), []);
+          assert.equal(remoteDelegations.length, 1);
+
+          // The receiver resolves this default when the task starts, so no card can name it.
+          const unresolved = { instanceId: codexInstanceId, model: ANTIGRAVITY_DEFAULT_MODEL };
+          for (const [selection, target, code] of [
+            [unresolved, { environmentId: remoteEnvironmentId }, "target_required"],
+            [
+              inherited,
+              { environmentId: remoteEnvironmentId, model: ANTIGRAVITY_DEFAULT_MODEL },
+              "target_required",
+            ],
+            // A local child resolves it again when it starts, so inheriting it is refused too.
+            [unresolved, undefined, "target_required"],
+            [inherited, { model: ANTIGRAVITY_DEFAULT_MODEL }, "model_unavailable"],
+          ] as const) {
+            const run = yield* harness({ decide: () => "approved", selection });
+            const refused = yield* delegate(run.service, target, "unresolved-default").pipe(
+              Effect.flip,
+            );
+            assert.propertyVal(refused, "code", code);
+            assert.deepEqual(run.approvals(), []);
+            assert.deepEqual(run.remoteDelegations, []);
+            assert.deepEqual(run.delegations(), []);
+          }
+          // A request accepted before this check replays its receipt instead of failing.
+          const replayed = yield* harness({
+            decide: () => "approved",
+            selection: unresolved,
+            acceptedReceipt: true,
+          });
+          yield* delegate(replayed.service, undefined, "accepted-default");
           assert.deepEqual(
-            remoteDelegations.map(
+            replayed.delegations().map((command) => command.modelSelection.model),
+            [ANTIGRAVITY_DEFAULT_MODEL],
+          );
+          // A parent on that default names no model a concrete target matches, so the user is asked.
+          const concrete = yield* harness({ decide: () => "approved", selection: unresolved });
+          yield* delegate(
+            concrete.service,
+            { environmentId: remoteEnvironmentId, model: "other-model" },
+            "remote-concrete",
+          ).pipe(Effect.result);
+          const concreteProposed = { instanceId: codexInstanceId, model: "other-model" };
+          assert.deepEqual(
+            concrete
+              .approvals()
+              .map(
+                (command) =>
+                  command.type === "delegation_approval.record" && [
+                    command.current,
+                    command.proposed,
+                  ],
+              ),
+            [[unresolved, concreteProposed]],
+          );
+          assert.deepEqual(
+            concrete.remoteDelegations.map(
               (delegated) => (delegated as { modelSelection: unknown }).modelSelection,
             ),
-            decision === "approved" ? [proposed] : [],
+            [concreteProposed],
           );
-          if (decision === "declined") assert.isTrue(Result.isFailure(result));
-        }
-        // The inherited target goes there without a card.
-        const { service, approvals, remoteDelegations } = yield* harness({
-          decide: () => "pending",
-        });
-        yield* delegate(service, { environmentId: remoteEnvironmentId }, "remote-inherited").pipe(
-          Effect.result,
-        );
-        assert.deepEqual(approvals(), []);
-        assert.equal(remoteDelegations.length, 1);
-
-        // The receiver resolves this default when the task starts, so no card can name it.
-        const unresolved = { instanceId: codexInstanceId, model: ANTIGRAVITY_DEFAULT_MODEL };
-        for (const [selection, target] of [
-          [unresolved, { environmentId: remoteEnvironmentId }],
-          [inherited, { environmentId: remoteEnvironmentId, model: ANTIGRAVITY_DEFAULT_MODEL }],
-        ] as const) {
-          const run = yield* harness({ decide: () => "approved", selection });
-          const refused = yield* delegate(run.service, target, "remote-default").pipe(Effect.flip);
-          assert.propertyVal(refused, "code", "target_required");
-          assert.deepEqual(run.approvals(), []);
-          assert.deepEqual(run.remoteDelegations, []);
-        }
-        // A parent on that default names no model a concrete target matches, so the user is asked.
-        const concrete = yield* harness({ decide: () => "approved", selection: unresolved });
-        yield* delegate(
-          concrete.service,
-          { environmentId: remoteEnvironmentId, model: "other-model" },
-          "remote-concrete",
-        ).pipe(Effect.result);
-        const concreteProposed = { instanceId: codexInstanceId, model: "other-model" };
-        assert.deepEqual(
-          concrete
-            .approvals()
-            .map(
-              (command) =>
-                command.type === "delegation_approval.record" && [
-                  command.current,
-                  command.proposed,
-                ],
-            ),
-          [[unresolved, concreteProposed]],
-        );
-        assert.deepEqual(
-          concrete.remoteDelegations.map(
-            (delegated) => (delegated as { modelSelection: unknown }).modelSelection,
-          ),
-          [concreteProposed],
-        );
-      }),
+        }),
     );
   });
 
