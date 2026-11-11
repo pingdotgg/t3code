@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 import { SERVER_SUPERSEDED_TOOLS } from "@t3tools/mcp-gateway/catalog";
 
+import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpGatewayBrokerModule from "../McpGatewayBroker.ts";
 import { McpGatewayBroker } from "../McpGatewayBroker.ts";
@@ -63,6 +64,7 @@ const makeLayer = (
   listedFor: Array<string>,
   relayed?: Array<{ method: string; args: unknown }>,
   scheduledOn: Array<string> = [],
+  callerModes?: Parameters<typeof McpToolAccessTestkit.liveThreadShell>[1],
 ) => {
   const port = {
     scheduledTask: async (environmentId: string) => {
@@ -87,7 +89,14 @@ const makeLayer = (
   } as unknown as GatewayRuntimePort;
   const base = layerAgentsToolkit.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
-    Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+    Layer.provide(
+      callerModes === undefined
+        ? McpToolAccessTestkit.liveThreadsLayer
+        : Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, callerModes)),
+          }),
+    ),
     Layer.provide(
       Layer.succeed(LocalGatewayPort, {
         environmentId: localId,
@@ -115,6 +124,7 @@ const makeLayer = (
       },
     ],
     listProjects: { items: [{ id: "project-2", title: "remote-app" }], snapshotAt: "snapshot-2" },
+    createThread: { status: "accepted", threadId: "thread-remote", requestId: "request-remote" },
   };
   const broker = Layer.effect(
     McpGatewayBroker,
@@ -266,4 +276,33 @@ it.effect("lets a read-only client read but not change anything", () => {
     expect(JSON.stringify(write.structuredContent)).toContain("read-only access");
     expect(scheduledOn).toEqual([]);
   }).pipe(Effect.provide(makeLayer(listedFor, undefined, scheduledOn)));
+});
+
+it.effect("keeps a chat from starting work on another machine above its own modes", () => {
+  const relayed: Array<{ method: string; args: unknown }> = [];
+  return Effect.gen(function* () {
+    const result = yield* callTool("t3_create_thread", {
+      environmentId: remoteId,
+      projectId: "project-2",
+      title: "Escalate",
+      runtimeMode: "full-access",
+      idempotencyKey: "escalate-1",
+    });
+    expect(relayed.filter((call) => call.method === "createThread")).toEqual([]);
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.structuredContent)).toContain("broader than this chat's");
+    const within = yield* callTool("t3_create_thread", {
+      environmentId: remoteId,
+      projectId: "project-2",
+      title: "Plan",
+      interactionMode: "plan",
+      idempotencyKey: "plan-1",
+    });
+    expect(within.isError).toBe(false);
+    expect(relayed.filter((call) => call.method === "createThread")).toHaveLength(1);
+  }).pipe(
+    Effect.provide(
+      makeLayer([], relayed, [], { runtimeMode: "approval-required", interactionMode: "plan" }),
+    ),
+  );
 });
