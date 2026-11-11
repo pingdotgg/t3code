@@ -112,7 +112,7 @@ const mockClaudeWithMod = (hook: "registers" | "never-finishes" = "registers") =
         : options.settings.disableAllHooks !== true;
     if (hooksRun) hookRuns.count += 1;
     markStarted();
-    const builtin = { name: "review", description: "", argumentHint: "" };
+    const builtin = { name: "project-review", description: "", argumentHint: "" };
     const modCommand = { name: "handoffs", description: "", argumentHint: "" };
     // oxlint-disable-next-line require-yield -- the stream stays open until abort, like the real SDK query
     const messages = (async function* () {
@@ -142,7 +142,7 @@ const MACHINE_SNAPSHOT = {
     enabled: true,
     checkedAt: "2026-10-22T00:00:00.000Z",
     models: [],
-    slashCommands: [{ name: "review" }],
+    slashCommands: [{ name: "machine-only" }],
     probe: {
       installed: true,
       version: "2.1.303",
@@ -190,15 +190,15 @@ it.effect("a scan for a read-only caller does not run session.start hooks", () =
     const scan = yield* scanWorkspace("registers", false);
     assert.equal(scan.hookRuns, 0);
     assert.notInclude(scan.commands, "handoffs");
-    assert.include(scan.commands, "review");
+    assert.include(scan.commands, "project-review");
   }),
 );
 
-it.effect("a hook that outlasts the probe keeps the machine commands and is not retried", () =>
+it.effect("a hook that outlasts the probe still lists the project's own commands", () =>
   Effect.gen(function* () {
     const scan = yield* scanWorkspace("never-finishes", true);
     assert.equal(scan.hookRuns, 1);
-    assert.includeMembers(scan.commands, ["compact", "review"]);
+    assert.sameMembers(scan.commands, ["compact", "project-review"]);
     assert.equal(scan.pending, false);
   }),
 );

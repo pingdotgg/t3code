@@ -505,24 +505,22 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   const fileSystem = yield* FileSystem.FileSystem;
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
-  const probeResult = cwdExists
-    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false, runHooks).pipe(
-        Effect.result,
-      )
-    : undefined;
+  const probe = (hooks: boolean) =>
+    probeClaudeCapabilities(claudeSettings, environment, cwd, false, hooks).pipe(Effect.result);
+  let probeResult = cwdExists ? yield* probe(runHooks) : undefined;
+  // A hook can outlast the probe deadline. Probing again without hooks still lists the
+  // project's own commands; a failure of both stays pending so clients retry.
+  if (runHooks && probeResult && Result.isFailure(probeResult)) probeResult = yield* probe(false);
   const capabilities =
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
-  // A hook can outlast the probe deadline. Retrying would rerun it every few seconds, so settle
-  // on the health check's hook-free commands instead.
-  const settled = capabilities !== undefined || runHooks;
   return {
     ...machineSnapshot,
     skills,
     slashCommands: dedupeSlashCommands([
       COMPACT_SLASH_COMMAND,
-      ...(capabilities?.slashCommands ?? (runHooks ? machineSnapshot.slashCommands : [])),
+      ...(capabilities?.slashCommands ?? []),
     ]),
-    slashCommandsPending: cwdExists && !settled,
+    slashCommandsPending: cwdExists && !capabilities,
     hooksSkipped: !runHooks,
   };
 });
