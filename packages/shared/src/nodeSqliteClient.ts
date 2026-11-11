@@ -144,13 +144,15 @@ const checkNodeSqliteCompat = Effect.fn("checkNodeSqliteCompat")(function () {
 });
 
 // node:sqlite supplies errcode; classifySqliteError expects errno.
+// Logs print the cause chain without error properties, so the message carries the
+// extended code: "disk I/O error" alone cannot tell a failed lock from a failed write.
 const classifyError = (cause: unknown, message: string, operation: string) => {
-  if (
-    Predicate.hasProperty(cause, "errcode") &&
-    typeof cause.errcode === "number" &&
-    !Predicate.hasProperty(cause, "errno")
-  ) {
-    Object.assign(cause, { errno: cause.errcode });
+  if (Predicate.hasProperty(cause, "errcode") && typeof cause.errcode === "number") {
+    if (!Predicate.hasProperty(cause, "errno")) {
+      Object.assign(cause, { errno: cause.errcode });
+    }
+    const detail = cause instanceof Error && cause.message ? `${cause.message}, ` : "";
+    message = `${message} (${detail}SQLite code ${cause.errcode})`;
   }
   return classifySqliteError(cause, { message, operation });
 };
