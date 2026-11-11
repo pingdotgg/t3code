@@ -11,6 +11,7 @@ import { returnKeyboardToFocusedPane } from "../layout/layoutPaneContext";
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -18,6 +19,7 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Button } from "./ui/button";
+import { useDialogActionInitialFocus } from "./ui/dialog";
 
 type ConfirmationCopy = {
   readonly title: string;
@@ -60,12 +62,14 @@ export function ConfirmDialogHost() {
   );
 
   const openerRef = useRef<Element | null>(null);
+  const { popupRef, initialFocus } = useDialogActionInitialFocus();
 
   const copy =
     state.status !== "idle" && state.title
       ? { title: state.title, description: state.message.trim() || null }
       : resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
+  const focusConfirm = state.status !== "idle" && state.initialFocus === "confirm";
   const confirmLabel = (state.status === "idle" ? undefined : state.confirmLabel) ?? "Confirm";
   // A destructive "Delete ..." action carries the trash icon.
   const showDeleteIcon = confirmVariant === "destructive" && /^delete\b/i.test(confirmLabel);
@@ -83,10 +87,11 @@ export function ConfirmDialogHost() {
       }}
     >
       <AlertDialogPopup
+        ref={popupRef}
         className="sm:max-w-105"
-        initialFocus={() => {
+        initialFocus={(openType) => {
           openerRef.current = document.activeElement;
-          return true;
+          return initialFocus(openType);
         }}
         finalFocus={() => {
           const opener = openerRef.current;
@@ -112,10 +117,16 @@ export function ConfirmDialogHost() {
           <AlertDialogClose render={<Button size="standard" variant="secondary" />}>
             Cancel
           </AlertDialogClose>
-          <Button size="standard" variant={confirmVariant} onClick={onConfirm}>
-            {showDeleteIcon ? <Trash2Icon aria-hidden /> : null}
-            {confirmLabel}
-          </Button>
+          {focusConfirm && confirmVariant === "default" ? (
+            <AlertDialogAction size="standard" onClick={onConfirm}>
+              {confirmLabel}
+            </AlertDialogAction>
+          ) : (
+            <Button size="standard" variant={confirmVariant} onClick={onConfirm}>
+              {showDeleteIcon ? <Trash2Icon aria-hidden /> : null}
+              {confirmLabel}
+            </Button>
+          )}
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>
