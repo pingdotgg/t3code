@@ -2965,6 +2965,129 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
+  it.live("hands a fresh session a durable recap while keeping the same model", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("seat-handover");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            nativeThreadGeneration: yield* Ref.make(0),
+          }),
+        ]);
+        const threadId = ThreadId.make("thread:seat-handover");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (
+            name: string,
+            options: {
+              readonly freshContext?: boolean;
+              readonly contextHandoffOnFresh?: boolean;
+            } = {},
+          ) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:seat-handover:${name}`),
+              threadId,
+              messageId: MessageId.make(`message:seat-handover:${name}`),
+              text: `Prompt ${name}`,
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              ...options,
+              deliveryIntent: "auto",
+              dispatchMode: { type: "start_immediately" },
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:seat-handover:create"),
+            threadId,
+            projectId: ProjectId.make("project:seat-handover"),
+            title: "Seat handover",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* send("alpha");
+          yield* worker.drain();
+          yield* waitForIdle(threadId);
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const priorModel = before.thread.modelSelection;
+          const priorNativeId = before.providerThreads.find(
+            (providerThread) => providerThread.id === before.thread.activeProviderThreadId,
+          )?.nativeThreadRef?.nativeId;
+          assert.isDefined(priorNativeId);
+
+          yield* send("beta", { freshContext: true, contextHandoffOnFresh: true });
+          yield* worker.drain();
+          yield* waitForIdle(threadId);
+
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const turns = yield* Ref.get(capturedTurns);
+          const freshRun = projection.runs.find(
+            (run) => run.userMessageId === "message:seat-handover:beta",
+          )!;
+          assert.isTrue(freshRun.freshContext);
+          assert.isTrue(freshRun.contextHandoffOnFresh);
+          assert.isDefined(freshRun.contextHandoffId);
+          assert.deepEqual(projection.thread.modelSelection, priorModel);
+
+          const handoff = projection.contextHandoffs.find(
+            (candidate) => candidate.id === freshRun.contextHandoffId,
+          );
+          assert.equal(handoff?.strategy, "full_thread_summary");
+          assert.include(handoff?.summaryText ?? "", "Prompt alpha");
+          assert.isTrue(
+            projection.turnItems.some(
+              (item) =>
+                item.type === "handoff" &&
+                item.runId === freshRun.id &&
+                item.title === "Session handoff" &&
+                item.contextHandoffId === freshRun.contextHandoffId,
+            ),
+          );
+
+          const betaTurn = turns.find((turn) => turn.text.endsWith("Prompt beta"))!;
+          const alphaTurn = turns.find((turn) => turn.text.endsWith("Prompt alpha"))!;
+          assert.notEqual(betaTurn.providerThreadId, alphaTurn.providerThreadId);
+          assert.notEqual(betaTurn.nativeThreadId, alphaTurn.nativeThreadId);
+          assert.include(betaTurn.text, "Prompt alpha");
+          assert.include(betaTurn.text, "Prompt beta");
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "seat-handover",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live("keeps the thread a queued fresh run reserved for that run", () =>
     Effect.scoped(
       Effect.gen(function* () {

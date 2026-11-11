@@ -518,6 +518,12 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
         "Start a new provider session without the thread's earlier context, like /clear. Never steers.",
     }),
   ),
+  contextHandoffOnFresh: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "With freshContext, start the new session with a durable written recap of earlier thread history (seat handover). Ignored unless freshContext is true.",
+    }),
+  ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;

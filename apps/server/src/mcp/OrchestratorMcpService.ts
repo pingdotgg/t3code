@@ -3142,6 +3142,7 @@ const make = Effect.gen(function* () {
           attachments: [],
           mode,
           ...(input.freshContext ? { freshContext: true } : {}),
+          ...(input.contextHandoffOnFresh ? { contextHandoffOnFresh: true } : {}),
           createdBy: "agent",
           creationSource: "mcp",
         })
