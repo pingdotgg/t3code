@@ -635,11 +635,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
+  const reportedModels = claudeReportedModels(
+    modelCatalog,
+    claudeSettings.customModels,
+    capabilities?.models,
+  );
   const models = claudeProviderModels(
-    [
-      ...resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-      ...claudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
-    ],
+    [...resolveClaudeModelsForVersion(modelCatalog, parsedVersion), ...reportedModels],
     claudeSettings.customModels,
   );
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
@@ -740,7 +742,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       : new Set<string>();
   const isEntitled = (model: { readonly slug: string }) =>
     !restrictedSlugs.has(toCatalogSlug(model.slug));
-  const restrictedModels = allModels
+  // Reported models are outside the catalog, so they are named here too.
+  const restrictedModels = [...allModels, ...reportedModels]
     .filter((model) => !isEntitled(model))
     .map(({ slug, name }) => ({ slug, name }));
   const restrictedNames = new Intl.ListFormat("en").format(restrictedModels.map((m) => m.name));

@@ -3758,5 +3758,27 @@ it.layer(
         );
       }).pipe(Effect.provide(claudeVersion("2.1.250"))),
     );
+
+    it.effect("withholds and names a turned-off model that only Claude Code reports", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            apiProvider: "firstParty",
+            restrictedModels: new Set(["claude-next-1"]),
+            models: [
+              { value: "claude-next-1[1m]", displayName: "Claude Next 1", description: "" },
+              { value: "claude-next-2", displayName: "Claude Next 2", description: "" },
+            ],
+          }),
+        );
+        const slugs = status.models.map((model) => model.slug);
+        assert.notInclude(slugs, "claude-next-1[1m]");
+        assert.include(slugs, "claude-next-2");
+        assert.deepStrictEqual(status.restrictedModels, [
+          { slug: "claude-next-1[1m]", name: "Claude Next 1" },
+        ]);
+      }).pipe(Effect.provide(claudeVersion("2.1.293"))),
+    );
   });
 });
