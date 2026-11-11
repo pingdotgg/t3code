@@ -110,6 +110,9 @@ export const layer: Layer.Layer<
                   sessionCapabilities: negotiatedCapabilities ?? currentInstance.value.capabilities,
                 })
               : undefined;
+          // A selection change never moves the thread; a shared session's cwd belongs to whichever thread opened it.
+          const workspace =
+            projection.thread.worktreePath ?? currentSession?.cwd ?? "<unresolved-workspace>";
           const transition =
             Option.isNone(targetInstance) || Option.isNone(targetAdapter)
               ? ({
@@ -130,10 +133,7 @@ export const layer: Layer.Layer<
                           modelSelection: current,
                           runtimeMode: projection.thread.runtimeMode,
                           interactionMode: projection.thread.interactionMode,
-                          workspace:
-                            currentSession?.cwd ??
-                            projection.thread.worktreePath ??
-                            "<unresolved-workspace>",
+                          workspace,
                         },
                   target: {
                     driver: targetInstance.value.driver,
@@ -144,10 +144,7 @@ export const layer: Layer.Layer<
                     modelSelection: targetModelSelection,
                     runtimeMode: projection.thread.runtimeMode,
                     interactionMode: projection.thread.interactionMode,
-                    workspace:
-                      projection.thread.worktreePath ??
-                      currentSession?.cwd ??
-                      "<unresolved-workspace>",
+                    workspace,
                     available: targetInstance.value.enabled,
                   },
                   ...(selectionTransition === undefined ? {} : { selectionTransition }),
