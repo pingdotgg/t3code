@@ -231,7 +231,7 @@ it("saves a stepped first age only once it is committed", async () => {
   await using screen = await render(panel());
   await chooseRetention(screen, "Custom");
   await userEvent.keyboard("{ArrowUp}{ArrowUp}");
-  await expect.element(daysInput(screen)).toHaveValue("10");
+  await expect.element(daysInput(screen)).toHaveValue(10);
   expect(state.update).not.toHaveBeenCalled();
   await userEvent.keyboard("{Enter}");
   expect(saves()).toEqual([{ browserArtifactsAfterDays: 10 }]);
@@ -281,7 +281,7 @@ it("keeps a newer pending age open when an older first save fails", async () => 
   expect(saves()).toHaveLength(2);
 
   await failSave(0);
-  await expect.element(daysInput(screen)).toHaveValue("60");
+  await expect.element(daysInput(screen)).toHaveValue(60);
   await expect.element(ruleSelect(screen)).toHaveTextContent("Custom");
 });
 
