@@ -1101,7 +1101,13 @@ function rootProviderThreadsForProvider(
 }
 
 function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
-  return run.status === "completed" || run.status === "failed" || run.status === "interrupted";
+  return (
+    run.status === "completed" ||
+    run.status === "failed" ||
+    run.status === "interrupted" ||
+    // A queued request cancelled before it started never reached any provider.
+    (run.status === "cancelled" && run.startedAt !== null)
+  );
 }
 
 function lastDeliveredRunForProviderThread(
@@ -8480,12 +8486,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (!startsAttempt) return;
     const child = yield* projectionStore.getThread(command.threadId);
     const parentThreadId = child.lineage.parentThreadId;
+    // A send with no sender thread comes from a client acting for the owner, like a user send.
     if (
       child.lineage.relationshipToParent !== "subagent" ||
       parentThreadId === null ||
       (command.notification === undefined &&
         command.createdBy !== "user" &&
         command.usageLimitContinuationOfRunId === undefined &&
+        command.senderThreadId !== undefined &&
         command.senderThreadId !== parentThreadId)
     )
       return;
