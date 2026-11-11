@@ -5,6 +5,7 @@ import {
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
+  decodeLastThreadActivityJson,
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
@@ -84,13 +85,15 @@ describe("decodePullRequestListJson", () => {
   it("stands the closing time in for a last-touched time Azure does not keep", () => {
     const batch = expectSuccess(
       decodePullRequestListJson(
-        asJson([pullRequest({ status: "completed", closedDate: "2026-07-05T00:00:00Z" })]),
+        asJson([
+          pullRequest({ status: "completed", closedDate: "2026-07-05T00:00:00.581070+00:00" }),
+        ]),
       ),
     );
 
     expect(batch.items[0]).toMatchObject({
       createdAt: "2026-07-01T00:00:00Z",
-      updatedAt: "2026-07-05T00:00:00Z",
+      updatedAt: "2026-07-05T00:00:00.581Z",
     });
   });
 
@@ -269,6 +272,33 @@ describe("decodeThreadsJson", () => {
     );
 
     expect(comments).toEqual([]);
+  });
+});
+
+describe("decodeLastThreadActivityJson", () => {
+  it("takes the newest thread, including the ones Azure writes for pushes and votes", () => {
+    const lastActivityAt = expectSuccess(
+      decodeLastThreadActivityJson(
+        asJson({
+          value: [
+            {
+              id: 1,
+              lastUpdatedDate: "2026-07-03T10:00:00.31Z",
+              properties: { CodeReviewThreadType: { $value: "RefUpdate" } },
+            },
+            // Azure trims trailing zeros, so the older `.3Z` sorts after `.31Z` as text.
+            { id: 2, lastUpdatedDate: "2026-07-03T10:00:00.3Z" },
+            { id: 3, publishedDate: "2026-07-02T00:00:00Z" },
+          ],
+        }),
+      ),
+    );
+
+    expect(lastActivityAt).toBe("2026-07-03T10:00:00.310Z");
+  });
+
+  it("reports no activity for a pull request without threads", () => {
+    expect(expectSuccess(decodeLastThreadActivityJson(asJson({ value: [] })))).toBeNull();
   });
 });
 

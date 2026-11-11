@@ -16,6 +16,7 @@ import {
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
+  decodeLastThreadActivityJson,
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
@@ -162,6 +163,13 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
+
+    /** The newest thread's time, or null for a pull request without threads. */
+    readonly readLastActivity: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+    }) => Effect.Effect<string | null, AzureDevOpsPullRequestCliError>;
 
     readonly listIterations: (input: {
       readonly cwd: string;
@@ -553,6 +561,17 @@ export const make = Effect.gen(function* () {
         routeParameters: pullRequestRoute(input),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeThreadsJson,
+      });
+    }),
+
+    readLastActivity: Effect.fn("AzureDevOpsPullRequestCli.readLastActivity")(function (input) {
+      return invoke({
+        cwd: input.cwd,
+        operation: "readLastActivity",
+        resource: "pullRequestThreads",
+        routeParameters: pullRequestRoute(input),
+        maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
+        decode: decodeLastThreadActivityJson,
       });
     }),
 

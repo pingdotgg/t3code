@@ -1,9 +1,12 @@
 import {
   trimOptionalString as trimmed,
   normalizeRefName,
+  toIsoUtc,
 } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -95,6 +98,11 @@ const RawThreadSchema = Schema.Struct({
 
 const RawThreadPageSchema = Schema.Struct({
   value: Schema.Array(Schema.Unknown),
+});
+
+const RawThreadActivitySchema = Schema.Struct({
+  lastUpdatedDate: Schema.optional(Schema.NullOr(Schema.String)),
+  publishedDate: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const RawViewerSchema = Schema.Struct({
@@ -220,7 +228,7 @@ function toPullRequest(
     isDraft: raw.isDraft ?? false,
     mergeability: toMergeability(raw.mergeStatus),
     createdAt: raw.creationDate,
-    updatedAt: closedAt ?? raw.creationDate,
+    updatedAt: toIsoUtc(closedAt ?? raw.creationDate),
     closedAt,
     body: raw.description ?? "",
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
@@ -236,6 +244,7 @@ const decodePullRequestEntry = Schema.decodeUnknownExit(RawPullRequestSchema);
 const decodePullRequest = decodeJsonResult(RawPullRequestSchema);
 const decodeThreadPage = decodeJsonResult(RawThreadPageSchema);
 const decodeThreadEntry = Schema.decodeUnknownExit(RawThreadSchema);
+const decodeThreadActivityEntry = Schema.decodeUnknownExit(RawThreadActivitySchema);
 const decodeViewer = decodeJsonResult(RawViewerSchema);
 
 type DecodeFailure = Cause.Cause<Schema.SchemaError>;
@@ -324,6 +333,36 @@ export function decodeThreadsJson(
   return Result.succeed(
     comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
   );
+}
+
+/** Compares instants: Azure trims trailing zeros, so `.3Z` sorts after `.31Z` as text. */
+export function latestTimestamp(current: string, candidate: string | null): string {
+  const candidateAt = candidate === null ? Option.none() : DateTime.make(candidate);
+  if (Option.isNone(candidateAt)) return current;
+  const currentAt = DateTime.make(current);
+  return Option.isNone(currentAt) || DateTime.isGreaterThan(candidateAt.value, currentAt.value)
+    ? DateTime.formatIso(candidateAt.value)
+    : current;
+}
+
+/**
+ * Azure keeps no last-updated time on a pull request. Pushes, votes, reviewer and status changes
+ * and comments each create or update a thread, so the newest thread stands in for it.
+ */
+export function decodeLastThreadActivityJson(
+  raw: string,
+): Result.Result<string | null, DecodeFailure> {
+  const decoded = decodeThreadPage(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  let latest: string | null = null;
+  for (const entry of decoded.success.value) {
+    const thread = decodeThreadActivityEntry(entry);
+    if (Exit.isFailure(thread)) continue;
+    const touchedAt = trimmed(thread.value.lastUpdatedDate) ?? trimmed(thread.value.publishedDate);
+    if (touchedAt === null) continue;
+    latest = latest === null ? toIsoUtc(touchedAt) : latestTimestamp(latest, touchedAt);
+  }
+  return Result.succeed(latest);
 }
 
 const RawIterationSchema = Schema.Struct({

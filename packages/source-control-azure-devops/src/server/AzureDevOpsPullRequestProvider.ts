@@ -26,12 +26,13 @@ import {
   type ProviderDiffSlice,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
-import type {
-  AzureDevOpsChangeEntry,
-  AzureDevOpsItemContent,
-  AzureDevOpsIteration,
-  AzureDevOpsPullRequest,
-  AzureDevOpsRepositoryLocation,
+import {
+  latestTimestamp,
+  type AzureDevOpsChangeEntry,
+  type AzureDevOpsItemContent,
+  type AzureDevOpsIteration,
+  type AzureDevOpsPullRequest,
+  type AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
 
@@ -185,6 +186,19 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // Clients and the sync sweep treat a changed updatedAt as "this pull request moved"; without the
+  // thread time an open Azure pull request would never change it.
+  const withLastActivity = Effect.fn("AzureDevOpsPullRequestProvider.withLastActivity")(function* (
+    input: { readonly cwd: string; readonly number: number },
+    pullRequest: AzureDevOpsPullRequest,
+  ) {
+    if (pullRequest.location === null) return pullRequest;
+    const lastActivityAt = yield* cli
+      .readLastActivity({ cwd: input.cwd, location: pullRequest.location, number: input.number })
+      .pipe(Effect.orElseSucceed(() => null));
+    return { ...pullRequest, updatedAt: latestTimestamp(pullRequest.updatedAt, lastActivityAt) };
+  });
+
   const diffScope = Effect.fn("AzureDevOpsPullRequestProvider.diffScope")(function* (input: {
     readonly cwd: string;
     readonly number: number;
@@ -308,20 +322,27 @@ export const make = Effect.gen(function* () {
       ),
 
     getChangeRequestSummary: (input) =>
-      cli
-        .getPullRequest({ cwd: input.cwd, number: input.number })
-        .pipe(Effect.mapError(fail("getChangeRequestSummary")), Effect.map(toSummary)),
+      cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
+        Effect.flatMap((pullRequest) => withLastActivity(input, pullRequest)),
+        Effect.mapError(fail("getChangeRequestSummary")),
+        Effect.map(toSummary),
+      ),
 
     getChangeRequest: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequest")(
       function* (input) {
-        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
-        const location = pullRequest.location;
-        const iterations =
-          location === null
-            ? []
-            : yield* cli
-                .listIterations({ cwd: input.cwd, location, number: input.number })
-                .pipe(Effect.orElseSucceed(() => []));
+        const read = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const location = read.location;
+        const [iterations, pullRequest] = yield* Effect.all(
+          [
+            location === null
+              ? Effect.succeed<ReadonlyArray<AzureDevOpsIteration>>([])
+              : cli
+                  .listIterations({ cwd: input.cwd, location, number: input.number })
+                  .pipe(Effect.orElseSucceed(() => [])),
+            withLastActivity(input, read),
+          ],
+          { concurrency: 2 },
+        );
         // The trial merge's lastMergeSourceCommit can lag behind a new source push.
         const headSha = iterations.at(-1)?.headCommit;
         const changedFiles =

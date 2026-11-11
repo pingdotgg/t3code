@@ -129,6 +129,7 @@ describe("getChangeRequest", () => {
         Effect.provide(
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            readLastActivity: () => Effect.succeed(null),
             listIterations: () =>
               Effect.succeed([ITERATION, { ...ITERATION, id: 4, headCommit: "new-head" }]),
             listIterationChanges: () =>
@@ -163,6 +164,7 @@ describe("getChangeRequest", () => {
           Effect.provide(
             Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
               getPullRequest: () => Effect.succeed(PULL_REQUEST),
+              readLastActivity: () => Effect.succeed(null),
               listIterations: () =>
                 state === "missing"
                   ? Effect.succeed([])
@@ -186,6 +188,59 @@ describe("getChangeRequest", () => {
         expect(detail.headSha).toBeUndefined();
         expect(detail.changedFiles).toBe(0);
       }),
+  );
+});
+
+describe("when a pull request was last touched", () => {
+  const REF = { cwd: "/w", repository: "acme/web", host: "dev.azure.com", number: 7 };
+  const lastTouched = (
+    lastActivity: Effect.Effect<
+      string | null,
+      AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError
+    >,
+  ) =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            readLastActivity: () => lastActivity,
+          }),
+        ),
+      );
+      const readSummary = provider.getChangeRequestSummary;
+      if (readSummary === undefined) return yield* Effect.die("summary read missing");
+      return yield* readSummary(REF);
+    });
+
+  it.effect.each([
+    {
+      thread: "newer, as after a push or comment",
+      lastActivity: Effect.succeed("2026-07-04T10:00:00.5Z"),
+      expected: "2026-07-04T10:00:00.500Z",
+    },
+    {
+      thread: "older than Azure's own time",
+      lastActivity: Effect.succeed("2026-07-01T12:00:00Z"),
+      expected: PULL_REQUEST.updatedAt,
+    },
+    { thread: "missing", lastActivity: Effect.succeed(null), expected: PULL_REQUEST.updatedAt },
+    {
+      thread: "unreadable",
+      lastActivity: Effect.fail(
+        new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+          command: "az",
+          cwd: "/w",
+          operation: "readLastActivity",
+          cause: "unavailable",
+        }),
+      ),
+      expected: PULL_REQUEST.updatedAt,
+    },
+  ])("dates the summary when the newest thread is $thread", ({ lastActivity, expected }) =>
+    Effect.gen(function* () {
+      expect((yield* lastTouched(lastActivity)).updatedAt).toBe(expected);
+    }),
   );
 });
 
