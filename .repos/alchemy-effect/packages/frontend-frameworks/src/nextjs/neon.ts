@@ -2,15 +2,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import {
-  finishNeonOutput,
-  makeNeonServeEntrySource,
-  makeNeonTarget,
-} from "../core/NeonServe.ts";
 import { toOutputFile } from "../core/BuildOutput.ts";
 import { DeployTargetError } from "../core/DeployTarget.ts";
-import { pinNodeServeModule } from "../core/NodeServe.ts";
 import type { FrameworkBuildOptions } from "../core/Framework.ts";
+import { finishNeonOutput, makeNeonServeEntrySource, makeNeonTarget } from "../core/NeonServe.ts";
+import { pinNodeServeModule } from "../core/NodeServe.ts";
 import {
   make as makeNode,
   makeNodeTarget,
@@ -27,9 +23,7 @@ export const target = (config?: Parameters<typeof makeNodeTarget>[0]) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const output = yield* node.build!(context).pipe(
-          Effect.flatMap(finishNeonOutput),
-        );
+        const output = yield* node.build!(context).pipe(Effect.flatMap(finishNeonOutput));
         const nodeServe = {
           ...output.nodeServe,
           handler: {
@@ -63,14 +57,8 @@ export const target = (config?: Parameters<typeof makeNodeTarget>[0]) => {
         };
         const name = output.serverModules![0]!.name;
         const source = makeNeonServeEntrySource(nodeServe);
-        yield* fs.writeFileString(
-          path.join(output.distDirectory!, name),
-          source,
-        );
-        return pinNodeServeModule(
-          { ...output, nodeServe },
-          yield* toOutputFile(name, source),
-        );
+        yield* fs.writeFileString(path.join(output.distDirectory!, name), source);
+        return pinNodeServeModule({ ...output, nodeServe }, yield* toOutputFile(name, source));
       }).pipe(
         Effect.mapError((cause) =>
           cause instanceof DeployTargetError
