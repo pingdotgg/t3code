@@ -4,7 +4,7 @@ import {
   pullRequestImageSource,
   type PullRequestMediaLocation,
 } from "./pullRequestMediaSource";
-import { useFilePreviewGallery } from "../../components/FilePreviewGallery";
+import { useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
@@ -13,13 +13,13 @@ import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
-import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
 import {
   FilePreviewModal,
   type FilePreviewSource,
   type FilePreviewItem,
-} from "../../components/FilePreviewModal";
+} from "../../components/ui/FilePreviewModal";
 
 export const PullRequestMediaVisibleContext = createContext(true);
 
