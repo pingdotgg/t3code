@@ -42,6 +42,14 @@ export function presentationFace(family: string, bold: boolean, italic: boolean)
   );
 }
 
+/** The face Excel's cells draw a family with when it is missing: its metric-compatible or bundled face, if any. */
+export function sheetFace(family: string, bold: boolean, italic: boolean) {
+  return (
+    shippedFace(resolveMetricCompatFace(family, bold, italic)) ??
+    shippedFace(resolveBundledFamilyFace(family, bold, italic))
+  );
+}
+
 function shippedFace(face: BundledFontFace | undefined) {
   return face && (!face.script || shipped(face.script)) ? face : undefined;
 }
