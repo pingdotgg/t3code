@@ -115,6 +115,7 @@ import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { THREAD_DETAILS_PANEL_LABEL_CLASS } from "./chat/threadDetailsPanelStyles";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
+import { PullRequestGlyph } from "./pullRequest/pullRequestIcons";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 
 interface GitActionsControlProps {
@@ -496,7 +497,10 @@ export default function GitActionsControl({
   const { data: gitStatus, error: gitStatusError } = gitStatusQuery;
   const sourceControlPresentation = getSourceControlPresentation(gitStatus?.sourceControlProvider);
   const changeRequestTerminology = sourceControlPresentation.terminology;
-  const SourceControlIcon = sourceControlPresentation.Icon;
+  const SourceControlIcon =
+    gitStatus?.sourceControlProvider?.kind === "gitcafe"
+      ? PullRequestGlyph.pullRequest
+      : sourceControlPresentation.Icon;
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
@@ -1034,24 +1038,24 @@ export default function GitActionsControl({
     readonly disabledReason: string | null;
     readonly trailing?: ReactNode;
     readonly onClick: () => void;
-  }) => (
-    <div key={row.key}>
-      <MenuItem
-        density={menuDensity}
-        disabled={!canWriteSourceControl || row.disabled}
-        onClick={row.onClick}
-      >
+  }) => {
+    const disabled = !canWriteSourceControl || row.disabled;
+    const item = (
+      <MenuItem key={row.key} density={menuDensity} disabled={disabled} onClick={row.onClick}>
         {row.icon}
         <MenuItemLabel>{row.label}</MenuItemLabel>
         {row.trailing}
       </MenuItem>
-      {row.disabled && row.disabledReason ? (
-        <p className="max-w-72 ps-8 pe-2 pb-1.5 text-meta text-dim-foreground">
-          {row.disabledReason}
-        </p>
-      ) : null}
-    </div>
-  );
+    );
+    return disabled && row.disabledReason ? (
+      <Tooltip key={row.key}>
+        <TooltipTrigger render={<span className="block" />}>{item}</TooltipTrigger>
+        <TooltipPopup side="left">{row.disabledReason}</TooltipPopup>
+      </Tooltip>
+    ) : (
+      item
+    );
+  };
   const renderActionMenuItem = (item: GitActionMenuItem) =>
     renderMenuRow({
       key: `${item.id}-${item.label}`,
@@ -1234,7 +1238,7 @@ export default function GitActionsControl({
               >
                 <EllipsisIcon />
               </MenuTrigger>
-              <MenuPopup side="bottom" align="end">
+              <MenuPopup side="bottom" align="end" width="wide">
                 {gitItems}
               </MenuPopup>
             </Menu>
