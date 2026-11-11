@@ -787,11 +787,11 @@ export class Launcher {
       return;
     }
     this.#timer = undefined;
+    // Anything thrown outside its own fallback still leaves the offline backup to run.
     const finishOnlineBackup = await startOnlineDatabaseBackup(
       this.#baseDir,
       pending,
       this.#backupSpaceProbe,
-      // Anything thrown outside its own fallback still leaves the offline backup to run.
     ).catch(() => undefined);
     this.#child = null;
     await terminateChild(child.process);
