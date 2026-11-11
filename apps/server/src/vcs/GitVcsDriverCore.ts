@@ -4592,11 +4592,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchRemote = Effect.fn("fetchRemote")(function* (input: GitVcsDriver.GitFetchRemoteInput) {
     // Only Git's default OpenSSH is watched: GIT_SSH_COMMAND would replace a
     // configured command, and Git for Windows may run another ssh.
+    const hostEnvironment = yield* HostProcess.Environment;
     const watchSshApproval =
       hostPlatform !== "win32" &&
-      ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"].every((key) => !(key in process.env)) &&
+      ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"].every(
+        (key) => hostEnvironment[key] === undefined,
+      ) &&
       // GIT_CONFIG redirects `git config`, but fetch still reads repository config.
-      !("GIT_CONFIG" in process.env) &&
+      hostEnvironment.GIT_CONFIG === undefined &&
       (yield* Effect.gen(function* () {
         const config = yield* executeGit(
           "GitVcsDriver.fetchRemote.sshConfig",

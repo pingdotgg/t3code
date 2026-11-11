@@ -6141,30 +6141,25 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           fetchErrors?: readonly string[];
         } = {},
       ) {
-        const sshEnvKeys = ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT", "GIT_CONFIG"] as const;
-        yield* Effect.acquireRelease(
-          Effect.sync(() => {
-            const previous = sshEnvKeys.map((key) => [key, process.env[key]] as const);
-            for (const key of sshEnvKeys) delete process.env[key];
-            if (options.envCommand !== undefined) process.env.GIT_SSH_COMMAND = options.envCommand;
-            return previous;
-          }),
-          (previous) =>
-            Effect.sync(() => {
-              for (const [key, value] of previous) {
-                if (value === undefined) delete process.env[key];
-                else process.env[key] = value;
-              }
-            }),
-        );
         const cwd = yield* makeTmpDir();
         yield* git(cwd, ["init"]);
         if (options.sshCommand !== undefined) {
           yield* git(cwd, ["config", "core.sshCommand", options.sshCommand]);
         }
+        const {
+          GIT_SSH_COMMAND: _command,
+          GIT_SSH: _ssh,
+          GIT_SSH_VARIANT: _variant,
+          GIT_CONFIG: _config,
+          ...hostEnvironment
+        } = yield* HostProcess.Environment;
+        const environment: NodeJS.ProcessEnv = {
+          ...hostEnvironment,
+          ...(options.envCommand !== undefined && { GIT_SSH_COMMAND: options.envCommand }),
+        };
         if (options.hiddenConfig) {
           yield* writeTextFile(cwd, "empty-config", "");
-          process.env.GIT_CONFIG = (yield* Path.Path).join(cwd, "empty-config");
+          environment.GIT_CONFIG = (yield* Path.Path).join(cwd, "empty-config");
         }
         let fetchCwd = cwd;
         if (options.submodules) {
@@ -6182,8 +6177,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const stderrRead = yield* Deferred.make<void>();
         const exit = yield* Deferred.make<void>();
         const released = yield* Deferred.make<void>();
-        const fetches: Array<string | undefined> = [];
-        const attempts: Array<readonly string[]> = [];
+        const fetches: Array<CommandLine.Word | undefined> = [];
+        const attempts: Array<readonly CommandLine.Word[]> = [];
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
             if (!ChildProcess.isStandardCommand(command))
@@ -6212,7 +6207,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         const fetching = yield* driver
           .fetchRemote({ cwd: fetchCwd, remoteName: "origin", refName: "main" })
-          .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+          .pipe(
+            Effect.provideService(HostProcess.Environment, environment),
+            Effect.result,
+            Effect.forkChild({ startImmediately: true }),
+          );
         yield* Deferred.await(started);
         return { fetching, stderrRead, exit, released, fetches, attempts };
       });
