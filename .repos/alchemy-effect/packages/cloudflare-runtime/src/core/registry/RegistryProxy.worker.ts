@@ -6,6 +6,7 @@
  */
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import {
+  HEADER_REGISTRY_UPDATE_SECRET,
   resolvedTargetKey,
   type ResolvedTarget,
   type ResolvedTargetMap,
@@ -14,7 +15,45 @@ import {
 
 interface Env {
   REGISTRY_DEBUG_PORT: Env.WorkerdDebugPortConnector;
+  /** Per-instance credential required on registry pushes. */
+  REGISTRY_UPDATE_SECRET: ArrayBuffer;
 }
+
+/**
+ * Receives registry pushes from the owning process (Miniflare's
+ * `dev-registry-proxy.worker.ts` default export). The credential is verified
+ * before the body is parsed; updates are only accepted on the loopback host's
+ * root path and never from a browser (`Origin`).
+ */
+export default {
+  async fetch(request, env) {
+    const supplied = new TextEncoder().encode(
+      request.headers.get(HEADER_REGISTRY_UPDATE_SECRET) ?? "",
+    );
+    const expected = env.REGISTRY_UPDATE_SECRET;
+    if (
+      expected === undefined ||
+      supplied.byteLength !== expected.byteLength ||
+      !crypto.subtle.timingSafeEqual(supplied, expected)
+    ) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    const url = new URL(request.url);
+    if (
+      url.pathname !== "/" ||
+      url.hostname !== "127.0.0.1" ||
+      !/^127\.0\.0\.1(?::\d+)?$/.test(request.headers.get("Host") ?? "") ||
+      request.headers.has("Origin")
+    ) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    if (request.method !== "POST") {
+      return new Response("Not Found", { status: 404 });
+    }
+    Target.set(await request.json<ResolvedTargetMap>());
+    return new Response("ok");
+  },
+} satisfies ExportedHandler<Env>;
 
 declare namespace Env {
   /**
@@ -33,11 +72,7 @@ declare namespace Env {
    * Durable Object actors on a remote workerd instance.
    */
   interface WorkerdDebugPortClient {
-    getEntrypoint(
-      service: string,
-      entrypoint?: string,
-      props?: Record<string, unknown>,
-    ): Fetcher;
+    getEntrypoint(service: string, entrypoint?: string, props?: Record<string, unknown>): Fetcher;
     getActor(service: string, entrypoint: string, actorId: string): Fetcher;
   }
 }
@@ -60,7 +95,7 @@ export namespace Target {
 
   /**
    * Constructs a cached target resolver for a subscriber.
-   * This reuses the same fetcher if the debug port address hasn't changed.
+   * This reuses the same fetcher while the target's debug port address and workerd instance are unchanged.
    * The `toFetcher` function should use the debug port binding to create a fetcher for the target service.
    */
   export function makeResolver<T extends Subscriber>(
@@ -70,19 +105,26 @@ export namespace Target {
     const key = resolvedTargetKey(subscriber);
     let fetcher: Fetcher | undefined;
     let debugPortAddress: string | undefined;
+    let instanceId: string | undefined;
     return {
       resolve: () => {
         const target = value[key] as ResolvedTarget<T> | undefined;
         if (!target) {
           fetcher = undefined;
           debugPortAddress = undefined;
+          instanceId = undefined;
           return undefined;
         }
-        if (fetcher && debugPortAddress === target.debugPortAddress) {
+        if (
+          fetcher &&
+          debugPortAddress === target.debugPortAddress &&
+          instanceId === target.instanceId
+        ) {
           return fetcher;
         }
         fetcher = toFetcher(target);
         debugPortAddress = target.debugPortAddress;
+        instanceId = target.instanceId;
         return fetcher;
       },
     };
@@ -160,14 +202,9 @@ export function makeExternalDurableObject(
 /**
  * Forwards queue consumer requests to the queue broker in the consuming worker.
  */
-export class ExternalQueueConsumer extends WorkerEntrypoint<
-  Env,
-  Subscriber.QueueConsumer
-> {
+export class ExternalQueueConsumer extends WorkerEntrypoint<Env, Subscriber.QueueConsumer> {
   private target = Target.makeResolver(this.ctx.props, (service) =>
-    this.env.REGISTRY_DEBUG_PORT.connect(
-      service.debugPortAddress,
-    ).getEntrypoint(service.service),
+    this.env.REGISTRY_DEBUG_PORT.connect(service.debugPortAddress).getEntrypoint(service.service),
   );
 
   async fetch(request: Request): Promise<Response> {
@@ -259,13 +296,11 @@ export class ExternalService extends WorkerEntrypoint<Env, Subscriber.Worker> {
       params.set("time", String(controller.scheduledTime));
     }
     const response = await fetcher.fetch(
-      `http://localhost/cdn-cgi/handler/scheduled?${params}`,
+      `http://localhost/cdn-cgi/handler/scheduled?${params.toString()}`,
     );
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(
-        `Scheduled handler returned HTTP ${response.status}: ${body}`,
-      );
+      throw new Error(`Scheduled handler returned HTTP ${response.status}: ${body}`);
     }
   }
 
@@ -279,12 +314,7 @@ export class ExternalService extends WorkerEntrypoint<Env, Subscriber.Worker> {
     }
     // Filter out tail events to prevent infinite recursion (the remote tail() call would itself produce a tail event).
     const filtered = events.filter(
-      (item) =>
-        !(
-          item.event &&
-          "rpcMethod" in item.event &&
-          item.event.rpcMethod === "tail"
-        ),
+      (item) => !(item.event && "rpcMethod" in item.event && item.event.rpcMethod === "tail"),
     );
     const serializedEvents = JSON.parse(
       JSON.stringify(filtered, ExternalService.tailEventsReplacer),
@@ -357,16 +387,16 @@ export class ExternalService extends WorkerEntrypoint<Env, Subscriber.Worker> {
   private static SERIALIZED_DATE = "___serialized_date___";
   private static SERIALIZED_BIGINT = "___serialized_bigint___";
 
-  private static tailEventsReplacer(_: string, value: any) {
+  private static tailEventsReplacer = (_: string, value: any) => {
     if (value instanceof Date) {
       return { [ExternalService.SERIALIZED_DATE]: value.toISOString() };
     } else if (typeof value === "bigint") {
       return { [ExternalService.SERIALIZED_BIGINT]: value.toString() };
     }
     return value;
-  }
+  };
 
-  private static tailEventsReviver(_: string, value: any) {
+  private static tailEventsReviver = (_: string, value: any) => {
     if (value && typeof value === "object") {
       if (ExternalService.SERIALIZED_DATE in value) {
         return new Date(value[ExternalService.SERIALIZED_DATE]);
@@ -375,16 +405,13 @@ export class ExternalService extends WorkerEntrypoint<Env, Subscriber.Worker> {
       }
     }
     return value;
-  }
+  };
 }
 
 /**
  * Forwards a workflow binding to the workflow engine in the owner worker.
  */
-export class ExternalWorkflow extends WorkerEntrypoint<
-  Env,
-  Subscriber.Workflow
-> {
+export class ExternalWorkflow extends WorkerEntrypoint<Env, Subscriber.Workflow> {
   private target: Target.Resolver;
 
   constructor(ctx: ExecutionContext<Subscriber.Workflow>, env: Env) {

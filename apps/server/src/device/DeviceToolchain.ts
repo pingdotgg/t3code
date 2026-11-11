@@ -209,6 +209,19 @@ export const isDeviceHubInstalled = (baseDir: string) =>
 export const isAgentDeviceInstalled = (baseDir: string) =>
   isToolInstalled(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
 
+/** Entry of the first installed agent-device among `versions`; never installs. */
+export const installedAgentDeviceEntry = Effect.fn("DeviceToolchain.installedAgentDeviceEntry")(
+  function* (baseDir: string, versions: ReadonlyArray<string>) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const version of versions) {
+      const paths = toolPaths(path, baseDir, { ...AGENT_DEVICE_SPEC, version });
+      if (yield* isInstalled(fs, paths, version)) return paths.entryPath;
+    }
+    return null;
+  },
+);
+
 export const deviceToolVersions = Effect.fn("DeviceToolchain.versions")(function* (
   baseDir: string,
   running: { hub?: string; agent?: string } = {},
