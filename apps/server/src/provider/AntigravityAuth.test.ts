@@ -1,4 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSetupError, type ProviderAuthState } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -82,7 +84,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
             yield* Deferred.succeed(closed, undefined);
           }),
         );
-        // Cached like the real AcpSessionRuntime, so start() reuses an earlier initialize.
+        // Like AcpSessionRuntime, `start` reuses one memoized initialize handshake.
         const initialize = yield* Effect.cached(
           Effect.gen(function* () {
             events.push("initialize");
@@ -149,7 +151,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   };
 });
 
-it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth", (it) => {
   it.effect("accepts a delayed duplicate after callback completion starts", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -282,7 +284,43 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
-  it.effect("does not blame the network when the agent never answers initialize", () =>
+  it.effect("does not blame the network while the runtime is still starting", () =>
+    Effect.gen(function* () {
+      const initializing = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        interactive: false,
+        beforeInitialize: Deferred.succeed(initializing, undefined).pipe(
+          Effect.andThen(Deferred.await(ready)),
+        ),
+      });
+      const hasHint = harness.auth.controller.subscribe(owner).pipe(
+        Stream.runHead,
+        Effect.map((state) => Option.getOrThrow(state).message?.includes("Broken IPv6") === true),
+      );
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(initializing);
+
+      // A one-file runtime can take about a minute to unpack before it answers initialize.
+      yield* TestClock.adjust("60 seconds");
+      assert.isFalse(yield* hasHint);
+
+      yield* Deferred.succeed(ready, undefined);
+      yield* Deferred.await(harness.authenticateCalled);
+      yield* TestClock.adjust("29 seconds");
+      assert.isFalse(yield* hasHint);
+
+      yield* TestClock.adjust("1 second");
+      const stalled = yield* harness.auth.controller.subscribe(owner).pipe(
+        Stream.filter((state) => state.message?.includes("Broken IPv6") === true),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      assert.equal(stalled.phase, "starting");
+    }),
+  );
+
+  it.effect("does not blame the network when the runtime never answers initialize", () =>
     Effect.gen(function* () {
       const initializing = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
@@ -294,7 +332,7 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       yield* Deferred.await(initializing);
       const blamesNetwork = /reach(ed)? Google|network|ipv6/i;
 
-      yield* TestClock.adjust("30 seconds");
+      yield* TestClock.adjust("90 seconds");
       const stalled = yield* harness.auth.controller.subscribe(owner).pipe(
         Stream.filter((state) => state.message !== "Starting Google sign-in."),
         Stream.runHead,
@@ -302,12 +340,12 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       );
       assert.equal(stalled.phase, "starting");
       assert.notMatch(stalled.message ?? "", blamesNetwork);
-      assert.match(stalled.message ?? "", /not responded|stuck/i);
+      assert.match(stalled.message ?? "", /not started|stuck/i);
 
-      yield* TestClock.adjust("270 seconds");
+      yield* TestClock.adjust("210 seconds");
       const failed = yield* phase(harness.auth, "failed");
       assert.notMatch(failed.message ?? "", blamesNetwork);
-      assert.match(failed.message ?? "", /not respond|stuck/i);
+      assert.match(failed.message ?? "", /not respond|may not run/i);
     }),
   );
 
