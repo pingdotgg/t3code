@@ -837,28 +837,30 @@ describe("Grok goal subagents", () => {
     }).pipe(Effect.scoped, Effect.provide(replayLayerTest)),
   );
 
-  it.live("keeps one subagent when a spawn tool call precedes subagent_spawned", () =>
-    Effect.gen(function* () {
-      const childSessionId = "01a1a0a6-c174-7d71-9b21-e32e6e069feb";
-      const toolCallId = "call-4149c7b9-9bc9-458e-96f0-70878f609cb7-0";
-      const description = "List calc.py functions";
-      const prompt = "List every function defined in calc.py.";
-      // Captured order: the spawn tool call lands ~30ms before its subagent_spawned.
-      const { childThreadTitles, subagentStates } = yield* replaySubagentTurn([
-        parentSessionUpdate({
-          sessionUpdate: "tool_call",
-          toolCallId,
-          title: "spawn_subagent",
-          rawInput: { description, prompt, background: false },
-        }),
-        parentSessionUpdate({
-          sessionUpdate: "tool_call_update",
-          toolCallId,
-          kind: "other",
-          title: description,
-          rawInput: { variant: "Task", prompt, description, run_in_background: false },
-        }),
-        parentNotification({
+  it.live(
+    "keeps one subagent whichever of the spawn tool call and subagent_spawned comes first",
+    () =>
+      Effect.gen(function* () {
+        const childSessionId = "01a1a0a6-c174-7d71-9b21-e32e6e069feb";
+        const toolCallId = "call-4149c7b9-9bc9-458e-96f0-70878f609cb7-0";
+        const description = "List calc.py functions";
+        const prompt = "List every function defined in calc.py.";
+        const spawnTool = [
+          parentSessionUpdate({
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "spawn_subagent",
+            rawInput: { description, prompt, background: false },
+          }),
+          parentSessionUpdate({
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            kind: "other",
+            title: description,
+            rawInput: { variant: "Task", prompt, description, run_in_background: false },
+          }),
+        ];
+        const spawnedNotice = parentNotification({
           sessionUpdate: "subagent_spawned",
           subagent_id: childSessionId,
           parent_session_id: sessionId,
@@ -866,37 +868,45 @@ describe("Grok goal subagents", () => {
           subagent_type: "general-purpose",
           description,
           model: "grok-4.7",
-        }),
-        parentNotification({
-          sessionUpdate: "subagent_finished",
-          subagent_id: childSessionId,
-          child_session_id: childSessionId,
-          status: "completed",
-          output: "add\nsubtract\nmultiply",
-        }),
-        parentSessionUpdate({
-          sessionUpdate: "tool_call_update",
-          toolCallId,
-          status: "completed",
-          content: [
-            {
-              type: "content",
-              content: {
-                type: "text",
-                text: `add\nsubtract\nmultiply\n\n<subagent_result>\nsubagent_id: ${childSessionId}\n</subagent_result>`,
-              },
-            },
-          ],
-          rawOutput: {
-            type: "SubagentCompleted",
-            output: "add\nsubtract\nmultiply",
+        });
+        const completion = [
+          parentNotification({
+            sessionUpdate: "subagent_finished",
             subagent_id: childSessionId,
-          },
-        }),
-      ]);
-      assert.deepEqual(childThreadTitles, [description]);
-      assert.deepEqual(subagentStates.at(-1), { title: description, status: "completed" });
-    }).pipe(Effect.scoped, Effect.provide(replayLayerTest)),
+            child_session_id: childSessionId,
+            status: "completed",
+            output: "add\nsubtract\nmultiply",
+          }),
+          parentSessionUpdate({
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "completed",
+            content: [
+              {
+                type: "content",
+                content: {
+                  type: "text",
+                  text: `add\nsubtract\nmultiply\n\n<subagent_result>\nsubagent_id: ${childSessionId}\n</subagent_result>`,
+                },
+              },
+            ],
+            rawOutput: {
+              type: "SubagentCompleted",
+              output: "add\nsubtract\nmultiply",
+              subagent_id: childSessionId,
+            },
+          }),
+        ];
+        // Captured order: the spawn tool call lands ~30ms before its subagent_spawned.
+        for (const entries of [
+          [...spawnTool, spawnedNotice, ...completion],
+          [spawnedNotice, ...spawnTool, ...completion],
+        ]) {
+          const { childThreadTitles, subagentStates } = yield* replaySubagentTurn(entries);
+          assert.deepEqual(childThreadTitles, [description]);
+          assert.deepEqual(subagentStates.at(-1), { title: description, status: "completed" });
+        }
+      }).pipe(Effect.scoped, Effect.provide(replayLayerTest)),
   );
   it.live("keeps each parallel same-description task bound to its own child session", () =>
     Effect.gen(function* () {

@@ -1378,6 +1378,8 @@ interface ActiveAcpTurn {
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
+  /** Subagents projected from a spawn notice before any tool call claimed them. */
+  readonly noticeSubagents: Set<ActiveAcpSubagent>;
   readonly pendingSubagentNotifications: Map<string, Array<EffectAcpSchema.SessionNotification>>;
   readonly toolCallIdsByBackgroundTaskId: Map<string, string>;
   /** Command ACKs register null; terminal results wait here for prompt settlement. */
@@ -3988,7 +3990,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ? undefined
             : extractSubagentUpdate(toolCall);
           if (subagentUpdate !== undefined) {
-            yield* emitSubagent(context, subagentUpdate);
+            // A spawn notice can precede its tool call; the tool result's child id finds that row.
+            const awaitsNoticeRow =
+              subagentUpdate.childSessionId === null &&
+              subagentUpdate.status === "running" &&
+              !context.subagents.has(subagentUpdate.nativeTaskId) &&
+              [...context.noticeSubagents].some(
+                (subagent) => subagent.task.title === subagentUpdate.title,
+              );
+            if (!awaitsNoticeRow) yield* emitSubagent(context, subagentUpdate);
             if (followsAgentWorkState) yield* syncNativeChildren(context);
             if (subagentUpdate.suppressNormalTool !== false) {
               yield* rearmDeferredFinalize(context);
@@ -6122,6 +6132,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             result: null,
             suppressNormalTool: true,
           });
+          const subagent = context.subagentsBySessionId.get(notice.childSessionId);
+          if (subagent !== undefined) context.noticeSubagents.add(subagent);
         });
 
         const finishSubagentFromNotice = Effect.fnUntraced(function* (notice: {
@@ -8233,6 +8245,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               toolStartedAt: new Map(),
               subagents: new Map(),
               subagentsBySessionId: new Map(),
+              noticeSubagents: new Set(),
               pendingSubagentNotifications: new Map(),
               toolCallIdsByBackgroundTaskId: new Map(),
               backgroundCommands: new Map(),

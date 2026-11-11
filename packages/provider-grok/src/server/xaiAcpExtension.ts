@@ -855,7 +855,15 @@ export function extractXAiAcpSubagentUpdate(
 
   if (!isXAiSpawnOrTaskTool(toolCall, rawInput)) return undefined;
 
-  const childSessionId = extractXAiChildSessionId(output);
+  const structuredChildSessionId = nonEmptyString(
+    unknownRecord(toolCall.data.rawOutput)?.subagent_id,
+  );
+  const childSessionId =
+    extractXAiChildSessionId(output) ??
+    (structuredChildSessionId !== undefined &&
+    new RegExp(`^${XAI_UUID_RE}$`, "i").test(structuredChildSessionId)
+      ? structuredChildSessionId
+      : null);
   const asyncSpawnAck = isXAiAsyncSpawnAck(output);
   const legacyResult =
     output
