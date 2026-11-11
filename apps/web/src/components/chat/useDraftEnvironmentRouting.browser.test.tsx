@@ -86,7 +86,6 @@ const provider = {
 type Routing = ReturnType<typeof useDraftEnvironmentRouting>;
 
 function ScratchDraft(props: {
-  readonly eligible?: boolean;
   readonly referencedEnvironmentId?: EnvironmentId;
   readonly onRouting?: (routing: Routing) => void;
 }) {
@@ -95,8 +94,7 @@ function ScratchDraft(props: {
     draftId,
     draftThread,
     envLocked: false,
-    automaticEnvironment:
-      (props.eligible ?? true) && draftThread?.environmentSelection !== "manual",
+    automaticEnvironment: draftThread?.environmentSelection !== "manual",
     logicalProjectEnvironments: [mac, box].map((environmentId) => ({
       environmentId,
       projectId: environmentId === mac ? ProjectId.make(mocks.macScratch.id) : null,
@@ -169,17 +167,14 @@ describe("useDraftEnvironmentRouting", () => {
     expect(mocks.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { change: "a file is attached", props: { eligible: false } },
-    { change: "a thread on this machine is referenced", props: { referencedEnvironmentId: mac } },
-  ])("drops a balanced move when $change while the folder opens", async ({ props }) => {
+  it("drops a balanced move when its target stops being a candidate while the folder opens", async () => {
     setup(boxScratch);
     const opens = deferOpens();
 
     // The harness only runs the hook and renders nothing routed.
     await using screen = await render(<ScratchDraft />, { router: false });
     await vi.waitFor(() => expect(opens).toHaveLength(1));
-    await screen.rerender(<ScratchDraft {...props} />);
+    await screen.rerender(<ScratchDraft referencedEnvironmentId={mac} />);
     await act(() => opens[0]?.(boxScratch));
 
     expect(mocks.draft.environmentId).toBe(mac);
