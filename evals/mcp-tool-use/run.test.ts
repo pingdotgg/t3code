@@ -90,6 +90,20 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
   }));
   const run = (calls: SampleRun["calls"]) => ({ calls, text: "", stopReason: "end_turn" });
   assert.deepEqual(failed({ distinctCalls }, run(cards)), []);
+  const constrained = distinctCalls.map((call) => ({
+    ...call,
+    requiredArgs: ["value"],
+    allowedArgs: Object.keys(call.args),
+  }));
+  assert.deepEqual(failed({ distinctCalls: constrained }, run(cards)), []);
+  const { value: _value, ...missingValue } = cards[0]!.input;
+  for (const input of [missingValue, { ...cards[0]!.input, extra: true }]) {
+    assert.deepEqual(
+      failed({ distinctCalls: constrained }, run([{ ...cards[0]!, input }, ...cards.slice(1)])),
+      ["distinctCalls"],
+    );
+  }
+
   assert.deepEqual(
     failed(
       { distinctCalls },
