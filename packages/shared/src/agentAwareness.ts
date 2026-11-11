@@ -77,6 +77,7 @@ export interface ProjectThreadAwarenessV2Input {
     | "id"
     | "lineage"
     | "latestRunBackgroundWake"
+    | "latestRunPermissionDenied"
     | "latestRunStopRequested"
     | "modelSelection"
     | "pendingBackgroundTasks"
@@ -114,7 +115,9 @@ export function projectThreadAwarenessV2(
   }
   const detail =
     phase === "completed"
-      ? "Review the completed task."
+      ? thread.latestRunPermissionDenied === true
+        ? "A tool call was denied. Review the task."
+        : "Review the completed task."
       : phase === "failed"
         ? "The agent run failed."
         : undefined;

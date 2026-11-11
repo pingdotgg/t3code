@@ -417,7 +417,7 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
   }).pipe(Effect.provide(layerSql)),
 );
 
-it.effect("sql: a run with a permission denial notice stays out of auto-settlement", () =>
+it.effect("sql: a run with a permission denial notice settles only on its pull request", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const noticeRun = Effect.fn(function* (name: string, nativeId: string) {
@@ -465,10 +465,9 @@ it.effect("sql: a run with a permission denial notice stays out of auto-settleme
         autoSettleAfterDays: 7,
         autoSettleOnMerge: true,
       });
-    for (const merged of [false, true]) {
-      assert.isNull(resolve(denied, merged));
-      assert.equal(DateTime.formatIso(resolve(unrelated, merged)!), DateTime.formatIso(old));
-    }
+    assert.isNull(resolve(denied, false));
+    assert.equal(DateTime.formatIso(resolve(denied, true)!), DateTime.formatIso(old));
+    assert.equal(DateTime.formatIso(resolve(unrelated, false)!), DateTime.formatIso(old));
   }).pipe(Effect.provide(layerSql)),
 );
 

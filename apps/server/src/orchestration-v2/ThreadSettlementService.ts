@@ -156,8 +156,6 @@ export function isAutoSettlementCandidate(
   if (thread.activityRunStatus != null) return false;
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
-  // Whether Claude recovered from a denial is unknowable, so the user decides.
-  if (thread.latestRunPermissionDenied === true) return false;
   // Interrupted runs must keep the same snooze protection the sidebar shows.
   return !isSnoozed(thread, nowMs);
 }
@@ -236,6 +234,9 @@ export function resolveAutoSettlementAt(input: {
   if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
     return DateTime.makeUnsafe(activityAtMs);
   }
+  // Whether the provider recovered from a denial is unknowable, so only the user or a
+  // finished pull request settles the thread, never inactivity.
+  if (thread.latestRunPermissionDenied === true) return null;
   const hasPullRequest =
     hasOpenLink ||
     pullRequest !== null ||

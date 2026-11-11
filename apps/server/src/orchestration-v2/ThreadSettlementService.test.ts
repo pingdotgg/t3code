@@ -278,7 +278,7 @@ describe("resolveAutoSettlementAt", () => {
     ).toBeNull();
   });
 
-  it("keeps a thread whose latest run had a permission denial until the user acts", () => {
+  it("settles a thread whose latest run had a permission denial only on its pull request", () => {
     const input = {
       thread: {
         ...shell({ latestUserMessageAt: at(-4 * DAY_MS) }),
@@ -290,7 +290,7 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleOnMerge: true,
       autoSettleKeepPullRequests: false,
     };
-    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-4 * DAY_MS));
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({ ...input, pullRequest: null }),
     ).toBeNull();
