@@ -101,6 +101,8 @@ const STATUS_UPSTREAM_FETCH_TIMEOUT = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_FAILURE_BASE_COOLDOWN = Duration.seconds(30);
 const STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN = Duration.minutes(15);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
+// Keeps each fetch command line well under Windows' 32 KiB limit.
+const STATUS_FETCH_REFSPEC_BATCH = 100;
 const REPOSITORY_PATHS_CACHE_CAPACITY = 2_048;
 const REPOSITORY_PATHS_CACHE_TTL = Duration.minutes(10);
 const REPOSITORY_PATHS_REFRESH_COALESCE_TTL = Duration.seconds(5);
@@ -530,6 +532,66 @@ function branchNameFromHeadRef(value: string): string | null {
   return ref.startsWith("refs/heads/") && ref.length > "refs/heads/".length
     ? ref.slice("refs/heads/".length)
     : null;
+}
+
+const STATUS_FETCH_REF_FORMAT =
+  "%(refname)%00%(symref)%00%(worktreepath)%00%(upstream:remotename)%00%(upstream:remoteref)";
+
+const STATUS_FETCH_BASE_CONFIG_PATTERN = String.raw`^branch\..*\.(t3-merge-base-ref|t3-merge-base|gh-merge-base)$`;
+
+// Status reads only the remote's default branch, plus the upstreams and recorded bases of
+// checked-out branches. Fetching every branch takes tens of seconds on large remotes.
+function statusFetchRefs(
+  forEachRefStdout: string,
+  baseConfigStdout: string,
+  lsRemoteStdout: string,
+  remoteName: string,
+): string[] {
+  const trackingPrefix = `refs/remotes/${remoteName}/`;
+  const checkedOut = new Set<string>();
+  const wanted = new Set<string>();
+  let defaultBranch: string | null = null;
+  for (const line of forEachRefStdout.split("\n")) {
+    const [refName = "", symref = "", worktreePath, upstreamRemote, upstreamRef = ""] =
+      line.split("\0");
+    if (refName === `${trackingPrefix}HEAD`) {
+      defaultBranch = parseDefaultBranchFromRemoteHeadRef(symref, remoteName);
+    } else if (worktreePath && refName.startsWith("refs/heads/")) {
+      checkedOut.add(refName.slice("refs/heads/".length));
+      if (upstreamRemote === remoteName && upstreamRef.startsWith("refs/heads/")) {
+        wanted.add(upstreamRef.slice("refs/heads/".length));
+      }
+    }
+  }
+  // `<remote>/HEAD` goes stale when the remote renames its default branch; status falls back to these.
+  for (const branch of [defaultBranch, ...DEFAULT_BASE_BRANCH_CANDIDATES]) {
+    if (branch !== null) wanted.add(branch);
+  }
+  // `git config --null --get-regexp` prints `<key>\n<value>\0`.
+  for (const entry of baseConfigStdout.split("\0")) {
+    const separator = entry.indexOf("\n");
+    const key = entry.slice(0, separator);
+    const branch = key.slice("branch.".length, key.lastIndexOf("."));
+    if (separator < 0 || !checkedOut.has(branch)) continue;
+    const base = entry.slice(separator + 1).trim();
+    const name = base.startsWith(trackingPrefix)
+      ? base.slice(trackingPrefix.length)
+      : base.startsWith(`${remoteName}/`)
+        ? base.slice(remoteName.length + 1)
+        : base.startsWith("refs/")
+          ? ""
+          : base;
+    if (name.length > 0) wanted.add(name);
+  }
+  // A branch deleted on the remote fails the whole fetch, so only request advertised ones.
+  const advertised: string[] = [];
+  for (const line of lsRemoteStdout.split("\n")) {
+    const refName = line.split("\t")[1] ?? "";
+    if (refName.startsWith("refs/heads/") && wanted.has(refName.slice("refs/heads/".length))) {
+      advertised.push(refName);
+    }
+  }
+  return advertised;
 }
 
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
@@ -1356,16 +1418,62 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // this poll from starting `git gc --auto`. When that gc fails, for example on a repository
     // with missing objects, Git retries it on every fetch and leaves a full-size `tmp_pack_*`
     // behind each time, so a background poll could fill the disk.
-    const args = [
-      "--git-dir",
-      gitCommonDir,
-      "fetch",
-      "--quiet",
-      "--no-tags",
-      "--no-auto-gc",
-      "--",
-      remoteName,
-    ];
+    const gitDirArgs = ["--git-dir", gitCommonDir];
+    const runStatusGit = (
+      args: readonly string[],
+      fallbackErrorDetail: string,
+      allowNonZeroExit = false,
+    ) =>
+      executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, [...gitDirArgs, ...args], {
+        allowNonZeroExit,
+        env: STATUS_UPSTREAM_REFRESH_ENV,
+        fallbackErrorDetail,
+        timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
+        forceKillAfterMs: 1_000,
+        maxOutputBytes: 16 * 1024 * 1024,
+      }).pipe(Effect.map((result) => result.stdout));
+    const refresh = Effect.gen(function* () {
+      const [localRefs, baseConfig, remoteHeads] = yield* Effect.all(
+        [
+          runStatusGit(
+            [
+              "for-each-ref",
+              `--format=${STATUS_FETCH_REF_FORMAT}`,
+              "refs/heads/",
+              `refs/remotes/${remoteName}/HEAD`,
+            ],
+            "Git could not list local branches.",
+          ),
+          // Exits 1 when no branch records a base.
+          runStatusGit(
+            ["config", "--null", "--get-regexp", STATUS_FETCH_BASE_CONFIG_PATTERN],
+            "Git could not read branch bases.",
+            true,
+          ),
+          runStatusGit(
+            ["ls-remote", "--heads", "--", remoteName],
+            "Background Git ls-remote exited with a non-zero status.",
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+      // Source-only refspecs let Git apply the remote's configured fetch mapping.
+      const refs = statusFetchRefs(localRefs, baseConfig, remoteHeads, remoteName);
+      for (let start = 0; start < refs.length; start += STATUS_FETCH_REFSPEC_BATCH) {
+        yield* runStatusGit(
+          [
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-auto-gc",
+            "--",
+            remoteName,
+            ...refs.slice(start, start + STATUS_FETCH_REFSPEC_BATCH),
+          ],
+          "Background Git fetch exited with a non-zero status.",
+        );
+      }
+    });
     const key = `${gitCommonDir}\0${remoteName}`;
     const failure = statusRemoteRefreshFailures.get(key);
     if (failure && (yield* Clock.currentTimeMillis) < failure.retryAt) return;
@@ -1376,13 +1484,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         // Frequent poll deadlines and disconnected clients must not interrupt a
         // healthy writer. A separate safety limit prevents a hung transport from
         // occupying its worker slot indefinitely.
-        const started = yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
-          env: STATUS_UPSTREAM_REFRESH_ENV,
-          fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
-          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
-          forceKillAfterMs: 1_000,
-        }).pipe(
-          Effect.asVoid,
+        const started = yield* refresh.pipe(
           Effect.tap(() =>
             Effect.sync(() => {
               statusRemoteRefreshFailures.delete(key);
@@ -4579,8 +4681,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { headCommit: input.targetCommit, moved: true, onTarget: true };
     });
 
-  const fetchRemote = Effect.fn("fetchRemote")(function* (input: GitVcsDriver.GitFetchRemoteInput) {
-    const args = ["fetch", "--quiet", "--", input.remoteName];
+  // Fetches one branch: fetching a whole remote takes tens of seconds on hosts with thousands of branches.
+  const fetchRemote = Effect.fn("fetchRemote")(function* (input: {
+    readonly cwd: string;
+    readonly remoteName: string;
+    readonly refName: string;
+  }) {
     const options = {
       env: STATUS_UPSTREAM_REFRESH_ENV,
       fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
@@ -4605,28 +4711,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ),
       );
     };
-    const fetchAll = runFetch(args).pipe(
-      Effect.flatMap((result) =>
-        result.exitCode === 0
-          ? Effect.void
-          : Effect.fail(
-              new GitCommandError({
-                ...gitCommandContext({
-                  operation: "GitVcsDriver.fetchRemote",
-                  cwd: input.cwd,
-                  args,
-                }),
-                detail: fetchFailureDetail(result.stderr) ?? options.fallbackErrorDetail,
-                ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
-                stdoutLength: result.stdout.length,
-                stderrLength: result.stderr.length,
-              }),
-            ),
-      ),
-    );
-    if (input.refName === undefined) {
-      return yield* fetchAll.pipe(Effect.as(true));
-    }
     const branch =
       parseRemoteRefWithRemoteNames(input.refName, [input.remoteName])?.branchName ?? input.refName;
     const scopedArgs = [
@@ -5164,18 +5248,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }),
     resolvePrimaryRemoteName,
     resolveDefaultBranchName,
-    fetchRemote: Effect.fnUntraced(function* (input) {
-      return yield* withListRefsInvalidation(
-        input.cwd,
-        fetchRemote(input).pipe(
-          Effect.flatMap((fetched) =>
-            fetched
-              ? Effect.void
-              : fetchRemote({ cwd: input.cwd, remoteName: input.remoteName }).pipe(Effect.asVoid),
-          ),
-        ),
-      );
-    }),
     remoteExists,
     remoteBranchExists,
     resolveRemoteTrackingCommit,
