@@ -465,6 +465,7 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
 export type OrchestratorMcpThreadDetail = typeof OrchestratorMcpThreadDetail.Type;
 
 export const OrchestratorMcpThreadRun = Schema.Struct({
+  queueHeld: Schema.optional(Schema.Boolean),
   runId: RunId,
   ordinal: PositiveInt,
   status: OrchestrationV2RunStatus,
@@ -523,6 +524,7 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
 
 export const OrchestratorMcpThreadSendResult = Schema.Struct({
+  queueHeld: Schema.optional(Schema.Boolean),
   threadId: ThreadId,
   link: Schema.optional(Schema.String),
   messageId: MessageId,

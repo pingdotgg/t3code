@@ -5,6 +5,7 @@ import { AuthSessionId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -292,3 +293,147 @@ it("titles from a long first line without splitting an emoji", () => {
   const title = titleFromMessage(`${"a".repeat(78)}😀 and the rest of a long first line`);
   assert.strictEqual(title, `${"a".repeat(78)}…`);
 });
+
+const session = {
+  calls: [] as Array<{ tool: string; args: unknown }>,
+  responses: {} as Record<string, unknown>,
+};
+
+/** Runs the thread CLI against scripted MCP responses and returns what it logged. */
+const runThreadCli = Effect.fn(function* (args: ReadonlyArray<string>) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-cli-" });
+  yield* persistServerRuntimeState({
+    path: path.join(baseDir, "userdata", "server-runtime.json"),
+    state: yield* makePersistedServerRuntimeState({
+      config: { host: "127.0.0.1", devUrl: undefined },
+      port: 3_773,
+    }),
+  });
+  using _session = vi.spyOn(McpBridge, "mcpToolSession").mockReturnValue(
+    Effect.succeed({
+      call: (tool, toolArgs) => {
+        session.calls.push({ tool, args: toolArgs });
+        return Effect.succeed({ structuredContent: session.responses[tool] });
+      },
+    }),
+  );
+  const output: Array<string> = [];
+  yield* Command.runWith(threadCommand, { version: "test" })([...args, "--base-dir", baseDir]).pipe(
+    Effect.provideService(Console.Console, {
+      ...console,
+      log: (value) => output.push(String(value)),
+    }),
+  );
+  return output;
+}, Effect.scoped);
+
+const cliLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  NetService.layer,
+  ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+);
+
+it.effect("send forwards non-restarting modes and preserves queue state in JSON and text", () =>
+  Effect.gen(function* () {
+    for (const mode of [undefined, "queue", "auto", "steer"]) {
+      for (const queueHeld of [true, false, undefined]) {
+        session.calls = [];
+        const sent = {
+          threadId,
+          messageId: "message-1",
+          runId,
+          status: "queued",
+          delivery: "queued",
+          ...(queueHeld === undefined ? {} : { queueHeld }),
+        };
+        session.responses = { t3_thread_send: sent };
+        const args = ["send", threadId, "hello", ...(mode === undefined ? [] : ["--mode", mode])];
+        const json = yield* runThreadCli([...args, "--json"]);
+        assert.deepStrictEqual(session.calls, [
+          { tool: "t3_thread_send", args: { threadId, message: "hello", mode: mode ?? "queue" } },
+        ]);
+        assert.deepStrictEqual(JSON.parse(json[0]!), sent);
+        const text = yield* runThreadCli(args);
+        assert.strictEqual(
+          text[0],
+          queueHeld === true
+            ? "Queued (held; not eligible for dispatch)."
+            : queueHeld === false
+              ? "Queued (not held)."
+              : "Queued (hold state unknown).",
+        );
+      }
+    }
+    session.calls = [];
+    yield* runThreadCli(["send", threadId, "hello", "--mode", "restart"]).pipe(Effect.flip);
+    assert.deepStrictEqual(session.calls, []);
+  }).pipe(Effect.provide(cliLayer)),
+);
+
+it.effect(
+  "show includes recent held and unheld runs without confusing questions with queue length",
+  () =>
+    Effect.gen(function* () {
+      session.calls = [];
+      const thread = {
+        threadId,
+        projectId: "project-1",
+        title: "Queue",
+        createdBy: "user",
+        creationSource: "web",
+        status: "completed",
+        latestRunId: runId,
+        activeRunId: null,
+        providerInstanceId: "codex",
+        model: "gpt-6.1-sol",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        linkedPullRequest: null,
+        titleRegeneration: null,
+        branch: null,
+        worktreePath: null,
+        parentThreadId: null,
+        relationshipToParent: null,
+        runCount: 3,
+        itemCount: 0,
+        pendingRequestCount: 0,
+        archived: false,
+        settled: false,
+        settledAt: null,
+        snoozed: false,
+        snoozedUntil: null,
+        createdAt: "2026-11-02T00:00:00Z",
+        updatedAt: "2026-11-02T00:00:00Z",
+      };
+      const recentRuns = [true, false, undefined].map((queueHeld, i) => ({
+        runId: `run-${i}`,
+        ordinal: i + 1,
+        status: "queued",
+        providerInstanceId: "codex",
+        model: "gpt-6.1-sol",
+        requestedAt: "2026-11-02T00:00:00Z",
+        startedAt: null,
+        completedAt: null,
+        ...(queueHeld === undefined ? {} : { queueHeld }),
+      }));
+      session.responses = {
+        t3_thread_read: { thread, recentRuns, items: [], nextPosition: null, hasMore: false },
+      };
+      const json = yield* runThreadCli(["show", threadId, "--json"]);
+      assert.deepStrictEqual(JSON.parse(json[0]!), { thread, recentRuns, messages: [] });
+      assert.deepStrictEqual(session.calls[0]?.args, {
+        threadId,
+        limit: 1,
+        runLimit: 50,
+      });
+      const text = yield* runThreadCli(["show", threadId]);
+      assert.deepStrictEqual(text.slice(2), [
+        "Run 1 run-0: queued (held; not eligible for dispatch).",
+        "Run 2 run-1: queued (not held).",
+        "Run 3 run-2: queued (hold state unknown).",
+      ]);
+    }).pipe(Effect.provide(cliLayer)),
+);

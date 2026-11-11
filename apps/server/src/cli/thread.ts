@@ -39,6 +39,8 @@ import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
  */
 const WAIT_SLICE_MS = 15_000;
 const READ_PAGE_LIMIT = 100;
+/** Recent runs `show` reads so queued ones are reported. */
+const RECENT_RUN_LIMIT = 50;
 const TITLE_MAX_CHARS = 80;
 
 export class ThreadServerNotRunningError extends Schema.TaggedError<ThreadServerNotRunningError>()(
@@ -346,11 +348,13 @@ export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(fun
   threadId: ThreadId,
   count: number,
 ) {
-  let { thread } = yield* tools.call(
+  const first = yield* tools.call(
     "t3_thread_read",
-    { threadId, limit: 1, runLimit: 1 },
+    { threadId, limit: 1, runLimit: RECENT_RUN_LIMIT },
     OrchestratorMcpThreadReadResult,
   );
+  let { thread } = first;
+  const { recentRuns } = first;
   let messages: Array<OrchestratorMcpThreadTimelineItem> = [];
   // The newest window has no upper bound, so items added since the first
   // read are still shown.
@@ -390,7 +394,7 @@ export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(fun
     before = start;
     span *= 2;
   } while (messages.length < count && start > 0);
-  return { thread, messages: messages.slice(Math.max(0, messages.length - count)) };
+  return { thread, recentRuns, messages: messages.slice(Math.max(0, messages.length - count)) };
 });
 
 /** Item text past the read's per-item cap. */
@@ -677,7 +681,20 @@ const threadStartCommand = Command.make("start", {
   ),
 );
 
+const queueStateText = (queueHeld: boolean | undefined) =>
+  queueHeld === true
+    ? "held; not eligible for dispatch"
+    : queueHeld === false
+      ? "not held"
+      : "hold state unknown";
+
 const threadSendCommand = Command.make("send", {
+  mode: Flag.Literals("mode", ["auto", "queue", "steer"]).pipe(
+    Flag.withDescription(
+      "Delivery mode: queue a new turn, steer the active turn, or choose automatically.",
+    ),
+    Flag.withDefault("queue"),
+  ),
   ...projectLocationFlags,
   thread: threadArgument,
   message: messageArgument,
@@ -685,7 +702,7 @@ const threadSendCommand = Command.make("send", {
   json: jsonFlag,
 }).pipe(
   Command.withDescription(
-    "Send a message to a thread. A busy thread gets it as its next turn; nothing is interrupted.",
+    "Send a message. Defaults to queue; held messages are not dispatched. Auto and steer use native provider behavior, which may interrupt and restart an active turn.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -696,7 +713,7 @@ const threadSendCommand = Command.make("send", {
         Effect.fn("cli.thread.send")(function* (tools) {
           const sent = yield* tools.call(
             "t3_thread_send",
-            { threadId, message, mode: "queue" },
+            { threadId, message, mode: flags.mode },
             OrchestratorMcpThreadSendResult,
           );
           if (flags.wait) {
@@ -704,7 +721,11 @@ const threadSendCommand = Command.make("send", {
           }
           yield* flags.json
             ? printJson(sent)
-            : Console.log(sent.delivery === "queued" ? "Queued." : "Sent.");
+            : Console.log(
+                sent.delivery === "queued"
+                  ? `Queued (${queueStateText(sent.queueHeld)}).`
+                  : "Sent.",
+              );
         }),
       );
     }).pipe(reportThreadErrors),
@@ -727,11 +748,11 @@ const threadShowCommand = Command.make("show", {
       yield* withThreadTools(
         flags,
         Effect.fn("cli.thread.show")(function* (tools) {
-          const { thread, messages: latest } = yield* readLatestMessages(
-            tools,
-            threadId,
-            flags.messages,
-          );
+          const {
+            thread,
+            recentRuns,
+            messages: latest,
+          } = yield* readLatestMessages(tools, threadId, flags.messages);
           const messages = yield* Effect.forEach(latest, (item) =>
             readFullText(tools, threadId, item).pipe(
               Effect.map((text) => ({
@@ -742,7 +763,7 @@ const threadShowCommand = Command.make("show", {
             ),
           );
           if (flags.json) {
-            return yield* printJson({ thread, messages });
+            return yield* printJson({ thread, recentRuns, messages });
           }
           yield* Console.log(thread.title);
           yield* Console.log(
@@ -755,6 +776,13 @@ const threadShowCommand = Command.make("show", {
           }
           if (thread.pendingRequestCount > 0) {
             yield* Console.log(`Waiting for ${thread.pendingRequestCount} answer(s).`);
+          }
+          for (const run of recentRuns) {
+            if (run.status === "queued") {
+              yield* Console.log(
+                `Run ${run.ordinal} ${run.runId}: queued (${queueStateText(run.queueHeld)}).`,
+              );
+            }
           }
           for (const entry of messages) {
             yield* Console.log(`\n[${entry.role}]\n${entry.text}`);
