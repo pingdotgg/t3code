@@ -122,6 +122,13 @@ it.live("publishes disable and uninstall changes to every connected client", () 
         yield* next((snapshot) => snapshot[0]?.status === "running");
         yield* service.manage({ id: "test.sync", action: "uninstall" });
         yield* next((snapshot) => snapshot.length === 0);
+        const homeRelative = yield* service
+          .install({ source: "~/fixture", sourceType: "local" })
+          .pipe(Effect.provideService(HostProcess.HomeDirectory, config.stateDir));
+        expect(homeRelative[0]?.source).toBe(yield* fs.realPath(source));
+        yield* next((snapshot) => snapshot[0]?.status === "running");
+        yield* service.manage({ id: "test.sync", action: "uninstall" });
+        yield* next((snapshot) => snapshot.length === 0);
       }).pipe(
         Effect.provide(
           ExtensionService.layer.pipe(

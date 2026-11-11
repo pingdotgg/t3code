@@ -1,3 +1,5 @@
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { extensionDiagnostic } from "./diagnostic.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as Deferred from "effect/Deferred";
@@ -147,13 +149,16 @@ export const layer = Layer.effect(
           );
         }),
       ),
-      install: Effect.fn("ExtensionService.install")((input) =>
-        Deferred.await(initialized).pipe(
-          Effect.andThen(
-            invoke("install", input.source, () => registry.install(input.source, input.sourceType)),
-          ),
-        ),
-      ),
+      install: Effect.fn("ExtensionService.install")(function* (input) {
+        yield* Deferred.await(initialized);
+        const source =
+          input.sourceType === "local"
+            ? expandHomePath(input.source, yield* HostProcess.HomeDirectory)
+            : input.source;
+        return yield* invoke("install", input.source, () =>
+          registry.install(source, input.sourceType),
+        );
+      }),
       manage: Effect.fn("ExtensionService.manage")((input) =>
         Deferred.await(initialized).pipe(
           Effect.andThen(
