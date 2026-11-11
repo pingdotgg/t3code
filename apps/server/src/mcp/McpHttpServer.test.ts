@@ -208,6 +208,17 @@ it("returns each course reference page as MCP image content", () => {
   ]);
 });
 
+it("keeps HTML course reference results usable without images", () => {
+  const result = McpHttpServer.imageToolContent({
+    url: "https://example.com/index.html",
+    title: "Solutions",
+    text: "Problem 1",
+    links: [{ text: "Pset 1", href: "https://example.com/pset1.pdf" }],
+  });
+  expect(result.metadata).toMatchObject({ title: "Solutions", images: [] });
+  expect(result.content).toHaveLength(1);
+});
+
 it.effect.each([
   { input: {}, open: false, message: "No device is open in this thread. Call device_open first." },
   {

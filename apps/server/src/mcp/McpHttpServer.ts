@@ -667,34 +667,35 @@ interface MultiImageToolResult {
 }
 
 export const imageToolContent = (encodedResult: unknown, includeImage = true) => {
-  const result = encodedResult as ImageToolResult | MultiImageToolResult;
-  const metadata = Array.isArray((result as { readonly images?: unknown }).images)
-    ? {
-        ...result,
-        images: (result as MultiImageToolResult).images.map(
-          ({ data: _data, type: _type, ...image }) => image,
-        ),
-      }
-    : (() => {
-        const screenshot = (result as ImageToolResult).screenshot;
-        const { screenshot: _screenshot, ...rest } = result as ImageToolResult;
-        return {
-          ...rest,
-          screenshot: {
-            mimeType: (screenshot as ImageToolResult["screenshot"]).mimeType,
-            width: (screenshot as ImageToolResult["screenshot"]).width,
-            height: (screenshot as ImageToolResult["screenshot"]).height,
+  const result = encodedResult as ImageToolResult | MultiImageToolResult | Record<string, unknown>;
+  const screenshot =
+    "screenshot" in result ? (result.screenshot as ImageToolResult["screenshot"]) : undefined;
+  const images = Array.isArray(result.images)
+    ? (result.images as MultiImageToolResult["images"])
+    : screenshot === undefined
+      ? []
+      : [
+          {
+            data: screenshot.data,
+            mimeType: screenshot.mimeType,
+            width: screenshot.width,
+            height: screenshot.height,
           },
-        };
-      })();
-  const images = Array.isArray((result as { readonly images?: unknown }).images)
-    ? (result as MultiImageToolResult).images
-    : [
-        {
-          data: (result as ImageToolResult).screenshot.data,
-          mimeType: (result as ImageToolResult).screenshot.mimeType,
-        },
-      ];
+        ];
+  const { screenshot: _screenshot, ...rest } = result;
+  const metadata = {
+    ...rest,
+    images: images.map(({ data: _data, type: _type, ...image }) => image),
+    ...(screenshot === undefined
+      ? {}
+      : {
+          screenshot: {
+            mimeType: screenshot.mimeType,
+            width: screenshot.width,
+            height: screenshot.height,
+          },
+        }),
+  };
   return {
     metadata,
     content: [
