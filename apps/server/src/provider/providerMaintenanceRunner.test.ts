@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -15,6 +16,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -39,10 +41,7 @@ const NATIVE_CLI_INSTANCE_ID = ProviderInstanceId.make("nativeCli");
 const OPENCODE_INSTANCE_ID = ProviderInstanceId.make("opencode");
 const encoder = new TextEncoder();
 
-// Pin a non-win32 platform so `resolveSpawnCommand` is a no-op and the raw
-// `{ command, args }` assertions below hold deterministically on any host
-// (including Windows). Windows-specific resolution is covered by the dedicated
-// win32 case at the end of this suite.
+// Pin Linux so raw command/args assertions bypass Windows shim resolution.
 const layerNonWindowsPlatform = Layer.succeed(HostProcess.Platform, "linux");
 
 function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabilities {
@@ -156,6 +155,9 @@ function layerMockSpawner(
 
 function makeRegistry(
   initialProviders: ServerProvider | ReadonlyArray<ServerProvider> = baseProvider,
+  options?: {
+    readonly installedVersionAfterUpdate?: string;
+  },
 ) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
@@ -195,8 +197,22 @@ function makeRegistry(
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
-      refreshAfterUpdate: () => Ref.get(providersRef),
+      reloadSecretsAndRefresh: () => Ref.get(providersRef),
+      refreshAfterUpdate: () => {
+        const version = options?.installedVersionAfterUpdate;
+        if (version === undefined) {
+          return Ref.get(providersRef);
+        }
+        return Ref.updateAndGet(providersRef, (providers) =>
+          providers.map((provider) => ({
+            ...provider,
+            version,
+          })),
+        );
+      },
       refreshWorkspaceSnapshot: () => Ref.get(providersRef),
+      invalidateModelCaches: () => Effect.void,
+      refreshModelCatalog: Effect.void,
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
       setProviderMaintenanceActionState,
@@ -222,6 +238,7 @@ const makeTestRunner = (
       ranges: [],
     })),
   },
+  latestVersions: Layer.Layer<ProviderLatestVersions.ProviderLatestVersions> = ProviderLatestVersions.layer,
 ) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
@@ -233,14 +250,31 @@ const makeTestRunner = (
               current: Effect.succeed(manifest),
               refresh: Effect.succeed(manifest),
               forceRefresh: Effect.succeed(manifest),
+              refreshOnDemand: Effect.succeed(manifest),
               refreshInBackground: Effect.void,
             }),
-            ProviderLatestVersions.layer,
+            latestVersions,
           ),
         ),
       ),
     ),
   );
+
+function layerFailingLatestLookupAfterFirst() {
+  let lookups = 0;
+  return Layer.succeed(ProviderLatestVersions.ProviderLatestVersions, {
+    cached: (_key, lookup) =>
+      Effect.gen(function* () {
+        lookups += 1;
+        if (lookups > 1) {
+          return yield* Effect.die("latest lookup failed");
+        }
+        return yield* lookup;
+      }),
+    invalidate: () => Effect.void,
+    invalidateAll: Effect.void,
+  });
+}
 
 describe("providerMaintenanceRunner", () => {
   it.effect("runs the allowlisted provider update command and records success", () => {
@@ -271,7 +305,190 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("0.0.0"),
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect.each([
+    { name: "current", probe: {}, skip: true },
+    { name: "failed", probe: { status: "error" }, skip: false },
+    { name: "behind", probe: { version: "2.1.309" }, skip: false },
+    { name: "unknown", probe: { version: null }, skip: false },
+    {
+      name: "installed current",
+      probe: { version: "2.1.309", installedVersion: "2.1.310" },
+      skip: true,
+    },
+    { name: "installed behind", probe: { installedVersion: "2.1.309" }, skip: false },
+    { name: "installed unknown", probe: { installedVersion: null }, skip: false },
+  ] as const)("only skips a successful fresh current probe: $name", ({ probe, skip }) => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    const refreshedInstanceIds: Array<ProviderInstanceId> = [];
+    return Effect.gen(function* () {
+      const { registry, updateStatesRef, providersRef } = yield* makeRegistry({
+        ...baseProvider,
+        version: "2.1.309",
+        versionAdvisory: {
+          status: "behind_latest",
+          currentVersion: "2.1.309",
+          latestVersion: "2.1.310",
+          updateCommand: "claude update",
+          canUpdate: true,
+          checkedAt: "2026-04-10T00:00:00.000Z",
+          message: "Update available.",
+        },
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        refreshInstance: (instanceId) => {
+          refreshedInstanceIds.push(instanceId);
+          return Ref.updateAndGet(providersRef, (providers) =>
+            providers.map((provider) =>
+              provider.instanceId === instanceId
+                ? {
+                    ...provider,
+                    version: "2.1.310",
+                    ...probe,
+                    checkedAt: "2026-04-10T00:00:01.000Z",
+                  }
+                : provider,
+            ),
+          );
+        },
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@anthropic-ai/claude-code",
+              updateExecutable: "claude",
+              updateArgs: ["update"],
+              updateLockKey: "claudeAgent-native",
+            }),
+          ),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(refreshedInstanceIds, [CODEX_INSTANCE_ID]);
+      assert.deepStrictEqual(calls, skip ? [] : [{ command: "claude", args: ["update"] }]);
+      if (!skip) return;
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      assert.strictEqual(result.providers[0]?.updateState?.message, "Already up to date.");
+      assert.deepStrictEqual(
+        (yield* Ref.get(updateStatesRef)).map((state) => [state.status, state.message]),
+        [
+          ["queued", "Waiting for another provider update to finish."],
+          ["running", "Checking for the latest version"],
+          ["succeeded", "Already up to date."],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("2.1.310"),
+          layerMockSpawner((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("still runs the installer when refreshInstance returns the cached snapshot", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        version: "2.1.310",
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@anthropic-ai/claude-code",
+              updateExecutable: "claude",
+              updateArgs: ["update"],
+              updateLockKey: "claudeAgent-native",
+            }),
+          ),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, [{ command: "claude", args: ["update"] }]);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("2.1.310"),
+          layerMockSpawner((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("still runs the installer when precheck advisory enrichment fails", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry({
+        ...baseProvider,
+        version: "2.1.310",
+        versionAdvisory: {
+          status: "current",
+          currentVersion: "2.1.310",
+          latestVersion: "2.1.310",
+          updateCommand: "claude update",
+          canUpdate: true,
+          checkedAt: "2026-04-10T00:00:00.000Z",
+          message: null,
+        },
+      });
+      const updater = yield* makeTestRunner(
+        {
+          ...registry,
+          refreshInstance: (instanceId) =>
+            Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) =>
+                provider.instanceId === instanceId
+                  ? { ...provider, checkedAt: "2026-04-10T00:00:01.000Z" }
+                  : provider,
+              ),
+            ),
+          getProviderMaintenanceCapabilitiesForInstance: () =>
+            Effect.succeed(
+              makeProviderMaintenanceCapabilities({
+                provider: CODEX_DRIVER,
+                packageName: "@anthropic-ai/claude-code",
+                updateExecutable: "claude",
+                updateArgs: ["update"],
+                updateLockKey: "claudeAgent-native",
+              }),
+            ),
+        },
+        undefined,
+        layerFailingLatestLookupAfterFirst(),
+      );
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, [{ command: "claude", args: ["update"] }]);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("2.1.310"),
           layerMockSpawner((command, args) => {
             calls.push({ command, args });
             return { stdout: "updated" };
@@ -300,7 +517,7 @@ describe("providerMaintenanceRunner", () => {
         Effect.provide(
           Layer.mergeAll(
             layerNonWindowsPlatform,
-            layerLatestVersionHttpClient("0.0.0"),
+            layerLatestVersionHttpClient("1.0.0"),
             layerMockSpawner(() => ({ stdout: "updated" })),
           ),
         ),
@@ -333,7 +550,7 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("0.0.0"),
+          layerLatestVersionHttpClient("1.0.0"),
           layerMockSpawner((_command, _args, options) => {
             seen.push(options.env);
             return { stdout: "updated" };
@@ -373,7 +590,7 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("0.0.0"),
+          layerLatestVersionHttpClient("1.0.0"),
           layerMockSpawner((command, args) => {
             calls.push({ command, args });
             return { stdout: "updated" };
@@ -398,6 +615,28 @@ describe("providerMaintenanceRunner", () => {
       4_096,
     );
     assert.strictEqual(ProviderMaintenanceRunner.toProgressLine("x".repeat(300))?.length, 200);
+
+    for (const redraw of [
+      "\r",
+      "\u001b[G",
+      "\u001b[0G",
+      "\u001b[1G",
+      "\u001b[01G",
+      "\u001b[999D",
+      "\u001b[999D\u001b[J",
+    ]) {
+      const output = `first${redraw}second${redraw}last`;
+      for (let boundary = 0; boundary <= output.length; boundary++) {
+        let partialLine = "";
+        for (const chunk of [output.slice(0, boundary), output.slice(boundary)]) {
+          partialLine = ProviderMaintenanceRunner.splitOutputLines(partialLine, chunk).partialLine;
+        }
+        assert.strictEqual(ProviderMaintenanceRunner.toProgressLine(partialLine), "last");
+      }
+    }
+    for (const incomplete of ["\u001b", "\u001b[", "\u001b[0", "\u001b[01"]) {
+      assert.strictEqual(ProviderMaintenanceRunner.toProgressLine(`progress${incomplete}`), null);
+    }
   });
 
   it.effect("aborts without running when the installation changed since the advisory", () => {
@@ -435,7 +674,7 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("0.0.0"),
+          layerLatestVersionHttpClient("1.0.0"),
           layerMockSpawner((command) => {
             calls.push(command);
             return { stdout: "updated" };
@@ -463,7 +702,7 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("0.0.0"),
+          layerLatestVersionHttpClient("1.0.0"),
           layerMockSpawner(() => ({
             stdout: "checking install\n",
             stderr: "Error: Could not detect the Codex installation method.\n\n",
@@ -471,6 +710,65 @@ describe("providerMaintenanceRunner", () => {
           })),
         ),
       ),
+    ),
+  );
+
+  it.effect("reports the updater's error rather than a trailing hint after it", () =>
+    Effect.forEach(
+      [
+        {
+          stdout: "Current version: 2.1.310\nChecking for updates to latest version...\n",
+          stderr: [
+            "Error: Failed to install native update",
+            "TelemetrySafeError: Failed to fetch version from https://downloads.claude.ai/claude-code-releases/latest after 3 attempt(s): Request failed with status code 403",
+            'Try running "claude doctor" for diagnostics',
+            "",
+          ].join("\n"),
+          reason: "Request failed with status code 403",
+          hint: "claude doctor",
+        },
+        {
+          stdout: "",
+          stderr: [
+            "Failed to check for updates",
+            "Unable to fetch latest version from npm registry",
+            "",
+            "Possible causes:",
+            "  • Network connectivity issues",
+            "  • npm registry is unreachable",
+            "  • Corporate proxy/firewall blocking npm",
+            "",
+            "Try:",
+            "  • Check your internet connection",
+            "  • Run with --debug flag for more details",
+            "  • Manually check: npm view @anthropic-ai/claude-code version",
+            "  • Check if you need to login: npm whoami",
+            "",
+          ].join("\n"),
+          reason: "Failed to check for updates",
+          hint: "npm whoami",
+        },
+      ],
+      ({ stdout, stderr, reason, hint }) =>
+        Effect.gen(function* () {
+          const { registry } = yield* makeRegistry(baseNativeCliProvider);
+          const updater = yield* makeTestRunner(registry);
+
+          const result = yield* updater.updateProvider(NATIVE_CLI_DRIVER);
+          const message = result.providers[0]?.updateState?.message ?? "";
+
+          assert.include(message, reason);
+          assert.notInclude(message, hint);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              layerNonWindowsPlatform,
+              layerLatestVersionHttpClient("0.0.0"),
+              layerMockSpawner(() => ({ stdout, stderr, code: 1 })),
+            ),
+          ),
+        ),
+      { discard: true },
     ),
   );
 
@@ -489,7 +787,7 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("0.0.0"),
+          layerLatestVersionHttpClient("1.0.0"),
           layerMockSpawner(() => ({ code: 1 })),
         ),
       ),
@@ -521,6 +819,41 @@ describe("providerMaintenanceRunner", () => {
         ),
       ),
   );
+
+  // A native updater such as `claude update` downloads a ~300 MB binary and
+  // prints nothing while it does. Killed mid-download, it leaves a truncated
+  // binary behind that later updates mistake for an install.
+  it.effect.each([
+    { runFor: "6 minutes", status: "succeeded", message: "Provider updated." },
+    { runFor: "31 minutes", status: "failed", message: "Update timed out after 30 minutes." },
+  ] as const)("lets a slow installer run for $runFor", ({ runFor, status, message }) => {
+    const started = Deferred.makeUnsafe<void>();
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseNativeCliProvider);
+      const updater = yield* makeTestRunner(registry);
+
+      const update = yield* updater.updateProvider(NATIVE_CLI_DRIVER).pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(runFor);
+      const result = yield* Fiber.join(update);
+
+      assert.strictEqual(result.providers[0]?.updateState?.status, status);
+      assert.strictEqual(result.providers[0]?.updateState?.message, message);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => ({
+            exitCode: Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.sleep(runFor)),
+              Effect.as(ChildProcessSpawner.ExitCode(0)),
+            ),
+          })),
+        ),
+      ),
+    );
+  });
 
   it.effect("prevents concurrent updates for the same provider", () => {
     const startedLatch: { resolve: () => void } = { resolve: () => {} };
@@ -554,7 +887,7 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("0.0.0"),
+          layerLatestVersionHttpClient("1.0.0"),
           layerMockSpawner(() => {
             startedLatch.resolve();
             return {
@@ -573,7 +906,9 @@ describe("providerMaintenanceRunner", () => {
     "releases the running-provider marker when interrupted after queuing but before the lock run starts",
     () =>
       Effect.gen(function* () {
-        const { registry } = yield* makeRegistry(baseProvider);
+        const { registry } = yield* makeRegistry(baseProvider, {
+          installedVersionAfterUpdate: "1.0.0",
+        });
         let blockQueuedState = true;
         const queuedStateWrittenLatch: { resolve: () => void } = { resolve: () => {} };
         const releaseQueuedStateLatch: { resolve: () => void } = { resolve: () => {} };
@@ -614,22 +949,38 @@ describe("providerMaintenanceRunner", () => {
         Effect.provide(
           Layer.mergeAll(
             layerNonWindowsPlatform,
-            layerLatestVersionHttpClient("0.0.0"),
+            layerLatestVersionHttpClient("1.0.0"),
             layerMockSpawner(() => ({ stdout: "updated" })),
           ),
         ),
       ),
   );
 
-  it.effect("resolves npm to a .cmd shim and routes through the shell on win32", () => {
+  it.effect("resolves npm to a .cmd shim from the provider's PATH on win32", () => {
     const captured: Array<{
       readonly command: string;
       readonly args: ReadonlyArray<string>;
       readonly shell: boolean | string | undefined;
+      readonly env: NodeJS.ProcessEnv | undefined;
     }> = [];
     return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry(baseProvider);
-      const runner = yield* makeTestRunner(registry);
+      const { registry } = yield* makeRegistry(baseProvider, {
+        installedVersionAfterUpdate: "1.0.0",
+      });
+      const runner = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@openai/codex",
+              updateExecutable: "npm",
+              updateArgs: ["install", "-g", "@openai/codex@latest"],
+              updateLockKey: "npm-global",
+              env: { PATH: "C:\\fake\\npm" },
+            }),
+          ),
+      });
 
       const result = yield* runner.updateProvider(CODEX_DRIVER);
 
@@ -642,31 +993,39 @@ describe("providerMaintenanceRunner", () => {
       );
       assert.deepEqual(call.args, []);
       assert.strictEqual(call.shell, true);
+      assert.deepStrictEqual(call.env, { PATH: "C:\\fake\\npm" });
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, "win32"),
+          // Only the provider's PATH has npm.
           Layer.succeed(HostProcess.Environment, {
-            PATH: "C:\\fake\\npm",
+            PATH: "C:\\Windows\\System32",
             PATHEXT: ".COM;.EXE;.BAT;.CMD",
           }),
-          Layer.succeed(SpawnExecutableResolution, (command) =>
-            command === "npm" ? "C:\\fake\\npm\\npm.cmd" : undefined,
+          Layer.succeed(SpawnExecutableResolution, (command, _platform, env) =>
+            command === "npm" && env.PATH === "C:\\fake\\npm"
+              ? "C:\\fake\\npm\\npm.cmd"
+              : undefined,
           ),
-          layerLatestVersionHttpClient("0.0.0"),
+          layerLatestVersionHttpClient("1.0.0"),
           Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
             ChildProcessSpawner.make((command) => {
               const childProcess = command as unknown as {
                 readonly command: string;
                 readonly args: ReadonlyArray<string>;
-                readonly options: { readonly shell?: boolean | string | undefined };
+                readonly options: {
+                  readonly shell?: boolean | string | undefined;
+                  readonly env?: NodeJS.ProcessEnv | undefined;
+                };
               };
               captured.push({
                 command: childProcess.command,
                 args: childProcess.args,
                 shell: childProcess.options.shell,
+                env: childProcess.options.env,
               });
               return Effect.succeed(mockHandle({ stdout: "updated" }));
             }),
@@ -678,6 +1037,12 @@ describe("providerMaintenanceRunner", () => {
 });
 
 it.effect.each([
+  {
+    mode: "default-precurrent",
+    version: "1.14.19",
+    installation: { installedVersion: "1.14.20" },
+    status: "succeeded",
+  },
   {
     mode: "default",
     version: "1.14.19",
@@ -691,8 +1056,14 @@ it.effect.each([
     status: "succeeded",
   },
   {
-    mode: "unknown",
+    mode: "targeted-current",
     version: "1.14.20",
+    installation: { installedVersion: "1.14.20" },
+    status: "succeeded",
+  },
+  {
+    mode: "unknown",
+    version: "1.14.19",
     installation: { installedVersion: null },
     status: "unchanged",
   },
@@ -725,6 +1096,14 @@ it.effect.each([
       const updater = yield* makeTestRunner(
         {
           ...registry,
+          refreshInstance: () =>
+            Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) => ({
+                ...provider,
+                ...(mode === "default-precurrent" ? installation : {}),
+                checkedAt: "2026-04-10T00:00:01.000Z",
+              })),
+            ),
           getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(pinnedCapabilities),
           refreshAfterUpdate: () =>
             Effect.gen(function* () {
@@ -749,17 +1128,27 @@ it.effect.each([
 
       const result = yield* updater.updateProvider({
         provider: OPENCODE_DRIVER,
-        ...(mode === "default" ? {} : { targetVersion: "1.14.20" }),
+        ...(mode.startsWith("default") ? {} : { targetVersion: "1.14.20" }),
       });
 
-      assert.deepStrictEqual(calls, [
-        `npm install -g opencode-ai@${mode === "default" ? "latest" : "1.14.20"}`,
-      ]);
+      assert.deepStrictEqual(
+        calls,
+        mode === "default-precurrent"
+          ? []
+          : [`npm install -g opencode-ai@${mode.startsWith("default") ? "latest" : "1.14.20"}`],
+      );
       const provider = result.providers[0];
       assert.ok(provider);
       assert.strictEqual(provider.updateState?.status, status);
+      if (mode === "default" || mode === "default-precurrent" || mode === "targeted") {
+        assert.strictEqual(
+          provider.updateState?.message,
+          "OpenCode CLI updated. Restart the configured local OpenCode server to use the new version.",
+        );
+      }
       assert.strictEqual(provider.version, version);
       assert.strictEqual("installedVersion" in provider, mode !== "legacy");
+      if (mode === "default-precurrent") return;
       assert.strictEqual(
         provider.versionAdvisory?.status,
         mode === "unknown" ? "unknown" : "current",
@@ -788,7 +1177,7 @@ it.effect(
   "uses fresh installer versions for post-update verification and compatibility checks",
   () => {
     const calls: string[] = [];
-    let latest = "1.0.0";
+    let latest = "2.0.0";
     const manifest: ModelManifest.ModelManifestData = {
       version: 1,
       currentModels: {},

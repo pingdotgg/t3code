@@ -9,6 +9,7 @@ import type {
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import { cloneUrlRepositoryPath } from "@t3tools/shared/cloneUrl";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
@@ -18,6 +19,7 @@ import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
   findProjectByPath,
+  getBrowseParentPath,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
   isUnsupportedWindowsProjectPath,
@@ -25,7 +27,7 @@ import {
 } from "../state/projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 import { sourceControlClients } from "../sourceControlClients.ts";
-import type { SourceControlClientDefinition } from "../sourceControlClients.ts";
+import type { SourceControlDefinition } from "../sourceControlClients.ts";
 
 export type AddProjectRemoteSource = SourceControlProviderKind | "url";
 
@@ -91,14 +93,44 @@ export function parseAddProjectRemoteSource(
   return (value ? sourceControlClients.find(value)?.kind : undefined) ?? "url";
 }
 
-const GITHUB_REPOSITORY_SHORTHAND =
-  /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?$/;
+const REPOSITORY_SHORTHAND = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?$/;
+
+/**
+ * The clone URL of `owner/name` on the public host of the host a repository reads as before it
+ * reports one. Null when that host has no public host.
+ */
+export function defaultHostCloneUrl(repository: string): string | null {
+  const definition = sourceControlClients.get(undefined);
+  if (definition.publicHost === null) return null;
+  const path = repository.endsWith(".git") ? repository : `${repository}.git`;
+  return definition.defaultCloneTransport === "https"
+    ? `https://${definition.publicHost}/${path}`
+    : `git@${definition.publicHost}:${path}`;
+}
+
+/** Owner present, repository name missing: `owner/` or `owner//`. */
+const INCOMPLETE_GITHUB_OWNER_PATH = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})\/+$/;
+
+const INCOMPLETE_GITHUB_OWNER_REPOSITORY_MESSAGE = "Enter the full owner/repository name.";
+
+/**
+ * Message to show when a GitHub add-project field is only `owner/`.
+ * Lookup would send that to GitHub and come back as a generic failure.
+ * Returns null for complete names, bare repo names, URLs, and other sources.
+ */
+export function githubIncompleteOwnerRepositoryMessage(
+  source: AddProjectRemoteSource,
+  input: string,
+): string | null {
+  if (source !== "github") return null;
+  if (!INCOMPLETE_GITHUB_OWNER_PATH.test(input.trim())) return null;
+  return INCOMPLETE_GITHUB_OWNER_REPOSITORY_MESSAGE;
+}
 
 export function normalizePastedCloneUrl(input: string): string {
   const trimmed = input.trim();
-  if (!GITHUB_REPOSITORY_SHORTHAND.test(trimmed)) return trimmed;
-  const repository = trimmed.endsWith(".git") ? trimmed : `${trimmed}.git`;
-  return `https://github.com/${repository}`;
+  if (REPOSITORY_SHORTHAND.test(trimmed)) return defaultHostCloneUrl(trimmed) ?? trimmed;
+  return sourceControlClients.repositoryUrlFromPage(trimmed) ?? trimmed;
 }
 
 export function getDefaultCloneUrl(
@@ -178,6 +210,26 @@ export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | und
   return lastSegment.endsWith(".git") ? lastSegment.slice(0, -".git".length) : lastSegment;
 }
 
+/** The folder a clone gets below its base: `<repo>`, or `<host>/<owner>/<repo>` like ghq. */
+export function getCloneDirectoryPath(
+  remoteUrl: string,
+  ghqCloneLayout: boolean,
+  repository = remoteUrl,
+): string {
+  return (
+    (ghqCloneLayout ? cloneUrlRepositoryPath(remoteUrl) : null) ?? getCloneDirectoryName(repository)
+  );
+}
+
+/** The clone's own folder, which folder browsing keeps at the end of the destination. */
+export function getCloneDirectoryLeafName(
+  remoteUrl: string,
+  ghqCloneLayout: boolean,
+  repository = remoteUrl,
+): string {
+  return getCloneDirectoryPath(remoteUrl, ghqCloneLayout, repository).split("/").at(-1) ?? "";
+}
+
 export function getCloneDestinationPath(
   directoryPath: string,
   directoryName: string | null | undefined,
@@ -186,7 +238,8 @@ export function getCloneDestinationPath(
   if (name.length === 0) {
     return directoryPath;
   }
-  return `${ensureBrowseDirectoryPath(directoryPath)}${name}`;
+  const base = ensureBrowseDirectoryPath(directoryPath);
+  return `${base}${base.endsWith("\\") ? name.replaceAll("/", "\\") : name}`;
 }
 
 export function getNewProjectPathPreview(newProjectsRoot: string, name: string): string {
@@ -194,7 +247,7 @@ export function getNewProjectPathPreview(newProjectsRoot: string, name: string):
 }
 
 export interface NewProjectPublishTarget {
-  readonly definition: SourceControlClientDefinition;
+  readonly definition: SourceControlDefinition;
   readonly owner: string | null;
 }
 
@@ -245,6 +298,26 @@ export function getCloneDestinationBrowsePath(input: {
   return selectedDirectoryMatches
     ? selectedDirectoryPath
     : getCloneDestinationPath(selectedDirectoryPath, input.cloneDirectoryName);
+}
+
+// The native picker returns a full path, not a name under the browsed directory.
+// Split it and reuse the in-app rules so a folder already named after the
+// repository stays that folder instead of becoming repo/repo.
+export function getCloneDestinationForPickedFolder(input: {
+  readonly pickedPath: string;
+  readonly cloneDirectoryName: string;
+  readonly caseSensitive: boolean;
+}): string {
+  const parentPath = getBrowseParentPath(input.pickedPath);
+  if (parentPath === null) {
+    return getCloneDestinationPath(input.pickedPath, input.cloneDirectoryName);
+  }
+  return getCloneDestinationBrowsePath({
+    browseDirectoryPath: parentPath,
+    selectedDirectoryName: inferProjectTitleFromPath(input.pickedPath),
+    cloneDirectoryName: input.cloneDirectoryName,
+    caseSensitive: input.caseSensitive,
+  });
 }
 
 export function resolveAddProjectPath(input: {

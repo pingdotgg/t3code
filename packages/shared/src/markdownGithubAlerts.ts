@@ -20,9 +20,7 @@ function readGithubAlert(node: MarkdownAstNode): void {
   if (!match?.[1]) return;
 
   const remainder = text.value.slice(match[0].length);
-  // Whether the marker's own line ended inside this text node. Without it, an empty remainder
-  // is ambiguous: `[!NOTE]\n**bold**` parses as [text "[!NOTE]\n", strong] — next-line content
-  // in a sibling — while `[!NOTE]*aside*` parses the same way minus the newline.
+  // An empty remainder may have next-line sibling content; preserve whether the marker ended its line.
   const markerEndsItsLine = match[0].endsWith("\n");
   if (remainder.length > 0) {
     text.value = remainder;

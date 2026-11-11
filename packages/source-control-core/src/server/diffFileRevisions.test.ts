@@ -181,8 +181,6 @@ describe("parseDiffFileRevisions", () => {
   });
 
   it("keeps a character from outside the basic plane that git left unescaped", () => {
-    // `core.quotePath` off leaves the name's own bytes in place, and git still quotes the header
-    // for the tab. Encoding what it left one unit at a time would split the pair into two halves.
     const revisions = parseDiffFileRevisions(
       patchOf(
         'diff --git "a/we\\tird-\u{1f680}.ts" "b/we\\tird-\u{1f680}.ts"',

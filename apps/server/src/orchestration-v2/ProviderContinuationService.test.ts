@@ -178,9 +178,6 @@ describe("ProviderContinuationService", () => {
           readonly text: string;
           readonly notification: OrchestrationV2Notification;
         };
-        // An app-owned child buffers nothing in the adapter, so this text is
-        // the whole wake. Marking it "provider" would make ClaudeAdapterV2
-        // drop it and settle the turn having prompted nothing.
         assert.notEqual(command.creationSource, "provider");
         assert.equal(command.creationSource, "server");
         assert.equal(command.text, "Delegated task completed.");
@@ -251,12 +248,12 @@ describe("ProviderContinuationService", () => {
   });
 
   it.effect(
-    "a project-disabled instance refuses a delegated-completion wake exactly once, acknowledges it, and never retries",
+    "a project-disabled instance refuses a delegated-completion wake exactly once, disposes it, and never retries",
     () => {
       return Effect.gen(function* () {
         const attempts = yield* Ref.make(0);
         const cleared = yield* Ref.make(false);
-        const acknowledged = yield* Queue.unbounded<unknown>();
+        const disposed = yield* Queue.unbounded<unknown>();
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () => Effect.succeed(delegatedProjection()),
           dispatch: (command) => {
@@ -274,7 +271,7 @@ describe("ProviderContinuationService", () => {
                 ),
               );
             }
-            return Queue.offer(acknowledged, command).pipe(Effect.as({} as never));
+            return Queue.offer(disposed, command).pipe(Effect.as({} as never));
           },
         });
         const layerWorker = ProviderContinuationService.layer.pipe(
@@ -302,24 +299,22 @@ describe("ProviderContinuationService", () => {
           assert.equal(yield* Ref.get(attempts), 1);
           assert.isTrue(yield* Ref.get(cleared));
 
-          const acknowledgements = (yield* Queue.takeAll(acknowledged)) as ReadonlyArray<{
+          const dispositions = (yield* Queue.takeAll(disposed)) as ReadonlyArray<{
             type: string;
             taskId: string;
-            observedByRunId: string | null;
           }>;
           assert.deepEqual(
-            acknowledgements.map((command) => command.taskId),
+            dispositions.map((command) => command.taskId),
             ["node-provider-continuation-first", "node-provider-continuation-second"],
           );
-          for (const command of acknowledgements) {
-            assert.equal(command.type, "delegated_task.completion-delivery.acknowledge");
-            assert.isNull(command.observedByRunId);
+          for (const command of dispositions) {
+            assert.equal(command.type, "delegated_task.completion-delivery.dispose");
           }
 
           yield* TestClock.adjust("1 hour");
           yield* Effect.yieldNow;
           assert.equal(yield* Ref.get(attempts), 1);
-          assert.equal(yield* Queue.size(acknowledged), 0);
+          assert.equal(yield* Queue.size(disposed), 0);
         }).pipe(
           Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
           Effect.scoped,
@@ -349,11 +344,7 @@ describe("ProviderContinuationService", () => {
           ),
         );
 
-        // Mirrors the ACP adapter's own dispatchIfCurrent: on a failed effect
-        // it clears its sticky "continuation requested" flag before
-        // re-raising. If this service pre-recovered the failure before
-        // handing the effect here, this flag would stay stuck set and
-        // hasPendingBackgroundWork would never clear.
+        // ACP clears its sticky continuation flag on raw dispatch failure; pre-recovery would prevent that cleanup.
         const dispatchIfCurrent = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
           Effect.gen(function* () {
             const exit = yield* Effect.exit(effect);
@@ -402,11 +393,7 @@ describe("ProviderContinuationService", () => {
           ),
         );
 
-        // Mirrors the Muse adapter: dispatchIfCurrent forwards the dispatch
-        // effect without any failure handling of its own (unlike ACP or Pi),
-        // so only the explicit clearIfCurrent callback can clear the sticky
-        // "wake held" flag. Without it, a disabled instance leaves the flag
-        // set forever and no later background turn is ever offered.
+        // Muse forwards dispatch failures unchanged; clearIfCurrent must release its sticky wake flag.
         const dispatchIfCurrent = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
           Effect.asSome(effect);
 

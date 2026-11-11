@@ -11,6 +11,7 @@ import type { CursorSettings } from "../settings.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import { cursorSdkModelSelection } from "./sdkModel.ts";
 import type { CursorAuth } from "./auth.ts";
+import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -23,17 +24,15 @@ function cursorSdkResultDetail(result: RunResult): string {
     case "cancelled":
       return "Cursor SDK request was cancelled.";
     case "error":
-      return "Cursor SDK request finished with an error.";
+      return CursorAgentSdk.isCursorUsageLimitError(result.error)
+        ? "Cursor usage limit reached. Try again later or choose another text-generation provider."
+        : "Cursor SDK request finished with an error.";
     case "finished":
       return "Cursor SDK returned empty output.";
   }
 }
 
-/**
- * The SDK throws this when `sandboxOptions.enabled` is set and local sandboxing
- * is unavailable. That happens on hosts that cannot launch `cursorsandbox`, and
- * also after an unsandboxed run caches "unsupported" for the process.
- */
+// Sandboxing fails without cursorsandbox or after a process-wide unsupported result.
 function cursorSandboxUnsupported(cause: unknown): boolean {
   const seen = new Set<object>();
   let current = cause;
@@ -54,7 +53,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   withAccess?: CursorAuth["withAccess"],
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const { Agent, SqliteLocalAgentStore } = yield* CursorSdk.CursorSdk;
+  const sdk = yield* CursorSdk.CursorSdk;
   const resolvedEnvironment = environment ?? process.env;
 
   const resolveCursorApiKey = Effect.fn("CursorTextGeneration.resolveCursorApiKey")(function* (
@@ -87,8 +86,13 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       const { operation, prompt, modelSelection } = input;
 
       const apiKey = yield* resolveCursorApiKey(operation);
-      // The SDK loads sandbox.json independently of settingSources and lets it
-      // expand the writable paths. Its public API cannot override that policy.
+      const sdkFailure = (detail: string) => (cause: unknown) =>
+        new TextGenerationError({ operation, detail, cause });
+      const { Agent } = yield* Effect.try({
+        try: sdk.load,
+        catch: sdkFailure("Cursor SDK could not be loaded."),
+      });
+      // sandbox.json expands writable paths independently of settingSources; the public API cannot override it.
       if (yield* fs.exists(`${yield* HostProcess.HomeDirectory}/.cursor/sandbox.json`)) {
         return yield* new TextGenerationError({
           operation,
@@ -97,13 +101,18 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         });
       }
       const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-text-" });
-      // The SDK keeps SQLite handles open after `agent.close()` and only releases
-      // them from a store the caller disposes. Its state lives outside `cwd` so the
-      // agent's workspace stays empty.
+      // Only store disposal releases SDK SQLite handles; keep state outside the empty workspace.
       const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-text-state-" });
       const store = yield* Effect.acquireRelease(
-        Effect.tryPromise(() => SqliteLocalAgentStore.open({ workspaceRef: cwd, stateRoot })),
-        (store) => Effect.tryPromise(() => store.dispose()).pipe(Effect.ignore({ log: true })),
+        Effect.tryPromise({
+          try: () => sdk.loadSqlite().SqliteLocalAgentStore.open({ workspaceRef: cwd, stateRoot }),
+          catch: sdkFailure("Cursor SDK agent store could not be opened."),
+        }),
+        (store) =>
+          Effect.tryPromise({
+            try: () => store.dispose(),
+            catch: sdkFailure("Cursor SDK agent store could not be disposed."),
+          }).pipe(Effect.ignore({ log: true })),
       );
       const agentOptions = {
         apiKey,
@@ -119,52 +128,58 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         },
       } satisfies AgentOptions;
       const createCursorAgent = (sandboxEnabled: boolean) =>
-        Effect.tryPromise((signal) =>
-          Agent.create(
-            sandboxEnabled
-              ? agentOptions
-              : {
-                  ...agentOptions,
-                  local: {
-                    ...agentOptions.local,
-                    sandboxOptions: { enabled: false },
+        Effect.tryPromise({
+          try: (signal) =>
+            Agent.create(
+              sandboxEnabled
+                ? agentOptions
+                : {
+                    ...agentOptions,
+                    local: {
+                      ...agentOptions.local,
+                      sandboxOptions: { enabled: false },
+                    },
                   },
-                },
-          ).then((agent) => {
-            if (signal.aborted) agent.close();
-            return agent;
-          }),
-        );
+            ).then((agent) => {
+              if (signal.aborted) agent.close();
+              return agent;
+            }),
+          catch: sdkFailure("Cursor SDK agent could not be created."),
+        });
 
       const request = Effect.gen(function* () {
-        // When the SDK refuses it, the empty temp directory and empty setting
-        // sources still keep this run off the user's project.
+        // Empty cwd and setting sources isolate the run from user projects even if sandboxing fails.
         const agent = yield* Effect.acquireRelease(
           createCursorAgent(true).pipe(
             Effect.catchIf(cursorSandboxUnsupported, () => createCursorAgent(false)),
           ),
           (agent) =>
-            Effect.tryPromise(() => agent[Symbol.asyncDispose]()).pipe(
-              Effect.timeout("5 seconds"),
-              Effect.ignore({ log: true }),
-            ),
+            Effect.tryPromise({
+              try: () => agent[Symbol.asyncDispose](),
+              catch: sdkFailure("Cursor SDK agent could not be disposed."),
+            }).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
           { interruptible: true },
         );
-        const run = yield* Effect.tryPromise((signal) =>
-          agent.send(prompt).then((run) => {
-            if (signal.aborted) void run.cancel().catch(() => undefined);
-            return run;
-          }),
-        );
+        const run = yield* Effect.tryPromise({
+          try: (signal) =>
+            agent.send(prompt).then((run) => {
+              if (signal.aborted) void run.cancel().catch(() => undefined);
+              return run;
+            }),
+          catch: sdkFailure("Cursor SDK request could not be sent."),
+        });
         yield* Effect.addFinalizer(() =>
           run.status === "running"
-            ? Effect.tryPromise(() => run.cancel()).pipe(
-                Effect.timeout("5 seconds"),
-                Effect.ignore({ log: true }),
-              )
+            ? Effect.tryPromise({
+                try: () => run.cancel(),
+                catch: sdkFailure("Cursor SDK run could not be cancelled."),
+              }).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }))
             : Effect.void,
         );
-        return yield* Effect.tryPromise(() => run.wait());
+        return yield* Effect.tryPromise({
+          try: () => run.wait(),
+          catch: sdkFailure("Cursor SDK run failed."),
+        });
       }).pipe(Effect.scoped);
       const promptResult = yield* request.pipe(
         Effect.timeoutOption(CURSOR_TIMEOUT_MS),
@@ -187,6 +202,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         return yield* new TextGenerationError({
           operation,
           detail: cursorSdkResultDetail(promptResult),
+          ...(promptResult.error ? { cause: promptResult.error } : {}),
         });
       }
 

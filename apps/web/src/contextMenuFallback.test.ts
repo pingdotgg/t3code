@@ -191,6 +191,8 @@ beforeEach(() => {
   vi.stubGlobal("window", {
     innerWidth: 1280,
     innerHeight: 800,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
   });
   vi.stubGlobal("requestAnimationFrame", (callback: (time: number) => void) => {
     callback(0);
@@ -237,7 +239,7 @@ describe("showContextMenuFallback", () => {
   });
 
   it("opens a submenu that would overflow the viewport to the left of its parent menu", () => {
-    vi.stubGlobal("window", { innerWidth: 400, innerHeight: 800 });
+    vi.stubGlobal("window", { ...window, innerWidth: 400, innerHeight: 800 });
 
     void showContextMenuFallback(
       [
@@ -256,5 +258,13 @@ describe("showContextMenuFallback", () => {
     const parent = trigger?.parent?.parent?.getBoundingClientRect();
     const submenu = findButton("Terminal 1")?.parent?.parent?.getBoundingClientRect();
     expect(submenu!.right).toBeLessThanOrEqual(parent!.left);
+  });
+
+  it("shows an item's detail beside its label and reads both to screen readers", () => {
+    void showContextMenuFallback([{ id: "snooze:hour", label: "In 1 hour", detail: "3:00 PM" }]);
+    const button = findButton("In 1 hour");
+
+    expect(button?.textContent).toBe("In 1 hour3:00 PM");
+    expect(button?.attributes.get("aria-label")).toBe("In 1 hour, 3:00 PM");
   });
 });

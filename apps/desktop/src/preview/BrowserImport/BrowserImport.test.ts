@@ -6,6 +6,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import * as BrowserSession from "../BrowserSession.ts";
+import { readManagedPolicyFile } from "@t3tools/shared/managedPolicyFile";
+import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as BrowserImport from "./BrowserImport.ts";
 import { BROWSER_IMPORT_SOURCES, sourcePathContext } from "./Sources.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -46,14 +48,13 @@ const withImporter = Effect.fnUntraced(function* () {
   const root = helium.userDataDirectory(context);
   if (root === undefined) throw new Error("Helium has no macOS user-data directory");
   yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
-  // The cookie database is what marks a source as installed, so a fixture
-  // without one is reported as absent before any other check runs.
   yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "db");
 
   const importer = yield* BrowserImport.BrowserImport.pipe(
     Effect.provide(
       BrowserImport.layer.pipe(
         Layer.provide(layerRejectedBeforeSession),
+        Layer.provide(DesktopManagedPolicy.layerTest()),
         Layer.provide(layerEnvironment),
         Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
         Layer.provide(Layer.succeed(HostProcess.ExecutablePath, "/Applications/T3 Code.app")),
@@ -96,8 +97,6 @@ describe("BrowserImport.importCookies", () => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const { importer, root } = yield* withImporter();
-        // The lock Chromium leaves while it is running, dangling target and
-        // all. This must stop the import before it ever asks the keychain.
         yield* fileSystem.symlink("host-that-does-not-exist-1234", `${root}/SingletonLock`);
 
         const error = yield* importer
@@ -112,8 +111,43 @@ describe("BrowserImport.importCookies", () => {
           })
           .pipe(Effect.flip);
 
+        assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
         assert.equal(error.reason, "browserRunning");
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
+describe("BrowserImport.checkBrowserImportPolicy", () => {
+  it.effect("allows imports unless a readable policy turns them off, and fails closed", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-import-policy-" });
+      const outcome = (contents: string | undefined) =>
+        Effect.gen(function* () {
+          const policyPath = `${dir}/policy.json`;
+          yield* fileSystem.remove(policyPath, { force: true });
+          if (contents !== undefined) yield* fileSystem.writeFileString(policyPath, contents);
+          const readPolicy = readManagedPolicyFile(policyPath).pipe(
+            Effect.map((document) => document && { source: policyPath, document }),
+          );
+          return yield* BrowserImport.checkBrowserImportPolicy(readPolicy).pipe(
+            Effect.match({ onFailure: (error) => error.message, onSuccess: () => "allowed" }),
+          );
+        });
+      const policy = (limits?: object) =>
+        JSON.stringify({ schemaVersion: 1, organization: "Example Corp", limits });
+
+      assert.equal(yield* outcome(undefined), "allowed");
+      assert.equal(yield* outcome(policy()), "allowed");
+      assert.equal(yield* outcome(policy({ browserCookieImport: true })), "allowed");
+      assert.equal(
+        yield* outcome(policy({ browserCookieImport: false })),
+        "Example Corp's policy does not allow importing browser cookies.",
+      );
+      for (const unreadable of ["{ not json", policy({ notALimit: false })]) {
+        assert.include(yield* outcome(unreadable), "could not be read");
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

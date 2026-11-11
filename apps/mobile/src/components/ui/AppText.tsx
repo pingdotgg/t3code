@@ -16,10 +16,6 @@ export type AppTextProps = RNTextProps & {
   readonly textRole?: keyof typeof MOBILE_TEXT_CLASSES;
 };
 
-/**
- * Thin wrapper around RN Text with default font-family and foreground color.
- * Uses Uniwind className — no manual style parsing.
- */
 export function AppText({ className, textRole, ...props }: AppTextProps) {
   return (
     <RNText
