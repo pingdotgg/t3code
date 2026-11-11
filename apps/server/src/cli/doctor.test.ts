@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as BootService from "../cloud/bootService.ts";
@@ -115,6 +116,96 @@ it.effect(
       );
       assert.deepEqual(calls, ["pause", "resume"]);
     }).pipe(Effect.provide(layerHost)),
+);
+
+it.effect("--fix repairs while the paused service is enabled and older than 0.1.0", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-doctor-service-" });
+    const t3Home = path.join(root, ".t3");
+    yield* fs.makeDirectory(path.join(t3Home, "userdata"), { recursive: true });
+    yield* fs.makeDirectory(path.join(t3Home, "runtime"));
+    yield* fs.writeFileString(
+      path.join(t3Home, "runtime", "service-state.json"),
+      JSON.stringify({ protocol: 3, activeVersion: "0.0.42" }),
+    );
+    const unitPath = path.join(root, ".config", "systemd", "user", "t3code.service");
+    yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
+    yield* fs.writeFileString(
+      unitPath,
+      BootService.renderBootServiceUnit({ program: [], baseDir: t3Home, logPath: "", unitPath }),
+    );
+    const systemctl: Record<string, { readonly code: number; readonly stdout: string }> = {
+      "is-active": { code: 3, stdout: "inactive\n" },
+      "is-enabled": { code: 0, stdout: "enabled\n" },
+    };
+    const calls: string[] = [];
+    yield* runDoctor(
+      {
+        dbPath: path.join(t3Home, "userdata", "statev2.sqlite"),
+        serverRuntimeStatePath: path.join(t3Home, "userdata", "server-runtime.json"),
+      },
+      { fix: true, dryRun: false, interactive: false },
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(BootService.BootService)({ withStopped: (operation) => operation }),
+          Layer.succeed(DatabaseMaintenance, {
+            inspect: () =>
+              Effect.succeed({
+                databaseBytes: 2000,
+                reclaimableBytes: 1000,
+                incrementalVacuumEnabled: false,
+                legacyDatabaseBytes: null,
+              }),
+            compact: () =>
+              Effect.sync(() => {
+                calls.push("compact");
+                return {
+                  beforeBytes: 2000,
+                  afterBytes: 1000,
+                  deletedEventCount: 0,
+                  deletedReceiptCount: 0,
+                };
+              }),
+            removeLegacyDatabase: () => Effect.void,
+          }),
+        ),
+      ),
+      Effect.provideService(
+        ProcessRunner.ProcessRunner,
+        ProcessRunner.ProcessRunner.of({
+          run: (run) => {
+            const output = systemctl[run.args.find((arg) => !arg.startsWith("--")) ?? ""];
+            return output === undefined
+              ? Effect.fail(
+                  new ProcessRunner.ProcessSpawnError({
+                    command: run.command,
+                    argumentCount: run.args.length,
+                    cause: new Error("not found"),
+                  }),
+                )
+              : Effect.succeed({
+                  stdout: output.stdout,
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(output.code),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                });
+          },
+        }),
+      ),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.UserId, 501),
+      Effect.provideService(HostProcess.HomeDirectory, root),
+      Effect.provideService(HostProcess.Environment, {}),
+    );
+    assert.deepEqual(calls, ["compact"]);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("warns how long reclaiming can take and reports each step with its elapsed time", () =>

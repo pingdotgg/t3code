@@ -8,7 +8,6 @@ import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
 import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
-import * as ProcessRunner from "../processRunner.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
@@ -34,11 +33,12 @@ const COMPACT_STEP_LABELS: Record<DatabaseMaintenance.DatabaseCompactStep, strin
 };
 
 // Holding the server lock refuses a server launched mid-repair, such as one started over SSH.
+// Lock only: acquireServerOwnership would also refuse the older service doctor just stopped.
 const lockServerHome = Effect.fn("runDoctor.lockServerHome")(function* (paths: {
   readonly dbPath: string;
   readonly serverRuntimeStatePath: string;
 }) {
-  yield* ServerOwnership.acquireServerOwnership(paths.serverRuntimeStatePath).pipe(
+  yield* ServerOwnership.holdServerOwnershipLock(paths.serverRuntimeStatePath).pipe(
     Effect.catchTags({
       ServerAlreadyRunningError: Effect.fn("runDoctor.nameServerHolder")(function* (cause) {
         const owner = yield* readPersistedServerRuntimeState(paths.serverRuntimeStatePath).pipe(
@@ -194,9 +194,7 @@ export const doctorCommand = Command.make("doctor", {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
       yield* runDoctor(config, { fix: flags.fix, dryRun: flags.dryRun }).pipe(
-        Effect.provide(
-          Layer.mergeAll(DatabaseMaintenance.layer, CliService.layer(config), ProcessRunner.layer),
-        ),
+        Effect.provide(Layer.merge(DatabaseMaintenance.layer, CliService.layer(config))),
       );
     }),
   ),
