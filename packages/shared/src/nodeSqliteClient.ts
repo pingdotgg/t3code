@@ -217,7 +217,6 @@ try {
   db = next;
   if (workerData.admission !== undefined && typeof db.setAuthorizer === "function") {
     admission = {
-      control: new Int32Array(workerData.admission.control),
       writes: new WeakMap(),
       preparing: undefined,
       sizeLimit: db.prepare("PRAGMA journal_size_limit"),
@@ -226,15 +225,25 @@ try {
       checkpoint: db.prepare("PRAGMA wal_checkpoint(PASSIVE)"),
       truncate: db.prepare("PRAGMA wal_checkpoint(TRUNCATE)"),
     };
-    db.setAuthorizer((code, action) => {
+    // Same classification as the main-thread writer's checkpoint admission.
+    const valuePragmas = new Set(["application_id", "auto_vacuum", "journal_mode", "schema_version", "user_version"]);
+    const mutatesPragma = (name, value) => {
+      const pragma = name === null ? undefined : name.toLowerCase();
+      if (pragma === undefined) return false;
+      if (pragma === "incremental_vacuum" || pragma === "optimize") return true;
+      if (pragma === "wal_checkpoint") return value === null || value.toLowerCase() !== "noop";
+      return value !== null && valuePragmas.has(pragma);
+    };
+    db.setAuthorizer((code, action, argument) => {
       const writes =
         code === constants.SQLITE_TRANSACTION || code === constants.SQLITE_SAVEPOINT
           ? action === "BEGIN"
-          : code !== constants.SQLITE_READ &&
-            code !== constants.SQLITE_SELECT &&
-            code !== constants.SQLITE_FUNCTION &&
-            code !== constants.SQLITE_RECURSIVE &&
-            code !== constants.SQLITE_PRAGMA;
+          : code === constants.SQLITE_PRAGMA
+            ? mutatesPragma(action, argument)
+            : code !== constants.SQLITE_READ &&
+              code !== constants.SQLITE_SELECT &&
+              code !== constants.SQLITE_FUNCTION &&
+              code !== constants.SQLITE_RECURSIVE;
       if (writes && admission.preparing !== undefined) admission.preparing.writes = true;
       return constants.SQLITE_OK;
     });
@@ -264,32 +273,28 @@ const walBytes = () => {
   }
 };
 // Mirrors the checkpoint worker's admission: a write waits while the WAL is over its bound and
-// a pinned reader keeps checkpoints from shrinking it. Blocking here leaves the event loop free.
-const admit = () => {
-  const { control } = admission;
-  const { backpressureFrames, idleMs } = workerData.admission;
-  while (Atomics.load(control, 0) === 0) {
+// a pinned reader keeps checkpoints from shrinking it. The wait polls, so it can be cancelled.
+const admitted = () => {
+  const { backpressureFrames } = workerData.admission;
+  for (let attempt = 0; attempt < 2; attempt++) {
     const limit = Number(admission.sizeLimit.get().journal_size_limit);
     const frameBytes = Number(admission.pageSize.get().page_size) + 24;
     const size = walBytes();
     const oversized = limit >= 0 && size > limit;
-    if (!oversized && size < backpressureFrames * frameBytes) return;
+    if (!oversized && size < backpressureFrames * frameBytes) return true;
     const state = admission.checkpoint.get();
-    if (!oversized && state.log < backpressureFrames) return;
-    if (state.checkpointed === state.log) {
-      const timeout = Number(admission.busyTimeout.get().timeout);
-      // A pinned reader must not make truncation wait; retry after the idle delay instead.
-      db.exec("PRAGMA busy_timeout = 0;");
-      let busy;
-      try {
-        busy = admission.truncate.get().busy !== 0;
-      } finally {
-        db.exec("PRAGMA busy_timeout = " + timeout + ";");
-      }
-      if (!busy) continue;
+    if (!oversized && state.log < backpressureFrames) return true;
+    if (state.checkpointed !== state.log) return false;
+    const timeout = Number(admission.busyTimeout.get().timeout);
+    // A pinned reader must not make truncation wait; retry after the idle delay instead.
+    db.exec("PRAGMA busy_timeout = 0;");
+    try {
+      if (admission.truncate.get().busy !== 0) return false;
+    } finally {
+      db.exec("PRAGMA busy_timeout = " + timeout + ";");
     }
-    Atomics.wait(control, 0, 0, idleMs);
   }
+  return false;
 };
 const prepare = (sql, cached) => {
   if (!cached) return prepareClassified(sql);
@@ -303,19 +308,38 @@ const prepare = (sql, cached) => {
   statements.set(sql, statement);
   return statement;
 };
-parentPort.on("message", ({ type, id, sql, params, cached, values, raw, safeIntegers }) => {
-  if (type === "close") {
-    if (db !== undefined) db.close();
-    parentPort.close();
-    return;
-  }
+const reply = (id, operation, error) =>
+  parentPort.postMessage({
+    id,
+    error: {
+      operation,
+      message: String(error && error.message ? error.message : error),
+      code: error && error.code,
+      errcode: error && error.errcode,
+      errstr: error && error.errstr,
+    },
+  });
+let waiting;
+const backlog = [];
+const run = (request) => {
+  const { id, sql, params, cached, values, raw, safeIntegers } = request;
   let operation = "open";
   try {
     if (db === undefined) throw new Error("database reader is unavailable");
     operation = "prepare";
     const statement = prepare(sql, cached);
     operation = "execute";
-    if (admission !== undefined && admission.writes.get(statement) && !db.isTransaction) admit();
+    if (admission !== undefined && admission.writes.get(statement) && !db.isTransaction && !admitted()) {
+      waiting = {
+        id,
+        timer: setTimeout(() => {
+          waiting = undefined;
+          run(request);
+          while (waiting === undefined && backlog.length > 0) run(backlog.shift());
+        }, workerData.admission.idleMs),
+      };
+      return;
+    }
     statement.setReadBigInts(safeIntegers);
     if (statement.columns().length > 0) {
       statement.setReturnArrays(values);
@@ -325,17 +349,38 @@ parentPort.on("message", ({ type, id, sql, params, cached, values, raw, safeInte
       parentPort.postMessage({ id, rows: raw ? result : [] });
     }
   } catch (error) {
-    parentPort.postMessage({
-      id,
-      error: {
-        operation,
-        message: String(error && error.message ? error.message : error),
-        code: error && error.code,
-        errcode: error && error.errcode,
-        errstr: error && error.errstr,
-      },
-    });
+    reply(id, operation, error);
   }
+};
+const stopWaiting = (message) => {
+  if (waiting === undefined) return false;
+  clearTimeout(waiting.timer);
+  reply(waiting.id, "execute", message);
+  waiting = undefined;
+  return true;
+};
+parentPort.on("message", (request) => {
+  if (request.type === "close") {
+    stopWaiting("Database writer closed");
+    for (const queued of backlog) reply(queued.id, "execute", "Database writer closed");
+    if (db !== undefined) db.close();
+    parentPort.close();
+    return;
+  }
+  if (request.type === "cancel") {
+    // A request that is not waiting has already run; its reply is on the way.
+    const queued = backlog.findIndex((entry) => entry.id === request.id);
+    if (queued !== -1) {
+      reply(request.id, "execute", "Statement cancelled before it ran");
+      backlog.splice(queued, 1);
+    } else if (waiting !== undefined && waiting.id === request.id) {
+      stopWaiting("Statement cancelled before it ran");
+      while (waiting === undefined && backlog.length > 0) run(backlog.shift());
+    }
+    return;
+  }
+  if (waiting !== undefined) backlog.push(request);
+  else run(request);
 });
 `;
 
@@ -568,8 +613,6 @@ const makeReader = Effect.fnUntraced(function* (
 
 // The writer cannot be replaced after an exit: a new connection would lack setup PRAGMAs and any open transaction.
 const startWriterWorker = Effect.fnUntraced(function* (options: SqliteClientConfig) {
-  // Set when the writer closes so a write held for WAL admission stops waiting.
-  const closing = new Int32Array(new SharedArrayBuffer(4));
   const warn = (reason: string) =>
     Effect.logWarning("SQLite writer worker unavailable; writes run on the main thread", {
       reason,
@@ -586,7 +629,6 @@ const startWriterWorker = Effect.fnUntraced(function* (options: SqliteClientConf
           prepareCacheSize: 200,
           admission: options.checkpointWorker
             ? {
-                control: closing.buffer,
                 backpressureFrames: CHECKPOINT_BACKPRESSURE_FRAMES,
                 idleMs: CHECKPOINT_IDLE_MS,
               }
@@ -653,8 +695,6 @@ const startWriterWorker = Effect.fnUntraced(function* (options: SqliteClientConf
     Effect.promise(() => {
       if (stoppedMessage !== undefined) return exited;
       stoppedMessage = "Database writer closed";
-      Atomics.store(closing, 0, 1);
-      Atomics.notify(closing, 0);
       // Queued after in-flight statements; the ref keeps the process alive until the database closes.
       worker.ref();
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
@@ -674,24 +714,37 @@ const startWriterWorker = Effect.fnUntraced(function* (options: SqliteClientConf
             );
       }
       const safeIntegers = Boolean(Context.get(fiber.context, Client.SafeIntegers));
-      // Like a statement on the main thread, a sent statement finishes before its caller sees an interrupt.
-      return Effect.uninterruptible(
-        Effect.callback<ReadonlyArray<any>, SqlError>((resume) => {
-          const id = nextRequestId++;
-          pending.set(id, (reply) => resume(replyToExit(reply)));
-          if (pending.size === 1) worker.ref();
-          const cached = input.cached && !hasLargeBinding(input.params);
+      return Effect.callback<ReadonlyArray<any>, SqlError>((resume) => {
+        const id = nextRequestId++;
+        let replied: () => void = () => {};
+        const settled = new Promise<void>((resolve) => {
+          replied = resolve;
+        });
+        pending.set(id, (reply) => {
+          replied();
+          resume(replyToExit(reply));
+        });
+        if (pending.size === 1) worker.ref();
+        const cached = input.cached && !hasLargeBinding(input.params);
+        try {
+          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+          worker.postMessage({ id, safeIntegers, ...input, cached });
+        } catch (cause) {
+          settle(id, {
+            id,
+            error: { operation: "execute", message: String(cause) },
+          });
+        }
+        // Only a write still waiting for WAL admission is cancelled; a running statement finishes first.
+        return Effect.promise(() => {
+          if (!pending.has(id)) return settled;
           try {
             // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-            worker.postMessage({ id, safeIntegers, ...input, cached });
-          } catch (cause) {
-            settle(id, {
-              id,
-              error: { operation: "execute", message: String(cause) },
-            });
-          }
-        }),
-      );
+            worker.postMessage({ type: "cancel", id });
+          } catch {}
+          return settled;
+        });
+      });
     });
   return workerConnection(request);
 });

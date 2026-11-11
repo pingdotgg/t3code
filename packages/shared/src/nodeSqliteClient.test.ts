@@ -279,11 +279,17 @@ it.effect("holds writer-worker writes past the WAL size limit until a pinned rea
       });
       yield* sql.withTransaction(blob);
       yield* sql.withTransaction(blob);
+      // Held writes, mutating pragmas included, can be cancelled before they run.
+      for (const cancelled of [blob, sql`PRAGMA user_version = 7`]) {
+        yield* Fiber.interrupt(yield* Effect.forkChild(cancelled, { startImmediately: true }));
+      }
       const held = yield* Effect.forkChild(sql.withTransaction(blob), { startImmediately: true });
       yield* Effect.sync(() => other.exec("COMMIT"));
       yield* Fiber.join(held);
       // Without admission the third write appends to a WAL the pinned reader kept from resetting.
       assert.isBelow(Number((yield* fs.stat(`${filename}-wal`)).size), limit);
+      assert.deepEqual(yield* sql`SELECT COUNT(*) FROM blobs`.values, [[3]]);
+      assert.deepEqual(yield* sql`PRAGMA user_version`.values, [[0]]);
     }).pipe(
       Effect.provide(SqliteClient.layer({ filename, writerWorker: true, checkpointWorker: true })),
     );
