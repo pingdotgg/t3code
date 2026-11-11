@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeStream from "node:stream";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -233,3 +234,33 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     }),
   );
 });
+
+// Real inherited pipe: an fs read would hold a threadpool thread and keep the process alive.
+it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "times out and lets the process exit while the bootstrap pipe stays open",
+  () =>
+    Effect.promise(async () => {
+      const child = NodeChildProcess.spawn(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `import * as Effect from "effect/Effect";
+           import * as Schema from "effect/Schema";
+           import { readBootstrapEnvelope } from "./src/bootstrap.ts";
+           const exit = await Effect.runPromiseExit(
+             readBootstrapEnvelope(Schema.String, 3, { timeoutMs: 50 }).pipe(Effect.flip),
+           );
+           console.log(exit._tag === "Success" ? exit.value._tag : "unexpected success");`,
+        ],
+        { cwd: `${import.meta.dirname}/..`, stdio: ["ignore", "pipe", "inherit", "pipe"] },
+      );
+      let stdout = "";
+      child.stdout?.on("data", (chunk) => (stdout += chunk));
+      const code = await new Promise((resolve) => child.once("exit", resolve));
+      child.stdio[3]?.destroy();
+
+      assert.equal(stdout.trim(), "BootstrapEnvelopeTimeoutError");
+      assert.equal(code, 0);
+    }),
+);
