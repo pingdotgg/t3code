@@ -406,6 +406,8 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const target = PeerForwarding.remoteTarget(scope, environmentId);
         if (target === undefined) return yield* here(params);
+        // The switch covers both routes to another machine: a peer link and an app's relay.
+        if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
         if (routing === "gateway") {
           const linked = Option.isSome(links)
             ? yield* links.value.get(target).pipe(Effect.mapError(unavailable))
@@ -413,7 +415,6 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
           // A stored peer link owns its route; other targets keep the app's gateway grants.
           if (Option.isNone(linked)) return yield* here({ ...params, environmentId });
         }
-        if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
         yield* (remote as RemoteCheck<typeof params>)(params);
         if (Option.isNone(forwarding)) return yield* linksUnavailable;
         return yield* forwarding.value.call(scope, tool, target, { ...params, environmentId });

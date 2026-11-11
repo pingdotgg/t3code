@@ -1,5 +1,3 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import type { GatewayRuntimePort } from "@t3tools/client-runtime/gateway";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
@@ -16,6 +14,7 @@ import { McpGatewayBroker } from "../McpGatewayBroker.ts";
 import { layerAgentsToolkit } from "../McpHttpServer.ts";
 import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
 import { LocalGatewayPort } from "./LocalGatewayPort.ts";
+import { CODE_PAIRED_SUBJECT, layerDependencies } from "../McpGatewayBroker.testkit.ts";
 
 const localId = EnvironmentId.make("environment-local");
 const threadId = ThreadId.make("thread-agents-mcp-test");
@@ -65,6 +64,7 @@ const makeLayer = (
   relayed?: Array<{ method: string; args: unknown }>,
   scheduledOn: Array<string> = [],
   callerModes?: Parameters<typeof McpToolAccessTestkit.liveThreadShell>[1],
+  overrides: Partial<GatewayRuntimePort> = {},
 ) => {
   const port = {
     scheduledTask: async (environmentId: string) => {
@@ -86,6 +86,7 @@ const makeLayer = (
         snapshotAt: "snapshot-1",
       };
     },
+    ...overrides,
   } as unknown as GatewayRuntimePort;
   const base = layerAgentsToolkit.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
@@ -125,25 +126,32 @@ const makeLayer = (
     ],
     listProjects: { items: [{ id: "project-2", title: "remote-app" }], snapshotAt: "snapshot-2" },
     createThread: { status: "accepted", threadId: "thread-remote", requestId: "request-remote" },
+    scheduledTask: {
+      tasks: [
+        { id: "task-wide", runtimeMode: "full-access", interactionMode: "default", threadId: null },
+      ],
+    },
   };
   const broker = Layer.effect(
     McpGatewayBroker,
     Effect.gen(function* () {
       const broker = yield* McpGatewayBrokerModule.make;
-      yield* broker.connect("desktop", { [remoteId]: ["read", "create"] }).pipe(
-        Stream.runForEach((event) => {
-          relayed.push({ method: event.method, args: event.args });
-          return broker.respond("desktop", {
-            connectionId: event.connectionId,
-            invocationId: event.invocationId,
-            result: answers[event.method],
-          });
-        }),
-        Effect.forkScoped({ startImmediately: true }),
-      );
+      yield* broker
+        .connect("desktop", { [remoteId]: ["read", "create", "send"] }, CODE_PAIRED_SUBJECT)
+        .pipe(
+          Stream.runForEach((event) => {
+            relayed.push({ method: event.method, args: event.args });
+            return broker.respond("desktop", {
+              connectionId: event.connectionId,
+              invocationId: event.invocationId,
+              result: answers[event.method],
+            });
+          }),
+          Effect.forkScoped({ startImmediately: true }),
+        );
       return broker;
     }),
-  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+  ).pipe(Layer.provide(layerDependencies()));
   return base.pipe(Layer.provide(broker));
 };
 
@@ -306,3 +314,277 @@ it.effect("keeps a chat from starting work on another machine above its own mode
     ),
   );
 });
+
+/** What each mutating tool reaches on the port, against work that runs in full-access/default. */
+const wideWork = (calls: Array<string>) => {
+  const record =
+    (method: string) =>
+    async (...args: ReadonlyArray<unknown>) => {
+      const request = args[1] as { readonly action?: string } | undefined;
+      const operation = (args[0] as { readonly operation?: string } | undefined)?.operation;
+      calls.push(
+        method === "scheduledTask"
+          ? `scheduledTask:${request?.action}`
+          : operation === undefined
+            ? method
+            : `executeOperation:${operation}`,
+      );
+      return method === "scheduledTask" && request?.action === "list"
+        ? {
+            tasks: [
+              {
+                id: "task-wide",
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                threadId: null,
+              },
+            ],
+          }
+        : {
+            status: "accepted",
+            threadId: "thread-wide",
+            requestId: "request-wide",
+            profile: {},
+            skill: {},
+          };
+    };
+  return {
+    listProjects: async () => ({
+      items: [
+        {
+          id: "project-1",
+          title: "t3code",
+          repositoryIdentity: { owner: "jayleaton", name: "t3code" },
+        },
+      ],
+      snapshotAt: "snapshot-1",
+    }),
+    listProfiles: async () => [
+      {
+        profileId: "wide",
+        name: "Wide",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        skillIds: ["skill-wide"],
+        revision: 1,
+      },
+    ],
+    getThread: async (_environmentId: string, id: string) => ({
+      id,
+      title: "Wide",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      pendingApprovals: [
+        { requestId: "approval-command", requestKind: "command" },
+        { requestId: "approval-edit", requestKind: "file-change" },
+      ],
+      pendingQuestions: [
+        {
+          questionRequestId: "question-1",
+          askedAt: "2026-11-11T00:00:00.000Z",
+          questions: [
+            {
+              questionId: "q1",
+              header: "Go?",
+              question: "Shall I go on?",
+              multiSelect: false,
+              allowsFreeText: true,
+              options: [],
+            },
+          ],
+        },
+      ],
+    }),
+    syncAgentLibrary: async () => undefined,
+    scheduledTask: record("scheduledTask"),
+    respondToApproval: record("respondToApproval"),
+    respondToUserInput: record("respondToUserInput"),
+    executeOperation: record("executeOperation"),
+    createProfile: record("createProfile"),
+    updateProfile: record("updateProfile"),
+    deleteProfile: record("deleteProfile"),
+    updateSkill: record("updateSkill"),
+    deleteSkill: record("deleteSkill"),
+  } as unknown as Partial<GatewayRuntimePort>;
+};
+
+const PR = { projectId: "project-1", repository: "t3code", number: 7 };
+const MUTATING_TOOLS: ReadonlyArray<readonly [string, Record<string, unknown>, string]> = [
+  [
+    "t3_create_scheduled_task",
+    { prompt: "Ship it.", profileId: "wide", projectId: "project-1", cron: "0 4 * * *" },
+    "scheduledTask:create",
+  ],
+  [
+    "t3_update_scheduled_task",
+    { taskId: "task-wide", patch: { prompt: "Ship it now." } },
+    "scheduledTask:update",
+  ],
+  ["t3_run_scheduled_task", { taskId: "task-wide" }, "scheduledTask:run"],
+  [
+    "t3_respond_to_approval",
+    {
+      threadId: "thread-wide",
+      approvalRequestId: "approval-command",
+      decision: "accept",
+      confirmDestructive: true,
+      idempotencyKey: "approve-1",
+    },
+    "respondToApproval",
+  ],
+  [
+    "t3_answer_question",
+    { threadId: "thread-wide", answers: [{ text: "Yes" }], idempotencyKey: "answer-1" },
+    "respondToUserInput",
+  ],
+  [
+    "t3_apply_patch",
+    {
+      projectId: "project-1",
+      patch: "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n",
+      idempotencyKey: "patch-1",
+    },
+    "executeOperation:git.apply_patch",
+  ],
+  [
+    "t3_create_branch",
+    { projectId: "project-1", branch: "wide", idempotencyKey: "branch-1" },
+    "executeOperation:git.create_branch",
+  ],
+  [
+    "t3_commit_changes",
+    { projectId: "project-1", message: "Wide", idempotencyKey: "commit-1" },
+    "executeOperation:git.commit",
+  ],
+  [
+    "t3_create_pr",
+    {
+      projectId: "project-1",
+      repository: "t3code",
+      owner: "jayleaton",
+      headBranch: "wide",
+      baseBranch: "main",
+      title: "Wide",
+      draft: true,
+      idempotencyKey: "pr-1",
+    },
+    "executeOperation:git.create_pr",
+  ],
+  [
+    "t3_update_pr",
+    { ...PR, title: "Wider", idempotencyKey: "pr-update-1" },
+    "executeOperation:pr.update",
+  ],
+  [
+    "t3_reply_review_comment",
+    { ...PR, commentId: "comment-1", body: "Done.", idempotencyKey: "reply-1" },
+    "executeOperation:pr.reply",
+  ],
+  [
+    "t3_publish_pr",
+    { ...PR, confirmDestructive: true, idempotencyKey: "publish-1" },
+    "executeOperation:pr.publish",
+  ],
+  [
+    "t3_apply_review_fixes",
+    { ...PR, threadId: "thread-wide", commentIds: ["comment-1"], idempotencyKey: "fixes-1" },
+    "executeOperation:pr.apply_review_fixes",
+  ],
+  ["t3_reclaim_worktree", { threadId: "thread-wide" }, "executeOperation:worktree.reclaim"],
+  [
+    "t3_create_agent",
+    {
+      name: "Wide",
+      providerLabel: "Codex",
+      modelLabel: "gpt-5",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    },
+    "createProfile",
+  ],
+  ["t3_update_agent", { profileId: "wide", patch: { systemPrompt: "Go wide." } }, "updateProfile"],
+  ["t3_delete_agent", { profileId: "wide" }, "deleteProfile"],
+  ["t3_update_skill", { skillId: "skill-wide", patch: { content: "Go wide." } }, "updateSkill"],
+  ["t3_delete_skill", { skillId: "skill-wide" }, "deleteSkill"],
+];
+
+it.effect("keeps every mutating tool within the calling chat's modes", () =>
+  Effect.gen(function* () {
+    const callers = [
+      ["approval-required", { runtimeMode: "approval-required", interactionMode: "default" }],
+      ["plan", { runtimeMode: "full-access", interactionMode: "plan" }],
+      ["full-access", { runtimeMode: "full-access", interactionMode: "default" }],
+    ] as const;
+    const problems: Array<string> = [];
+    for (const [label, modes] of callers) {
+      for (const [name, args, reached] of MUTATING_TOOLS) {
+        const calls: Array<string> = [];
+        const result = yield* callTool(name, args).pipe(
+          Effect.provide(makeLayer([], undefined, [], modes, wideWork(calls))),
+        );
+        // The full-access caller proves each call is well formed and reaches the port.
+        if (calls.includes(reached) !== (label === "full-access")) {
+          problems.push(`${label} ${name}: ${JSON.stringify(result.structuredContent)}`);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+  }),
+);
+
+it.effect("lets a narrower chat answer only what it could do itself", () =>
+  Effect.gen(function* () {
+    const respond = (
+      modes: Parameters<typeof McpToolAccessTestkit.liveThreadShell>[1],
+      approvalRequestId: string,
+      decision: string,
+    ) => {
+      const calls: Array<string> = [];
+      return callTool("t3_respond_to_approval", {
+        threadId: "thread-wide",
+        approvalRequestId,
+        decision,
+        confirmDestructive: true,
+        idempotencyKey: `${approvalRequestId}-${decision}`,
+      }).pipe(
+        Effect.provide(makeLayer([], undefined, [], modes, wideWork(calls))),
+        Effect.as(calls),
+      );
+    };
+    const edits = { runtimeMode: "auto-accept-edits", interactionMode: "default" } as const;
+    expect(yield* respond(edits, "approval-edit", "accept")).toEqual(["respondToApproval"]);
+    expect(yield* respond(edits, "approval-command", "accept")).toEqual([]);
+    // Declining is always open: it is how a chat stops work it could not approve.
+    const supervised = { runtimeMode: "approval-required", interactionMode: "default" } as const;
+    expect(yield* respond(supervised, "approval-command", "decline")).toEqual([
+      "respondToApproval",
+    ]);
+  }),
+);
+
+it.effect("keeps a chat from running a scheduled task on another machine above its modes", () =>
+  Effect.gen(function* () {
+    const runsFor = (modes: Parameters<typeof McpToolAccessTestkit.liveThreadShell>[1]) => {
+      const relayed: Array<{ method: string; args: unknown }> = [];
+      return callTool("t3_run_scheduled_task", {
+        environmentId: remoteId,
+        taskId: "task-wide",
+      }).pipe(
+        Effect.provide(makeLayer([], relayed, [], modes)),
+        Effect.map(() =>
+          relayed.filter(
+            (call) =>
+              call.method === "scheduledTask" &&
+              (call.args as ReadonlyArray<{ action?: string }>)[1]?.action === "run",
+          ),
+        ),
+      );
+    };
+    expect(
+      yield* runsFor({ runtimeMode: "approval-required", interactionMode: "default" }),
+    ).toEqual([]);
+    expect(yield* runsFor({ runtimeMode: "full-access", interactionMode: "default" })).toHaveLength(
+      1,
+    );
+  }),
+);

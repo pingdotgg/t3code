@@ -45,6 +45,10 @@ import {
   TailnetDeviceSetAccessInput,
   TailnetAppSetAccessInput,
   TailnetDeviceAdmitInput,
+  TailnetDeviceForgetInput,
+  TailnetAppForgetInput,
+  TailnetDeviceSetLimitInput,
+  TailnetDeviceAllowJoinResult,
   NetworkApp,
   NetworkMember,
 } from "./tailnetDevices.ts";
@@ -585,6 +589,12 @@ export const WS_METHODS = {
   tailnetDevicesAdmit: "tailnetDevices.admit",
   tailnetDevicesSetAppAccess: "tailnetDevices.setAppAccess",
   tailnetDevicesOpenDevice: "tailnetDevices.openDevice",
+  tailnetDevicesForget: "tailnetDevices.forget",
+  tailnetDevicesForgetApp: "tailnetDevices.forgetApp",
+  tailnetDevicesSetLimit: "tailnetDevices.setLimit",
+  tailnetDevicesLeave: "tailnetDevices.leave",
+  tailnetDevicesAllowJoin: "tailnetDevices.allowJoin",
+  subscribeTailnetDevices: "subscribeTailnetDevices",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -951,7 +961,8 @@ const WsTailnetDevicesSetAppAccessRpc = Rpc.make(WS_METHODS.tailnetDevicesSetApp
 /** Adds a machine Tailscale proves is the owner's to the whole network. */
 const WsTailnetDevicesAdmitRpc = Rpc.make(WS_METHODS.tailnetDevicesAdmit, {
   payload: TailnetDeviceAdmitInput,
-  success: NetworkMember,
+  /** Null for `scope: "local"`, which joins no network. */
+  success: Schema.NullOr(NetworkMember),
   error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
 });
 
@@ -960,6 +971,41 @@ const WsTailnetDevicesOpenDeviceRpc = Rpc.make(WS_METHODS.tailnetDevicesOpenDevi
   payload: TailnetDeviceOpenInput,
   success: TailnetDeviceClientCredential,
   error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+const WsTailnetDevicesForgetRpc = Rpc.make(WS_METHODS.tailnetDevicesForget, {
+  payload: TailnetDeviceForgetInput,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+const WsTailnetDevicesForgetAppRpc = Rpc.make(WS_METHODS.tailnetDevicesForgetApp, {
+  payload: TailnetAppForgetInput,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+const WsTailnetDevicesSetLimitRpc = Rpc.make(WS_METHODS.tailnetDevicesSetLimit, {
+  payload: TailnetDeviceSetLimitInput,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+/** This machine leaves its network: its links to members end and others see it revoked. */
+const WsTailnetDevicesLeaveRpc = Rpc.make(WS_METHODS.tailnetDevicesLeave, {
+  payload: Schema.Struct({}),
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+const WsTailnetDevicesAllowJoinRpc = Rpc.make(WS_METHODS.tailnetDevicesAllowJoin, {
+  payload: Schema.Struct({}),
+  success: TailnetDeviceAllowJoinResult,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+/** The snapshot now and after every roster, link or switch change, so clients follow it live. */
+const WsSubscribeTailnetDevicesRpc = Rpc.make(WS_METHODS.subscribeTailnetDevices, {
+  payload: Schema.Struct({}),
+  success: TailnetDevicesSnapshot,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+  stream: true,
 });
 
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
@@ -2353,6 +2399,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsTailnetDevicesAdmitRpc,
   WsTailnetDevicesSetAppAccessRpc,
   WsTailnetDevicesOpenDeviceRpc,
+  WsTailnetDevicesForgetRpc,
+  WsTailnetDevicesForgetAppRpc,
+  WsTailnetDevicesSetLimitRpc,
+  WsTailnetDevicesLeaveRpc,
+  WsTailnetDevicesAllowJoinRpc,
+  WsSubscribeTailnetDevicesRpc,
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,

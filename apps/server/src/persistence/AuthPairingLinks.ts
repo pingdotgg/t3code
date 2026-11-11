@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
-import { AuthEnvironmentScopes } from "@t3tools/contracts";
+import { AuthEnvironmentScopes, EnvironmentId } from "@t3tools/contracts";
 
 import {
   type AuthPairingLinkRepositoryError,
@@ -34,6 +34,8 @@ export const AuthPairingLinkRecord = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   consumedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  /** The member that asked for this credential on an app's behalf. */
+  brokeredBy: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
 });
 export type AuthPairingLinkRecord = typeof AuthPairingLinkRecord.Type;
 
@@ -47,6 +49,7 @@ export const CreateAuthPairingLinkInput = Schema.Struct({
   proofKeyThumbprint: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
+  brokeredBy: Schema.optionalKey(EnvironmentId),
 });
 export type CreateAuthPairingLinkInput = typeof CreateAuthPairingLinkInput.Type;
 
@@ -90,6 +93,7 @@ const AuthPairingLinkRawDbRow = Schema.Struct({
   expiresAt: Schema.Unknown,
   consumedAt: Schema.Unknown,
   revokedAt: Schema.Unknown,
+  brokeredBy: Schema.optionalKey(Schema.Unknown),
 });
 
 const decodeAuthPairingLinkDbRow = Schema.decodeUnknownEffect(AuthPairingLinkRecord);
@@ -149,7 +153,8 @@ export const make = Effect.gen(function* () {
           created_at,
           expires_at,
           consumed_at,
-          revoked_at
+          revoked_at,
+          brokered_by
         )
         VALUES (
           ${input.id},
@@ -162,7 +167,8 @@ export const make = Effect.gen(function* () {
           ${input.createdAt},
           ${input.expiresAt},
           NULL,
-          NULL
+          NULL,
+          ${input.brokeredBy ?? null}
         )
       `,
   });
@@ -219,7 +225,8 @@ export const make = Effect.gen(function* () {
           created_at AS "createdAt",
           expires_at AS "expiresAt",
           consumed_at AS "consumedAt",
-          revoked_at AS "revokedAt"
+          revoked_at AS "revokedAt",
+          brokered_by AS "brokeredBy"
       `,
   });
 

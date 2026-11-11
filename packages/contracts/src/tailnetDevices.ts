@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { AuthGrantScope, AuthMcpClientAccess } from "./auth.ts";
@@ -31,6 +32,11 @@ export const NetworkMember = Schema.Struct({
   nodeId: Schema.NullOr(TrimmedNonEmptyString),
   access: TailnetDeviceAccess,
   updatedAt: TailnetHlc,
+  /**
+   * The latest revocation this entry was written knowing about. A revocation outranks any entry
+   * that does not name it, so a machine that missed it cannot undo it by writing later.
+   */
+  restores: Schema.optionalKey(TailnetHlc),
 });
 export type NetworkMember = typeof NetworkMember.Type;
 
@@ -92,6 +98,8 @@ export const TailnetLinkRefusal = Schema.Literals([
   "unreachable",
   "descriptor_mismatch",
   "grant_rejected",
+  /** A machine in no network joins only while its owner allows it there: same account is not consent. */
+  "not_consented",
   "storage",
 ]);
 export type TailnetLinkRefusal = typeof TailnetLinkRefusal.Type;
@@ -111,6 +119,8 @@ export const TailnetJoinRequest = Schema.Struct({
   /** The machine the admitter means; another environment refuses. */
   memberEnvironmentId: EnvironmentId,
   challenge: TailnetChallenge,
+  /** `local` only links the machine to the admitter; it joins no network. */
+  scope: Schema.optionalKey(Schema.Literals(["network", "local"])),
 });
 export type TailnetJoinRequest = typeof TailnetJoinRequest.Type;
 
@@ -176,6 +186,11 @@ export type TailnetDeviceStatus = typeof TailnetDeviceStatus.Type;
 /** A machine as this environment sees it, merging the roster, tailnet finds and paired links. */
 export const TailnetDevice = Schema.Struct({
   ...TailnetDeviceDescriptor.fields,
+  /**
+   * Tailscale's stable node id, as proven by whois or bound in the roster. Clients group rows by
+   * it, so a reinstalled machine (new environment id, same node) is one machine, not two.
+   */
+  nodeId: Schema.NullOr(TrimmedNonEmptyString),
   status: TailnetDeviceStatus,
   /** Its access here: the roster's, narrowed by this machine's limit; a paired link's otherwise. */
   access: Schema.NullOr(TailnetDeviceAccess),
@@ -198,7 +213,14 @@ export const TailnetDevicesSnapshot = Schema.Struct({
   /** This machine's own roster entry. Null until it creates or joins a network. */
   selfMember: Schema.NullOr(NetworkMember),
   devices: Schema.Array(TailnetDevice),
+  /** Apps that redeemed their invitation; an unredeemed invitation is only a pairing link. */
   apps: Schema.Array(NetworkApp),
+  /** Whether this machine takes part in the network (the Device network switch). */
+  enabled: Schema.Boolean,
+  /** The calling session's app id when it is an app of the network: the client's network identity. */
+  callerAppId: Schema.NullOr(TrimmedNonEmptyString),
+  /** While set, an admin of a network may add this unclaimed machine. */
+  joinOpenUntil: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type TailnetDevicesSnapshot = typeof TailnetDevicesSnapshot.Type;
 
@@ -209,22 +231,57 @@ export const TailnetDeviceSetAccessInput = Schema.Struct({
 });
 export type TailnetDeviceSetAccessInput = typeof TailnetDeviceSetAccessInput.Type;
 
-/** Adds a machine found on the tailnet to the whole network, at `access`. */
+/**
+ * Adds a machine found on the tailnet. `network` puts it in the roster everywhere (and promotes a
+ * machine already linked here); `local` links it to this machine only, as a pairing code would.
+ */
 export const TailnetDeviceAdmitInput = Schema.Struct({
   environmentId: EnvironmentId,
   access: AuthMcpClientAccess,
+  scope: Schema.Literals(["network", "local"]).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("network" as const)),
+  ),
 });
 export type TailnetDeviceAdmitInput = typeof TailnetDeviceAdmitInput.Type;
 
-/** Narrow, widen, revoke or restore an app of the network everywhere. */
+/**
+ * What an app of the network may do. App sessions carry no agent mode ceiling, so an app is either
+ * full access or read-only; `revoked` ends its sessions everywhere.
+ */
+export const NetworkAppAccess = Schema.Literals(["full-access", "read-only", "revoked"]);
+export type NetworkAppAccess = typeof NetworkAppAccess.Type;
+
+/** Narrowing or revoking signs the app out everywhere; it pairs again to recover. */
 export const TailnetAppSetAccessInput = Schema.Struct({
   appId: TrimmedNonEmptyString,
-  access: TailnetDeviceAccess,
+  access: NetworkAppAccess,
 });
 export type TailnetAppSetAccessInput = typeof TailnetAppSetAccessInput.Type;
 
 export const TailnetDeviceOpenInput = Schema.Struct({ environmentId: EnvironmentId });
 export type TailnetDeviceOpenInput = typeof TailnetDeviceOpenInput.Type;
+
+/**
+ * Removes a member or found machine from this view and ends its link here. A member is first
+ * revoked everywhere, so the tombstone stays and it cannot rejoin by itself.
+ */
+export const TailnetDeviceForgetInput = Schema.Struct({ environmentId: EnvironmentId });
+export type TailnetDeviceForgetInput = typeof TailnetDeviceForgetInput.Type;
+
+/** Removes an app from the network: it is revoked everywhere, then hidden. */
+export const TailnetAppForgetInput = Schema.Struct({ appId: TrimmedNonEmptyString });
+export type TailnetAppForgetInput = typeof TailnetAppForgetInput.Type;
+
+/** A limit only this machine keeps for a member, narrower than the roster. Null clears it. */
+export const TailnetDeviceSetLimitInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  access: Schema.NullOr(AuthMcpClientAccess),
+});
+export type TailnetDeviceSetLimitInput = typeof TailnetDeviceSetLimitInput.Type;
+
+/** Lets an admin of a network add this unclaimed machine for a short while. */
+export const TailnetDeviceAllowJoinResult = Schema.Struct({ openUntil: Schema.DateTimeUtc });
+export type TailnetDeviceAllowJoinResult = typeof TailnetDeviceAllowJoinResult.Type;
 
 export class TailnetDevicesError extends Schema.TaggedError<TailnetDevicesError>()(
   "TailnetDevicesError",

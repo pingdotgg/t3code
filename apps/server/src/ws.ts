@@ -2808,11 +2808,20 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(peerLinkRequests.answer(input)),
           ),
-        [WS_METHODS.tailnetDevicesList]: () => tailnetDevices.list,
+        [WS_METHODS.tailnetDevicesList]: () =>
+          tailnetDevices.list({ subject: currentSession.subject }),
+        [WS_METHODS.subscribeTailnetDevices]: () =>
+          tailnetDevices.subscribe({ subject: currentSession.subject }),
         [WS_METHODS.tailnetDevicesSetAccess]: (input) =>
           tailnetDevices.setAccess(input.environmentId, input.access, "user"),
         [WS_METHODS.tailnetDevicesAdmit]: (input) =>
-          tailnetDevices.admit(input.environmentId, input.access),
+          tailnetDevices.admit(input.environmentId, input.access, input.scope),
+        [WS_METHODS.tailnetDevicesForget]: (input) => tailnetDevices.forget(input.environmentId),
+        [WS_METHODS.tailnetDevicesForgetApp]: (input) => tailnetDevices.forgetApp(input.appId),
+        [WS_METHODS.tailnetDevicesSetLimit]: (input) =>
+          tailnetDevices.setLimit(input.environmentId, input.access),
+        [WS_METHODS.tailnetDevicesLeave]: () => tailnetDevices.leave,
+        [WS_METHODS.tailnetDevicesAllowJoin]: () => tailnetDevices.allowJoin,
         [WS_METHODS.tailnetDevicesOpenDevice]: (input) =>
           tailnetDevices.openDevice(input.environmentId, {
             scopes: currentSession.scopes,
@@ -3351,7 +3360,7 @@ export const layerWsRpc = (
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.mcpGatewayConnect]: (input) =>
-          mcpGatewayBroker.connect(currentSessionId, input.grants),
+          mcpGatewayBroker.connect(currentSessionId, input.grants, currentSession.subject),
         [WS_METHODS.mcpGatewayRespond]: (input) =>
           mcpGatewayBroker.respond(currentSessionId, input),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),

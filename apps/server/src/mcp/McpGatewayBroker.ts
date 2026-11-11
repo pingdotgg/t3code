@@ -6,9 +6,12 @@ import {
 } from "@t3tools/client-runtime/gateway";
 import type * as Cause from "effect/Cause";
 import {
+  type EnvironmentId,
   type GatewayScope,
   McpGatewayRelayCalls,
   McpGatewayUnavailableError,
+  NETWORK_ACCESS_CEILING,
+  NETWORK_APP_SUBJECT_PREFIX,
   toMcpGatewayRelayJson,
   type McpGatewayRelayArgs,
   type McpGatewayRelayEvent,
@@ -16,6 +19,7 @@ import {
   type McpGatewayRelayMethod,
   type McpGatewayRelayResponse,
   type McpGatewayRelayResult,
+  type TailnetDeviceAccess,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -29,7 +33,22 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
+import * as Membership from "../peer/Membership.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+
 const unavailable = (message: string) => new McpGatewayUnavailableError({ message });
+const linksOff = unavailable(
+  "Linked environments is off on this machine, so its agents cannot act on another machine.",
+);
+/** The gateway scopes a roster entry allows; undefined when the roster does not list it. */
+const gatewayCeiling = (
+  access: Option.Option<TailnetDeviceAccess>,
+): ReadonlyArray<GatewayScope> | undefined =>
+  Option.isSome(access) ? NETWORK_ACCESS_CEILING[access.value].gateway : undefined;
+const revoked = unavailable(
+  "This machine's access to the network was revoked, so its agents cannot act on another machine.",
+);
 
 interface RelayCodec {
   readonly encodeArgs: (args: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
@@ -53,6 +72,8 @@ const relayCodecs: { readonly [M in McpGatewayRelayMethod]: RelayCodec } = {
 
 interface Host {
   readonly owner: string;
+  /** The network app whose session registered it; undefined for a session paired by code. */
+  readonly appId: string | undefined;
   readonly connectionId: string;
   readonly grants: McpGatewayRelayGrants;
   readonly requests: Queue.Queue<McpGatewayRelayEvent, Cause.Done>;
@@ -70,16 +91,23 @@ interface Pending {
  */
 export const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
+  const membership = yield* Membership.Membership;
+  const settings = yield* ServerSettingsService;
+  const identity = yield* ServerEnvironmentIdentity;
   const hosts = new Map<string, Host>();
   const pending = new Map<string, Pending>();
   /** Fires when an app connects, so queued cross-environment work can retry at once. */
   const connected = yield* PubSub.unbounded<void>();
-  const connect = (owner: string, grants: McpGatewayRelayGrants) =>
+  /** `subject` is the registering session's: an app of the network relays as that app. */
+  const connect = (owner: string, grants: McpGatewayRelayGrants, subject: string) =>
     Stream.unwrap(
       Effect.gen(function* () {
         const connectionId = yield* random.uuidV4();
         const requests = yield* Queue.unbounded<McpGatewayRelayEvent, Cause.Done>();
-        const host: Host = { owner, connectionId, grants, requests, stalled: false };
+        const appId = subject.startsWith(NETWORK_APP_SUBJECT_PREFIX)
+          ? subject.slice(NETWORK_APP_SUBJECT_PREFIX.length)
+          : undefined;
+        const host: Host = { owner, appId, connectionId, grants, requests, stalled: false };
         yield* Effect.acquireRelease(
           Effect.sync(() => hosts.set(connectionId, host)).pipe(
             Effect.andThen(PubSub.publish(connected, undefined)),
@@ -115,6 +143,48 @@ export const make = Effect.gen(function* () {
     }
     return Object.fromEntries(Object.entries(merged).map(([id, scopes]) => [id, [...scopes]]));
   };
+  /**
+   * What each app may run now, read on every call so a revoke or the switch applies at once.
+   * This machine's own roster access caps every app. A network member is relayed only by an app
+   * of the network, within that app's roster access, and such an app relays only members: a
+   * session paired by code cannot claim a member's traffic, nor an app the network's.
+   */
+  const boundGrants = Effect.fn("McpGatewayBroker.boundGrants")(function* () {
+    const enabled = yield* settings.getSettings.pipe(
+      Effect.map((current) => current.linkedEnvironmentsEnabled),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!enabled) return yield* linksOff;
+    const ceiling = gatewayCeiling(yield* membership.accessOf(yield* identity.getEnvironmentId));
+    if (ceiling?.length === 0) return yield* revoked;
+    const targets = new Map<string, Option.Option<TailnetDeviceAccess>>();
+    const bound = new Map<Host, Record<string, ReadonlyArray<GatewayScope>>>();
+    for (const host of hosts.values()) {
+      // An app the roster no longer lists relays nothing.
+      const appScopes =
+        host.appId === undefined
+          ? undefined
+          : (gatewayCeiling(yield* membership.appAccessOf(host.appId)) ?? []);
+      const grants: Record<string, ReadonlyArray<GatewayScope>> = {};
+      for (const [environmentId, scopes] of Object.entries(host.grants)) {
+        let target = targets.get(environmentId);
+        if (target === undefined) {
+          target = yield* membership.accessOf(environmentId as EnvironmentId);
+          targets.set(environmentId, target);
+        }
+        if (Option.isSome(target) !== (host.appId !== undefined)) continue;
+        if (Option.isSome(target) && target.value === "revoked") continue;
+        const allowed = scopes.filter(
+          (scope) =>
+            (ceiling === undefined || ceiling.includes(scope)) &&
+            (appScopes === undefined || appScopes.includes(scope)),
+        );
+        if (allowed.length > 0) grants[environmentId] = allowed;
+      }
+      bound.set(host, grants);
+    }
+    return bound;
+  });
   /** Sends one call to one app and waits for its answer. */
   const ask = Effect.fn("McpGatewayBroker.ask")(function* (
     host: Host,
@@ -155,19 +225,26 @@ export const make = Effect.gen(function* () {
    * Each app sees the environments its own device reaches, so the listing merges every app's
    * answer; following one app would swap the agent's world whenever another app connects.
    */
-  const listEnvironments = Effect.gen(function* () {
+  const listEnvironments = Effect.fn("McpGatewayBroker.listEnvironments")(function* (
+    bound: ReadonlyMap<Host, Record<string, ReadonlyArray<GatewayScope>>>,
+  ) {
     const answers = yield* Effect.forEach(
-      [...hosts.values()].toReversed(),
-      (host) => ask(host, "listEnvironments", [], "10 seconds").pipe(Effect.option),
+      [...bound.keys()].toReversed(),
+      (host) =>
+        ask(host, "listEnvironments", [], "10 seconds").pipe(
+          Effect.option,
+          Effect.map((answer) => ({ host, answer })),
+        ),
       { concurrency: "unbounded" },
     );
     const merged = new Map<string, Record<string, unknown>>();
-    for (const answer of answers) {
+    for (const { host, answer } of answers) {
       if (Option.isNone(answer) || !Array.isArray(answer.value)) continue;
       for (const candidate of answer.value as ReadonlyArray<unknown>) {
         if (typeof candidate !== "object" || candidate === null) continue;
         const environment = candidate as Record<string, unknown>;
         if (typeof environment.environmentId !== "string") continue;
+        if (bound.get(host)?.[environment.environmentId] === undefined) continue;
         const known = merged.get(environment.environmentId);
         // The newest app's view wins unless only an older app is connected to the environment.
         if (
@@ -185,17 +262,19 @@ export const make = Effect.gen(function* () {
     args: ReadonlyArray<unknown>,
     environmentIds: ReadonlyArray<string>,
   ): Effect.fn.Return<unknown, McpGatewayUnavailableError> {
-    if (method === "listEnvironments") return yield* listEnvironments;
+    const bound = yield* boundGrants();
+    if (method === "listEnvironments") return yield* listEnvironments(bound);
     // The newest app whose own grant covers the call runs it, preferring one that answers; a
     // grant another app holds never widens it.
     const requirements = gatewayPortCallScopes(method, args);
-    const holding = [...hosts.values()]
+    const holding = [...bound]
       .toReversed()
-      .filter((candidate) => unmetGatewayScopes(candidate.grants, requirements) === undefined);
+      .filter(([, grants]) => unmetGatewayScopes(grants, requirements) === undefined)
+      .map(([candidate]) => candidate);
     const host = holding.find((candidate) => !candidate.stalled) ?? holding[0];
     if (!host) {
       const unmet = requirements.find(({ environmentId }) =>
-        [...hosts.values()].every((candidate) => candidate.grants[environmentId] === undefined),
+        [...bound.values()].every((grants) => grants[environmentId] === undefined),
       );
       return yield* unavailable(
         hosts.size === 0

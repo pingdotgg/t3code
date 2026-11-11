@@ -1,5 +1,3 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -17,6 +15,7 @@ import * as McpGatewayBrokerModule from "../mcp/McpGatewayBroker.ts";
 import { McpGatewayBroker } from "../mcp/McpGatewayBroker.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { cascadeToOtherEnvironments } from "./RemoteSettlementCascade.ts";
+import { CODE_PAIRED_SUBJECT, layerDependencies } from "../mcp/McpGatewayBroker.testkit.ts";
 
 const devBox = EnvironmentId.make("environment-dev-box");
 const macBook = EnvironmentId.make("environment-macbook");
@@ -73,7 +72,7 @@ const makeLayer = (calls: Array<Call>, scopes: ReadonlyArray<GatewayScope>) =>
       Effect.gen(function* () {
         const broker = yield* McpGatewayBrokerModule.make;
         // The desktop app relaying for dev-box reaches the MacBook.
-        yield* broker.connect("desktop", { [macBook]: scopes }).pipe(
+        yield* broker.connect("desktop", { [macBook]: scopes }, CODE_PAIRED_SUBJECT).pipe(
           Stream.runForEach((event) => {
             calls.push({ method: event.method, args: event.args });
             return broker.respond("desktop", {
@@ -89,7 +88,7 @@ const makeLayer = (calls: Array<Call>, scopes: ReadonlyArray<GatewayScope>) =>
         );
         return broker;
       }),
-    ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ).pipe(Layer.provide(layerDependencies())),
     Layer.mock(ServerEnvironment.ServerEnvironment)({
       getDescriptor: Effect.succeed({ environmentId: devBox } as never),
     }),

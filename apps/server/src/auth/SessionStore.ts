@@ -380,6 +380,18 @@ export class SubjectSessionsRevocationError extends Schema.TaggedError<SubjectSe
   }
 }
 
+export class BrokeredSessionsRevocationError extends Schema.TaggedError<BrokeredSessionsRevocationError>()(
+  "BrokeredSessionsRevocationError",
+  {
+    brokeredBy: Schema.String,
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke the sessions one machine brokered.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
@@ -391,6 +403,7 @@ export const SessionCredentialInternalError = Schema.Union([
   OtherSessionsRevocationError,
   PeerSessionsRevocationError,
   SubjectSessionsRevocationError,
+  BrokeredSessionsRevocationError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -416,6 +429,8 @@ export class SessionStore extends Context.Service<
       readonly peerLink?: boolean;
       readonly member?: boolean;
       readonly peerEnvironmentId?: EnvironmentId;
+      /** The member that asked for the credential this session is redeemed from. */
+      readonly brokeredBy?: EnvironmentId;
       readonly replaceActiveForSubjectAndMethod?: boolean;
       readonly replaceSessionId?: AuthSessionId;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
@@ -460,6 +475,10 @@ export class SessionStore extends Context.Service<
     /** Revokes every session of one subject, such as an app of the network. */
     readonly revokeBySubject: (
       subject: string,
+    ) => Effect.Effect<number, SessionCredentialInternalError>;
+    /** Revokes every session redeemed from a credential another machine asked for. */
+    readonly revokeBrokeredBy: (
+      brokeredBy: EnvironmentId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
@@ -746,6 +765,7 @@ const make = Effect.gen(function* () {
         ...(input?.peerEnvironmentId === undefined
           ? {}
           : { peerEnvironmentId: input.peerEnvironmentId }),
+        ...(input?.brokeredBy === undefined ? {} : { brokeredBy: input.brokeredBy }),
         issuedAt,
         expiresAt,
       } satisfies AuthSessions.CreateAuthSessionInput;
@@ -1138,6 +1158,25 @@ const make = Effect.gen(function* () {
     return revokedSessionIds.length;
   });
 
+  const revokeBrokeredBy: SessionStore["Service"]["revokeBrokeredBy"] = Effect.fn(
+    "SessionStore.revokeBrokeredBy",
+  )(function* (brokeredBy) {
+    const revokedAt = yield* DateTime.now;
+    const revokedSessionIds = yield* authSessions
+      .revokeBrokeredBy({ brokeredBy, revokedAt })
+      .pipe(Effect.mapError((cause) => new BrokeredSessionsRevocationError({ brokeredBy, cause })));
+    yield* Ref.update(connectedSessionsRef, (current) => {
+      const next = new Map(current);
+      for (const revokedSessionId of revokedSessionIds) next.delete(revokedSessionId);
+      return next;
+    });
+    yield* Effect.forEach(revokedSessionIds, emitRemoved, {
+      concurrency: "unbounded",
+      discard: true,
+    });
+    return revokedSessionIds.length;
+  });
+
   const awaitInvalidation = Effect.fn(function* (
     sessionId: AuthSessionId,
     proofKeyThumbprint?: string,
@@ -1213,6 +1252,7 @@ const make = Effect.gen(function* () {
     revokeAllExcept,
     revokeByPeerEnvironment,
     revokeBySubject,
+    revokeBrokeredBy,
     markConnected,
     markDisconnected,
   });

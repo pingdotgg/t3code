@@ -1,5 +1,3 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -9,15 +7,19 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as Membership from "../peer/Membership.ts";
 import { make } from "./McpGatewayBroker.ts";
+import { CODE_PAIRED_SUBJECT, layerDependencies } from "./McpGatewayBroker.testkit.ts";
 
 type Broker = Effect.Success<typeof make>;
+
+const here = EnvironmentId.make("here");
+const remote = EnvironmentId.make("remote");
 
 const failureMessage = <E extends { readonly message: string }>(
   effect: Effect.Effect<unknown, E>,
@@ -29,8 +31,9 @@ const serve = (
   owner: string,
   grants: McpGatewayRelayGrants,
   answer: (method: string, args: ReadonlyArray<unknown>) => { result?: unknown; error?: string },
+  subject = CODE_PAIRED_SUBJECT,
 ) =>
-  broker.connect(owner, grants).pipe(
+  broker.connect(owner, grants, subject).pipe(
     Stream.runForEach((event) =>
       broker.respond(owner, {
         connectionId: event.connectionId,
@@ -61,7 +64,7 @@ it.effect("runs calls on the newest app that reaches every environment in them",
         "desktop:listThreads",
       );
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  ).pipe(Effect.provide(layerDependencies())),
 );
 
 it.effect("routes each call only to an app holding the scopes it needs", () =>
@@ -84,7 +87,7 @@ it.effect("routes each call only to an app holding the scopes it needs", () =>
         yield* failureMessage(broker.forward("controlThread", [control], ["remote"])),
       ).toContain("remote");
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  ).pipe(Effect.provide(layerDependencies())),
 );
 
 it.effect("never lets one app's grant widen the call another app serves", () =>
@@ -103,7 +106,7 @@ it.effect("never lets one app's grant widen the call another app serves", () =>
         yield* failureMessage(broker.forward("handoffThread", [handoff], ["remote"])),
       ).toContain("remote");
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  ).pipe(Effect.provide(layerDependencies())),
 );
 
 it.effect(
@@ -126,7 +129,7 @@ it.effect(
         }));
         // An app that stopped answering must not hold up the others' environments.
         yield* broker
-          .connect("asleep", { asleep: ["read"], laptop: ["read"] })
+          .connect("asleep", { asleep: ["read"], laptop: ["read"] }, CODE_PAIRED_SUBJECT)
           .pipe(Stream.runDrain, Effect.forkScoped({ startImmediately: true }));
         const listing = yield* broker
           .forward("listEnvironments", [], [])
@@ -142,7 +145,7 @@ it.effect(
           summary("studio", "connecting"),
         ]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ).pipe(Effect.provide(layerDependencies())),
 );
 
 it.effect("fails calls no connected app can run, and reports app errors", () =>
@@ -159,7 +162,7 @@ it.effect("fails calls no connected app can run, and reports app errors", () =>
         "not granted",
       );
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  ).pipe(Effect.provide(layerDependencies())),
 );
 
 it.effect("rejects answers from another app and fails calls when their app disconnects", () =>
@@ -167,7 +170,7 @@ it.effect("rejects answers from another app and fails calls when their app disco
     Effect.gen(function* () {
       const broker = yield* make;
       const events = yield* broker
-        .connect("desktop", { remote: ["read"] })
+        .connect("desktop", { remote: ["read"] }, CODE_PAIRED_SUBJECT)
         .pipe(Stream.take(1), Stream.runCollect, Effect.forkScoped({ startImmediately: true }));
       const call = yield* broker
         .forward("listProjects", ["remote"], ["remote"])
@@ -185,7 +188,7 @@ it.effect("rejects answers from another app and fails calls when their app disco
       expect(yield* failureMessage(Fiber.join(call))).toContain("disconnected");
       expect(broker.available()).toBe(false);
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  ).pipe(Effect.provide(layerDependencies())),
 );
 
 it.effect("relays calls whose arguments hold undefined fields in a form the wire can encode", () =>
@@ -196,7 +199,7 @@ it.effect("relays calls whose arguments hold undefined fields in a form the wire
       // whole relay stream, so every later call for its environments failed until a restart.
       const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(McpGatewayRelayEvent));
       const received: Array<ReadonlyArray<unknown>> = [];
-      yield* broker.connect("desktop", { remote: ["read", "create"] }).pipe(
+      yield* broker.connect("desktop", { remote: ["read", "create"] }, CODE_PAIRED_SUBJECT).pipe(
         Stream.runForEach((event) =>
           Effect.gen(function* () {
             yield* encode(event);
@@ -228,7 +231,7 @@ it.effect("relays calls whose arguments hold undefined fields in a form the wire
       ).toContain("cannot be relayed");
       expect(broker.available()).toBe(true);
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  ).pipe(Effect.provide(layerDependencies())),
 );
 
 it.effect("checks this server's own calls against their contract both ways", () =>
@@ -252,5 +255,112 @@ it.effect("checks this server's own calls against their contract both ways", () 
         yield* failureMessage(broker.call("getThread", [remote, ThreadId.make("child")])),
       ).toContain("cannot read");
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  ).pipe(Effect.provide(layerDependencies())),
+);
+
+const createThread = { environmentId: "remote", projectId: "project", title: "Child" };
+
+it.effect("caps every app's grant at what the roster lets this machine do, at call time", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      const membership = yield* Membership.Membership;
+      const putMember = (
+        environmentId: EnvironmentId,
+        access: "full-access" | "approval-required" | "read-only" | "revoked",
+      ) => membership.put({ environmentId, label: environmentId, nodeId: null, access });
+      yield* putMember(here, "full-access");
+      yield* putMember(remote, "full-access");
+      yield* membership.putApp({ appId: "desktop", label: "Desktop", access: "full-access" });
+      yield* serve(
+        broker,
+        "desktop",
+        { remote: ["read", "create", "send"] },
+        (method) => ({ result: method }),
+        "network-app:desktop",
+      );
+      expect(yield* broker.forward("createThread", [createThread], ["remote"])).toBe(
+        "createThread",
+      );
+      // Apps carry no agent mode ceiling, so anything short of full access only reads.
+      for (const access of ["approval-required", "read-only"] as const) {
+        yield* putMember(here, access);
+        expect(
+          yield* failureMessage(broker.forward("createThread", [createThread], ["remote"])),
+        ).not.toBe("ok");
+        expect(yield* broker.forward("listProjects", ["remote"], ["remote"])).toBe("listProjects");
+      }
+      yield* putMember(here, "revoked");
+      expect(
+        yield* failureMessage(broker.forward("listProjects", ["remote"], ["remote"])),
+      ).not.toBe("ok");
+      expect(yield* failureMessage(broker.forward("listEnvironments", [], []))).not.toBe("ok");
+    }),
+  ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect("relays a network member only through an app of the network, within its access", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      const membership = yield* Membership.Membership;
+      yield* membership.put({
+        environmentId: here,
+        label: "here",
+        nodeId: null,
+        access: "full-access",
+      });
+      yield* membership.put({
+        environmentId: remote,
+        label: "remote",
+        nodeId: null,
+        access: "full-access",
+      });
+      // A session paired by code has no identity the roster can bind to a member.
+      yield* serve(broker, "browser", { remote: ["read", "create"] }, (method) => ({
+        result: `browser:${method}`,
+      }));
+      expect(
+        yield* failureMessage(broker.forward("listProjects", ["remote"], ["remote"])),
+      ).not.toBe("ok");
+      yield* membership.putApp({ appId: "phone", label: "Phone", access: "full-access" });
+      yield* serve(
+        broker,
+        "phone",
+        { remote: ["read", "create"], elsewhere: ["read"] },
+        (method) => ({ result: `phone:${method}` }),
+        "network-app:phone",
+      );
+      expect(yield* broker.forward("listProjects", ["remote"], ["remote"])).toBe(
+        "phone:listProjects",
+      );
+      // An app of the network reaches its members, not an environment outside it.
+      expect(
+        yield* failureMessage(broker.forward("listProjects", ["elsewhere"], ["elsewhere"])),
+      ).not.toBe("ok");
+      yield* membership.putApp({ appId: "phone", label: "Phone", access: "read-only" });
+      expect(
+        yield* failureMessage(broker.forward("createThread", [createThread], ["remote"])),
+      ).not.toBe("ok");
+      yield* membership.putApp({ appId: "phone", label: "Phone", access: "revoked" });
+      expect(
+        yield* failureMessage(broker.forward("listProjects", ["remote"], ["remote"])),
+      ).not.toBe("ok");
+    }),
+  ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect("relays nothing while linked environments is off", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      yield* serve(broker, "desktop", { remote: ["read"] }, (method) => ({ result: method }));
+      expect(
+        yield* failureMessage(broker.forward("listProjects", ["remote"], ["remote"])),
+      ).toContain("Linked environments is off");
+      expect(yield* failureMessage(broker.call("listThreads", [remote]))).toContain(
+        "Linked environments is off",
+      );
+    }),
+  ).pipe(Effect.provide(layerDependencies({ linksOff: true }))),
 );

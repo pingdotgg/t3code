@@ -80,6 +80,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.tailnetDevicesSetAccess]: AuthAccessWriteScope,
   [WS_METHODS.tailnetDevicesAdmit]: AuthAccessWriteScope,
   [WS_METHODS.tailnetDevicesSetAppAccess]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesForget]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesForgetApp]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesSetLimit]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesLeave]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesAllowJoin]: AuthAccessWriteScope,
   // A session on another member, never past the caller's own grant; the server decides who may.
   [WS_METHODS.tailnetDevicesOpenDevice]: AuthOrchestrationReadScope,
 } as const;

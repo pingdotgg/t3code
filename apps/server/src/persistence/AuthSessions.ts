@@ -54,6 +54,8 @@ export const CreateAuthSessionInput = Schema.Struct({
   method: ServerAuthSessionMethod,
   client: AuthSessionClientMetadataRecord,
   peerEnvironmentId: Schema.optionalKey(EnvironmentId),
+  /** The member that asked for the credential this session was redeemed from. */
+  brokeredBy: Schema.optionalKey(EnvironmentId),
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
 });
@@ -102,6 +104,12 @@ export const RevokeSubjectSessionsInput = Schema.Struct({
 });
 export type RevokeSubjectSessionsInput = typeof RevokeSubjectSessionsInput.Type;
 
+export const RevokeBrokeredSessionsInput = Schema.Struct({
+  brokeredBy: EnvironmentId,
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type RevokeBrokeredSessionsInput = typeof RevokeBrokeredSessionsInput.Type;
+
 export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
   sessionId: AuthSessionId,
   lastConnectedAt: Schema.DateTimeUtcFromString,
@@ -137,6 +145,9 @@ export class AuthSessionRepository extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
     readonly revokeBySubject: (
       input: RevokeSubjectSessionsInput,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    readonly revokeBrokeredBy: (
+      input: RevokeBrokeredSessionsInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
@@ -240,6 +251,7 @@ export const make = Effect.gen(function* () {
           client_os,
           client_browser,
           peer_environment_id,
+          brokered_by,
           issued_at,
           expires_at,
           revoked_at
@@ -256,6 +268,7 @@ export const make = Effect.gen(function* () {
           ${input.client.os},
           ${input.client.browser},
           ${input.peerEnvironmentId ?? null},
+          ${input.brokeredBy ?? null},
           ${input.issuedAt},
           ${input.expiresAt},
           NULL
@@ -426,6 +439,30 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.sessionId)),
     );
 
+  const revokeBrokeredRows = SqlSchema.findAll({
+    Request: RevokeBrokeredSessionsInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ brokeredBy, revokedAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET revoked_at = ${revokedAt}
+        WHERE brokered_by = ${brokeredBy}
+          AND revoked_at IS NULL
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
+  const revokeBrokeredBy: AuthSessionRepository["Service"]["revokeBrokeredBy"] = (input) =>
+    revokeBrokeredRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.revokeBrokeredBy:query",
+          "AuthSessionRepository.revokeBrokeredBy:decodeRows",
+        ),
+      ),
+      Effect.map((rows) => rows.map((row) => row.sessionId)),
+    );
+
   const create: AuthSessionRepository["Service"]["create"] = (input) =>
     createSessionRow(input).pipe(
       Effect.mapError(
@@ -569,6 +606,7 @@ export const make = Effect.gen(function* () {
     revokeAllExcept,
     revokeByPeerEnvironment,
     revokeBySubject,
+    revokeBrokeredBy,
     setLastConnectedAt,
   } satisfies AuthSessionRepository["Service"];
 });

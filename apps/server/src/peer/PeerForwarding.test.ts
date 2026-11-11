@@ -283,26 +283,31 @@ const makeLaptop = Effect.gen(function* () {
     ReadonlyArray<readonly [EnvironmentId, TailnetDeviceAccess, "user" | "agent"]>
   >([]);
   const layerDevices = Layer.mock(TailnetDevices.TailnetDevices)({
-    list: Effect.succeed({
-      self: { environmentId: laptop.environmentId, label: laptop.label, urls: [] },
-      selfMember: null,
-      devices: [
-        {
-          environmentId: desk,
-          label: "Desk",
-          urls: [],
-          status: "online",
-          access: "full-access",
-          member: null,
-          localLimit: null,
-          outgoing: null,
-          incoming: false,
-          tailnetName: "desk",
-          lastSeenAt: null,
-        },
-      ],
-      apps: [],
-    }),
+    list: () =>
+      Effect.succeed({
+        self: { environmentId: laptop.environmentId, label: laptop.label, urls: [] },
+        selfMember: null,
+        devices: [
+          {
+            environmentId: desk,
+            label: "Desk",
+            urls: [],
+            status: "online",
+            access: "full-access",
+            member: null,
+            localLimit: null,
+            outgoing: null,
+            incoming: false,
+            tailnetName: "desk",
+            lastSeenAt: null,
+            nodeId: null,
+          },
+        ],
+        apps: [],
+        enabled: true,
+        callerAppId: null,
+        joinOpenUntil: null,
+      }),
     setAccess: (environmentId, access, actor) =>
       Ref.update(accessSet, (seen) => [...seen, [environmentId, access, actor] as const]).pipe(
         Effect.as({

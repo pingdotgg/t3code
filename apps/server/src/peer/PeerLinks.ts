@@ -25,10 +25,13 @@ import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as PubSub from "effect/PubSub";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpApi from "effect/http-api/HttpApi";
@@ -124,6 +127,8 @@ export class PeerLinks extends Context.Service<
       environmentId: EnvironmentId,
       outcome: { readonly error: string | null },
     ) => Effect.Effect<void>;
+    /** Every link stored or removed after subscribing. */
+    readonly subscribeChanges: Effect.Effect<Stream.Stream<EnvironmentId>, never, Scope.Scope>;
   }
 >()("t3/peer/PeerLinks") {}
 
@@ -218,6 +223,7 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const changes = yield* PubSub.unbounded<EnvironmentId>();
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -559,6 +565,7 @@ const make = Effect.gen(function* () {
       if (Option.isSome(previous) && previous.value.secret_name !== secretName) {
         yield* secrets.remove(previous.value.secret_name).pipe(Effect.ignore);
       }
+      yield* PubSub.publish(changes, linked.environmentId);
     },
   );
 
@@ -628,6 +635,7 @@ const make = Effect.gen(function* () {
       for (const row of deleted) {
         yield* secrets.remove(row.secret_name).pipe(Effect.catch(failStorage));
       }
+      if (deleted.length > 0) yield* PubSub.publish(changes, environmentId);
       return deleted.length > 0;
     },
   );
@@ -720,6 +728,7 @@ const make = Effect.gen(function* () {
     unlink,
     resolve,
     recordOutcome,
+    subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
   });
 });
 

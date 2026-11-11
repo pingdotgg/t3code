@@ -38,6 +38,39 @@ layer("fork/017_NetworkMembers", (it) => {
       yield* link("env-studio", "Studio", "tailnet", "full-access");
       yield* link("env-box", "Box", "tailnet", "full-access");
       yield* link("env-paired", "Paired", "paired", "full-access");
+      // The grant each holds here by pairing code: the box was let in read-only, the studio
+      // supervised; an expired grant and a full one change nothing.
+      const session = (
+        id: string,
+        peer: string,
+        scopes: ReadonlyArray<string>,
+        expiresAt: string,
+      ) =>
+        sql`
+          INSERT INTO auth_sessions
+            (session_id, subject, scopes, method, issued_at, expires_at, peer_environment_id)
+          VALUES (${id}, 'mcp-client', ${JSON.stringify(scopes)}, 'bearer-access-token',
+            '2026-11-01T00:00:00.000Z', ${expiresAt}, ${peer})
+        `;
+      yield* session("s-box", "env-box", ["orchestration:read"], "2999-01-01T00:00:00.000Z");
+      yield* session(
+        "s-studio",
+        "env-studio",
+        ["orchestration:read", "orchestration:operate"],
+        "2999-01-01T00:00:00.000Z",
+      );
+      yield* session(
+        "s-studio-full",
+        "env-studio",
+        ["orchestration:read", "orchestration:operate", "settings:write", "source-control:write"],
+        "2000-01-01T00:00:00.000Z",
+      );
+      yield* session(
+        "s-old",
+        "env-old",
+        ["orchestration:read", "orchestration:operate", "settings:write", "source-control:write"],
+        "2999-01-01T00:00:00.000Z",
+      );
       // Found on the tailnet, never linked: not a member.
       yield* sql`
         INSERT INTO tailnet_devices (environment_id, label, urls_json, tailnet_name, last_seen_at)
@@ -67,7 +100,14 @@ layer("fork/017_NetworkMembers", (it) => {
           ["env-studio", "Studio", null, "read-only", 50],
         ],
       );
-      assert.deepEqual(yield* sql`SELECT * FROM network_member_limits`, []);
+      // The node is unproven, so it stays unbound until the user adds the machine again.
+      assert.deepEqual(
+        yield* sql`SELECT environment_id, access FROM network_member_limits ORDER BY environment_id`,
+        [
+          { environment_id: "env-box", access: "read-only" },
+          { environment_id: "env-studio", access: "approval-required" },
+        ],
+      );
     }),
   );
 });

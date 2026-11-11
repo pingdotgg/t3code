@@ -52,6 +52,7 @@ import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
 import { ProjectToolkit } from "../toolkits/project/tools.ts";
 import { LocalGatewayPort } from "./LocalGatewayPort.ts";
+import { CODE_PAIRED_SUBJECT, layerDependencies } from "../McpGatewayBroker.testkit.ts";
 
 // The 2026-10-22 shape: Captain on dev-box launching Cody on the MacBook.
 const devBox = EnvironmentId.make("environment-dev-box");
@@ -205,27 +206,29 @@ const makeLayer = (macbook: ReturnType<typeof makeMacBook>, record: TestRecord) 
     McpGatewayBroker,
     Effect.gen(function* () {
       const broker = yield* McpGatewayBrokerModule.make;
-      yield* broker.connect("desktop", { [macBook]: ["read", "create", "send"] }).pipe(
-        Stream.runForEach((event) => {
-          macbook.calls.push({ method: event.method, args: event.args });
-          const reply = (() => {
-            try {
-              return { result: macbook.answer(event.method, event.args) };
-            } catch (error) {
-              return { error: (error as Error).message };
-            }
-          })();
-          return broker.respond("desktop", {
-            connectionId: event.connectionId,
-            invocationId: event.invocationId,
-            ...reply,
-          });
-        }),
-        Effect.forkScoped({ startImmediately: true }),
-      );
+      yield* broker
+        .connect("desktop", { [macBook]: ["read", "create", "send"] }, CODE_PAIRED_SUBJECT)
+        .pipe(
+          Stream.runForEach((event) => {
+            macbook.calls.push({ method: event.method, args: event.args });
+            const reply = (() => {
+              try {
+                return { result: macbook.answer(event.method, event.args) };
+              } catch (error) {
+                return { error: (error as Error).message };
+              }
+            })();
+            return broker.respond("desktop", {
+              connectionId: event.connectionId,
+              invocationId: event.invocationId,
+              ...reply,
+            });
+          }),
+          Effect.forkScoped({ startImmediately: true }),
+        );
       return broker;
     }),
-  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+  ).pipe(Layer.provide(layerDependencies()));
   return Layer.mergeAll(
     broker,
     Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),

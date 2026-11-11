@@ -9,6 +9,7 @@ import {
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthCreatePairingCredentialInput,
+  NETWORK_ACCESS_CEILING,
   NETWORK_APP_SUBJECT_PREFIX,
   type AuthEnvironmentScope,
   type AuthPairingLink,
@@ -418,14 +419,18 @@ export class EnvironmentAuth extends Context.Service<
       readonly proofKeyThumbprint?: string;
       readonly purpose?: "startup";
       readonly mcpApproval?: AuthMcpClientAccess;
+      readonly brokeredBy?: EnvironmentId;
     }) => Effect.Effect<
       IssuedPairingLink,
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
     >;
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput,
-      /** The redeemed session's subject; an app of the network passes its own. */
-      options?: { readonly subject?: string },
+      /**
+       * The redeemed session's subject (an app of the network passes its own), and the member that
+       * asked for it on an app's behalf, whose revocation ends the session.
+       */
+      options?: { readonly subject?: string; readonly brokeredBy?: EnvironmentId },
     ) => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
@@ -785,6 +790,40 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.getSessionState"),
     );
 
+  /**
+   * A credential a member asked for is refused once that member is revoked, and an app of the
+   * network becomes one when its invitation is first redeemed, so an unused code leaves no entry.
+   */
+  const admitRedeemed = Effect.fn("EnvironmentAuth.admitRedeemed")(function* (
+    grant: Pick<PairingGrantStore.BootstrapGrant, "scopes" | "subject" | "label" | "brokeredBy">,
+  ) {
+    if (grant.brokeredBy !== undefined) {
+      const broker = yield* membership.accessOf(grant.brokeredBy);
+      if (Option.isSome(broker) && broker.value === "revoked") {
+        return yield* new ServerAuthInvalidCredentialError({
+          diagnostic: "The machine that opened this credential was revoked.",
+        });
+      }
+    }
+    if (!grant.subject.startsWith(NETWORK_APP_SUBJECT_PREFIX)) return;
+    const redeemed = yield* membership
+      .redeemApp({
+        appId: grant.subject.slice(NETWORK_APP_SUBJECT_PREFIX.length),
+        label: grant.label ?? "App",
+        access: AuthStandardClientScopes.every((scope) => grant.scopes.includes(scope))
+          ? "full-access"
+          : "read-only",
+      })
+      .pipe(
+        Effect.mapError((cause) => new ServerAuthBootstrapCredentialValidationError({ cause })),
+      );
+    if (redeemed === "revoked") {
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: "This app was removed from the network.",
+      });
+    }
+  });
+
   const createBrowserSession: EnvironmentAuth["Service"]["createBrowserSession"] = Effect.fn(
     "EnvironmentAuth.createBrowserSession",
   )(function* (credential, requestMetadata, previousSessionToken) {
@@ -822,11 +861,13 @@ export const make = Effect.gen(function* () {
     const grant = yield* bootstrapCredentials
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
+    yield* admitRedeemed(grant);
     const session = yield* sessions
       .issue({
         method: "browser-session-cookie",
         subject: grant.subject,
         scopes: grant.scopes,
+        ...(grant.brokeredBy === undefined ? {} : { brokeredBy: grant.brokeredBy }),
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
           : {}),
@@ -849,7 +890,7 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "scopes" | "subject" | "label"
+    "scopes" | "subject" | "label" | "brokeredBy"
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -911,11 +952,13 @@ export const make = Effect.gen(function* () {
             if (grantedScopes.length === 0) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
+            yield* admitRedeemed(grant);
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 subject: grant.subject,
                 scopes: grantedScopes,
+                ...(grant.brokeredBy === undefined ? {} : { brokeredBy: grant.brokeredBy }),
                 // DPoP sessions keep the default lifetime so LAN and tailnet routes outlive a
                 // sleeping client.
                 ...(input?.proofKeyThumbprint
@@ -975,6 +1018,7 @@ export const make = Effect.gen(function* () {
         ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
         ...(input?.purpose ? { purpose: input.purpose } : {}),
         ...(input?.mcpApproval ? { mcpApproval: input.mcpApproval } : {}),
+        ...(input?.brokeredBy ? { brokeredBy: input.brokeredBy } : {}),
       });
       return {
         id: issued.id,
@@ -1088,6 +1132,7 @@ export const make = Effect.gen(function* () {
       subject: options?.subject ?? "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
       ...(input?.access ? { mcpApproval: input.access } : {}),
+      ...(options?.brokeredBy ? { brokeredBy: options.brokeredBy } : {}),
     }).pipe(
       Effect.map((issued) => ({
         ...toPairingCredential(issued),
@@ -1278,26 +1323,28 @@ export const make = Effect.gen(function* () {
         // The roster narrows what the token was issued with, on every request. A member session
         // whose machine left the roster has nothing left; a paired link is only ever narrowed.
         return membership.accessOf(session.peerEnvironmentId).pipe(
-          Effect.flatMap((access) =>
-            Option.isNone(access)
-              ? client.member
+          Effect.flatMap((access) => {
+            if (Option.isNone(access)) {
+              return client.member
                 ? Effect.fail(
                     new ServerAuthInvalidCredentialError({
                       diagnostic: "This machine is no longer in the network.",
                     }),
                   )
-                : Effect.succeed(client)
-              : access.value === "revoked"
-                ? Effect.fail(
-                    new ServerAuthInvalidCredentialError({
-                      diagnostic: "This device's access was revoked.",
-                    }),
-                  )
-                : Effect.succeed({
-                    ...client,
-                    access: Membership.narrowerAccess(client.access, access.value),
+                : Effect.succeed(client);
+            }
+            const ceiling = NETWORK_ACCESS_CEILING[access.value].mode;
+            return ceiling === null
+              ? Effect.fail(
+                  new ServerAuthInvalidCredentialError({
+                    diagnostic: "This device's access was revoked.",
                   }),
-          ),
+                )
+              : Effect.succeed({
+                  ...client,
+                  access: Membership.narrowerAccess(client.access, ceiling),
+                });
+          }),
         );
       }),
       Effect.withSpan("EnvironmentAuth.authenticateMcpClient"),

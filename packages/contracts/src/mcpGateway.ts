@@ -1,10 +1,19 @@
 import * as Schema from "effect/Schema";
 
-import type { AuthMcpClientAccess } from "./auth.ts";
+import {
+  AuthAccessReadScope,
+  AuthDiagnosticsReadScope,
+  AuthFilesystemReadScope,
+  type AuthGrantScope,
+  type AuthMcpClientAccess,
+  AuthOrchestrationReadScope,
+  AuthStandardClientScopes,
+} from "./auth.ts";
 import { EnvironmentId, MessageId, ProjectId, RunId, ThreadId } from "./baseSchemas.ts";
 import { OrchestrationV2RunStatus } from "./orchestrationV2.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+import type { TailnetDeviceAccess } from "./tailnetDevices.ts";
 
 export class McpGatewayUnavailableError extends Schema.TaggedError<McpGatewayUnavailableError>()(
   "McpGatewayUnavailableError",
@@ -26,32 +35,38 @@ export const GATEWAY_SCOPE_VALUES = [
 export const GatewayScope = Schema.Literals(GATEWAY_SCOPE_VALUES);
 export type GatewayScope = typeof GatewayScope.Type;
 
-const MEMBER_GATEWAY_SCOPES: ReadonlyArray<GatewayScope> = [
-  "read",
-  "create",
-  "send",
-  "control",
-  "lifecycle",
-  "approval",
-  "artifact",
-  "delivery",
+const APP_READ_SCOPES: ReadonlyArray<AuthGrantScope> = [
+  AuthOrchestrationReadScope,
+  AuthFilesystemReadScope,
+  AuthDiagnosticsReadScope,
+  AuthAccessReadScope,
 ];
+const READ_ONLY = { app: APP_READ_SCOPES, gateway: ["read"] } as const;
 
-/** The gateway scopes each member access level carries on a machine. */
-export const GATEWAY_SCOPES_BY_ACCESS = {
-  "read-only": ["read"],
-  "approval-required": MEMBER_GATEWAY_SCOPES,
-  "auto-accept-edits": MEMBER_GATEWAY_SCOPES,
-  auto: MEMBER_GATEWAY_SCOPES,
-  "full-access": GATEWAY_SCOPE_VALUES,
-} as const satisfies Record<AuthMcpClientAccess, ReadonlyArray<GatewayScope>>;
-
-/** The scopes both the derived set and a narrowing allow; no narrowing leaves `derived` as is. */
-export const narrowGatewayScopes = (
-  derived: ReadonlyArray<GatewayScope>,
-  narrowing: ReadonlyArray<GatewayScope> | undefined,
-): ReadonlyArray<GatewayScope> =>
-  narrowing === undefined ? derived : derived.filter((scope) => narrowing.includes(scope));
+/**
+ * The one ceiling a network access level sets, per surface. MCP sessions enforce agent modes, so
+ * they keep the level as their `mode` ceiling. App sessions and relayed gateway calls carry no
+ * mode ceiling, so anything short of full access only reads. `revoked` grants nothing anywhere.
+ */
+export const NETWORK_ACCESS_CEILING = {
+  revoked: { mode: null, app: [], gateway: [] },
+  "read-only": { mode: "read-only", ...READ_ONLY },
+  "approval-required": { mode: "approval-required", ...READ_ONLY },
+  "auto-accept-edits": { mode: "auto-accept-edits", ...READ_ONLY },
+  auto: { mode: "auto", ...READ_ONLY },
+  "full-access": {
+    mode: "full-access",
+    app: AuthStandardClientScopes,
+    gateway: GATEWAY_SCOPE_VALUES,
+  },
+} as const satisfies Record<
+  TailnetDeviceAccess,
+  {
+    readonly mode: AuthMcpClientAccess | null;
+    readonly app: ReadonlyArray<AuthGrantScope>;
+    readonly gateway: ReadonlyArray<GatewayScope>;
+  }
+>;
 
 /** Per-environment T3 Agents scopes a connected app grants to agents relayed through it. */
 export const McpGatewayRelayGrants = Schema.Record(Schema.String, Schema.Array(GatewayScope));

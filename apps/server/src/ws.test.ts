@@ -135,6 +135,7 @@ import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { OrchestrationCommandReceiptRepository } from "./persistence/OrchestrationCommandReceipts.ts";
 import * as McpGatewayBroker from "./mcp/McpGatewayBroker.ts";
+import * as McpGatewayBrokerTestkit from "./mcp/McpGatewayBroker.testkit.ts";
 import * as ClientFocusBroker from "./clients/ClientFocusBroker.ts";
 import * as TodoService from "./todo/TodoService.ts";
 import * as ThreadTaskService from "./threadTask/ThreadTaskService.ts";
@@ -1125,7 +1126,7 @@ it.effect.each([
             available: () => false,
           }),
           Layer.mock(ClientFocusBroker.ClientFocusBroker)({}),
-          McpGatewayBroker.layer.pipe(Layer.provide(NodeCrypto.layer)),
+          McpGatewayBroker.layer.pipe(Layer.provide(McpGatewayBrokerTestkit.layerDependencies())),
           Layer.mock(ClientFocusBroker.ClientFocusBroker)({}),
         ),
       ),

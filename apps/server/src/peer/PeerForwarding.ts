@@ -301,7 +301,7 @@ const make = Effect.gen(function* () {
         ),
       );
       // Devices only add to the links, so an unreadable tailnet still lists them.
-      const devices = yield* tailnetDevices.list.pipe(
+      const devices = yield* tailnetDevices.list().pipe(
         Effect.map((snapshot) => snapshot.devices),
         Effect.tapError((error) => Effect.logWarning("Tailnet devices unreadable", error)),
         Effect.orElseSucceed(() => []),

@@ -131,13 +131,18 @@ trusted:
   answering, so one request yields a mutual link, each half proven by the side
   granting it. Gossip between linked members only adds addresses to try.
 - **A member is bound to its Tailscale node** (`StableID` from whois, `ID` in
-  status). The first proof binds it, and a different node answering for the
-  same environment id is refused. Only an explicit add can rebind a machine
-  that moved to a new node.
+  status). Only an explicit add binds or rebinds it, and a different node
+  answering for the same environment id is refused. A member with no binding,
+  as after an upgrade, is refused until the user adds it again; an inbound or
+  first answer never binds one.
+- **A machine in no network joins only while its owner allows it** there
+  (`allowJoin`, ten minutes, in memory), and so does rebinding an unbound admin.
 
 The [roster](../../apps/server/src/peer/Membership.ts) of members and network
 apps is replicated and merged last-writer-wins by hybrid logical clock.
-`revoked` is a tombstone that never expires. **A roster write counts only from
+`revoked` is a tombstone that never expires, and outranks any write that does
+not name it in `restores`, so a machine that missed a revocation cannot undo it
+by writing later; only a user's restore made after seeing it does. **A roster write counts only from
 a member session (the signed `mbr` claim the handshake mints, never a
 pairing-code link) whose machine is full access on the receiving side, and
 never for an entry naming the sender**, so a revoked or limited machine cannot
@@ -155,7 +160,12 @@ credential is capped at the app's own grant. For an app of the network
 access, not the access of the machine relaying for it. Narrowing or revoking a
 network app ends its sessions on every member, because sessions cannot be
 re-scoped in place, so it pairs again. App sessions carry no agent mode
-ceiling, so anything below full access opens read-only. A phone needs one
+ceiling, so anything below full access opens read-only. One table in contracts,
+`NETWORK_ACCESS_CEILING`, sets this and also caps member MCP sessions and agent
+calls relayed through a connected app (`McpGatewayBroker`). A relayed call is
+capped on every call by this machine's own roster access, and a member is
+relayed only by a network app's session, within that app's access, so a
+code-paired session cannot take a member's traffic. A phone needs one
 reachable member to renew, and if every full-access member is lost, the
 network has to be started again from a fresh machine.
 

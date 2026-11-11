@@ -3,6 +3,7 @@ import {
   type AuthEnvironmentScope,
   type AuthMcpClientAccess,
   type AuthPairingLink,
+  type EnvironmentId,
   mcpApprovalCode,
   PAIRING_CODE_ALPHABET,
   PAIRING_CODE_LENGTH,
@@ -36,6 +37,8 @@ export interface BootstrapGrant {
   readonly subject: string;
   readonly label?: string;
   readonly proofKeyThumbprint?: string;
+  /** The member that asked for this credential on an app's behalf. */
+  readonly brokeredBy?: EnvironmentId;
   readonly expiresAt: DateTime.DateTime;
 }
 
@@ -223,6 +226,7 @@ export class PairingGrantStore extends Context.Service<
       readonly purpose?: "startup";
       /** Issues a hidden `<LEVEL>-` code that only an agent sign-in at this level can spend. */
       readonly mcpApproval?: AuthMcpClientAccess;
+      readonly brokeredBy?: EnvironmentId;
     }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialInternalError>;
     readonly listActive: () => Effect.Effect<
       ReadonlyArray<AuthPairingLink>,
@@ -430,6 +434,7 @@ const make = Effect.gen(function* () {
         proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
         createdAt: now,
         expiresAt: expiresAt,
+        ...(input?.brokeredBy === undefined ? {} : { brokeredBy: input.brokeredBy }),
       })
       .pipe(
         Effect.mapError(
@@ -598,6 +603,7 @@ const make = Effect.gen(function* () {
           ...(consumed.value.proofKeyThumbprint
             ? { proofKeyThumbprint: consumed.value.proofKeyThumbprint }
             : {}),
+          ...(consumed.value.brokeredBy ? { brokeredBy: consumed.value.brokeredBy } : {}),
           expiresAt: consumed.value.expiresAt,
         } satisfies BootstrapGrant;
       }

@@ -1,7 +1,7 @@
 import { EnvironmentId, type NetworkMember } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeRoster } from "./Membership.ts";
+import { mergeMembers } from "./Membership.ts";
 
 const laptop = EnvironmentId.make("env-laptop");
 const studio = EnvironmentId.make("env-studio");
@@ -24,13 +24,15 @@ const write = (
 
 const writes = [
   write(box, "revoked", 10, 0, laptop),
+  // Stamped later on a machine that had not seen the revocation.
   write(box, "full-access", 10, 1, studio),
-  write(box, "read-only", 10, 1, laptop),
+  // The user restored it after seeing the revocation.
+  { ...write(box, "auto", 11, 0, studio), restores: { wallMs: 10, counter: 0, node: laptop } },
   write(studio, "auto", 5, 0, laptop),
   write(studio, "revoked", 4, 9, box),
-  // A tombstone beats an older widen that arrives after it.
   write(phone, "revoked", 8, 0, studio),
-  write(phone, "full-access", 7, 3, laptop),
+  // A later narrowing that missed the revocation does not undo it.
+  write(phone, "read-only", 9, 0, laptop),
 ];
 
 const permutations = <A>(items: ReadonlyArray<A>): ReadonlyArray<ReadonlyArray<A>> =>
@@ -46,7 +48,7 @@ describe("mergeRoster", () => {
       // One write at a time, as gossip delivers them.
       [
         ...order.reduce<ReadonlyMap<EnvironmentId, NetworkMember>>(
-          (roster, entry) => mergeRoster(roster, [entry], (member) => member.environmentId),
+          (roster, entry) => mergeMembers(roster, [entry]),
           new Map(),
         ),
       ].toSorted(([a], [b]) => a.localeCompare(b)),
@@ -54,8 +56,8 @@ describe("mergeRoster", () => {
 
     for (const result of results) expect(result).toEqual(results[0]);
     expect(Object.fromEntries(results[0]!.map(([id, entry]) => [id, entry.access]))).toEqual({
-      [box]: "full-access",
-      [studio]: "auto",
+      [box]: "auto",
+      [studio]: "revoked",
       [phone]: "revoked",
     });
   });

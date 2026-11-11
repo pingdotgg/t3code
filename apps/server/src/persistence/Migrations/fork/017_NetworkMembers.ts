@@ -1,10 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// The roster replaces the device policy. Existing access carries over exactly: a policy entry keeps
-// its level and stamp; a machine linked over the tailnet without one keeps the shared default it had
-// (full access when that was never changed), stamped at zero so any real write wins. Machines that
-// were only found on the tailnet do not become members. The old tables stay for a rollback.
+// The roster replaces the device policy without widening anyone: a policy entry keeps its level and
+// stamp; a tailnet link without one keeps the shared default, stamped at zero. Found machines do not
+// become members. `node_id` stays NULL: the old tables kept only the renameable node name, so a
+// member is bound again only when the user re-adds it. The old tables stay for a rollback.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -64,5 +64,39 @@ export default Effect.gen(function* () {
     FROM peer_environment_links AS links
     WHERE links.origin = 'tailnet'
       AND links.environment_id NOT IN (SELECT environment_id FROM network_members)
+  `;
+
+  // A member keeps here no more than the widest grant it already held here, so a machine let in
+  // read-only by pairing code is not widened by the roster. Grants are the agent sessions it
+  // holds (`peer_environment_links.access` is this machine's access there, not theirs here). Only
+  // scopes are stored, so a supervised-or-wider grant without settings rounds down to supervised.
+  yield* sql`
+    INSERT INTO network_member_limits (environment_id, access)
+    SELECT environment_id, CASE MAX(rank)
+      WHEN 0 THEN 'read-only'
+      ELSE 'approval-required'
+    END
+    FROM (
+      SELECT
+        sessions.peer_environment_id AS environment_id,
+        CASE
+          WHEN NOT EXISTS (
+            SELECT 1 FROM json_each(sessions.scopes) WHERE value = 'orchestration:operate'
+          ) THEN 0
+          WHEN EXISTS (SELECT 1 FROM json_each(sessions.scopes) WHERE value = 'settings:write')
+            AND EXISTS (
+              SELECT 1 FROM json_each(sessions.scopes) WHERE value = 'source-control:write'
+            ) THEN 2
+          ELSE 1
+        END AS rank
+      FROM auth_sessions AS sessions
+      WHERE sessions.subject = 'mcp-client'
+        AND sessions.revoked_at IS NULL
+        AND sessions.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        AND json_valid(sessions.scopes)
+        AND sessions.peer_environment_id IN (SELECT environment_id FROM network_members)
+    )
+    GROUP BY environment_id
+    HAVING MAX(rank) < 2
   `;
 });
