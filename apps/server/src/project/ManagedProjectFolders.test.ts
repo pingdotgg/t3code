@@ -56,11 +56,7 @@ const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 
 interface HarnessOptions {
   readonly vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>;
-  readonly git?: Layer.Layer<
-    GitVcsDriver.GitVcsDriver,
-    never,
-    ServerConfig.ServerConfig | NodeServices.NodeServices
-  >;
+  readonly git?: typeof layerRealGit;
   readonly projects?: (
     real: ProjectService.ProjectService["Service"],
   ) => ProjectService.ProjectService["Service"];
@@ -463,8 +459,10 @@ it.effect("says Git is not installed when a named project cannot start Git", () 
 
         const failure = yield* Effect.flip(folders.createNamedProject({ name: "T3Code Test" }));
 
-        assert.match(failure.message, /\bgit\b/i);
-        assert.match(failure.message, /not installed|isn't installed|missing|not found/i);
+        assert.strictEqual(
+          failure.message,
+          "Git isn't installed on this machine. Install Git to create a project.",
+        );
       }),
     {
       git: GitVcsDriver.layer.pipe(
