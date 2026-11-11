@@ -33,6 +33,7 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import {
   shouldPreserveAssistantLineBreaks,
+  remarkAssistantInsights,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
@@ -78,16 +79,18 @@ export const THREAD_FIND_BLOCK_TAGS = new Set([
   "ul",
 ]);
 
-const assistantProcessor = unified()
-  .use(remarkParse)
-  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
-  .use(remarkRehype, { allowDangerousHtml: true })
-  .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
-const assistantBreaksProcessor = unified()
-  .use(remarkParse)
-  .use(CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS)
-  .use(remarkRehype, { allowDangerousHtml: true })
-  .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+function assistantTextProcessor(lineBreaks = false, renderInsights = false) {
+  return unified()
+    .use(remarkParse)
+    .use(renderInsights ? [remarkAssistantInsights] : [])
+    .use(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+}
+const assistantProcessor = assistantTextProcessor();
+const assistantBreaksProcessor = assistantTextProcessor(true);
+const insightProcessor = assistantTextProcessor(false, true);
+const insightBreaksProcessor = assistantTextProcessor(true, true);
 const userProcessor = unified()
   .use(remarkParse)
   .use(CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS)
@@ -111,13 +114,19 @@ function markdownThreadFindText(
   cwd?: string,
   skills: readonly InlineSkill[] = [],
   lineBreaks = false,
+  renderInsights = false,
 ): string[] {
   const processor = userMessage
     ? userProcessor
     : lineBreaks
       ? assistantBreaksProcessor
       : assistantProcessor;
-  const tree = processor.runSync(processor.parse(markdown));
+  const renderer = renderInsights
+    ? lineBreaks
+      ? insightBreaksProcessor
+      : insightProcessor
+    : processor;
+  const tree = renderer.runSync(renderer.parse(markdown), markdown);
   const paths = [
     ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)),
     ...extractInlineCodeSpans(markdown).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
@@ -231,5 +240,6 @@ export function searchableMessageSegments(
     cwd,
     skills,
     shouldPreserveAssistantLineBreaks(message.text),
+    true,
   );
 }
