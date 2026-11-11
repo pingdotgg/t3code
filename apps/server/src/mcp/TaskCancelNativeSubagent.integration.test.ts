@@ -419,7 +419,7 @@ const cancelBackgroundOnlyTask = (
               ...child.turn.providerThread,
               status: "active",
               pendingBackgroundTasks: [
-                { taskId: "bg-sleep", description: "sleep 300", kind: "command" },
+                { taskId: "bg-sleep", description: "sleep 300", kind: "command", awaited: true },
               ],
               updatedAt: now,
             },
