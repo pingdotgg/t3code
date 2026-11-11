@@ -45,6 +45,7 @@ export const AuthFilesystemWriteScope = "filesystem:write" as const;
 const AuthReviewWriteScope = "review:write" as const;
 export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
+/** T3 Connect scopes. Kept decodable for existing credentials and older clients; never granted. */
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
 export const AuthEnvironmentScope = Schema.Literals([
@@ -147,7 +148,14 @@ export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean
   );
 }
 
-// Shell and full-access agent scopes already confer access and relay authority.
+const retiredScopes = new Set<AuthEnvironmentScope>([AuthRelayReadScope, AuthRelayWriteScope]);
+
+/** Drops scopes that may still arrive from old clients or stored records but are never granted. */
+export const withoutRetiredScopes = <S extends AuthEnvironmentScope>(
+  scopes: ReadonlyArray<S>,
+): ReadonlyArray<S> => scopes.filter((scope) => !retiredScopes.has(scope));
+
+// Shell and full-access agent scopes already confer access authority.
 export const AuthStandardClientScopes = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -161,10 +169,8 @@ export const AuthStandardClientScopes = [
   AuthSourceControlWriteScope,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
-  AuthRelayReadScope,
   AuthAccessReadScope,
   AuthAccessWriteScope,
-  AuthRelayWriteScope,
 ] as const;
 
 export const AuthTokenExchangeGrantType =

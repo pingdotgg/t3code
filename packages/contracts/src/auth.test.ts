@@ -10,7 +10,11 @@ import {
   authScopeResponse,
   AuthSessionState,
   sessionGrantsScope,
+  withoutRetiredScopes,
 } from "./auth.ts";
+
+const decodeEnvironmentScopes = Schema.decodeSync(AuthEnvironmentScopes);
+const decodeGrantScopes = Schema.decodeSync(AuthGrantScopes);
 
 describe("authorization grants", () => {
   it("decodes legacy review credentials without offering them in new grants", () => {
@@ -21,6 +25,17 @@ describe("authorization grants", () => {
 
     expect(() => decodeAuthGrantScopes(["review:write"])).toThrow();
     expect(AuthStandardClientScopes).not.toContain("review:write");
+  });
+
+  it("decodes T3 Connect scopes from old clients and stored grants without granting them", () => {
+    const relayScopes = ["relay:read", "relay:write"] as const;
+
+    expect(decodeEnvironmentScopes(relayScopes)).toEqual(relayScopes);
+    expect(decodeGrantScopes(relayScopes)).toEqual(relayScopes);
+    expect(withoutRetiredScopes(["orchestration:read", ...relayScopes])).toEqual([
+      "orchestration:read",
+    ]);
+    for (const scope of relayScopes) expect(AuthStandardClientScopes).not.toContain(scope);
   });
 
   // Keep the pre-granular vocabulary frozen to expose compatibility regressions.

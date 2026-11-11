@@ -16,7 +16,6 @@ import {
   ContextTransferId,
   EventId,
   GuestMessageId,
-  GuestShareId,
   IsoDateTime,
   MessageId,
   EnvironmentId,
@@ -3509,31 +3508,6 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snapshotAt: Schema.DateTimeUtc,
-  }),
-  // Guest share commands the server issues after checking T3 Connect and the guest token.
-  Schema.Struct({
-    type: Schema.Literal("thread.guest-share.open"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    shareId: GuestShareId,
-    host: TrimmedNonEmptyString,
-    expiresAt: IsoDateTime,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("thread.guest-share.redeem"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    shareId: GuestShareId,
-    guestName: TrimmedNonEmptyString,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("thread.guest-message.submit"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    shareId: GuestShareId,
-    guestMessageId: GuestMessageId,
-    text: Schema.String,
-    attachments: Schema.optional(Schema.Array(ChatAttachment)),
   }),
   /** Moves a thread to a project rooted at the folder it already works in, so its cwd never changes. */
   Schema.Struct({

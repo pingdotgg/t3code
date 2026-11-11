@@ -1042,7 +1042,6 @@ export interface DesktopBridge {
   getMcpGatewayBridgeToken?: () => string | null;
   /** The bridge token, creating a durable one when none is configured; null if it cannot. */
   ensureMcpGatewayBridgeToken?: () => string | null;
-  getRelayTelemetryEnabled: () => boolean;
   getPathForFile: (file: File) => string;
   getClientPlatform: () => string;
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;

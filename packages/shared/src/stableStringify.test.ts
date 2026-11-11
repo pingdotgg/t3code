@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { stableStringify } from "./relaySigning.ts";
+import { stableStringify } from "./stableStringify.ts";
 
-describe("relaySigning", () => {
+describe("stableStringify", () => {
   it("canonicalizes object keys recursively", () => {
     expect(
       stableStringify({

@@ -1,7 +1,6 @@
 import {
   isListedThread,
   type EnvironmentId,
-  isProviderNativeSubagentThread,
   type OrchestrationV2ThreadShell,
   type Project,
   type RuntimeRequestId,
@@ -24,25 +23,6 @@ export interface SubagentRequestAwareness {
   readonly requestId: RuntimeRequestId;
   /** The child's own update time, which moves whenever its request changes. */
   readonly updatedAt: DateTime.Utc;
-}
-
-/** Provider-native subagents ask on their parent; the coordinator answers child questions. */
-export function subagentAwaitsApproval(
-  thread: Pick<
-    OrchestrationV2ThreadShell,
-    "activityRunStatus" | "creationSource" | "lineage" | "pendingRuntimeRequest"
-  >,
-): boolean {
-  const kind = thread.pendingRuntimeRequest?.kind;
-  return (
-    kind !== undefined &&
-    kind !== "auth_refresh" &&
-    kind !== "user_input" &&
-    thread.lineage.relationshipToParent === "subagent" &&
-    !isProviderNativeSubagentThread(thread) &&
-    // The activity run stays set when a follow-up is queued behind a blocked run.
-    thread.activityRunStatus != null
-  );
 }
 
 export interface AgentAwarenessState {
