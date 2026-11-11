@@ -128,9 +128,10 @@ export function evaluatePullRequestWatch(
       passed = false;
       passedChecks = [];
     }
-    const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
+    // A watch saved before passedChecks existed takes this read's gate as what it was told.
+    if (passed && passedChecks.length === 0) passedChecks = gateNames;
     // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
-    const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
+    const gateGrew = required.length > 0 && gateNames.some((name) => !passedChecks.includes(name));
     // Other checks still pending when required ones passed are owed one wake when all settle.
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
     const owed = passed

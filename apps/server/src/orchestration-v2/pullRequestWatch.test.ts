@@ -609,6 +609,21 @@ describe("evaluatePullRequestWatch", () => {
     const saved = evaluatePullRequestWatch(told, green, noRemarks);
     assert.deepEqual(saved.changes, []);
     assert.deepEqual(saved.next.passedChecks, ["test"]);
+
+    const required = (name: string, status: PullRequestCheck["status"]) => ({
+      ...check(name, status),
+      required: true,
+    });
+    const rerun = evaluatePullRequestWatch(
+      told,
+      detail({ checks: [required("test", "pending")] }),
+      noRemarks,
+    );
+    assert.deepEqual(rerun.changes, []);
+    const grown = detail({ checks: [required("test", "success"), required("lint", "success")] });
+    assert.deepEqual(evaluatePullRequestWatch(rerun.next, grown, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required: true },
+    ]);
   });
 
   it("keeps remarks for a later pass when the conversation was not read whole", () => {
