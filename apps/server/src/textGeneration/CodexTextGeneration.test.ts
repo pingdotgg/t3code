@@ -431,8 +431,8 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           subject: "Add important change",
           body: "",
         }),
-        launchArgs: "--strict-config --listen off",
-        requireArg: "--strict-config",
+        launchArgs: "--strict-config --oss --local-provider ollama --listen off",
+        requireArg: "--strict-config --oss --local-provider ollama",
         forbidArg: "--listen",
       },
       (textGeneration) =>

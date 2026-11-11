@@ -1,12 +1,17 @@
 import packageJson from "../../package.json" with { type: "json" };
 import { BUILD_MIGRATION_HEAD, recordedMigrations } from "../persistence/databaseMigrationHead.ts";
-import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
+import {
+  isSupportedLauncherProtocol,
+  SERVICE_LAUNCHER_PROTOCOL,
+  type SupportedLauncherProtocol,
+} from "./serviceProtocol.ts";
 
 export type ServicePreflightResult =
   | {
       readonly status: "ready";
       readonly version: string;
-      readonly launcherProtocol: typeof SERVICE_LAUNCHER_PROTOCOL;
+      /** The launcher protocol the server named; it accepts no other in reply. */
+      readonly launcherProtocol: SupportedLauncherProtocol;
     }
   | {
       readonly status: "blocked";
@@ -20,14 +25,15 @@ export function runServicePreflight(input: {
   readonly version?: string;
 }): ServicePreflightResult {
   const version = input.version ?? packageJson.version;
-  if (input.launcherProtocol !== SERVICE_LAUNCHER_PROTOCOL) {
+  const { launcherProtocol } = input;
+  if (!isSupportedLauncherProtocol(launcherProtocol)) {
     return {
       status: "blocked",
       version,
       // A stale `t3` earlier on PATH (an old npm/nvm global) makes `t3 service install`
       // reinstall itself and report success, so name the exact install and the path check.
       reason: [
-        `The installed service launcher speaks protocol ${input.launcherProtocol}, but t3@${version} requires protocol ${SERVICE_LAUNCHER_PROTOCOL}.`,
+        `The installed service launcher speaks protocol ${launcherProtocol}, but t3@${version} requires protocol ${SERVICE_LAUNCHER_PROTOCOL}.`,
         `On the server machine, install this exact CLI: \`curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION=${version} sh\`.`,
         `Check that \`t3 --version\` prints ${version} and that \`which -a t3\` lists no older t3 (such as an npm or nvm install) first, then run \`~/.local/bin/t3 service install\` (the installer's default path).`,
         "Updating the desktop app does not update this CLI, and `t3 service update` only repairs the service with whichever CLI runs it.",
@@ -51,7 +57,7 @@ export function runServicePreflight(input: {
     };
   }
 
-  return { status: "ready", version, launcherProtocol: SERVICE_LAUNCHER_PROTOCOL };
+  return { status: "ready", version, launcherProtocol };
 }
 
 /** Migrations a newer build recorded, or null when the database exists but cannot be read.
@@ -63,21 +69,20 @@ function newerRecordedMigrations(databasePath: string): ReadonlyArray<string> | 
     : recorded.filter(({ id }) => id > BUILD_MIGRATION_HEAD).map(({ id, name }) => `${id}_${name}`);
 }
 
-export function decodeServicePreflightResult(value: unknown): ServicePreflightResult | undefined {
+export function decodeServicePreflightResult(
+  value: unknown,
+  launcherProtocol: SupportedLauncherProtocol,
+): ServicePreflightResult | undefined {
   if (typeof value !== "object" || value === null) {
     return undefined;
   }
   const record = value as Record<string, unknown>;
   if (
     record.status === "ready" &&
-    record.launcherProtocol === SERVICE_LAUNCHER_PROTOCOL &&
+    record.launcherProtocol === launcherProtocol &&
     typeof record.version === "string"
   ) {
-    return {
-      status: "ready",
-      version: record.version,
-      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
-    };
+    return { status: "ready", version: record.version, launcherProtocol };
   }
   if (
     record.status === "blocked" &&

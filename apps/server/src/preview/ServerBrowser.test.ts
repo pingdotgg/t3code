@@ -2255,6 +2255,33 @@ it.live("agents read a human's tab with no arguments and act on it only while no
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("preview_open reports a tab it shows as visible once the client attaches", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      yield* Effect.yieldNow;
+      // Like a real client, the stream attaches asynchronously after the reveal request arrives.
+      yield* Effect.gen(function* () {
+        let event;
+        do event = yield* PubSub.take(events);
+        while (event.type !== "navigated" || !event.snapshot.revealRequest);
+        yield* browser.attachViewer(viewerInput(event.tabId, false)).pipe(Effect.forkScoped);
+      }).pipe(Effect.forkScoped);
+
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, open: true },
+      });
+
+      expect(opened.visible).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a session's own tab stays its default while other sessions' tabs are listed", () =>
   Effect.scoped(
     Effect.gen(function* () {
