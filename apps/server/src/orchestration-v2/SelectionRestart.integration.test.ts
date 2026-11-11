@@ -16,6 +16,7 @@ import {
   ProviderTurnId,
   type RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -352,6 +353,27 @@ it.live("retries a failed selection restart session open before completing", () 
         if (activeRunId === undefined) {
           return yield* Effect.die("active restart test run is missing");
         }
+        const approval = {
+          type: "delegation_approval.record" as const,
+          threadId,
+          runId: activeRunId,
+          nodeId: activeProjection.runs[0]!.rootNodeId!,
+          turnItemId: TurnItemId.make("approval:selection-restart"),
+          title: "Delegate a task",
+          task: "Review the change",
+          current: initialSelection,
+          proposed: replacementSelection,
+        };
+        yield* orchestrator.dispatch({
+          ...approval,
+          commandId: CommandId.make("command:selection-restart:approval-pending"),
+          approvalStatus: "pending",
+        });
+        const originalCard = (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
+          (item) => item.id === approval.turnItemId,
+        )!;
+        assert.isNotNull(originalCard.providerThreadId);
+        assert.isNotNull(originalCard.providerTurnId);
 
         const completed = yield* eventSink
           .stream({
@@ -381,6 +403,21 @@ it.live("retries a failed selection restart session open before completing", () 
         });
         yield* Fiber.join(completed);
         yield* worker.drain();
+        yield* orchestrator.dispatch({
+          ...approval,
+          commandId: CommandId.make("command:selection-restart:approval-declined"),
+          approvalStatus: "declined",
+        });
+        const answered = (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
+          (item) => item.id === approval.turnItemId,
+        )!;
+        assert.equal(answered.nodeId, originalCard.nodeId);
+        assert.equal(answered.providerThreadId, originalCard.providerThreadId);
+        assert.equal(answered.providerTurnId, originalCard.providerTurnId);
+        assert.equal(
+          answered.type === "delegation_approval" ? answered.approvalStatus : null,
+          "declined",
+        );
         return {
           projection: yield* orchestrator.getThreadProjection(threadId),
           captured: yield* Ref.get(state),

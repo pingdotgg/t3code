@@ -9396,8 +9396,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           runId: command.runId,
           nodeId,
-          providerThreadId: run.providerThreadId,
-          providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
+          providerThreadId:
+            existing === undefined ? run.providerThreadId : existing.providerThreadId,
+          providerTurnId:
+            existing === undefined
+              ? (providerTurnForRun(projection, run)?.id ?? null)
+              : existing.providerTurnId,
           nativeItemRef: null,
           parentItemId: null,
           ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),
