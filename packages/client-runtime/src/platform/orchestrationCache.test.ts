@@ -74,14 +74,20 @@ describe("orchestration cache envelopes", () => {
     expect(decoded.visibleTurnItems.find((entry) => entry.item.id === item.id)?.item).toEqual(item);
   });
 
-  it("rejects thread snapshots saved before queued-run items were kept, but not shells", () => {
-    const staleThread = encodeStoredThreadSnapshotJson({
+  it("rejects thread snapshots saved before human history was bounded, but not shells", () => {
+    const currentThread = encodeStoredThreadSnapshotJson({
       schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
       environmentId,
       threadId: v2ThreadId,
       snapshot: { snapshotSequence: 4, projection: v2Projection },
-    }).replace(`"schemaVersion":${ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION}`, `"schemaVersion":3`);
-    expect(() => decodeStoredThreadSnapshotJson(staleThread)).toThrow();
+    });
+    for (const staleVersion of [3, 4]) {
+      const staleThread = currentThread.replace(
+        `"schemaVersion":${ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION}`,
+        `"schemaVersion":${staleVersion}`,
+      );
+      expect(() => decodeStoredThreadSnapshotJson(staleThread)).toThrow();
+    }
     const shell = encodeStoredShellSnapshot({
       schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
       environmentId,
@@ -101,7 +107,7 @@ describe("orchestration cache envelopes", () => {
       const decoded = Effect.try({
         try: () => decodeStoredShellSnapshotSync({ ...encodedShell, schemaVersion: 1 }),
         catch: (cause) => new TestCacheDecodeError({ message: String(cause) }),
-      }).pipe(Effect.map(Option.some));
+      }).pipe(Effect.asSome);
 
       const result = yield* decodeOrDiscardOrchestrationCache(
         decoded,

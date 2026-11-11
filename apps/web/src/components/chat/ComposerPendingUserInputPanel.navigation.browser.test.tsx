@@ -6,8 +6,11 @@ import {
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -15,11 +18,12 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
 }));
 
 import { act, fakeTimers, render } from "../../../test/render";
-import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
-import { threadContextRecord, threadContextReference } from "../../lib/composerContextRecords";
+import { threadContextReference } from "../../lib/composerContextRecords";
 import { questionAttachmentDraftId } from "../../questionAttachments";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { toastManager } from "../ui/toast";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
@@ -76,34 +80,33 @@ function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]
   } satisfies OrchestrationV2ThreadProjection;
 }
 
-let requests: ReturnType<typeof usePendingThreadRequests>;
-
-function PendingRequestsProbe({
-  environmentId,
-  projection,
-  loading = false,
-  composerDraftTarget,
-}: {
+interface ProbeProps {
   environmentId: EnvironmentId;
   projection: OrchestrationV2ThreadProjection;
   loading?: boolean;
-  composerDraftTarget?: DraftId;
-}) {
+}
+
+function useProbeRequests({ environmentId, projection, loading = false }: ProbeProps) {
   const promptRef = useRef("");
   const composerRef = useRef(null);
-  const state = usePendingThreadRequests({
+  return usePendingThreadRequests({
     environmentId,
     activeThreadId: projection.thread.id,
-    activeThread: projection.thread,
     serverProjection: loading ? null : projection,
     supportsQuestionAttachments: false,
-    composerDraftTarget: composerDraftTarget ?? { environmentId, threadId: projection.thread.id },
+    composerDraftTarget: { environmentId, threadId: projection.thread.id },
     setComposerDraftPrompt: (target, prompt) =>
       useComposerDraftStore.getState().setPrompt(target, prompt),
     promptRef,
     composerRef,
     setThreadError: () => {},
   });
+}
+
+let requests: ReturnType<typeof usePendingThreadRequests>;
+
+function PendingRequestsProbe(props: ProbeProps) {
+  const state = useProbeRequests(props);
   useLayoutEffect(() => {
     requests = state;
   });
@@ -145,6 +148,77 @@ it("retains answers, selections and question position after leaving chat, includ
   expect(requests).toMatchObject(expected);
 });
 
+it("tells the user when an option click moves their typed answer into the hidden composer draft", async () => {
+  using _timers = fakeTimers();
+  const environmentId = EnvironmentId.make("displaced-environment");
+  const draftTarget = { environmentId, threadId: threadRef.threadId };
+  const draftPrompt = () => useComposerDraftStore.getState().getComposerDraft(draftTarget)?.prompt;
+  using toast = vi.spyOn(toastManager, "add");
+  await using _screen = await render(
+    <PendingRequestsProbe
+      environmentId={environmentId}
+      projection={questionProjection(threadRef.threadId)}
+    />,
+  );
+
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  expect(toast).not.toHaveBeenCalled();
+
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "first try"));
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  expect(draftPrompt()).toBe("first try");
+  expect(toast).toHaveBeenCalledTimes(1);
+  expect(toast).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "info",
+      title: "Your typed text was set aside",
+      description: "It will be back in the composer once the question is answered.",
+      data: { threadRef: draftTarget },
+    }),
+  );
+
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "second try"));
+  expect(draftPrompt()).toBe("first try");
+  expect(requests.activePendingDraftAnswers["question-0"]).toMatchObject({
+    customAnswer: "second try",
+  });
+  expect(toast).toHaveBeenCalledTimes(1);
+});
+
+function QuestionPositionProbe(props: ProbeProps) {
+  const state = useProbeRequests(props);
+  return (
+    <>
+      <output>Question {state.activePendingQuestionIndex + 1}</output>
+      <button
+        type="button"
+        onClick={() => state.onSelectActivePendingUserInputOption("question-0", "Incremental")}
+      >
+        Choose Incremental
+      </button>
+      <button type="button" onClick={() => state.onAdvanceActivePendingUserInput()}>
+        Submit
+      </button>
+    </>
+  );
+}
+
+it("stays on an unanswered question when the composer submits", async () => {
+  await using screen = await render(
+    <QuestionPositionProbe
+      environmentId={EnvironmentId.make("unanswered-environment")}
+      projection={questionProjection(threadRef.threadId)}
+    />,
+  );
+  const submit = screen.getByRole("button", { name: "Submit" });
+  await userEvent.click(submit);
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Question 1");
+
+  await userEvent.click(screen.getByRole("button", { name: "Choose Incremental" }));
+  await userEvent.click(submit);
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Question 2");
+});
+
 it("isolates drafts by environment, thread and request and discards only resolved requests", async () => {
   using _timers = fakeTimers();
   const environmentId = EnvironmentId.make("scope-environment");
@@ -168,6 +242,7 @@ it("isolates drafts by environment, thread and request and discards only resolve
     await act(() => requests.onAdvanceActivePendingUserInput());
   }
 
+  // "first" was answered on another device.
   await show({
     environmentId,
     projection: {
@@ -180,6 +255,21 @@ it("isolates drafts by environment, thread and request and discards only resolve
     },
   });
   expect(requests.activePendingUserInput?.requestId).toBe("second");
+  await act(() =>
+    makeThreadRequestsResolvedAnnouncer(
+      environmentId,
+      threadRef.threadId,
+    )([
+      { id: RuntimeRequestId.make("first"), status: "resolved" },
+      { id: RuntimeRequestId.make("second"), status: "pending" },
+    ]),
+  );
+  // An answered question's text was sent, so it does not come back as a draft.
+  expect(
+    useComposerDraftStore
+      .getState()
+      .getComposerDraft({ environmentId, threadId: threadRef.threadId })?.prompt ?? "",
+  ).toBe("");
   for (const [index, scope] of scopes.entries()) {
     await show(scope);
     expect(requests.activePendingQuestionIndex).toBe(index === 0 ? 0 : 1);
@@ -191,111 +281,40 @@ it("isolates drafts by environment, thread and request and discards only resolve
 
 // Stop cancels an open question; a provider timeout expires it. Neither sends the answer.
 it.each(["cancelled", "expired"] as const)(
-  "keeps a typed answer and its thread chips in the thread draft when the question is %s",
+  "returns a typed answer and its thread chips to the thread draft when the question is %s",
   async (status) => {
     using _timers = fakeTimers();
     const environmentId = EnvironmentId.make(`${status}-environment`);
-    const projection = questionProjection(threadRef.threadId, ["first"]);
+    const requestId = RuntimeRequestId.make("first");
     const reference = threadContextRecord(
       { environmentId, threadId: ThreadId.make("reference-thread") },
       "Reference work",
     );
     const answer = `Purple please, like ${formatInlineContextReference(threadContextReference(reference))}`;
     const draftTarget = { environmentId, threadId: threadRef.threadId };
-    useComposerDraftStore.getState().setPrompt(draftTarget, "Earlier draft");
-    useComposerDraftStore
-      .getState()
-      .setThreadContexts(
-        questionAttachmentDraftId(environmentId, threadRef.threadId, "first", "question-0"),
-        [reference],
-      );
-    await using screen = await render(
-      <PendingRequestsProbe environmentId={environmentId} projection={projection} />,
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(draftTarget, "Earlier draft");
+    store.setThreadContexts(
+      questionAttachmentDraftId(environmentId, threadRef.threadId, requestId, "question-0"),
+      [reference],
     );
-    await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", answer));
-    expect(requests.activePendingDraftAnswers["question-0"]?.customAnswer).toBe(answer);
-
-    await screen.rerender(
+    await using _screen = await render(
       <PendingRequestsProbe
         environmentId={environmentId}
-        projection={{
-          ...projection,
-          runtimeRequests: projection.runtimeRequests.map((request) => ({
-            ...request,
-            status,
-            resolvedAt: projection.updatedAt,
-          })),
-        }}
+        projection={questionProjection(threadRef.threadId, [requestId])}
       />,
     );
-    expect(requests.activePendingUserInput).toBeNull();
+    await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", answer));
+
+    await act(() =>
+      makeThreadRequestsResolvedAnnouncer(
+        environmentId,
+        threadRef.threadId,
+      )([{ id: requestId, status }]),
+    );
     expect(useComposerDraftStore.getState().getComposerDraft(draftTarget)).toMatchObject({
       prompt: `Earlier draft\n\n${answer}`,
       threadContexts: [reference],
     });
   },
 );
-
-it("does not return an answer to the thread draft once the question is resolved", async () => {
-  using _timers = fakeTimers();
-  const environmentId = EnvironmentId.make("resolve-environment");
-  const projection = questionProjection(threadRef.threadId, ["first"]);
-  await using screen = await render(
-    <PendingRequestsProbe environmentId={environmentId} projection={projection} />,
-  );
-  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Sent"));
-  await screen.rerender(
-    <PendingRequestsProbe
-      environmentId={environmentId}
-      projection={{
-        ...projection,
-        runtimeRequests: projection.runtimeRequests.map((request) => ({
-          ...request,
-          status: "resolved",
-          resolvedAt: projection.updatedAt,
-        })),
-      }}
-    />,
-  );
-  expect(
-    useComposerDraftStore
-      .getState()
-      .getComposerDraft({ environmentId, threadId: threadRef.threadId })?.prompt ?? "",
-  ).toBe("");
-});
-
-it("keeps a cancelled question's typed answer when a queued-message edit is open and then cancelled", async () => {
-  using _timers = fakeTimers();
-  const environmentId = EnvironmentId.make("queued-edit-environment");
-  const projection = questionProjection(threadRef.threadId, ["first"]);
-  const answer = "Typed while a queued message was being edited.";
-  const threadTarget = { environmentId, threadId: threadRef.threadId };
-  // The composer shows the queued edit's temporary draft, not the thread's.
-  const editTarget = DraftId.make("queued-edit:test:run");
-  useComposerDraftStore.getState().setPrompt(editTarget, "Queued message text");
-  await using screen = await render(
-    <PendingRequestsProbe
-      environmentId={environmentId}
-      projection={projection}
-      composerDraftTarget={editTarget}
-    />,
-  );
-  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", answer));
-  await screen.rerender(
-    <PendingRequestsProbe
-      environmentId={environmentId}
-      composerDraftTarget={editTarget}
-      projection={{
-        ...projection,
-        runtimeRequests: projection.runtimeRequests.map((request) => ({
-          ...request,
-          status: "cancelled",
-          resolvedAt: projection.updatedAt,
-        })),
-      }}
-    />,
-  );
-  // Cancelling the queued edit clears its temporary draft.
-  useComposerDraftStore.getState().clearComposerContent(editTarget);
-  expect(useComposerDraftStore.getState().getComposerDraft(threadTarget)?.prompt).toBe(answer);
-});

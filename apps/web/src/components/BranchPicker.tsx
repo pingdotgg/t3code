@@ -1,18 +1,10 @@
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ComponentProps,
-  type ReactNode,
-} from "react";
+import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
 
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { cn } from "../lib/utils";
-import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { RefreshIcon } from "./ui/refresh-icon";
 import { Switch } from "./ui/switch";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
@@ -32,7 +24,6 @@ export function BranchPicker({
   filteredItems,
   value,
   query,
-  resultsQuery,
   onQueryChange,
   open,
   onOpenChange,
@@ -51,7 +42,6 @@ export function BranchPicker({
   filteredItems: string[];
   value: string | null;
   query: string;
-  resultsQuery: string;
   onQueryChange: (value: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -68,10 +58,7 @@ export function BranchPicker({
 }) {
   const highlightedValueRef = useRef<string | null>(null);
   const startFromOriginSwitchId = useId();
-  const branchListScrollElementRef = useRef<HTMLElement | null>(null);
-  const previousBranchListScrollTopRef = useRef<number | null>(null);
   const handleOpenChange = (nextOpen: boolean) => {
-    previousBranchListScrollTopRef.current = null;
     if (!nextOpen) highlightedValueRef.current = null;
     onOpenChange(nextOpen);
   };
@@ -84,69 +71,14 @@ export function BranchPicker({
 
     onLoadNext();
   };
-  const maybeFetchNextBranchPage = () => {
-    const scrollElement = branchListScrollElementRef.current;
-    if (!scrollElement) {
-      return;
-    }
-
-    const previousScrollTop = previousBranchListScrollTopRef.current;
-    previousBranchListScrollTopRef.current = scrollElement.scrollTop;
-    if (
-      !open ||
-      !hasNextPage ||
-      isFetchingNextPage ||
-      !shouldLoadNextBranchPageAfterScroll({
-        previousScrollTop,
-        scrollTop: scrollElement.scrollTop,
-        scrollHeight: scrollElement.scrollHeight,
-        clientHeight: scrollElement.clientHeight,
-      })
-    ) {
-      return;
-    }
-
-    fetchNextBranchPage();
-  };
-
   const branchListRef = useRef<LegendListRef | null>(null);
   const updateBranchListScrollFades = () => {
-    const scrollElement = branchListRef.current?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) {
-      return;
-    }
-    branchListScrollElementRef.current = scrollElement;
-    const maxScrollOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-    setShowTopBranchScrollFade(scrollElement.scrollTop > 1);
-    setShowBottomBranchScrollFade(maxScrollOffset - scrollElement.scrollTop > 1);
+    const metrics = branchListRef.current?.getState();
+    if (!metrics) return;
+    setShowTopBranchScrollFade(!metrics.isAtStart);
+    setShowBottomBranchScrollFade(!metrics.isAtEnd);
   };
-
-  useLayoutEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    let nestedFrame = 0;
-    const frame = requestAnimationFrame(() => {
-      updateBranchListScrollFades();
-      nestedFrame = requestAnimationFrame(updateBranchListScrollFades);
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      cancelAnimationFrame(nestedFrame);
-    };
-  }, [open, updateBranchListScrollFades]);
-
-  const previousResultsQuery = useRef<string | null>(null);
-  useEffect(() => {
-    if (!open) {
-      previousResultsQuery.current = null;
-      return;
-    }
-    if (previousResultsQuery.current === resultsQuery) return;
-    previousResultsQuery.current = resultsQuery;
-    void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
-  }, [resultsQuery, open]);
+  const branchScrollRef = useLegendListRef(branchListRef, updateBranchListScrollFades);
 
   return (
     <Combobox
@@ -173,7 +105,10 @@ export function BranchPicker({
         <ComboboxSearchInput
           placeholder="Search refs..."
           value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
+          onChange={(event) => {
+            onQueryChange(event.target.value);
+            void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+          }}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229)
               return;
@@ -193,22 +128,19 @@ export function BranchPicker({
           <div className="relative flex min-h-0 w-full max-h-56 flex-1 flex-col overflow-hidden">
             <ComboboxListVirtualized className="flex size-full min-h-0 min-w-0 flex-col">
               <LegendList<string>
-                ref={branchListRef}
+                ref={branchScrollRef}
                 data={filteredItems}
+                initialScrollOffset={0}
                 keyExtractor={(item) => item}
                 {...(getItemType ? { getItemType } : {})}
                 renderItem={({ item, index }) => renderItem(item, index)}
                 estimatedItemSize={28}
                 drawDistance={336}
-                onLayout={() => {
-                  updateBranchListScrollFades();
-                  previousBranchListScrollTopRef.current =
-                    branchListScrollElementRef.current?.scrollTop ?? null;
-                }}
-                onScroll={() => {
-                  updateBranchListScrollFades();
-                  maybeFetchNextBranchPage();
-                }}
+                onScroll={updateBranchListScrollFades}
+                onLayout={updateBranchListScrollFades}
+                onReady={updateBranchListScrollFades}
+                onEndReached={fetchNextBranchPage}
+                onEndReachedThreshold={0.5}
                 className={cn(
                   "min-h-0 max-h-56 scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 py-2",
                   getVirtualizedScrollFadeClassName({
