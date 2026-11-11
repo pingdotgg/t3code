@@ -234,7 +234,7 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
 > {
   return yield* Effect.tryPromise({
     try: async () => {
-      const fetchImpl = input.fetchImpl ?? undiciFetch;
+      const fetchImpl: typeof fetch = input.fetchImpl ?? (undiciFetch as unknown as typeof fetch);
       let url = new URL("http://invalid.local/");
       let response: Response | undefined;
       const hops: { url: string; status: number | null; ips: string[] }[] = [];
