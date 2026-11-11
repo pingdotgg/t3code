@@ -226,8 +226,12 @@ export const make = Effect.gen(function* () {
 
           const plans = yield* Effect.forEach(group, (thread) =>
             Effect.gen(function* () {
+              // A fork carries its source's PR but gets its own createdAt.
+              const isFork = thread.lineage.relationshipToParent === "fork";
               let branchPullRequest =
-                detected !== null && pullRequestPredatesThread(detected, thread.createdAt)
+                detected !== null &&
+                pullRequestPredatesThread(detected, thread.createdAt) &&
+                !(isFork && samePullRequest(thread.branchPullRequest, detectedReference))
                   ? null
                   : detectedReference;
               if (
@@ -242,7 +246,7 @@ export const make = Effect.gen(function* () {
                 if (
                   previous.headBranch === thread.branch &&
                   (previous.state === "merged" || previous.state === "closed") &&
-                  !pullRequestPredatesThread(previous, thread.createdAt)
+                  (isFork || !pullRequestPredatesThread(previous, thread.createdAt))
                 ) {
                   branchPullRequest = thread.branchPullRequest;
                 }

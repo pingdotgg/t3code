@@ -587,6 +587,15 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             threadShell("new-2"),
             { ...threadShell("saved"), branchPullRequest: reference },
             { ...threadShell("explicit"), linkedPullRequest: reference },
+            {
+              ...threadShell("fork"),
+              branchPullRequest: reference,
+              lineage: {
+                rootThreadId: ThreadId.make("older"),
+                parentThreadId: ThreadId.make("older"),
+                relationshipToParent: "fork" as const,
+              },
+            },
           ].map((thread) => ({ ...thread, branch: "staging" }));
           const project: OrchestrationProjectShell = {
             id: reference.projectId,
