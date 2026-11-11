@@ -5,6 +5,7 @@ import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapTo
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
+import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -18,7 +19,6 @@ import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 
 const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(15);
 const BOOTSTRAP_TRANSIENT_RETRY_INTERVAL = Duration.millis(500);
-const BACKEND_START_TIMEOUT = Duration.minutes(2);
 const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
 
 const isTransientBearerBootstrapError = (error: RemoteEnvironmentRequestError): boolean => {
@@ -42,15 +42,6 @@ export class DesktopLocalEnvironmentAuthBackendNotConfiguredError extends Schema
   }
 }
 
-export class DesktopLocalEnvironmentAuthBackendNotReadyError extends Schema.TaggedError<DesktopLocalEnvironmentAuthBackendNotReadyError>()(
-  "DesktopLocalEnvironmentAuthBackendNotReadyError",
-  {},
-) {
-  override get message(): string {
-    return "Local backend did not become ready.";
-  }
-}
-
 export class DesktopLocalEnvironmentAuthSessionBootstrapError extends Schema.TaggedError<DesktopLocalEnvironmentAuthSessionBootstrapError>()(
   "DesktopLocalEnvironmentAuthSessionBootstrapError",
   { cause: Schema.Defect() },
@@ -62,7 +53,6 @@ export class DesktopLocalEnvironmentAuthSessionBootstrapError extends Schema.Tag
 
 export const DesktopLocalEnvironmentAuthError = Schema.Union([
   DesktopLocalEnvironmentAuthBackendNotConfiguredError,
-  DesktopLocalEnvironmentAuthBackendNotReadyError,
   DesktopLocalEnvironmentAuthSessionBootstrapError,
 ]);
 export type DesktopLocalEnvironmentAuthError = typeof DesktopLocalEnvironmentAuthError.Type;
@@ -74,10 +64,11 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
   }
 >()("@t3tools/desktop/backend/DesktopLocalEnvironmentAuth") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const httpClient = yield* HttpClient.HttpClient;
+  const mac = yield* Mac.Mac;
   const tokenRef = yield* Ref.make(Option.none<string>());
   const mutex = yield* Semaphore.make(1);
 
@@ -91,23 +82,22 @@ export const make = Effect.gen(function* () {
 
         const instances = yield* pool.list;
         const primary = instances.find((instance) => instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
-        // Cold startup must not spend the HTTP retry budget before the server can accept auth.
-        if (primary !== undefined && !(yield* primary.waitForReady(BACKEND_START_TIMEOUT))) {
-          return yield* new DesktopLocalEnvironmentAuthBackendNotReadyError();
+        if (primary === undefined || !(yield* primary.waitForReady(Duration.infinity))) {
+          return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
         }
-        const configOption = primary === undefined ? Option.none() : yield* primary.currentConfig;
+        const configOption = yield* primary.currentConfig;
         if (Option.isNone(configOption)) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
         }
         const config = configOption.value;
-        // A backend launched with the desktop secret accepts the current
-        // window's token, not the one frozen into its launch config; this
-        // exchange can run long after launch (e.g. after a suspend).
+        // Secret-authenticated backends accept the current window token; the launch token may be stale.
         const secret = config.bootstrap.desktopBootstrapSecret;
         const credential =
           secret === undefined
             ? config.bootstrap.desktopBootstrapToken
-            : currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis);
+            : yield* currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis).pipe(
+                Effect.provideService(Mac.Mac, mac),
+              );
         if (!credential) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
         }

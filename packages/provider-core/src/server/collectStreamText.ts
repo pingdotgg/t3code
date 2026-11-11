@@ -38,10 +38,7 @@ export const collectUint8StreamText = <E>(input: {
         truncated: false,
       }),
       (state, chunk): CollectState => {
-        /*
-         * keep draining after truncation so the child process can exit normally.
-         * its a know issue that on windows killing after the output cap can force an expensive taskkill operation and hurt performance
-         */
+        // Keep draining after truncation; killing a child on Windows can invoke expensive taskkill.
         if (state.truncated) {
           return state;
         }

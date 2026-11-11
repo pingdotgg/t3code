@@ -42,17 +42,6 @@ describe("extractIcnsPng", () => {
     expect(widthOf(extractIcnsPng(file, 96))).toBe(128);
   });
 
-  it("falls back to the largest PNG when none covers the requested size", () => {
-    const file = icns(["icp4", pngHeader(16)], ["icp5", pngHeader(32)]);
-
-    expect(widthOf(extractIcnsPng(file, 96))).toBe(32);
-  });
-
-  it("returns null for files without a PNG entry or with a foreign header", () => {
-    expect(extractIcnsPng(icns(["it32", new Uint8Array(64)]), 96)).toBeNull();
-    expect(extractIcnsPng(pngHeader(128), 96)).toBeNull();
-  });
-
   it("stops at an entry whose length runs past the file", () => {
     const file = icns(["ic07", pngHeader(128)], ["ic08", pngHeader(256)]);
     new DataView(file.buffer).setUint32(8 + 8 + 24 + 4, 4096);

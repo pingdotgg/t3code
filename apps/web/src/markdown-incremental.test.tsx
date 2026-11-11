@@ -1,4 +1,4 @@
-import { CHAT_MARKDOWN_REHYPE_PLUGINS } from "@t3tools/shared/markdownRawPipeline";
+import { CHAT_MARKDOWN_REHYPE_PLUGINS } from "@t3tools/shared/markdownPipeline";
 import type { Root } from "mdast";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";

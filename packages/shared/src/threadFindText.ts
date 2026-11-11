@@ -21,7 +21,10 @@ import {
   resolveMarkdownFileLinkTarget,
 } from "./markdownLinks.ts";
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
-import { parseComposerContextHref } from "./composerContextReferences.ts";
+import {
+  isAttachmentOnlyBootstrapPrompt,
+  parseComposerContextHref,
+} from "./composerContextReferences.ts";
 import { assistantCitationLabel, parseAssistantCitationHref } from "./assistantCitations.ts";
 import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "./proposedPlanText.ts";
@@ -30,12 +33,50 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import {
   shouldPreserveAssistantLineBreaks,
+  CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
 } from "./markdownPipeline.ts";
 
-import { CHAT_MARKDOWN_REHYPE_PLUGINS } from "./markdownRawPipeline.ts";
-import { THREAD_FIND_BLOCK_TAGS } from "./threadFindBlockTags.ts";
+// Inline wrappers (including Shiki token spans) must not split a search phrase.
+export const THREAD_FIND_BLOCK_TAGS = new Set([
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "br",
+  "dd",
+  "details",
+  "div",
+  "dl",
+  "dt",
+  "figcaption",
+  "figure",
+  "footer",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hr",
+  "li",
+  "main",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "summary",
+  "table",
+  "tbody",
+  "td",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+]);
 
 const assistantProcessor = unified()
   .use(remarkParse)
@@ -178,6 +219,8 @@ export function searchableMessageSegments(
   skills: readonly InlineSkill[] = [],
 ): readonly string[] | null {
   if (message.role === "user") {
+    // Clients hide this prompt, so find must not match text nobody can see.
+    if (isAttachmentOnlyBootstrapPrompt(message.text)) return [];
     const text = message.context ? message.text : upgradeLegacyContextMessage(message.text).text;
     return markdownThreadFindText(text, true, cwd, skills);
   }

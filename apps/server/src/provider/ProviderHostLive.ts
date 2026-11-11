@@ -1,15 +1,16 @@
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { ProviderCredentialError } from "@t3tools/provider-core/server/errors";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
-import * as ServerActivation from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as DocumentText from "./DocumentText.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 
 export const layer = Layer.effect(
@@ -19,8 +20,8 @@ export const layer = Layer.effect(
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
     const secrets = yield* ServerSecretStore.ServerSecretStore;
-    const crypto = yield* Crypto.Crypto;
-    const background = yield* ServerActivation.ServerBackgroundStart;
+    const digest = yield* Digest.Digest;
+    const fileSystem = yield* FileSystem.FileSystem;
     return ProviderHost.ProviderHost.of({
       paths: {
         cwd: config.cwd,
@@ -36,11 +37,17 @@ export const layer = Layer.effect(
         subscribe: serverSettings.subscribeChanges,
       },
       shouldRunBackgroundWork: backgroundPolicy.shouldRunScopeWork,
-      ...(background === undefined ? {} : { awaitStartupProbe: background.awaitTurn }),
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
-      credentials: (namespace, bindingId) =>
-        ProviderCredentialStore.make(namespace, bindingId).pipe(
+      // DocumentText owns the path-resolution span.
+      resolveExtractedTextPath: Effect.fnUntraced(
+        function* (path) {
+          return yield* DocumentText.resolveExtractedTextPath(path);
+        },
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      ),
+      credentials: Effect.fn("ProviderHost.credentials")(function (namespace, bindingId) {
+        return ProviderCredentialStore.make(namespace, bindingId).pipe(
           Effect.map((store) => ({
             binding: store.binding,
             get: store.get.pipe(
@@ -61,8 +68,9 @@ export const layer = Layer.effect(
             ),
           })),
           Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
-          Effect.provideService(Crypto.Crypto, crypto),
-        ),
+          Effect.provideService(Digest.Digest, digest),
+        );
+      }),
     });
   }),
 );

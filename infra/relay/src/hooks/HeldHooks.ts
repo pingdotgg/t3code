@@ -32,11 +32,7 @@ interface HookEndpoint {
 export class HeldHooks extends Context.Service<
   HeldHooks,
   {
-    /**
-     * The key is the tunnel name's hash of user and environment, so it names
-     * exactly one allocation and at most one active link; nobody else can link
-     * their way onto it.
-     */
+    /** Hash user and environment so endpoint keys cannot be claimed by another account. */
     readonly resolveEndpoint: (
       endpointKey: string,
     ) => Effect.Effect<HookEndpoint | null, PersistenceError>;
@@ -84,10 +80,7 @@ const make = Effect.gen(function* () {
     };
   });
 
-  /**
-   * Endpoint keys of the managed links the calling environment key proved.
-   * The environment id alone would also match other accounts' links of it.
-   */
+  /** Only links proven by this environment key count; other accounts can claim the same environment id. */
   const ownEndpointKeys = Effect.fn("relay.hooks.own_endpoint_keys")(function* (input: {
     readonly environmentId: string;
     readonly environmentPublicKey: string;

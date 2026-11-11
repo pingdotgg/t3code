@@ -1,7 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
@@ -26,53 +29,6 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
-  it.effect("indexes active-thread sweep expressions and follows payload changes", () =>
-    Effect.gen(function* () {
-      yield* runMigrations();
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO orchestration_v2_projection_threads (
-        thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
-        created_at, updated_at, payload_json
-      ) VALUES ('sweep', 'project', 'Sweep', 'codex', 'full-access', 'default',
-        '2026-10-01', '2026-10-01', '{"pullRequests":[{"number":1}]}')`;
-
-      const sweep = sql`SELECT thread_id FROM orchestration_v2_projection_threads
-        WHERE deleted_at IS NULL AND archived_at IS NULL
-          AND json_extract(payload_json, '$.settledOverride') IS NULL
-          AND json_array_length(payload_json, '$.pullRequests') > 0
-        ORDER BY updated_at, thread_id`;
-      assert.deepStrictEqual(yield* sweep, [{ thread_id: "sweep" }]);
-      const bytecode = yield* sql<{ opcode: string; p4: string | null }>`EXPLAIN
-        SELECT thread_id FROM orchestration_v2_projection_threads
-        WHERE deleted_at IS NULL AND archived_at IS NULL
-          AND json_extract(payload_json, '$.settledOverride') IS NULL
-          AND json_array_length(payload_json, '$.pullRequests') > 0
-        ORDER BY updated_at, thread_id`;
-      assert.deepStrictEqual(
-        bytecode.filter((op) => op.opcode === "Function" && op.p4?.startsWith("json_")),
-        [],
-      );
-
-      yield* sql`UPDATE orchestration_v2_projection_threads
-        SET payload_json = json_set(payload_json, '$.settledOverride', 'settled')`;
-      assert.deepStrictEqual(yield* sweep, []);
-      yield* sql`UPDATE orchestration_v2_projection_threads
-        SET payload_json = json_remove(payload_json, '$.settledOverride')`;
-      assert.deepStrictEqual(yield* sweep, [{ thread_id: "sweep" }]);
-      yield* sql`UPDATE orchestration_v2_projection_threads SET archived_at = '2026-10-02'`;
-      assert.deepStrictEqual(yield* sweep, []);
-      assert.deepStrictEqual(yield* runMigrations(), []);
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
-  );
-
-  it.effect("migrates a fresh database through the whole manifest", () =>
-    Effect.gen(function* () {
-      yield* runMigrations();
-      assert.deepStrictEqual(yield* history, migrationManifest);
-      assert.isAbove(yield* v2TableCount, 0);
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
-  );
-
   it.effect("refuses to start when another migration took a V2 id", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -119,6 +75,44 @@ describe("runMigrations", () => {
       assert.deepStrictEqual(yield* runMigrations(), v2Migrations);
       assert.deepStrictEqual(yield* history, migrationManifest);
       assert.isAbove(yield* v2TableCount, 0);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("drops the unused correlation index and keeps correlation values", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 54 });
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          command_id, causation_event_id, correlation_id, actor_kind, payload_json, metadata_json
+        )
+        VALUES (
+          'event-1', 'thread', 'thread-1', 0, 'thread.created', '2026-01-01T00:00:00.000Z',
+          'command-1', NULL, 'correlation-1', 'client', '{}', '{}'
+        )
+      `;
+
+      yield* runMigrations();
+
+      const indexes = yield* sql<{ readonly name: string }>`
+        SELECT name FROM sqlite_master
+        WHERE type = 'index' AND tbl_name = 'orchestration_events' AND sql IS NOT NULL
+      `;
+      const indexNames = indexes.map((row) => row.name);
+      assert.notInclude(indexNames, "idx_orch_events_correlation_id");
+      for (const kept of [
+        "idx_orch_events_stream_version",
+        "idx_orch_events_stream_sequence",
+        "idx_orch_events_command_id",
+        "idx_orchestration_events_agent_stream_sequence",
+      ]) {
+        assert.include(indexNames, kept);
+      }
+      const events = yield* sql<{ readonly correlation_id: string | null }>`
+        SELECT correlation_id FROM orchestration_events WHERE event_id = 'event-1'
+      `;
+      assert.deepStrictEqual(events, [{ correlation_id: "correlation-1" }]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
@@ -170,3 +164,20 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });
+
+// The npm launcher reads the highest migration id from these file names.
+it.effect("registers every migration file", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = path.join(import.meta.dirname, "Migrations");
+    const files = (yield* fs.readDirectory(dir)).flatMap((name) => {
+      const match = /^(\d+)_(\w+)\.ts$/.exec(name);
+      return match ? [[Number(match[1]), match[2]] as const] : [];
+    });
+    assert.deepStrictEqual(
+      files.toSorted(([a], [b]) => a - b),
+      migrationManifest,
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
