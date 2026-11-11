@@ -3788,7 +3788,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         textGeneration: {
           generateCommitMessage: (input) => {
             generatedPolicy = input.policy;
-            return Effect.succeed({ subject: "Implement stacked git actions", body: "" });
+            return Effect.succeed({
+              subject: "feat: Generierte React-API-Verträge versionieren und CI-Updates absichern",
+              body: "",
+            });
           },
         },
       });
@@ -3802,8 +3805,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(result.push.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("skipped_not_requested");
       expect(generatedPolicy).toMatchObject({ commitInstructions: "Use a direct tone." });
+      expect(
+        yield* runGit(repoDir, ["log", "-1", "--pretty=%s"]).pipe(
+          Effect.map((result) => result.stdout.trim()),
+        ),
+      ).toBe("feat: Generierte React-API-Verträge versionieren und CI-Updates absichern");
       expect(result.toast).toMatchObject({
-        description: "Implement stacked git actions",
+        description: "feat: Generierte React-API-Verträge versionieren und CI-Updates absic...",
         cta: {
           kind: "run_action",
           label: "Push",
@@ -3813,11 +3821,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         },
       });
       expect(result.toast.title).toMatch(/^Committed [0-9a-f]{7}$/);
-      expect(
-        yield* runGit(repoDir, ["log", "-1", "--pretty=%s"]).pipe(
-          Effect.map((result) => result.stdout.trim()),
-        ),
-      ).toBe("Implement stacked git actions");
     }),
   );
 

@@ -9,15 +9,17 @@ describe("limitSection", () => {
 });
 
 describe("sanitizeCommitSubject", () => {
-  // regression: #19181 truncation split grapheme clusters at the subject limit
   it.each([
+    { name: "a complete word", prefixLength: 65, character: "absichern" },
     { name: "an emoji", prefixLength: 71, character: "🚀" },
     { name: "an accented character", prefixLength: 71, character: "e\u0301" },
     { name: "a joined emoji", prefixLength: 65, character: "👨‍👩‍👧‍👦" },
-  ])("keeps $name intact at the subject limit", ({ prefixLength, character }) => {
+  ])("keeps $name intact beyond the subject guideline", ({ prefixLength, character }) => {
     const prefix = "a".repeat(prefixLength);
 
-    expect(sanitizeCommitSubject(`${prefix}${character} more`)).toBe(prefix);
+    const subject = `${prefix}${character} more`;
+
+    expect(sanitizeCommitSubject(subject)).toBe(subject);
   });
 });
 

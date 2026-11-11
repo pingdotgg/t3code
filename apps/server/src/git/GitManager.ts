@@ -79,6 +79,7 @@ import {
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { sanitizeCommitSubject } from "@t3tools/provider-core/server/textGenerationUtils";
 import {
   conventionalCommitsTextGenerationPolicy,
   customTextGenerationPolicy,
@@ -560,11 +561,8 @@ function sanitizeCommitMessage(generated: {
   body: string;
   branch?: string | undefined;
 } {
-  const rawSubject = generated.subject.trim().split(/\r?\n/g)[0]?.trim() ?? "";
-  const subject = rawSubject.replace(/[.]+$/g, "").trim();
-  const safeSubject = subject.length > 0 ? subject.slice(0, 72).trimEnd() : "Update project files";
   return {
-    subject: safeSubject,
+    subject: sanitizeCommitSubject(generated.subject),
     body: generated.body.trim(),
     ...(generated.branch !== undefined ? { branch: generated.branch } : {}),
   };
