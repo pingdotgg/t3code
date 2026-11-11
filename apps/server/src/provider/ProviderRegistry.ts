@@ -745,14 +745,22 @@ export const layer = Layer.effect(
         (instance) => instance.instanceId === selectedInstanceId,
       );
       if (selectedInstance?.afterUpdate !== undefined) {
+        // The probe below reports what is running, so a failed hook needs no status of its own.
         yield* selectedInstance.afterUpdate.pipe(
-          Effect.catchCause((cause) => recoverInstanceFailure(selectedInstance.instanceId, cause)),
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logError("provider post-update hook failed", {
+                  instanceId: selectedInstance.instanceId,
+                  cause: Cause.pretty(cause),
+                }),
+          ),
         );
       }
       // Accounts can share an installation, but discovery must use each
       // instance's own executable, environment, and credentials.
       yield* Effect.forEach(
-        instances.filter((instance) => !failedInstances.has(instance.instanceId)),
+        instances,
         (instance) =>
           Effect.gen(function* () {
             yield* instance.invalidateCaches ?? Effect.void;

@@ -74,6 +74,7 @@ import type {
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
@@ -1494,6 +1495,7 @@ it.layer(
         const forceRefreshCalls = yield* Ref.make(0);
         const manifest = yield* Ref.make(ModelManifest.BUNDLED_MODEL_MANIFEST);
         const updateEvents = yield* Ref.make<ReadonlyArray<string>>([]);
+        const hookFails = yield* Ref.make(false);
         const makeInstance = (name: string) =>
           Effect.gen(function* () {
             const driver = ProviderDriverKind.make("codex");
@@ -1549,6 +1551,12 @@ it.layer(
               ]).pipe(
                 Effect.andThen(
                   Ref.update(updateEvents, (events) => [...events, `afterUpdate:${name}`]),
+                ),
+                Effect.andThen(Ref.get(hookFails)),
+                Effect.flatMap((fails) =>
+                  fails
+                    ? Effect.fail(new ProviderDriverError({ driver, instanceId, detail: "hook" }))
+                    : Effect.void,
                 ),
               ),
               orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
@@ -1649,6 +1657,19 @@ it.layer(
           assert.notInclude(yield* second.takeMaintenanceReads, "afterUpdate");
           // Instances sharing the replaced service must not cache its old version.
           assert.strictEqual((yield* Ref.get(updateEvents))[0], "afterUpdate:codex_first");
+
+          // A failed hook leaves the probe to report what is running.
+          yield* Ref.set(hookFails, true);
+          const probesBeforeFailedHook = yield* Ref.get(first.probes);
+          const refreshed = yield* registry.refreshAfterUpdate(
+            first.instance.driverKind,
+            first.instance.instanceId,
+          );
+          assert.strictEqual(yield* Ref.get(first.probes), probesBeforeFailedHook + 1);
+          assert.include(
+            refreshed.map((provider) => provider.instanceId),
+            first.instance.instanceId,
+          );
         }).pipe(
           Effect.provide(
             ProviderRegistry.layer.pipe(

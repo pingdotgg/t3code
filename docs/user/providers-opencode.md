@@ -50,10 +50,10 @@ must use the service's own protocol, host, and port. For a service listening on
 Restarting interrupts running turns, and the service then runs with T3 Code's
 environment. Set any variables it needs with `opencode service set env <name> <value>`.
 
-T3 Code does not restart any other local server, including the background service
+T3 Code does not restart any other server, including the background service
 reached through `localhost`. That server can still report the previous version
-until you restart it. T3 Code shows that restart requirement instead of treating
-the CLI update as a failure.
+until you restart it. For a loopback URL, T3 Code shows that restart requirement
+instead of treating the CLI update as a failure.
 
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.
