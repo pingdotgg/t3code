@@ -11082,6 +11082,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return false;
         });
 
+        const applySelectionLive = Effect.fnUntraced(function* (
+          live: ClaudeLiveQueryContext,
+          compiledSelection: CompiledClaudeModelSelection,
+        ) {
+          // Preserve launcher-selected models unless the model changed or a failed update left it unknown.
+          yield* (
+            live.selection.queryIdentity === "" ||
+            live.selection.apiModelId !== compiledSelection.apiModelId
+              ? live.query.setModel(compiledSelection.apiModelId)
+              : Effect.void
+          ).pipe(
+            Effect.andThen(
+              live.query.applyFlagSettings(claudeLiveSelectionFlagSettings(compiledSelection)),
+            ),
+            Effect.tapError(() =>
+              Effect.sync(() => {
+                live.selection = { ...live.selection, queryIdentity: "" };
+              }),
+            ),
+          );
+          live.selection = compiledSelection;
+        });
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
@@ -11122,24 +11145,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (existing.selection.apiModelId === compiledSelection.apiModelId ||
               existing.openedPermissionMode === queryPolicy.permissionMode)
           ) {
-            const live = existing;
-            // Preserve launcher-selected models unless the model changed or a failed update left it unknown.
-            yield* (
-              live.selection.queryIdentity === "" ||
-              live.selection.apiModelId !== compiledSelection.apiModelId
-                ? live.query.setModel(compiledSelection.apiModelId)
-                : Effect.void
-            ).pipe(
-              Effect.andThen(
-                live.query.applyFlagSettings(claudeLiveSelectionFlagSettings(compiledSelection)),
-              ),
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  live.selection = { ...live.selection, queryIdentity: "" };
-                }),
-              ),
-            );
-            live.selection = compiledSelection;
+            yield* applySelectionLive(existing, compiledSelection);
           }
           if (
             existing !== null &&
@@ -11945,11 +11951,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               persistAttachmentBudget(existing.nativeThreadId),
             );
+            // A selection sent with the steer applies to the running turn when the live process can switch to it.
+            const steerSelection =
+              turnInput.modelSelection === undefined
+                ? undefined
+                : compileClaudeModelSelection(turnInput.modelSelection, modelCatalog);
+            const liveSteerSelection =
+              steerSelection !== undefined &&
+              existing.selection.queryIdentity !== steerSelection.queryIdentity &&
+              canApplyClaudeSelectionLive(existing.selection, steerSelection) &&
+              (existing.selection.apiModelId === steerSelection.apiModelId ||
+                existing.openedPermissionMode === currentTurn.queryPolicy.permissionMode)
+                ? steerSelection
+                : undefined;
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
                 turnInput.message.text,
-                compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
-                  .promptEffort,
+                (
+                  liveSteerSelection ??
+                  compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
+                ).promptEffort,
               ),
               attachments: turnInput.message.attachments,
               priority: "now",
@@ -11974,6 +11995,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
               });
+            }
+            if (liveSteerSelection !== undefined) {
+              yield* applySelectionLive(existing, liveSteerSelection);
             }
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
