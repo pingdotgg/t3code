@@ -3103,6 +3103,7 @@ export default function ChatView(props: ChatViewProps) {
   const trayStatusItems = useChatBannerLane({
     environmentId,
     activeProviderStatus,
+    selectedModel: composerSelectedModelSelection?.model ?? activeThread?.modelSelection.model,
     providerStatuses,
     usageLimitSources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
     canSwitchProvider: lockedProvider === null || supportsProviderSwitchingViaHandoff,
