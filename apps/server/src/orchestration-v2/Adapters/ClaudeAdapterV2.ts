@@ -145,6 +145,7 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Schedule from "effect/Schedule";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -358,6 +359,8 @@ const CLAUDE_STOP_CONFIRM_TIMEOUT_MS = 10_000;
 const CLAUDE_STDERR_TAIL_LENGTH = 2_048;
 // The process group is killed on exit, so its stderr closes promptly.
 const CLAUDE_STDERR_DRAIN_TIMEOUT = Duration.seconds(1);
+// How often the CLI's process tree is recorded when no agent scope will stop what it leaves.
+const CLAUDE_DESCENDANT_POLL = "1 second";
 // Claude Code's refusal of bypassPermissions as root, which it explains only on stderr.
 const CLAUDE_ROOT_REFUSAL =
   "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
@@ -437,12 +440,12 @@ function killClaudeDescendant(row: ClaudeProcessRow) {
 
 function claudeDescendants(
   rows: ReadonlyArray<ClaudeProcessRow>,
-  rootPid: number,
+  rootPids: ReadonlyArray<number>,
 ): ReadonlyArray<ClaudeProcessRow> {
   const children = Map.groupBy(rows, (row) => row.ppid);
   const found: Array<ClaudeProcessRow> = [];
-  const seen = new Set<number>([rootPid]);
-  const pending = [rootPid];
+  const seen = new Set<number>(rootPids);
+  const pending = [...rootPids];
   for (let parent = pending.pop(); parent !== undefined; parent = pending.pop()) {
     for (const child of children.get(parent) ?? []) {
       if (seen.has(child.pid)) continue;
@@ -1231,18 +1234,34 @@ export const layerQueryRunner: Layer.Layer<
         Effect.map((result) => (result.code === 0 ? parseClaudeProcessTable(result.stdout) : [])),
         Effect.orElseSucceed(() => []),
       );
-    // A job that left the CLI's group escapes the group kill and is re-parented once the CLI
-    // exits, so it is found while the CLI runs and stopped after it exits, if still the same process.
-    const stopAfterExit = Effect.fn("ClaudeAgentSdkQueryRunner.stopAfterExit")(function* (
-      descendants: ReadonlyArray<ClaudeProcessRow>,
-      exited: Promise<void>,
-    ) {
-      yield* Effect.promise(() => exited);
-      const running = new Set((yield* readProcessTable).map((row) => `${row.pid} ${row.started}`));
-      for (const row of descendants) {
-        if (running.has(`${row.pid} ${row.started}`)) killClaudeDescendant(row);
-      }
-    });
+    // Without an agent scope, a job that left the CLI's group escapes the group kill and is
+    // re-parented once the CLI exits. So the CLI's tree is recorded while it runs, and what is
+    // still the same process (pid and start time) is stopped after it exits.
+    const trackDescendants = (cliPid: number) => {
+      const tracked = new Map<string, ClaudeProcessRow>();
+      const identity = (row: ClaudeProcessRow) => `${row.pid} ${row.started}`;
+      // After exit the CLI's pid may belong to an unrelated process, so only tracked jobs are roots.
+      const refresh = Effect.fn("ClaudeAgentSdkQueryRunner.trackDescendants")(function* (
+        cliRunning: boolean,
+      ) {
+        const rows = yield* readProcessTable;
+        const running = new Set(rows.map(identity));
+        const roots = [
+          ...(cliRunning ? [cliPid] : []),
+          ...[...tracked.values()].flatMap((row) => (running.has(identity(row)) ? [row.pid] : [])),
+        ];
+        for (const row of claudeDescendants(rows, roots)) tracked.set(identity(row), row);
+        return running;
+      });
+      const stop = refresh(false).pipe(
+        Effect.map((running) => {
+          for (const row of tracked.values()) {
+            if (running.has(identity(row))) killClaudeDescendant(row);
+          }
+        }),
+      );
+      return { refresh: refresh(true).pipe(Effect.asVoid), stop };
+    };
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: random.uuidV4(),
@@ -1307,7 +1326,7 @@ export const layerQueryRunner: Layer.Layer<
             if (answered) return;
             stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
           };
-          let cliPid: number | undefined;
+          let refreshDescendants: Effect.Effect<void> = Effect.void;
           const spawnProcess =
             options.spawnClaudeCodeProcess ??
             ((spawnOptions: ClaudeSpawnOptions) => {
@@ -1321,7 +1340,16 @@ export const layerQueryRunner: Layer.Layer<
                   appendStderr,
                   stderrDone,
                 );
-                cliPid = child.pid;
+                if (unit === undefined && child.pid !== undefined) {
+                  const tracker = trackDescendants(child.pid);
+                  const polling = runFork(
+                    tracker.refresh.pipe(Effect.repeat(Schedule.spaced(CLAUDE_DESCENDANT_POLL))),
+                  );
+                  child.once("exit", () =>
+                    runFork(Fiber.interrupt(polling).pipe(Effect.andThen(tracker.stop))),
+                  );
+                  refreshDescendants = tracker.refresh;
+                }
                 return child;
               }
               const child = NodeChildProcess.spawn(spawnOptions.command, spawnOptions.args, {
@@ -1617,16 +1645,8 @@ export const layerQueryRunner: Layer.Layer<
                 }),
               ),
             ),
-            close: Effect.gen(function* () {
-              const descendants =
-                cliPid === undefined || processExited
-                  ? []
-                  : claudeDescendants(yield* readProcessTable, cliPid);
-              const exited = processExit;
-              if (descendants.length > 0 && exited !== undefined) {
-                runFork(stopAfterExit(descendants, exited));
-              }
-            }).pipe(
+            // A job started since the last poll is recorded before the CLI is told to exit.
+            close: Effect.suspend(() => (processExited ? Effect.void : refreshDescendants)).pipe(
               Effect.andThen(Queue.shutdown(promptQueue)),
               Effect.andThen(closeClaudeQuery(queryRuntime)),
               Effect.tap(() =>
