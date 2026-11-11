@@ -240,6 +240,7 @@ export interface DesktopBackendInstance {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
   readonly start: Effect.Effect<void>;
+  /** Timeout controls the warning; stop still waits for process teardown and exit. */
   readonly stop: (options?: { readonly timeout?: Duration.Duration }) => Effect.Effect<void>;
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
@@ -307,21 +308,36 @@ const closeRun = (
   run: ActiveBackendRun,
   parentScope: Scope.Scope,
   options?: { readonly timeout?: Duration.Duration },
-): Effect.Effect<boolean> => {
+) => {
   const waitForFiber = Option.match(run.fiber, {
     onNone: () => Effect.void,
     onSome: (fiber) => Fiber.await(fiber).pipe(Effect.asVoid),
   });
-  const close = Scope.close(run.scope, Exit.void).pipe(Effect.andThen(waitForFiber));
+  const close = Scope.close(run.scope, Exit.void).pipe(
+    Effect.withSpan("desktop.backendInstance.closeScope"),
+    Effect.andThen(waitForFiber.pipe(Effect.withSpan("desktop.backendInstance.awaitRun"))),
+  );
   const timeout = options?.timeout;
 
   if (!timeout) {
-    return close.pipe(Effect.as(true));
+    return close;
   }
 
-  return Effect.forkIn(close, parentScope).pipe(
+  return Effect.forkIn(close, parentScope, { startImmediately: true }).pipe(
     Effect.flatMap((closeFiber) =>
-      Fiber.await(closeFiber).pipe(Effect.timeoutOption(timeout), Effect.map(Option.isSome)),
+      Fiber.await(closeFiber).pipe(
+        Effect.timeoutOption(timeout),
+        Effect.tap((completed) =>
+          Option.isNone(completed)
+            ? logBackendProcessWarning("backend shutdown exceeded timeout; waiting for exit", {
+                timeoutMs: Duration.toMillis(timeout),
+              })
+            : Effect.void,
+        ),
+        // Parent-scope interruption still finishes release; do not cancel sibling stops.
+        Effect.andThen(Fiber.await(closeFiber)),
+        Effect.asVoid,
+      ),
     ),
   );
 };
@@ -573,6 +589,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
 
   const exit = yield* handle.exitCode.pipe(
+    Effect.withSpan("desktop.backendProcess.awaitExit"),
     Effect.map((exitCode) => ({
       code: Option.some(exitCode),
       reason: `code=${exitCode}`,
@@ -608,6 +625,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   }).pipe(
     Effect.timeout(options.outputDrainTimeout ?? DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT),
     Effect.ignore,
+    Effect.withSpan("desktop.backendProcess.drainOutput"),
   );
   if (Exit.isFailure(exit)) {
     return yield* Effect.failCause(exit.cause);
@@ -1094,10 +1112,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       onNone: () => Effect.void,
       // The enclosing operation owns the span for this inline handler.
       onSome: Effect.fnUntraced(function* (run) {
-        const closed = yield* closeRun(run, parentScope, options);
-        if (!closed) {
-          return;
-        }
+        yield* closeRun(run, parentScope, options);
         const cleanup = yield* mutex.withPermits(1)(
           SubscriptionRef.modify(
             state,

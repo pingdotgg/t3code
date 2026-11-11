@@ -4,8 +4,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import * as commandPalette from "../commandPaletteBus";
 import * as settings from "../hooks/useSettings";
+import * as storage from "../hooks/useLocalStorage";
 import * as threadActions from "../lib/chatThreadActions";
 import * as entities from "../state/entities";
+import * as projectsState from "../state/projects";
+import { Atom } from "effect/reactivity";
 import type { Project } from "../types";
 import { installChatRouteCommands } from "./chatRouteCommands";
 import * as dispatcher from "./dispatcher";
@@ -29,17 +32,19 @@ describe("new thread commands", () => {
     { mode: "normal", count: 2, command: "chat.new", picker: true },
     { mode: "boring", count: 2, command: "chat.new", picker: true },
     { mode: "boring", count: 1, command: "chat.new", picker: false },
-    { mode: "legacy", count: 2, command: "chat.new", picker: false },
     { mode: "boring", count: 2, command: "chat.newLocal", picker: false },
   ] as const)("$mode sidebar, $count projects, $command: picker=$picker", (scenario) => {
     using _settings = vi.spyOn(settings, "getClientSettings").mockReturnValue({
       ...DEFAULT_CLIENT_SETTINGS,
       boringSidebarEnabled: scenario.mode === "boring",
-      legacySidebarEnabled: scenario.mode === "legacy",
     });
     using _projects = vi
       .spyOn(entities, "readProjects")
       .mockReturnValue([project("active"), project("idle")].slice(0, scenario.count));
+    using _ready = vi
+      .spyOn(projectsState, "defaultProjectFallbackReadyAtom")
+      .mockReturnValue(Atom.make(true));
+    using storedProject = vi.spyOn(storage, "getLocalStorageItem").mockReturnValue("local:active");
     using openPicker = vi.spyOn(commandPalette, "openCommandPalette").mockImplementation(() => {});
     using startLocal = vi.spyOn(threadActions, "startNewThreadFromContext").mockResolvedValue(true);
     using register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
@@ -52,6 +57,7 @@ describe("new thread commands", () => {
       stopPropagation: vi.fn(),
     } as unknown as KeyboardEvent;
 
+    storedProject.mockReturnValue("local:idle");
     commands[scenario.command]!(event);
 
     if (scenario.picker) {
@@ -60,6 +66,10 @@ describe("new thread commands", () => {
     } else {
       expect(openPicker).not.toHaveBeenCalled();
       expect(startLocal).toHaveBeenCalledOnce();
+      expect(startLocal.mock.calls[0]![0].defaultProjectRef).toEqual({
+        environmentId: "local",
+        projectId: scenario.count === 1 ? "active" : "idle",
+      });
     }
   });
 });
