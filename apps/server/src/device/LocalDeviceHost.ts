@@ -561,10 +561,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       const probe = HttpClient.withScope(httpClient)
         .get(`http://127.0.0.1:${existing.value.httpPort}/health`)
         .pipe(
-          Effect.timeout(Duration.millis(DAEMON_HEALTH_TIMEOUT_MS)),
           Effect.flatMap((response) =>
             response.arrayBuffer.pipe(Effect.as(response.status === 200)),
           ),
+          Effect.timeout(Duration.millis(DAEMON_HEALTH_TIMEOUT_MS)),
           Effect.scoped,
           Effect.orElseSucceed(() => false),
         );
@@ -576,15 +576,12 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       }
       // Stop through agent-device while daemon.json still names the process; once
       // the file is gone it reports "not-running" and the daemon keeps daemon.lock.
-      // Keep the file unless the stop is confirmed, so a later attempt can retry it.
       const stopped = yield* runAgentDeviceDaemonStop(
         { entryPath: agentTool.entryPath, nodePath },
         DAEMON_RECOVERY_STOP_TIMEOUT,
       ).pipe(Effect.result);
       if (stopped._tag === "Failure" || stopped.success.timedOut || stopped.success.code !== 0) {
-        return yield* new DeviceHost.DeviceHostError({
-          hostId,
-          step: "stopping unresponsive agent tools",
+        yield* Effect.logWarning("Could not stop an unresponsive agent-device daemon", {
           cause: stopped._tag === "Failure" ? stopped.failure : stopped.success,
         });
       }

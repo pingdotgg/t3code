@@ -192,34 +192,29 @@ describe("AgentDevice startup", () => {
   it.live.each([
     ["fails", processOutput(1)],
     ["times out", processOutput(0, "", "", true)],
-  ] as const)("keeps an unresponsive daemon's record when its stop %s", ([, result]) =>
+  ] as const)("still restarts an unresponsive daemon when its stop %s", ([, result]) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       let attempts = 0;
-      const { host, stateDir, daemonHealthy, commands, stopResult } = yield* agentFixture(
-        (stateDir) =>
-          Effect.gen(function* () {
-            attempts++;
-            yield* fs
-              .writeFileString(
-                `${stateDir}/daemon.json`,
-                JSON.stringify({ httpPort: 12345 + attempts, token: `token-${attempts}` }),
-              )
-              .pipe(Effect.orDie);
-            return processOutput(0);
-          }),
+      const { host, daemonHealthy, commands, stopResult } = yield* agentFixture((stateDir) =>
+        Effect.gen(function* () {
+          attempts++;
+          yield* fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345 + attempts, token: `token-${attempts}` }),
+            )
+            .pipe(Effect.orDie);
+          return processOutput(0);
+        }),
       );
       yield* host.ensureAgentReady(() => Effect.void);
       yield* Ref.set(daemonHealthy, false);
       yield* Ref.set(stopResult, result);
 
-      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "DeviceHostError",
-        step: "stopping unresponsive agent tools",
-      });
-      expect(commands).toEqual(["devices --json", "daemon stop"]);
-      expect(yield* fs.exists(`${stateDir}/daemon.json`)).toBe(true);
+      const restarted = yield* host.ensureAgentReady(() => Effect.void);
+      expect(commands).toEqual(["devices --json", "daemon stop", "devices --json"]);
+      expect(restarted.agentDevice).toMatchObject({ token: "token-2" });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
