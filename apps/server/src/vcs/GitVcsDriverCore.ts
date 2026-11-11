@@ -65,6 +65,7 @@ const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`
 const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge-base`;
 const gitProcesses = Semaphore.makeUnsafe(8);
 const backgroundGitProcesses = Semaphore.makeUnsafe(2);
+const WORKTREE_INDEX_REFRESH_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -188,7 +189,6 @@ interface GitRefsSnapshot {
 interface ExecuteGitOptions {
   stdin?: string | undefined;
   timeoutMs?: number | null | undefined;
-  forceKillAfterMs?: number | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorDetail?: string | undefined;
   env?: NodeJS.ProcessEnv | undefined;
@@ -994,7 +994,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ChildProcess.make(executable, commandInput.args, {
               cwd: commandInput.cwd,
               env: spawnEnv,
-              forceKillAfter: input.forceKillAfterMs,
+              // SIGTERM first lets git remove its lock files; SIGKILL ends one that ignores it.
+              forceKillAfter: "1 second",
               ...(runsGitWithoutConsole(hostPlatform, executable, commandInput.args)
                 ? { detached: true, windowsHide: true }
                 : {}),
@@ -1163,9 +1164,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ...(options.env !== undefined ? { env: options.env } : {}),
       allowNonZeroExit: true,
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.forceKillAfterMs !== undefined
-        ? { forceKillAfterMs: options.forceKillAfterMs }
-        : {}),
       ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
       ...(options.appendTruncationMarker !== undefined
         ? { appendTruncationMarker: options.appendTruncationMarker }
@@ -1380,7 +1378,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           env: STATUS_UPSTREAM_REFRESH_ENV,
           fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
           timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
-          forceKillAfterMs: 1_000,
         }).pipe(
           Effect.asVoid,
           Effect.tap(() =>
@@ -4247,6 +4244,52 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  // A checkout stamps most files in the second it writes the index, and Git re-reads every file
+  // stamped in the index's own second or later ("racily clean") on each status, diff and add.
+  // T3's own git calls never rewrite a worktree's index, so refresh it once.
+  const refreshNewWorktreeIndex = Effect.fn("refreshNewWorktreeIndex")(function* (
+    worktreePath: string,
+  ) {
+    const indexPath = path.resolve(
+      worktreePath,
+      (yield* runGitStdout("GitVcsDriver.createWorktree.indexPath", worktreePath, [
+        "rev-parse",
+        "--git-path",
+        "index",
+      ])).trim(),
+    );
+    const indexSecond = fileSystem.stat(indexPath).pipe(
+      Effect.map(({ mtime }) => Option.map(mtime, (date) => Math.floor(date.getTime() / 1000))),
+      Effect.orElseSucceed(() => Option.none<number>()),
+    );
+    // Older Git (such as 2.30) skips the write when racy entries merely check out clean.
+    // A refresh re-reads every checked-out file, so allow five minutes outside shared permits.
+    const refresh = runGit(
+      "GitVcsDriver.createWorktree.refreshIndex",
+      worktreePath,
+      ["update-index", "-q", "--refresh", "--force-write-index"],
+      { timeoutMs: WORKTREE_INDEX_REFRESH_TIMEOUT_MS },
+    );
+    const checkoutSecond = yield* indexSecond;
+    yield* refresh;
+    const refreshedSecond = yield* indexSecond;
+    if (
+      Option.isNone(checkoutSecond) ||
+      Option.isNone(refreshedSecond) ||
+      refreshedSecond.value > checkoutSecond.value
+    ) {
+      return;
+    }
+    // The refresh finished within the checkout's second, so its index is just as racy. Wait that
+    // second out (file timestamps can trail the clock by a kernel tick) and refresh again. Two
+    // seconds or more means this clock does not match the file timestamps, as on a share stamped
+    // by another machine, so it cannot say when that second ends.
+    const delay = (checkoutSecond.value + 1) * 1000 + 50 - (yield* Clock.currentTimeMillis);
+    if (delay >= 2_000) return;
+    if (delay > 0) yield* Effect.sleep(Duration.millis(delay));
+    yield* refresh;
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -4443,6 +4486,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }),
       );
     }
+
+    // Before the worktree is returned: a refresh holds index.lock, so running it in the
+    // background would race the setup script's and the agent's own git commands.
+    yield* refreshNewWorktreeIndex(worktreePath).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning(
+          "worktree index refresh failed; Git keeps re-reading its files until the index is rewritten",
+          { worktreePath, cause },
+        ),
+      ),
+    );
 
     if (newRefName && base) {
       yield* Effect.gen(function* () {
@@ -4982,17 +5036,39 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ).pipe(Effect.map((result) => result.exitCode === 0))
           : false;
 
+      const newTrackingBranch =
+        !localInputExists && remoteExists && !localTrackingBranch && !localTrackedBranchTargetExists
+          ? localTrackedBranchCandidate
+          : null;
+
       const checkoutArgs = localInputExists
         ? ["checkout", input.refName]
         : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
           ? ["checkout", input.refName]
-          : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
-            : remoteExists && localTrackingBranch
-              ? ["checkout", localTrackingBranch]
-              : ["checkout", input.refName];
+          : newTrackingBranch
+            ? ["checkout", newTrackingBranch]
+            : remoteExists && !localTrackingBranch
+              ? ["checkout", "--track", input.refName]
+              : remoteExists && localTrackingBranch
+                ? ["checkout", localTrackingBranch]
+                : ["checkout", input.refName];
 
       yield* refuseOptionLikeRefName("GitVcsDriver.switchRef", input.cwd, checkoutArgs.at(-1));
+
+      // Created before the checkout so the shared-config lock is not held while files are written.
+      // Not rolled back on failure: Git may already have switched HEAD to it (post-checkout hooks).
+      if (newTrackingBranch) {
+        yield* executeGit(
+          "GitVcsDriver.switchRef.createTrackingBranch",
+          input.cwd,
+          ["branch", "--track", "--", newTrackingBranch, input.refName],
+          {
+            timeoutMs: 10_000,
+            fallbackErrorDetail: "git branch create failed",
+            writesSharedConfig: true,
+          },
+        );
+      }
 
       // A stale ref must not turn into a path checkout that discards local edits.
       yield* executeGitWithStableDiagnostics(
@@ -5000,10 +5076,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         input.cwd,
         [...checkoutArgs, "--"],
         {
-          timeoutMs: 10_000,
+          // Killing a checkout midway (large or LFS repos) leaves a half-updated working tree.
+          timeoutMs: null,
           fallbackErrorDetail: "git checkout failed",
-          // Checking out a remote branch creates a local one that tracks it.
-          writesSharedConfig: !localInputExists,
+          // Creating a branch writes its upstream; Git also guesses a remote branch for a missing name.
+          writesSharedConfig: checkoutArgs[1] === "--track" || (!localInputExists && !remoteExists),
         },
       );
 
