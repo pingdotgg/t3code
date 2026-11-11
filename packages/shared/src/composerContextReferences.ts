@@ -10,6 +10,7 @@ import {
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 
+import { expandAssistantCitationsForProvider } from "./assistantCitations.ts";
 import {
   isSafeComposerContextMarkdownHref,
   parseFigmaDesignUrl,
@@ -552,7 +553,7 @@ export function projectComposerContextForProvider(input: {
   records: ReadonlyArray<ComposerContextRecord>;
 }): string {
   const occurrences = collectComposerContextReferences(input.text);
-  if (occurrences.length === 0) return input.text;
+  if (occurrences.length === 0) return expandAssistantCitationsForProvider(input.text);
   const recordsById = new Map<ComposerContextId, ComposerContextRecord | undefined>();
   const recordsByUrl = new Map<string, ComposerContextRecord>();
   for (const record of input.records) {
@@ -567,7 +568,7 @@ export function projectComposerContextForProvider(input: {
     if (occurrence.url !== undefined) return recordsByUrl.get(occurrence.url.trim());
     return undefined;
   };
-  const body = replaceComposerContextReferences(input.text, (occurrence) => {
+  const body = expandAssistantCitationsForProvider(replaceComposerContextReferences(input.text, (occurrence) => {
     const record = lookupRecord(occurrence);
     // Draft already stores a real URL, or the record can supply one — keep/re-emit the link.
     if (occurrence.url !== undefined) return occurrence.source;
@@ -577,7 +578,7 @@ export function projectComposerContextForProvider(input: {
       occurrence.contextId,
       record,
     );
-  });
+  }));
   const seen = new Set<ComposerContextId>();
   const entries: string[] = [];
   for (const occurrence of occurrences) {
