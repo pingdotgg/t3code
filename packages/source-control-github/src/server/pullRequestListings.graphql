@@ -67,6 +67,7 @@ fragment PullRequestEnterpriseRow on PullRequest {
     nodes {
       name
       color
+      description
     }
   }
   # GitHub's rollup for the head commit, one enum, rather than the whole check list: measured at a

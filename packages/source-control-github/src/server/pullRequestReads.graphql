@@ -173,6 +173,7 @@ fragment PullRequestCoreFields on PullRequest {
     nodes {
       name
       color
+      description
     }
   }
   commits(last: 1) {
