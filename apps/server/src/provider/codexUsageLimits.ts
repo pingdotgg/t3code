@@ -19,13 +19,24 @@ interface CodexRateLimitWindow {
 export interface CodexRateLimitSnapshot {
   readonly limitId?: string | null;
   readonly planType?: string | null;
-  readonly rateLimitReachedType?: string | null;
+  readonly rateLimitReachedType?: string | null | undefined;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
-  readonly individualLimit?: {
-    readonly remainingPercent: number;
-    readonly resetsAt: number;
-  } | null;
+  readonly individualLimit?:
+    | {
+        readonly remainingPercent: number;
+        readonly resetsAt: number;
+      }
+    | null
+    | undefined;
+  readonly credits?:
+    | {
+        readonly hasCredits: boolean;
+        readonly unlimited: boolean;
+      }
+    | null
+    | undefined;
+  readonly spendControlReached?: boolean | null | undefined;
 }
 
 export interface CodexResetCreditsSummary {
@@ -113,6 +124,16 @@ function codexResetCreditsToContract(
   };
 }
 
+/** Explicit block signals only: Codex sends null for fields it could not read, which says nothing. */
+function codexCreditsBlocked(snapshot: CodexRateLimitSnapshot): boolean {
+  return (
+    snapshot.spendControlReached === true ||
+    snapshot.rateLimitReachedType?.startsWith("workspace_") === true ||
+    (snapshot.individualLimit != null && snapshot.individualLimit.remainingPercent <= 0) ||
+    (snapshot.credits != null && !snapshot.credits.hasCredits && !snapshot.credits.unlimited)
+  );
+}
+
 export function codexRateLimitsToLimits(input: {
   readonly snapshot: CodexRateLimitSnapshot;
   readonly rateLimitsByLimitId?:
@@ -123,13 +144,24 @@ export function codexRateLimitsToLimits(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
-  const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
+  const snapshot = input.rateLimitsByLimitId?.codex ?? input.snapshot;
+  // No fixture shows whether Codex reports credits on the bucket or the top-level snapshot.
+  const credits = snapshot.credits ?? input.snapshot.credits;
+  const continuesOnCredits =
+    (credits?.hasCredits === true || credits?.unlimited === true) &&
+    !codexCreditsBlocked({
+      ...snapshot,
+      spendControlReached: snapshot.spendControlReached ?? input.snapshot.spendControlReached,
+      rateLimitReachedType: snapshot.rateLimitReachedType ?? input.snapshot.rateLimitReachedType,
+      individualLimit: snapshot.individualLimit ?? input.snapshot.individualLimit,
+    });
   return {
     ...makeUsageLimits({
       checkedAt: input.checkedAt,
-      windows,
+      windows: codexRateLimitsToWindows(snapshot),
     }),
     ...(resetCredits ? { resetCredits } : {}),
+    ...(continuesOnCredits ? { continuesOnCredits } : {}),
   };
 }
 
@@ -149,6 +181,10 @@ export function codexRateLimitsToUpdate(
       existing.windowDurationMins !== window.windowDurationMins
     );
   });
+  // Only the account probe grants credit spending; a notification can only revoke it.
+  const revokesCredits =
+    (!snapshot.limitId || snapshot.limitId === "codex") && codexCreditsBlocked(snapshot);
+  if (revokesCredits) return { windows, continuesOnCredits: false };
   return windows.length > 0 ? { windows } : undefined;
 }
 
