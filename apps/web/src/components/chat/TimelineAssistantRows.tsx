@@ -32,7 +32,8 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
     row.projectedItem?.item.id,
   );
   const text = liveText ?? row.message.text;
-  const messageText = text || (row.message.streaming ? "" : "(empty response)");
+  const messageText =
+    text || (row.message.streaming || row.suppressEmptyResponse ? "" : "(empty response)");
 
   return (
     <>

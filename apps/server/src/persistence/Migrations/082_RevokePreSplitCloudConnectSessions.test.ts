@@ -71,11 +71,11 @@ const sessions = [
   },
 ] as const;
 
-layer("081_RevokePreSplitCloudConnectSessions", (it) => {
+layer("082_RevokePreSplitCloudConnectSessions", (it) => {
   it.effect("revokes only active pre-split T3 Connect DPoP sessions", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 80 });
+      yield* runMigrations({ toMigrationInclusive: 81 });
 
       for (const session of sessions) {
         yield* sql`
@@ -90,7 +90,7 @@ layer("081_RevokePreSplitCloudConnectSessions", (it) => {
         `;
       }
 
-      yield* runMigrations({ toMigrationInclusive: 81 });
+      yield* runMigrations({ toMigrationInclusive: 82 });
 
       const rows = yield* sql<{ readonly id: string; readonly revokedAt: string | null }>`
         SELECT session_id AS "id", revoked_at AS "revokedAt" FROM auth_sessions
