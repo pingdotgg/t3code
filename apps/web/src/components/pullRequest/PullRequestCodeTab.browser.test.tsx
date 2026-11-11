@@ -58,7 +58,7 @@ const { diffAtom, pagedDiffAtom, filesViewedAtom } = await vi.hoisted(async () =
       AsyncResult.success<PullRequestFilesViewedResult>({
         files: [
           { path: "early-0.ts", state: "viewed" },
-          { path: "early-1.ts", state: "dismissed" },
+          { path: "early-2.ts", state: "dismissed" },
         ],
         truncated: false,
       }),
@@ -257,7 +257,7 @@ it("hides viewed files but keeps one pushed to since it was viewed", async () =>
   await hideViewed.click();
 
   await expect.element(screen.getByText("early-0.ts", { exact: true })).not.toBeInTheDocument();
-  await expect.element(screen.getByText("early-1.ts", { exact: true }).first()).toBeVisible();
+  await expect.element(screen.getByText("early-2.ts", { exact: true }).first()).toBeVisible();
   await hideViewed.click();
   await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
 });
