@@ -1,18 +1,15 @@
+import * as NodeChildProcess from "node:child_process";
+import * as NodeNet from "node:net";
+import { fileURLToPath } from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
-import * as NodeChildProcess from "node:child_process";
-import * as NodeNet from "node:net";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { makeNeonServeEntrySource } from "../../core/NeonServe.ts";
-import {
-  NODE_BUNDLE_CONDITIONS,
-  makeNodeServeEntrySource,
-} from "../../core/NodeServe.ts";
+import { NODE_BUNDLE_CONDITIONS, makeNodeServeEntrySource } from "../../core/NodeServe.ts";
 import {
   NEXT_PRODUCTION_APP_SOURCE,
   SERVER_ENTRY_NAME,
@@ -33,9 +30,7 @@ describe("makeNodeTarget", () => {
 
   it("starts Next from the built config before preparing", () => {
     const source = NEXT_PRODUCTION_APP_SOURCE;
-    expect(source).toContain(
-      'path.join(dir, ".next", "required-server-files.json")',
-    );
+    expect(source).toContain('path.join(dir, ".next", "required-server-files.json")');
     expect(source.indexOf("__NEXT_PRIVATE_STANDALONE_CONFIG")).toBeLessThan(
       source.indexOf("next({ dev: false, dir })"),
     );
@@ -71,10 +66,7 @@ const fixture = (files: Record<string, string>) =>
     );
     const base = path.join(workspace, ".alchemy", "nextjs-node-tests");
     yield* fs.makeDirectory(base, { recursive: true });
-    const root = yield* fs.makeTempDirectoryScoped({
-      directory: base,
-      prefix: "nextjs-",
-    });
+    const root = yield* fs.makeTempDirectoryScoped({ directory: base, prefix: "nextjs-" });
     yield* fs.symlink(
       path.join(workspace, "examples", "aws-website-nextjs", "node_modules"),
       path.join(root, "node_modules"),
@@ -113,12 +105,8 @@ const serve = (entry: string, port: number) =>
     ({ child }) => Effect.sync(() => child.kill("SIGKILL")),
   );
 
-const run = <A, E>(
-  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
-) =>
-  Effect.runPromise(
-    effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>) =>
+  Effect.runPromise(effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer)));
 
 describe("Next.js Node serve entry", { concurrent: false }, () => {
   it(
@@ -131,17 +119,13 @@ describe("Next.js Node serve entry", { concurrent: false }, () => {
           const root = yield* fixture({
             "app/layout.jsx":
               "export default function Layout({children}) {return <html><body>{children}</body></html>}",
-            "app/page.jsx":
-              "export default function Home() {return <h1>Node Next</h1>}",
+            "app/page.jsx": "export default function Home() {return <h1>Node Next</h1>}",
             "app/api/echo/route.js":
               "export async function POST(request) {return Response.json({value:await request.text()})}",
             "next.config.ts":
               'import type { NextConfig } from "next";\nconst config: NextConfig = { basePath: "/app", experimental: { cpus: 1 } };\nexport default config;\n',
           });
-          const output = yield* makeNodeTarget().build!({
-            root,
-            framework: "nextjs",
-          });
+          const output = yield* makeNodeTarget().build!({ root, framework: "nextjs" });
           expect(output.serverModules?.[0]?.name).toBe(SERVER_ENTRY_NAME);
           // Any runtime load of the config now fails the server loudly.
           yield* fs.writeFileString(
@@ -151,9 +135,7 @@ describe("Next.js Node serve entry", { concurrent: false }, () => {
           const port = yield* freePort;
           const server = yield* serve(path.join(root, SERVER_ENTRY_NAME), port);
           const get = (pathname: string, init?: RequestInit) =>
-            Effect.tryPromise(() =>
-              fetch(`http://127.0.0.1:${port}${pathname}`, init),
-            );
+            Effect.tryPromise(() => fetch(`http://127.0.0.1:${port}${pathname}`, init));
           const health = yield* get("/health").pipe(
             Effect.retry({
               schedule: Schedule.spaced("250 millis"),
@@ -162,12 +144,7 @@ describe("Next.js Node serve entry", { concurrent: false }, () => {
             }),
             Effect.mapError(
               (cause) =>
-                new Error(
-                  `serve-node.mjs never became ready:\n${server.output()}`,
-                  {
-                    cause,
-                  },
-                ),
+                new Error(`serve-node.mjs never became ready:\n${server.output()}`, { cause }),
             ),
           );
           expect(health.status).toBe(200);
@@ -175,14 +152,9 @@ describe("Next.js Node serve entry", { concurrent: false }, () => {
           const html = yield* Effect.tryPromise(() => page.text());
           expect(page.status, server.output()).toBe(200);
           expect(html).toContain("Node Next");
-          const post = yield* get("/app/api/echo", {
-            method: "POST",
-            body: "value",
-          });
+          const post = yield* get("/app/api/echo", { method: "POST", body: "value" });
           expect(post.status).toBe(200);
-          expect(yield* Effect.tryPromise(() => post.json())).toEqual({
-            value: "value",
-          });
+          expect(yield* Effect.tryPromise(() => post.json())).toEqual({ value: "value" });
           expect(server.output()).not.toContain("reloaded at runtime");
         }),
       ),
@@ -196,15 +168,12 @@ describe("Next.js Node serve entry", { concurrent: false }, () => {
           const root = yield* fixture({
             "app/layout.jsx":
               "export default function Layout({children}) {return <html><body>{children}</body></html>}",
-            "app/page.jsx":
-              "export default function Home() {return <h1>Static Next</h1>}",
-            "next.config.mjs":
-              'export default { output: "export", experimental: { cpus: 1 } };',
+            "app/page.jsx": "export default function Home() {return <h1>Static Next</h1>}",
+            "next.config.mjs": 'export default { output: "export", experimental: { cpus: 1 } };',
           });
-          const error = yield* makeNodeTarget().build!({
-            root,
-            framework: "nextjs",
-          }).pipe(Effect.flip);
+          const error = yield* makeNodeTarget().build!({ root, framework: "nextjs" }).pipe(
+            Effect.flip,
+          );
           expect(error.message).toContain('`output: "export"`');
           expect(error.message).toContain("cannot run on the Node target");
         }),
