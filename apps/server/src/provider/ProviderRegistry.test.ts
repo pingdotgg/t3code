@@ -2069,6 +2069,12 @@ it.layer(
           assert.deepStrictEqual(whileProbing?.skills, projectSkills);
           assert.strictEqual(whileProbing?.slashCommandsPending, true);
 
+          // The partial entry can be evicted again before the probe finishes.
+          for (let index = 0; index < 16; index++) {
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: `/later-${index}` });
+          }
+          assert.strictEqual(yield* workspaceA, undefined);
+
           yield* Deferred.succeed(releaseProbe, undefined);
           yield* Fiber.join(rescan);
           const settled = yield* workspaceA;

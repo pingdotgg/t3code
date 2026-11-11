@@ -991,8 +991,8 @@ export const layer = Layer.effect(
             Effect.andThen(refreshInstance(input.instanceId)),
           )
         : Effect.void;
-      // Partial and final results replace whatever this scan last published,
-      // so a partial publication does not make the final one look stale.
+      // Results replace what the scan started from or last published, so neither a partial
+      // publication nor its capacity eviction makes the final one look stale.
       let publishedFrom = scannedFrom;
       const publish = (scopedSnapshot: ProviderWorkspaceSnapshot) =>
         instanceRegistry.getInstance(input.instanceId).pipe(
@@ -1004,10 +1004,9 @@ export const layer = Layer.effect(
                 return currentProviders;
               }
               return currentProviders.map((candidate) => {
-                if (
-                  candidate.instanceId !== input.instanceId ||
-                  !Equal.equals(workspaceSnapshotOf(candidate), publishedFrom)
-                ) {
+                if (candidate.instanceId !== input.instanceId) return candidate;
+                const current = workspaceSnapshotOf(candidate);
+                if (!Equal.equals(current, publishedFrom) && !Equal.equals(current, scannedFrom)) {
                   return candidate;
                 }
                 const next = upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
