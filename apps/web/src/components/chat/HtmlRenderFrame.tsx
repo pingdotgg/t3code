@@ -128,7 +128,7 @@ export function HtmlRenderFrame(props: {
           {expandedSrc !== null ? (
             <HtmlRenderDialog
               src={expandedSrc}
-              title={title}
+              htmlRender={props.htmlRender}
               askPending={props.askPending}
               threadRef={props.threadRef}
               onAskInSideChat={

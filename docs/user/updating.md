@@ -124,6 +124,11 @@ asks before restarting the background service; if you decline, run
 stop it and start it again afterwards with your usual options such as `--host`
 or `--tailscale-serve`.
 
+A background service installed by an older release refuses **Update server**
+until you update it once on the host and let that update restart it. If you
+decline the restart, the service can stay down after a crash or reboot until you
+run `ominax service restart`.
+
 ## If an update fails
 
 Keep the client open until it reconnects or reports a failure. A failed service

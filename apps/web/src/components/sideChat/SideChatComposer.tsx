@@ -629,7 +629,10 @@ export function SideChatComposer(props: {
           onPageScrollKeyDown={props.onPageScrollKeyDown}
           onPageScrollKeyUp={props.onPageScrollKeyUp}
           onPageScrollRelease={props.onPageScrollRelease}
-          onCitationSubmitAndSend={() => void send()}
+          onCitationSubmitAndSend={() => {
+            void send();
+            return false;
+          }}
           onPaste={(event) => {
             const files = [...event.clipboardData.files];
             if (

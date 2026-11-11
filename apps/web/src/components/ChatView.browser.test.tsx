@@ -11,9 +11,10 @@ import { AppRoot } from "~/AppRoot";
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
-import { getRouter } from "~/router";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { getRouter } from "~/router";
 import { WELCOME_GUIDE_SEEN_STORAGE_KEY } from "./onboarding/WelcomeGuideDialog";
 import { seedWhatsNewForNewInstall, WHATS_NEW_SEEN_STORAGE_KEY } from "./onboarding/WhatsNewDialog";
 import {
@@ -103,17 +104,22 @@ it("a new draft does not load its reserved thread before the server lists it", a
   expect(threadRequests).toEqual([]);
 });
 
-it("offers lesson side chats while hiding upstream side chat entry points", async () => {
+// The Welcome guide and What's new open over the app once setup is done; mark both seen.
+function skipLessonGuides(): Disposable {
   const seenAt = localStorage.getItem(WELCOME_GUIDE_SEEN_STORAGE_KEY);
   localStorage.setItem(WELCOME_GUIDE_SEEN_STORAGE_KEY, JSON.stringify("2026-01-01T00:00:00.000Z"));
   seedWhatsNewForNewInstall();
-  using _welcomeGuide = {
+  return {
     [Symbol.dispose]: () => {
       localStorage.removeItem(WHATS_NEW_SEEN_STORAGE_KEY);
       if (seenAt === null) localStorage.removeItem(WELCOME_GUIDE_SEEN_STORAGE_KEY);
       else localStorage.setItem(WELCOME_GUIDE_SEEN_STORAGE_KEY, seenAt);
     },
   };
+}
+
+it("offers lesson side chats while hiding upstream side chat entry points", async () => {
+  using _welcomeGuide = skipLessonGuides();
   const thread = threadWithHistory("lesson-side-chats", 1);
   using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
@@ -147,4 +153,94 @@ it("offers lesson side chats while hiding upstream side chat entry points", asyn
     .element(page.getByRole("menuitem", { name: /^Side chat(?:\s|$)/ }))
     .not.toBeInTheDocument();
   await expect.element(page.getByRole("menuitem", { name: /^Side-chat map/ })).toBeVisible();
+});
+
+it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
+  using _welcomeGuide = skipLessonGuides();
+  const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("older-settled: question 0")).toBeVisible();
+
+  await page.getByRole("button", { name: `Thread actions for ${thread.title}` }).click();
+  // Without a bound the poll runs to the test deadline and reports a bare timeout.
+  await expect
+    .element(page.getByRole("menuitem", { name: "Rename thread" }), { timeout: 5_000 })
+    .toBeVisible();
+});
+
+it("retains each thread's diff selection when returning from another thread or Settings", async () => {
+  const a = threadWithHistory("diff-selection-a", 1);
+  const b = threadWithHistory("diff-selection-b", 1);
+  using _environment = installFakeEnvironment([a, b]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const aRef = scopeThreadRef(ENVIRONMENT_ID, a.id);
+  const bRef = scopeThreadRef(ENVIRONMENT_ID, b.id);
+  useRightPanelStore.getState().open(aRef, "diff");
+  useRightPanelStore.getState().open(bRef, "diff");
+  useDiffPanelStore.getState().selectBranchBaseRef(bRef, "origin/release");
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${a.id}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
+  await act(() => useDiffPanelStore.getState().selectGitScope(aRef, "unstaged"));
+
+  await act(() =>
+    router.navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: ENVIRONMENT_ID, threadId: b.id },
+    }),
+  );
+  await expect.element(page.getByText(`Answer 0 for ${b.id}.`)).toBeVisible();
+  expect(selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, bRef)).toEqual({
+    kind: "branch",
+    baseRef: "origin/release",
+  });
+  await act(() =>
+    router.navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: ENVIRONMENT_ID, threadId: a.id },
+    }),
+  );
+  await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
+  expect(selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, aRef)).toEqual({
+    kind: "unstaged",
+  });
+
+  await act(() => useDiffPanelStore.getState().selectTurn(aRef, a.runs[0]!.id));
+  await act(() => router.navigate({ to: "/settings/general" }));
+  await expect
+    .element(page.getByRole("heading", { name: "Time format", exact: true }))
+    .toBeVisible();
+  await act(() =>
+    router.navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: ENVIRONMENT_ID, threadId: a.id },
+    }),
+  );
+  await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
+  expect(
+    selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, aRef),
+  ).toMatchObject({
+    kind: "turn",
+    turnId: a.runs[0]!.id,
+  });
 });

@@ -396,6 +396,7 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "preview.focusUrl") return "Preview: Focus URL";
   if (command === "sideChat.askSelection") return "Side Chat: Ask About Selection";
   if (command === "sideChat.toggleMap") return "Side Chat: Toggle Map";
+  if (command === "preview.find") return "Preview: Find on Page";
   const raw = String(command);
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
     return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;

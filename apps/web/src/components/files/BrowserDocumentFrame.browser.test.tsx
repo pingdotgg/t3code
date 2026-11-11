@@ -376,7 +376,7 @@ it("asks about the title and visible embed text from its corner button", async (
   await screen.rerender(
     <HtmlRenderDialog
       src={src}
-      title="State diagram"
+      htmlRender={{ attachmentId: "state-diagram", title: "State diagram", height: 321 }}
       onAskInSideChat={onAskInSideChat}
       onClose={() => undefined}
     />,
@@ -418,7 +418,7 @@ it("hides the corner action for an older embed without the selection bridge", as
   await using screen = await render(
     <HtmlRenderDialog
       src={src}
-      title="Older diagram"
+      htmlRender={{ attachmentId: "older-diagram", title: "Older diagram", height: 321 }}
       onAskInSideChat={onAskInSideChat}
       onClose={() => undefined}
     />,
