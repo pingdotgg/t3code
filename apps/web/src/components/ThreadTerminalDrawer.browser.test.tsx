@@ -11,6 +11,7 @@ import { Atom, AsyncResult } from "effect/reactivity";
 import type { GhosttyTerminalSurfaceOptions } from "~/terminal/ghostty/surface";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
 import { useRightPanelStore } from "../rightPanelStore";
+import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { extractTerminalLinks } from "../terminal-links";
 import { expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../test/render";
@@ -154,6 +155,7 @@ function setup() {
   fixture.surfaceOptions = [];
   fixture.metadata.clear();
   useRightPanelStore.setState(useRightPanelStore.getInitialState());
+  useTerminalUiStateStore.setState(useTerminalUiStateStore.getInitialState());
   return { original, other };
 }
 
@@ -187,6 +189,7 @@ it("hands thread navigation shortcuts from a focused terminal back to the app", 
       keybindings={compileResolvedKeybindingsConfig([
         ...DEFAULT_KEYBINDINGS,
         { key: "ctrl+r", command: "thread.next", when: "!previewOpen" },
+        { key: "ctrl+g", command: "thread.previous", when: "terminalOpen" },
       ])}
     />,
   );
@@ -203,8 +206,11 @@ it("hands thread navigation shortcuts from a focused terminal back to the app", 
     false,
   ]);
   expect(terminalHandles("C", "KeyC")).toBe(true);
-  // Sidebar sees the open preview and rejects this binding, so the shell keeps the key.
-  expect(terminalHandles("r", "KeyR", false)).toBe(true);
+  // Sidebar sees the open preview and the closed drawer and rejects these, so the shell keeps them.
+  expect([terminalHandles("r", "KeyR", false), terminalHandles("g", "KeyG", false)]).toEqual([
+    true,
+    true,
+  ]);
 });
 
 it("only activates terminal paths confirmed to exist on their environment", async () => {
