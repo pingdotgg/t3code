@@ -21,6 +21,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
+import * as DesktopHomeOwner from "../backend/DesktopHomeOwner.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
@@ -221,6 +222,21 @@ const bootstrap = Effect.gen(function* () {
 
   if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
+  }
+
+  // A backend started while another server owns this home only exits with the ownership code.
+  if (!(settings.wslOnly && settings.wslBackendEnabled)) {
+    const homeOwner = yield* DesktopHomeOwner.readLiveHomeOwner();
+    if (Option.isSome(homeOwner)) {
+      yield* logBootstrapWarning("bootstrap found another server owning the T3 home", {
+        ...homeOwner.value,
+      });
+      yield* (yield* ElectronDialog.ElectronDialog).showErrorBox(
+        "This T3 home is unavailable",
+        DesktopHomeOwner.homeOwnedMessage(homeOwner),
+      );
+      return yield* (yield* ElectronApp.ElectronApp).quit;
+    }
   }
 
   const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
