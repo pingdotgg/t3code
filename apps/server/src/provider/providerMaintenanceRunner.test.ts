@@ -212,6 +212,7 @@ function makeRegistry(
       },
       refreshWorkspaceSnapshot: () => Ref.get(providersRef),
       invalidateModelCaches: () => Effect.void,
+      refreshModelCatalog: Effect.void,
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
       setProviderMaintenanceActionState,
@@ -249,6 +250,7 @@ const makeTestRunner = (
               current: Effect.succeed(manifest),
               refresh: Effect.succeed(manifest),
               forceRefresh: Effect.succeed(manifest),
+              refreshOnDemand: Effect.succeed(manifest),
               refreshInBackground: Effect.void,
             }),
             latestVersions,
@@ -270,6 +272,7 @@ function layerFailingLatestLookupAfterFirst() {
         return yield* lookup;
       }),
     invalidate: () => Effect.void,
+    invalidateAll: Effect.void,
   });
 }
 
@@ -710,6 +713,65 @@ describe("providerMaintenanceRunner", () => {
     ),
   );
 
+  it.effect("reports the updater's error rather than a trailing hint after it", () =>
+    Effect.forEach(
+      [
+        {
+          stdout: "Current version: 2.1.310\nChecking for updates to latest version...\n",
+          stderr: [
+            "Error: Failed to install native update",
+            "TelemetrySafeError: Failed to fetch version from https://downloads.claude.ai/claude-code-releases/latest after 3 attempt(s): Request failed with status code 403",
+            'Try running "claude doctor" for diagnostics',
+            "",
+          ].join("\n"),
+          reason: "Request failed with status code 403",
+          hint: "claude doctor",
+        },
+        {
+          stdout: "",
+          stderr: [
+            "Failed to check for updates",
+            "Unable to fetch latest version from npm registry",
+            "",
+            "Possible causes:",
+            "  • Network connectivity issues",
+            "  • npm registry is unreachable",
+            "  • Corporate proxy/firewall blocking npm",
+            "",
+            "Try:",
+            "  • Check your internet connection",
+            "  • Run with --debug flag for more details",
+            "  • Manually check: npm view @anthropic-ai/claude-code version",
+            "  • Check if you need to login: npm whoami",
+            "",
+          ].join("\n"),
+          reason: "Failed to check for updates",
+          hint: "npm whoami",
+        },
+      ],
+      ({ stdout, stderr, reason, hint }) =>
+        Effect.gen(function* () {
+          const { registry } = yield* makeRegistry(baseNativeCliProvider);
+          const updater = yield* makeTestRunner(registry);
+
+          const result = yield* updater.updateProvider(NATIVE_CLI_DRIVER);
+          const message = result.providers[0]?.updateState?.message ?? "";
+
+          assert.include(message, reason);
+          assert.notInclude(message, hint);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              layerNonWindowsPlatform,
+              layerLatestVersionHttpClient("0.0.0"),
+              layerMockSpawner(() => ({ stdout, stderr, code: 1 })),
+            ),
+          ),
+        ),
+      { discard: true },
+    ),
+  );
+
   it.effect("keeps the exit code message when a failed command prints nothing", () =>
     Effect.gen(function* () {
       const { registry } = yield* makeRegistry();
@@ -976,6 +1038,12 @@ describe("providerMaintenanceRunner", () => {
 
 it.effect.each([
   {
+    mode: "default-precurrent",
+    version: "1.14.19",
+    installation: { installedVersion: "1.14.20" },
+    status: "succeeded",
+  },
+  {
     mode: "default",
     version: "1.14.19",
     installation: { installedVersion: "1.14.20" },
@@ -1030,7 +1098,11 @@ it.effect.each([
           ...registry,
           refreshInstance: () =>
             Ref.updateAndGet(providersRef, (providers) =>
-              providers.map((provider) => ({ ...provider, checkedAt: "2026-04-10T00:00:01.000Z" })),
+              providers.map((provider) => ({
+                ...provider,
+                ...(mode === "default-precurrent" ? installation : {}),
+                checkedAt: "2026-04-10T00:00:01.000Z",
+              })),
             ),
           getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(pinnedCapabilities),
           refreshAfterUpdate: () =>
@@ -1056,17 +1128,27 @@ it.effect.each([
 
       const result = yield* updater.updateProvider({
         provider: OPENCODE_DRIVER,
-        ...(mode === "default" ? {} : { targetVersion: "1.14.20" }),
+        ...(mode.startsWith("default") ? {} : { targetVersion: "1.14.20" }),
       });
 
-      assert.deepStrictEqual(calls, [
-        `npm install -g opencode-ai@${mode === "default" ? "latest" : "1.14.20"}`,
-      ]);
+      assert.deepStrictEqual(
+        calls,
+        mode === "default-precurrent"
+          ? []
+          : [`npm install -g opencode-ai@${mode.startsWith("default") ? "latest" : "1.14.20"}`],
+      );
       const provider = result.providers[0];
       assert.ok(provider);
       assert.strictEqual(provider.updateState?.status, status);
+      if (mode === "default" || mode === "default-precurrent" || mode === "targeted") {
+        assert.strictEqual(
+          provider.updateState?.message,
+          "OpenCode CLI updated. Restart the configured local OpenCode server to use the new version.",
+        );
+      }
       assert.strictEqual(provider.version, version);
       assert.strictEqual("installedVersion" in provider, mode !== "legacy");
+      if (mode === "default-precurrent") return;
       assert.strictEqual(
         provider.versionAdvisory?.status,
         mode === "unknown" ? "unknown" : "current",

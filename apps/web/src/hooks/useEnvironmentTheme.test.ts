@@ -9,7 +9,7 @@ const publishedThemes = vi.hoisted(() => ({
 vi.mock(import("../state/server"), async () => {
   const { Atom } = await import("effect/reactivity");
   publishedThemes.atom = Atom.make<ReadonlyArray<EnvironmentTheme>>([]);
-  return { primaryServerEnvironmentThemesAtom: publishedThemes.atom } as never;
+  return { themeServerEnvironmentThemesAtom: publishedThemes.atom } as never;
 });
 const refreshTheme = vi.hoisted(() => vi.fn());
 vi.mock(import("./useTheme"), () => ({ refreshTheme }) as never);
