@@ -277,6 +277,7 @@ overrides:
   expo-audio: 58.0.11
   expo-network: 58.0.4
   '@clerk/expo-native-components': 0.4.4
+  '@cursor/sdk': 1.2.0
   expo-sharing: 58.0.22
   expo-widgets: 58.0.27
   '@ff-labs/fff-node': 0.11.0
@@ -357,6 +358,7 @@ pnpmfileChecksum: sha256-h8NLkl2dhhbQKbAHnoo4rQ3tYV96igLQxJ7la6dsbSc=
 patchedDependencies:
   '@alchemy.run/test@2.0.0-beta.85': 29c0539ea71d9cc372f0b16558640599beb9bc609605feb2a493da268d72713e
   '@clerk/expo-native-components@0.4.4': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
+  '@cursor/sdk@1.2.0': b9966f50182358ded9d1a72f39d9cd850f2e7471e7b8224d3d618bdbbe00e055
   '@effect/vitest@4.1.2': 299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7
   '@ff-labs/fff-node@0.11.0': cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c
   '@legendapp/list@3.7.2': 3c68607b8bb7a531873bcbe0b197d163ef1fdb4d4cf52a4ddf9d2b3804671658
@@ -489,6 +491,9 @@ importers:
       electron-builder:
         specifier: 26.16.1
         version: 26.16.1(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1)
+      jsdom:
+        specifier: ^30.0.1
+        version: 30.1.0(@noble/hashes@1.8.0)
       tailwindcss:
         specifier: 4.3.3
         version: 4.3.3
@@ -823,7 +828,7 @@ importers:
         version: 0.3.321(@anthropic-ai/sdk@0.93.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(supports-color@8.1.1)(zod@4.6.7))(zod@4.6.7)
       '@cursor/sdk':
         specifier: 1.2.0
-        version: 1.2.0(zod@4.6.7)
+        version: 1.2.0(patch_hash=b9966f50182358ded9d1a72f39d9cd850f2e7471e7b8224d3d618bdbbe00e055)(zod@4.6.7)
       '@effect/platform-node':
         specifier: 4.1.2
         version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
@@ -1013,16 +1018,19 @@ importers:
         version: 1.9.0(@date-fns/tz@1.5.0)(@types/react@19.3.0)(date-fns@4.4.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@betteroffice/docx':
         specifier: 0.4.3
-        version: 0.4.3(@betteroffice/fonts@0.4.0)
+        version: 0.4.3(@betteroffice/fonts@0.4.0(@betteroffice/fonts-cjk@0.4.0))
       '@betteroffice/fonts':
+        specifier: 0.4.0
+        version: 0.4.0(@betteroffice/fonts-cjk@0.4.0)
+      '@betteroffice/fonts-cjk':
         specifier: 0.4.0
         version: 0.4.0
       '@betteroffice/pptx':
-        specifier: 0.2.0
-        version: 0.2.0
+        specifier: 0.5.1
+        version: 0.5.1
       '@betteroffice/xlsx':
-        specifier: 0.3.0
-        version: 0.3.0
+        specifier: 0.5.1
+        version: 0.5.1
       '@clerk/clerk-js':
         specifier: 6.42.3
         version: 6.42.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -1697,7 +1705,7 @@ importers:
     dependencies:
       '@cursor/sdk':
         specifier: 1.2.0
-        version: 1.2.0(zod@4.6.7)
+        version: 1.2.0(patch_hash=b9966f50182358ded9d1a72f39d9cd850f2e7471e7b8224d3d618bdbbe00e055)(zod@4.6.7)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -3252,6 +3260,9 @@ packages:
       '@betteroffice/fonts':
         optional: true
 
+  '@betteroffice/fonts-cjk@0.4.0':
+    resolution: {integrity: sha512-gLLqoIdVA02H5GQs+TpGrHWzxYEbpxj8a1Kzkf3cGQUea+cCpzoCuO38sV0zSDmBbub3gRldzf0N5fPpKCsS5g==}
+
   '@betteroffice/fonts@0.4.0':
     resolution: {integrity: sha512-x1BVwYDAgY5R6TWI4t9NLguSiAEbH5GItN2ZlpBIFoRXTIJgjBsXd6sUxPGpexXOyY6KdhRjG8XvHjyAYxEGCw==}
     peerDependencies:
@@ -3260,11 +3271,11 @@ packages:
       '@betteroffice/fonts-cjk':
         optional: true
 
-  '@betteroffice/pptx@0.2.0':
-    resolution: {integrity: sha512-pNPQ58tlA+pVibERbLdQNskvP7a0GIMf4jhkCU/gPp8043Ichf6gB3PSb4ra9sfqoIaWqOaZKCWyptovA2+Q0A==}
+  '@betteroffice/pptx@0.5.1':
+    resolution: {integrity: sha512-2Rn51fx1GCDfcus1Ly2giDk7CnhLmWjJFPq3QL2DiBAF2BF+A5R9PdRDHYX5gQm0sfWK97C2osTmR3/klJKF2Q==}
 
-  '@betteroffice/xlsx@0.3.0':
-    resolution: {integrity: sha512-K2bHtdk/epAxsmvxJlIWBRndjP3ltQU0Oh3p4gcZd2n5/YgXglo3SmMYX4nQe8WEm/yvz91p+aIasKyXXQP9Wg==}
+  '@betteroffice/xlsx@0.5.1':
+    resolution: {integrity: sha512-UHOnzcMML6Ud9D1M4d8FZKmw3AAg2/DttE/sVxM858SgiIpOtzGOqlh62RM9/8y/JW8bR8t+wN69EX8UJvR8EQ==}
 
   '@blazediff/core@1.10.0':
     resolution: {integrity: sha512-AOQff0zgR7cGsZL+4E7hVkmujoPUpm0J9xzWGWZj5wCjd3gmxESXAPfKyuzs93VdpQNFhHlBhfOjrcZ+XTERtQ==}
@@ -13456,15 +13467,19 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.3.0
 
-  '@betteroffice/docx@0.4.3(@betteroffice/fonts@0.4.0)':
+  '@betteroffice/docx@0.4.3(@betteroffice/fonts@0.4.0(@betteroffice/fonts-cjk@0.4.0))':
     optionalDependencies:
-      '@betteroffice/fonts': 0.4.0
+      '@betteroffice/fonts': 0.4.0(@betteroffice/fonts-cjk@0.4.0)
 
-  '@betteroffice/fonts@0.4.0': {}
+  '@betteroffice/fonts-cjk@0.4.0': {}
 
-  '@betteroffice/pptx@0.2.0': {}
+  '@betteroffice/fonts@0.4.0(@betteroffice/fonts-cjk@0.4.0)':
+    optionalDependencies:
+      '@betteroffice/fonts-cjk': 0.4.0
 
-  '@betteroffice/xlsx@0.3.0': {}
+  '@betteroffice/pptx@0.5.1': {}
+
+  '@betteroffice/xlsx@0.5.1': {}
 
   '@blazediff/core@1.10.0': {}
 
@@ -13731,7 +13746,7 @@ snapshots:
   '@cursor/sdk-win32-x64@1.2.0':
     optional: true
 
-  '@cursor/sdk@1.2.0(zod@4.6.7)':
+  '@cursor/sdk@1.2.0(patch_hash=b9966f50182358ded9d1a72f39d9cd850f2e7471e7b8224d3d618bdbbe00e055)(zod@4.6.7)':
     dependencies:
       '@bufbuild/protobuf': 1.10.0
       '@connectrpc/connect': 1.7.0(@bufbuild/protobuf@1.10.0)
