@@ -446,7 +446,13 @@ export function ThreadDetailsPrRow({
                 checksState={checksRollup}
                 checks={detail.checks}
                 variant="count"
-                render={<ThreadDetailsControl part="meta" className="min-w-0 shrink" />}
+                render={
+                  <ThreadDetailsControl
+                    part="meta"
+                    // A pending label leaves no room for a readable count; keep only the icon.
+                    className={cn("min-w-0 shrink", trailingAction?.pending && "[&>span]:hidden")}
+                  />
+                }
               />
             ) : null}
             {watchControl("icon")}
