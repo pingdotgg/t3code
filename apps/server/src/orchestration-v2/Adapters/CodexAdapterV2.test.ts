@@ -1274,13 +1274,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
-                      raw: {
-                        ...client.raw,
-                        request: (method, params) =>
-                          onRequest(method, params).pipe(
-                            Effect.andThen(client.raw.request(method, params)),
-                          ),
-                      },
                       request: (method, params) =>
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
