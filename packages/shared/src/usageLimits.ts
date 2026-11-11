@@ -14,6 +14,7 @@ import {
   type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceAccount,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
@@ -236,6 +237,10 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
 
+// The hub can only redeem Codex credits; other drivers redeem natively or not at all.
+const hubRedeemCreditId = (account: UsageLimitSourceAccount) =>
+  account.driver === "codex" ? account.usageLimits.resetCredits?.nextCreditId : undefined;
+
 export interface LimitAccount {
   readonly key: string;
   readonly driver: ServerProvider["driver"];
@@ -366,6 +371,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
         const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
+        const creditId = hubRedeemCreditId(account);
         merge(resolveKey(account) ?? key, {
           key,
           driver: account.driver,
@@ -375,18 +381,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           accentColor: undefined,
           environments: [],
           sourceLabel,
-          // The hub can only redeem Codex credits; other drivers redeem natively or not at all.
-          redeem:
-            account.driver === "codex" && account.usageLimits.resetCredits?.nextCreditId
-              ? {
-                  environmentId,
-                  input: {
-                    sourceId: source.id,
-                    accountId: account.id,
-                    creditId: account.usageLimits.resetCredits.nextCreditId,
-                  },
-                }
-              : null,
+          redeem: creditId
+            ? { environmentId, input: { sourceId: source.id, accountId: account.id, creditId } }
+            : null,
           limits: account.usageLimits,
         });
       }
@@ -881,7 +878,7 @@ export function collectProviderUsageLimits(
         (a, b) =>
           Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
       )[0];
-    const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
+    const hubCreditId = hubCredits && hubRedeemCreditId(hubCredits.account);
     const showHubCredits =
       hubCredits &&
       (!credits ||
@@ -915,19 +912,14 @@ export function collectProviderUsageLimits(
     for (const account of matching) {
       const key = resolveKey(account);
       if (key && nativeAccountKeys.has(key)) continue;
+      const creditId = hubRedeemCreditId(account);
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,
         label: `${source.label} · ${hubAccountName(account)}`,
         sourceLabel: "CLI Proxy",
-        ...(account.usageLimits.resetCredits?.nextCreditId
-          ? {
-              resetCreditInput: {
-                sourceId: source.id,
-                accountId: account.id,
-                creditId: account.usageLimits.resetCredits.nextCreditId,
-              },
-            }
+        ...(creditId
+          ? { resetCreditInput: { sourceId: source.id, accountId: account.id, creditId } }
           : {}),
         ...(account.plan ? { plan: account.plan } : {}),
         ...(account.email ? { email: account.email } : {}),

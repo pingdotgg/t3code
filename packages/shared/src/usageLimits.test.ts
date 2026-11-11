@@ -1197,8 +1197,13 @@ describe("/usage-limits", () => {
     ]);
   });
 
-  it("redeems a native duplicate through the hub even when the native snapshot is fresher", () => {
+  it.each([
+    ["codex", { sourceId: "hub", accountId: "duplicate", creditId: "hub-credit" }],
+    // Hub consume redeems only Codex credits.
+    ["claudeAgent", { instanceId: "codex" }],
+  ])("redeems a native %s duplicate the hub holds a credit for through %o", (driver, redeem) => {
     const fresher = provider({
+      driver: ProviderDriverKind.make(driver),
       usageLimits: {
         checkedAt: "2026-09-03T11:30:00.000Z",
         windows: [window],
@@ -1226,11 +1231,7 @@ describe("/usage-limits", () => {
       },
     ];
     const report = collectProviderUsageLimits(fresher.instanceId, [fresher], stale, now);
-    expect(report?.accounts[0]?.resetCreditInput).toEqual({
-      sourceId: "hub",
-      accountId: "duplicate",
-      creditId: "hub-credit",
-    });
+    expect(report?.accounts[0]?.resetCreditInput).toEqual(redeem);
     expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
   });
 
