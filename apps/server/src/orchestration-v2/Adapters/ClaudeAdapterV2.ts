@@ -4435,6 +4435,9 @@ interface ActiveClaudeTurnContext {
   // Keyed by tool_use_id. Older CLIs and hook denials send no
   // permission_denied frame, so an errored tool_result's text is the fallback.
   readonly permissionDenialReasons: Map<string, string>;
+  // A denial fails the turn only when this newest batch holds it; a later
+  // tool call means Claude recovered.
+  lastRootToolResultIds: ReadonlySet<string>;
   // Claude can run another model than requested, such as when an organization disallows it.
   executedModel: string | undefined;
 }
@@ -9895,7 +9898,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
-          for (const { toolResult, output } of claudeToolResultEntriesFromMessage(message)) {
+          const toolResultEntries = claudeToolResultEntriesFromMessage(message);
+          if (toolResultEntries.length > 0 && parentToolUseIdFromSdkMessage(message) === null) {
+            context.lastRootToolResultIds = new Set(
+              toolResultEntries.map(({ toolResult }) => toolResult.tool_use_id),
+            );
+          }
+          for (const { toolResult, output } of toolResultEntries) {
             // A foreground fork's stream opens with a placeholder result for its own launch call.
             if (parentToolUseIdFromSdkMessage(message) === toolResult.tool_use_id) continue;
             if (!context.permissionDenialReasons.has(toolResult.tool_use_id)) {
@@ -10239,11 +10248,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : limitedCompaction !== null
                 ? "failed"
                 : terminalStatusFromResult(message, failureHint);
-            // A turn the CLI blocked must not read as finished work: the
-            // failure wakes a snooze and keeps the thread out of
-            // auto-settlement. Real interrupts and failures keep their own
-            // status and reason.
-            const deniedByCli = resultStatus === "completed" && cliDenials.length > 0;
+            // A turn that ended on the CLI's denial must not read as finished
+            // work, so it fails and stays out of auto-settlement. Real
+            // interrupts and failures keep their own status and reason.
+            const endedOnDenial =
+              context.lastRootToolResultIds.size === 0 ||
+              cliDenials.some((denial) => context.lastRootToolResultIds.has(denial.tool_use_id));
+            const deniedByCli =
+              resultStatus === "completed" && cliDenials.length > 0 && endedOnDenial;
             const terminalFailure =
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
@@ -11452,6 +11464,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               heldRootFrames: [],
               t3DeniedToolUseIds: new Set(),
               permissionDenialReasons: new Map(),
+              lastRootToolResultIds: new Set(),
               executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {

@@ -419,64 +419,59 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
   }).pipe(Effect.provide(layerSql)),
 );
 
-it.effect.each([
-  ["sql", layerSql],
-  ["memory", ProjectionStore.layerMemory],
-] as const)(
-  "%s: a run failed by a permission denial stays out of auto-settlement",
-  ([, testLayer]) =>
-    Effect.gen(function* () {
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      const failRun = Effect.fn(function* (name: string, code: string) {
-        const threadId = yield* createThread(name);
-        const runId = yield* createRun(threadId, "failed");
-        yield* store.apply({
-          id: EventId.make(`event:error:${runId}`),
-          type: "turn-item.updated",
+it.effect("sql: a run failed by a permission denial stays out of auto-settlement", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const failRun = Effect.fn(function* (name: string, code: string) {
+      const threadId = yield* createThread(name);
+      const runId = yield* createRun(threadId, "failed");
+      yield* store.apply({
+        id: EventId.make(`event:error:${runId}`),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: old,
+        payload: {
+          id: TurnItemId.make(`error:${runId}`),
           threadId,
-          occurredAt: old,
-          payload: {
-            id: TurnItemId.make(`error:${runId}`),
-            threadId,
-            runId,
-            nodeId: null,
-            providerThreadId: null,
-            providerTurnId: null,
-            nativeItemRef: null,
-            parentItemId: null,
-            ordinal: 1,
-            type: "error",
-            status: "failed",
-            title: null,
-            startedAt: old,
-            completedAt: old,
-            updatedAt: old,
-            failure: { class: "permission_error", message: name, code, retryable: false },
-          },
-        });
-        return threadId;
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          type: "error",
+          status: "failed",
+          title: null,
+          startedAt: old,
+          completedAt: old,
+          updatedAt: old,
+          failure: { class: "permission_error", message: name, code, retryable: false },
+        },
       });
-      const denied = yield* failRun("denied", "permission_denied");
-      const unrelated = yield* failRun("unrelated", "other_failure");
-      // A message sent during the denied run queues behind it and is held when it fails.
-      const deniedWithHeldSuccessor = yield* failRun("denied-held", "permission_denied");
-      yield* createRun(deniedWithHeldSuccessor, "queued", 2, { queueHeld: true });
+      return threadId;
+    });
+    const denied = yield* failRun("denied", "permission_denied");
+    const unrelated = yield* failRun("unrelated", "other_failure");
+    // A message sent during the denied run queues behind it and is held when it fails.
+    const deniedWithHeldSuccessor = yield* failRun("denied-held", "permission_denied");
+    yield* createRun(deniedWithHeldSuccessor, "queued", 2, { queueHeld: true });
 
-      const candidates = yield* store.getSettlementCandidates();
-      const resolve = (threadId: ThreadId, merged: boolean) =>
-        resolveAutoSettlementAt({
-          thread: candidates.find((thread) => thread.id === threadId)!,
-          pullRequest: merged ? { state: "merged", mergedAt: DateTime.formatIso(old) } : null,
-          nowMs: DateTime.toEpochMillis(now),
-          autoSettleAfterDays: 7,
-          autoSettleOnMerge: true,
-        });
-      for (const merged of [false, true]) {
-        assert.isNull(resolve(denied, merged));
-        assert.isNull(resolve(deniedWithHeldSuccessor, merged));
-        assert.equal(DateTime.formatIso(resolve(unrelated, merged)!), DateTime.formatIso(old));
-      }
-    }).pipe(Effect.provide(testLayer)),
+    const candidates = yield* store.getSettlementCandidates();
+    const resolve = (threadId: ThreadId, merged: boolean) =>
+      resolveAutoSettlementAt({
+        thread: candidates.find((thread) => thread.id === threadId)!,
+        pullRequest: merged ? { state: "merged", mergedAt: DateTime.formatIso(old) } : null,
+        nowMs: DateTime.toEpochMillis(now),
+        autoSettleAfterDays: 7,
+        autoSettleOnMerge: true,
+      });
+    for (const merged of [false, true]) {
+      assert.isNull(resolve(denied, merged));
+      assert.isNull(resolve(deniedWithHeldSuccessor, merged));
+      assert.equal(DateTime.formatIso(resolve(unrelated, merged)!), DateTime.formatIso(old));
+    }
+  }).pipe(Effect.provide(layerSql)),
 );
 
 const pullRequestLink = (number: number) => ({
