@@ -194,7 +194,11 @@ describe("mobile mention search", () => {
       addEventListener() {},
       removeEventListener() {},
     } as unknown as HTMLElement);
-    await using _root = { [Symbol.asyncDispose]: () => act(() => root.unmount()) };
+    await using _root = {
+      [Symbol.asyncDispose]: async () => {
+        await act(async () => root.unmount());
+      },
+    };
     const onChangeDraftMessage = vi.fn();
     let menu!: ReturnType<typeof useComposerCommandMenu>;
     function Probe({ draftMessage }: { draftMessage: string }) {
