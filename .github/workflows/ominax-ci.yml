@@ -592,7 +592,7 @@ jobs:
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.mobile_native != 'false' }}
+    if: false
     runs-on: macos-26
     timeout-minutes: 10
     steps:
@@ -678,7 +678,7 @@ jobs:
           # not needed. Gates are keyed by job name, except merged Build and the
           # macOS lint.
           echo "$RESULTS" | jq -e '.changes.outputs as $gates
-            | {build: ["build", "typecheck", "desktop_launch"], mobile_native_static_analysis: ["mobile_native"]} as $renamed
+            | {build: ["build", "typecheck", "desktop_launch"], mobile_native_static_analysis: []} as $renamed
             | all(to_entries[];
                 .value.result == "success"
                 or (.value.result == "skipped"

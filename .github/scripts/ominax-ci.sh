@@ -9,10 +9,8 @@
 #   bash .github/scripts/ominax-ci.sh
 # Lint fails while the committed copy differs from this script's output.
 #
-# ci-changes.cjs runs the macOS job only when ci.yml (not this script or its
-# output) changes, so a PR that changes the macOS runner mapping skips it.
-# Prove such a change with `gh workflow run ominax-ci.yml --ref <branch>` and
-# a passing Mobile Native Static Analysis job before merging.
+# The fork never runs on GitHub's hosted Macs (med, REL-71), so the macOS-only
+# Mobile Native Static Analysis job is always skipped and Check accepts that.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -30,6 +28,8 @@ transform='
 s/^name: CI$/name: OminaX CI/
 s/^( *)runs-on: blacksmith-[0-9]+vcpu-ubuntu-2404$/\1runs-on: ubuntu-24.04/
 s/^( *)runs-on: blacksmith-[0-9]+vcpu-macos-26$/\1runs-on: macos-26/
+/^  mobile_native_static_analysis:$/,/^  [a-z_]+:$/s/^    if: .*$/    if: false/
+s/mobile_native_static_analysis: \["mobile_native"\]/mobile_native_static_analysis: []/
 /^  test_web:$/,/^  [a-z_]+:$/{
   s/^(    name: Test Web)$/\1 ${{ matrix.shard }}/
   /^    runs-on: ubuntu-24.04$/a\
@@ -104,6 +104,8 @@ count() { grep -c "$1" <<<"$generated" || true; }
   fail "scripted learner step not appended to Build"
 [[ $(count "test_web != 'false' || needs.changes.outputs.test_server != 'false'") -eq 5 ]] ||
   fail "Chromium steps not widened for server-only changes"
+[[ $(count '^    if: false$') -eq 1 && $(count 'mobile_native_static_analysis: \[\]') -eq 1 ]] ||
+  fail "macOS job not disabled"
 # Any runner label, including one set through a matrix or an input.
 if grep -nE 'blacksmith-[0-9]+vcpu-' <<<"$generated" >&2; then
   fail "unmapped Blacksmith runner"

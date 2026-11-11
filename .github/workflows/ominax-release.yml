@@ -8,12 +8,12 @@ name: OminaX Release
 # release after install tests pass and the promote job marks it latest.
 # Builds are unsigned; macOS builds get an ad hoc signature. Upstream's
 # release.yml also matches these tags but only runs in pingdotgg/t3code.
-# Mac jobs run on GitHub's hosted Macs unless a repo variable names a
-# self-hosted label: T3_LEARN_MAC_RUNNER for the desktop builds of CI-triggered
-# runs on main (hand-tagged runs stay hosted) and
-# T3_LEARN_MAC_INSTALL_RUNNER for the macOS install tests. Only a host that
-# gives each job a clean machine (the rented Mac's throwaway VMs) may take the
-# install tests, because they write /Applications.
+# Mac jobs never run on GitHub's hosted Macs (med, REL-71). They run only
+# when a repo variable names a self-hosted label: T3_LEARN_MAC_RUNNER for the
+# desktop builds of CI-triggered runs on main and T3_LEARN_MAC_INSTALL_RUNNER
+# for the macOS install tests. Without one, the release ships without macOS
+# and its notes say so. Only a host that gives each job a clean machine (the
+# rented Mac's throwaway VMs) may take the install tests: they write /Applications.
 
 on:
   push:
@@ -43,6 +43,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       commit: ${{ steps.version.outputs.commit }}
       skip: ${{ steps.version.outputs.skip }}
+      install_matrix: ${{ steps.install_matrix.outputs.matrix }}
     if: github.event_name == 'push' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     steps:
       - name: Checkout tested commit
@@ -74,6 +75,28 @@ jobs:
             since="$(git tag --list 'v*-learn.*' | sort -V | tail -n 1)"
           bash .github/scripts/ominax-release-notes.sh "$since" "$RELEASE_COMMIT" > release-notes.md
           cat release-notes.md
+
+      - id: install_matrix
+        name: List install tests
+        env:
+          MAC: ${{ vars.T3_LEARN_MAC_INSTALL_RUNNER }}
+        run: |
+          set -euo pipefail
+          rows='[
+            {"os":"ubuntu-24.04","scenario":"fresh"},
+            {"os":"ubuntu-24.04","scenario":"next-to-t3-code"},
+            {"os":"ubuntu-24.04","scenario":"appimage"},
+            {"os":"ubuntu-24.04","scenario":"service"},
+            {"os":"ubuntu-24.04-arm","scenario":"fresh"},
+            {"os":"windows-2025","scenario":"fresh"},
+            {"os":"windows-2025","scenario":"next-to-t3-code"},
+            {"os":"windows-11-arm","scenario":"fresh"}]'
+          if [ -n "$MAC" ]; then
+            rows="$(jq --arg m "$MAC" '. + [
+              {os:$m,scenario:"fresh"}, {os:$m,scenario:"next-to-t3-code"},
+              {os:$m,arch:"x64",scenario:"fresh"}, {os:$m,arch:"x64",scenario:"next-to-t3-code"}]' <<<"$rows")"
+          fi
+          echo "matrix=$(jq -c . <<<"$rows")" >> "$GITHUB_OUTPUT"
 
       - name: Upload release notes
         if: steps.version.outputs.skip != 'true'
@@ -135,7 +158,7 @@ jobs:
           retention-days: 1
 
   desktop_mac_arm64:
-    if: needs.preflight.outputs.skip != 'true'
+    if: needs.preflight.outputs.skip != 'true' && github.event_name == 'workflow_run' && vars.T3_LEARN_MAC_RUNNER != ''
     name: Desktop macOS arm64
     needs: [preflight, build_bundle]
     uses: ./.github/workflows/release-desktop.yml
@@ -149,19 +172,18 @@ jobs:
       clerk_cli_oauth_client_id: ""
       relay_url: ""
       label: macOS arm64
-      runner: ${{ github.event_name == 'workflow_run' && vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}
+      runner: ${{ vars.T3_LEARN_MAC_RUNNER }}
       platform: mac
       target: dmg
       arch: arm64
       rust_target: aarch64-apple-darwin
       resource_key: darwin-arm64
       cli_archive: true
-      # med's MacBook runs jobs over SSH with no GUI session; the hosted install tests still launch the app.
-      launch_check: ${{ !(github.event_name == 'workflow_run' && vars.T3_LEARN_MAC_RUNNER == 't3-learn-macbook') }}
+      # med's MacBook runs jobs over SSH with no GUI session.
+      launch_check: ${{ vars.T3_LEARN_MAC_RUNNER != 't3-learn-macbook' }}
 
-  # Built natively on hosted Intel: the Apple silicon pool starves for hours (REL-70).
   desktop_mac_x64:
-    if: needs.preflight.outputs.skip != 'true'
+    if: needs.preflight.outputs.skip != 'true' && github.event_name == 'workflow_run' && vars.T3_LEARN_MAC_RUNNER != ''
     name: Desktop macOS x64
     needs: [preflight, build_bundle]
     uses: ./.github/workflows/release-desktop.yml
@@ -175,7 +197,7 @@ jobs:
       clerk_cli_oauth_client_id: ""
       relay_url: ""
       label: macOS x64
-      runner: ${{ github.event_name == 'workflow_run' && vars.T3_LEARN_MAC_RUNNER || 'macos-15-intel' }}
+      runner: ${{ vars.T3_LEARN_MAC_RUNNER }}
       platform: mac
       target: dmg
       arch: x64
@@ -280,8 +302,12 @@ jobs:
       resource_key: win32-arm64
       cli_archive: true
 
+  # Publishes without macOS when the Mac builds were skipped or failed.
   release:
-    if: needs.preflight.outputs.skip != 'true'
+    if: >-
+      ${{ !cancelled() && needs.preflight.result == 'success' && needs.preflight.outputs.skip != 'true' &&
+      needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' &&
+      needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
     name: Publish GitHub pre-release
     needs:
       [
@@ -334,11 +360,24 @@ jobs:
       # electron-updater reads one manifest per platform and picks the file
       # entry for the running arch, so the per-arch manifests are merged.
       - name: Merge updater manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           cd release-assets
-          node ../scripts/merge-update-manifests.ts --platform mac latest-mac.yml latest-mac-x64.yml
-          rm latest-mac-x64.yml
+          if [ "${{ needs.desktop_mac_arm64.result }}${{ needs.desktop_mac_x64.result }}" = successsuccess ]; then
+            node ../scripts/merge-update-manifests.ts --platform mac latest-mac.yml latest-mac-x64.yml
+            rm latest-mac-x64.yml
+          else
+            # One Mac arch alone would make a half macOS release.
+            rm -f latest-mac*.yml *.dmg *.dmg.blockmap OminaX-*.zip OminaX-*.zip.blockmap t3-*-darwin-*.tar.gz
+            # Keep Macs on the latest release's Mac build: its feed and checksum lines carry over, and
+            # the installer downloads from the version named in the asset.
+            prev="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+            gh release download "$prev" -R "$GITHUB_REPOSITORY" -p latest-mac.yml -p SHA256SUMS -D ../prev-release
+            sed '/^releaseNotes:/d' ../prev-release/latest-mac.yml > latest-mac.yml
+            grep -E ' \*?((OminaX|T3-Learn)-.*\.(dmg|zip)|t3-.*-darwin-.*\.tar\.gz)$' ../prev-release/SHA256SUMS > ../prev-mac-sums
+          fi
           node ../scripts/merge-update-manifests.ts --platform win latest-win-x64.yml latest-win-arm64.yml latest.yml
           rm latest-win-x64.yml latest-win-arm64.yml
           # electron-builder's config dump, not a feed.
@@ -352,13 +391,25 @@ jobs:
           cp scripts/ominax-install.sh release-assets/install.sh
           cp scripts/ominax-install.ps1 release-assets/install.ps1
           cd release-assets
+          shopt -s nullglob
           sha256sum *.dmg *.zip *.AppImage *.deb *.exe t3-*.tar.gz install.sh install.ps1 > SHA256SUMS
+          [ ! -f ../prev-mac-sums ] || cat ../prev-mac-sums >> SHA256SUMS
           cat SHA256SUMS
 
       - name: Download release notes
         uses: actions/download-artifact@v8
         with:
           name: release-notes
+
+      - name: Note missing macOS build
+        if: needs.desktop_mac_arm64.result != 'success' || needs.desktop_mac_x64.result != 'success'
+        run: |
+          set -euo pipefail
+          line='- No macOS build in this release: Macs stay on the previous version until the next release with a Mac build'
+          awk -v line="$line" '/^<details>/ && !done { print line "\n"; done=1 } { print } END { if (!done) print "\n" line }' \
+            release-notes.md > notes.tmp
+          mv notes.tmp release-notes.md
+          cat release-notes.md
 
       # The generic update feed carries no release body, so the desktop update
       # prompt reads "What's new" from each manifest: this release plus the last
@@ -403,13 +454,15 @@ jobs:
             release-assets/install.sh
             release-assets/install.ps1
             release-assets/SHA256SUMS
-          fail_on_unmatched_files: true
+          # macOS files are absent from releases without a Mac build.
+          fail_on_unmatched_files: false
           token: ${{ github.token }}
 
   # Installs the pre-release with its one-line installer on each platform,
   # on a clean runner and next to an installed T3 Code, then uninstalls it.
   install_test:
-    if: needs.preflight.outputs.skip != 'true'
+    # !cancelled(): the skipped Mac builds upstream would otherwise skip this job.
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.preflight.outputs.skip != 'true' }}
     name: Install on ${{ matrix.os }} ${{ matrix.arch }} (${{ matrix.scenario }})
     needs: [preflight, release]
     runs-on: ${{ matrix.os }}
@@ -417,30 +470,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-26' }}", scenario: fresh }
-          - {
-              os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-26' }}",
-              scenario: next-to-t3-code,
-            }
-          - {
-              os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-15-intel' }}",
-              arch: x64,
-              scenario: fresh,
-            }
-          - {
-              os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-15-intel' }}",
-              arch: x64,
-              scenario: next-to-t3-code,
-            }
-          - { os: ubuntu-24.04, scenario: fresh }
-          - { os: ubuntu-24.04, scenario: next-to-t3-code }
-          - { os: ubuntu-24.04, scenario: appimage }
-          - { os: ubuntu-24.04, scenario: service }
-          - { os: ubuntu-24.04-arm, scenario: fresh }
-          - { os: windows-2025, scenario: fresh }
-          - { os: windows-2025, scenario: next-to-t3-code }
-          - { os: windows-11-arm, scenario: fresh }
+        include: ${{ fromJSON(needs.preflight.outputs.install_matrix) }}
     env:
       GH_TOKEN: ${{ github.token }}
       ARTIFACTS: ${{ github.workspace }}/install-test
@@ -490,7 +520,7 @@ jobs:
 
   promote:
     name: Promote tested release
-    if: needs.install_test.result == 'success' && needs.preflight.outputs.skip != 'true'
+    if: ${{ !cancelled() && needs.install_test.result == 'success' && needs.preflight.outputs.skip != 'true' }}
     needs: [preflight, install_test]
     runs-on: ubuntu-24.04
     permissions:
