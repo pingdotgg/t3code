@@ -319,7 +319,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
       redeem:
         hubRedeems.get(key)?.redeem ??
-        (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
+        creditSource?.redeem ??
+        winner.redeem ??
+        previous.redeem ??
+        next.redeem,
       limits: {
         ...winner.limits,
         ...(creditSource?.limits.resetCredits
@@ -372,16 +375,18 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           accentColor: undefined,
           environments: [],
           sourceLabel,
-          redeem: account.usageLimits.resetCredits?.nextCreditId
-            ? {
-                environmentId,
-                input: {
-                  sourceId: source.id,
-                  accountId: account.id,
-                  creditId: account.usageLimits.resetCredits.nextCreditId,
-                },
-              }
-            : null,
+          // The hub can only redeem Codex credits; other drivers redeem natively or not at all.
+          redeem:
+            account.driver === "codex" && account.usageLimits.resetCredits?.nextCreditId
+              ? {
+                  environmentId,
+                  input: {
+                    sourceId: source.id,
+                    accountId: account.id,
+                    creditId: account.usageLimits.resetCredits.nextCreditId,
+                  },
+                }
+              : null,
           limits: account.usageLimits,
         });
       }
