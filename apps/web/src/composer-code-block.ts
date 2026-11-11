@@ -36,8 +36,7 @@ function codeBlockRange(
   const { $from, $to } = state.selection;
   const parent = $from.parent;
   if (parent.type.spec.code !== true) return null;
-  // Same occurrence, not merely equal structure: two identical fences would
-  // otherwise let a selection across them edit through the block boundary.
+  // Structural equality would let selections span identical fences.
   if (!$from.sameParent($to)) return null;
   const from = $from.start();
   return { from, to: from + parent.content.size, text: parent.textContent };
@@ -74,8 +73,7 @@ export function exitCodeBlockOnTrailingBlankLines(view: EditorView): boolean {
   const trailing = /\n[ \t]*\n[ \t]*$/.exec($from.parent.textContent);
   if (!trailing) return false;
   const transaction = view.state.tr.delete($from.pos - trailing[0].length, $from.pos);
-  // An unclosed fence runs to the end of the draft; the prose after it would
-  // be read back as code, so leaving it writes the closing fence.
+  // Close the fence on exit so following prose is not read as code.
   if (!$from.parent.attrs.close) {
     transaction.setNodeAttribute($from.before(), "close", `\n${$from.parent.attrs.fence}`);
   }
@@ -163,17 +161,13 @@ export function indentCodeBlock(
   return true;
 }
 
-/**
- * Tiptap's own input rules only fire on a space, so without this the gesture every markdown editor
- * has — ```` ```ts ```` then Enter — leaves the fence as literal text.
- */
+/** Tiptap's input rules only fire on a space, leaving a fence followed by Enter literal. */
 export function convertCodeFenceOnEnter(
   state: EditorState,
   dispatch?: (transaction: Transaction) => void,
 ): boolean {
   const { $from, empty } = state.selection;
-  // Top-level paragraphs only: the list and quote serializers have no line
-  // to write a fence into, so one created inside them would vanish.
+  // List and quote serializers cannot write fences, so allow only top-level paragraphs.
   if (!empty || $from.parent.type.name !== "paragraph" || $from.depth !== 1) return false;
   if ($from.parentOffset !== $from.parent.content.size) return false;
   const opening = parseOpeningFence(serializeSelection(state.doc, $from.start(), $from.end()));

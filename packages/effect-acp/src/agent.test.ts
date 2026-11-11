@@ -37,10 +37,7 @@ const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
 const DieResponse = Schema.Struct({
   id: Schema.Number,
-  error: Schema.Struct({
-    _tag: Schema.Literal("Cause"),
-    data: Schema.Tuple([Schema.Struct({ _tag: Schema.Literal("Die") })]),
-  }),
+  error: Schema.TaggedStruct("Cause", { data: Schema.Tuple([Schema.TaggedStruct("Die", {})]) }),
 });
 const decodeRequestPermissionRequest = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionRequest),
@@ -259,12 +256,7 @@ it.effect("effect-acp agent keeps RPC ids within int32 and apart from extension 
         Schema.fromJsonString(RequestPermissionRequest),
       );
       const decodedExt = Schema.decodeEffect(Schema.fromJsonString(ExtRequest));
-      const firstIsPermission = yield* decodedPermission(firstOutbound).pipe(
-        Effect.match({
-          onFailure: () => false,
-          onSuccess: () => true,
-        }),
-      );
+      const firstIsPermission = yield* decodedPermission(firstOutbound).pipe(Effect.isSuccess);
 
       const permissionRequest = firstIsPermission
         ? yield* decodedPermission(firstOutbound)
