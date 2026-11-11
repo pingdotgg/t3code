@@ -123,6 +123,23 @@ describe("Antigravity process environment", () => {
     expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
   });
 
+  it("signs the agy CLI in with ADC for Agent Platform without an API key", () => {
+    const spawn = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/usr/bin/agy", harnessPath: null },
+      profile,
+      cwd: "/project",
+      baseEnv: { PATH: "/usr/bin" },
+      auth: {
+        authMethod: "agent-platform",
+        apiKey: "",
+        gcpProject: "proj",
+        gcpLocation: "global",
+      },
+    });
+
+    expect(spawn.env).toMatchObject({ AGY_ADC_AUTH: "true" });
+  });
+
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
     const baseEnv = { PATH: "/usr/bin", GOOGLE_API_KEY: "ambient-key" };
     const spawnFor = (auth: AntigravityAuthConfig) =>
