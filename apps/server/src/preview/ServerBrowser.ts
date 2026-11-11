@@ -297,6 +297,8 @@ interface ServerTab {
   readonly frameSessions: Map<Frame, CDPSession>;
   /** Copy reads run in key order, outside the input queue. */
   copyReads: Promise<void>;
+  /** When the last copy or cut key was acknowledged; the next one starts after it. */
+  copyKeyedUntil: number;
   readonly createdAt: number;
   usedAt: number;
   readonly viewers: Set<ViewerState>;
@@ -464,10 +466,10 @@ const CLIPBOARD_SCRIPT = `(() => {
     addEventListener(type, snapshot, true);
     addEventListener(type, replace);
   }
-  // Copies from keys dispatched before since are stale.
-  globalThis.takeCopy = (since) => {
+  // A key's copy was keyed between its dispatch and acknowledgement; older copies are stale.
+  globalThis.takeCopy = (since, until) => {
     while (copies.length > 0 && copies[0].at < since) copies.shift();
-    return copies.shift()?.text ?? "";
+    return copies[0] && copies[0].at <= until ? copies.shift().text : "";
   };
 })();`;
 
@@ -872,6 +874,7 @@ const make = Effect.gen(function* () {
       cdp,
       frameSessions: new Map(),
       copyReads: Promise.resolve(),
+      copyKeyedUntil: 0,
       createdAt: Date.now(),
       usedAt: Date.now(),
       viewers: new Set(),
@@ -1315,7 +1318,7 @@ const make = Effect.gen(function* () {
     await recordCopies(cdp).catch(constVoid);
   };
 
-  const takeSessionCopies = async (cdp: CDPSession, since: number) => {
+  const takeSessionCopies = async (cdp: CDPSession, since: number, until: number) => {
     const tree = await cdp.send("Page.getFrameTree").catch(() => null);
     if (!tree) return [];
     const frameIds = (node: typeof tree.frameTree): Array<string> => [
@@ -1329,7 +1332,7 @@ const make = Effect.gen(function* () {
           .then(({ executionContextId }) =>
             cdp.send("Runtime.evaluate", {
               contextId: executionContextId,
-              expression: `globalThis.takeCopy?.(${since})`,
+              expression: `globalThis.takeCopy?.(${since}, ${until})`,
               returnByValue: true,
             }),
           )
@@ -1341,9 +1344,9 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const takeCopiedText = async (tab: ServerTab, since: number) => {
+  const takeCopiedText = async (tab: ServerTab, since: number, until: number) => {
     const copies = await Promise.all(
-      [tab.cdp, ...tab.frameSessions.values()].map((cdp) => takeSessionCopies(cdp, since)),
+      [tab.cdp, ...tab.frameSessions.values()].map((cdp) => takeSessionCopies(cdp, since, until)),
     );
     return copies.flat().find((text) => text.length > 0);
   };
@@ -2452,6 +2455,9 @@ const make = Effect.gen(function* () {
         const copying =
           !tab.desktop && (command?.commands[0] === "copy" || command?.commands[0] === "cut");
 
+        // Copy keys get disjoint millisecond windows so each frame's copy belongs to one key.
+        if (copying)
+          while (Date.now() <= tab.copyKeyedUntil) await sleepUntil(tab.copyKeyedUntil + 1);
         const since = Date.now();
         await session.send("Input.dispatchKeyEvent", {
           type: text ? "keyDown" : "rawKeyDown",
@@ -2467,9 +2473,11 @@ const make = Effect.gen(function* () {
         });
         viewer.pressedKeys.set(code || key, { key, code });
         if (!copying) return;
+        const until = Date.now();
+        tab.copyKeyedUntil = until;
         // A busy frame answers late; its read must not hold later input.
         const read = tab.copyReads.then(async () => {
-          const copied = await takeCopiedText(tab, since);
+          const copied = await takeCopiedText(tab, since, until);
           if (copied) viewer.push({ _tag: "clipboard", text: copied });
         });
         tab.copyReads = read;
