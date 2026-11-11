@@ -6,9 +6,7 @@ import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
   orderWebThreadLineageRows,
-  relatedThreadIds,
   resolveMergeBackTargetThreadId,
-  walkThreadRelationships,
   threadRelationshipRowStatus,
 } from "./threadRelationships.ts";
 
@@ -61,6 +59,40 @@ describe("thread relationships", () => {
     ).toBeNull();
   });
 
+  it.each(["fork", "subagent"] as const)(
+    "keeps the parent edge of an opened %s omitted from the shell",
+    (relationshipToParent) => {
+      const parent = ThreadId.make("parent");
+      const child = ThreadId.make("omitted-child");
+      const projection = {
+        thread: {
+          id: child,
+          forkedFrom:
+            relationshipToParent === "fork"
+              ? { type: "run", threadId: parent, runId: "source-run" }
+              : null,
+          lineage: { rootThreadId: parent, parentThreadId: parent, relationshipToParent },
+        },
+        subagents: [],
+        contextTransfers: [],
+      } as never;
+      const graph = deriveThreadRelationshipGraph({ threads: [], projection });
+      expect(immediateThreadRelationships(graph, child)).toEqual([
+        expect.objectContaining({
+          threadId: parent,
+          edge: expect.objectContaining({
+            sourceThreadId: parent,
+            targetThreadId: child,
+            kind: relationshipToParent,
+          }),
+        }),
+      ]);
+      expect(resolveMergeBackTargetThreadId(projection)).toBe(
+        relationshipToParent === "fork" ? parent : null,
+      );
+    },
+  );
+
   it("keeps an older activity run visible over a newer cancelled run", () => {
     const parent = ThreadId.make("thread-parent");
     const child = ThreadId.make("thread-child");
@@ -112,14 +144,6 @@ describe("thread relationships", () => {
     });
 
     expect(graph.nodes.get(missing)?.missing).toBe(true);
-    expect(relatedThreadIds(graph, root)).toEqual([child]);
-    expect(relatedThreadIds(graph, child)).toEqual([root, missing]);
-    expect(
-      walkThreadRelationships(graph, root).map(({ threadId, depth }) => [threadId, depth]),
-    ).toEqual([
-      [child, 1],
-      [missing, 2],
-    ]);
     expect(immediateThreadRelationships(graph, root).map(({ threadId }) => threadId)).toEqual([
       child,
     ]);

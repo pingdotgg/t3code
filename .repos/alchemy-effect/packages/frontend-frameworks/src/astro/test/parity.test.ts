@@ -1,3 +1,7 @@
+import * as NodeFsPromises from "node:fs/promises";
+import * as NodeOs from "node:os";
+import * as NodePath from "node:path";
+import { pathToFileURL } from "node:url";
 /**
  * Build-output / option parity with upstream `@astrojs/cloudflare` v14.1.3:
  * zero-config sessions, `_redirects` generation, `_headers` immutable
@@ -6,10 +10,6 @@
  */
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as NodeFsPromises from "node:fs/promises";
-import * as NodeOs from "node:os";
-import * as NodePath from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import cloudflareTarget, {
   distilledCloudflare,
@@ -18,10 +18,7 @@ import cloudflareTarget, {
   withPrerenderSessionKv,
   type DistilledCloudflareOptions,
 } from "../cloudflare.ts";
-import {
-  buildAssetsHeadersContent,
-  headersFileHasCacheControlForPath,
-} from "../headers.ts";
+import { buildAssetsHeadersContent, headersFileHasCacheControlForPath } from "../headers.ts";
 import { applyWorkerEnvToProcess } from "../source.ts";
 
 const noopLogger = {
@@ -78,10 +75,7 @@ interface ConfigDoneContext {
   injected: Array<{ filename: string; content: string }>;
 }
 
-const makeConfigDoneContext = (
-  root: string,
-  base = "/",
-): ConfigDoneContext => ({
+const makeConfigDoneContext = (root: string, base = "/"): ConfigDoneContext => ({
   config: {
     base,
     trailingSlash: "ignore",
@@ -127,9 +121,7 @@ const runBuildDone = async (
   const hook = integration.hooks["astro:build:done"];
   if (!hook) throw new Error("astro:build:done hook missing");
   await hook({
-    dir: root
-      ? pathToFileURL(NodePath.join(root, "dist") + "/")
-      : new URL("file:///dev/null/"),
+    dir: root ? pathToFileURL(NodePath.join(root, "dist") + "/") : new URL("file:///dev/null/"),
     assets: new Map(),
     pages: [],
     logger: noopLogger,
@@ -162,10 +154,7 @@ describe("zero-config sessions", () => {
   });
 
   it("uses the configured sessionKVBindingName", () => {
-    const captured = runConfigSetup(
-      { sessionKVBindingName: "MY_SESSION" },
-      "build",
-    );
+    const captured = runConfigSetup({ sessionKVBindingName: "MY_SESSION" }, "build");
     expect(captured.session?.driver?.config).toMatchObject({
       binding: "MY_SESSION",
     });
@@ -187,12 +176,8 @@ describe("zero-config sessions", () => {
   it("usesCloudflareKVSessionDriver matches by name and entrypoint", () => {
     expect(usesCloudflareKVSessionDriver(undefined)).toBe(false);
     expect(usesCloudflareKVSessionDriver({})).toBe(false);
-    expect(
-      usesCloudflareKVSessionDriver({ driver: "cloudflareKVBinding" }),
-    ).toBe(true);
-    expect(
-      usesCloudflareKVSessionDriver({ driver: "cloudflare-kv-binding" }),
-    ).toBe(true);
+    expect(usesCloudflareKVSessionDriver({ driver: "cloudflareKVBinding" })).toBe(true);
+    expect(usesCloudflareKVSessionDriver({ driver: "cloudflare-kv-binding" })).toBe(true);
     expect(usesCloudflareKVSessionDriver({ driver: "redis" })).toBe(false);
     expect(
       usesCloudflareKVSessionDriver({
@@ -245,14 +230,12 @@ describe("zero-config sessions", () => {
 
 describe("unsupported upstream options", () => {
   it("rejects upstream adapter options with a clear error", () => {
-    expect(() =>
-      distilledCloudflare({ imageService: "compile" } as never),
-    ).toThrowError(
+    expect(() => distilledCloudflare({ imageService: "compile" } as never)).toThrowError(
       /unsupported @astrojs\/cloudflare option[\s\S]*imageService[\s\S]*passthrough/,
     );
-    expect(() =>
-      distilledCloudflare({ configPath: "wrangler.json" } as never),
-    ).toThrowError(/configPath/);
+    expect(() => distilledCloudflare({ configPath: "wrangler.json" } as never)).toThrowError(
+      /configPath/,
+    );
   });
 
   it("accepts the supported options", () => {
@@ -274,9 +257,7 @@ describe("astro:config:done", () => {
     runConfigDone(integration, ctx);
     expect(ctx.injected).toHaveLength(1);
     expect(ctx.injected[0]?.filename).toBe("cloudflare.d.ts");
-    expect(ctx.injected[0]?.content).toContain(
-      "@alchemy.run/frontend-frameworks/astro/types.d.ts",
-    );
+    expect(ctx.injected[0]?.content).toContain("@alchemy.run/frontend-frameworks/astro/types.d.ts");
   });
 
   it("keeps build.client untouched for base '/'", async () => {
@@ -297,13 +278,9 @@ describe("astro:config:done", () => {
     const ctx = makeConfigDoneContext(root, "/docs");
     const original = ctx.config.build.client.href;
     runConfigDone(integration, ctx);
-    expect(ctx.config.build.client.href).toBe(
-      new URL("./docs/", original).href,
-    );
+    expect(ctx.config.build.client.href).toBe(new URL("./docs/", original).href);
     expect(reported).toHaveLength(1);
-    expect(NodePath.resolve(reported[0]!)).toBe(
-      NodePath.join(root, "dist/client"),
-    );
+    expect(NodePath.resolve(reported[0]!)).toBe(NodePath.join(root, "dist/client"));
   });
 });
 
@@ -334,24 +311,16 @@ describe("astro:build:done", () => {
     expect(redirects).toContain("/about/");
     expect(redirects).toContain("301");
 
-    const headers = await NodeFsPromises.readFile(
-      NodePath.join(clientDir, "_headers"),
-      "utf-8",
-    );
+    const headers = await NodeFsPromises.readFile(NodePath.join(clientDir, "_headers"), "utf-8");
     expect(headers).toContain("/_astro/*");
-    expect(headers).toContain(
-      "Cache-Control: public, max-age=31536000, immutable",
-    );
+    expect(headers).toContain("Cache-Control: public, max-age=31536000, immutable");
   });
 
   it("appends redirects to an existing _redirects and preserves user _headers rules", async () => {
     const root = await makeTempRoot();
     const clientDir = NodePath.join(root, "dist/client");
     await NodeFsPromises.mkdir(clientDir, { recursive: true });
-    await NodeFsPromises.writeFile(
-      NodePath.join(clientDir, "_redirects"),
-      "/legacy / 302\n",
-    );
+    await NodeFsPromises.writeFile(NodePath.join(clientDir, "_redirects"), "/legacy / 302\n");
     await NodeFsPromises.writeFile(
       NodePath.join(clientDir, "_headers"),
       "/api/*\n  X-Custom: yes\n",
@@ -368,10 +337,7 @@ describe("astro:build:done", () => {
     expect(redirects).toContain("/legacy / 302");
     expect(redirects).toContain("/old-about");
 
-    const headers = await NodeFsPromises.readFile(
-      NodePath.join(clientDir, "_headers"),
-      "utf-8",
-    );
+    const headers = await NodeFsPromises.readFile(NodePath.join(clientDir, "_headers"), "utf-8");
     expect(headers).toContain("X-Custom: yes");
     expect(headers).toContain("/_astro/*");
   });
@@ -381,18 +347,12 @@ describe("astro:build:done", () => {
     const clientDir = NodePath.join(root, "dist/client");
     await NodeFsPromises.mkdir(clientDir, { recursive: true });
     const existing = "/_astro/*\n  Cache-Control: no-store\n";
-    await NodeFsPromises.writeFile(
-      NodePath.join(clientDir, "_headers"),
-      existing,
-    );
+    await NodeFsPromises.writeFile(NodePath.join(clientDir, "_headers"), existing);
     const integration = distilledCloudflare();
     const ctx = makeConfigDoneContext(root);
     runConfigDone(integration, ctx);
     await runBuildDone(integration, ctx, [], root);
-    const headers = await NodeFsPromises.readFile(
-      NodePath.join(clientDir, "_headers"),
-      "utf-8",
-    );
+    const headers = await NodeFsPromises.readFile(NodePath.join(clientDir, "_headers"), "utf-8");
     expect(headers).toBe(existing);
   });
 
@@ -416,14 +376,8 @@ describe("astro:build:done", () => {
     const nestedDir = NodePath.join(clientDir, "docs");
     await NodeFsPromises.mkdir(nestedDir, { recursive: true });
     // Astro writes the special files into the (remapped) client dir.
-    await NodeFsPromises.writeFile(
-      NodePath.join(nestedDir, "_redirects"),
-      "/nested / 302\n",
-    );
-    await NodeFsPromises.writeFile(
-      NodePath.join(nestedDir, ".assetsignore"),
-      "secret.txt\n",
-    );
+    await NodeFsPromises.writeFile(NodePath.join(nestedDir, "_redirects"), "/nested / 302\n");
+    await NodeFsPromises.writeFile(NodePath.join(nestedDir, ".assetsignore"), "secret.txt\n");
     const integration = distilledCloudflare();
     const ctx = makeConfigDoneContext(root, "/docs");
     runConfigDone(integration, ctx);
@@ -440,10 +394,7 @@ describe("astro:build:done", () => {
     );
     expect(ignore).toContain("secret.txt");
     // The base-prefixed headers rule lands at the original client dir root.
-    const headers = await NodeFsPromises.readFile(
-      NodePath.join(clientDir, "_headers"),
-      "utf-8",
-    );
+    const headers = await NodeFsPromises.readFile(NodePath.join(clientDir, "_headers"), "utf-8");
     expect(headers).toContain("/docs/_astro/*");
   });
 
@@ -453,10 +404,7 @@ describe("astro:build:done", () => {
     const nestedDir = NodePath.join(clientDir, "docs");
     await NodeFsPromises.mkdir(nestedDir, { recursive: true });
     // Astro writes the prerendered 404 page into the (remapped) client dir.
-    await NodeFsPromises.writeFile(
-      NodePath.join(nestedDir, "404.html"),
-      "<h1>not found</h1>",
-    );
+    await NodeFsPromises.writeFile(NodePath.join(nestedDir, "404.html"), "<h1>not found</h1>");
     const integration = distilledCloudflare();
     const ctx = makeConfigDoneContext(root, "/docs");
     runConfigDone(integration, ctx, "static");
@@ -465,10 +413,7 @@ describe("astro:build:done", () => {
     // Only the asset-server special files move up; the 404 page stays nested
     // under the base, where Cloudflare's `not_found_handling: "404-page"`
     // nearest-parent lookup finds it for every in-base URL.
-    const nested404 = await NodeFsPromises.readFile(
-      NodePath.join(nestedDir, "404.html"),
-      "utf-8",
-    );
+    const nested404 = await NodeFsPromises.readFile(NodePath.join(nestedDir, "404.html"), "utf-8");
     expect(nested404).toContain("not found");
   });
 });
@@ -576,29 +521,17 @@ describe("cloudflare target finish (base !== '/')", () => {
 describe("headers utility", () => {
   it("detects existing Cache-Control rules (set and detach forms)", () => {
     expect(
-      headersFileHasCacheControlForPath(
-        "/_astro/*\n  Cache-Control: no-store\n",
-        "/_astro/probe",
-      ),
+      headersFileHasCacheControlForPath("/_astro/*\n  Cache-Control: no-store\n", "/_astro/probe"),
     ).toBe(true);
     expect(
-      headersFileHasCacheControlForPath(
-        "/_astro/*\n  ! Cache-Control\n",
-        "/_astro/probe",
-      ),
+      headersFileHasCacheControlForPath("/_astro/*\n  ! Cache-Control\n", "/_astro/probe"),
     ).toBe(true);
     expect(
-      headersFileHasCacheControlForPath(
-        "/api/*\n  Cache-Control: no-store\n",
-        "/_astro/probe",
-      ),
+      headersFileHasCacheControlForPath("/api/*\n  Cache-Control: no-store\n", "/_astro/probe"),
     ).toBe(false);
-    expect(
-      headersFileHasCacheControlForPath(
-        "/_astro/*\n  X-Custom: 1\n",
-        "/_astro/probe",
-      ),
-    ).toBe(false);
+    expect(headersFileHasCacheControlForPath("/_astro/*\n  X-Custom: 1\n", "/_astro/probe")).toBe(
+      false,
+    );
     expect(
       headersFileHasCacheControlForPath(
         "https://example.com/_astro/*\n  Cache-Control: no-store\n",
@@ -606,10 +539,7 @@ describe("headers utility", () => {
       ),
     ).toBe(true);
     expect(
-      headersFileHasCacheControlForPath(
-        "/:dir/file\n  Cache-Control: x\n",
-        "/_astro/file",
-      ),
+      headersFileHasCacheControlForPath("/:dir/file\n  Cache-Control: x\n", "/_astro/file"),
     ).toBe(true);
   });
 
