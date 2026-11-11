@@ -30,9 +30,7 @@ import type * as vite from "vite";
  * exist in dev (workerd mode serves prerenderable routes through the entry
  * worker's dev-match path instead).
  */
-export function createWorkerdPrerenderEnvironmentPlugin(
-  serverEntrypoint: string,
-): vite.Plugin {
+export function createWorkerdPrerenderEnvironmentPlugin(serverEntrypoint: string): vite.Plugin {
   return {
     name: "@alchemy.run/frontend-frameworks/astro:workerd-prerender-environment",
     apply: "build",

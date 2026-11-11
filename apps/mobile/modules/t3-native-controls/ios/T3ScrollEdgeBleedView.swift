@@ -95,8 +95,11 @@ final class T3ScrollEdgeBleedView: ExpoView {
     // The vertical-bar API ships in the iOS 27.1 SDK (UIKit 9127.0.85); see T3LayoutMetricsView.
     #if canImport(UIKit, _version: 9127.0.85)
     if #available(iOS 27.1, *) {
+      // UIKit leaves the trait unset in a split view's inspector column, though the bar overlaps
+      // it; the flush check above still decides whether this view sits at the bar.
+      let traits = window?.rootViewController?.traitCollection ?? traitCollection
       let rtl = effectiveUserInterfaceLayoutDirection == .rightToLeft
-      switch traitCollection.verticalBarEdge {
+      switch traits.verticalBarEdge {
       case .leading: return rtl ? .right : .left
       case .trailing: return rtl ? .left : .right
       default: return nil

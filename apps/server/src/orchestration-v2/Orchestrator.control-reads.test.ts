@@ -62,6 +62,194 @@ const layerTest = Layer.mergeAll(
   ),
 );
 
+it.effect.each(
+  (["provider.switch", "thread.model-selection.set"] as const).flatMap((type) =>
+    [
+      { active: true, selectionChange: "instance" },
+      { active: false, selectionChange: "instance" },
+      { active: true, selectionChange: "next-turn" },
+      { active: true, selectionChange: "restart" },
+    ].map((scenario) => ({ type, ...scenario })),
+  ),
+)("$type $selectionChange ($active)", ({ type, active, selectionChange }) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const threadId = ThreadId.make("thread:instance-switch");
+    const now = yield* DateTime.now;
+    const sessionId = ProviderSessionId.make("session:instance-switch");
+    const providerThreadId = ProviderThreadId.make("provider-thread:instance-switch");
+    const runId = RunId.make("run:instance-switch");
+    const nodeId = NodeId.make("node:instance-switch");
+    const attemptId = RunAttemptId.make("attempt:instance-switch");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-instance-switch"),
+      threadId,
+      projectId: ProjectId.make("project:instance-switch"),
+      title: "Instance switch",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* projections.apply({
+      id: EventId.make("instance-switch:session"),
+      type: "provider-session.attached",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: sessionId,
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        status: "ready",
+        cwd: "/repo",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("instance-switch:provider-thread"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: providerThreadId,
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        providerSessionId: sessionId,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: {
+          driver: adapter.driver,
+          nativeId: "native:instance-switch",
+          strength: "strong",
+        },
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    if (active) {
+      yield* projections.apply({
+        id: EventId.make("instance-switch:run"),
+        type: "run.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection,
+          providerThreadId,
+          userMessageId: MessageId.make("message:instance-switch"),
+          rootNodeId: nodeId,
+          activeAttemptId: attemptId,
+          status: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("instance-switch:turn"),
+        type: "provider-turn.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make("provider-turn:instance-switch"),
+          providerThreadId,
+          nodeId,
+          runAttemptId: attemptId,
+          nativeTurnRef: { driver: adapter.driver, nativeId: "native:turn", strength: "strong" },
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+    }
+    const before = yield* projections.getThreadProjection(threadId);
+    const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+    const commandId = CommandId.make("switch-instance");
+    const target = {
+      instanceId:
+        selectionChange === "instance" ? ProviderInstanceId.make("codex-other") : instanceId,
+      model: selectionChange === "instance" ? modelSelection.model : "gpt-6",
+    };
+    const outcome = yield* orchestrator
+      .dispatch({
+        type,
+        commandId,
+        threadId,
+        modelSelection: target,
+      })
+      .pipe(Effect.result);
+    const after = yield* projections.getThreadProjection(threadId);
+    if (active && selectionChange !== "next-turn") {
+      assert.deepEqual(
+        after,
+        before,
+        "a refused switch must preserve the turn, session and selection",
+      );
+      assert.deepEqual(
+        yield* outbox.listByCommandId(commandId),
+        [],
+        "a refused switch must not release the provider session",
+      );
+      assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+      assert.ok(Result.isFailure(outcome));
+      assert.instanceOf(outcome.failure, Orchestrator.OrchestratorProviderSelectionBusyError);
+    } else {
+      assert.ok(Result.isSuccess(outcome));
+      assert.deepEqual(after.thread.modelSelection, target);
+      assert.equal(after.thread.providerInstanceId, target.instanceId);
+      assert.deepEqual(after.runs, before.runs);
+      assert.deepEqual(after.providerTurns, before.providerTurns);
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerDatabase,
+        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "instance-switch" },
+          ProviderAdapterRegistry.layerFromAdapters([
+            {
+              ...adapter,
+              planSelectionTransition: () =>
+                Effect.succeed(
+                  selectionChange === "restart"
+                    ? { type: "restart_session" as const }
+                    : { type: "apply_on_next_turn" as const },
+                ),
+            },
+            { ...adapter, instanceId: ProviderInstanceId.make("codex-other") },
+          ]),
+          { databaseLayer: layerDatabase, runEffectWorker: false },
+        ),
+      ),
+    ),
+  ),
+);
+
 it.effect(
   "records approval feedback and targets only its runtime request without dispatching a parent turn",
   () =>
@@ -559,6 +747,14 @@ it.effect(
             assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
           }
         }
+        if (mode === "live") {
+          yield* orchestrator.dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("snooze-live-control"),
+            threadId,
+            snoozedUntil: "2099-07-25T09:00:00.000Z",
+          });
+        }
         yield* orchestrator.dispatch(
           mode === "live"
             ? {
@@ -583,6 +779,8 @@ it.effect(
         assert.equal(response.node?.status, mode === "live" ? "completed" : "cancelled");
         assert.equal(response.item?.status, mode === "live" ? "completed" : "cancelled");
         if (mode === "live") {
+          assert.isNull((yield* projections.getThread(threadId)).snoozedUntil);
+          assert.isNull((yield* projections.getThread(threadId)).snoozedAt);
           assert.deepEqual(response.request?.answers, normalizedAnswers);
           assert.equal(response.item?.type, "user_input_request");
           if (response.item?.type === "user_input_request") {
@@ -654,6 +852,55 @@ it.effect(
       });
       assert.isNotNull((yield* projections.getThread(threadId)).deletedAt);
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps the store's read failure as the cause when a command projection fails", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const unreadableMessage = ThreadId.make("thread:control-unreadable-message");
+    const unreadableRequest = ThreadId.make("thread:control-unreadable-request");
+    for (const threadId of [unreadableMessage, unreadableRequest]) {
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("project:control-unreadable"),
+        title: "Unreadable",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    }
+    yield* sql`INSERT INTO orchestration_v2_projection_messages
+      (message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json)
+      VALUES ('obsolete-user', ${unreadableMessage}, NULL, NULL, 'user', 0, ${now}, ${now}, '{"obsolete":true}')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests
+      (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
+      VALUES ('request:unreadable', ${unreadableRequest}, 'node:unreadable', 'user-input', 'pending', ${now}, '{}')`;
+    for (const command of [
+      {
+        type: "queue.resume",
+        commandId: CommandId.make("resume-unreadable"),
+        threadId: unreadableMessage,
+      },
+      {
+        type: "thread.user-input.dismiss",
+        commandId: CommandId.make("dismiss-unreadable"),
+        threadId: unreadableRequest,
+        requestId: RuntimeRequestId.make("request:unreadable"),
+      },
+    ] as const) {
+      const failure = yield* orchestrator.dispatch(command).pipe(Effect.flip);
+      assert.instanceOf(failure, Orchestrator.OrchestratorProjectionError);
+      assert.instanceOf(failure.cause, ProjectionStore.ProjectionStoreReadError);
+    }
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("implements a proposed plan that the command projection leaves out", () =>
@@ -1485,6 +1732,92 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
     } as const;
     assert.deepInclude(yield* projections.getThreadShell(threadId), active);
     assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps a snooze when a live question is cancelled or an approval is answered", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const now = yield* DateTime.now;
+    for (const kind of ["user_input", "command"] as const) {
+      const threadId = ThreadId.make(`thread:snoozed-live-${kind}`);
+      const requestId = RuntimeRequestId.make(`request:snoozed-live-${kind}`);
+      const sessionId = ProviderSessionId.make(`session:snoozed-live-${kind}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create-snoozed-live-${kind}`),
+        threadId,
+        projectId: ProjectId.make("project:snoozed-live"),
+        title: "Deferred question",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make(`snooze-live-${kind}`),
+        threadId,
+        snoozedUntil: "2099-07-25T09:00:00.000Z",
+      });
+      const before = yield* projections.getThread(threadId);
+      yield* projections.apply({
+        id: EventId.make(`attach-snoozed-live-${kind}`),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`request-snoozed-live-${kind}`),
+        type: "runtime-request.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: requestId,
+          nodeId: NodeId.make(`node:snoozed-live-${kind}`),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind,
+          status: "pending",
+          responseCapability: { type: "live", providerSessionId: sessionId },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      });
+      const commandId = CommandId.make(`respond-snoozed-live-${kind}`);
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId,
+        threadId,
+        requestId,
+        decision: kind === "user_input" ? "cancel" : "accept",
+      });
+      const after = yield* projections.getThread(threadId);
+      assert.deepEqual(after.snoozedUntil, before.snoozedUntil);
+      assert.deepEqual(after.snoozedAt, before.snoozedAt);
+      assert.equal((yield* projections.getRuntimeRequest(threadId, requestId))?.status, "resolved");
+      assert.equal(
+        (yield* outbox.listByCommandId(commandId))[0]?.request.type,
+        "runtime-request.respond",
+      );
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 

@@ -11,6 +11,7 @@ import {
   DeviceOperationError,
   type DevicePlatform,
   type DevicePlatformAvailability,
+  type SettingsSecretValue,
   type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -26,10 +27,13 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { truncate } from "@t3tools/shared/String";
 import type { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import { writeAgentDeviceConfig } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 
@@ -58,13 +62,34 @@ const decodeCatalog = Schema.decodeUnknownEffect(Catalog);
 const decodeSessionRecord = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ leaseId: Schema.String })),
 );
-const decodeCliFailure = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Struct({
-      error: Schema.Struct({ message: Schema.String, hint: Schema.optional(Schema.String) }),
-    }),
-  ),
-);
+const CliFailure = Schema.Struct({
+  error: Schema.Struct({
+    message: Schema.String,
+    hint: Schema.optional(Schema.String),
+    logPath: Schema.optional(Schema.String),
+    // An open bag; `line` holds the daemon's raw response when agent-device could not parse it.
+    details: Schema.optional(Schema.Unknown),
+  }),
+});
+const responseLine = (details: unknown) =>
+  typeof details === "object" &&
+  details !== null &&
+  "line" in details &&
+  typeof details.line === "string"
+    ? details.line
+    : undefined;
+const decodeCliFailure = Schema.decodeUnknownOption(Schema.fromJsonString(CliFailure));
+const describeCliFailure = ({ error }: typeof CliFailure.Type) => {
+  const line = responseLine(error.details);
+  return [
+    error.message,
+    error.hint,
+    line ? `The daemon answered: ${truncate(line, 300)}` : undefined,
+    error.logPath ? `Log: ${error.logPath}` : undefined,
+  ]
+    .filter((part) => part !== undefined)
+    .join(" ");
+};
 
 interface Lease {
   readonly leaseId: string;
@@ -75,6 +100,8 @@ interface Lease {
   readonly dir: string;
   readonly configPath: string;
   readonly installDirectory: string;
+  /** The token the lease was opened with; ending it must not depend on reading the secret again. */
+  readonly token: string;
 }
 
 const catalogId = (platform: DevicePlatform, model: string) => `simlock:${platform}:${model}`;
@@ -108,20 +135,25 @@ export const machineSimlockToken = (environment: NodeJS.ProcessEnv) => {
 
 /**
  * The saved token, else this machine's agent-device token; each only for the gateway it belongs to,
- * so a URL being edited never receives either.
+ * so a URL being edited never receives either. A saved secret reference that cannot be read fails
+ * instead of falling back to this machine's token.
  */
-export const resolveSimlockToken = (
+export const resolveSimlockToken = Effect.fn("SimlockDeviceHost.resolveToken")(function* (
+  secrets: SecretResolver.SecretResolver["Service"],
   gatewayUrl: string,
-  saved: { readonly gatewayUrl: string; readonly agentToken: string } | undefined,
+  saved: { readonly gatewayUrl: string; readonly agentToken: SettingsSecretValue } | undefined,
   environment: NodeJS.ProcessEnv,
-) => {
+) {
   if (saved?.agentToken && sameOrigin(saved.gatewayUrl, gatewayUrl))
-    return { agentToken: saved.agentToken, source: "settings" as const };
+    return {
+      agentToken: yield* requireSettingsSecret(secrets, saved.agentToken),
+      source: "settings" as const,
+    };
   const machine = machineSimlockToken(environment);
   return machine && sameOrigin(machine.gatewayUrl, gatewayUrl)
     ? { agentToken: machine.agentToken, source: "env" as const }
     : null;
-};
+});
 
 /** What went wrong talking to a gateway, without the gateway's own text. */
 export const describeGatewayFailure = (cause: unknown, gatewayUrl: string, tokenOwner: string) => {
@@ -181,9 +213,9 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   const server = yield* ServerConfig.ServerConfig;
   const services = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
   const environment = yield* HostProcess.Environment;
+  const secrets = yield* SecretResolver.SecretResolver;
   const hostId = config.id;
   const gateway = config.gatewayUrl.replace(/\/$/, "");
-  const agentToken = resolveSimlockToken(config.gatewayUrl, config, environment)?.agentToken ?? "";
   const agentDeviceUrl = `${gateway}/v1/agent-device`;
   const hostDir = path.join(server.stateDir, "device", "simlock", hostId);
   const leases = new Map<string, Lease>();
@@ -209,7 +241,18 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       ...(cause === undefined ? {} : { cause }),
     });
 
+  // Read on each use, so a rotated or unlocked secret applies without rebuilding the host.
+  const currentToken = resolveSimlockToken(secrets, config.gatewayUrl, config, environment).pipe(
+    Effect.mapError((error) => unavailable(error.message, error)),
+    Effect.flatMap((token) =>
+      token
+        ? Effect.succeed(token.agentToken)
+        : Effect.fail(unavailable(`Add an agent token for ${config.label} in Settings.`)),
+    ),
+  );
+
   const request = (
+    agentToken: string,
     method: "GET" | "POST" | "DELETE",
     route: string,
     body?: Readonly<Record<string, unknown>>,
@@ -274,7 +317,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       return yield* unavailable(
         Option.match(failure, {
           onNone: () => `agent-device ${args[0]} failed (exit code ${result.code ?? "none"}).`,
-          onSome: ({ error }) => (error.hint ? `${error.message} ${error.hint}` : error.message),
+          onSome: describeCliFailure,
         }),
       );
     }
@@ -284,10 +327,8 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   const fetchCatalog = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     if (catalog && now - catalog.at < CATALOG_TTL_MS) return catalog.devices;
-    if (!agentToken) {
-      return yield* unavailable(`Add an agent token for ${config.label} in Settings.`);
-    }
-    const decoded = yield* request("GET", "/v1/catalog").pipe(
+    const agentToken = yield* currentToken;
+    const decoded = yield* request(agentToken, "GET", "/v1/catalog").pipe(
       Effect.flatMap(decodeCatalog),
       Effect.mapError((cause) =>
         unavailable(describeGatewayFailure(cause, gateway, config.label), cause),
@@ -357,7 +398,9 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   /** Ends the lease through its session, or over HTTP when the session is gone. */
   const release = Effect.fn("SimlockDeviceHost.release")(function* (lease: Lease) {
     yield* agentDevice(lease, ["close"]).pipe(
-      Effect.catch(() => request("DELETE", `/v1/leases/${encodeURIComponent(lease.leaseId)}`)),
+      Effect.catch(() =>
+        request(lease.token, "DELETE", `/v1/leases/${encodeURIComponent(lease.leaseId)}`),
+      ),
       Effect.tapError((cause) =>
         Effect.logWarning("Could not release Simlock lease", { leaseId: lease.leaseId, cause }),
       ),
@@ -376,6 +419,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       yield* Effect.sleep(Duration.millis(Math.min(left, Duration.toMillis(RENEW_INTERVAL))));
       if ((yield* Clock.currentTimeMillis) >= deadline) break;
       const renewed = yield* request(
+        lease.token,
         "POST",
         `/v1/leases/${encodeURIComponent(lease.leaseId)}/renew`,
         { ttlMs: LEASE_TTL_MS },
@@ -418,17 +462,20 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   ) {
     const target = parseCatalogId(device.id);
     if (!target) {
+      const reason = "This Simlock device is no longer leased. Open it again from the list.";
       return yield* new DeviceBootError({
         hostId,
         deviceId: device.id,
         reason: "launch_failed",
-        cause: new Error("This Simlock device is no longer leased. Open it again from the list."),
+        diagnostics: reason,
+        cause: new Error(reason),
       });
     }
     const suffix = (yield* Random.nextIntBetween(0, 0xffffff)).toString(16).padStart(6, "0");
     const session = `t3-${suffix}`;
     const dir = path.join(hostDir, suffix);
     const configPath = path.join(dir, "agent-device.json");
+    const agentToken = yield* currentToken;
     yield* writeAgentDeviceConfig(configPath, {
       baseUrl: agentDeviceUrl,
       token: agentToken,
@@ -465,6 +512,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
         dir,
         configPath,
         installDirectory,
+        token: agentToken,
       };
       if (stops !== stopsAtOpen)
         return yield* unavailable("Device support stopped while the device was opening.");
@@ -487,6 +535,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
               hostId,
               deviceId: device.id,
               reason: "launch_failed",
+              diagnostics: truncate(error.reason, 1_997),
               cause: new Error(error.reason),
             })
           : error,
@@ -557,7 +606,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
         onSome: (lease) =>
           Effect.succeed({
             baseUrl: agentDeviceUrl,
-            token: agentToken,
+            token: lease.token,
             agentDeviceId: null,
             session: lease.session,
             stateDir: lease.dir,
@@ -588,7 +637,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       if (!lease) return null;
       return {
         url: `${gateway}/v1/leases/${encodeURIComponent(lease.leaseId)}/${stream ? "stream" : "input"}`,
-        headers: { authorization: `Bearer ${agentToken}` },
+        headers: { authorization: `Bearer ${lease.token}` },
         protocols: [],
       };
     });
