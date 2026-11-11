@@ -511,19 +511,20 @@ function engineStyles(xml: string) {
   });
   parser.write(xml).close();
   const id = /(numFmtId\s*=\s*)(["'])(\d+)\2/g;
-  const moved = new Map<string, number>();
+  const moved = new Map<number, number>();
   const formatBlock = blocks.get("numFmts");
   const formats = formatBlock ? xml.slice(formatBlock.start, formatBlock.end) : "";
   const used = new Set([...formats.matchAll(id)].map((match) => Number(match[3])));
   let next = 164;
   const renumber = (part: string, assign: boolean) =>
     part.replace(id, (attribute: string, key: string, quote: string, value: string) => {
-      if (assign && Number(value) < 164 && !moved.has(value)) {
+      const number = Number(value);
+      if (assign && number < 164 && !moved.has(number)) {
         while (used.has(next)) next++;
         if (next > 65535) throw new Error("This workbook has too many custom number formats.");
-        moved.set(value, next++);
+        moved.set(number, next++);
       }
-      const to = moved.get(value);
+      const to = moved.get(number);
       return to === undefined ? attribute : `${key}${quote}${to}${quote}`;
     });
   const numberedFormats = renumber(formats, true);
@@ -541,7 +542,7 @@ function engineStyles(xml: string) {
     .join("")
     .replace(
       new RegExp(
-        `${name("u")}\\s+val\\s*=\\s*(["'])(?:single|double|singleAccounting|doubleAccounting)\\2\\s*/>`,
+        `${name("u")}\\s+val\\s*=\\s*(["'])(?:single|double|singleAccounting|doubleAccounting)\\2\\s*(?:/>|>\\s*</\\1u\\s*>)`,
         "g",
       ),
       "<$1u/>",

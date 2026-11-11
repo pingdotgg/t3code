@@ -1775,58 +1775,61 @@ it.each(["XFD200", "XFD300", "XFD1048576", "AX500", "AZ9999999"])(
   },
 );
 
-it("shows the number formats and underlines a workbook's own styles define", async () => {
-  const { default: JSZip } = await import("jszip");
-  const archive = new JSZip();
-  archive.file(
-    "xl/workbook.xml",
-    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Styles" sheetId="1" r:id="rId1"/></sheets></workbook>',
-  );
-  archive.file(
-    "xl/_rels/workbook.xml.rels",
-    '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
-  );
-  archive.file(
-    "xl/styles.xml",
-    `<styleSheet><numFmts count="4"><numFmt numFmtId="164" formatCode="0.000"/><numFmt numFmtId="65535" formatCode="0.0000"/><numFmt numFmtId="7" formatCode="&quot;￥&quot;#,##0.00"/><numFmt numFmtId="82" formatCode="[$-010409]dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/></font><font><u val="double"/><sz val="11"/></font></fonts><cellXfs count="4"><xf numFmtId="0" fontId="0"/><xf numFmtId="7" fontId="0"/><xf numFmtId="82" fontId="0"/><xf numFmtId="0" fontId="1"/></cellXfs></styleSheet>`,
-  );
-  archive.file(
-    "xl/worksheets/sheet1.xml",
-    '<worksheet><sheetData><row r="1"><c r="A1" s="1"><v>100</v></c><c r="B1" s="2"><v>44986</v></c><c r="C1" s="3" t="inlineStr"><is><t>Total</t></is></c></row></sheetData></worksheet>',
-  );
-  const { prepareOffice } = await import("./officeArchive");
-  const prepared = await prepareOffice(
-    await archive.generateAsync({ type: "arraybuffer" }),
-    "xlsx",
-  );
-  const styles = await (
-    await JSZip.loadAsync(prepared.bytes)
-  )
-    .file("xl/styles.xml")!
-    .async("string");
-  expect(styles).toContain("<font><u/>");
-  const worker = new Worker(new URL("./office/spreadsheet.worker.ts", import.meta.url), {
-    type: "module",
-  });
-  try {
-    const { createWorkerClient } = await import("./office/worker-rpc");
-    const client = createWorkerClient<import("./office/sheet-protocol").SheetMethods>(worker);
-    const bytes = prepared.bytes;
-    await client.call("open", { bytes, view: prepared.view! }, { transfer: [bytes] });
-    const cells = await client.call("cells", {
-      sheet: 0,
-      range: { top: 0, bottom: 0, left: 0, right: 1 },
+it.each(['<u val="double"/>', '<u val="double"></u>'])(
+  "shows workbook formats and underline %s",
+  async (underline) => {
+    const { default: JSZip } = await import("jszip");
+    const archive = new JSZip();
+    archive.file(
+      "xl/workbook.xml",
+      '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Styles" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    );
+    archive.file(
+      "xl/_rels/workbook.xml.rels",
+      '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+    );
+    archive.file(
+      "xl/styles.xml",
+      `<styleSheet><numFmts count="4"><numFmt numFmtId="164" formatCode="0.000"/><numFmt numFmtId="65535" formatCode="0.0000"/><numFmt numFmtId="007" formatCode="&quot;￥&quot;#,##0.00"/><numFmt numFmtId="82" formatCode="[$-010409]dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/></font><font>${underline}<sz val="11"/></font></fonts><cellXfs count="4"><xf numFmtId="0" fontId="0"/><xf numFmtId="7" fontId="0"/><xf numFmtId="82" fontId="0"/><xf numFmtId="0" fontId="1"/></cellXfs></styleSheet>`,
+    );
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      '<worksheet><sheetData><row r="1"><c r="A1" s="1"><v>100</v></c><c r="B1" s="2"><v>44986</v></c><c r="C1" s="3" t="inlineStr"><is><t>Total</t></is></c></row></sheetData></worksheet>',
+    );
+    const { prepareOffice } = await import("./officeArchive");
+    const prepared = await prepareOffice(
+      await archive.generateAsync({ type: "arraybuffer" }),
+      "xlsx",
+    );
+    const styles = await (
+      await JSZip.loadAsync(prepared.bytes)
+    )
+      .file("xl/styles.xml")!
+      .async("string");
+    expect(styles).toContain("<font><u/>");
+    const worker = new Worker(new URL("./office/spreadsheet.worker.ts", import.meta.url), {
+      type: "module",
     });
-    // Ids under 164 that a workbook defines keep its formats, not Excel's built-in ones.
-    expect(cells[0]).toEqual(["￥100.00", "01-Mar-2023"]);
-  } finally {
-    worker.terminate();
-  }
-  archive.file("xl/styles.xml", "<styleSheet><numFmts/><numFmts/></styleSheet>");
-  await expect(
-    prepareOffice(await archive.generateAsync({ type: "arraybuffer" }), "xlsx"),
-  ).rejects.toThrow("duplicate stylesheet blocks");
-});
+    try {
+      const { createWorkerClient } = await import("./office/worker-rpc");
+      const client = createWorkerClient<import("./office/sheet-protocol").SheetMethods>(worker);
+      const bytes = prepared.bytes;
+      await client.call("open", { bytes, view: prepared.view! }, { transfer: [bytes] });
+      const cells = await client.call("cells", {
+        sheet: 0,
+        range: { top: 0, bottom: 0, left: 0, right: 1 },
+      });
+      // Ids under 164 that a workbook defines keep its formats, not Excel's built-in ones.
+      expect(cells[0]).toEqual(["￥100.00", "01-Mar-2023"]);
+    } finally {
+      worker.terminate();
+    }
+    archive.file("xl/styles.xml", "<styleSheet><numFmts/><numFmts/></styleSheet>");
+    await expect(
+      prepareOffice(await archive.generateAsync({ type: "arraybuffer" }), "xlsx"),
+    ).rejects.toThrow("duplicate stylesheet blocks");
+  },
+);
 
 it("keeps spreadsheet dates on their calendar day west of UTC", async () => {
   const { default: JSZip } = await import("jszip");
