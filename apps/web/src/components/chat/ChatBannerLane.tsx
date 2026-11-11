@@ -6,12 +6,12 @@ import type {
   ThreadId,
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
-import { type Dispatch, type SetStateAction, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { getDefaultServerModel } from "../../providerModels";
 import { providerStatusBannerItem } from "./ProviderStatusBanner";
 import { dismissThreadErrorBannerForSession, threadErrorBannerItem } from "./ThreadErrorBanner";
 import {
-  isLowLimitDismissed,
+  useLowLimitDismissed,
   lowLimitBannerItem,
   resolveLowLimitSignal,
   resolveLowLimitSwitchTarget,
@@ -65,14 +65,14 @@ export function useChatBannerLane(input: {
     setThreadError,
     setThreadErrorBannerDismissTick,
   } = input;
-  const [, setTrayNoticeDismissTick] = useState(0);
   const lowLimitSignal = resolveLowLimitSignal(
     activeProviderStatus,
     providerStatuses,
     usageLimitSources,
     environmentId,
   );
-  const lowLimitVisible = lowLimitSignal !== null && !isLowLimitDismissed(lowLimitSignal.key);
+  const lowLimitDismissed = useLowLimitDismissed(lowLimitSignal?.key ?? null);
+  const lowLimitVisible = lowLimitSignal !== null && !lowLimitDismissed;
   const lowLimitSwitchTarget =
     lowLimitVisible && activeProviderStatus !== null && canSwitchProvider
       ? resolveLowLimitSwitchTarget(activeProviderStatus, providerStatuses)
@@ -116,7 +116,6 @@ export function useChatBannerLane(input: {
                 sources: usageLimitSources,
               }
             : null,
-        onDismissed: () => setTrayNoticeDismissTick((tick) => tick + 1),
       }),
     );
   }

@@ -19,7 +19,7 @@ import {
   tightestSessionLimit,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, InfoIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { ensureLocalApi } from "../../localApi";
@@ -394,10 +394,17 @@ export function resolveLowLimitSwitchTarget(
 
 // Session-scoped so a remount does not bring a dismissed notice back before
 // its window resets.
-const dismissedLowLimitKeys = new Set<string>();
+let dismissedLowLimitKeys: ReadonlySet<string> = new Set();
+const lowLimitDismissListeners = new Set<() => void>();
+const subscribeLowLimitDismissals = (listener: () => void) => {
+  lowLimitDismissListeners.add(listener);
+  return () => lowLimitDismissListeners.delete(listener);
+};
+const readLowLimitDismissals = () => dismissedLowLimitKeys;
 
-export function isLowLimitDismissed(key: string): boolean {
-  return dismissedLowLimitKeys.has(key);
+export function useLowLimitDismissed(key: string | null): boolean {
+  const dismissed = useSyncExternalStore(subscribeLowLimitDismissals, readLowLimitDismissals);
+  return key !== null && dismissed.has(key);
 }
 
 /** Ticks once a minute; the rest of the composer does not re-render with it. */
@@ -478,13 +485,11 @@ export function lowLimitBannerItem({
   switchTarget,
   onSwitch,
   limits,
-  onDismissed,
 }: {
   readonly signal: LowLimitSignal;
   readonly switchTarget: ServerProvider | null;
   readonly onSwitch: (provider: ServerProvider) => void;
   readonly limits: LimitsSource | null;
-  readonly onDismissed: () => void;
 }): ComposerBannerStackItem {
   return {
     id: `low-limit:${signal.key}`,
@@ -508,8 +513,8 @@ export function lowLimitBannerItem({
     ),
     dismissLabel: "Dismiss low usage notice",
     onDismiss: () => {
-      dismissedLowLimitKeys.add(signal.key);
-      onDismissed();
+      dismissedLowLimitKeys = new Set(dismissedLowLimitKeys).add(signal.key);
+      for (const listener of lowLimitDismissListeners) listener();
     },
   };
 }
