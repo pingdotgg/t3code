@@ -156,13 +156,18 @@ export function useReviewSections(input: {
   const selectedSection =
     reviewSections.find((section) => section.id === selectedSectionId) ?? null;
 
+  // With a child unresolved there are no Git sections, so a turn can be selected only as a fallback.
+  const repositoryFailureVisible =
+    repositoryUnresolved &&
+    !(selectedSection?.kind === "turn" && reviewCache.selectedSectionId === selectedSection.id);
+
   const refreshSelectedSection = async () => {
     if (!enabled) {
       return;
     }
     if (selectedSection?.kind === "turn") {
       activeTurnDiff.refresh();
-      return;
+      if (!repositoryFailureVisible) return;
     }
     diffPreview.refresh();
     repositoriesQuery.refresh();
@@ -188,7 +193,7 @@ export function useReviewSections(input: {
     reviewCwd: selectedSection?.kind === "turn" ? selectedThreadCwd : reviewCwd,
     repositoryPath: selectedSection?.kind === "turn" ? "" : repositoryPath,
     error:
-      (repositoryUnresolved && selectedSection?.kind !== "turn" ? repositoriesQuery.error : null) ??
+      (repositoryFailureVisible ? repositoriesQuery.error : null) ??
       diffPreview.error ??
       activeTurnDiff.error ??
       (selectedSection === null && !fileAccess.isPending && !canReadFiles

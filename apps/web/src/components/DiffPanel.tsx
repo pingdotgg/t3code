@@ -1457,13 +1457,18 @@ export default function DiffPanel({
               <div className="px-3">
                 <p className="mb-2 text-2xs text-error/80">{selectedPatchError}</p>
                 {isGitSelection && repositoryError && routeThreadRef && (
-                  <Button
-                    size="xs"
-                    variant="secondary"
-                    onClick={() => useDiffPanelStore.getState().clearRepository(routeThreadRef)}
-                  >
-                    Review the thread's repository
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="xs" variant="secondary" onClick={repositoriesQuery.refresh}>
+                      Retry
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={() => useDiffPanelStore.getState().clearRepository(routeThreadRef)}
+                    >
+                      Review the thread's repository
+                    </Button>
+                  </div>
                 )}
               </div>
             )}
