@@ -382,9 +382,9 @@ export const layerHttpServer = Layer.unwrap(
       listen(bindHost),
       Layer.succeed(ServerConfig.ServerConfig, config),
     );
-    if (!config.privateNetworkOnly) return listening;
-    // The managed service only chose the wildcard itself, so a port held on one
-    // interface should not cost the local server; layers above see the real host.
+    if (!config.loopbackFallback) return listening;
+    // The service chose the wildcard on its own, so a port held on one interface
+    // (e.g. by Tailscale Serve) must not cost the local server; layers above see the real host.
     return listening.pipe(
       Layer.catchTag("ServeError", (error) =>
         Layer.unwrap(
@@ -402,6 +402,7 @@ export const layerHttpServer = Layer.unwrap(
                     ...config,
                     host: "127.0.0.1",
                     privateNetworkOnly: undefined,
+                    loopbackFallback: undefined,
                   }),
                 ),
               )

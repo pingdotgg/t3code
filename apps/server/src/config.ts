@@ -87,6 +87,8 @@ export class ServerConfig extends Context.Service<
     readonly host: string | undefined;
     /** Set when the host was defaulted to a private-network listener for the service. */
     readonly privateNetworkOnly?: boolean | undefined;
+    /** The service picked that listener without `--lan`, so a taken port may fall back to loopback. */
+    readonly loopbackFallback?: boolean | undefined;
     readonly cwd: string;
     readonly baseDir: string;
     readonly staticDir: string | undefined;

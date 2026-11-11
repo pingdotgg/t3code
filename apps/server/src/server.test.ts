@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -12,25 +13,33 @@ import * as NodeOS from "node:os";
 import * as ServerConfig from "./config.ts";
 import { layerHttpServer } from "./server.ts";
 
-// Holds a port on a specific non-loopback address, so a wildcard bind on that
-// port fails with EADDRINUSE while a loopback bind is still free.
-const occupyNonLoopbackPort = Effect.acquireRelease(
-  Effect.callback<NodeNet.Server & { readonly port: number }>((resume) => {
-    const address = Object.values(NodeOS.networkInterfaces())
-      .flat()
-      .find((entry) => entry?.family === "IPv4" && !entry.internal)?.address;
-    if (address === undefined) throw new Error("no non-loopback IPv4 interface");
-    const blocker = NodeNet.createServer();
-    blocker.listen(0, address, () => {
-      const bound = blocker.address() as NodeNet.AddressInfo;
-      resume(Effect.succeed(Object.assign(blocker, { port: bound.port })));
-    });
-  }),
-  (blocker) => Effect.callback<void>((resume) => void blocker.close(() => resume(Effect.void))),
-);
+// Linux refuses a wildcard bind on a port one specific address holds; macOS
+// lets it share the port under SO_REUSEADDR, so there is nothing to recover.
+const nonLoopbackAddress =
+  HostProcess.Platform.defaultValue() === "linux"
+    ? Object.values(NodeOS.networkInterfaces())
+        .flat()
+        .find((entry) => entry?.family === "IPv4" && !entry.internal)?.address
+    : undefined;
+
+const occupyNonLoopbackPort = (address: string) =>
+  Effect.acquireRelease(
+    Effect.callback<NodeNet.Server & { readonly port: number }>((resume) => {
+      const blocker = NodeNet.createServer();
+      blocker.once("error", (error) => resume(Effect.die(error)));
+      blocker.listen(0, address, () => {
+        const bound = blocker.address() as NodeNet.AddressInfo;
+        resume(Effect.succeed(Object.assign(blocker, { port: bound.port })));
+      });
+    }),
+    (blocker) => Effect.callback<void>((resume) => void blocker.close(() => resume(Effect.void))),
+  );
 
 const httpServerWithConfig = (
-  overrides: Pick<ServerConfig.ServerConfig["Service"], "host" | "port" | "privateNetworkOnly">,
+  overrides: Pick<
+    ServerConfig.ServerConfig["Service"],
+    "host" | "port" | "privateNetworkOnly" | "loopbackFallback"
+  >,
 ) =>
   layerHttpServer.pipe(
     Layer.provide(
@@ -44,15 +53,24 @@ const httpServerWithConfig = (
     Layer.provide(Layer.mergeAll(NodeServices.layer, NetService.layer)),
   );
 
-it.live("managed service falls back to loopback when its wildcard port is taken", () =>
+const live = it.live.skipIf(nonLoopbackAddress === undefined);
+
+live("managed service falls back to loopback when its wildcard port is taken", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { port } = yield* occupyNonLoopbackPort;
+      const { port } = yield* occupyNonLoopbackPort(nonLoopbackAddress!);
       const { address, config } = yield* Effect.all({
         address: Effect.map(HttpServer.HttpServer, (server) => server.address),
         config: ServerConfig.ServerConfig,
       }).pipe(
-        Effect.provide(httpServerWithConfig({ host: "0.0.0.0", port, privateNetworkOnly: true })),
+        Effect.provide(
+          httpServerWithConfig({
+            host: "0.0.0.0",
+            port,
+            privateNetworkOnly: true,
+            loopbackFallback: true,
+          }),
+        ),
       );
       assert.strictEqual(config.host, "127.0.0.1");
       const listening =
@@ -64,13 +82,18 @@ it.live("managed service falls back to loopback when its wildcard port is taken"
   ),
 );
 
-it.live("an explicit wildcard host still fails when its port is taken", () =>
+live("--lan still fails when its wildcard port is taken", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { port } = yield* occupyNonLoopbackPort;
+      const { port } = yield* occupyNonLoopbackPort(nonLoopbackAddress!);
       const exit = yield* HttpServer.HttpServer.pipe(
         Effect.provide(
-          httpServerWithConfig({ host: "0.0.0.0", port, privateNetworkOnly: undefined }),
+          httpServerWithConfig({
+            host: "0.0.0.0",
+            port,
+            privateNetworkOnly: true,
+            loopbackFallback: undefined,
+          }),
         ),
         Effect.exit,
       );
