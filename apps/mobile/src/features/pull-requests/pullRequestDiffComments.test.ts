@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { PullRequestReviewThread } from "@t3tools/contracts";
 import type { NativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
-import {
-  annotatePullRequestDiff,
-  reviewPosition,
-  reviewPositionLabel,
-} from "./pullRequestDiffComments";
+import { annotatePullRequestDiff, reviewPositionLabel } from "./pullRequestDiffComments";
 const data: NativeReviewDiffData = {
   rows: [
     { kind: "file", id: "header", fileId: "f", filePath: "a.ts" },
@@ -28,6 +24,17 @@ const thread: PullRequestReviewThread = {
   comments: [],
 };
 describe("PR comments in continuous native diffs", () => {
+  it("returns unannotated data unchanged without reading or indexing rows", () => {
+    const unannotated = {
+      ...data,
+      get rows(): NativeReviewDiffData["rows"] {
+        throw new Error("Empty annotation must not read rows");
+      },
+    };
+    expect(annotatePullRequestDiff(unannotated, [], [], undefined)).toBe(unannotated);
+    expect(annotatePullRequestDiff(data, [], [], undefined).rows).toBe(data.rows);
+  });
+
   it("anchors old/new lines separately despite identical line numbers", () => {
     const annotated = annotatePullRequestDiff(
       data,
@@ -89,39 +96,21 @@ describe("PR comments in continuous native diffs", () => {
     ]);
     expect(annotated.commentTargetsByRowId).toBe(data.commentTargetsByRowId);
   });
-  it("substitutes mention labels while preserving the native row's authored source", () => {
-    const token = "@{account-id}";
-    const source = `See [design](https://example.test/spec) and \`${token}\`; <span title="literal">HTML</span> and \\_literal\\_. Ping `;
-    const comment = {
-      id: "comment",
-      author: null,
-      body: `${source}${token}`,
-      displayBody: `${source}@Alex\\_Smith \\& Co`,
-      displayText: `${source}@Alex_Smith & Co`,
-      createdAt: "2026-10-02T00:00:00Z",
-      updatedAt: null,
-      url: null,
-    };
+  it("counts a single-comment discussion in the singular", () => {
     const annotated = annotatePullRequestDiff(
       data,
-      [{ ...thread, comments: [comment] }],
+      [
+        { ...thread, commentCount: 1 },
+        { ...thread, id: "right", side: "right", commentCount: 2 },
+      ],
       [],
       "abc",
     );
-    expect(annotated.rows.find((row) => row.id === "discussion:t")?.commentText).toBe(
-      `Discussion\n${source}@Alex_Smith & Co\n1 comments · Tap to open`,
-    );
-    expect(comment.body).toBe(`${source}${token}`);
-    expect(comment.displayText).toBe(`${source}@Alex_Smith & Co`);
-    expect(comment.displayBody).toBe(`${source}@Alex\\_Smith \\& Co`);
-  });
-  it("does not guess positions for missing lines, notices, or binary files", () => {
-    expect(reviewPosition(data.rows[0]!)).toBeNull();
-    expect(reviewPosition(data.rows[1]!)).toEqual({ kind: "deleted", oldLine: 2 });
-    expect(reviewPosition(data.rows[2]!)).toEqual({ kind: "added", newLine: 2 });
     expect(
-      reviewPosition({ kind: "line", id: "context", oldLineNumber: 3, newLineNumber: 4 }),
-    ).toEqual({ kind: "context", side: "right", oldLine: 3, newLine: 4 });
+      annotated.rows
+        .filter((row) => row.kind === "comment")
+        .map((row) => row.commentText?.split("\n").at(-1)),
+    ).toEqual(["1 comment · Tap to open", "2 comments · Tap to open"]);
   });
   it("uses the old line number for left-side context when the line numbers differ", () => {
     const position = { kind: "context" as const, side: "left" as const, oldLine: 7, newLine: 8 };

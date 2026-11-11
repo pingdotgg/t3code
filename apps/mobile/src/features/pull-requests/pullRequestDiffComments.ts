@@ -18,6 +18,9 @@ export function reviewPosition(row: NativeReviewDiffRow): PullRequestReviewPosit
     };
   return null;
 }
+export function discussionCommentCountLabel(count: number) {
+  return `${count} ${count === 1 ? "comment" : "comments"}`;
+}
 export function reviewPositionLabel(position: PullRequestReviewPosition) {
   const oldSide =
     position.kind === "deleted" || (position.kind === "context" && position.side === "left");
@@ -34,6 +37,7 @@ export function annotatePullRequestDiff(
   drafts: readonly PendingReviewComment[],
   headSha: string | undefined,
 ): NativeReviewDiffData {
+  if (threads.length === 0 && drafts.length === 0) return data;
   const anchors = new Map<string, NativeReviewDiffRow[]>();
   const firstByPath = new Map<string, NativeReviewDiffRow>();
   const lines = new Map<string, NativeReviewDiffRow>();
@@ -74,13 +78,11 @@ export function annotatePullRequestDiff(
       thread.line === null
         ? firstByPath.get(thread.path)
         : lines.get(JSON.stringify([thread.path, thread.side, thread.line]));
-    if (!anchor) continue;
     const first = thread.comments[0];
-    const preview = first?.displayText ?? first?.body ?? "";
     attach(
       anchor,
       `discussion:${thread.id}`,
-      `${first?.author?.login ?? "Discussion"}${thread.isResolved ? " · Resolved" : ""}\n${preview}\n${thread.commentCount ?? thread.comments.length} comments · Tap to open`,
+      `${first?.author?.login ?? "Discussion"}${thread.isResolved ? " · Resolved" : ""}\n${first?.displayText ?? first?.body ?? ""}\n${discussionCommentCountLabel(thread.commentCount ?? thread.comments.length)} · Tap to open`,
       thread.line === null ? "file" : String(thread.line),
     );
   }
