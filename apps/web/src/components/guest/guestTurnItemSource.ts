@@ -10,7 +10,6 @@ import {
   OrchestrationV2GetTurnItemResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -21,9 +20,9 @@ import { Atom } from "effect/reactivity";
 import type { TurnItemSource } from "../chat/timelineRowContext";
 
 /** What an expanded guest row says when it cannot read the item. */
-class GuestItemReadError extends Data.TaggedError("GuestItemReadError")<{
-  readonly message: string;
-}> {}
+class GuestItemReadError extends Schema.TaggedError<GuestItemReadError>()("GuestItemReadError", {
+  message: Schema.String,
+}) {}
 
 const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2GetTurnItemResult));
 const decodeFrame = Schema.decodeUnknownOption(
