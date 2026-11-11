@@ -25,7 +25,6 @@ export {
   AGENT_ICON_IDS,
   AGENT_ICONS,
   isAgentIconId,
-  legacyAgentIcon,
   type AgentIconCategory,
   type AgentIconId,
   type AgentLegacyIcon,
@@ -144,7 +143,7 @@ export function groupAgentsByRole<T extends Pick<McpGatewayProfile, "tags">>(
 }
 
 /** Keeps the previous list when a config push leaves every agent as it was, so readers don't re-render. */
-export function shareAgentProfiles(
+function shareAgentProfiles(
   previous: ReadonlyArray<McpGatewayProfile> | undefined,
   next: ReadonlyArray<McpGatewayProfile>,
 ): ReadonlyArray<McpGatewayProfile> {

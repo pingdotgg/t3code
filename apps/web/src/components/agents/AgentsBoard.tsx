@@ -638,9 +638,8 @@ export function AgentsBoard() {
                         setDeleteError(
                           cause instanceof Error ? cause.message : "Could not delete the agent.",
                         );
-                      } finally {
-                        setBusy(false);
                       }
+                      setBusy(false);
                     }}
                   >
                     {busy ? "Deleting…" : "Delete agent"}
