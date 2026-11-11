@@ -781,6 +781,7 @@ export function BranchToolbarBranchSelector({
                 <ComposerControl size="xs" />
               )
             }
+            aria-label={`Branch: ${triggerLabel}`}
             className="min-w-0 max-w-full active:scale-100"
             disabled={isInitialBranchesLoadPending || isBranchActionPending}
           >
