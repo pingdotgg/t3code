@@ -1068,7 +1068,7 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelPresent = rightPanelPresence.present;
   const rightPanelControlsInPanel =
     shouldUsePlanSidebarSheet && rightPanelPresent && rightPanelOpen;
-  // One mount point for open and closed, so the toggles keep focus instead of remounting.
+  // One mount point for open and closed, so the toggles are not remounted.
   const rightPanelControlsAtRoot = !rightPanelControlsInPanel;
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
