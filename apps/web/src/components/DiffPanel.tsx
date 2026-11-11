@@ -369,14 +369,6 @@ export default function DiffPanel({
     initialScrollPosition = savedScrollPosition;
     setScrollRestore({ scopeKey: scrollScopeKey, position: initialScrollPosition });
   }
-  const initialScrollTarget = initialScrollPosition
-    ? {
-        type: "item" as const,
-        id: initialScrollPosition.fileKey,
-        align: "start" as const,
-        offset: initialScrollPosition.offset,
-      }
-    : undefined;
   const selectedCheckpointRange =
     typeof selectedCheckpointTurnCount === "number"
       ? {
@@ -722,7 +714,10 @@ export default function DiffPanel({
   const allDiffFilesCollapsed = areAllDiffFilesCollapsed(shownFileKeys, collapsedDiffFileKeys);
   const diffLineStat = sourceLineStat ?? getDiffLineStat(renderableFiles);
   const fileTreeEntries = diffFileTreeEntries(renderableFiles.filter(isFileShown));
-  const codeViewReveal = useCodeViewFileReveal(scrollScopeKey, initialScrollTarget);
+  const codeViewReveal = useCodeViewFileReveal(
+    scrollScopeKey,
+    initialScrollPosition && { id: initialScrollPosition.fileKey, offset: initialScrollPosition.offset },
+  );
   const revealDiffFile = (filePath: string) => {
     const index = renderableFileEntries.findIndex(
       (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
@@ -1411,6 +1406,10 @@ export default function DiffPanel({
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <div
                   className="min-h-0 min-w-0 flex-1"
+                  onWheelCapture={codeViewReveal.cancel}
+                  onTouchStartCapture={codeViewReveal.cancel}
+                  onPointerDownCapture={codeViewReveal.cancel}
+                  onKeyDownCapture={codeViewReveal.cancel}
                   onClickCapture={(event) => {
                     const composedPath = event.nativeEvent.composedPath?.() ?? [];
                     for (const node of composedPath) {
