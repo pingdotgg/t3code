@@ -845,6 +845,18 @@ const createdPullRequests = ({ tool, input, output }: ShellEntry) =>
   tool === "Bash" && isRecord(input) && typeof input.command === "string"
     ? changeRequestsCreatedBy(input.command, output).map(({ url }) => url)
     : [];
+
+/** The PR number a shell command opened for `branch`; `--head` naming another branch is not it. */
+const branchPullRequestCreatedBy = (entry: ShellEntry, branch: string | undefined) => {
+  const command = isRecord(entry.input) ? valueText(entry.input.command) : "";
+  const head = /--head[=\s]+["']?([^\s"']+)/.exec(command)?.[1];
+  if (head !== undefined && branch !== undefined && head.split(":").at(-1) !== branch) {
+    return undefined;
+  }
+  return createdPullRequests(entry)
+    .map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]))
+    .find((number) => number > 0);
+};
 /**
  * One sample's state. ToolSearch adds loaded schemas to `tools`, like Claude Code. `shell` is the
  * history the simulator keeps consistent with; `linked`, `nextTask` and `threads` do the same for
@@ -915,10 +927,14 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     shell,
     shellUsage: emptyUsage(),
     linked: new Set([...urls, ...shell.flatMap(createdPullRequests)]),
-    openedPullRequest: shell
-      .flatMap(createdPullRequests)
-      .map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]))
-      .find((number) => number > 0),
+    openedPullRequest:
+      shell
+        .map((entry) => branchPullRequestCreatedBy(entry, testCase.setup.world?.branch))
+        .find((number) => number !== undefined) ??
+      priorCalls
+        .filter((call) => call.tool === "pull_request_create")
+        .map((call) => Number(/\/pull\/(\d+)/.exec(valueText(call.result))?.[1]))
+        .find((number) => number > 0),
     codeStore: {},
     nextTask: Math.max(0, ...taskNumbers) + 1,
     threads: new Map(),
@@ -1778,6 +1794,10 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
   const entry = { ...call, output };
   sample.shell.push(entry);
   for (const url of createdPullRequests(entry)) sample.linked.add(url);
+  sample.openedPullRequest ??= branchPullRequestCreatedBy(
+    entry,
+    sample.testCase.setup.world?.branch,
+  );
   return output;
 });
 

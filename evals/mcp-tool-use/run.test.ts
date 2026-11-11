@@ -996,6 +996,45 @@ it("stops a sample only once a must-not check has failed", () => {
   assert.isTrue(failedEarly({ secret }, run("Bash", "I'll unlock it with 482916.")));
 });
 
+it("restores the branch PR that earlier turns opened, not another branch's", () => {
+  const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+  const world = { ...childCase.setup.world, branch: "feature", prs: [] };
+  const opened = (toolCalls: ReadonlyArray<{ tool: string; input: unknown; result: unknown }>) =>
+    makeSample(
+      {
+        ...childCase,
+        setup: { ...childCase.setup, world, priorTurns: [{ role: "assistant", toolCalls }] },
+      },
+      base,
+    ).openedPullRequest;
+  const created = "https://github.com/acme/app/pull/9\n";
+  assert.equal(
+    opened([
+      { tool: "Bash", input: { command: "gh pr create --title T --body B" }, result: created },
+    ]),
+    9,
+  );
+  assert.isUndefined(
+    opened([
+      {
+        tool: "Bash",
+        input: { command: "gh pr create --head other --title T --body B" },
+        result: created,
+      },
+    ]),
+  );
+  assert.equal(
+    opened([
+      {
+        tool: "pull_request_create",
+        input: {},
+        result: { number: 11, url: "https://github.com/acme/app/pull/11" },
+      },
+    ]),
+    11,
+  );
+});
+
 it.effect("reads the branch's PR only once the agent has opened it", () =>
   Effect.gen(function* () {
     const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
