@@ -22,6 +22,13 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Style
+
+On web and desktop, **Style** in **Settings → Appearance** sets how buttons and controls are
+painted, independently of the theme: **Standard** (the default), **Flat**, **Soft**, **Gloss**,
+**Accent gloss**, or **Outline**. Accent gloss paints main buttons, the send button, and switches
+in the theme's accent color.
+
 ## Math
 
 Turn on **Render math** in **Settings → Appearance** to typeset LaTeX in messages and Markdown

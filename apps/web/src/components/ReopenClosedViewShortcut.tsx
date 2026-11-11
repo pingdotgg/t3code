@@ -55,6 +55,7 @@ const PREVIEW_FORWARDED_COMMANDS = [
   "workspace.focusPrevious",
   "sidebar.toggle",
   "preview.focusUrl",
+  "preview.find",
 ] as const;
 
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>
