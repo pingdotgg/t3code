@@ -4926,17 +4926,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath },
       });
       const history = "Context handoff:\n[Historical user; user_message]\n$review the diff";
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
+      const text = withInlineContext(history, "continue");
+      yield* harness.runtime.startTurn({
+        ...makeClaudeTestTurnInput({
           threadId: harness.threadId,
           providerThread: harness.providerThread,
           now: yield* DateTime.now,
           attemptId: RunAttemptId.make("skill-handoff"),
-          text: withInlineContext(history, "continue"),
+          text,
           attachments: [],
           runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: homePath },
         }),
-      );
+        inlineContextLength: text.length - "continue".length,
+      });
 
       const content = harness.offeredMessages[0]?.message.content;
       const blocks =
