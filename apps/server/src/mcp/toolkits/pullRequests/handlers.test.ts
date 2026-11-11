@@ -12,7 +12,7 @@ import {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -32,15 +32,12 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import { listThreadPullRequests } from "./handlers.ts";
 import * as PullRequestsHandlers from "./handlers.ts";
-import { PullRequestsToolkit } from "./tools.ts";
+import { CHILD_PULL_REQUEST_REPORT_NEXT, PullRequestsToolkit } from "./tools.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
 const THREAD_ID = ThreadId.make("thread-1");
 
-const testCrypto = Crypto.make({
-  randomBytes: (size) => new Uint8Array(size).fill(7),
-  digest: (_algorithm, data) => Effect.succeed(data),
-});
+const testCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(7));
 
 const invocation = (
   capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
@@ -194,10 +191,10 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     }),
     Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadShell: (id) =>
-        Effect.succeed(id === THREAD_ID && thread ? v2PullRequestThread(thread) : null),
+        Effect.succeed(id === thread?.id ? v2PullRequestThread(thread) : null),
       dispatch,
     }),
-    Layer.succeed(Crypto.Crypto, testCrypto),
+    Layer.succeed(SecureRandom.SecureRandom, testCrypto),
     McpToolAccessTestkit.liveThreadsLayer,
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
@@ -236,6 +233,21 @@ describe("pull request toolkit handlers", () => {
         capability: "pull-requests",
         threadId: THREAD_ID,
       });
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
+  it.effect("points a bare thread uuid at the mcp: thread it belongs to", () =>
+    Effect.gen(function* () {
+      const bareId = ThreadId.make("5d0b4a3e-8c1f-4a52-9d37-2f6c7e1b9a04");
+      const harness = yield* makeHarness({
+        thread: { ...makeThread([]), id: ThreadId.make(`mcp:${bareId}`) },
+      });
+      const error = yield* harness
+        .call("link_pull_request", { threadId: bareId, number: 123 })
+        .pipe(Effect.flip);
+      expect(error.message).toBe(`Thread ${bareId} was not found. Did you mean \`mcp:${bareId}\`?`);
+      expect(error).toMatchObject({ _tag: "OrchestratorMcpFailure", code: "thread_not_found" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );
@@ -350,6 +362,25 @@ describe("pull request toolkit handlers", () => {
         .pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "PullRequestWatchFromSubagentError" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
+  it.effect("asks a subagent thread to end with its PR report after it links", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([]),
+          lineage: {
+            rootThreadId: ThreadId.make("parent"),
+            parentThreadId: ThreadId.make("parent"),
+            relationshipToParent: "subagent",
+          },
+        },
+      });
+      const result = yield* harness.call("link_pull_request", {
+        url: "https://github.com/t3tools/t3code/pull/124",
+      });
+      expect(result).toMatchObject({ number: 124, next: CHILD_PULL_REQUEST_REPORT_NEXT });
     }),
   );
 
@@ -494,6 +525,75 @@ describe("pull request toolkit handlers", () => {
       expect(missing.wasLinked).toBe(false);
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.unlink", number: 5 },
+      ]);
+    }),
+  );
+
+  it.effect("reports a dismissed stack member as not linked and leaves it dismissed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: makeThread([makeLink(9, { source: "stack-dismissed" })]),
+      });
+      const result = yield* harness.call("unlink_pull_request", {
+        repository: "t3tools/t3code",
+        number: 9,
+      });
+      expect(result.wasLinked).toBe(false);
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
+  it.effect("links several pull requests in one call", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: makeThread([makeLink(1), { ...makeLink(2), source: "stack-dismissed" }]),
+      });
+      const url = (number: number) => `https://github.com/t3tools/t3code/pull/${number}`;
+      const result = yield* harness.call("link_pull_requests", {
+        urls: [url(1), url(2), url(3), url(3), "https://example.com/not-a-pr"],
+      });
+      expect(result).toEqual({
+        linked: [{ host: "github.com", repository: "t3tools/t3code", numbers: [2, 3] }],
+        alreadyLinked: [{ host: "github.com", repository: "t3tools/t3code", numbers: [1] }],
+        linkedCount: 3,
+        invalidUrls: ["https://example.com/not-a-pr"],
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", number: 2, source: "agent" },
+        { type: "thread.pull-request.link", number: 3, source: "agent" },
+      ]);
+    }),
+  );
+
+  it.effect("unlinks every visible pull request in the given states in one call", () =>
+    Effect.gen(function* () {
+      const withState = (number: number, state: "open" | "closed" | "merged") => {
+        const link = makeLink(number, { headBranch: `branch-${number}` });
+        return { ...link, snapshot: { ...link.snapshot!, state } };
+      };
+      const harness = yield* makeHarness({
+        thread: makeThread([
+          withState(1, "merged"),
+          withState(2, "open"),
+          withState(3, "closed"),
+          makeLink(4),
+          { ...withState(5, "merged"), source: "stack-dismissed" },
+        ]),
+      });
+      const result = yield* harness.call("unlink_pull_requests", {
+        states: ["closed", "merged"],
+      });
+      expect(result).toEqual({
+        unlinked: [
+          { host: "github.com", repository: "t3tools/t3code", state: "merged", numbers: [1] },
+          { host: "github.com", repository: "t3tools/t3code", state: "closed", numbers: [3] },
+        ],
+        unlinkedCount: 2,
+        remaining: 2,
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.unlink", number: 1 },
+        { type: "thread.pull-request.unlink", number: 3 },
       ]);
     }),
   );

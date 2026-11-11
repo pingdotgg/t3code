@@ -10,10 +10,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import {
@@ -44,9 +47,13 @@ type CommitClaim =
 export const listen: Effect.Effect<
   void,
   never,
-  DesktopUpdates.DesktopUpdates | DesktopTelemetryPublisher.DesktopTelemetryPublisher | Scope.Scope
+  | DesktopUpdates.DesktopUpdates
+  | DesktopTelemetryPublisher.DesktopTelemetryPublisher
+  | DesktopBackendPool.DesktopBackendPool
+  | Scope.Scope
 > = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
+  const backends = yield* DesktopBackendPool.DesktopBackendPool;
   const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
   const activeRequestIdRef = yield* Ref.make(Option.none<string>());
   const requestControlRef = yield* Ref.make<{
@@ -171,7 +178,59 @@ export const listen: Effect.Effect<
           return;
         }
         yield* Ref.set(activeRequestIdRef, Option.some(request.requestId));
-        yield* logInfo("remote update requested", { requestId: request.requestId });
+        yield* logInfo("remote update requested", {
+          requestId: request.requestId,
+          channel: request.channel,
+        });
+        // A switch saves its track first, so the step machine never sees the old track's offer.
+        // The saved track is the user's intent and stays even if this request fails: a track saved
+        // toward Stable never offers an older build outside a guarded switch.
+        if (request.channel !== undefined) {
+          // A reinstall restarts every backend, but the requesting server checked only its own
+          // database. A WSL backend keeps its own, so cross tracks only where all can be checked.
+          const current = yield* updates.getState;
+          if (
+            desktopUpdateChannelOf(current.currentVersion) !== request.channel &&
+            (yield* backends.list).length > 1
+          ) {
+            yield* publishReport(
+              current,
+              {
+                outcome: "failed",
+                reason:
+                  "This desktop app also runs WSL backends, whose databases a remote switch cannot check. Switch it on that machine.",
+              },
+              request.requestId,
+            );
+            return;
+          }
+          const switched = yield* Effect.raceFirst(
+            updates.setChannel(request.channel, { minimumVersion: request.targetVersion }).pipe(
+              Effect.as(true),
+              Effect.catch((error) =>
+                updates.getState.pipe(
+                  Effect.flatMap((state) =>
+                    publishReport(
+                      state,
+                      { outcome: "failed", reason: error.message },
+                      request.requestId,
+                    ),
+                  ),
+                  Effect.as(false),
+                ),
+              ),
+            ),
+            Deferred.await(cancellation).pipe(Effect.as(false)),
+          );
+          if (!switched) return;
+          // A host already running the target only needed its track saved; installing a newer
+          // build here would restart it without the dialog having said so.
+          const state = yield* updates.getState;
+          if (request.targetVersion === state.currentVersion) {
+            yield* publishReport(state, { outcome: "up-to-date" }, request.requestId);
+            return;
+          }
+        }
         const { latest, changes } = yield* updates.subscribe;
         const disabledReason = Option.getOrNull(yield* updates.disabledReason);
         let attempts: RemoteDesktopUpdateAttempts = { checks: 0, downloads: 0 };
@@ -184,6 +243,12 @@ export const listen: Effect.Effect<
             Effect.forkScoped,
           );
 
+        // A host leaving its build's track may need an older build, down to the checked release;
+        // the updater offers nothing below it.
+        const crossing = (state: DesktopUpdateState) =>
+          request.channel !== undefined &&
+          request.targetVersion !== undefined &&
+          desktopUpdateChannelOf(state.currentVersion) !== request.channel;
         const step = Effect.fn("DesktopRemoteUpdates.step")(function* (
           state: DesktopUpdateState,
         ): Effect.fn.Return<boolean, never, Scope.Scope> {
@@ -193,7 +258,7 @@ export const listen: Effect.Effect<
               return false;
             case "check":
               attempts = { ...attempts, checks: attempts.checks + 1 };
-              yield* updates.check("remote-update").pipe(
+              yield* updates.check("remote-update", { allowDowngrade: crossing(state) }).pipe(
                 Effect.flatMap((result) => {
                   if (result.checked) return Effect.void;
                   attempts = { ...attempts, checks: attempts.checks - 1 };
@@ -246,21 +311,34 @@ export const listen: Effect.Effect<
               yield* logInfo("remote update prepared", { requestId: request.requestId });
               return true;
             }
-            case "done":
+            case "done": {
+              // A switch that leaves the host on its old track, or below its checked release, did
+              // not reach it; a track-only host already at the release is done.
+              const done =
+                request.targetVersion !== undefined &&
+                next.outcome === "up-to-date" &&
+                (crossing(state) ||
+                  compareSemverVersions(state.currentVersion, request.targetVersion) < 0)
+                  ? {
+                      outcome: "failed" as const,
+                      reason: `The desktop app found no build of ${request.targetVersion}.`,
+                    }
+                  : next;
               yield* publishReport(
                 state,
                 {
-                  outcome: next.outcome,
-                  ...(next.reason === undefined ? {} : { reason: next.reason }),
+                  outcome: done.outcome,
+                  ...(done.reason === undefined ? {} : { reason: done.reason }),
                 },
                 request.requestId,
               );
               yield* logInfo("remote update finished", {
                 requestId: request.requestId,
-                outcome: next.outcome,
-                reason: next.reason ?? null,
+                outcome: done.outcome,
+                reason: done.reason ?? null,
               });
               return true;
+            }
           }
         });
 

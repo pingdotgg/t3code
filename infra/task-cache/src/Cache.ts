@@ -220,17 +220,19 @@ const make = Effect.gen(function* () {
         .pipe(
           Effect.timeout(writing ? "2 minutes" : "15 seconds"),
           Effect.catchTags({
+            AdmissionRejected: () =>
+              Effect.fail(new CacheError({ status: 503, reason: "concurrency_limit" })),
             TimeoutError: () => Effect.fail(new CacheError({ status: 503, reason: "deadline" })),
           }),
         );
     },
     Effect.catchTags({
-      CacheError: (error) =>
-        Effect.gen(function* () {
-          if (error.status >= 500)
-            yield* Effect.logWarning("Cache request failed", { reason: error.reason });
-          return errorResponse(new HttpError(error.status, error.reason));
-        }),
+      // The enclosing operation owns the span for this inline handler.
+      CacheError: Effect.fnUntraced(function* (error) {
+        if (error.status >= 500)
+          yield* Effect.logWarning("Cache request failed", { reason: error.reason });
+        return errorResponse(new HttpError(error.status, error.reason));
+      }),
     }),
   );
 
