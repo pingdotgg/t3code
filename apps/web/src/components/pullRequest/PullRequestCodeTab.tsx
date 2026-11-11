@@ -1167,7 +1167,7 @@ function PullRequestCodeTab({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={<Button size="xs" variant="ghost" />}
-              className="min-w-0 max-w-64"
+              className="min-w-0 max-w-64 shrink"
               aria-label={`Diff scope: ${scopeLabel}`}
             >
               <span className="truncate">{scopeLabel}</span>
@@ -1210,7 +1210,7 @@ function PullRequestCodeTab({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
-        <span className="flex min-w-0 items-center gap-x-2.5 whitespace-nowrap">
+        <span className="flex shrink-0 items-center gap-x-2.5 whitespace-nowrap">
           {filesViewed.enabled && files.length > 0 ? null : (
             <span className="shrink-0 tabular-nums">
               {files.length} {files.length === 1 ? "file" : "files"}
@@ -1231,7 +1231,7 @@ function PullRequestCodeTab({
             </Button>
           ) : null}
           {filesViewed.enabled && files.length > 0 ? (
-            <span className="flex min-w-0 items-center gap-1 tabular-nums">
+            <span className="flex shrink-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
                 {filePaths.filter(isFileViewed).length} / {files.length}
                 {nextCursor === null ? "" : "+"}
@@ -1314,6 +1314,7 @@ function PullRequestCodeTab({
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <DiffViewControls
+          foldBelow="md"
           diffLayout={diffLayout}
           wordWrap={wordWrap}
           onWordWrapChange={setWordWrap}
