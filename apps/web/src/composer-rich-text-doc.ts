@@ -313,7 +313,7 @@ export function surroundSelectionWithMark(
   marker: string,
 ) {
   const markType = state.schema.marks[SURROUND_MARKS[marker] ?? ""];
-  if (!markType) return null;
+  if (!markType || touchesMarkdownSource(state, from, to)) return null;
   const $from = state.doc.resolve(from);
   if (!$from.sameParent(state.doc.resolve(to)) || !$from.parent.type.allowsMarkType(markType)) {
     return null;
