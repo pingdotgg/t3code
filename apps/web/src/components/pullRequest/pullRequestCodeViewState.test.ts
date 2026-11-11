@@ -107,7 +107,10 @@ describe("pull request refresh pages", () => {
   });
 
   it("stays on the last page once every loaded page is unchanged", () => {
-    const loaded = [{ ...page(), nextCursor: "2" }, { ...page(), cursor: "2" }];
+    const loaded = [
+      { ...page(), nextCursor: "2" },
+      { ...page(), cursor: "2" },
+    ];
     expect(applyPullRequestDiffPage(loaded, { ...loaded[1]! })).toEqual({
       cursor: "2",
       slices: loaded,
