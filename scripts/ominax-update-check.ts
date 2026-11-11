@@ -51,6 +51,8 @@ const page = await app.firstWindow({ timeout: STEP_TIMEOUT_MS });
 await page
   .getByRole("dialog")
   .or(page.getByText("What should we work on?"))
+  // A first run opens on the Welcome page, which is not a dialog.
+  .or(page.getByRole("heading", { name: /^Welcome to / }))
   .first()
   .waitFor({ timeout: STEP_TIMEOUT_MS });
 
