@@ -49,6 +49,19 @@ export async function prepareLocalTrackSwitch(
   };
 }
 
+/**
+ * Whether this app stays put while connected machines move: its updater is off, as for a .deb
+ * install or without a feed. Off only because a policy rules out its nightly channel, it moves.
+ */
+export function localUpdaterStaysPut(
+  state: Pick<DesktopUpdateState, "enabled" | "channelBlockedByPolicy"> | null | undefined,
+  target: DesktopUpdateChannel,
+): boolean {
+  return (
+    state?.enabled === false && !(target === "latest" && state.channelBlockedByPolicy === true)
+  );
+}
+
 /** When no machine moves, confirming only saves the track; when that track is already saved too,
  * confirming would do nothing. Track-only hosts are not rows but still get a request. */
 export function nothingToMove(input: {

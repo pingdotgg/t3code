@@ -117,7 +117,6 @@ export function PullRequestFilterSearchScreen({
       placeholder={placeholder}
       closeAccessibilityLabel={kind === "labels" ? "Close label filter" : "Close author filter"}
       clearAccessibilityLabel={kind === "labels" ? "Clear label search" : "Clear author search"}
-      searchTextChangeId="pr-filter-option-search"
       query={query}
       onQueryChange={setQuery}
     >
