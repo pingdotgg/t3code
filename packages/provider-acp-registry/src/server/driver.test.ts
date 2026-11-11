@@ -1,12 +1,27 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AcpRegistryOperationError, ProviderInstanceId } from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as HttpClient from "effect/http/HttpClient";
 
+import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
+  AcpRegistryDriver,
   applyAcpRegistryAvailableCommands,
   applyAcpRegistryLiveConfiguration,
   buildCheckedAcpRegistrySnapshot,
@@ -430,5 +445,114 @@ describe("acpRegistrySnapshotReadiness", () => {
         message: "Checking ACP authentication, models, and commands in the background...",
       });
     }),
+  );
+});
+
+// An ACP v1 agent whose `session/new` model list is read from MODELS_FILE on every call.
+const MODEL_LIST_AGENT = `
+const { readFileSync } = require("node:fs");
+const models = () => readFileSync(process.env.MODELS_FILE, "utf8").split("\\n").filter(Boolean);
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined || message.method === undefined) return;
+  if (message.method === "initialize") {
+    return send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+  }
+  if (message.method === "session/new") {
+    const options = models().map((value) => ({ value, name: value }));
+    return send({
+      id: message.id,
+      result: {
+        sessionId: "probe",
+        configOptions: [
+          { id: "model", name: "Model", category: "model", type: "select", currentValue: options[0].value, options },
+        ],
+      },
+    });
+  }
+  send({ id: message.id, error: { code: -32601, message: message.method } });
+});
+`;
+
+describe("AcpRegistryDriver model refresh", () => {
+  it.live("drops a stale probe and live session model list when model caches are invalidated", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-acp-registry-refresh-" });
+      const agentPath = path.join(dir, "agent.cjs");
+      const modelsPath = path.join(dir, "models.txt");
+      yield* fs.writeFileString(agentPath, MODEL_LIST_AGENT);
+      yield* fs.writeFileString(modelsPath, "model-a\nmodel-b\n");
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+      const instanceId = ProviderInstanceId.make("acpRegistry_refresh");
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId,
+        displayName: "Refresh test",
+        accentColor: undefined,
+        enabled: true,
+        environment: [{ name: "MODELS_FILE", value: modelsPath, sensitive: false }],
+        config: decodeSettings({
+          source: "local",
+          commandPath: process.execPath,
+          commandArgs: [agentPath],
+        }),
+      });
+      const slugs = (provider: { readonly models: ReadonlyArray<{ readonly slug: string }> }) =>
+        provider.models.map((model) => model.slug);
+      const enriched = (refresh: Effect.Effect<unknown>) =>
+        Effect.gen(function* () {
+          const next = yield* instance.snapshot.streamChanges.pipe(
+            Stream.filter((provider) => provider.models.length > 0 && !provider.message),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          yield* refresh;
+          return Option.getOrThrow(yield* Fiber.join(next));
+        });
+
+      expect(slugs(yield* enriched(instance.snapshot.refresh))).toEqual(["model-a", "model-b"]);
+      // A thread session published the list it saw when it started.
+      yield* coordinator.publishLiveConfiguration(instanceId, {
+        models: [
+          { id: "model-a", name: "model-a", description: null },
+          { id: "model-b", name: "model-b", description: null },
+        ],
+        currentModelId: "model-a",
+        configOptions: [],
+      });
+
+      // The agent ships a new model; the user presses Refresh (refreshModels: true).
+      yield* fs.writeFileString(modelsPath, "model-a\nmodel-b\nmodel-new\n");
+      const refreshed = yield* enriched(
+        (instance.invalidateCaches ?? Effect.void).pipe(Effect.andThen(instance.snapshot.refresh)),
+      );
+
+      expect(slugs(refreshed)).toEqual(["model-a", "model-b", "model-new"]);
+    }).pipe(
+      Effect.provide(
+        AcpRegistrySupport.layerFromHost.pipe(
+          Layer.provideMerge(TestProviderHost.layer()),
+          Layer.provideMerge(IdAllocator.layer),
+          Layer.provideMerge(McpProviderSessions.layer),
+          Layer.provideMerge(
+            Layer.succeed(
+              ProviderEventLoggers.ProviderEventLoggers,
+              ProviderEventLoggers.NoOpProviderEventLoggers,
+            ),
+          ),
+          Layer.provideMerge(
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("local ACP agents need no HTTP")),
+            ),
+          ),
+          Layer.provideMerge(Layer.succeed(HostProcess.Environment, process.env)),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+      Effect.scoped,
+    ),
   );
 });
