@@ -312,6 +312,15 @@ describe("mergeUsage", () => {
     expect(merged.records).toBe(5);
     expect(merged.sessions).toBe(1);
     expect(merged.contributingEnvironments).toEqual(["old"]);
+
+    const attributed = environment("new", {
+      ...partial.summary,
+      buckets: partial.summary.buckets.map((entry) => ({
+        ...entry,
+        upstreamProvider: "anthropic",
+      })),
+    });
+    expect(mergeUsage([complete, attributed], USAGE_CONTRACT_VERSION).costUsd).toBe(10);
   });
 
   it("identifies an environment reporting an older contract version", () => {

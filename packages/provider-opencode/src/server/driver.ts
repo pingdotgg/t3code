@@ -546,7 +546,6 @@ export const OpenCodeDriver: ProviderDriver<
           Effect.annotateSpans({ providerInstanceId: instanceId }),
         ),
         usageLimits: checkUsageLimits,
-        integrationUsageLimits: checkIntegrationUsageLimits,
       },
       { concurrency: "unbounded" },
     ).pipe(

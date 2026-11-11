@@ -53,7 +53,7 @@ export function UsageModelDialog({
     (bucket) =>
       bucket.provider === model.provider &&
       bucket.model === model.model &&
-      (model.upstreamProvider === undefined || bucket.upstreamProvider === model.upstreamProvider),
+      bucket.upstreamProvider === model.upstreamProvider,
   );
   const providers = [model.provider];
   const presentation = PROVIDER_PRESENTATION[model.provider];

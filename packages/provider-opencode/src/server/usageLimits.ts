@@ -72,6 +72,7 @@ const MiniMaxQuotaResponse = Schema.Struct({
 });
 
 interface MiniMaxQuotaEntry {
+  readonly model_name?: string;
   readonly current_interval_remaining_percent?: number;
   readonly current_interval_status?: number;
   readonly end_time?: number;
@@ -82,6 +83,7 @@ interface MiniMaxQuotaEntry {
 
 const miniMaxQuotaEntry = Schema.decodeUnknownOption(
   Schema.Struct({
+    model_name: Schema.optionalKey(Schema.String),
     current_interval_remaining_percent: Schema.optionalKey(Schema.Finite),
     current_interval_status: Schema.optionalKey(Schema.Finite),
     end_time: Schema.optionalKey(Schema.Finite),
@@ -241,6 +243,7 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
         const result = response.value;
         if (result.status !== 200) continue;
         const body = yield* HttpClientResponse.schemaBodyJson(MiniMaxQuotaResponse)(result).pipe(
+          Effect.timeout("5 seconds"),
           Effect.option,
         );
         if (Option.isNone(body)) continue;
@@ -250,7 +253,8 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
           const entry: MiniMaxQuotaEntry | undefined = Option.getOrUndefined(
             miniMaxQuotaEntry(raw),
           );
-          if (entry === undefined) continue;
+          // Other entries (e.g. video) meter separate quotas that text models never use.
+          if (entry === undefined || (entry.model_name ?? "general") !== "general") continue;
           const interval = miniMaxWindow(
             integrationId,
             quota.label,
@@ -295,10 +299,8 @@ export function mergeUsageLimits(
   integrationWindows: readonly ServerProviderUsageWindow[],
 ): ServerProviderUsageLimits {
   if (integrationWindows.length === 0) return console;
-  return {
-    checkedAt: console.checkedAt,
-    windows: [...console.windows, ...integrationWindows],
-  };
+  const { unavailable: _unavailable, ...rest } = console;
+  return { ...rest, windows: [...console.windows, ...integrationWindows] };
 }
 
 /** External OpenCode servers own their credentials; never read the host's account for them. */

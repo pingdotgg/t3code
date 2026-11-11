@@ -132,12 +132,15 @@ function bucketsForSource(summary: UsageSummary, source: UsageSource): readonly 
   );
 }
 
-function bucketKey(bucket: UsageBucket): string {
+function bucketKey(
+  bucket: UsageBucket,
+  upstreamProvider: string | null = bucket.upstreamProvider ?? null,
+): string {
   return JSON.stringify([
     bucket.day,
     bucket.hourStart ?? null,
     bucket.provider,
-    bucket.upstreamProvider ?? null,
+    upstreamProvider,
     bucket.model,
   ]);
 }
@@ -197,7 +200,11 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
       }
       let seen = seenBucketKeysByFingerprint.get(key);
       if (seen === undefined) {
-        seen = new Set(bucketsForSource(owner.environment.summary, owner.source).map(bucketKey));
+        seen = new Set(
+          bucketsForSource(owner.environment.summary, owner.source).map((bucket) =>
+            bucketKey(bucket),
+          ),
+        );
         seenBucketKeysByFingerprint.set(key, seen);
       }
       const supplemental =
@@ -205,7 +212,8 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
       let added = false;
       for (const bucket of bucketsForSource(environment.summary, source)) {
         const cell = bucketKey(bucket);
-        if (seen.has(cell)) continue;
+        // An unattributed owner cell (e.g. from an older server) may hold these same records.
+        if (seen.has(cell) || seen.has(bucketKey(bucket, null))) continue;
         seen.add(cell);
         supplemental.add(bucket);
         added = true;

@@ -28,6 +28,13 @@ const MINIMAX_RESPONSE = {
       current_weekly_status: 1,
       weekly_end_time: 1794905017270,
     },
+    {
+      model_name: "video",
+      current_interval_remaining_percent: 0,
+      current_interval_status: 2,
+      current_weekly_remaining_percent: 0,
+      current_weekly_status: 2,
+    },
   ],
 };
 
@@ -78,6 +85,7 @@ describe("mergeUsageLimits", () => {
       {
         checkedAt: "2026-11-10T00:00:00.000Z",
         windows: [],
+        credentialFingerprint: "go-account",
         unavailable: { reason: "unsupported" },
       },
       [
@@ -90,6 +98,7 @@ describe("mergeUsageLimits", () => {
       ],
     );
     assert.strictEqual(merged.windows.length, 1);
+    assert.strictEqual(merged.credentialFingerprint, "go-account");
     assert.isUndefined(merged.unavailable);
   });
 
