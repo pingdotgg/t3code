@@ -17,6 +17,9 @@ export const SCOPED_MODEL_SETTING_KEYS = [
 ] as const;
 export type ScopedModelSettingKey = (typeof SCOPED_MODEL_SETTING_KEYS)[number];
 
+export const isScopedModelSettingKey = (key: string): key is ScopedModelSettingKey =>
+  (SCOPED_MODEL_SETTING_KEYS as readonly string[]).includes(key);
+
 export const supportsScopedTextGenerator = (key: ScopedModelSettingKey) =>
   key === "textGenerationModelSelection" ||
   key === "sourceControlWriterModelSelection" ||

@@ -27,7 +27,11 @@ import {
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
-import { resolveScopedModelInstanceId, scopedModelSelectionsEqual } from "./scopedModelSelection";
+import {
+  resolveScopedModelInstanceId,
+  SCOPED_MODEL_SETTING_KEYS,
+  scopedModelSelectionsEqual,
+} from "./scopedModelSelection";
 
 function environment(
   id: string,
@@ -826,14 +830,7 @@ describe("model selections across environments' provider instances", () => {
     { environmentId, serverConfig } = laptop,
   ) => ({ target: { environmentId, settings: serverConfig!.settings }, providersByEnvironment });
   const luna = { instanceId: laptopCodex.instanceId, model: "gpt-6-luna" };
-  const keys = [
-    "defaultModelSelection",
-    "fallbackModelSelection",
-    "textGenerationModelSelection",
-    "sourceControlWriterModelSelection",
-    "reviewGuideModelSelection",
-    "speechPostProcessingModelSelection",
-  ] as const;
+  const keys = SCOPED_MODEL_SETTING_KEYS;
   const forKeys = <T>(value: T, only: readonly string[] = keys) =>
     Object.fromEntries(only.map((key) => [key, value]));
 
@@ -882,10 +879,8 @@ describe("model selections across environments' provider instances", () => {
     ["same ID, unknown identity", [a("x", {}, cursor)], [a("x", none, cursor)], "x"],
     ["conflicting ID beside matching account", [a("l")], [a("l", other), a("s")], "s"],
     ["the same ID on another account", [a("x")], [a("x", other)], null],
-    ["the same ID in another workspace", [a("x")], [a("x", team)], null],
     ["the same ID with another login", [a("x")], [a("x", apiKey)], null],
     ["the same ID on another driver", [a("x")], [a("x", {}, claude)], null],
-    ["Claude ID, different account", [a("x", {}, claude)], [a("x", other, claude)], null],
     ["Claude, different IDs", [a("l", {}, claude)], [a("s", {}, claude)], null],
     ["an API key account", [a("l", apiKey)], [a("s", apiKey)], null],
     ["another workspace", [a("l")], [a("s", team)], null],

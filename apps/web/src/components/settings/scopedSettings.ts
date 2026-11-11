@@ -27,6 +27,7 @@ import * as Cause from "effect/Cause";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 import {
+  isScopedModelSettingKey,
   resolveScopedModelInstanceId,
   SCOPED_MODEL_SETTING_KEYS,
   scopedModelSelectionsEqual,
@@ -135,9 +136,6 @@ export function resolveScopedSettingsTargets(
 
 type ProvidersByEnvironment = ReadonlyMap<EnvironmentId, readonly ServerProvider[]>;
 
-const isScopedModelKey = (key: string): key is (typeof SCOPED_MODEL_SETTING_KEYS)[number] =>
-  (SCOPED_MODEL_SETTING_KEYS as readonly string[]).includes(key);
-
 export function scopedSettingsAreMixed(
   targets: readonly Pick<ScopedSettingsTarget, "environmentId" | "settings">[],
   keys: readonly (keyof ServerSettings)[],
@@ -152,7 +150,7 @@ export function scopedSettingsAreMixed(
       .slice(index + 1)
       .some((candidate) =>
         keys.some((key) =>
-          providersByEnvironment && isScopedModelKey(key)
+          providersByEnvironment && isScopedModelSettingKey(key)
             ? !scopedModelSelectionsEqual(
                 reference.settings[key],
                 at(reference),
