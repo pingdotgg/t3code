@@ -1,4 +1,4 @@
-import * as Railway from "alchemy/Railway";
+import * as Railway from "@alchemy.run/railway";
 import * as Redacted from "effect/Redacted";
 
 export const VOLUME_PATH = "/data";

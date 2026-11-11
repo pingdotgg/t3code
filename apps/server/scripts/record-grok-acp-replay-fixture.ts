@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { type ProviderReplayEntry } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
@@ -5,6 +6,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
+import * as Config from "effect/Config";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -32,6 +35,7 @@ import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/Provider
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { makeGrokAcpRuntime } from "@t3tools/provider-grok/testing";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import * as Result from "effect/Result";
 
 const wallClock = Clock.Clock.defaultValue();
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -101,12 +105,7 @@ function makeWireTee() {
         }),
     };
   };
-  // Grok runs its own wake turns (`task-completed-*`, `notifications-*`,
-  // `subagent-completed-*`) after T3's run can already have settled, and its
-  // session roster can report idle before them. Grok is done when no session
-  // has a queued or running prompt (`x.ai/queue/changed` vs `turn_completed`),
-  // no background task still runs (`background_tasks`), and every spawned
-  // subagent finished (`subagent_spawned` vs `subagent_finished`).
+  // Grok can report idle before its wake turns; wait for prompt queues, tasks and subagents to finish.
   const grokHasPendingWork = () => {
     const queues = new Map<unknown, Record<string, unknown>>();
     const tasks = new Map<unknown, ReadonlyArray<unknown>>();
@@ -187,8 +186,7 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
     const pending = direction === "outgoing" ? agentRequests : t3Requests;
     const method = pending.get(String(message.id));
     if (method === undefined) {
-      // Grok answers its own internal requests (e.g. id "skills-reload") on the
-      // shared stream; T3's protocol drops those, so replay never sees them.
+      // Grok answers internal requests on this stream; T3 drops them before replay.
       droppedFrames += 1;
       continue;
     }
@@ -373,9 +371,16 @@ function normalizeEntries(input: {
   });
 }
 
-const DEFAULT_GROK_SETTINGS = Schema.decodeUnknownSync(GrokSettings)({});
+const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
+
+const RecorderEnv = Config.all({
+  T3_GROK_BIN: Config.String("T3_GROK_BIN").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  HOME: Config.String("HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  USER: Config.String("USER").pipe(Config.option, Config.map(Option.getOrUndefined)),
+});
 
 const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: string) {
+  const recorderEnv = yield* RecorderEnv;
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === fixtureName);
   const variant = fixture?.providers.find((provider) => provider.driver === GROK_PROVIDER);
   if (fixture === undefined || variant === undefined) {
@@ -395,10 +400,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   const scenario = {
     name: `${fixtureName}/grok-record`,
     commands: materialized.commands,
-    // Background fixtures pace replay with gates and with receipts that drive
-    // the finish debounce on the test clock. Live, Grok and wall time pace
-    // themselves, so a fixture that gates records its dispatches only and then
-    // waits for Grok to idle, and a held run is simply waited for.
+    // Live Grok needs no replay gates or clock receipts; record dispatches and wait for idle.
     steps: materialized.steps.some(
       (step) =>
         step.type === "release_replay_gate" || step.type === "release_replay_gate_after_waiting",
@@ -412,7 +414,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   };
 
   const tee = makeWireTee();
-  const settings = { ...DEFAULT_GROK_SETTINGS, binaryPath: process.env.T3_GROK_BIN ?? "grok" };
+  const settings = { ...DEFAULT_GROK_SETTINGS, binaryPath: recorderEnv.T3_GROK_BIN ?? "grok" };
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
       const environment = yield* HostProcess.Environment;
@@ -433,9 +435,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
             runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
           }),
       });
-      // The scenario runs on the replay TestClock so its clock steps order
-      // dispatches as replay will. Grok itself runs on wall time, so the
-      // adapter's session (finish debounces, safety holds) does too.
+      // Order dispatches on TestClock as in replay, but run Grok's adapter timers on wall time.
       const onWallClock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         Effect.provideService(effect, Clock.Clock, wallClock);
       return [
@@ -459,15 +459,17 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
-        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+        TestProviderHost.layer().pipe(
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
         NodeServices.layer,
+        NodeCrypto.layer,
         IdAllocator.layer,
       ),
     ),
   );
 
-  // A wake turn is admitted shortly after the frame that triggers it, so Grok
-  // must also stay quiet for a few seconds.
+  // Wake turns arrive after their triggering frames; require a few quiet seconds too.
   let quietPolls = 0;
   let seenFrames = -1;
   const waitForGrokIdle = Effect.sleep("1 second").pipe(
@@ -530,8 +532,8 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
       ...normalizeEntries({
         entries,
         workspace: realWorkspace,
-        home: process.env.HOME ?? "",
-        user: process.env.USER ?? "",
+        home: recorderEnv.HOME ?? "",
+        user: recorderEnv.USER ?? "",
         runtimeInstructions: buildRuntimeInstructions({
           harness: "Grok",
           model: variant.modelSelection.model,
@@ -553,12 +555,9 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   );
   yield* Console.log(`Wrote ${transcriptEntries.length} Grok ACP replay entries to ${outputPath}`);
 
-  const liveFailure = yield* Effect.try(() => variant.assertOutput(result, transcript)).pipe(
-    Effect.flip,
-    Effect.option,
-  );
-  if (liveFailure._tag === "Some") {
-    yield* Console.log(`Live orchestration failed ${fixtureName} assertions:`, liveFailure.value);
+  const liveFailure = Result.try(() => variant.assertOutput(result, transcript));
+  if (Result.isFailure(liveFailure)) {
+    yield* Console.log(`Live orchestration failed ${fixtureName} assertions:`, liveFailure.failure);
   }
 });
 
@@ -570,5 +569,5 @@ if (scenarios.length === 0) {
 await Effect.runPromise(
   Effect.forEach(scenarios, (name) => Effect.scoped(recordScenario(name)), {
     discard: true,
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
