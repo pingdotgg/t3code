@@ -51,6 +51,17 @@ describe("Bitbucket change request URLs", () => {
   });
 });
 
+describe("Bitbucket repository pages", () => {
+  it("reads the repository from a source view on Bitbucket hosts only", () => {
+    const repositoryUrl = (url: string) => definition.repositoryUrlFromPage?.(new URL(url));
+    expect(repositoryUrl("https://bitbucket.org/workspace/repo/src/main/")).toBe(
+      "https://bitbucket.org/workspace/repo",
+    );
+    expect(repositoryUrl("https://bitbucket.org/workspace/repo")).toBeNull();
+    expect(repositoryUrl("https://scm.example.test/workspace/repo/src/main/")).toBeNull();
+  });
+});
+
 describe("Bitbucket remotes", () => {
   const recognize = (url: string) => recognizeRemoteWith(definition, url);
 
