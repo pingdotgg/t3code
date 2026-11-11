@@ -256,7 +256,8 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
   | CommandOutputRecorder.CommandOutputRecorder
-  | ProviderSessionManager.ProviderSessionManagerV2,
+  | ProviderSessionManager.ProviderSessionManagerV2
+  | ProviderSwitchService.ProviderSwitchServiceV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const layerRegistry = harness.makeProviderAdapterRegistryLayer(
@@ -289,6 +290,7 @@ export function layerWithRegistry<Error>(
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
   | ProviderSessionManager.ProviderSessionManagerV2
+  | ProviderSwitchService.ProviderSwitchServiceV2
   | CommandOutputRecorder.CommandOutputRecorder,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
@@ -537,6 +539,7 @@ export function layerWithRegistry<Error>(
   const layerReplayRuntime = Layer.mergeAll(
     layerOrchestratorProvided,
     layerProviderSessionManagerProvided,
+    layerProviderSwitchServiceProvided,
     layerEffectWorkerProvided,
     layerEventSinkProvided,
     layerContinuationWorkerProvided,

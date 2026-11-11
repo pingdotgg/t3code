@@ -34,6 +34,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -84,6 +85,7 @@ const layerDispatchChokepointTest =
   (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) => (dispatched: Array<string>) =>
     ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadRecords: () =>
@@ -216,6 +218,7 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
       ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
     const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
@@ -293,6 +296,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
       ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
     const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
@@ -371,6 +375,7 @@ it.effect("waitForThread settles delegated work on a thread rolled back past its
     } as unknown as OrchestrationV2Run;
     const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
@@ -424,6 +429,7 @@ it.effect("waitForThread returns the cut run once its continuation is declined",
     let pending = true;
     const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
@@ -512,6 +518,7 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
             }),
       } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
       const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({})),
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(Orchestrator.OrchestratorV2)({
@@ -593,6 +600,7 @@ it.effect.each([
     let raced = false;
     const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () =>
@@ -758,6 +766,7 @@ it.effect.each([
     const teardowns: Array<string> = [];
     const tornDown = yield* Deferred.make<void>();
     const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({})),
       Layer.provide(
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           isLive: () => Effect.succeed(true),
@@ -840,6 +849,7 @@ it.effect("Force stop refuses once a newer run has started, before killing anyth
     let killed = false;
     const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadRecords: () =>

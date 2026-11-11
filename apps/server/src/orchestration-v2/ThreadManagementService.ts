@@ -62,6 +62,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
@@ -587,6 +588,7 @@ const make = Effect.gen(function* () {
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const providerSwitch = yield* ProviderSwitchService.ProviderSwitchServiceV2;
   const layerScope = yield* Effect.scope;
   const agentScope = yield* AgentScope;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
@@ -826,22 +828,34 @@ const make = Effect.gen(function* () {
 
   const configureModelSelection = Effect.fn("ThreadManagementService.configureModelSelection")(
     function* (input: Parameters<ThreadManagementServiceShape["configureModelSelection"]>[0]) {
-      const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
+      const target = yield* getProjectThreadRecords(input, [
+        "runs",
+        "providerTurns",
+        "providerSessions",
+        "providerThreads",
+      ]);
       if (target.thread.archivedAt !== null) {
         return yield* new ThreadManagementThreadArchivedError({
           threadId: input.threadId,
         });
       }
       const activeRun = latestActiveRun(target);
-      if (
-        modelSelectionsEqual(
-          activeRun?.modelSelection ?? target.thread.modelSelection,
-          input.modelSelection,
-        )
-      ) {
+      const runMatches =
+        activeRun === undefined ||
+        modelSelectionsEqual(activeRun.modelSelection, input.modelSelection);
+      if (runMatches && modelSelectionsEqual(target.thread.modelSelection, input.modelSelection)) {
         return { sequence: yield* orchestrator.getThreadEventSequence(input.threadId) };
       }
-      if (activeRun === undefined) {
+      // The selection command interrupts a running turn only when it releases
+      // the turn's session; otherwise the change waits for the next turn. A
+      // plan error is left for the selection command to report.
+      const releasesSession = yield* providerSwitch
+        .plan({ projection: target, targetModelSelection: input.modelSelection })
+        .pipe(
+          Effect.map((plan) => plan.releaseProviderSessionIds.length > 0),
+          Effect.orElseSucceed(() => false),
+        );
+      if (activeRun === undefined || runMatches || !releasesSession) {
         return yield* dispatch({
           type: modelSelectionCommandType(target.thread.providerInstanceId, input.modelSelection),
           commandId: input.commandId,
@@ -1722,6 +1736,7 @@ export const layer: Layer.Layer<
   never,
   | Orchestrator.OrchestratorV2
   | ProviderSessionManager.ProviderSessionManagerV2
+  | ProviderSwitchService.ProviderSwitchServiceV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
 > = Layer.effect(ThreadManagementService, make).pipe(
@@ -1735,6 +1750,7 @@ export const layerWithLegacyImporter: Layer.Layer<
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | Orchestrator.OrchestratorV2
   | ProviderSessionManager.ProviderSessionManagerV2
+  | ProviderSwitchService.ProviderSwitchServiceV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
 > = Layer.effect(ThreadManagementService, make).pipe(Layer.provide(ThreadCommandExecutor.layer));

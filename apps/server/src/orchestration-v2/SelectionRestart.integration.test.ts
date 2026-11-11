@@ -303,19 +303,48 @@ function makeRestartAdapter(
 
 // An agent that switches its own thread's model through MCP is the running
 // turn the switch interrupts, so the configure call must leave behind a
-// continuation of the unfinished request.
-it.live("t3_thread_configure from the running turn continues the user request", () =>
+// continuation of the unfinished request. A change the provider applies on its
+// next turn must leave the running turn alone.
+const configureTargetInstanceId = ProviderInstanceId.make("codex-configure-target");
+it.live.each([
+  {
+    name: "configure-continuation",
+    target: {
+      instanceId: configureTargetInstanceId,
+      model: replacementSelection.model,
+      options: [{ id: "reasoningEffort", value: "low" }],
+    } satisfies ModelSelection,
+    restarts: true,
+  },
+  {
+    name: "configure-effort",
+    target: {
+      ...initialSelection,
+      options: [{ id: "reasoningEffort", value: "low" }],
+    } satisfies ModelSelection,
+    restarts: false,
+  },
+  {
+    name: "configure-running-selection",
+    preselect: {
+      ...initialSelection,
+      options: [{ id: "reasoningEffort", value: "high" }],
+    } satisfies ModelSelection,
+    target: initialSelection,
+    restarts: false,
+  },
+] as ReadonlyArray<{
+  readonly name: string;
+  readonly preselect?: ModelSelection;
+  readonly target: ModelSelection;
+  readonly restarts: boolean;
+}>)("t3_thread_configure from the running turn: $name", ({ name, preselect, target, restarts }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const name = "configure-continuation";
       const cwd = yield* checkpointWorkspace(name);
       const threadId = ThreadId.make(`thread:${name}`);
-      const otherInstanceId = ProviderInstanceId.make("codex-configure-target");
-      const targetSelection = {
-        instanceId: otherInstanceId,
-        model: replacementSelection.model,
-        options: [{ id: "reasoningEffort", value: "low" }],
-      } satisfies ModelSelection;
+      const otherInstanceId = configureTargetInstanceId;
+      const targetSelection = target;
       const state = yield* Ref.make<RestartAdapterState>({
         activeTurn: null,
         opened: [],
@@ -395,6 +424,15 @@ it.live("t3_thread_configure from the running turn continues the user request", 
           Stream.take(1),
           Stream.runDrain,
         );
+        if (preselect !== undefined) {
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`${name}:preselect`),
+            threadId,
+            modelSelection: preselect,
+          });
+          yield* worker.drain();
+        }
         const before = yield* orchestrator.getThreadProjection(threadId);
         const sequence = yield* orchestrator.getThreadEventSequence(threadId);
 
@@ -434,6 +472,17 @@ it.live("t3_thread_configure from the running turn continues the user request", 
           );
         assert.notEqual(result.isError, true, JSON.stringify(result.content));
         yield* worker.drain();
+        if (!restarts) {
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(after.thread.modelSelection, targetSelection);
+          assert.deepEqual(
+            after.runs.map((run) => [run.id, run.status, run.modelSelection]),
+            [[before.runs[0]!.id, "running", initialSelection]],
+          );
+          assert.lengthOf(after.attempts, before.attempts.length);
+          assert.lengthOf(after.messages, before.messages.length);
+          return;
+        }
         yield* orchestrator.streamStoredEventsFrom({ threadId, afterSequence: sequence }).pipe(
           Stream.filter(
             ({ event }) =>
