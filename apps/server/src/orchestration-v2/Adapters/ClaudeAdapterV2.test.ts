@@ -9031,7 +9031,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("ambient SDK frames do not extend a stalled turn's deadline", () =>
+  it.effect("ambient and subagent frames do not clear the root turn's stall deadline", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       yield* harness.runtime.startTurn(
@@ -9039,49 +9039,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           threadId: harness.threadId,
           providerThread: harness.providerThread,
           now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("attempt-claude-stalled-ambient"),
-          text: "Continue.",
-          attachments: [],
-        }),
-      );
-      yield* TestClock.adjust("9 minutes");
-      yield* harness.offerAndWait(
-        claudeSdkFrame({
-          type: "system",
-          subtype: "background_tasks_changed",
-          tasks: [],
-          uuid: "00000000-0000-4000-8000-000000024893",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-      );
-      yield* TestClock.adjust("61 seconds");
-
-      assert.deepEqual(
-        harness.terminalEvents().map((event) => event.failure?.code),
-        ["native_session_stalled"],
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-        ),
-      ),
-    ),
-  );
-
-  it.effect("subagent output does not clear the root turn's stall deadline", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("attempt-claude-stalled-subagent"),
+          attemptId: RunAttemptId.make("attempt-claude-stalled-not-progress"),
           text: "Continue.",
           attachments: [],
         }),
@@ -9096,6 +9054,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       yield* TestClock.adjust("9 minutes");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [],
+          uuid: "00000000-0000-4000-8000-000000024893",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
       yield* harness.offerAndWait(
         claudeSdkFrame({
           type: "stream_event",

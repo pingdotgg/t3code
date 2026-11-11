@@ -11689,9 +11689,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Stop owns settlement now; the stall deadline must not fail the turn underneath it.
             yield* cancelStallWatchdog(currentTurn);
             yield* existing.query.interrupt.pipe(Effect.timeoutOption("10 seconds"));
-            // A wedged CLI can leave the SDK close pending forever.
-            yield* existing.query.close.pipe(Effect.ignore, Effect.timeoutOption("10 seconds"));
-            const closed = yield* Deferred.await(existing.closed).pipe(
+            // A wedged CLI can leave the SDK close pending forever; Force stop is offered instead.
+            const closed = yield* existing.query.close.pipe(
+              Effect.ignore,
+              Effect.andThen(Deferred.await(existing.closed)),
               Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
             );
             if (Option.isSome(closed)) {
