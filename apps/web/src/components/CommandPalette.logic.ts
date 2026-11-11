@@ -36,7 +36,7 @@ import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 import { isSidebarHiddenThread } from "./Sidebar.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-export const RECENT_THREAD_LIMIT = 3;
+export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-3.5 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
 
@@ -603,19 +603,16 @@ export function filterCommandPaletteGroups(input: {
   const searchQuery = isActionsFilter ? input.query.slice(1) : input.query;
   const normalizedQuery = foldSearchQuery(searchQuery);
 
-  const isActionGroup = (group: CommandPaletteGroup) =>
-    group.value === "actions" || group.value === "settings";
-
   if (normalizedQuery.length === 0) {
     if (isActionsFilter) {
-      return input.activeGroups.filter(isActionGroup);
+      return input.activeGroups.filter((group) => group.value === "actions");
     }
     return [...input.activeGroups];
   }
 
   let baseGroups = [...input.activeGroups];
   if (isActionsFilter) {
-    baseGroups = baseGroups.filter(isActionGroup);
+    baseGroups = baseGroups.filter((group) => group.value === "actions");
   } else if (!input.isInSubmenu) {
     baseGroups = baseGroups.filter((group) => group.value !== "recent-threads");
   }
@@ -647,21 +644,11 @@ export function filterCommandPaletteGroups(input: {
       });
     }
     if (input.settingsSearchItems && input.settingsSearchItems.length > 0) {
-      // Settings matches join the root Settings actions so the list shows one Settings group.
-      const settingsIndex = searchableGroups.findIndex((group) => group.value === "settings");
-      const settingsGroup = searchableGroups[settingsIndex];
-      if (settingsGroup) {
-        searchableGroups[settingsIndex] = {
-          ...settingsGroup,
-          items: [...settingsGroup.items, ...input.settingsSearchItems],
-        };
-      } else {
-        searchableGroups.push({
-          value: "settings-search",
-          label: "Settings",
-          items: input.settingsSearchItems,
-        });
-      }
+      searchableGroups.push({
+        value: "settings-search",
+        label: "Settings",
+        items: input.settingsSearchItems,
+      });
     }
   }
 
@@ -807,21 +794,17 @@ export function getCommandPaletteMode(input: {
 export function buildRootGroups(input: {
   actionItems: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
   recentThreadItems: ReadonlyArray<CommandPaletteActionItem>;
-  settingsItems?: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
 }): CommandPaletteGroup[] {
   const groups: CommandPaletteGroup[] = [];
+  if (input.actionItems.length > 0) {
+    groups.push({ value: "actions", label: "Actions", items: input.actionItems });
+  }
   if (input.recentThreadItems.length > 0) {
     groups.push({
       value: "recent-threads",
       label: "Recent Threads",
       items: input.recentThreadItems,
     });
-  }
-  if (input.actionItems.length > 0) {
-    groups.push({ value: "actions", label: "Actions", items: input.actionItems });
-  }
-  if (input.settingsItems && input.settingsItems.length > 0) {
-    groups.push({ value: "settings", label: "Settings", items: input.settingsItems });
   }
   return groups;
 }
