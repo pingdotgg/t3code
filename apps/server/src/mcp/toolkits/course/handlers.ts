@@ -148,10 +148,7 @@ const handlers = {
       const service = yield* CourseService.CourseService;
       const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
       const units = [...new Set(input.units)].sort((a, b) => a - b);
-      if (
-        units.length === 0 ||
-        units.some((unit) => !Number.isInteger(unit) || unit < 1 || unit > course.units.length)
-      )
+      if (units.length === 0 || units.some((unit) => unit < 1 || unit > course.units.length))
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "units must name one or more course units",
@@ -191,10 +188,7 @@ const handlers = {
         });
       const service = yield* CourseService.CourseService;
       const course = yield* getOwnedCourse(service, thread.threadId, input.courseId);
-      if (
-        input.unit !== undefined &&
-        (!Number.isInteger(input.unit) || input.unit < 1 || input.unit > course.units.length)
-      )
+      if (input.unit !== undefined && (input.unit < 1 || input.unit > course.units.length))
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "unit must name a course unit",

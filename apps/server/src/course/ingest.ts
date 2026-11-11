@@ -341,7 +341,7 @@ export const parseOcwZipEntries = (
       !/solution/i.test(title) &&
       (types.includes("assignment") ||
         types.includes("problem set") ||
-        /problem\s*set/i.test(title))
+        /problem\s*set|pset|assignment|\bps\b/i.test(title))
     );
   });
   const solutionRecords = resourceRecords.filter(({ record }) => {
@@ -362,10 +362,12 @@ export const parseOcwZipEntries = (
     const file = stringValue(record.file);
     return file ? NodePath.basename(file) : undefined;
   };
+  const titleNumber = (value: string) =>
+    value.match(/(?:problem\s*set|pset|ps|assignment)\s*(\d+)/i)?.[1];
   const solutionByNumber = new Map<string, string>();
   for (const { record } of solutionRecords) {
     const title = stringValue(record.title) ?? "";
-    const number = title.match(/(?:problem\s*set|pset)\s*(\d+)/i)?.[1];
+    const number = titleNumber(title);
     const text = fileName(record) ? pdfTexts.get(fileName(record)!) : undefined;
     if (number && text) solutionByNumber.set(number, text);
   }
@@ -388,9 +390,7 @@ export const parseOcwZipEntries = (
   const problemSets = psetRecords
     .toSorted((a, b) => {
       const number = (record: Record<string, unknown>) =>
-        Number(
-          (stringValue(record.title) ?? "").match(/(?:problem\s*set|pset)\s*(\d+)/i)?.[1] ?? 0,
-        );
+        Number(titleNumber(stringValue(record.title) ?? "") ?? 0);
       return number(a.record) - number(b.record);
     })
     .flatMap(({ name, record }) => {
@@ -398,7 +398,7 @@ export const parseOcwZipEntries = (
       const text = fileName(record) ? pdfTexts.get(fileName(record)!) : undefined;
       if (!title || text === undefined) return [];
       const folder = name.match(/resources\/([^/]+)\/data\.json$/i)?.[1];
-      const number = title.match(/(?:problem\s*set|pset)\s*(\d+)/i)?.[1];
+      const number = titleNumber(title);
       const workedExampleUnits = (workedPages.get(folder ?? "") ?? [])
         .map((page) => stringValue(pages.get(page)?.title))
         .flatMap((workedTitle) => (workedTitle ? (pageUnits.get(workedTitle) ?? []) : []));
@@ -474,6 +474,12 @@ const extractPdfPages = Effect.fn("course.extractPdfPages")(function* (bytes: Ui
   }
   return { document, pages };
 });
+const destroyPdf = (document: object) => {
+  const destroy = Reflect.get(document, "destroy");
+  return typeof destroy === "function"
+    ? Effect.promise(() => destroy.call(document) as Promise<void>)
+    : Effect.void;
+};
 
 /** Parse an OCW zip using the repository's yauzl wrapper. */
 export const parseOcwZip = (zipPath: string, source: string) =>
@@ -484,6 +490,7 @@ export const parseOcwZip = (zipPath: string, source: string) =>
         (detail) => new CourseIngestError({ message: detail }),
       );
       const entries = new Map<string, Uint8Array>();
+      const pdfEntries = new Map<string, Parameters<typeof archive.streamEntry>[0]>();
       let totalUncompressed = 0;
       let indexEntry: Parameters<typeof archive.streamEntry>[0] | undefined;
       while (true) {
@@ -495,11 +502,11 @@ export const parseOcwZip = (zipPath: string, source: string) =>
         )
           indexEntry = entry;
         if (/(?:^|\/)index\.html$/i.test(entry.fileName)) continue;
-        if (
-          !/(?:^|\/)data\.json$|\.(?:vtt|srt)$/i.test(entry.fileName) &&
-          !/(?:pset|problem|solution|assignment)[^/]*\.pdf$/i.test(entry.fileName)
-        )
+        if (/\.pdf$/i.test(entry.fileName)) {
+          pdfEntries.set(entry.fileName, entry);
           continue;
+        }
+        if (!/(?:^|\/)data\.json$|\.(?:vtt|srt)$/i.test(entry.fileName)) continue;
         if (entry.uncompressedSize > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES) continue;
         totalUncompressed += entry.uncompressedSize;
         if (totalUncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES)
@@ -522,13 +529,42 @@ export const parseOcwZip = (zipPath: string, source: string) =>
           yield* tryIo("Could not read the OCW zip", () => readStream(stream)),
         );
       }
+      const pdfNames = new Set<string>();
+      for (const [name, raw] of entries) {
+        if (!/(?:^|\/)resources\/[^/]+\/data\.json$/i.test(name)) continue;
+        const record = asRecord(parseJson(Buffer.from(raw).toString("utf8")));
+        if (stringValue(record.resourcetype)?.toLowerCase() !== "document") continue;
+        const title = stringValue(record.title) ?? "";
+        const types = String(record.learning_resource_types ?? "").toLowerCase();
+        if (
+          !types.includes("assignment") &&
+          !types.includes("problem set") &&
+          !types.includes("solution") &&
+          !/problem\s*set|pset|assignment|solution/i.test(title)
+        )
+          continue;
+        const file = stringValue(record.file);
+        if (file) pdfNames.add(NodePath.basename(file));
+      }
       const pdfTexts = new Map<string, string>();
-      for (const [name, bytes] of entries) {
-        if (!/\.pdf$/i.test(name)) continue;
-        // One unreadable problem-set PDF must not fail the whole course.
-        const extracted = yield* Effect.option(extractPdfPages(bytes));
-        if (extracted._tag === "Some")
+      let pdfBytes = totalUncompressed;
+      for (const [name, entry] of pdfEntries) {
+        if (!pdfNames.has(NodePath.basename(name))) continue;
+        if (entry.uncompressedSize > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES) continue;
+        if (pdfBytes + entry.uncompressedSize > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES) continue;
+        const extracted = yield* Effect.option(
+          archive.streamEntry(entry).pipe(
+            Effect.flatMap((stream) =>
+              tryIo("Could not read the OCW PDF", () => readStream(stream)),
+            ),
+            Effect.flatMap((bytes) => extractPdfPages(bytes)),
+          ),
+        );
+        if (extracted._tag === "Some") {
+          pdfBytes += entry.uncompressedSize;
           pdfTexts.set(NodePath.basename(name), extracted.value.pages.join("\n\n"));
+          yield* destroyPdf(extracted.value.document);
+        }
       }
       return parseOcwZipEntries(entries, source, pdfTexts);
     }),
@@ -720,6 +756,7 @@ const extractPdf = Effect.fn("course.extractPdf")(function* (source: string) {
       parts.push(extractedPdf.pages[page - 1] ?? "");
     units.push({ title: range.title, pages: [range.from, range.to], text: parts.join("\n\n") });
   }
+  yield* destroyPdf(document);
   return { kind: "pdf", title, source, units } satisfies IngestedCourse;
 });
 

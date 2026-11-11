@@ -129,12 +129,42 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
   const root = path.join(stateDir, "courses");
   const unitFile = (id: string, unit: number, ext: string) =>
     path.join(root, id, "units", `${String(unit).padStart(2, "0")}.${ext}`);
-  const psetFile = (id: string, pset: number, solution = false) =>
+  const psetFile = (baseDir: string, pset: number, solution = false) =>
     path.join(
-      root,
-      id,
+      baseDir,
       "psets",
       `${String(pset).padStart(2, "0")}${solution ? ".solution" : ""}.txt`,
+    );
+  const problemSetMetadata = (
+    source: IngestedCourse,
+    remap?: (unit: number) => number | undefined,
+  ) =>
+    source.problemSets?.map((pset) => ({
+      title: pset.title.trim(),
+      ...(pset.section ? { section: pset.section } : {}),
+      hasSolution: pset.solution !== undefined,
+      ...(pset.workedExampleUnits?.length
+        ? {
+            workedExampleUnits: pset.workedExampleUnits
+              .map((unit) => (remap ? remap(unit) : unit))
+              .filter((unit): unit is number => unit !== undefined),
+          }
+        : {}),
+    }));
+  const writeProblemSets = (
+    baseDir: string,
+    problemSets: NonNullable<IngestedCourse["problemSets"]>,
+  ) =>
+    Effect.forEach(
+      problemSets,
+      (pset, index) =>
+        Effect.gen(function* () {
+          yield* fs.makeDirectory(path.join(baseDir, "psets"), { recursive: true });
+          yield* fs.writeFileString(psetFile(baseDir, index + 1), pset.text);
+          if (pset.solution !== undefined)
+            yield* fs.writeFileString(psetFile(baseDir, index + 1, true), pset.solution);
+        }),
+      { discard: true },
     );
   const locked = <A, E extends { readonly message: string }, R>(effect: Effect.Effect<A, E, R>) =>
     lock
@@ -222,18 +252,22 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
       const next = old === undefined ? undefined : matched.indexOf(old);
       return next === undefined || next < 0 ? undefined : next + 1;
     };
-    const problemSets = source.problemSets?.map((pset) => ({
-      title: pset.title.trim(),
-      ...(pset.section ? { section: pset.section } : {}),
-      hasSolution: pset.solution !== undefined,
-      ...(pset.workedExampleUnits?.length
-        ? {
-            workedExampleUnits: pset.workedExampleUnits
-              .map(remap)
-              .filter((unit): unit is number => unit !== undefined),
-          }
-        : {}),
-    }));
+    const remapExisting = (unit: number) => {
+      const next = matched.indexOf(unit - 1);
+      return next < 0 ? undefined : next + 1;
+    };
+    const problemSets = source.problemSets
+      ? problemSetMetadata(source, remap)
+      : course.problemSets?.map((pset) => ({
+          ...pset,
+          ...(pset.workedExampleUnits
+            ? {
+                workedExampleUnits: pset.workedExampleUnits
+                  .map(remapExisting)
+                  .filter((unit): unit is number => unit !== undefined),
+              }
+            : {}),
+        }));
     const next = {
       ...course,
       units: matched.map((index) => ({
@@ -267,22 +301,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
     }
     if (source.problemSets) {
       yield* fs.makeDirectory(path.join(staged, "psets"), { recursive: true });
-      yield* Effect.forEach(
-        source.problemSets,
-        (pset, index) =>
-          Effect.gen(function* () {
-            yield* fs.writeFileString(
-              path.join(staged, "psets", `${String(index + 1).padStart(2, "0")}.txt`),
-              pset.text,
-            );
-            if (pset.solution !== undefined)
-              yield* fs.writeFileString(
-                path.join(staged, "psets", `${String(index + 1).padStart(2, "0")}.solution.txt`),
-                pset.solution,
-              );
-          }),
-        { discard: true },
-      );
+      yield* writeProblemSets(staged, source.problemSets);
     }
     const json = yield* encodeCourse(positioned).pipe(
       Effect.mapError(() => failure("The reordered course is invalid and was not saved.")),
@@ -335,14 +354,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
           prepThreadIds: [],
           ...(source.problemSets
             ? {
-                problemSets: source.problemSets.map((pset) => ({
-                  title: pset.title.trim(),
-                  ...(pset.section ? { section: pset.section } : {}),
-                  hasSolution: pset.solution !== undefined,
-                  ...(pset.workedExampleUnits?.length
-                    ? { workedExampleUnits: pset.workedExampleUnits }
-                    : {}),
-                })),
+                problemSets: problemSetMetadata(source),
               }
             : {}),
         };
@@ -356,17 +368,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
           { discard: true },
         );
         if (source.problemSets) {
-          yield* Effect.forEach(
-            source.problemSets,
-            (pset, index) =>
-              Effect.gen(function* () {
-                yield* fs.makeDirectory(path.join(root, id, "psets"), { recursive: true });
-                yield* fs.writeFileString(psetFile(id, index + 1), pset.text);
-                if (pset.solution !== undefined)
-                  yield* fs.writeFileString(psetFile(id, index + 1, true), pset.solution);
-              }),
-            { discard: true },
-          );
+          yield* writeProblemSets(path.join(root, id), source.problemSets);
         }
         // One course per lesson: the new one replaces the lesson's old course.
         yield* Effect.forEach(
@@ -558,54 +560,57 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
             ? course.problemSets.slice(input.pset - 1, input.pset)
             : input.unit !== undefined
               ? course.problemSets.filter(
-                  (pset) => pset.section === course.units[input.unit! - 1]?.section,
+                  (pset) =>
+                    course.units[input.unit! - 1]?.section !== undefined &&
+                    pset.section === course.units[input.unit! - 1]?.section,
                 )
               : course.problemSets;
         if (input.pset !== undefined && !selected.length)
           return yield* failure(`Problem set ${input.pset} was not found.`);
-        const result = yield* Effect.forEach(
-          selected,
-          (pset) =>
-            Effect.gen(function* () {
-              const number = course.problemSets!.indexOf(pset) + 1;
-              const item = {
-                number,
-                title: pset.title,
-                ...(pset.section ? { section: pset.section } : {}),
-                ...(pset.workedExampleUnits
-                  ? {
-                      workedExampleUnits: pset.workedExampleUnits.map((unit) => ({
-                        unit,
-                        title: course.units[unit - 1]?.title ?? "",
-                      })),
-                    }
-                  : {}),
-              };
-              if (!input.reveal || input.pset === undefined) {
-                if (input.pset === undefined && input.unit === undefined) return item;
-                return { ...item, text: yield* fs.readFileString(psetFile(course.id, number)) };
-              }
-              const text = yield* fs.readFileString(psetFile(course.id, number));
-              const solution =
-                pset.hasSolution && (yield* fs.exists(psetFile(course.id, number, true)))
-                  ? yield* fs.readFileString(psetFile(course.id, number, true))
-                  : null;
-              const examples = (pset.workedExampleUnits ?? [])
-                .map((unit) => course.units[unit - 1]?.title)
-                .filter(Boolean)
-                .join(", ");
+        const result = yield* Effect.forEach(selected, (pset) =>
+          Effect.gen(function* () {
+            const number = course.problemSets!.indexOf(pset) + 1;
+            const item = {
+              number,
+              title: pset.title,
+              ...(pset.section ? { section: pset.section } : {}),
+              ...(pset.workedExampleUnits
+                ? {
+                    workedExampleUnits: pset.workedExampleUnits.map((unit) => ({
+                      unit,
+                      title: course.units[unit - 1]?.title ?? "",
+                    })),
+                  }
+                : {}),
+            };
+            if (!input.reveal || input.pset === undefined) {
+              if (input.pset === undefined && input.unit === undefined) return item;
               return {
                 ...item,
-                text,
-                solution,
-                ...(solution === null
-                  ? {
-                      note: `No official solution exists; work the problem yourself, check against the listed worked-example units where they match (${examples || "none listed"}), say plainly where they disagree, and tell the learner: graded against my own worked solution, not MIT's.`,
-                    }
-                  : {}),
+                text: yield* fs.readFileString(psetFile(path.join(root, course.id), number)),
               };
-            }),
-          { discard: false },
+            }
+            const text = yield* fs.readFileString(psetFile(path.join(root, course.id), number));
+            const solution =
+              pset.hasSolution &&
+              (yield* fs.exists(psetFile(path.join(root, course.id), number, true)))
+                ? yield* fs.readFileString(psetFile(path.join(root, course.id), number, true))
+                : null;
+            const examples = (pset.workedExampleUnits ?? [])
+              .map((unit) => course.units[unit - 1]?.title)
+              .filter(Boolean)
+              .join(", ");
+            return {
+              ...item,
+              text,
+              solution,
+              ...(solution === null
+                ? {
+                    note: `No official solution exists; work the problem yourself, check against the listed worked-example units where they match (${examples || "none listed"}), say plainly where they disagree, and tell the learner: graded against my own worked solution, not MIT's.`,
+                  }
+                : {}),
+            };
+          }),
         );
         return { ...attribution, problemSets: result };
       }),

@@ -292,7 +292,7 @@ describe("course ingestion parsers", () => {
       expect(course.units[0]?.section).toBe("Other");
       expect(course.units[1]?.text).toBe("[00:00] Tiny caption");
       expect(course.problemSets?.map((pset) => [pset.title, pset.text, pset.solution])).toEqual([
-        ["Problem Set 1", "Chapter One\n\nChapter Two", "Chapter One\n\nChapter Two"],
+        ["PS 1", "Chapter One\n\nChapter Two", "Chapter One\n\nChapter Two"],
         ["Problem Set 2", "Chapter One\n\nChapter Two", undefined],
       ]);
       expect(course.problemSets?.[0]?.workedExampleUnits).toEqual([1]);

@@ -274,11 +274,12 @@ describe("CourseService", () => {
             title: "Backfill",
             source: "source",
             units: [
+              { title: "X", section: "Week" },
               { title: "B", section: "Week" },
               { title: "A", section: "Week" },
             ],
             problemSets: [
-              { title: "Pset", section: "Week", text: "Problem", workedExampleUnits: [2] },
+              { title: "Pset", section: "Week", text: "Problem", workedExampleUnits: [3] },
             ],
           },
         });
@@ -288,6 +289,52 @@ describe("CourseService", () => {
           (yield* service.problems({ courseId: repaired.id, pset: 1 })).problemSets[0]?.text,
           "Problem",
         );
+      }),
+    ),
+  );
+
+  it.effect("does not assign every problem set when a unit has no section", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const course = yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            kind: "ocw",
+            title: "Sections",
+            source: "source",
+            units: [{ title: "Unsectioned" }],
+            problemSets: [{ title: "Pset", text: "Problem" }],
+          },
+        });
+        const result = yield* service.problems({ courseId: course.id, unit: 1 });
+        assert.deepStrictEqual(result.problemSets, []);
+      }),
+    ),
+  );
+
+  it.effect("remaps existing worked examples when a reorder has no incoming problem sets", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            kind: "ocw",
+            title: "Existing sets",
+            source: "source",
+            units: [{ title: "A" }, { title: "B" }],
+            problemSets: [{ title: "Pset", text: "Problem", workedExampleUnits: [1] }],
+          },
+        });
+        const repaired = yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            kind: "ocw",
+            title: "Existing sets",
+            source: "source",
+            units: [{ title: "X" }, { title: "B" }, { title: "A" }],
+          },
+        });
+        assert.deepStrictEqual(repaired.problemSets?.[0]?.workedExampleUnits, [2]);
       }),
     ),
   );
