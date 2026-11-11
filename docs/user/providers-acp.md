@@ -134,10 +134,12 @@ conversation from before the checkpoint.
 ## Text generation
 
 GitHub Copilot can write T3's thread titles, commit messages, branch names, and pull request
-descriptions. Choose a Copilot model in **Settings → Threads → Text generation**. T3 Code never
-switches to Copilot on its own, because each request counts against your Copilot plan, so a low-cost
-model is a good choice. These requests run without tools, user-configured Copilot hooks, MCP
-servers, plugins, or custom instructions. Administrator-managed Copilot policy hooks still run.
+descriptions. Choose a Copilot model in **Settings → Threads → Text generation**. If
+**Settings → Source control → Source control writer model** is turned on, that model writes commit
+messages, branch names, and pull request text instead, so choose Copilot there too or turn it off.
+T3 Code never switches to Copilot on its own, because each request counts against your Copilot plan,
+so a low-cost model is a good choice. These requests run without tools, user-configured Copilot
+hooks, MCP servers, plugins, or custom instructions. Administrator-managed Copilot policy hooks still run.
 A `userPromptSubmitted` policy hook receives the text-generation prompt. These requests stay out
 of your Copilot session history. Copilot cannot write review guides, which need to read the checkout.
 
