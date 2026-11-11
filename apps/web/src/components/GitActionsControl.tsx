@@ -992,12 +992,15 @@ export default function GitActionsControl({
     !gitStatusForActions.hasWorkingTreeChanges &&
     gitStatusForActions.behindCount > 0 &&
     gitStatusForActions.aheadCount === 0;
-  const hasGitMenuContent = hasUsableGitMenuContent({
-    menuItems: gitActionMenuItems,
-    canWriteSourceControl,
-    canPublishRepository,
-    hasNotice: isDetachedHead || isCleanAndBehind || Boolean(gitStatusError),
-  });
+  const hasGitMenuContent =
+    hasUsableGitMenuContent({
+      menuItems: gitActionMenuItems,
+      canWriteSourceControl,
+      canPublishRepository,
+      hasNotice: isDetachedHead || isCleanAndBehind || Boolean(gitStatusError),
+    }) ||
+    (canWriteSourceControl &&
+      Object.values(syncMenuItems).some((item) => item !== null && !item.disabled));
 
   // A disabled menu cannot refresh on open, and terminal edits or commits publish no status.
   const refreshStatusForEmptyMenu = () =>
