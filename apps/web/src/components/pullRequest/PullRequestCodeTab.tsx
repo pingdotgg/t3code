@@ -1596,7 +1596,11 @@ function PullRequestCodeTab({
   if (items.length === 0 && nextCursor === null) {
     return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
-        {commit === null ? `This ${term} has no file changes.` : "This commit has no file changes."}
+        {loadedFiles.length > 0
+          ? "All changed files are hidden by the file filters."
+          : commit === null
+            ? `This ${term} has no file changes.`
+            : "This commit has no file changes."}
       </p>,
     );
   }
