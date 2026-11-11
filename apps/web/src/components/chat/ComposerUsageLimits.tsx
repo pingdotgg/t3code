@@ -302,7 +302,7 @@ function UsageLimitsAccounts({
  * when it reports, else the tightest account of that driver a hub reports.
  */
 export interface LowLimitSignal {
-  /** Dismissals last until this window resets. */
+  /** Dismissals last for the session, per provider instance and limit window. */
   readonly key: string;
   readonly driver: ServerProvider["driver"];
   readonly window: ServerProviderUsageWindow;
@@ -353,13 +353,8 @@ export function resolveLowLimitSignal(
     );
   if (!tightest || !isLowLimit(tightest.window)) return null;
   return {
-    key: [
-      environmentId,
-      provider.instanceId,
-      tightest.account.key,
-      tightest.window.id,
-      tightest.window.resetsAt ?? "",
-    ].join("\u0000"),
+    // Which account is tightest and its reported reset time both shift between usage reads.
+    key: [environmentId, provider.instanceId, tightest.window.id].join("\u0000"),
     driver: provider.driver,
     window: tightest.window,
   };
