@@ -2,15 +2,21 @@ import { Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import { EnvironmentId, ThreadId } from "./baseSchemas.ts";
+import { PreviewNavStatus } from "./preview.ts";
 import {
   PreviewAutomationHost,
   PreviewAutomationInvalidSelectorError,
+  PreviewAutomationNavigateInput,
+  PreviewAutomationOpenInput,
   PreviewAutomationStatus,
 } from "./previewAutomation.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
+const decodeOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
+const decodeNavigateInput = Schema.decodeUnknownSync(PreviewAutomationNavigateInput);
+const decodeNavStatus = Schema.decodeUnknownSync(PreviewNavStatus);
 
 describe("PreviewAutomationHost", () => {
   it("accepts legacy hosts and current operation advertisements", () => {
@@ -46,6 +52,25 @@ describe("PreviewAutomationStatus", () => {
         viewport: { width: 412, height: 915 },
       }).viewport,
     ).toEqual({ width: 412, height: 915 });
+  });
+});
+
+describe("preview URLs", () => {
+  it("accept a prefilled issue form URL longer than 2,048 characters", () => {
+    const url = `https://github.com/pingdotgg/t3code/issues/new?title=${"a".repeat(3000)}`;
+    expect(decodeOpenInput({ url }).url).toBe(url);
+    expect(decodeNavigateInput({ tabId: "preview-t", url }).url).toBe(url);
+    expect(
+      decodeNavigateInput({
+        tabId: "preview-t",
+        target: { kind: "url", url },
+      }).target,
+    ).toEqual({ kind: "url", url });
+    expect(decodeNavStatus({ _tag: "Success", url, title: "New issue" })).toEqual({
+      _tag: "Success",
+      url,
+      title: "New issue",
+    });
   });
 });
 
