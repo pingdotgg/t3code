@@ -1,6 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { json } from "@sveltejs/kit";
 import { stringifySetCookie } from "cookie";
-import { randomUUID } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import type { RequestHandler } from "./$types";
 
