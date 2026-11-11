@@ -4355,7 +4355,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           mode === "detached" ? "" : "feature/test",
         );
       }
-      expect(plans).toBe(1);
+      expect(plans).toBe(mode === "invalid-plan" ? 2 : 1);
     }),
   );
 
@@ -4486,35 +4486,69 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("rejects logical commit plans that omit change units", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.ts"), "export const alpha = 1;\n");
-      NodeFS.writeFileSync(NodePath.join(repoDir, "beta.ts"), "export const beta = 2;\n");
-
-      const { manager } = yield* makeManager({
-        textGeneration: {
-          generateCommitPlan: () =>
-            Effect.succeed({
-              commits: [{ subject: "Add alpha behavior", body: "", hunkIds: ["H001"] }],
-            }),
-        },
-      });
-
-      const error = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "commit",
-        splitCommits: true,
-      }).pipe(Effect.flip);
-
-      expect(error.message).toContain("omitted 1 change unit");
-      expect(
-        yield* runGit(repoDir, ["log", "-1", "--pretty=%s"]).pipe(
-          Effect.map((output) => output.stdout.trim()),
-        ),
-      ).toBe("Initial commit");
-    }),
+  it.effect.each([false, true])(
+    "corrects an omitted change unit or rejects the plan (corrected: %s)",
+    (corrected) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.ts"), "export const alpha = 1;\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, "beta.ts"), "export const beta = 2;\n");
+        const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+        const indexBefore = NodeFS.readFileSync(NodePath.join(repoDir, ".git/index"));
+        let attempts = 0;
+        let feedback: string | undefined;
+        const { manager } = yield* makeManager({
+          textGeneration: {
+            generateCommitPlan: (input) => {
+              attempts += 1;
+              feedback = input.correction?.error;
+              expect(NodeFS.readFileSync(NodePath.join(repoDir, ".git/index"))).toEqual(
+                indexBefore,
+              );
+              return Effect.succeed({
+                commits: [
+                  {
+                    subject: "Add behavior",
+                    body: "",
+                    hunkIds: corrected && attempts === 2 ? ["H001", "H002"] : ["H001"],
+                  },
+                ],
+              });
+            },
+          },
+        });
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit",
+          splitCommits: true,
+        }).pipe(Effect.result);
+        expect(attempts).toBe(2);
+        expect(feedback).toContain("H002");
+        expect(feedback).toContain("beta.ts");
+        if (corrected) {
+          expect(Result.isSuccess(result)).toBe(true);
+          expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout.trim()).toBe("");
+          expect(
+            (yield* runGit(repoDir, ["show", "HEAD", "--format=", "--name-only"])).stdout,
+          ).toContain("beta.ts");
+        } else {
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(result.failure.message).toContain("omitted 1 change unit");
+            expect(result.failure.message.match(/Git manager failed/g)).toHaveLength(1);
+          }
+          expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(headBefore);
+          expect(NodeFS.readFileSync(NodePath.join(repoDir, ".git/index"))).toEqual(indexBefore);
+          expect(
+            (yield* runGit(repoDir, [
+              "for-each-ref",
+              "--format=%(refname)",
+              "refs/t3/commit-workflow/",
+            ])).stdout.trim(),
+          ).toBe("");
+        }
+      }),
   );
 
   it.effect.each([
