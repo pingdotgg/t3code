@@ -8410,6 +8410,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "early-reset",
     "early-reset-snooze-only",
     "early-reset-manual-snooze",
+    "early-reset-then-snooze",
+    "early-reset-then-cancel",
+    "early-reset-then-stop",
   ] as const)("guards a scheduled usage-limit continuation against %s", (scenario) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -8637,13 +8640,12 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       });
       if (snooze)
         assert.equal(DateTime.toEpochMillis(armedShell.snoozedUntil!), Date.parse(resetAt));
-      if (
-        scenario === "early-reset" ||
-        scenario === "early-reset-snooze-only" ||
-        scenario === "early-reset-manual-snooze"
-      ) {
+      if (scenario.startsWith("early-reset")) {
         const manualWakeAt = DateTime.add(now, { seconds: 30 });
-        if (scenario === "early-reset-manual-snooze")
+        // Until a snooze the user set ends, the early reset is recorded and nothing continues.
+        const manualSnooze =
+          scenario === "early-reset-manual-snooze" || scenario.startsWith("early-reset-then");
+        if (manualSnooze)
           yield* orchestrator.dispatch({
             type: "thread.snooze",
             commandId: CommandId.make(`recovery:manual-snooze:${scenario}`),
@@ -8687,9 +8689,11 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           resetBefore: DateTime.add(DateTime.makeUnsafe(resetAt), { seconds: 1 }),
         });
         const reset = (yield* orchestrator.getThreadProjection(threadId)).thread;
-        assert.deepInclude(reset.limitRecovery, { autoResume, snooze: false, resetEarly: true });
+        assert.deepInclude(reset.limitRecovery, { autoResume, snooze: false });
+        // Without a scheduled continuation there is nothing to bring forward.
+        assert.equal(reset.limitRecovery?.resetEarly, autoResume ? true : undefined);
         // The reset ends the snooze the recovery set, never one the user chose.
-        if (scenario === "early-reset-manual-snooze")
+        if (manualSnooze)
           assert.equal(
             DateTime.toEpochMillis(reset.snoozedUntil!),
             DateTime.toEpochMillis(manualWakeAt),
@@ -8707,17 +8711,39 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             ? null
             : limitRecoveryCommand(candidate, false, DateTime.toEpochMillis(sweptAt));
         });
-        if (scenario !== "early-reset") {
-          assert.isNull(yield* sweep);
-          if (scenario === "early-reset-manual-snooze") yield* TestClock.adjust("30 seconds");
-          else
+        const choose = (
+          choice: string,
+          limitRecovery: { autoResume?: boolean; snooze?: boolean },
+        ) =>
+          orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`recovery:${choice}:${scenario}`),
+            threadId,
+            limitRecovery: { runId: run.id, resetAt, ...limitRecovery },
+          });
+        if (scenario !== "early-reset") assert.isNull(yield* sweep);
+        if (scenario !== "early-reset" && scenario !== "early-reset-manual-snooze") {
+          // A choice made after the reset goes by the reset time the thread still shows.
+          if (scenario === "early-reset-then-snooze") yield* choose("snooze", { snooze: true });
+          if (scenario === "early-reset-then-cancel")
+            yield* choose("cancel", { autoResume: false });
+          if (scenario === "early-reset-then-stop")
             yield* orchestrator.dispatch({
-              type: "thread.metadata.update",
-              commandId: CommandId.make(`recovery:resume-after-reset:${scenario}`),
+              type: "thread.stop",
+              commandId: CommandId.make(`recovery:stop:${scenario}`),
               threadId,
-              limitRecovery: { runId: run.id, resetAt, autoResume: true },
             });
+          if (scenario !== "early-reset-then-snooze") yield* choose("resume", { autoResume: true });
+          const chosen = (yield* orchestrator.getThreadProjection(threadId)).thread;
+          assert.deepInclude(chosen.limitRecovery, { autoResume: true });
+          assert.isUndefined(chosen.limitRecovery?.resetEarly);
+          if (scenario === "early-reset-then-snooze")
+            assert.equal(DateTime.toEpochMillis(chosen.snoozedUntil!), Date.parse(resetAt));
+          yield* TestClock.adjust("30 seconds");
+          assert.isNull(yield* sweep);
+          return;
         }
+        if (manualSnooze) yield* TestClock.adjust("30 seconds");
         const resume = yield* sweep;
         assert(resume?.type === "message.dispatch");
         assert.isBelow(DateTime.toEpochMillis(yield* DateTime.now), Date.parse(resetAt));

@@ -9,6 +9,7 @@ import { resetCreditReach } from "@t3tools/shared/usageLimits";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -34,6 +35,7 @@ const make = Effect.gen(function* () {
   const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
+  const scope = yield* Effect.scope;
 
   const consume = Effect.fn("ResetCredits.consume")(function* (
     input: ProviderConsumeResetCreditInput,
@@ -107,17 +109,15 @@ const make = Effect.gen(function* () {
   const redeem: ResetCredits["Service"]["redeem"] = Effect.fn("ResetCredits.redeem")(
     function* (input) {
       const startedAt = yield* DateTime.now;
-      // A caller that goes away once the credit is spent must not leave its threads waiting.
-      return yield* Effect.uninterruptibleMask((restore) =>
-        restore(consume(input)).pipe(
-          Effect.tap(({ result, redeemedOn }) =>
-            // The second is a retry of a redemption whose answer was lost.
-            result.outcome === "reset" || result.outcome === "alreadyRedeemed"
-              ? endLimitWaits(input, startedAt, redeemedOn)
-              : Effect.void,
-          ),
-          Effect.map(({ result }) => result),
+      return yield* consume(input).pipe(
+        Effect.tap(({ result, redeemedOn }) =>
+          result.outcome === "reset" ? endLimitWaits(input, startedAt, redeemedOn) : Effect.void,
         ),
+        Effect.map(({ result }) => result),
+        // The credit may be spent before the caller hears of it. A caller that goes away must
+        // not leave the threads waiting, so only service shutdown ends this.
+        Effect.forkIn(scope),
+        Effect.flatMap(Fiber.join),
       );
     },
   );

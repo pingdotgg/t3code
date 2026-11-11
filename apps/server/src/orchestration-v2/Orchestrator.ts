@@ -4068,7 +4068,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     autoResume:
                       command.limitRecovery.autoResume ?? previousRecovery?.autoResume ?? false,
                     snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
-                    ...(previousRecovery?.resetEarly ? { resetEarly: true } : {}),
                     requestId: command.commandId,
                   };
           return {
@@ -4756,7 +4755,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           limitRecovery: {
             ...recovery,
             snooze: false,
-            resetEarly: true,
+            // Without a scheduled continuation the reset only ends the snooze.
+            ...(recovery.autoResume ? { resetEarly: true } : {}),
             requestId: command.commandId,
           },
           // Ends only the snooze this recovery set; one the user chose stays.
@@ -14662,7 +14662,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }).pipe(
             // A thread that moved on since the read is refused and keeps its own schedule.
             Effect.catchCause((cause) =>
-              Effect.logDebug("orchestration-v2.limit-recovery.reset-skipped", { threadId, cause }),
+              Effect.logWarning("orchestration-v2.limit-recovery.reset-failed", {
+                threadId,
+                cause,
+              }),
             ),
           ),
         { discard: true },

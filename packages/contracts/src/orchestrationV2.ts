@@ -404,7 +404,7 @@ export const OrchestrationV2LimitRecovery = Schema.Struct({
   resetAt: IsoDateTime,
   autoResume: Schema.Boolean,
   snooze: Schema.optional(Schema.Boolean),
-  /** The provider reset the limit before `resetAt`, so a continuation no longer waits for it. */
+  /** The provider reset the limit before `resetAt`, so the scheduled continuation no longer waits for it. */
   resetEarly: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2LimitRecovery = typeof OrchestrationV2LimitRecovery.Type;
