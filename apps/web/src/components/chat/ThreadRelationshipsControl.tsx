@@ -302,10 +302,10 @@ function RemoteSubagentRow(props: {
             </span>
           </span>
           <span
-            className={`shrink-0 text-caption ${failed ? "text-destructive-foreground" : "text-dim-foreground"}`}
+            className={`flex max-w-1/2 shrink-0 gap-1 text-caption ${failed ? "text-destructive-foreground" : "text-dim-foreground"}`}
           >
-            <span className="inline-flex flex-col">
-              <span>on {remoteChild.label}</span>
+            <span className="inline-flex min-w-0 flex-col">
+              <span className="truncate">on {remoteChild.label}</span>
               <span>{threadRelationshipStatusLabel(status)}</span>
             </span>
           </span>
@@ -369,7 +369,9 @@ function DelegatedFromRow(props: {
             </span>
           </span>
           {label ? (
-            <span className="shrink-0 text-caption text-dim-foreground">on {label}</span>
+            <span className="max-w-1/2 shrink-0 truncate text-caption text-dim-foreground">
+              on {label}
+            </span>
           ) : null}
         </TooltipTrigger>
         <TooltipPopup side="left">
@@ -378,7 +380,7 @@ function DelegatedFromRow(props: {
             hint={
               environment === null
                 ? `Delegated from ${label ?? "a linked environment"}. Connect to it to open the parent thread.`
-                : "Open parent agent"
+                : `Open parent agent on ${environment.label}`
             }
           />
         </TooltipPopup>

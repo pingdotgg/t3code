@@ -1,3 +1,4 @@
+import type { TimelineRow } from "./timelineRowContext";
 import { THINKING_PREVIEW_PLUGINS, THOUGHT_PREVIEW_PLUGINS } from "./TimelineWorkEntryRow.logic";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { MESSAGE_HEADING_LEVEL } from "./TimelineRowParts";
@@ -169,6 +170,37 @@ export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEn
     />
   );
 });
+
+export function ViewedImagesTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "viewed-images" }>;
+}) {
+  const { threadRef, workspaceRoot, onImageExpand } = use(TimelineRowCtx);
+  if (!threadRef) return null;
+  return (
+    <div className="flex flex-wrap items-start gap-2 px-0.5">
+      {row.paths.map((path) => {
+        const image = resolveViewedImageAsset(path, {
+          threadId: threadRef.threadId,
+          workspaceRoot,
+        });
+        return image ? (
+          <ChatMarkdownAssetImage
+            key={path}
+            environmentId={threadRef.environmentId}
+            resource={image.resource}
+            alt={image.alt}
+            srcFragment={image.srcFragment}
+            workspaceRoot={workspaceRoot}
+            maxHeightRem={10}
+            onImageExpand={onImageExpand}
+          />
+        ) : null;
+      })}
+    </div>
+  );
+}
 
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const {

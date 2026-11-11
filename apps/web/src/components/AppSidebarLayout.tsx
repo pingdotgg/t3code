@@ -327,7 +327,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
   };
 }
 
-function SidebarControl() {
+function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -342,6 +342,8 @@ function SidebarControl() {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener that toggles the sidebar on its shortcut
   useEffect(() => {
+    // A hidden sidebar would still save the toggle, so the shortcut does nothing without one.
+    if (!showSidebar) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (
@@ -378,7 +380,7 @@ function SidebarControl() {
       window.removeEventListener("keydown", onKeyDown, true);
       unsubscribe?.();
     };
-  }, [keybindings, toggleSidebar, usagePageOpen]);
+  }, [keybindings, showSidebar, toggleSidebar, usagePageOpen]);
 
   // The control lives as long as the shell, so it carries the shell's commands. Created
   // once so re-renders never re-register them.
@@ -398,23 +400,25 @@ function SidebarControl() {
       data-chrome-scope=""
       data-sidebar-control=""
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarTrigger
-              variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
-              className={cn(
-                "pointer-events-auto",
-                isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
-              )}
-              aria-label="Toggle main sidebar"
-            />
-          }
-        />
-        <TooltipPopup side="bottom">
-          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
-        </TooltipPopup>
-      </Tooltip>
+      {showSidebar ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <SidebarTrigger
+                variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
+                className={cn(
+                  "pointer-events-auto",
+                  isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+                )}
+                aria-label="Toggle main sidebar"
+              />
+            }
+          />
+          <TooltipPopup side="bottom">
+            Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
       {/* Phones keep the header for the page; the system back gesture covers them. */}
       <div className="pointer-events-auto hidden items-center [-webkit-app-region:no-drag] md:flex">
         <NavigationHistoryButton direction="back" onStageBackdrop={onStageBackdrop} />
@@ -479,7 +483,13 @@ const DesignSystemSidebarNav = import.meta.env.DEV
     )
   : null;
 
-export function AppSidebarLayout({ children }: { children: ReactNode }) {
+export function AppSidebarLayout({
+  children,
+  showSidebar = true,
+}: {
+  children: ReactNode;
+  showSidebar?: boolean;
+}) {
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
@@ -564,41 +574,45 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         store={sidebarOpenStore}
         style={sidebarProviderStyle}
       >
-        <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
-        {chromeArtVariant ? <ChromeChannelArt variant={chromeArtVariant} /> : null}
-        <Sidebar
-          side="left"
-          collapsible="offcanvas"
-          variant="inset"
-          data-app-sidebar=""
-          {...sidebarArea}
-          role="navigation"
-          aria-label={isOnDesignSystem ? "Design system" : "Threads"}
-          // Light, black chrome paints the sidebar with the dark tokens (index.css).
-          data-chrome-scope=""
-          resizable={{
-            maxWidth: sidebarMaximumWidth,
-            minWidth: sidebarMinimumWidth,
-            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-              nextWidth <= currentWidth ||
-              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-            onResize: setSidebarWidth,
-          }}
-          style={windowControlsInsetStyle}
-        >
-          {isOnDesignSystem && DesignSystemSidebarNav ? (
-            <>
-              <SidebarChromeHeader isElectron={isElectron} />
-              <Suspense fallback={null}>
-                <DesignSystemSidebarNav />
-              </Suspense>
-            </>
-          ) : (
-            <ThreadSidebar routeReveal={sidebarRouteReveal} />
-          )}
-          <SidebarRail onDoubleClick={resetSidebarWidth} />
-        </Sidebar>
+        {showSidebar ? (
+          <>
+            <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+            {chromeArtVariant ? <ChromeChannelArt variant={chromeArtVariant} /> : null}
+            <Sidebar
+              side="left"
+              collapsible="offcanvas"
+              variant="inset"
+              data-app-sidebar=""
+              {...sidebarArea}
+              role="navigation"
+              aria-label={isOnDesignSystem ? "Design system" : "Threads"}
+              // Light, black chrome paints the sidebar with the dark tokens (index.css).
+              data-chrome-scope=""
+              resizable={{
+                maxWidth: sidebarMaximumWidth,
+                minWidth: sidebarMinimumWidth,
+                shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+                  nextWidth <= currentWidth ||
+                  wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+                storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+                onResize: setSidebarWidth,
+              }}
+              style={windowControlsInsetStyle}
+            >
+              {isOnDesignSystem && DesignSystemSidebarNav ? (
+                <>
+                  <SidebarChromeHeader isElectron={isElectron} />
+                  <Suspense fallback={null}>
+                    <DesignSystemSidebarNav />
+                  </Suspense>
+                </>
+              ) : (
+                <ThreadSidebar routeReveal={sidebarRouteReveal} />
+              )}
+              <SidebarRail onDoubleClick={resetSidebarWidth} />
+            </Sidebar>
+          </>
+        ) : null}
         {children}
         <BackgroundThreadAnnouncer />
         {isElectron ? (
@@ -609,7 +623,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             className="drag-region fixed inset-x-0 top-0 hidden h-(--workspace-pane-inset-top) md:block"
           />
         ) : null}
-        <SidebarControl />
+        <SidebarControl showSidebar={showSidebar} />
         {isElectron ? <HistorySwipeNavigation /> : null}
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
