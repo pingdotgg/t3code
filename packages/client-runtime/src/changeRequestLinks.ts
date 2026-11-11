@@ -39,7 +39,10 @@ export function findProjectOnChangeRequestHost<Project extends ChangeRequestProj
       const identity = project.repositoryIdentity;
       return (
         identity?.provider !== undefined &&
-        sourceControlClients.get(identity.provider).canReadChangeRequestOnHost(identity, link)
+        (sourceControlClients.get(identity.provider).canReadChangeRequestOnHost(identity, link) ||
+          sourceControlClients
+            .findByPublicHost(link.host)
+            ?.canReadChangeRequestOnHost(identity, link))
       );
     })
   );

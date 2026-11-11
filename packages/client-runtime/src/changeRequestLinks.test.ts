@@ -126,9 +126,36 @@ describe("resolveChangeRequestLinkTarget", () => {
         lendHostProject: true,
       }),
     ).toEqual({ project: sibling, host: "github.com", repository: "acme/app", number: 7 });
+    for (const route of ["pull", "pulls"]) {
+      expect(
+        resolveChangeRequestLinkTarget({
+          url: `https://git.cafe/pingdotgg/t3code/${route}/33106`,
+          projects: [sibling, elsewhere],
+          configLoaded: loaded,
+          environmentId: local,
+          lendHostProject: true,
+        }),
+      ).toEqual({
+        project: sibling,
+        host: "git.cafe",
+        repository: "pingdotgg/t3code",
+        number: 33106,
+      });
+    }
   });
 
   it("only borrows a host project for views that can show any repository on the host", () => {
+    for (const host of ["staging.git.cafe", "git.cafe.evil.test"]) {
+      expect(
+        resolveChangeRequestLinkTarget({
+          url: `https://${host}/acme/app/pull/7`,
+          projects: [sibling],
+          configLoaded: loaded,
+          environmentId: local,
+          lendHostProject: true,
+        }),
+      ).toBeNull();
+    }
     expect(
       resolveChangeRequestLinkTarget({
         url,

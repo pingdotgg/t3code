@@ -101,6 +101,7 @@ export const definition = defineSourceControl({
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
+    link.host === "git.cafe" ||
     isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
   settings,
 });
