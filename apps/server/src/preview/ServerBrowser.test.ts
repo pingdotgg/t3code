@@ -894,6 +894,70 @@ it.live("enforces provider ownership and explicit targets when a session has mul
   ).pipe(Effect.provide(layer)),
 );
 
+/** A JPEG start-of-frame, enough for a reader to size the image. */
+const jpegOfSize = (width: number, height: number) => {
+  const sof = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 0, 0, 0, 0, 3]);
+  sof.writeUInt16BE(height, 7);
+  sof.writeUInt16BE(width, 9);
+  return sof;
+};
+const jpegSize = (bytes: Uint8Array) => {
+  const data = Buffer.from(bytes);
+  for (let i = 2; i + 9 < data.length;) {
+    if (data[i] !== 0xff) return null;
+    const marker = data[i + 1]!;
+    if (marker >= 0xc0 && marker <= 0xc3)
+      return { width: data.readUInt16BE(i + 7), height: data.readUInt16BE(i + 5) };
+    i += 2 + data.readUInt16BE(i + 2);
+  }
+  return null;
+};
+
+it.live("a viewer's still fits the size it asked for", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const context = contexts[0]!;
+      // Chromium captures the viewport at device pixels: 1280x800 CSS at the 2x render scale.
+      const captureAtDevicePixels = (session: (typeof context.sessions)[number]) => {
+        const send = session.send.getMockImplementation()!;
+        session.send.mockImplementation(async (method, input) => {
+          const options = input as {
+            format?: string;
+            clip?: { width: number; height: number; scale: number };
+          };
+          if (method !== "Page.captureScreenshot" || options.format !== "jpeg") {
+            return send(method, input);
+          }
+          const { clip } = options;
+          const still = clip
+            ? jpegOfSize(Math.round(clip.width * clip.scale), Math.round(clip.height * clip.scale))
+            : jpegOfSize(2560, 1600);
+          return { data: still.toString("base64") };
+        });
+        return session;
+      };
+      context.sessions.forEach(captureAtDevicePixels);
+      const newCDPSession = context.newCDPSession;
+      context.newCDPSession = async (target) => captureAtDevicePixels(await newCDPSession(target));
+      const viewer = yield* browser.attachViewer({
+        ...viewerInput(tabId, true),
+        maxWidth: 640,
+        maxHeight: 400,
+      });
+      const stills = (yield* Queue.takeAll(viewer.output)).flatMap((item) =>
+        item._tag === "frame" ? [jpegSize(item.data)] : [],
+      );
+      expect(stills).not.toHaveLength(0);
+      for (const still of stills) {
+        expect(still).not.toBeNull();
+        expect(still!.width).toBeLessThanOrEqual(640);
+        expect(still!.height).toBeLessThanOrEqual(400);
+      }
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("streams to a read-only viewer without allowing takeover, input, or viewport changes", () =>
   Effect.scoped(
     Effect.gen(function* () {
