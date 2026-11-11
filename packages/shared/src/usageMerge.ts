@@ -118,32 +118,29 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
   ].join(" ");
 }
 
-// physicalSourceId joins one directory read natively by Windows and through a WSL mount
-// (path and dev:ino both differ) and wins over the legacy key. A fingerprint without one
-// adopts the single physical source seen at its legacy key; when that key carries several,
-// it keeps its legacy key and counts separately rather than dropping a directory's usage.
+// Sources are one directory when either their legacy key or their physicalSourceId matches.
+// physicalSourceId joins a directory read natively by Windows and through a WSL mount (path
+// and dev:ino both differ); the legacy key still joins installs whose host scopes differ.
 function sourceIdentity(
   environments: readonly EnvironmentUsage[],
 ): (fingerprint: UsageSourceFingerprint) => string {
-  const physicalKey = (fingerprint: UsageSourceFingerprint) =>
-    `\u0000${fingerprint.provider}\u0000${fingerprint.physicalSourceId}`;
-  // null marks a legacy key seen with more than one physical source.
-  const physicalByLegacy = new Map<string, string | null>();
+  const parent = new Map<string, string>();
+  const find = (key: string): string => {
+    const next = parent.get(key);
+    if (next === undefined || next === key) return key;
+    const root = find(next);
+    parent.set(key, root);
+    return root;
+  };
   for (const environment of environments) {
     for (const { fingerprint } of environment.summary.sources) {
       if (fingerprint.physicalSourceId === undefined) continue;
-      const legacy = fingerprintKey(fingerprint);
-      const physical = physicalKey(fingerprint);
-      const seen = physicalByLegacy.get(legacy);
-      if (seen === undefined) physicalByLegacy.set(legacy, physical);
-      else if (seen !== physical) physicalByLegacy.set(legacy, null);
+      const legacy = find(fingerprintKey(fingerprint));
+      const physical = find(`\u0000${fingerprint.provider}\u0000${fingerprint.physicalSourceId}`);
+      if (legacy !== physical) parent.set(legacy, physical);
     }
   }
-  return (fingerprint) => {
-    if (fingerprint.physicalSourceId !== undefined) return physicalKey(fingerprint);
-    const legacy = fingerprintKey(fingerprint);
-    return physicalByLegacy.get(legacy) ?? legacy;
-  };
+  return (fingerprint) => find(fingerprintKey(fingerprint));
 }
 
 function bucketsForSource(summary: UsageSummary, source: UsageSource): readonly UsageBucket[] {
