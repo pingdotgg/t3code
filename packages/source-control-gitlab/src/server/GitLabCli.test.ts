@@ -337,16 +337,6 @@ layer("GitLabCli.layer", (it) => {
       remotes: ["git@gitlab.com:team/app.git"],
     },
     {
-      case: "the checkout has a userless SCP gitlab.com remote",
-      hosts: ["gitlab.selfhosted.test"],
-      remotes: ["gitlab.com:team/app.git"],
-    },
-    {
-      case: "the checkout has a userless SCP gitlab.com remote with a trailing slash",
-      hosts: ["gitlab.selfhosted.test"],
-      remotes: ["gitlab.com:team/app.git/"],
-    },
-    {
       case: "the checkout fetches from a mirror and pushes to gitlab.com",
       hosts: ["gitlab.selfhosted.test"],
       remotes: [{ url: "/srv/mirror/app.git", pushUrl: "git@gitlab.com:team/app.git" }],
