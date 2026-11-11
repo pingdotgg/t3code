@@ -624,6 +624,20 @@ it("replays earlier capability results with the model under test as the caller",
   }
 });
 
+it("sends a side chat's context and an account switch note together, as T3 does", () => {
+  const base = buildBase(template, { model: "claude-opus-5-5", keepUserInstructions: false });
+  const setup = {
+    role: "top" as const,
+    sideChat: { parentThreadId: "thread-parent", digest: ["The permissions fix is committed."] },
+    providerSwitch: { from: { id: "claude-1" }, to: { id: "claude-2" } },
+  };
+  const sent = JSON.stringify(
+    buildMessages(makeSample({ ...childCase, prompt: "Go", setup }, base)),
+  );
+  assert.include(sent, "The permissions fix is committed.");
+  assert.include(sent, JSON.stringify("from `claude-1`.\n\nUser message:\nGo").slice(1, -1));
+});
+
 it("gives each launched thread its own id, and reading it back shows that thread's brief", () => {
   const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
   const sample = makeSample(childCase, base);

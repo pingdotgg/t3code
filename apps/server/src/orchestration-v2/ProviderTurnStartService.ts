@@ -894,7 +894,10 @@ export const layer: Layer.Layer<
       const acceptedAttemptIds = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
       const previousAttempt = projection.runs
         .filter(
-          (source) => source.ordinal <= run.ordinal && !commandMessageIds.has(source.userMessageId),
+          (source) =>
+            source.ordinal <= run.ordinal &&
+            source.status !== "rolled_back" &&
+            !commandMessageIds.has(source.userMessageId),
         )
         .flatMap((source) =>
           projection.attempts.filter((candidate) => candidate.runId === source.id),
