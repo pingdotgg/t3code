@@ -4,6 +4,7 @@ import { ms } from "itty-time";
 import type { ResolvedStepConfig, StepState } from "../context.ts";
 import type { WorkflowSleepDuration } from "cloudflare:workers";
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- vendored workers-sdk Workflows code; the error `name` is part of the protocol surfaced to user code across RPC
 export class DelayFunctionError extends Error {
 	constructor(reason: string) {
 		super(reason);

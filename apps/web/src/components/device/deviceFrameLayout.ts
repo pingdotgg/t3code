@@ -1,4 +1,4 @@
-export function fitDeviceFrame(aspect: number, width: number, height: number, rightInset = 0) {
+export function fitDeviceFrame(aspect: number, width: number, height: number, rightInset: number) {
   const availableWidth = Math.max(0, width - rightInset);
   if (availableWidth === 0 || height === 0) return { width: 0, height: 0 };
   const byHeight = { width: height * aspect, height };

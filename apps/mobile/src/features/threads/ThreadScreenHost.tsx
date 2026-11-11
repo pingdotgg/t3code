@@ -6,7 +6,9 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
+
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { ThreadDetailScreen, type ThreadDetailScreenProps } from "./ThreadDetailScreen";
 
 type ThreadScreenContent =
@@ -40,11 +42,7 @@ function ThreadScreenOutlet() {
   return (
     <>
       {"props" in content ? content.props.header : content.header}
-      {Platform.OS === "android" ? (
-        <View className="flex-1 overflow-hidden rounded-t-[28px] bg-thread-canvas">{body}</View>
-      ) : (
-        body
-      )}
+      <ScreenContent surface="canvas">{body}</ScreenContent>
     </>
   );
 }
@@ -65,6 +63,7 @@ export function ThreadScreenHost({ children }: { readonly children: ReactNode })
 
 export function ThreadScreenBinding(props: ThreadDetailScreenProps) {
   const store = useContext(ThreadScreenContext)!;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the route's thread screen props to the external store the outlet reads
   useLayoutEffect(() => {
     store.publish({ props });
   });
@@ -79,6 +78,7 @@ export function ThreadScreenFallback({
   readonly header?: ReactNode;
 }) {
   const store = useContext(ThreadScreenContext)!;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the fallback content and header to the external store the outlet reads
   useLayoutEffect(() => {
     store.publish({ fallback: children, header });
   });
