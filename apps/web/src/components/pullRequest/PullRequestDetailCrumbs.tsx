@@ -113,7 +113,7 @@ export function PullRequestDetailCrumbs({
 }) {
   const state = detail ? resolvePullRequestState(detail) : null;
   return (
-    <div className="mt-2 flex min-h-6 min-w-0 items-center gap-1.5 pl-4 text-label text-muted-foreground">
+    <div className="mt-2 flex min-h-6 min-w-0 flex-wrap items-center gap-1.5 pl-4 text-label text-muted-foreground @md/pr-header:flex-nowrap">
       {detail && toneClassName && state ? (
         <>
           {onBack ? (
