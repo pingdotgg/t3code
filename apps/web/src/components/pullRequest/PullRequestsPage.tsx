@@ -6,7 +6,6 @@ import type { PullRequestSpeedActionResult } from "~/components/pullRequest/Pull
 import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullRequestActions";
 import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
 import { resolveSidebarSweepKeys } from "~/components/Sidebar.logic";
-import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import type {
   EnvironmentId,
@@ -22,14 +21,7 @@ import type {
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowDownUpIcon, CircleAlertIcon, LayersIcon, Plug2Icon } from "lucide-react";
-import {
-  useEffect,
-  useEffectEvent,
-  useRef,
-  useState,
-  type ComponentProps,
-  type ReactNode,
-} from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import {
   collectPullRequestListFacets,
@@ -119,7 +111,6 @@ import {
   useRightPanelStore,
   type PullRequestSurface,
 } from "~/rightPanelStore";
-import { useSidebarProjectGroups } from "~/hooks/useSidebarProjectGroups";
 import {
   pullRequestEnvironment,
   usePullRequestList,
@@ -252,6 +243,7 @@ export function PullRequestsPage() {
           ...(next.repository ? { repository: next.repository } : {}),
           ...(next.number ? { number: next.number } : {}),
           ...(next.projectId ? { projectId: next.projectId } : {}),
+          ...(next.projectEnvironmentId ? { projectEnvironmentId: next.projectEnvironmentId } : {}),
           ...(next.environmentId ? { environmentId: next.environmentId } : {}),
           ...(next.host ? { host: next.host } : {}),
           ...(next.selectedHost ? { selectedHost: next.selectedHost } : {}),
@@ -352,7 +344,6 @@ export function PullRequestsPage() {
             state: search.state,
             involvement: search.involvement,
             limit: pageSize,
-            ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
             ...(projectIds ? { projectIds } : {}),
             ...(search.host ? { host: search.host } : {}),
             ...(hasFilters ? { filters } : {}),
@@ -377,7 +368,6 @@ export function PullRequestsPage() {
         state: search.state,
         involvement: search.involvement,
         limit: PAGE_SIZE,
-        ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
         ...(projectIds ? { projectIds } : {}),
         ...(search.host ? { host: search.host } : {}),
         ...(menuFiltered ? { filters: menuFilters } : {}),
@@ -403,7 +393,6 @@ export function PullRequestsPage() {
         state: "all",
         involvement: search.involvement,
         limit: PAGE_SIZE,
-        ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
         ...(projectIds ? { projectIds } : {}),
         ...(search.host ? { host: search.host } : {}),
       } satisfies PullRequestListInput,
@@ -413,7 +402,6 @@ export function PullRequestsPage() {
   const filterOptionScope = environmentQueries.map(({ environmentId, projectIds }) => ({
     environmentId,
     input: {
-      ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
       ...(projectIds ? { projectIds } : {}),
       ...(search.host ? { host: search.host } : {}),
     },
@@ -437,7 +425,6 @@ export function PullRequestsPage() {
           state: search.state,
           involvement,
           limit: PAGE_SIZE,
-          ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
           ...(projectIds ? { projectIds } : {}),
           ...(search.host ? { host: search.host } : {}),
           ...(menuFiltered ? { filters: menuFilters } : {}),
@@ -575,10 +562,20 @@ export function PullRequestsPage() {
     }
     const entries = narrowPullRequestsToFilters(loaded.data.entries, {
       state: search.state,
-      projectId: scopedProjectId,
+      projectId: undefined,
       host: search.host,
     });
-    return entries.length === 0 ? null : { ...loaded.data, entries };
+    const scoped =
+      scopedProjectId === undefined
+        ? entries
+        : entries.filter((entry) =>
+            environmentQueries.some(
+              (query) =>
+                query.environmentId === entry.environmentId &&
+                query.projectIds?.includes(entry.projectId),
+            ),
+          );
+    return scoped.length === 0 ? null : { ...loaded.data, entries: scoped };
   })();
   // A grown page is read by the list and nothing else: the baseline always asks for one page, so
   // a host with no cursor to continue from — where "more" means asking for a longer page — would
@@ -1238,6 +1235,7 @@ export function PullRequestsPage() {
       labels: undefined,
       host: undefined,
       projectId: undefined,
+      projectEnvironmentId: undefined,
       environmentId: undefined,
     });
   const listFiltered =
@@ -1428,7 +1426,7 @@ export function PullRequestsPage() {
     />
   );
   const renderFiltersMenu = (compactItems?: ReactNode) => (
-    <PullRequestFiltersMenuInSidebarOrder
+    <PullRequestFiltersMenu
       {...(compactItems ? { compactItems } : {})}
       onOpenChange={setFiltersOpen}
       involvement={search.involvement}
@@ -1459,13 +1457,19 @@ export function PullRequestsPage() {
       optionScope={filterOptionScope}
       server={scopedEnvironmentId ?? undefined}
       serverOptions={serverMenuOptions}
-      onServer={(server) => updateListScope({ environmentId: server, projectId: undefined })}
+      onServer={(server) =>
+        updateListScope({
+          environmentId: server,
+          projectId: undefined,
+          projectEnvironmentId: undefined,
+        })
+      }
       projects={scopedProjects}
       projectId={scopedProjectId}
       projectEnvironmentId={scopedProject?.environmentId}
       unavailable={unavailableProjects}
       onProject={(projectId, environmentId) =>
-        updateListScope(environmentId === undefined ? { projectId } : { projectId, environmentId })
+        updateListScope({ projectId, projectEnvironmentId: environmentId })
       }
     />
   );
@@ -1763,12 +1767,4 @@ export function PullRequestsPage() {
       </div>
     </SidebarInset>
   );
-}
-
-function PullRequestFiltersMenuInSidebarOrder(
-  props: ComponentProps<typeof PullRequestFiltersMenu>,
-) {
-  const sidebarProjectGroups = useSidebarProjectGroups();
-  const projects = sortProjectsByGroupOrder(props.projects, sidebarProjectGroups);
-  return <PullRequestFiltersMenu {...props} projects={projects} />;
 }
