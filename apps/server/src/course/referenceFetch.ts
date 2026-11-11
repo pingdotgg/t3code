@@ -176,7 +176,8 @@ const extractPdf = async (bytes: Uint8Array, requested: ReadonlyArray<number>) =
     let largest: { width: number; height: number; kind: number; data: Uint8Array } | undefined;
     for (const candidate of candidates) {
       const id = candidate.args[0];
-      const image = await new Promise<any>((resolve) => page.objs.get(id, resolve));
+      const objects = String(id).startsWith("g_") ? page.commonObjs : page.objs;
+      const image = await new Promise<any>((resolve) => objects.get(id, resolve));
       if (image && (!largest || image.width * image.height > largest.width * largest.height))
         largest = image;
     }
