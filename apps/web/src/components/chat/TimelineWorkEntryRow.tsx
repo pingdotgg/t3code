@@ -1,4 +1,5 @@
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
+import { AttachmentImage } from "../media/AttachmentImage";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
   getQuestionAnswerPreview,
@@ -655,7 +656,8 @@ function QuestionAnswerHistory({
                   className="text-sm underline"
                 >
                   {attachment.type === "image" && url ? (
-                    <img
+                    <AttachmentImage
+                      name={attachment.name}
                       src={url}
                       alt={attachment.name}
                       className="h-20 max-w-32 rounded object-contain"

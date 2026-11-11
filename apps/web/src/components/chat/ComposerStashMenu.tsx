@@ -6,6 +6,7 @@ import { RelativeTime } from "../RelativeTime";
 import { cn } from "~/lib/utils";
 import { type PromptStashEntry } from "../../promptStashStore";
 import { ComposerBanner } from "./ComposerBanner";
+import { AttachmentImage } from "../media/AttachmentImage";
 
 const SNIPPET_MAX_CHARS = 90;
 
@@ -199,7 +200,8 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                   {entry.attachments.length > 0 ? (
                     <span className="flex shrink-0 items-center -space-x-1.5">
                       {entry.attachments.slice(0, 3).map((attachment) => (
-                        <img
+                        <AttachmentImage
+                          name={attachment.name}
                           key={attachment.id}
                           src={attachment.dataUrl}
                           alt=""

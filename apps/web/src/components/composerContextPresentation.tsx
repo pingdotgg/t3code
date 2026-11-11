@@ -1,4 +1,5 @@
 import ChatMarkdown from "./ChatMarkdown";
+import { AttachmentImage } from "./media/AttachmentImage";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type {
@@ -316,7 +317,8 @@ function ComposerPreviewAnnotationDetails({
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-background/70">
       {screenshotUrl ? (
-        <img
+        <AttachmentImage
+          name="Annotated preview crop"
           src={screenshotUrl}
           alt="Annotated preview crop"
           className="max-h-64 w-full border-border/70 border-b bg-muted object-contain"

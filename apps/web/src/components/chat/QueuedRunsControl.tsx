@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { AttachmentImage } from "../media/AttachmentImage";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import {
@@ -486,7 +487,8 @@ function QueuedMessage(props: {
                     className="size-8 overflow-hidden rounded-md border border-border/70 bg-background"
                   >
                     {thumbnail.url ? (
-                      <img
+                      <AttachmentImage
+                        name={thumbnail.name}
                         src={thumbnail.url}
                         alt={thumbnail.name}
                         className="size-full object-cover"

@@ -1,3 +1,4 @@
+import { AttachmentImage } from "../media/AttachmentImage";
 import {
   EnvironmentId,
   GUEST_MESSAGE_MAX_LENGTH,
@@ -627,7 +628,9 @@ interface StagedFile {
 /** A staged image's thumbnail; its object URL lives as long as the element. */
 function StagedImage({ file }: { readonly file: File }) {
   return (
-    <img
+    <AttachmentImage
+      name={file.name}
+      mimeType={file.type}
       alt={file.name}
       className="size-full object-cover"
       ref={(image) => {

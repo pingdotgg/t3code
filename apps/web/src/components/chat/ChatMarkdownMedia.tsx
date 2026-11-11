@@ -17,6 +17,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { cn } from "../../lib/utils";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
+import { AttachmentImage } from "../media/AttachmentImage";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { markdownImageGallery, markdownImageItems } from "./markdownImageGallery";
@@ -200,7 +201,8 @@ export function ChatMarkdownImage(props: {
   if (settled) {
     return (
       <MediaActions source={props.actionsSource}>
-        <img
+        <AttachmentImage
+          name={props.alt.trim() || "image"}
           {...props.imageProps}
           ref={markLoadedIfComplete}
           src={src}
@@ -259,7 +261,8 @@ export function ChatMarkdownImage(props: {
             <ChatMarkdownMediaUnavailableLabel alt={props.alt} detail={props.unavailableDetail} />
           </span>
         ) : src !== null ? (
-          <img
+          <AttachmentImage
+            name={props.alt.trim() || "image"}
             ref={markLoadedIfComplete}
             src={src}
             alt={props.alt}

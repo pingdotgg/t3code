@@ -1,20 +1,24 @@
 import { useEffect, useRef, useState, type ComponentProps, type SyntheticEvent } from "react";
 import { isHeicImageFile } from "../../lib/imageCompression";
+import { imagePreviewBackgroundStyles, useImagePreviewBackground } from "./imagePreviewBackground";
 
 type AttachmentImageProps = ComponentProps<"img"> & { name: string; mimeType?: string | undefined };
 
 // Keep import expressions outside hooks until React Compiler supports them.
 const loadImageDecoder = () => import("../files/decodeImagePreview");
 
-export function AttachmentImage({ name, mimeType, ...props }: AttachmentImageProps) {
+export function AttachmentImage({ name, mimeType, style, ...props }: AttachmentImageProps) {
+  const [background] = useImagePreviewBackground();
+  const imageStyle =
+    background === "theme" ? style : { ...style, ...imagePreviewBackgroundStyles[background] };
   const fallback =
     isHeicImageFile({ name, type: mimeType ?? "" }) ||
     /\.tiff?$/i.test(name) ||
     /^image\/tiff$/i.test(mimeType ?? "");
   return fallback ? (
-    <DecodedImage key={props.src} {...props} name={name} mimeType={mimeType} />
+    <DecodedImage key={props.src} {...props} style={imageStyle} name={name} mimeType={mimeType} />
   ) : (
-    <img {...props} />
+    <img {...props} style={imageStyle} />
   );
 }
 
