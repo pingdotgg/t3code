@@ -8,9 +8,19 @@ const { getSystemLocaleMock, getUserDefaultMock } = vi.hoisted(() => ({
   getUserDefaultMock: vi.fn((_key: string) => false),
 }));
 
+const { appEvents } = await vi.hoisted(async () => {
+  const { EventEmitter } = await import("node:events");
+  return { appEvents: new EventEmitter() };
+});
+const { autoUpdaterMock } = vi.hoisted(() => ({
+  autoUpdaterMock: { autoInstallOnAppQuit: false },
+}));
+vi.mock("electron-updater", () => ({ autoUpdater: autoUpdaterMock }));
+
 vi.mock("electron", () => ({
   app: {
     getSystemLocale: getSystemLocaleMock,
+    once: appEvents.once.bind(appEvents),
   },
   systemPreferences: {
     getUserDefault: getUserDefaultMock,
@@ -18,6 +28,7 @@ vi.mock("electron", () => ({
 }));
 
 import * as ElectronApp from "./ElectronApp.ts";
+import * as ElectronUpdater from "./ElectronUpdater.ts";
 
 describe("ElectronApp", () => {
   beforeEach(() => {
@@ -86,4 +97,22 @@ it.effect("reads both macOS hour preferences without overriding explicit formats
       }
     }
   }),
+);
+
+it.effect("records only an armed normal quit after the updater scope closes", () =>
+  Effect.gen(function* () {
+    const updater = yield* ElectronUpdater.ElectronUpdater;
+    const recordInstall = vi.fn();
+    for (const [exitCode, armed, expectedRecords] of [
+      [1, true, 0],
+      [0, false, 0],
+      [0, true, 1],
+    ] as const) {
+      yield* updater.setAutoInstallOnAppQuit(true);
+      yield* Effect.scoped(updater.onInstallOnAppQuit(recordInstall));
+      yield* updater.setAutoInstallOnAppQuit(armed);
+      appEvents.emit("quit", {}, exitCode);
+      assert.equal(recordInstall.mock.calls.length, expectedRecords);
+    }
+  }).pipe(Effect.provide(ElectronUpdater.layer)),
 );

@@ -141,3 +141,17 @@ describe("SidebarUpdatePill update everything", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(button.element()));
   });
 });
+
+it("shows the update action as soon as a check finds a release", async () => {
+  setup({ ...nightlyUpdate([]), status: "checking", availableVersion: null });
+  await using screen = await render(<SidebarUpdatePill />);
+  await expect
+    .element(screen.getByRole("button", { name: "Checking for updates…" }))
+    .toBeDisabled();
+
+  await publish(nightlyUpdate([]));
+  await expect.element(screen.getByRole("button", { name: /ready to download/ })).toBeEnabled();
+
+  await publish({ ...nightlyUpdate([]), status: "downloading", downloadPercent: 50 });
+  await expect.element(screen.getByRole("button", { name: /Downloading/ })).toBeVisible();
+});

@@ -36,6 +36,11 @@ The confirmation counts the running threads that the restarts will interrupt,
 and how many can resume afterwards. See **Continue threads after restarts**
 below.
 
+The desktop app downloads its own updates in the background and installs them
+when you quit, except on macOS, where you choose **Install** to apply them.
+Linux `.deb` updates ask for your password, so they wait until
+you choose **Install**.
+
 ## Switch between Stable and Nightly
 
 In the desktop app, change **Settings → About → Update track**. T3 Code shows each
