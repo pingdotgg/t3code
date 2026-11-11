@@ -1,14 +1,12 @@
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type { DevicePlatform, DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
-import { Check } from "lucide-react";
-import { Check as CheckGlyph, CircleAlert } from "lucide";
+import { Check, CircleAlert } from "lucide-react";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useAtomMount } from "@effect/atom-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { DialogClose } from "~/components/ui/dialog";
-import { MorphIcon } from "~/components/MorphIcon";
 import { WizardHeader, WizardPanel, WizardSteps, WizardFooter } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { Switch } from "~/components/ui/switch";
@@ -388,13 +386,21 @@ function PlatformStatus(props: {
 }) {
   return (
     <div className={cn("flex gap-2", !props.compact && "rounded-card surface-panel px-3 py-2")}>
-      <MorphIcon
-        className={cn(
-          "mt-0.5 size-4 shrink-0",
-          props.status.ready ? "text-success-foreground" : "text-muted-foreground",
-        )}
-        icon={props.status.ready ? CheckGlyph : CircleAlert}
-      />
+      {props.status.ready ? (
+        <Check
+          className={cn(
+            "mt-0.5 size-4 shrink-0",
+            props.status.ready ? "text-success-foreground" : "text-muted-foreground",
+          )}
+        />
+      ) : (
+        <CircleAlert
+          className={cn(
+            "mt-0.5 size-4 shrink-0",
+            props.status.ready ? "text-success-foreground" : "text-muted-foreground",
+          )}
+        />
+      )}
       <div className={cn(props.compact && props.status.ready && "flex items-center gap-2")}>
         <p className="font-medium">{props.platform}</p>
         <p className="text-xs text-muted-foreground">
