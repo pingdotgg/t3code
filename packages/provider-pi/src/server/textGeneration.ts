@@ -8,7 +8,7 @@ import { TextGenerationError } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import type { PiSettings } from "../settings.ts";
 
-import { makePiRpcConnection, parsePiModelSlug, piRecordString } from "./rpc.ts";
+import { makePiRpcConnection, piRecordField, piRecordString, resolvePiModelSlug } from "./rpc.ts";
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
@@ -62,7 +62,10 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
 
       if (modelSelection.model !== "default") {
         // Reject unusable custom slugs; silently using Pi's default would misreport the requested model.
-        const parsed = parsePiModelSlug(modelSelection.model);
+        const inventory = yield* connection
+          .request({ type: "get_available_models" })
+          .pipe(Effect.orElseSucceed(() => undefined));
+        const parsed = resolvePiModelSlug(modelSelection.model, piRecordField(inventory, "models"));
         if (parsed === null) {
           return yield* new TextGenerationError({
             operation,
