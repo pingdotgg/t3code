@@ -3827,19 +3827,26 @@ export const make = Effect.gen(function* () {
     const checks = yield* selectChecks(project, input, "rerunChecks");
     if (checks.length === 0) return [];
     const ref = yield* canonicalRef(input);
-    const outcomes = yield* rerun({
+    // A failure can follow a run that already restarted, so readers refresh either way.
+    return yield* rerun({
       cwd: project.project.workspaceRoot,
       repository: project.repository,
       host: project.host,
       checks,
     }).pipe(
       Effect.mapError(toPullRequestError("rerunChecks")),
-      Effect.ensuring(readCache.invalidate(refScope(ref))),
+      Effect.ensuring(
+        readCache.invalidate(refScope(ref)).pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              bumpRefEpoch(ref);
+              listingsEpoch = ++epochCounter;
+              return SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
+            }),
+          ),
+        ),
+      ),
     );
-    bumpRefEpoch(ref);
-    listingsEpoch = ++epochCounter;
-    yield* SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
-    return outcomes;
   });
 
   const runActionAndInvalidate: PullRequestService["Service"]["runAction"] = Effect.fn(

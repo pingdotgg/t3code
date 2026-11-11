@@ -1458,9 +1458,13 @@ export const t3Default = (
       const number =
         typeof input.number === "number" ? input.number : branchPullRequest(sample).number;
       const world = worldPullRequests(sample).find((pr) => Number(pr.number) === number);
+      // Selects as PullRequestService does: a name ignoring case, else every failed check.
+      const named = typeof input.check === "string" ? input.check.trim().toLowerCase() : null;
       const checks = (Array.isArray(world?.checks) ? world.checks.filter(isRecord) : []).filter(
         (check) =>
-          typeof input.check === "string" ? check.name === input.check : check.state === "fail",
+          named === null
+            ? check.state === "fail" || check.state === "cancelled"
+            : valueText(check.name).toLowerCase() === named,
       );
       return {
         ...pullRequest(sample.repo, { number }),

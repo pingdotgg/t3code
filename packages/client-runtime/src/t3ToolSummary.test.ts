@@ -94,6 +94,9 @@ describe("summarizeT3ToolCalls", () => {
       label: "Could not re-run 1 check",
       failedCount: 1,
     });
+    expect(summarizeT3ToolCalls("ci-rerun", [rerun()]).label).toBe(
+      "Found no failed checks to re-run",
+    );
   });
 
   it("excludes failed and unfinished sends even if the provider reports completed", () => {

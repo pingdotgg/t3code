@@ -518,7 +518,10 @@ export function summarizeT3ToolCalls(
       const refused = outcomes.length - rerun;
       failedCount += refused;
       if (outcomes.length === 0) {
-        label = phrase("Re-ran", "re-run", `CI ${times}`);
+        // An empty list means no check had failed, so nothing was asked of the host.
+        label = selected.some((call) => Array.isArray(call.output?.checks))
+          ? phrase("Found", "re-run", "no failed checks to re-run")
+          : phrase("Re-ran", "re-run", `CI ${times}`);
       } else if (rerun === 0) {
         label = `Could not re-run ${quantity(refused, "check")}`;
       } else {

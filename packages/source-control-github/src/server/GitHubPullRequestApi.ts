@@ -816,6 +816,18 @@ const NOT_A_JOB = "This check is not a GitHub Actions job, so GitHub cannot re-r
 const decodeActionsJob = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Struct({ run_id: Schema.Number })),
 );
+const decodeRunJobs = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      jobs: Schema.Array(
+        Schema.Struct({ id: Schema.Number, conclusion: Schema.NullOr(Schema.String) }),
+      ),
+    }),
+  ),
+);
+const FAILED_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out", "startup_failure"]);
+const ONE_JOB_AT_A_TIME =
+  "GitHub re-runs one job of a run at a time. Re-run this one after the other finishes.";
 
 interface LocatedCheckJob {
   readonly check: ProviderCheckReference;
@@ -2884,38 +2896,66 @@ export const make = Effect.gen(function* () {
         },
         { concurrency: 4 },
       );
-      // GitHub refuses a second job re-run while the run re-runs, so a run's failed jobs go together.
+      // GitHub refuses a second job re-run while the run re-runs, so a run's jobs go together.
       const byRun = new Map<number, Array<LocatedCheckJob>>();
       for (const entry of located) {
         if (entry.runId === null) continue;
         byRun.set(entry.runId, [...(byRun.get(entry.runId) ?? []), entry]);
       }
-      const outcomes = new Map<number, string | null>();
+      const post = (path: string) =>
+        api.rest({ host: input.host, operation: "rerunChecks", method: "POST", path }).pipe(
+          Effect.as<string | null>(null),
+          Effect.catchTags({
+            GitHubApiNotFoundError: (error) => Effect.succeed(error.message),
+            GitHubApiResponseError: (error) => Effect.succeed(error.message),
+          }),
+        );
+      const failedJobsOf = (runId: number) =>
+        api
+          .rest({
+            host: input.host,
+            operation: "readRunJobs",
+            path: `${root}/runs/${runId}/jobs?filter=latest&per_page=100`,
+          })
+          .pipe(
+            Effect.flatMap((response) => decodeRunJobs(response.body)),
+            Effect.map(
+              ({ jobs }) =>
+                new Set(
+                  jobs
+                    .filter((job) => FAILED_CONCLUSIONS.has(job.conclusion ?? ""))
+                    .map((job) => String(job.id)),
+                ),
+            ),
+            Effect.catchTags({
+              GitHubApiNotFoundError: () => Effect.succeed(new Set<string>()),
+              GitHubApiResponseError: () => Effect.succeed(new Set<string>()),
+              SchemaError: () => Effect.succeed(new Set<string>()),
+            }),
+          );
+      const outcomes = new Map<string | null, string | null>();
       yield* Effect.forEach(
         byRun,
         ([runId, jobs]) =>
-          api
-            .rest({
-              host: input.host,
-              operation: "rerunChecks",
-              method: "POST",
-              path:
-                jobs.length === 1
-                  ? `${root}/jobs/${jobs[0]!.jobId}/rerun`
-                  : `${root}/runs/${runId}/rerun-failed-jobs`,
-            })
-            .pipe(
-              Effect.as<string | null>(null),
-              Effect.catchTags({
-                GitHubApiNotFoundError: (error) => Effect.succeed(error.message),
-                GitHubApiResponseError: (error) => Effect.succeed(error.message),
-              }),
-              Effect.map((detail) => outcomes.set(runId, detail)),
-            ),
+          Effect.gen(function* () {
+            const [first, ...rest] = jobs;
+            if (first === undefined) return;
+            if (rest.length > 0) {
+              // Re-running a run's failed jobs fits only when they are exactly the selection.
+              const failed = yield* failedJobsOf(runId);
+              if (failed.size === jobs.length && jobs.every((job) => failed.has(job.jobId ?? ""))) {
+                const detail = yield* post(`${root}/runs/${runId}/rerun-failed-jobs`);
+                for (const job of jobs) outcomes.set(job.jobId, detail);
+                return;
+              }
+            }
+            outcomes.set(first.jobId, yield* post(`${root}/jobs/${first.jobId}/rerun`));
+            for (const job of rest) outcomes.set(job.jobId, ONE_JOB_AT_A_TIME);
+          }),
         { concurrency: 2, discard: true },
       );
-      return located.map(({ check, runId, detail }) => {
-        const outcome = runId === null ? detail : (outcomes.get(runId) ?? null);
+      return located.map(({ check, jobId, runId, detail }) => {
+        const outcome = runId === null ? detail : (outcomes.get(jobId) ?? null);
         return { name: check.name, rerun: runId !== null && outcome === null, detail: outcome };
       });
     }),

@@ -815,6 +815,35 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
     [5, "merged"],
     [6, "open"],
   ]);
+  const ciSample = makeSample(
+    {
+      ...childCase,
+      setup: {
+        ...childCase.setup,
+        world: {
+          ...childCase.setup.world,
+          prs: [
+            {
+              number: 7,
+              checks: [
+                { name: "Test", state: "pass" },
+                { name: "Lint", state: "cancelled" },
+              ],
+            },
+          ],
+        },
+      },
+    },
+    base,
+  );
+  const ciNames = (input: Record<string, unknown>) =>
+    (
+      t3Default(ciSample, "ci_logs", { number: 7, ...input }) as {
+        checks: Array<{ name: string }>;
+      }
+    ).checks.map((check) => check.name);
+  assert.deepEqual(ciNames({ check: " test " }), ["Test"]);
+  assert.deepEqual(ciNames({}), ["Lint"]);
   const read: Readonly<Record<string, unknown>> = t3Default(sample, "pull_request_read", {
     number: 5,
     sections: ["summary", "diff", "conversation"],

@@ -798,11 +798,24 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("tails Actions job logs and re-runs a run's failed jobs together", () =>
     Effect.gen(function* () {
-      const runOf: Record<string, number> = { "11": 10, "12": 10, "21": 20 };
+      const runOf: Record<string, number> = { "11": 10, "12": 10, "21": 20, "41": 40, "42": 40 };
+      const runJobs: Record<string, Array<{ id: number; conclusion: string }>> = {
+        "10": [
+          { id: 11, conclusion: "failure" },
+          { id: 12, conclusion: "cancelled" },
+        ],
+        // 41 passed and is asked for by name; 43 failed but was not selected.
+        "40": [
+          { id: 41, conclusion: "success" },
+          { id: 42, conclusion: "failure" },
+          { id: 43, conclusion: "failure" },
+        ],
+      };
       mockedExecute.mockImplementation((call) => {
         if (call.kind !== "rest") return Effect.succeed(output("{}"));
         const log = /actions\/jobs\/(\d+)\/logs$/.exec(call.path);
         if (log?.[1] === "13") return Effect.succeed(output("one long line", true));
+        if (log?.[1] === "15") return Effect.succeed(output("x".repeat(100_000)));
         if (log?.[1] === "14") {
           return Effect.fail(
             new GitHubRequestPolicy.GitHubApiAuthenticationError({
@@ -814,6 +827,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         if (log) return Effect.succeed(output("setup\nbuild\nError: boom\n"));
         const job = /actions\/jobs\/(\d+)$/.exec(call.path);
         if (job) return Effect.succeed(output(encodeJson({ run_id: runOf[job[1]!] })));
+        const run = /actions\/runs\/(\d+)\/jobs\?/.exec(call.path);
+        if (run) return Effect.succeed(output(encodeJson({ jobs: runJobs[run[1]!] ?? [] })));
         return Effect.succeed(output("{}"));
       });
       const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
@@ -837,6 +852,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
         { log: "one long line", truncated: true },
       ]);
       const refused = yield* Effect.flip(api.readCheckLogs({ ...capped, checks: [job(14, 30)] }));
+      const [huge] = yield* api.readCheckLogs({ ...capped, checks: [job(15, 30)] });
+      expect(huge?.log?.length).toBe(32_000);
+      expect(huge?.truncated).toBe(true);
       expect(refused._tag).toBe("GitHubApiAuthenticationError");
 
       const reruns = yield* api.rerunChecks({
@@ -847,6 +865,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
           job(12, 10),
           { name: "solo", url: "https://github.com/octo/repo/runs/21" },
           external,
+          job(41, 40),
+          { name: "job 42", url: "https://github.com/octo/repo/actions/runs/40/jobs/42" },
         ],
       });
       expect(reruns.map(({ name, rerun }) => [name, rerun])).toEqual([
@@ -854,6 +874,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         ["job 12", true],
         ["solo", true],
         ["Vercel", false],
+        ["job 41", true],
+        ["job 42", false],
       ]);
       expect(
         mockedExecute.mock.calls.flatMap(([call]) =>
@@ -862,6 +884,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       ).toEqual([
         "repos/octo/repo/actions/runs/10/rerun-failed-jobs",
         "repos/octo/repo/actions/jobs/21/rerun",
+        "repos/octo/repo/actions/jobs/41/rerun",
       ]);
     }),
   );

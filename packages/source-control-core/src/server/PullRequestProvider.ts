@@ -215,11 +215,14 @@ export interface ProviderCheckRerun {
 export function gitHubActionsJobId(url: string | null): string | null {
   if (url === null) return null;
   return (
-    /\/actions\/runs\/\d+\/job\/(\d+)(?:[/?#]|$)/.exec(url)?.[1] ??
+    /\/runs\/\d+\/jobs?\/(\d+)(?:[/?#]|$)/.exec(url)?.[1] ??
     /^https:\/\/[^/]+\/[^/]+\/[^/]+\/runs\/(\d+)(?:[/?#]|$)/.exec(url)?.[1] ??
     null
   );
 }
+
+/** Keeps one minified or progress-bar line from filling the agent's context. */
+const LOG_TAIL_MAX_CHARS = 32_000;
 
 /** The last `lines` lines of a log, where a failure usually is. */
 export function tailLogLines(
@@ -227,9 +230,10 @@ export function tailLogLines(
   lines: number,
 ): { readonly log: string; readonly truncated: boolean } {
   const all = text.replace(/\n$/, "").split("\n");
-  return all.length <= lines
-    ? { log: all.join("\n"), truncated: false }
-    : { log: all.slice(-lines).join("\n"), truncated: true };
+  const log = all.slice(-lines).join("\n");
+  return log.length > LOG_TAIL_MAX_CHARS
+    ? { log: log.slice(-LOG_TAIL_MAX_CHARS), truncated: true }
+    : { log, truncated: all.length > lines };
 }
 
 export interface ProviderChangeRequestStat {
