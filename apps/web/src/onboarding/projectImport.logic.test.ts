@@ -56,6 +56,23 @@ describe("partitionOnboardingProjects", () => {
     });
   });
 
+  it("narrows the default selection to a shorter import window", () => {
+    const lastWeek = candidate("/projects/last-week", { lastActiveAt: "2026-08-17T12:00:00.000Z" });
+    const lastMonth = candidate("/projects/last-month", {
+      lastActiveAt: "2026-08-02T12:00:00.000Z",
+    });
+    const recentOf = (importWindowDays: number | null | undefined) =>
+      partitionOnboardingProjects(
+        [lastWeek, lastMonth].map((project) => ({ ...project, importWindowDays })),
+        now,
+      ).recent.map((project) => project.path);
+
+    expect(recentOf(7)).toEqual(["/projects/last-week"]);
+    expect(recentOf(90)).toEqual(["/projects/last-week", "/projects/last-month"]);
+    expect(recentOf(null)).toEqual(["/projects/last-week", "/projects/last-month"]);
+    expect(recentOf(undefined)).toEqual(["/projects/last-week", "/projects/last-month"]);
+  });
+
   it("keeps non-git folders and thin histories out of the default selection", () => {
     const repo = candidate("/projects/repo");
     const folder = candidate("/projects/folder", { git: null });

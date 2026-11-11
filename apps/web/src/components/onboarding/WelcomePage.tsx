@@ -1378,6 +1378,7 @@ function useProjectImport({
     importedThreadCount?: number,
   ) => Promise<boolean>;
 }) {
+  const { environments } = useEnvironments();
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
@@ -1406,6 +1407,9 @@ function useProjectImport({
         ...candidate,
         environmentId: scan.environmentId,
         key: onboardingProjectKey(scan.environmentId, candidate.path),
+        importWindowDays: environments.find(
+          (environment) => environment.environmentId === scan.environmentId,
+        )?.serverConfig?.settings.agentSessionImport.windowDays,
       })),
     ),
   );

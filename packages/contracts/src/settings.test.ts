@@ -115,6 +115,69 @@ describe("storage cleanup settings", () => {
   });
 });
 
+describe("agent session import settings", () => {
+  it("keeps the shipped import limits for existing installations", () => {
+    expect(decodeServerSettings({}).agentSessionImport).toEqual({
+      windowDays: 30,
+      conversationsPerRun: 100,
+      recordsPerConversation: 100_000,
+      messagesPerThread: 200,
+      scanBudgetMiB: 64,
+    });
+  });
+
+  it("keeps sibling limits when a stored group is partial", () => {
+    expect(
+      decodeServerSettings({ agentSessionImport: { windowDays: null, messagesPerThread: null } })
+        .agentSessionImport,
+    ).toEqual({
+      windowDays: null,
+      conversationsPerRun: 100,
+      recordsPerConversation: 100_000,
+      messagesPerThread: null,
+      scanBudgetMiB: 64,
+    });
+    expect(decodeServerSettingsPatch({ agentSessionImport: { scanBudgetMiB: 256 } })).toEqual({
+      agentSessionImport: { scanBudgetMiB: 256 },
+    });
+  });
+
+  it.each([
+    ["windowDays", 0],
+    ["windowDays", 3651],
+    ["windowDays", 1.5],
+    ["conversationsPerRun", 0],
+    ["conversationsPerRun", 5001],
+    ["conversationsPerRun", null],
+    ["recordsPerConversation", 999],
+    ["recordsPerConversation", 1_000_001],
+    ["messagesPerThread", 1],
+    ["messagesPerThread", 10_001],
+    ["scanBudgetMiB", 0],
+    ["scanBudgetMiB", 1025],
+    ["scanBudgetMiB", null],
+  ])("rejects %s = %s in patches and stores the default instead", (key, value) => {
+    expect(() => decodeServerSettingsPatch({ agentSessionImport: { [key]: value } })).toThrow();
+    expect(
+      decodeServerSettings({ agentSessionImport: { [key]: value } }).agentSessionImport,
+    ).toEqual(DEFAULT_SERVER_SETTINGS.agentSessionImport);
+  });
+
+  it("keeps the rest of a stored file when one import limit is out of range", () => {
+    const settings = decodeServerSettings({
+      addProjectBaseDirectory: "~/code",
+      agentSessionImport: { windowDays: null, conversationsPerRun: 250, scanBudgetMiB: 4096 },
+    });
+
+    expect(settings.addProjectBaseDirectory).toBe("~/code");
+    expect(settings.agentSessionImport).toEqual({
+      ...DEFAULT_SERVER_SETTINGS.agentSessionImport,
+      windowDays: null,
+      conversationsPerRun: 250,
+    });
+  });
+});
+
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
 
