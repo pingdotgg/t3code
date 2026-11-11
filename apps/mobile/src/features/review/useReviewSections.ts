@@ -73,7 +73,16 @@ export function useReviewSections(input: {
       (repo) =>
         repositoryChoice?.threadKey === reviewCache.threadKey && repo.cwd === repositoryChoice.cwd,
     ) ?? repositories[0];
-  const reviewCwd = selectedRepository?.path ? selectedRepository.cwd : selectedThreadCwd;
+  // A chosen child stays unresolved while discovery has no answer, so its review never shows the parent.
+  const repositoryUnresolved =
+    repositoryChoice?.threadKey === reviewCache.threadKey &&
+    repositoryChoice.cwd !== selectedThreadCwd &&
+    !repositoriesQuery.data;
+  const reviewCwd = repositoryUnresolved
+    ? null
+    : selectedRepository?.path
+      ? selectedRepository.cwd
+      : selectedThreadCwd;
   const repositoryPath = selectedRepository?.path ?? "";
   const diffPreview = useEnvironmentQuery(
     canReadFiles && enabled && environmentId !== undefined && reviewCwd !== null
@@ -179,6 +188,7 @@ export function useReviewSections(input: {
     reviewCwd: selectedSection?.kind === "turn" ? selectedThreadCwd : reviewCwd,
     repositoryPath: selectedSection?.kind === "turn" ? "" : repositoryPath,
     error:
+      (repositoryUnresolved && selectedSection?.kind !== "turn" ? repositoriesQuery.error : null) ??
       diffPreview.error ??
       activeTurnDiff.error ??
       (selectedSection === null && !fileAccess.isPending && !canReadFiles

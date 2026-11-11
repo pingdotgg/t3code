@@ -295,9 +295,13 @@ export default function DiffPanel({
     repositoryMissing && isRepositoryDiff
       ? { kind: "branch" as const, baseRef: null }
       : storedDiffSelection;
-  const repositoryPending =
-    !!requestedRepositoryCwd && repositoriesQuery.isPending && !repositoriesQuery.data;
-  const repositoryCwd = repositoryPending
+  // A saved child stays unresolved until discovery answers; the thread's repository needs no answer.
+  const repositoryUnresolved =
+    !!requestedRepositoryCwd && requestedRepositoryCwd !== workspaceCwd && !repositoriesQuery.data;
+  const repositoryPending = repositoryUnresolved && repositoriesQuery.isPending;
+  const repositoryError =
+    repositoryUnresolved && !repositoriesQuery.isPending ? repositoriesQuery.error : null;
+  const repositoryCwd = repositoryUnresolved
     ? undefined
     : selectedRepository?.path
       ? selectedRepository.cwd
@@ -551,7 +555,7 @@ export default function DiffPanel({
     ? toolCallDetail.error
     : selectedTurn
       ? activeCheckpointDiff.error
-      : branchDiffPreview.error;
+      : (repositoryError ?? branchDiffPreview.error);
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges =
     hasResolvedPatch &&
@@ -1452,6 +1456,15 @@ export default function DiffPanel({
             {selectedPatchError && !renderablePatch && (
               <div className="px-3">
                 <p className="mb-2 text-2xs text-error/80">{selectedPatchError}</p>
+                {isGitSelection && repositoryError && routeThreadRef && (
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    onClick={() => useDiffPanelStore.getState().clearRepository(routeThreadRef)}
+                  >
+                    Review the thread's repository
+                  </Button>
+                )}
               </div>
             )}
             {!renderablePatch && toolCallPreview && toolCallPreview.content.length > 0 ? (
