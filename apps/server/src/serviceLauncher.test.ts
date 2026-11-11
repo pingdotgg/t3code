@@ -27,6 +27,7 @@ import {
   readServiceEnvironment,
   type BackupSpaceProbe,
   readServiceState,
+  registerServiceTask,
   serviceLauncherIsRunning,
   serviceLauncherLockPath,
   writeServiceState,
@@ -35,6 +36,7 @@ import {
   compareExactServiceVersions,
   decodeServiceState,
   isExactServiceVersion,
+  disabledServiceTask,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
@@ -227,6 +229,77 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           EMPTY: "",
         });
       }),
+  );
+
+  it.effect("registers its task again without enabling one the CLI disabled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-task-" });
+      const unitPath = path.join(root, "t3code-task.xml");
+      const unit = renderBootServiceTask(unitPlan(root, "1.1.0"), {
+        userId: "PC\\theo",
+        homeDir: "C:\\Users\\theo",
+        conhostPath: "conhost.exe",
+      });
+      yield* fs.writeFileString(unitPath, unit);
+      // Task Scheduler's copy: `t3 doctor` disabled it to keep the service stopped.
+      let task = disabledServiceTask(unit.replace("1.1.0", "1.0.0"));
+      const schtasks = async (...args: ReadonlyArray<string>) => {
+        if (args[0] === "/Create") task = await NodeFSP.readFile(args[2] ?? "", "utf8");
+        return { stdout: task };
+      };
+
+      yield* Effect.promise(() => registerServiceTask(unitPath, "t3code-PC-theo", schtasks));
+      assert.equal(task, disabledServiceTask(unit));
+      assert.deepEqual(yield* fs.readDirectory(root), ["t3code-task.xml"]);
+
+      task = unit.replace("1.1.0", "1.0.0");
+      yield* Effect.promise(() => registerServiceTask(unitPath, "t3code-PC-theo", schtasks));
+      assert.equal(task, unit);
+    }),
+  );
+
+  it.effect("finds its unit through the manager's environment, not service.env", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-unit-" });
+      const home = path.join(root, "home");
+      const unitPath = path.join(home, "Library", "LaunchAgents", "t3code.plist");
+      const render = (version: string) =>
+        renderBootServicePlist(unitPlan(root, version), { homeDir: home, environmentPath: "" });
+      yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
+      yield* fs.writeFileString(unitPath, render("1.0.0"));
+      // The server may run with another HOME; the launch agent still lives in the manager's.
+      yield* fs.writeFileString(path.join(root, SERVICE_ENV_FILE), "HOME=/elsewhere\n");
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.1.0"),
+        "process.exit(0);\n",
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(path.join(root, "runtime", "service-state.json"), {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.1.0",
+          update: {
+            id: "update-1",
+            fromVersion: "1.0.0",
+            targetVersion: "1.1.0",
+            status: "committed",
+          },
+        }),
+      );
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("T3_BOOT_SERVICE_UNIT", "t3code.plist");
+
+      yield* Effect.promise(() =>
+        expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
+      );
+
+      assert.equal(yield* fs.readFileString(unitPath), render("1.1.0"));
+    }),
   );
 
   it.effect("adopts a legacy install record without rewriting it", () =>

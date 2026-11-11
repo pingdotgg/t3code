@@ -35,6 +35,11 @@ reads as stopped at once, and `/Run` then starts a second launcher beside the fi
 Windows launcher holds a lock file for as long as it runs. A replacement waits for that lock,
 and the CLI treats its release as the stop having finished.
 
+Task Scheduler also runs its own copy of the task, and registering one enables it. So every
+write of the task file registers it, including an install that defers its restart. The CLI
+disables the task under the unit lease, and a registration under that lease keeps a disabled
+task disabled, so the repeating trigger cannot restart a service the CLI is holding stopped.
+
 ## Commit boundary
 
 The launcher durably records the pending update before acknowledging it, then

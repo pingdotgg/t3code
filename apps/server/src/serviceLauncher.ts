@@ -22,6 +22,7 @@ import {
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
   parseLegacyServiceState,
+  disabledServiceTask,
   parseServiceState,
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf,
@@ -85,17 +86,34 @@ export interface ServiceUnit {
   readonly reload: () => Promise<void>;
 }
 
-// Registering replaces the task, so one the CLI disabled to keep the service stopped stays disabled.
-async function registerServiceTask(unitPath: string, taskName: string): Promise<void> {
-  const schtasks = (...args: ReadonlyArray<string>) =>
-    NodeUtil.promisify(NodeChildProcess.execFile)("schtasks", args, {
-      windowsHide: true,
-      timeout: 30_000,
-    });
+const runSchtasks = (...args: ReadonlyArray<string>) =>
+  NodeUtil.promisify(NodeChildProcess.execFile)("schtasks", args, {
+    windowsHide: true,
+    timeout: 30_000,
+  });
+
+/**
+ * Registering replaces the task, so one the CLI disabled to keep the service stopped is
+ * registered disabled. The caller holds the unit lease, as the CLI does to disable it.
+ */
+export async function registerServiceTask(
+  unitPath: string,
+  taskName: string,
+  schtasks: (...args: ReadonlyArray<string>) => Promise<{ readonly stdout: string }> = runSchtasks,
+): Promise<void> {
+  const register = (xmlPath: string) => schtasks("/Create", "/XML", xmlPath, "/TN", taskName, "/F");
   const registered = await schtasks("/Query", "/TN", taskName, "/XML");
-  await schtasks("/Create", "/XML", unitPath, "/TN", taskName, "/F");
-  if (serviceTaskIsDisabled(registered.stdout)) {
-    await schtasks("/Change", "/TN", taskName, "/DISABLE");
+  if (!serviceTaskIsDisabled(registered.stdout)) {
+    await register(unitPath);
+    return;
+  }
+  const disabledPath = `${unitPath}.${process.pid}.disabled`;
+  try {
+    const unit = await NodeFSP.readFile(unitPath, "utf8");
+    await NodeFSP.writeFile(disabledPath, disabledServiceTask(unit));
+    await register(disabledPath);
+  } finally {
+    await NodeFSP.rm(disabledPath, { force: true });
   }
 }
 
@@ -1245,11 +1263,14 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const windows = process.platform === "win32";
   try {
-    const environment = await readServiceEnvironment(baseDir, {
+    // What the service manager started the launcher with. It locates the unit; service.env
+    // changes only what the server gets.
+    const managerEnvironment = {
       ...process.env,
       T3CODE_HOME: baseDir,
-      ...(options.serviceUnit === undefined ? {} : { T3_BOOT_SERVICE_UNIT: options.serviceUnit }),
-    });
+      ...(options.serviceUnit === undefined ? {} : { [SERVICE_UNIT_ENV]: options.serviceUnit }),
+    };
+    const environment = await readServiceEnvironment(baseDir, managerEnvironment);
     const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     const contents = await NodeFSP.readFile(statePath, "utf8");
     let state = parseServiceState(contents);
@@ -1260,7 +1281,7 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
         throw new Error(`Selected t3@${state.activeVersion} runtime is missing or incomplete.`);
       }
     }
-    const serviceUnit = serviceUnitFromEnvironment(environment);
+    const serviceUnit = serviceUnitFromEnvironment(managerEnvironment);
     const launcher = new Launcher(baseDir, state, {
       environment,
       ...(serviceUnit === undefined ? {} : { serviceUnit }),

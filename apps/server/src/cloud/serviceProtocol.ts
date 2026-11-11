@@ -33,6 +33,12 @@ const unquoteWindowsArgument = (raw: string) =>
 export const serviceTaskIsDisabled = (taskXml: string): boolean =>
   /<Settings>[\s\S]*?<\/Settings>/.exec(taskXml)?.[0].includes("<Enabled>false</Enabled>") === true;
 
+/** A task as Task Scheduler should hold it while its service must stay stopped. */
+export const disabledServiceTask = (taskXml: string): string =>
+  serviceTaskIsDisabled(taskXml)
+    ? taskXml
+    : taskXml.replace("  </Settings>", "    <Enabled>false</Enabled>\n  </Settings>");
+
 export function serviceUnitBaseDirOf(contents: string): string | undefined {
   const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
   if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
