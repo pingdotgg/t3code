@@ -10734,6 +10734,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "unawait",
     "query-closed",
     "wake-discarded",
+    "wake-discarded-late-completion",
     "task-stopped",
   ] as const)(
     "holds only the background tasks the agent marks awaited through their wake: %s",
@@ -10860,14 +10861,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
           yield* harness.offerAndWait(wakeTurnInit);
           const continuation = yield* Queue.take(harness.continuationReceipts);
-          if (order === "wake-discarded") {
+          if (order === "wake-discarded-late-completion") {
+            yield* awaitBackgroundTasks({
+              providerThread: harness.providerThread,
+              taskIds: ["dev-server"],
+              awaited: true,
+            });
+            yield* Queue.take(harness.providerThreadReceipts);
+            yield* harness.offerAndWait(roster([], "00000000-0000-4000-8000-000000000305"));
+            yield* Queue.take(harness.providerThreadReceipts);
+            assert.lengthOf(harness.continuationRequests, 1);
+          }
+          if (order === "wake-discarded" || order === "wake-discarded-late-completion") {
             if (continuation.clearIfCurrent === undefined) {
               return yield* Effect.die("An awaited wake must release its hold when discarded.");
             }
             yield* continuation.clearIfCurrent();
-            assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 1)), [
-              ["dev-server", false],
-            ]);
+            const remaining = yield* Queue.take(harness.providerThreadReceipts);
+            assert.deepStrictEqual(
+              marks(remaining.providerThread.pendingBackgroundTasks ?? []),
+              order === "wake-discarded-late-completion" ? [] : [["dev-server", false]],
+            );
             return;
           }
           yield* harness.runtime.startTurn(

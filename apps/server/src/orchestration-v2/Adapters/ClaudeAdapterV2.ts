@@ -8944,7 +8944,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
           });
-          const held = new Map(awaitedCompletionsByNativeThread.get(wakeInput.nativeThreadId));
+          const held = awaitedCompletionsByNativeThread.get(wakeInput.nativeThreadId) ?? new Map();
+          awaitedCompletionsByNativeThread.set(wakeInput.nativeThreadId, held);
           yield* continuationRequests.offer({
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
@@ -8955,10 +8956,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               sdkMessageLock.withPermits(1)(
                 Effect.gen(function* () {
                   const current = awaitedCompletionsByNativeThread.get(wakeInput.nativeThreadId);
-                  for (const [taskId, task] of held) {
-                    if (current?.get(taskId) === task) current.delete(taskId);
-                  }
-                  if (held.size > 0) {
+                  if (current === held) {
+                    awaitedCompletionsByNativeThread.delete(wakeInput.nativeThreadId);
                     const active = yield* Ref.get(activeTurn);
                     yield* emitRosterUpdate(
                       wakeInput.nativeThreadId,
