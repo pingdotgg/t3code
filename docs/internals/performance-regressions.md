@@ -68,8 +68,11 @@ fixtures exclude unrelated settings calls and subscription events. Payload budge
 these tests so regressions fail locally. The transfer budget integration test
 (`apps/server/integration/transferBudgetV2.integration.test.ts`) sends the opt-ins current clients
 send and caps the decoded bytes and rows of the bounded snapshot and one older page for a 900-row
-agent turn, and of the cold-connect shell for a sidebar of settled threads and idle subagents. When
-clients gain an opt-in, add it to the test's client queries and give a fixture the data it saves.
+agent turn, and of the cold-connect shell for a sidebar of settled threads and idle subagents. It
+also caps the bytes and the node, subagent, plan, provider turn and checkpoint counts of the
+bounded snapshot for a thread of 40 finished runs behind one working run, so finished runs cannot
+ride along with a window. When clients gain an opt-in, add it to the test's client queries and give
+a fixture the data it saves.
 
 ## Event store and startup
 
