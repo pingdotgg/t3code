@@ -1341,13 +1341,18 @@ const ConversationTimeline = memo(function ConversationTimeline({
       ? observeResize(scrollNode, keepEndOnViewportResize)
       : undefined;
     const viewport = scrollNode
-      ? attachTimelineViewport(scrollNode, (frame) => {
-          const rowId = frame.closest<HTMLElement>("[data-timeline-row-id]")?.dataset.timelineRowId;
-          if (rowId && list) {
-            list.cancelScroll();
-            list.anchorVisibleContent({ key: rowId });
-          }
-        }, () => layoutPaneFocusedRef.current)
+      ? attachTimelineViewport(
+          scrollNode,
+          (frame) => {
+            const rowId =
+              frame.closest<HTMLElement>("[data-timeline-row-id]")?.dataset.timelineRowId;
+            if (rowId && list) {
+              list.cancelScroll();
+              list.anchorVisibleContent({ key: rowId });
+            }
+          },
+          () => layoutPaneFocusedRef.current,
+        )
       : null;
     viewportRef.current = viewport;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;

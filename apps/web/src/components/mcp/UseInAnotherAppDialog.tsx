@@ -157,7 +157,6 @@ function Wizard({
                 <AccessOption
                   key={level}
                   access={level}
-                  selected={level === access}
                   disabledReason={levels.get(level)}
                   description={
                     level === "full-access" ? "Runs commands and edits files without asking" : null
