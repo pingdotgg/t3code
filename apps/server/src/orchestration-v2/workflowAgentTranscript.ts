@@ -1,11 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/**
- * A workflow member never becomes a provider task and the CLI forwards none of
- * its messages, so the transcript the harness writes is the only record of its
- * conversation. The path is derived here from the run's transcript directory
- * and the member's provider id rather than accepted from the caller, and the
- * read itself is contained by readContainedWorkflowFile.
- */
+/** Workflow members appear only in transcripts, not provider events. */
 import * as NodePath from "node:path";
 
 import { OrchestrationWorkflowFileError } from "@t3tools/contracts";
@@ -33,7 +27,6 @@ export const initialWorkflowAgentTranscriptCursor: WorkflowAgentTranscriptCursor
   identity: null,
 };
 
-/** Sees every transcript read: where it started and ended, and how many lines it kept. */
 export const WorkflowAgentTranscriptReadObserver = Context.Reference<
   (read: {
     readonly agentId: string;
@@ -45,11 +38,7 @@ export const WorkflowAgentTranscriptReadObserver = Context.Reference<
   defaultValue: () => () => Effect.void,
 });
 
-/**
- * Conversation lines only: `attachment` lines and `isMeta` user lines are
- * harness bookkeeping (hook output, skill listings, injected context), and a
- * line without a uuid cannot be projected idempotently.
- */
+/** Skip harness bookkeeping (attachment and isMeta user lines) and lines without uuids needed for idempotent projection. */
 function parseWorkflowAgentTranscriptLines(contents: string): ReadonlyArray<unknown> {
   return contents.split("\n").flatMap((line) => {
     if (line.trim().length === 0) return [];
@@ -92,7 +81,6 @@ export const readWorkflowAgentTranscript = Effect.fn("orchestration.readWorkflow
     return {
       lines,
       cursor: { offset: file.endOffset, identity: file.identity },
-      // More complete lines may follow past the per-read cap.
       truncated: file.truncated,
     };
   },
