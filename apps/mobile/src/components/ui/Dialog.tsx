@@ -3,38 +3,19 @@ import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.type
 
 export type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
 
-type PendingDialogCancel = () => void;
-
-let pendingDialogCancel: PendingDialogCancel | undefined;
-
-function replacePendingDialogCancel(next: PendingDialogCancel | undefined) {
-  const previous = pendingDialogCancel;
-  pendingDialogCancel = next;
-  if (previous === undefined) return;
-  // Defer so a cancel handler that opens another dialog replaces `next` cleanly.
-  queueMicrotask(() => {
-    if (pendingDialogCancel === previous) return;
-    previous();
-  });
-}
-
-/** Tracks cancel for the active confirm/prompt; calling it is idempotent. */
 function beginTrackedDialog(onCancel: (() => void) | undefined) {
   let finished = false;
   const finish = (action?: () => void) => {
     if (finished) return;
     finished = true;
-    if (pendingDialogCancel === cancel) pendingDialogCancel = undefined;
     action?.();
   };
   const cancel = () => finish(onCancel);
   const complete = (action: () => void) => finish(action);
-  replacePendingDialogCancel(cancel);
   return { cancel, complete };
 }
 
 export function alert(...args: Parameters<typeof Alert.alert>): void {
-  replacePendingDialogCancel(undefined);
   Alert.alert(...args);
 }
 
