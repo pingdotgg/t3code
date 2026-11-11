@@ -1,13 +1,20 @@
 #!/bin/sh
-# Creates the relay's cloud-mint signing key pair (Ed25519). Run once and keep the private key.
+# Creates the relay's cloud-mint signing key pair (Ed25519), keeping a private key that exists.
 set -eu
 dir="$(dirname "$0")/secrets"
 mkdir -p "$dir"
-if [ -f "$dir/cloud-mint-private.pem" ]; then
-  echo "Keys already exist in $dir; not overwriting them."
-  exit 0
+private="$dir/cloud-mint-private.pem"
+if [ -f "$private" ]; then
+  echo "Keeping the existing $private."
+else
+  (umask 077 && openssl genpkey -algorithm ed25519 -out "$private")
 fi
-openssl genpkey -algorithm ed25519 -out "$dir/cloud-mint-private.pem"
-openssl pkey -in "$dir/cloud-mint-private.pem" -pubout -out "$dir/cloud-mint-public.pem"
-chmod 600 "$dir/cloud-mint-private.pem"
-echo "Wrote $dir/cloud-mint-private.pem and $dir/cloud-mint-public.pem"
+# Derived every run, so a missing or partial public key is repaired.
+openssl pkey -in "$private" -pubout -out "$dir/cloud-mint-public.pem"
+# Compose mounts secret files with their host owner, and the relay runs as the image's node user.
+if [ "$(id -u)" = 0 ]; then
+  chown 1000:1000 "$private"
+elif [ "$(id -u)" != 1000 ]; then
+  echo "The relay reads $private as uid 1000. Run: sudo chown 1000 $private" >&2
+fi
+echo "Keys are in $dir"

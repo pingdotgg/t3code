@@ -198,28 +198,23 @@ export function createOidcController(deps: OidcControllerDeps) {
         publish(null);
         return null;
       }
-      try {
-        const tokens = await refreshOidcTokens({
-          metadata: await metadata(),
-          clientId: deps.config.clientId,
-          refreshToken: current.refreshToken,
-          fetch: fetchImpl,
-        });
-        // A sign-out, or another sign-in, while the request was out wins over its answer.
-        const latest = readSession();
-        if (latest?.refreshToken !== current.refreshToken) {
-          publish(latest);
-          return latest?.idToken ?? null;
-        }
-        publish(toStored(tokens));
-        return tokens.idToken;
-      } catch (error) {
-        if (isPermanentRefreshFailure(error)) {
-          publish(null);
-          return null;
-        }
+      const tokens = await refreshOidcTokens({
+        metadata: await metadata(),
+        clientId: deps.config.clientId,
+        refreshToken: current.refreshToken,
+        fetch: fetchImpl,
+      }).catch((error: unknown) => {
+        if (isPermanentRefreshFailure(error)) return null;
         throw error;
+      });
+      // A sign-out, or another sign-in, while the request was out wins over its answer.
+      const latest = readSession();
+      if (latest?.refreshToken !== current.refreshToken) {
+        publish(latest);
+        return latest?.idToken ?? null;
       }
+      publish(tokens === null ? null : toStored(tokens));
+      return tokens?.idToken ?? null;
     }).finally(() => {
       refreshing = null;
     });

@@ -30,6 +30,8 @@ interface Channel {
   readonly sockets: Map<number, Queue.Queue<SocketFrame>>;
   /** Completed when a reconnect takes this channel's place. */
   readonly replaced: Deferred.Deferred<void>;
+  /** Completed once the channel's socket is gone. */
+  readonly ended: Deferred.Deferred<void>;
   /** Rechecks since the environment last sent a frame. */
   quietChecks: number;
 }
@@ -159,11 +161,17 @@ export const makeRelayChannels = () => {
     const socket = yield* request.upgrade;
     const writer = yield* socket.writer;
     const reader = yield* socket.reader;
+    const socketEnded = yield* Deferred.make<void>();
     const channel: Channel = {
-      send: (frame) => writer.write(JSON.stringify(frame)).pipe(Effect.ignore),
+      // Once the socket closes, a write waits for it to reopen, which never happens.
+      send: (frame) =>
+        writer
+          .write(JSON.stringify(frame))
+          .pipe(Effect.raceFirst(Deferred.await(socketEnded)), Effect.ignore),
       responses: new Map(),
       sockets: new Map(),
       replaced: yield* Deferred.make<void>(),
+      ended: socketEnded,
       quietChecks: 0,
     };
     const previous = channels.get(key);
@@ -174,14 +182,8 @@ export const makeRelayChannels = () => {
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         if (channels.get(key) === channel) channels.delete(key);
-        for (const [id, response] of channel.responses) {
-          yield* Deferred.succeed(response, {
-            type: "http-response",
-            id,
-            status: 502,
-            headers: {},
-          });
-        }
+        // Pending requests answer 502, and sends stop waiting on the closed socket.
+        yield* Deferred.succeed(socketEnded, undefined);
         for (const [id, inbox] of channel.sockets) {
           yield* Queue.offer(inbox, { type: "ws-close", id, code: 1012 });
         }
@@ -246,18 +248,23 @@ export const makeRelayChannels = () => {
     const id = ++nextId;
     const response = yield* Deferred.make<HttpResponseFrame>();
     channel.responses.set(id, response);
-    yield* channel.send({
-      type: "http-request",
-      id,
-      method: request.method,
-      path: target.path,
-      headers: forwardedHeaders(request, target),
-      ...(body.value.byteLength > 0 ? { body: Buffer.from(body.value).toString("base64") } : {}),
-    });
-    const result = yield* Deferred.await(response).pipe(
-      Effect.timeoutOption(RELAY_CHANNEL_RESPONSE_TIMEOUT_MS),
-      Effect.ensuring(Effect.sync(() => channel.responses.delete(id))),
+    const channelEnded = Deferred.await(channel.ended).pipe(
+      Effect.as<HttpResponseFrame>({ type: "http-response", id, status: 502, headers: {} }),
     );
+    const result = yield* channel
+      .send({
+        type: "http-request",
+        id,
+        method: request.method,
+        path: target.path,
+        headers: forwardedHeaders(request, target),
+        ...(body.value.byteLength > 0 ? { body: Buffer.from(body.value).toString("base64") } : {}),
+      })
+      .pipe(
+        Effect.andThen(Effect.raceFirst(Deferred.await(response), channelEnded)),
+        Effect.timeoutOption(RELAY_CHANNEL_RESPONSE_TIMEOUT_MS),
+        Effect.ensuring(Effect.sync(() => channel.responses.delete(id))),
+      );
     if (Option.isNone(result)) {
       return HttpServerResponse.text("The environment did not answer in time.", { status: 504 });
     }

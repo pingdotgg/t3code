@@ -2,7 +2,7 @@ import {
   discoverSelfHostedRelay,
   type SelfHostedRelay,
 } from "@t3tools/client-runtime/relay/self-hosted";
-import * as Updates from "expo-updates";
+import { reloadAppAsync } from "expo";
 import { useState } from "react";
 import { ScrollView, TextInput, View } from "react-native";
 
@@ -17,7 +17,7 @@ import { SettingsSection } from "./components/SettingsSection";
 // Sign-in and the relay client are wired once at startup, so a new choice reloads the app.
 async function switchTo(relay: SelfHostedRelay | null) {
   await saveSelfHostedRelay(relay);
-  await Updates.reloadAsync();
+  await reloadAppAsync("Switched the T3 Connect service");
 }
 
 /** Chooses between the build's T3 Connect and a relay the user runs themselves. */

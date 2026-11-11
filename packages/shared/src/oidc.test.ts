@@ -71,6 +71,19 @@ describe("discoverOidc", () => {
     expect(failure).toBeInstanceOf(OidcError);
     expect((failure as OidcError).code).toBe(code);
   });
+
+  it("refuses an issuer without HTTPS, whatever its discovery document says", async () => {
+    const issuer = "http://sso.example.com/realms/t3";
+    const failure = await discoverOidc(issuer, async () =>
+      jsonResponse({
+        issuer,
+        authorization_endpoint: metadata.authorizationEndpoint,
+        token_endpoint: metadata.tokenEndpoint,
+      }),
+    ).catch((error: unknown) => error);
+
+    expect((failure as OidcError).code).toBe("insecure_endpoint");
+  });
 });
 
 describe("PKCE and authorization URL", () => {

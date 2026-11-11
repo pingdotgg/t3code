@@ -92,6 +92,10 @@ export function parseOidcMetadata(issuer: string, body: unknown): OidcMetadata {
     string,
     unknown
   >;
+  // Over plain HTTP, anyone on the path could answer with endpoints of their own.
+  if (!isSecureEndpoint(issuer)) {
+    throw new OidcError({ code: "insecure_endpoint", message: "The OIDC issuer must use HTTPS." });
+  }
   if (document.issuer !== issuer) {
     throw new OidcError({
       code: "issuer_mismatch",

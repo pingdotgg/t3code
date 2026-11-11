@@ -78,6 +78,8 @@ export class CloudManagedEndpointRuntime extends Context.Service<
     ) => Effect.Effect<CloudManagedEndpointRuntimeStatus>;
     /** `null` when no connector is running. */
     readonly inspectConnector: Effect.Effect<ConnectorFacts | null>;
+    /** `null` when no relay channel runs; otherwise whether the relay holds it now. */
+    readonly inspectRelayChannel: Effect.Effect<boolean | null>;
     /** Emits when a connector registers a connection or its readiness changes. */
     readonly readinessChanged: Stream.Stream<void>;
     readonly recoveryRequests: Stream.Stream<RelayManagedEndpointRuntimeConfig>;
@@ -234,6 +236,7 @@ export const make = Effect.gen(function* () {
   const channelRef = yield* Ref.make<{
     readonly key: string;
     readonly fiber: Fiber.Fiber<unknown>;
+    readonly state: { open: boolean };
   } | null>(null);
   const installInFlightRef = yield* Ref.make(false);
   const lastInstallFailureAtRef = yield* Ref.make<number | null>(null);
@@ -349,12 +352,16 @@ export const make = Effect.gen(function* () {
     const key = `${config.channelUrl}|${config.connectorToken}|${localOrigin}`;
     if ((yield* Ref.get(channelRef))?.key !== key) {
       yield* stopChannel;
+      const state = { open: false };
       const fiber = yield* RelayChannelClient.runRelayChannel({
         channelUrl: config.channelUrl,
         token: config.connectorToken,
         localOrigin,
+        onOpenChange: (open) => {
+          state.open = open;
+        },
       }).pipe(withRelayClientLog, Effect.forkIn(runtimeScope));
-      yield* Ref.set(channelRef, { key, fiber });
+      yield* Ref.set(channelRef, { key, fiber, state });
     }
     return {
       status: "running",
@@ -952,9 +959,14 @@ export const make = Effect.gen(function* () {
     } satisfies ConnectorFacts;
   });
 
+  const inspectRelayChannel = Ref.get(channelRef).pipe(
+    Effect.map((channel) => (channel === null ? null : channel.state.open)),
+  );
+
   const runtime = CloudManagedEndpointRuntime.of({
     applyConfig,
     inspectConnector,
+    inspectRelayChannel,
     readinessChanged: Stream.fromQueue(readinessChanges),
     recoveryRequests: Stream.fromQueue(recoveryRequests),
     requestRecovery: Effect.fn("CloudManagedEndpointRuntime.requestRecovery")(function (config) {

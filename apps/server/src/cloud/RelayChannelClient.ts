@@ -166,8 +166,10 @@ function openChannel(input: RelayChannelInput) {
     for (const socket of locals.values()) socket.close();
     locals.clear();
   };
+  let disposed = false;
   channel.addEventListener("open", () => {
     opened = true;
+    if (!disposed) input.onOpenChange?.(true);
   });
   const handleFrame = (frame: RelayChannelFrame | null) => {
     switch (frame?.type) {
@@ -226,6 +228,8 @@ function openChannel(input: RelayChannelInput) {
       send({ type: "ping" });
     },
     dispose: () => {
+      if (!disposed) input.onOpenChange?.(false);
+      disposed = true;
       closeLocals();
       channel.close();
     },
@@ -254,6 +258,8 @@ export interface RelayChannelInput {
   readonly token: string;
   /** Where this server listens, e.g. `http://127.0.0.1:3773`. */
   readonly localOrigin: string;
+  /** Told when the relay accepts a channel and when that channel ends. */
+  readonly onOpenChange?: (open: boolean) => void;
 }
 
 /** Keeps this environment reachable through its relay channel until interrupted. */

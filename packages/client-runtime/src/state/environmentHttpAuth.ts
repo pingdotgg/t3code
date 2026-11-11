@@ -159,7 +159,11 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
    * params exactly like the request client, so the DPoP proof matches the
    * URL actually sent.
    */
-  readonly url: (urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[Group]) => string;
+  readonly url: (
+    urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[Group],
+    /** Where the request goes, which reauthorizing the target can change. */
+    httpBaseUrl: string,
+  ) => string;
   readonly timeoutMs: number;
   /** Extra fetch options, such as refusing redirects for credentialed audio uploads. */
   readonly requestInit?: RequestInit;
@@ -177,7 +181,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
 > {
   let httpBaseUrl = input.prepared.httpBaseUrl;
   const requestUrlFor = (baseUrl: string) =>
-    input.url(makeEnvironmentHttpApiUrlBuilder(baseUrl)[input.group]);
+    input.url(makeEnvironmentHttpApiUrlBuilder(baseUrl)[input.group], baseUrl);
   return yield* Effect.gen(function* () {
     let rejectedAccessToken: string | undefined;
     for (;;) {

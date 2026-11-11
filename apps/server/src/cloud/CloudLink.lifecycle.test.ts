@@ -210,6 +210,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             restartConnector: () => Effect.succeed(false),
             tunnelConnected: Stream.empty,
             inspectConnector: Effect.succeed(harness.connector ?? null),
+            inspectRelayChannel: Effect.succeed(null),
             readinessChanged: Stream.empty,
             withLinkStateLock: (effect) => effect,
           }),

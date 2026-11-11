@@ -9,22 +9,21 @@ import * as SecureStore from "expo-secure-store";
 import * as WebBrowser from "expo-web-browser";
 
 import { resolveCloudPublicConfig } from "../publicConfig";
-
-// SecureStore keys allow only letters, digits, ".", "-" and "_".
-const secureKey = (key: string) => key.replace(/[^A-Za-z0-9._-]/gu, "_");
+import { secureStoreKey } from "./secureStoreKey";
 
 // SecureStore deletes asynchronously, so the map answers until the keychain catches up.
 function secureSessionStore(): KeyValueStore {
   const shadow = new Map<string, string | null>();
   return {
-    getItem: (key) => (shadow.has(key) ? shadow.get(key)! : SecureStore.getItem(secureKey(key))),
+    getItem: (key) =>
+      shadow.has(key) ? shadow.get(key)! : SecureStore.getItem(secureStoreKey(key)),
     setItem: (key, value) => {
       shadow.set(key, value);
-      SecureStore.setItem(secureKey(key), value);
+      SecureStore.setItem(secureStoreKey(key), value);
     },
     removeItem: (key) => {
       shadow.set(key, null);
-      void SecureStore.deleteItemAsync(secureKey(key));
+      void SecureStore.deleteItemAsync(secureStoreKey(key));
     },
   };
 }

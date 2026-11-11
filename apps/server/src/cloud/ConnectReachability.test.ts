@@ -115,20 +115,34 @@ const cloudflareErrorPage = (request: HttpClientRequest.HttpClientRequest, code:
     ? JSON.stringify({ status: 530, error_code: code, error_name: "tunnel_error" })
     : `<!doctype html><h1><span>Error</span> <span>${code}</span></h1>`;
 
+const RELAY_CHANNEL_CONFIG = JSON.stringify({
+  providerKind: "t3_relay",
+  connectorToken: "credential",
+  channelUrl: "wss://relay.example.test/v1/environments/env-1/channel",
+});
+
+/** `relayChannel` stores a relay channel link instead of a tunnel one. */
 const reachabilityLayer = (
   respond: Effect.Effect<ServedResponse>,
   restartConnector: (pid: number, stillDead: Effect.Effect<boolean>) => Effect.Effect<boolean>,
+  relayChannel?: { readonly open: () => boolean },
 ) =>
   ConnectReachability.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({
           inspectConnector: Effect.succeed(connected),
+          inspectRelayChannel: Effect.sync(() => relayChannel?.open() ?? null),
           readinessChanged: Stream.never,
           restartConnector,
         }),
         Layer.mock(ServerSecretStore.ServerSecretStore)({
-          get: () => Effect.succeedSome(new Uint8Array()),
+          get: () =>
+            Effect.succeedSome(
+              relayChannel === undefined
+                ? new Uint8Array()
+                : new TextEncoder().encode(RELAY_CHANNEL_CONFIG),
+            ),
         }),
         Layer.succeed(
           HttpClient.HttpClient,
@@ -373,6 +387,28 @@ describe("ConnectReachability stale connector recovery", () => {
         yield* Effect.promise(() => bodyRead);
         yield* TestClock.adjust(Duration.seconds(2));
         expect(yield* Fiber.join(check)).toMatchObject({ cause: "no_connector" });
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+});
+
+describe("ConnectReachability relay channels", () => {
+  it.effect("answers for a relay-carried environment by its channel, not as unlinked", () =>
+    Effect.gen(function* () {
+      let open = true;
+      const layer = reachabilityLayer(
+        Effect.die("a relay channel has no address to probe"),
+        () => Effect.succeed(false),
+        { open: () => open },
+      );
+      yield* Effect.gen(function* () {
+        const reachability = yield* ConnectReachability.ConnectReachability;
+        expect(yield* reachability.check).toMatchObject({ status: "reachable" });
+        open = false;
+        expect(yield* reachability.check).toMatchObject({
+          status: "unreachable",
+          cause: "connector_not_ready",
+        });
       }).pipe(Effect.provide(layer));
     }),
   );

@@ -239,7 +239,34 @@ describe("tokens", () => {
     expect(harness.sessions.entries.size).toBe(0);
   });
 
-  it("keeps a sign-out made while a refresh was out", async () => {
+  // What another tab's sign-in leaves in the storage the tabs share.
+  const BOB_SESSION = {
+    idToken: "bob-id-token",
+    refreshToken: "refresh-bob",
+    expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+    userId: `oidc:${ISSUER}|bob`,
+    label: "bob@example.com",
+  };
+
+  it.each([
+    {
+      change: "a sign-out",
+      meanwhile: (harness: Harness) => harness.controller.signOut(),
+      reply: (harness: Harness) =>
+        Response.json({
+          id_token: idToken({ exp: harness.clock / 1000 + 3600 }),
+          refresh_token: "refresh-2",
+        }),
+      kept: null,
+    },
+    {
+      change: "another tab's sign-in",
+      meanwhile: async (harness: Harness) =>
+        harness.sessions.setItem(harness.controller.storageKey, JSON.stringify(BOB_SESSION)),
+      reply: () => Response.json({ error: "invalid_grant" }, { status: 400 }),
+      kept: BOB_SESSION,
+    },
+  ])("keeps $change made while a refresh was out", async ({ meanwhile, reply, kept }) => {
     const harness = makeHarness();
     await signInWith(harness);
     harness.clock += 3600 * 1000;
@@ -247,21 +274,17 @@ describe("tokens", () => {
     const answered = new Promise<void>((resolve) => {
       answer = resolve;
     });
-    harness.tokenReply = () =>
-      answered.then(() =>
-        Response.json({
-          id_token: idToken({ exp: harness.clock / 1000 + 3600 }),
-          refresh_token: "refresh-2",
-        }),
-      );
+    harness.tokenReply = () => answered.then(() => reply(harness));
 
     const refreshing = harness.controller.getToken();
-    await harness.controller.signOut();
+    await meanwhile(harness);
     answer();
 
-    expect(await refreshing).toBeNull();
-    expect(harness.controller.getSnapshot().userId).toBeNull();
-    expect(harness.sessions.entries.size).toBe(0);
+    expect(await refreshing).toBe(kept?.idToken ?? null);
+    expect(harness.controller.getSnapshot().userId).toBe(kept?.userId ?? null);
+    expect(harness.sessions.getItem(harness.controller.storageKey)).toBe(
+      kept === null ? null : JSON.stringify(kept),
+    );
   });
 
   it("clears the session and the in-flight sign-in on sign out", async () => {

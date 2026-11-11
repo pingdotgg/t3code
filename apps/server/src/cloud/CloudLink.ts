@@ -1203,10 +1203,15 @@ const make = Effect.gen(function* () {
         if (typeof address === "string" || !("port" in address)) {
           return yield* new CloudLinkInternalError({ operation: "resolve-server-origin" });
         }
-        yield* startManagedTunnelIfOriginConfirmed(
+        const started = yield* startManagedTunnelIfOriginConfirmed(
           `http://${loopbackUrlHostForAddress(address)}:${address.port}`,
         );
-        return result;
+        return started
+          ? ({
+              ok: true,
+              endpointRuntimeStatus: { status: "running", providerKind: "t3_relay" },
+            } satisfies EnvironmentCloudRelayConfigResult)
+          : result;
       }
       if (payload.endpointRuntime?.providerKind === "cloudflare_tunnel") {
         const address = httpServer.address;
