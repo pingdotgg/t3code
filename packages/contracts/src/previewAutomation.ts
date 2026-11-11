@@ -71,6 +71,14 @@ export const PreviewAutomationProfile = Schema.Struct({
 });
 export type PreviewAutomationProfile = typeof PreviewAutomationProfile.Type;
 
+/** Why the tab shows the browser's error page instead of the page it tried to load. */
+export const PreviewAutomationLoadError = Schema.Struct({
+  url: Schema.String,
+  code: Schema.Int,
+  description: Schema.String,
+});
+export type PreviewAutomationLoadError = typeof PreviewAutomationLoadError.Type;
+
 export const PreviewAutomationStatus = Schema.Struct({
   available: Schema.Boolean,
   visible: Schema.Boolean,
@@ -78,6 +86,7 @@ export const PreviewAutomationStatus = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
   loading: Schema.Boolean,
+  loadError: Schema.optional(PreviewAutomationLoadError),
   control: Schema.optional(
     Schema.Struct({
       owner: PreviewAutomationTabOwner,
@@ -463,11 +472,6 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
     .check(Schema.isNonEmpty())
     .check(Schema.isMaxLength(64_000)),
   awaitPromise: Schema.optional(Schema.Boolean.annotate({ description: "Default true." })),
-  returnByValue: Schema.optional(
-    Schema.Boolean.annotate({
-      description: "False returns a ref. Default true.",
-    }),
-  ),
 });
 export type PreviewAutomationEvaluateInput = typeof PreviewAutomationEvaluateInput.Type;
 
@@ -540,6 +544,7 @@ export const PreviewAutomationSnapshot = Schema.Struct({
   url: Schema.String,
   title: Schema.String,
   loading: Schema.Boolean,
+  loadError: Schema.optional(PreviewAutomationLoadError),
   visibleText: Schema.String,
   interactiveElements: Schema.Array(PreviewAutomationElement),
   accessibilityTree: Schema.Unknown,
