@@ -55,6 +55,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -192,6 +193,15 @@ export interface ProviderSessionManagerV2Shape {
     readonly threadId: ThreadId;
     readonly detail?: string;
     readonly revokeMcpCredential?: boolean;
+  }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
+  /**
+   * Releases the one-process-per-thread session of a delegated child whose result is out and
+   * which nothing can resume: no run, queued follow-up, subagent, background task or wake
+   * message. Keeps the session otherwise; a later message to the child opens a new one.
+   */
+  readonly releaseFinishedDelegate: (input: {
+    readonly threadId: ThreadId;
+    readonly detail?: string;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   /**
    * Releases the session unless, at the moment of removal, a turn of a provider thread outside
@@ -980,6 +990,7 @@ export const layerWithOptions = (
         function* (input: {
           readonly providerSessionId: ProviderSessionId;
           readonly onlyIfIdleGeneration?: number;
+          readonly onlyIfRuntime?: LiveSessionEntry["runtime"];
           readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
           readonly keepIf?: Effect.Effect<boolean>;
         }): Effect.fn.Return<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> {
@@ -993,6 +1004,9 @@ export const layerWithOptions = (
               const existing = current.get(key);
               if (existing !== candidate) {
                 return [existing === undefined ? "gone" : "changed", current] as const;
+              }
+              if (input.onlyIfRuntime !== undefined && existing.runtime !== input.onlyIfRuntime) {
+                return ["kept", current] as const;
               }
               if (
                 input.onlyIfIdleGeneration !== undefined &&
@@ -1073,6 +1087,7 @@ export const layerWithOptions = (
         readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
+        readonly onlyIfRuntime?: LiveSessionEntry["runtime"];
         readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
         readonly keepIf?: Effect.Effect<boolean>;
         readonly gracefulSubscribers?: boolean;
@@ -2650,6 +2665,58 @@ export const layerWithOptions = (
             ),
         ),
         release: releaseEntry,
+        releaseFinishedDelegate: Effect.fn("ProviderSessionManager.releaseFinishedDelegate")(
+          function* (input) {
+            // Shared processes unload per thread instead; only a sole attached thread owns its process.
+            const owned = [...(yield* Ref.get(sessions)).values()].filter(
+              (entry) =>
+                !entry.supportsMultipleProviderThreads &&
+                entry.attachedThreadIds.size === 1 &&
+                entry.attachedThreadIds.has(input.threadId),
+            );
+            if (owned.length === 0) return;
+            // Taken before the probes: any later activity bumps it and keeps the session.
+            const generations = new Map(owned.map((entry) => [entry, entry.idleGeneration]));
+            const finished = yield* projectionStore
+              .getThreadRecords(
+                input.threadId,
+                ["runs", "messages", "subagents", "providerThreads"],
+                { messageRoles: ["user"] },
+              )
+              .pipe(
+                Effect.map(
+                  (records) =>
+                    records.thread.lineage.relationshipToParent === "subagent" &&
+                    // Progress ignores held runs, but a held follow-up still needs this session.
+                    !records.runs.some((run) => run.status === "queued") &&
+                    delegatedTaskProgress(records).state === "result_available",
+                ),
+                // An unreadable thread may still be working; never kill it unseen.
+                Effect.orElseSucceed(() => false),
+              );
+            if (!finished) return;
+            for (const entry of owned) {
+              // A runtime that cannot reload its native conversation keeps it for the idle window.
+              if (entry.busyTurns.size > 0 || entry.runtime.canResumeAfterRestart === false)
+                continue;
+              const pending =
+                entry.runtime.hasPendingBackgroundWork === undefined
+                  ? false
+                  : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                      Effect.catchCause(() => Effect.succeed(true)),
+                    );
+              if (pending) continue;
+              yield* releaseEntry({
+                providerSessionId: entry.runtime.providerSessionId,
+                reason: "idle_timeout",
+                detail: input.detail ?? "Delegated task finished.",
+                onlyIfIdleGeneration: generations.get(entry)!,
+                // A replacement reuses the session id and restarts the generation count.
+                onlyIfRuntime: entry.runtime,
+              }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
+            }
+          },
+        ),
         releaseUnlessBusy: Effect.fn("ProviderSessionManager.releaseUnlessBusy")(function* (input) {
           const key = sessionKey(input.providerSessionId);
           const before = (yield* Ref.get(sessions)).get(key);

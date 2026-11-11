@@ -14565,6 +14565,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.forkScoped,
     );
 
+  // A finished delegate is rarely resumed, so its process need not idle for the full timeout. The
+  // session manager re-checks that nothing can resume it. Not an outbox effect: older servers
+  // cannot decode new effect types, and a lost process holds no session to release anyway.
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "subagent.updated" })
+    .pipe(
+      Stream.filterMap((stored) =>
+        stored.event.type === "subagent.updated" &&
+        stored.event.payload.status === "completed" &&
+        stored.event.payload.childThreadId !== null
+          ? Result.succeed(stored.event.payload.childThreadId)
+          : Result.failVoid,
+      ),
+      Stream.runForEach((threadId) =>
+        providerSessions.releaseFinishedDelegate({ threadId }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to release a finished delegate's session", {
+              threadId,
+              cause,
+            }),
+          ),
+        ),
+      ),
+      Effect.forkScoped,
+    );
+
   // A child whose run ends while its background tasks or its own subagents still run has no
   // result yet. When that work settles there is no run update to finalize it, so these events
   // do it. A background roster counts once it stops holding after it was seen holding.
