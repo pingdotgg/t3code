@@ -145,7 +145,7 @@ describe("course ingestion parsers", () => {
         "course/pages/first/child/data.json",
         JSON.stringify({
           title: "First child",
-          content: '<track src="../../_v5.vtt"><track src="../../_v4.vtt">',
+          content: '<track src="../../hash_v_5.vtt"><track src="../../hash_v4.vtt">',
         }),
       ],
       [
@@ -202,7 +202,7 @@ describe("course ingestion parsers", () => {
           uid: "v5",
           title: "Lecture 5",
           parent_title: "First child",
-          video_metadata: { youtube_id: "v5" },
+          video_metadata: { youtube_id: "v_5" },
         }),
       ],
     ]);

@@ -243,7 +243,7 @@ export const parseOcwZipEntries = (
     }),
   );
   const pageOrder = new Map<string, number>();
-  const pageVideoOrder = new Map<string, Map<string, number>>();
+  const pageContent = new Map<string, string>();
   for (const section of sections) {
     const page = pages.get(section);
     const children = [
@@ -260,13 +260,8 @@ export const parseOcwZipEntries = (
     for (const slug of [section, ...children]) {
       const title = stringValue(pages.get(slug)?.title);
       if (title && !pageOrder.has(title)) pageOrder.set(title, pageOrder.size);
-      if (title) {
-        const content = stringValue(pages.get(slug)?.content) ?? "";
-        const ids = [...content.matchAll(/[_-]([A-Za-z0-9-]+)\.(?:vtt|srt)\b/gi)].map(
-          (match) => match[1]!,
-        );
-        pageVideoOrder.set(title, new Map(ids.map((id, position) => [id, position])));
-      }
+      if (title && !pageContent.has(title))
+        pageContent.set(title, stringValue(pages.get(slug)?.content) ?? "");
     }
   }
   const order = (record: Record<string, unknown>) => {
@@ -274,12 +269,14 @@ export const parseOcwZipEntries = (
     const parent = stringValue(record.parent_title) ?? "";
     const page = pageOrder.get(parent);
     const youtubeId = resourceYoutubeId(record);
-    const withinPage = pageVideoOrder.get(parent)?.get(youtubeId ?? "");
+    // Videos sharing a page follow where their YouTube id first appears in it.
+    const at = youtubeId ? (pageContent.get(parent)?.indexOf(youtubeId) ?? -1) : -1;
+    const withinPage = at < 0 ? undefined : at;
     return (
       gallery ??
       (page === undefined
         ? Number.MAX_SAFE_INTEGER
-        : galleryOrder.size + page * 1_000_000 + (withinPage ?? 100_000))
+        : galleryOrder.size + page * 1_000_000 + (withinPage ?? 999_999))
     );
   };
   const videos = records
