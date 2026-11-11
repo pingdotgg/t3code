@@ -221,7 +221,7 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
 const RosterFindTool = Tool.make("t3_roster_find", {
   ...commandTool,
   description:
-    "Who already knows this topic? Ranked top-level threads matching title, branch, PR, project, or messages, so you ask the right peer. Skips subagents. Includes branch, provider, model, tags, and message hit strength. `projectId`: one project, else yours, else all outside a thread. Not exhaustive.",
+    "Who already knows this topic? Ranked top-level threads by title, branch, PR, project, or messages. `relation`: owns (title/branch/PR) or discussed (message mention); prefer owns for a specialist. Skips subagents. Includes branch, provider, model, tags, hit strength. `projectId`: one project, else yours, else all. Not exhaustive.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     topic: TrimmedNonEmptyString.check(
@@ -239,6 +239,7 @@ const RosterFindTool = Tool.make("t3_roster_find", {
         title: Schema.String,
         link: Schema.optional(Schema.String),
         why: Schema.Literals(["title", "user", "assistant"]),
+        relation: Schema.Literals(["owns", "discussed"]),
         snippet: Schema.optional(OrchestrationThreadSearchMatch.fields.snippet),
         messageCreatedAt: Schema.optional(OrchestrationThreadSearchMatch.fields.messageCreatedAt),
         branch: Schema.NullOr(Schema.String),

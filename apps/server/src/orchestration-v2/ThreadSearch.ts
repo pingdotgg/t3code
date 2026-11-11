@@ -277,6 +277,16 @@ export interface ThreadSearchHit {
   readonly messageCreatedAt?: string | null;
 }
 
+/**
+ * How a thread relates to the topic: identity metadata (title/branch/PR) vs a
+ * conversation mention. Ownership is not a durable specialist record.
+ */
+export type RosterTopicRelation = "owns" | "discussed";
+
+const rosterTopicRelation = (
+  why: "title" | OrchestrationThreadSearchSource,
+): RosterTopicRelation => (why === "title" ? "owns" : "discussed");
+
 /** A top-level thread that already looks knowledgeable about a topic. */
 export interface RosterFindHit {
   readonly threadId: ThreadId;
@@ -284,6 +294,11 @@ export interface RosterFindHit {
   readonly title: string;
   /** Why this thread matched: metadata (title/branch/PR) or a message. */
   readonly why: "title" | OrchestrationThreadSearchSource;
+  /**
+   * `owns`: the thread's title/branch/PR names the topic. `discussed`: the
+   * topic only appears in messages (a mention, not ownership).
+   */
+  readonly relation: RosterTopicRelation;
   readonly snippet?: string;
   readonly messageCreatedAt?: string | null;
   readonly branch: string | null;
@@ -703,6 +718,7 @@ export const make = Effect.gen(function* () {
             projectId: thread.projectId,
             title: thread.title,
             why: hit.why,
+            relation: rosterTopicRelation(hit.why),
             branch: thread.branch,
             providerInstanceId: thread.providerInstanceId,
             model: thread.modelSelection.model,

@@ -1341,6 +1341,7 @@ it.layer(layerTest)("ThreadSearch.findRoster", (it) => {
         projectId: project,
         title: "Checkpoint restore bugs",
         why: "title",
+        relation: "owns",
         branch: "fix/checkpoint-restore",
         providerInstanceId,
         model: "gpt-5",
@@ -1348,6 +1349,7 @@ it.layer(layerTest)("ThreadSearch.findRoster", (it) => {
         latestActivityAt: DateTime.formatIso(at(0)),
       });
       assert.equal(matches[1]?.why, "user");
+      assert.equal(matches[1]?.relation, "discussed");
       assert.equal(matches[1]?.branch, "feat/elsewhere");
       assert.deepEqual(matches[1]?.tags, ["web"]);
       assert.isTrue((matches[1]?.hitStrength ?? 0) > 0);
