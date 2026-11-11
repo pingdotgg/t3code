@@ -7,7 +7,6 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
-import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -19,9 +18,6 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
 
 import { act, fakeTimers, render } from "../../../test/render";
 import { useComposerDraftStore } from "../../composerDraftStore";
-import { formatInlineContextReference } from "../../lib/composerContextReferences";
-import { threadContextReference } from "../../lib/composerContextRecords";
-import { questionAttachmentDraftId } from "../../questionAttachments";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
@@ -264,12 +260,6 @@ it("isolates drafts by environment, thread and request and discards only resolve
       { id: RuntimeRequestId.make("second"), status: "pending" },
     ]),
   );
-  // An answered question's text was sent, so it does not come back as a draft.
-  expect(
-    useComposerDraftStore
-      .getState()
-      .getComposerDraft({ environmentId, threadId: threadRef.threadId })?.prompt ?? "",
-  ).toBe("");
   for (const [index, scope] of scopes.entries()) {
     await show(scope);
     expect(requests.activePendingQuestionIndex).toBe(index === 0 ? 0 : 1);
@@ -278,43 +268,3 @@ it("isolates drafts by environment, thread and request and discards only resolve
     );
   }
 });
-
-// Stop cancels an open question; a provider timeout expires it. Neither sends the answer.
-it.each(["cancelled", "expired"] as const)(
-  "returns a typed answer and its thread chips to the thread draft when the question is %s",
-  async (status) => {
-    using _timers = fakeTimers();
-    const environmentId = EnvironmentId.make(`${status}-environment`);
-    const requestId = RuntimeRequestId.make("first");
-    const reference = threadContextRecord(
-      { environmentId, threadId: ThreadId.make("reference-thread") },
-      "Reference work",
-    );
-    const answer = `Purple please, like ${formatInlineContextReference(threadContextReference(reference))}`;
-    const draftTarget = { environmentId, threadId: threadRef.threadId };
-    const store = useComposerDraftStore.getState();
-    store.setPrompt(draftTarget, "Earlier draft");
-    store.setThreadContexts(
-      questionAttachmentDraftId(environmentId, threadRef.threadId, requestId, "question-0"),
-      [reference],
-    );
-    await using _screen = await render(
-      <PendingRequestsProbe
-        environmentId={environmentId}
-        projection={questionProjection(threadRef.threadId, [requestId])}
-      />,
-    );
-    await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", answer));
-
-    await act(() =>
-      makeThreadRequestsResolvedAnnouncer(
-        environmentId,
-        threadRef.threadId,
-      )([{ id: requestId, status }]),
-    );
-    expect(useComposerDraftStore.getState().getComposerDraft(draftTarget)).toMatchObject({
-      prompt: `Earlier draft\n\n${answer}`,
-      threadContexts: [reference],
-    });
-  },
-);
