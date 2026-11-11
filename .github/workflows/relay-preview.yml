@@ -79,3 +79,5 @@ jobs:
           PLANETSCALE_API_TOKEN: ${{ secrets.PLANETSCALE_API_TOKEN }}
           AXIOM_TOKEN: ${{ secrets.AXIOM_TOKEN }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          # Unset by default, so previews keep the T3 Chat link off.
+          T3CHAT_LINK_SECRET: ${{ secrets.T3CHAT_LINK_SECRET }}

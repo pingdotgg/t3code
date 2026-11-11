@@ -18,6 +18,8 @@ const ATTACHMENT_PATH_PATTERN = /^\/user-attachments\/assets\/[\w-]+$/u;
 const LEGACY_ATTACHMENT_PATH_PATTERN = /^\/[^/]+\/[^/]+\/assets\/\d+\/[\w-]+$/u;
 /** `blob` and `raw` both address file bytes; `raw` is the one the token is honoured on. */
 const REPOSITORY_FILE_PATTERN = /^\/([^/]+)\/([^/]+)\/(?:raw|blob)\/(.*[^/])$/u;
+/** GitHub rejects 40-hex branch and tag names, and serves no SHA-256 repositories. */
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 
 function fileName(fetchUrl: string): string {
   const segment = new URL(fetchUrl).pathname.split("/").pop() ?? "";
@@ -31,26 +33,34 @@ function fileName(fetchUrl: string): string {
   return name.length > 0 ? name : "github-media";
 }
 
-function media(fetchUrl: string, kind?: "video"): SourceControlMediaUrl {
-  return { fetchUrl, fileName: fileName(fetchUrl), ...(kind ? { kind } : {}) };
+function media(
+  fetchUrl: string,
+  extra: Pick<SourceControlMediaUrl, "kind" | "immutable"> = {},
+): SourceControlMediaUrl {
+  return { fetchUrl, fileName: fileName(fetchUrl), ...extra };
+}
+
+/** A branch or tag can move; a raw file is fixed only when read at a full commit SHA. */
+function rawFile(fetchUrl: string): SourceControlMediaUrl {
+  const ref = new URL(fetchUrl).pathname.split("/")[3] ?? "";
+  return media(fetchUrl, COMMIT_SHA_PATTERN.test(ref) ? { immutable: true } : {});
 }
 
 export function gitHubMediaUrl(url: URL): SourceControlMediaUrl | null {
   if (url.protocol !== "https:") return null;
   const host = url.hostname.toLowerCase();
-  if (host === RAW_HOST || host === LFS_HOST) {
-    return media(`https://${host}${url.pathname}${url.search}`);
-  }
+  if (host === RAW_HOST) return rawFile(`https://${host}${url.pathname}${url.search}`);
+  if (host === LFS_HOST) return media(`https://${host}${url.pathname}${url.search}`);
   if (!WEB_HOSTS.has(host)) return null;
   // GitHub links an uploaded video bare, with no extension, and an image as markdown.
   if (ATTACHMENT_PATH_PATTERN.test(url.pathname)) {
-    return media(`https://github.com${url.pathname}`, "video");
+    return media(`https://github.com${url.pathname}`, { kind: "video", immutable: true });
   }
   if (LEGACY_ATTACHMENT_PATH_PATTERN.test(url.pathname)) {
-    return media(`https://github.com${url.pathname}`);
+    return media(`https://github.com${url.pathname}`, { immutable: true });
   }
   const repositoryFile = REPOSITORY_FILE_PATTERN.exec(url.pathname);
   return repositoryFile
-    ? media(`https://${RAW_HOST}/${repositoryFile[1]}/${repositoryFile[2]}/${repositoryFile[3]}`)
+    ? rawFile(`https://${RAW_HOST}/${repositoryFile[1]}/${repositoryFile[2]}/${repositoryFile[3]}`)
     : null;
 }
