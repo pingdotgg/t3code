@@ -181,8 +181,10 @@ An existing fork PR can appear beside the branch even if you pushed without sett
 If its badge is missing because several remotes hold that branch, set the branch's upstream to
 the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
 
-Choose the writing style and model in **Settings → Source control**. **Repository conventions**
-uses the project's instructions and recent commit subjects.
+Choose how commit messages and pull request titles and descriptions are written in
+**Settings → Source control → Commits & pull requests**. **Repository conventions** uses the
+project's instructions and recent commit subjects. **Custom instructions** applies your own
+instructions to commits and pull requests.
 
 ## Review and merge
 
@@ -191,6 +193,10 @@ or merge. You can edit review titles and descriptions and your own comments wher
 Where you can edit a description, you can also tick its checkboxes from the Summary tab
 (the Overview tab on mobile).
 GitLab calls these merge requests.
+
+A link to part of a pull request opens that part: a comment or review is marked in the activity, a
+changed-line link opens the file at those lines, a checks link opens the checks, and a commit link
+opens that commit's changes. On web and desktop, hovering a comment or commit link previews it.
 
 On mobile, **Pull requests** lists reviews across your connected environments. Open a review
 to read its description, activity, commits, and changed files. Line comments stay as drafts
@@ -317,7 +323,7 @@ review is terminal. An open or unsynced link keeps it active.
 
 Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
 the thread is active, the server checks the pull request every two minutes and wakes the agent when a
-check fails, the required checks pass, someone else comments or reviews, or the branch starts to
+check fails or waits for a maintainer's approval, the required checks pass, someone else comments or reviews, or the branch starts to
 conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
 watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
