@@ -182,7 +182,7 @@ export function ReviewThreadCard({
   const headerFeedback = pullRequestAiReviewerFeedback(comments[0] ?? { body: "" }) ?? rootFeedback;
   const headerLabel =
     headerFeedback !== null
-      ? `${aiReviewerOneLine(headerFeedback)}${commentCount > 1 ? ` · ${commentCount} comments` : ""}`
+      ? aiReviewerOneLine(headerFeedback)
       : `${thread.isResolved ? "Resolved" : "Open"} · ${commentCount} ${commentCount === 1 ? "comment" : "comments"}`;
 
   const saveEdit = async (commentId: string, body: string) => {
@@ -261,6 +261,9 @@ export function ReviewThreadCard({
         >
           {headerLabel}
         </button>
+        {headerFeedback !== null && commentCount > 1 ? (
+          <span className="shrink-0">{commentCount} comments</span>
+        ) : null}
         {thread.isOutdated ? <span>outdated</span> : null}
         {onFix ||
         (onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null)) ? (
