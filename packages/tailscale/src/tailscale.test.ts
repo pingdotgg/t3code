@@ -455,10 +455,12 @@ describe("tailscale executable lookup", () => {
   });
 });
 
-// Trimmed from real `tailscale status --json` and `tailscale whois --json` output.
+// Trimmed from real `tailscale status --json` and `tailscale whois --json` output. On 1.104.4,
+// status `ID` and whois `Node.StableID` are the same string for the same node.
 const tailnetStatusJson = JSON.stringify({
   BackendState: "Running",
   Self: {
+    ID: "nMacbook3CNTRL",
     HostName: "MacBook Pro (3)",
     DNSName: "macbook.prawn-penny.ts.net.",
     TailscaleIPs: ["100.111.125.20", "fd7a:115c:a1e0::8401:a43c"],
@@ -469,6 +471,7 @@ const tailnetStatusJson = JSON.stringify({
   },
   Peer: {
     "nodekey:aa": {
+      ID: "nDgx01CNTRL",
       HostName: "dgx-01",
       DNSName: "dgx-01.prawn-penny.ts.net.",
       TailscaleIPs: ["100.111.125.200", "fd7a:115c:a1e0::a532:9c2b"],
@@ -492,6 +495,7 @@ const tailnetStatusJson = JSON.stringify({
 const whoisJson = JSON.stringify({
   Node: {
     ID: 296504211427553,
+    StableID: "nStudio01CNTRL",
     Name: "studio-01.prawn-penny.ts.net.",
     User: 431931774855047,
     Addresses: ["100.104.231.93/32", "fd7a:115c:a1e0::5932:e75f/128"],
@@ -511,6 +515,7 @@ describe("tailnet", () => {
         Effect.provide(layerMockSpawner(() => ({ stdout: tailnetStatusJson }))),
       );
       assert.deepEqual(tailnet.self, {
+        nodeId: "nMacbook3CNTRL",
         userId: "431931774855047",
         magicDnsName: "macbook.prawn-penny.ts.net",
         tailnetAddresses: ["100.111.125.20", "fd7a:115c:a1e0::8401:a43c"],
@@ -518,6 +523,7 @@ describe("tailnet", () => {
       });
       assert.deepEqual(tailnet.peers, [
         {
+          nodeId: "nDgx01CNTRL",
           nodeName: "dgx-01",
           magicDnsName: "dgx-01.prawn-penny.ts.net",
           tailnetAddresses: ["100.111.125.200", "fd7a:115c:a1e0::a532:9c2b"],
@@ -527,6 +533,7 @@ describe("tailnet", () => {
           os: "linux",
         },
         {
+          nodeId: null,
           nodeName: "t3-box",
           magicDnsName: "t3-box.prawn-penny.ts.net",
           tailnetAddresses: ["100.90.1.2"],
@@ -536,6 +543,7 @@ describe("tailnet", () => {
           os: "linux",
         },
         {
+          nodeId: null,
           nodeName: "phone",
           magicDnsName: null,
           tailnetAddresses: [],
@@ -562,6 +570,7 @@ describe("tailnet", () => {
   it.effect("reads who owns a tailnet address", () =>
     Effect.gen(function* () {
       assert.deepEqual(yield* parseTailscaleWhois(whoisJson), {
+        nodeId: "nStudio01CNTRL",
         userId: "431931774855047",
         loginName: "jayleaton@gmail.com",
         nodeName: "studio-01",
