@@ -62,6 +62,7 @@ type AcpAgentTerminalUpdate = Extract<
 >;
 
 const MAX_ACP_TERMINAL_OUTPUT_BYTES = 16 * 1024 * 1024;
+const ACP_TERMINAL_OUTPUT_TRIM_BYTES = 1024 * 1024;
 const MAX_ACP_TERMINAL_FRAME_BYTES = MAX_ACP_TERMINAL_OUTPUT_BYTES;
 
 function isBase64DataCode(code: number): boolean {
@@ -128,12 +129,7 @@ function decodeTerminalOutputChunk(
     : { text, pendingOutputBytes: Uint8Array.from(bytes.subarray(completeEnd)) };
 }
 
-/**
- * Appends decoded text to terminal output and keeps the newest
- * `MAX_ACP_TERMINAL_OUTPUT_BYTES`, dropping whole leading characters. Only the
- * appended text and the dropped prefix are measured, so per-chunk cost does not
- * grow with the retained output.
- */
+// Drop an extra batch at UTF-8 boundaries so flattening the retained string is amortized.
 function appendTerminalOutput(
   output: string,
   outputBytes: number,
@@ -145,7 +141,7 @@ function appendTerminalOutput(
   if (excess <= 0) return { output: combined, outputBytes: combinedBytes };
   let start = 0;
   let dropped = 0;
-  while (dropped < excess) {
+  while (dropped < excess + ACP_TERMINAL_OUTPUT_TRIM_BYTES) {
     const codePoint = combined.codePointAt(start)!;
     dropped += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
     start += codePoint < 0x10000 ? 1 : 2;
@@ -224,7 +220,7 @@ export type AcpPlanUpdate =
       readonly explanation?: string | null;
       readonly plan: ReadonlyArray<{
         readonly step: string;
-        readonly status: "pending" | "inProgress" | "completed";
+        readonly status: "pending" | "inProgress" | "completed" | "cancelled";
       }>;
     }
   | { readonly nativePlanId: string; readonly kind: "markdown"; readonly markdown: string }
@@ -291,6 +287,13 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "SessionInfoUpdated";
       readonly metadata: OrchestrationV2ProviderThreadNativeMetadata;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "NoticeReceived";
+      readonly severity: string;
+      readonly title: string;
+      readonly description?: string;
       readonly rawPayload: unknown;
     }
   | {
@@ -490,10 +493,14 @@ export function parseSessionModeState(
   };
 }
 
-function normalizePlanStepStatus(raw: unknown): "pending" | "inProgress" | "completed" {
+function normalizePlanStepStatus(
+  raw: unknown,
+): "pending" | "inProgress" | "completed" | "cancelled" {
   switch (raw) {
     case "completed":
       return "completed";
+    case "cancelled":
+      return "cancelled";
     case "in_progress":
     case "inProgress":
       return "inProgress";
@@ -515,6 +522,7 @@ function normalizeToolCallStatus(
     case "completed":
       return "completed";
     case "failed":
+    case "cancelled":
       return "failed";
     default:
       return fallback;
@@ -1059,9 +1067,9 @@ function acpMcpFallbackInput(value: string | undefined): Record<string, unknown>
   return undefined;
 }
 
-// Known T3 inventory gates matches, so server-name separators can stay loose.
+// Known T3 inventory gates matches, so server-name separators can stay loose. Kiro titles "@t3-code/<tool>".
 const T3_MCP_TITLE_CALL =
-  /^(?:mcp[-_]{1,2})?t3[-_ ]?code[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
+  /^(?:@|mcp[-_]{1,2})?t3[-_ ]?code[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
 
 const T3_MCP_TITLE_SUFFIX_CALL =
   /^(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*?)(?: \(t3[-_ ]?code MCP Server\)(?::|$)|[-_.]t3[-_ ]?code$)/i;
@@ -1086,6 +1094,18 @@ export function extractMcpToolCallIdentity(
   const tool = typeof rawInput?.tool === "string" ? rawInput.tool.trim() : "";
   if (meta?.is_mcp_tool_call === true && server.length > 0 && tool.length > 0) {
     return { server, tool };
+  }
+  // Kiro names the server in `_meta.kiro.serverName` and the call in `rawInput.tool_id`
+  // ("<server>::<tool>"), with the tool's own input under `rawInput.arguments`.
+  const kiroServer = isRecord(meta?.kiro) ? meta.kiro.serverName : undefined;
+  const kiroToolId = typeof rawInput?.tool_id === "string" ? rawInput.tool_id.trim() : "";
+  if (
+    typeof kiroServer === "string" &&
+    kiroServer.length > 0 &&
+    kiroToolId.startsWith(`${kiroServer}::`) &&
+    kiroToolId.length > kiroServer.length + 2
+  ) {
+    return { server: kiroServer, tool: kiroToolId.slice(kiroServer.length + 2) };
   }
   const claudeCode = isRecord(meta?.claudeCode) ? meta.claudeCode : undefined;
   const gooseToolCall = isRecord(meta?.goose)
@@ -1121,6 +1141,16 @@ export function extractMcpToolCallIdentity(
     );
     const tool = prefix === undefined ? metaToolName : metaToolName.slice(prefix.length);
     return tool ? { server: metaServerId, tool } : undefined;
+  }
+  // OMP mounts MCP tools as xd://mcp__<server>_<tool> devices and calls them by writing JSON
+  // args; a read of the same path only fetches the tool's docs.
+  const devicePath = typeof rawInput?.path === "string" ? rawInput.path : "";
+  if (devicePath.startsWith("xd://") && typeof rawInput?.content === "string") {
+    const deviceTool = T3_MCP_TITLE_CALL.exec(devicePath.slice("xd://".length))?.groups?.tool;
+    if (deviceTool !== undefined && T3_MCP_TOOL_NAMES.has(deviceTool)) {
+      const input = acpMcpFallbackInput(rawInput.content);
+      return { server: "t3-code", tool: deviceTool, ...(input === undefined ? {} : { input }) };
+    }
   }
   const candidates = [
     meta?.toolName,
@@ -1170,6 +1200,29 @@ export function embeddedTerminalIdsFromSessionUpdate(
     .filter((entry) => entry.type === "terminal")
     .map((entry) => entry.terminalId);
   return terminalIds.length === 0 ? undefined : { toolCallId: update.toolCallId, terminalIds };
+}
+
+/** ACP lets a permission request name its tool call by ID only; omitted (not null) fields come from the tracked call. */
+export function withTrackedPermissionToolCall(
+  params: EffectAcpSchema.RequestPermissionRequest,
+  tracked: AcpToolCallState | undefined,
+): EffectAcpSchema.RequestPermissionRequest {
+  if (tracked === undefined) return params;
+  const { title, kind, rawInput } = params.toolCall;
+  return {
+    ...params,
+    toolCall: {
+      ...params.toolCall,
+      ...(title === undefined && typeof tracked.data.title === "string"
+        ? { title: tracked.data.title }
+        : {}),
+      // Unrecognised kinds map to command approvals, so only a tracked execute kind may grant execution.
+      ...(kind === undefined && tracked.kind === "execute" ? { kind: "execute" as const } : {}),
+      ...(rawInput === undefined && tracked.data.rawInput !== undefined
+        ? { rawInput: tracked.data.rawInput }
+        : {}),
+    },
+  };
 }
 
 export function parsePermissionRequest(
@@ -1362,17 +1415,15 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         step: entry.content.trim().length > 0 ? entry.content.trim() : `Step ${index + 1}`,
         status: normalizePlanStepStatus(entry.status),
       }));
-      if (plan.length > 0) {
-        events.push({
-          _tag: "PlanUpdated",
-          payload: {
-            nativePlanId: "legacy",
-            kind: "items",
-            plan,
-          },
-          rawPayload: params,
-        });
-      }
+      events.push({
+        _tag: "PlanUpdated",
+        payload: {
+          nativePlanId: "legacy",
+          kind: "items",
+          plan,
+        },
+        rawPayload: params,
+      });
       break;
     }
     case "plan_update": {
@@ -1524,16 +1575,6 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       }
       break;
     }
-    case "state_update": {
-      if (upd.state === "idle" && upd.usage !== undefined && upd.usage !== null) {
-        events.push({
-          _tag: "UsageUpdated",
-          usage: { usedTokens: upd.usage.totalTokens },
-          rawPayload: params,
-        });
-      }
-      break;
-    }
     case "usage_update": {
       const currency = upd.cost?.currency.trim().slice(0, 32);
       events.push({
@@ -1556,6 +1597,19 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           ...(upd.title === null ? { title: null } : title ? { title } : {}),
           ...(upd.updatedAt === null ? { updatedAt: null } : updatedAt ? { updatedAt } : {}),
         },
+        rawPayload: params,
+      });
+      break;
+    }
+    case "notice": {
+      const title = upd.title.trim().slice(0, 1_024);
+      const description = upd.description?.trim().slice(0, 4_096);
+      if (title.length === 0) break;
+      events.push({
+        _tag: "NoticeReceived",
+        severity: boundedContentMetadata(upd.severity, 64) || "info",
+        title,
+        ...(description ? { description } : {}),
         rawPayload: params,
       });
       break;

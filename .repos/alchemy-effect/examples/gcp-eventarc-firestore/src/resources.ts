@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 
 /**
  * Eventarc only delivers Firestore events to triggers in the database's

@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -26,10 +27,14 @@ const MODEL_MANIFEST_URL =
 
 const MANIFEST_TTL_MS = 60 * 60 * 1000;
 
+/** GitHub's raw CDN caches about this long, so a shorter window buys nothing. */
+const MANIFEST_ON_DEMAND_TTL_MS = 5 * 60 * 1000;
+
 /** Back off failed fetches so offline health checks do not each wait on the network. */
 const MANIFEST_RETRY_MS = 5 * 60 * 1000;
 
 const FETCH_TIMEOUT_MS = 10_000;
+const MODEL_NEW_BADGE_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const ManifestModelStatus = Schema.Literals(["current", "legacy"]);
 
@@ -45,7 +50,8 @@ const ManifestProviderModel = Schema.Struct({
   subProvider: Schema.optional(TrimmedNonEmptyString),
   aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   status: ManifestModelStatus,
-  badge: Schema.optional(Schema.Literal("new")),
+  /** ISO date or timestamp of the model's public release, as published by its provider. */
+  releasedAt: Schema.optional(Schema.String),
   profile: Schema.optional(TrimmedNonEmptyString),
   adapter: Schema.optional(Schema.Unknown),
 });
@@ -110,6 +116,7 @@ function manifestUpdatedAtMs(manifest: ModelManifestData): number {
 export function resolveProviderCatalog(
   manifest: ModelManifestData,
   driverKind: ProviderDriverKind,
+  nowMs = DateTime.toEpochMillis(DateTime.nowUnsafe()),
 ): ModelCatalog.ProviderCatalog | null {
   const catalog = manifest.providers?.[driverKind];
   if (!catalog) return null;
@@ -123,13 +130,19 @@ export function resolveProviderCatalog(
     const profile = entry.profile ? catalog.profiles[entry.profile] : undefined;
     if (entry.profile && !profile) return null;
 
+    const releasedAtMs = entry.releasedAt === undefined ? NaN : Date.parse(entry.releasedAt);
+    const showNewBadge =
+      entry.status === "current" &&
+      nowMs >= releasedAtMs &&
+      nowMs - releasedAtMs < MODEL_NEW_BADGE_DURATION_MS;
+
     models.push({
       slug: entry.slug,
       name: entry.name,
       ...(entry.shortName ? { shortName: entry.shortName } : {}),
       ...(entry.subProvider ? { subProvider: entry.subProvider } : {}),
       ...(entry.aliases ? { aliases: entry.aliases } : {}),
-      ...(entry.badge ? { badge: entry.badge } : {}),
+      ...(showNewBadge ? { badge: "new" as const } : {}),
       status: entry.status,
       capabilities: profile?.capabilities ?? null,
       adapter: entry.adapter,
@@ -164,6 +177,8 @@ export class ModelManifest extends Context.Service<
     readonly current: Effect.Effect<ModelManifestData>;
     readonly refresh: Effect.Effect<ModelManifestData>;
     readonly forceRefresh: Effect.Effect<ModelManifestData>;
+    /** For a user looking at the model list: tolerates far less staleness than `refresh`. */
+    readonly refreshOnDemand: Effect.Effect<ModelManifestData>;
     /** Process-shared fetches must survive the triggering instance's teardown. */
     readonly refreshInBackground: Effect.Effect<void>;
   }
@@ -173,6 +188,7 @@ const BundledOnlyModelManifest: ModelManifest["Service"] = {
   current: Effect.succeed(BUNDLED_MODEL_MANIFEST),
   refresh: Effect.succeed(BUNDLED_MODEL_MANIFEST),
   forceRefresh: Effect.succeed(BUNDLED_MODEL_MANIFEST),
+  refreshOnDemand: Effect.succeed(BUNDLED_MODEL_MANIFEST),
   refreshInBackground: Effect.void,
 };
 
@@ -208,13 +224,16 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  const refresh = Effect.fn("ModelManifest.refresh")(function* (force = false) {
+  const refresh = Effect.fn("ModelManifest.refresh")(function* (
+    force = false,
+    ttlMs = MANIFEST_TTL_MS,
+  ) {
     yield* ensureDiskCacheLoaded;
     const now = yield* Clock.currentTimeMillis;
     // Expire future timestamps after clock rollback; disk caches cross restarts, ruling out monotonic time.
     const isWithin = (sinceMs: number | null, windowMs: number) =>
       sinceMs !== null && now >= sinceMs && now - sinceMs < windowMs;
-    if (!force && isWithin(fetchedAtMs, MANIFEST_TTL_MS)) return manifest;
+    if (!force && isWithin(fetchedAtMs, ttlMs)) return manifest;
     if (!force && isWithin(lastAttemptMs, MANIFEST_RETRY_MS)) return manifest;
 
     const settings = yield* settingsService.getSettings.pipe(
@@ -252,6 +271,7 @@ export const make = Effect.gen(function* () {
     current: ensureDiskCacheLoaded.pipe(Effect.map(() => manifest)),
     refresh: guardedRefresh,
     forceRefresh: refreshSemaphore.withPermits(1)(refresh(true)),
+    refreshOnDemand: refreshSemaphore.withPermits(1)(refresh(false, MANIFEST_ON_DEMAND_TTL_MS)),
     refreshInBackground: Effect.forkIn(guardedRefresh, serviceScope).pipe(Effect.asVoid),
   });
 });
@@ -267,10 +287,11 @@ export const layerModelCatalog = Layer.effect(
   Effect.gen(function* () {
     const manifest = yield* ModelManifest;
     return ModelCatalog.ModelCatalog.of({
-      current: (driverKind) =>
-        manifest.current.pipe(
-          Effect.map((data) => resolveProviderCatalog(data, driverKind) ?? undefined),
-        ),
+      current: Effect.fn("ModelCatalog.current")(function* (driverKind: ProviderDriverKind) {
+        const data = yield* manifest.current;
+        const nowMs = yield* Clock.currentTimeMillis;
+        return resolveProviderCatalog(data, driverKind, nowMs) ?? undefined;
+      }),
       bundled: (driverKind) =>
         resolveProviderCatalog(BUNDLED_MODEL_MANIFEST, driverKind) ?? undefined,
       refreshInBackground: manifest.refreshInBackground,

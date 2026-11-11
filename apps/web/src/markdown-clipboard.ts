@@ -57,26 +57,36 @@ function codeFenceFor(code: string): string {
   return "`".repeat(Math.max(3, longestRun + 1));
 }
 
-function resolveCodeBlockLanguage(pre: Element): string | null {
-  const declared =
-    pre.closest("[data-language]")?.getAttribute("data-language") ??
-    /(?:^|\s)language-(\S+)/.exec(pre.querySelector("code")?.className ?? "")?.[1] ??
-    null;
-  return declared && declared !== "text" ? declared : null;
-}
-
 export function serializeCodeBlockToMarkdown(source: string, language: string | null): string {
   const code = source.replace(/\n$/, "");
   const fence = codeFenceFor(code);
   return `${fence}${language ?? ""}\n${code}\n${fence}\n\n`;
 }
 
+// Brackets copied code so tidyMarkdown leaves its whitespace alone. Code is
+// copied as shown, without fences; DOM text from rendered markdown carries no NUL.
+const CODE_BOUNDARY = "\u0000";
+
+function verbatimBlock(code: string): string {
+  return `${CODE_BOUNDARY}${code}${CODE_BOUNDARY}\n\n`;
+}
+
+// Odd parts are code and keep their markers, so outer passes still skip them.
+function outsideCode(markdown: string, tidy: (prose: string) => string): string {
+  return markdown
+    .split(CODE_BOUNDARY)
+    .map((part, index) =>
+      index % 2 === 1 ? `${CODE_BOUNDARY}${part}${CODE_BOUNDARY}` : tidy(part),
+    )
+    .join("");
+}
+
 function serializeCodeBlock(pre: Element): string {
-  return serializeCodeBlockToMarkdown(pre.textContent ?? "", resolveCodeBlockLanguage(pre));
+  return verbatimBlock((pre.textContent ?? "").replace(/\n$/, ""));
 }
 
 function serializeTableCell(cell: Element): string {
-  return serializeChildren(cell).replace(/\n+/g, " ").trim().replaceAll("|", "\\|");
+  return serializeChildren(cell, true).replace(/\n+/g, " ").trim();
 }
 
 function tableSeparatorFor(headerCells: Element[]): string {
@@ -108,18 +118,23 @@ function serializeTable(table: Element): string {
   return `${lines.join("\n")}\n\n`;
 }
 
-function serializeListItem(item: Element, ordered: boolean, index: number): string {
+function serializeListItem(
+  item: Element,
+  ordered: boolean,
+  index: number,
+  inTableCell: boolean,
+): string {
   const checkbox = item.querySelector(
     ':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]',
   );
   const task = checkbox ? `[${(checkbox as HTMLInputElement).checked ? "x" : " "}] ` : "";
   const bullet = ordered ? `${index}. ` : "- ";
   const marker = `${bullet}${task}`;
-  let content = serializeChildren(item)
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  let content = outsideCode(serializeChildren(item, inTableCell), (prose) =>
+    prose.replace(/\n{3,}/g, "\n\n"),
+  ).trim();
   if (!item.querySelector(":scope > p")) {
-    content = content.replace(/\n{2,}/g, "\n");
+    content = outsideCode(content, (prose) => prose.replace(/\n{2,}/g, "\n"));
   }
   // Continuations align after the bullet; task boxes belong to the item text.
   const continuationIndent = " ".repeat(bullet.length);
@@ -130,17 +145,24 @@ function serializeListItem(item: Element, ordered: boolean, index: number): stri
   ].join("\n");
 }
 
-function serializeList(list: Element, ordered: boolean): string {
-  const start = Number.parseInt(list.getAttribute("start") ?? "1", 10) || 1;
+function serializeList(list: Element, ordered: boolean, inTableCell: boolean): string {
+  const start = Number.parseInt(list.getAttribute("start") ?? "1", 10);
   const items = [...list.children].filter((child) => child.tagName === "LI");
   if (items.length === 0) return "";
-  return `${items.map((item, index) => serializeListItem(item, ordered, start + index)).join("\n")}\n\n`;
+  let next = Number.isNaN(start) ? 1 : start;
+  return `${items
+    .map((item) => {
+      const value = Number.parseInt(item.getAttribute("value") ?? "", 10);
+      if (ordered && !Number.isNaN(value)) next = value;
+      return serializeListItem(item, ordered, next++, inTableCell);
+    })
+    .join("\n")}\n\n`;
 }
 
-function serializeBlockquote(quote: Element): string {
-  const content = serializeChildren(quote)
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+function serializeBlockquote(quote: Element, inTableCell: boolean): string {
+  const content = outsideCode(serializeChildren(quote, inTableCell), (prose) =>
+    prose.replace(/\n{3,}/g, "\n\n"),
+  ).trim();
   if (!content) return "";
   const quoted = content
     .split("\n")
@@ -159,11 +181,11 @@ function serializeDetails(details: Element): string {
   return `<details${open}>\n<summary>${summary}</summary>${content ? `\n\n${content}` : ""}\n</details>\n\n`;
 }
 
-function serializeAnchor(anchor: Element): string {
+function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   const markdownCopy = anchor.getAttribute("data-markdown-copy");
-  if (markdownCopy !== null) return markdownCopy;
-  const content = serializeChildren(anchor);
-  const href = anchor.getAttribute("href") ?? "";
+  if (markdownCopy !== null) return escapeTablePipes(markdownCopy, inTableCell);
+  const content = serializeChildren(anchor, inTableCell);
+  const href = escapeTablePipes(anchor.getAttribute("href") ?? "", inTableCell);
   if (!/^https?:\/\//i.test(href)) return content;
   const label = content.trim();
   if (!label) return "";
@@ -171,32 +193,48 @@ function serializeAnchor(anchor: Element): string {
   return `[${label}](${href})`;
 }
 
-function serializeChildren(node: Node): string {
+/**
+ * GFM splits a table row at every unescaped pipe, but its math-aware parsing
+ * keeps a formula's pipes in the cell, so formula source is copied unescaped.
+ */
+function escapeTablePipes(text: string, inTableCell: boolean): string {
+  return inTableCell ? text.replaceAll("|", "\\|") : text;
+}
+
+function serializeChildren(node: Node, inTableCell = false): string {
   let out = "";
   for (const child of node.childNodes) {
-    out += serializeNode(child);
+    out += serializeNode(child, inTableCell);
   }
   return out;
 }
 
-function serializeNode(node: Node): string {
+function serializeNode(node: Node, inTableCell = false): string {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? "";
     if (text.includes("\n") && text.trim().length === 0) return "\n";
-    return text;
+    return escapeTablePipes(text, inTableCell);
   }
   if (node.nodeType !== Node.ELEMENT_NODE) return "";
   const element = node as Element;
   if (element.hasAttribute("data-markdown-details")) {
-    return serializeDetails(element);
+    return escapeTablePipes(serializeDetails(element), inTableCell);
   }
   const markdownCopy = element.getAttribute("data-markdown-copy");
-  if (markdownCopy !== null) return markdownCopy;
+  if (markdownCopy !== null) {
+    // A diagram copies as its fenced source, which is code too.
+    if (element.hasAttribute("data-markdown-mermaid")) {
+      return verbatimBlock(escapeTablePipes(markdownCopy.trimEnd(), inTableCell));
+    }
+    return element.hasAttribute("data-markdown-math")
+      ? markdownCopy
+      : escapeTablePipes(markdownCopy, inTableCell);
+  }
   if (isSkippedElement(element)) return "";
 
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
   if (headingLevel) {
-    return `${"#".repeat(Number(headingLevel))} ${serializeChildren(element).trim()}\n\n`;
+    return `${"#".repeat(Number(headingLevel))} ${serializeChildren(element, inTableCell).trim()}\n\n`;
   }
 
   switch (element.tagName) {
@@ -205,45 +243,45 @@ function serializeNode(node: Node): string {
     case "HR":
       return "---\n\n";
     case "P":
-      return `${serializeChildren(element).trim()}\n\n`;
+      return `${serializeChildren(element, inTableCell).trim()}\n\n`;
     case "PRE":
-      return serializeCodeBlock(element);
+      return escapeTablePipes(serializeCodeBlock(element), inTableCell);
     case "CODE": {
-      const content = element.textContent ?? "";
+      const content = escapeTablePipes(element.textContent ?? "", inTableCell);
       return isBlockCodeElement(element, content) ? content : wrapInlineCode(content);
     }
     case "STRONG":
     case "B":
-      return wrapInlineMarker(serializeChildren(element), "**");
+      return wrapInlineMarker(serializeChildren(element, inTableCell), "**");
     case "EM":
     case "I":
-      return wrapInlineMarker(serializeChildren(element), "*");
+      return wrapInlineMarker(serializeChildren(element, inTableCell), "*");
     case "DEL":
     case "S":
-      return wrapInlineMarker(serializeChildren(element), "~~");
+      return wrapInlineMarker(serializeChildren(element, inTableCell), "~~");
     case "A":
-      return serializeAnchor(element);
+      return serializeAnchor(element, inTableCell);
     case "IMG": {
-      const alt = element.getAttribute("alt") ?? "";
-      const src = element.getAttribute("src") ?? "";
+      const alt = escapeTablePipes(element.getAttribute("alt") ?? "", inTableCell);
+      const src = escapeTablePipes(element.getAttribute("src") ?? "", inTableCell);
       return alt && src ? `![${alt}](${src})` : "";
     }
     case "UL":
-      return serializeList(element, false);
+      return serializeList(element, false, inTableCell);
     case "OL":
-      return serializeList(element, true);
+      return serializeList(element, true, inTableCell);
     case "BLOCKQUOTE":
-      return serializeBlockquote(element);
+      return serializeBlockquote(element, inTableCell);
     case "TABLE":
-      return serializeTable(element);
+      return escapeTablePipes(serializeTable(element), inTableCell);
     case "DIV":
     case "SECTION":
     case "ARTICLE": {
-      const content = serializeChildren(element);
+      const content = serializeChildren(element, inTableCell);
       return content && !content.endsWith("\n") ? `${content}\n` : content;
     }
     default:
-      return serializeChildren(element);
+      return serializeChildren(element, inTableCell);
   }
 }
 
@@ -299,13 +337,19 @@ function soleCodeBlock(container: Node): Element | null {
 }
 
 function tidyMarkdown(markdown: string): string {
-  return markdown
-    .split(/(```[\s\S]*?(?:```|$))/)
-    .map((part, index) =>
-      index % 2 === 1 ? part : part.replace(/[ \t]+(?=\n)/g, "").replace(/\n{3,}/g, "\n\n"),
-    )
-    .join("")
-    .trim();
+  // Odd parts are code, kept verbatim, so a selection that starts or ends inside
+  // code keeps that code's leading and trailing whitespace.
+  const parts = markdown.split(CODE_BOUNDARY);
+  const last = parts.length - 1;
+  return parts
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      let prose = part.replace(/[ \t]+(?=\n)/g, "").replace(/\n{3,}/g, "\n\n");
+      if (index === 0) prose = prose.trimStart();
+      if (index === last) prose = prose.trimEnd();
+      return prose;
+    })
+    .join("");
 }
 
 export function serializeRenderedMarkdownFragment(container: Node): string {
@@ -315,7 +359,8 @@ export function serializeRenderedMarkdownFragment(container: Node): string {
 }
 
 export function serializeTableElementToMarkdown(table: Element): string {
-  return serializeTable(table).trim();
+  // Raw HTML can put a pre in a cell; with no tidy pass here, drop its markers.
+  return serializeTable(table).replaceAll(CODE_BOUNDARY, "").trim();
 }
 
 // The wrapper MarkdownMath puts on every formula it renders. The sanitizer drops

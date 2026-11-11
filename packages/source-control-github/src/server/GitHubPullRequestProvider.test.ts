@@ -16,6 +16,8 @@ import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullReque
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
 
 const coreFields = {
+  maintainerCanModify: true,
+  canEditMaintainerEdits: false,
   reviewRequestTeams: [],
   checksTruncated: false,
   comparison: { behindBy: 0, viewerCanUpdate: true },
@@ -64,6 +66,44 @@ it.effect("maps credential verification failures without relabeling operation fa
     verificationFails = false;
     expect(yield* verify(input, operation).pipe(Effect.flip)).toBe("operation-failed");
     expect(operations).toBe(1);
+  }),
+);
+
+it.effect.each([
+  { status: 403, githubErrorTypes: [], reason: "forbidden" },
+  { status: 503, githubErrorTypes: [], reason: "failed" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN"], reason: "forbidden" },
+  { status: 200, githubErrorTypes: ["INTERNAL"], reason: "failed" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN", "NOT_FOUND"], reason: "forbidden" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN", "INTERNAL"], reason: "failed" },
+  { status: 200, githubErrorTypes: ["FORBIDDEN", null], reason: "failed" },
+])("classifies GitHub response $status as $reason", ({ status, githubErrorTypes, reason }) =>
+  Effect.gen(function* () {
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          revalidateChecks: (_input, read) => read,
+          getPullRequestDetail: () =>
+            Effect.fail(
+              new GitHubRequestPolicy.GitHubApiResponseError({
+                host: "github.com",
+                operation: "detail",
+                status,
+                githubErrorTypes,
+              }),
+            ),
+        }),
+      ),
+    );
+    const error = yield* provider
+      .getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      })
+      .pipe(Effect.flip);
+    expect(error.reason).toBe(reason);
   }),
 );
 
@@ -205,6 +245,7 @@ describe("gitHubViewerPermissions", () => {
       });
 
       expect(detail.viewerPermissions).toEqual({
+        maintainerEdits: false,
         actions: ["ready", "draft", "close", "reopen"],
         comment: true,
         resolve: false,
@@ -218,6 +259,7 @@ describe("gitHubViewerPermissions", () => {
         status: "action-required",
         description: "GitHub could not determine whether workflows are awaiting approval.",
         url: null,
+        placeholder: true,
       });
       for (const fingerprint of ["broad", "restricted", "broad"]) {
         const scoped = yield* provider
@@ -245,7 +287,6 @@ describe("gitHubViewerPermissions", () => {
               ...coreFields,
               comparison: null,
               viewerAccess: { ...coreFields.viewerAccess, canWrite: false, canTriage: false },
-              authorId: null,
               number: 7,
               title: "Pull request 7",
               url: "https://github.com/acme/web/pull/7",
@@ -337,7 +378,6 @@ describe("gitHubViewerPermissions", () => {
           getPullRequestDetail: () =>
             Effect.succeed({
               ...coreFields,
-              authorId: null,
               number: 7,
               title: "Pull request 7",
               url: "https://github.com/acme/web/pull/7",
@@ -400,7 +440,6 @@ describe("gitHubViewerPermissions", () => {
 
 const openDetail = {
   ...coreFields,
-  authorId: null,
   number: 7,
   title: "Pull request 7",
   url: "https://github.com/acme/web/pull/7",
@@ -481,6 +520,7 @@ it.effect("keeps an unsafe workflow approval scope visible as unknown", () =>
         status: "action-required",
         description: "GitHub could not determine whether workflows are awaiting approval.",
         url: null,
+        placeholder: true,
       },
     ]);
   }).pipe(
@@ -606,7 +646,6 @@ describe("getViewerPermissions", () => {
 
 describe("getChangeRequest commits", () => {
   const baseDetail = {
-    authorId: null,
     number: 7,
     title: "Pull request 7",
     url: "https://github.com/acme/web/pull/7",
@@ -645,7 +684,6 @@ describe("getChangeRequest commits", () => {
     reviewers: [],
     avatarsByLogin: new Map<string, string>(),
     botLogins: new Set<string>(),
-    commitStats: new Map<string, { readonly additions: number; readonly deletions: number }>(),
     viewer: { canUpdate: true, didAuthor: false },
   };
 
@@ -657,6 +695,14 @@ describe("getChangeRequest commits", () => {
           author: baseDetail.author,
           comments: baseDetail.comments,
           commits: [
+            {
+              oid: "graphql-newest",
+              messageHeadline: "Activity metadata",
+              committedDate: "2026-07-06T00:00:00Z",
+              additions: 18,
+              deletions: 7,
+              authors: [],
+            },
             {
               oid: "view-oldest",
               messageHeadline: "gh pr view's oldest commit",
@@ -679,6 +725,11 @@ describe("getChangeRequest commits", () => {
       });
 
       expect(detail.commits.map((commit) => commit.oid)).toEqual(["graphql-newest"]);
+      expect(detail.commits[0]).toMatchObject({
+        messageHeadline: "the newest commit gh pr view drops",
+        additions: 18,
+        deletions: 7,
+      });
     }).pipe(
       Effect.provide(
         layerWith([
@@ -703,7 +754,7 @@ describe("getChangeRequest commits", () => {
         number: 7,
       });
 
-      expect(detail.commits.map((commit) => commit.oid)).toEqual(["view-oldest"]);
+      expect(detail.commits.map((commit) => commit.oid)).toEqual(["graphql-newest", "view-oldest"]);
     }).pipe(Effect.provide(layerWith([]))),
   );
 });
@@ -732,7 +783,6 @@ describe("getChangeRequestActivity dismissed reviews", () => {
     reviewers: [],
     avatarsByLogin: new Map(),
     botLogins: new Set(["macroscopeapp"]),
-    commitStats: new Map(),
     commits: [],
     viewer: { canUpdate: true, didAuthor: false },
   };
@@ -780,7 +830,6 @@ describe("listChangeRequestsAcross", () => {
     title: "Change",
     url: `https://github.com/${repository}/pull/1`,
     author: null,
-    authorId: null,
     headBranch: "feature",
     baseBranch: "main",
     state: "open" as const,

@@ -308,16 +308,10 @@ export const ProviderThreadId = makeEntityId("ProviderThreadId");
 export type ProviderThreadId = typeof ProviderThreadId.Type;
 export const ProviderTurnId = makeEntityId("ProviderTurnId");
 export type ProviderTurnId = typeof ProviderTurnId.Type;
-export const RuntimeSessionId = makeEntityId("RuntimeSessionId");
-export type RuntimeSessionId = typeof RuntimeSessionId.Type;
-export const RuntimeItemId = makeEntityId("RuntimeItemId");
-export type RuntimeItemId = typeof RuntimeItemId.Type;
 export const TurnItemId = makeEntityId("TurnItemId");
 export type TurnItemId = typeof TurnItemId.Type;
 export const RuntimeRequestId = makeEntityId("RuntimeRequestId");
 export type RuntimeRequestId = typeof RuntimeRequestId.Type;
-export const RuntimeTaskId = makeEntityId("RuntimeTaskId");
-export type RuntimeTaskId = typeof RuntimeTaskId.Type;
 export const ScheduledTaskId = makeEntityId("ScheduledTaskId");
 /** A one-use handle to a secret the user entered for an agent; the agent never sees the value. */
 export const SecretRef = makeEntityId("SecretRef");

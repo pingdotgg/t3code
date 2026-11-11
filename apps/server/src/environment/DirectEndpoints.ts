@@ -9,21 +9,21 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
-import { isTailnetHost } from "@t3tools/shared/hostClassification";
-
-import * as ServerConfig from "../config.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   formatHostForUrl,
-  isLoopbackHost,
-  isPrivateNetworkAddress,
+  isTailnetHost,
   isWildcardHost,
-  VIRTUAL_INTERFACE,
-} from "../startupAccess.ts";
+} from "@t3tools/shared/hostClassification";
+
+import * as ServerConfig from "../config.ts";
+import { isLoopbackHost, isPrivateNetworkAddress, VIRTUAL_INTERFACE } from "../startupAccess.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
@@ -33,6 +33,7 @@ const TAILSCALE_ENDPOINT_TIMEOUT = Duration.seconds(3);
 export class DirectEndpoints extends Context.Service<
   DirectEndpoints,
   {
+    readonly resolveAvailable: () => Effect.Effect<ReadonlyArray<ServerDirectEndpoint>>;
     readonly resolve: () => Effect.Effect<ReadonlyArray<ServerDirectEndpoint>>;
   }
 >()("t3/environment/DirectEndpoints") {}
@@ -49,7 +50,11 @@ const isTailscaleInterface = (
   /^tailscale/i.test(name) ||
   entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
 
+// Windows adapter names are mutable; Linux bridges can inherit these MACs.
+const WINDOWS_HOST_ADAPTER_MAC = /^(0a:00:27|00:50:56:c0:00):/i;
+
 export function resolveBoundEndpoints(input: {
+  readonly platform: NodeJS.Platform;
   readonly host: string | undefined;
   readonly port: number;
   readonly interfaces: NetworkInterfacesMap;
@@ -67,7 +72,10 @@ export function resolveBoundEndpoints(input: {
         .flatMap(([name, entries]) => (VIRTUAL_INTERFACE.test(name) ? [] : (entries ?? [])))
         .filter(
           (entry) =>
-            !entry.internal && entry.family === "IPv4" && isAdvertisableAddress(entry.address),
+            !entry.internal &&
+            entry.family === "IPv4" &&
+            isAdvertisableAddress(entry.address) &&
+            !(input.platform === "win32" && WINDOWS_HOST_ADAPTER_MAC.test(entry.mac)),
         )
         .map((entry) => entry.address)
     : [input.host!].filter(isAdvertisableAddress);
@@ -111,6 +119,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
+  const platform = yield* HostProcess.Platform;
   // Only the service default listens on every interface without being asked,
   // so only it checks once whether it runs in a cloud. The check starts now so
   // the first client does not wait for its timeout.
@@ -119,15 +128,23 @@ export const make = Effect.gen(function* () {
     : Effect.succeed(false);
   yield* Effect.forkDetach(onCloudVm);
 
-  const resolve = Effect.gen(function* () {
+  const servedEndpoint = yield* Ref.make<Option.Option<string>>(Option.none());
+  const resolveAvailable = Effect.fn("DirectEndpoints.resolveAvailable")(function* () {
     const endpoints = [
       ...resolveBoundEndpoints({
+        platform,
         host: config.host,
         port: config.port,
         interfaces: NodeOS.networkInterfaces(),
         onCloudVm: yield* onCloudVm,
       }),
     ];
+    const servedUrl = yield* Ref.get(servedEndpoint);
+    if (Option.isSome(servedUrl)) endpoints.push({ kind: "tailnet", httpBaseUrl: servedUrl.value });
+    return endpoints;
+  });
+
+  const resolve = Effect.gen(function* () {
     // Serve setup can fail without stopping startup; advertise only after it answers as this server.
     if (config.tailscaleServeEnabled) {
       const servedUrl = yield* readTailscaleStatus.pipe(
@@ -148,14 +165,17 @@ export const make = Effect.gen(function* () {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(HttpClient.HttpClient, httpClient),
       );
-      if (Option.isSome(servedUrl)) {
-        endpoints.push({ kind: "tailnet", httpBaseUrl: servedUrl.value });
-      }
+      yield* Ref.set(servedEndpoint, servedUrl);
     }
-    return endpoints;
+    return yield* resolveAvailable();
   });
 
-  return DirectEndpoints.of({ resolve: () => resolve });
+  return DirectEndpoints.of({
+    resolveAvailable,
+    resolve: Effect.fn("DirectEndpoints.resolve")(function () {
+      return resolve;
+    }),
+  });
 });
 
 export const layer = Layer.effect(DirectEndpoints, make);

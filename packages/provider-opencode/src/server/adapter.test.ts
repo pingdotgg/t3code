@@ -1,6 +1,12 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Exercise HTTP authentication with the real SDK.
+import * as NodeHttp from "node:http";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
   CheckpointId,
   NodeId,
@@ -15,6 +21,7 @@ import {
   ThreadId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type ProviderOptionSelection,
 } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
@@ -28,6 +35,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -50,6 +58,7 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeOpenCodeSettings = Schema.decodeEffect(OpenCodeSettings);
 const OPEN_CODE_TEST_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
   serverUrl: "http://test.invalid",
 });
@@ -100,7 +109,7 @@ function asyncEventStream() {
   };
 }
 
-const OPENCODE_TEST_SETTINGS = Schema.decodeUnknownSync(OpenCodeSettings)({});
+const OPENCODE_TEST_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
 
 function runtimePolicy(
   runtimeMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"],
@@ -144,15 +153,24 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   suffix: string,
   nativeSessionId: string,
   client: object,
+  host: Partial<ProviderHost.ProviderHost["Service"]> = {},
+  turnSettings: {
+    readonly model?: string;
+    readonly options?: ReadonlyArray<ProviderOptionSelection>;
+    readonly interactionMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["interactionMode"];
+  } = {},
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
   const modelSelection = {
     instanceId,
-    model: "anthropic/claude-sonnet",
-    options: [],
+    model: turnSettings.model ?? "anthropic/claude-sonnet",
+    options: turnSettings.options ?? [],
   };
-  const policy = runtimePolicy("full-access", { cwd: "/workspace" });
+  const policy = runtimePolicy("full-access", {
+    cwd: "/workspace",
+    interactionMode: turnSettings.interactionMode ?? "default",
+  });
   const adapter = yield* makeOpenCodeAdapterV2({
     instanceId,
     settings: OPEN_CODE_TEST_SETTINGS,
@@ -165,6 +183,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     Effect.provideService(ProviderHost.ProviderHost, {
       paths: { cwd: "/workspace" },
       resolveAttachmentPath: () => null,
+      ...host,
     } as unknown as ProviderHost.ProviderHost["Service"]),
   );
   const runtime = yield* adapter.openSession({
@@ -182,6 +201,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   const startTurn = (
     text = "hello",
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
+    turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
   ) =>
     runtime.startTurn({
       appThread: {
@@ -191,7 +211,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
         runtimeMode: "full-access",
-        interactionMode: "default",
+        interactionMode: policy.interactionMode,
         branch: null,
         worktreePath: null,
         activeProviderThreadId: providerThread.id,
@@ -222,7 +242,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         attachments: [],
       },
       modelSelection,
-      runtimePolicy: policy,
+      runtimePolicy: turnPolicy,
     });
   return {
     nativeSessionId,
@@ -237,6 +257,537 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect.each([
+    ["empty", "prompt"],
+    ["unsupported", "command"],
+    ["supported", "command"],
+    ["unknown", "prompt"],
+    ["failure", "prompt"],
+    ["unset", "prompt"],
+  ] as const)("normalizes reasoning variants for %s inventory at %s dispatch", ([kind, request]) =>
+    Effect.gen(function* () {
+      const suffix = `variant-${kind}-${request}`;
+      const nativeEvents = asyncEventStream();
+      const inputs: Array<Record<string, unknown>> = [];
+      let inventoryCalls = 0;
+      const receive = async (input: Record<string, unknown>) => {
+        inputs.push(input);
+        return { data: true };
+      };
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        suffix,
+        suffix,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          provider: {
+            list: async () => {
+              inventoryCalls++;
+              if (kind === "failure") throw new Error("inventory unavailable");
+              return {
+                data: {
+                  all: [
+                    {
+                      id: "opencode",
+                      models:
+                        kind === "unknown"
+                          ? {}
+                          : {
+                              "big-pickle": {
+                                id: "big-pickle",
+                                variants:
+                                  kind === "supported"
+                                    ? { medium: {} }
+                                    : kind === "unsupported"
+                                      ? { high: {} }
+                                      : {},
+                              },
+                            },
+                    },
+                  ],
+                },
+              };
+            },
+          },
+          command: { list: async () => ({ data: [{ name: "review" }] }) },
+          session: {
+            create: async () => ({ data: { id: suffix, time: { created: 1, updated: 1 } } }),
+            promptAsync: receive,
+            command: receive,
+          },
+        },
+        {},
+        {
+          model: "opencode/big-pickle",
+          options: [
+            ...(kind === "unset" ? [] : [{ id: "variant", value: "medium" }]),
+            { id: "agent", value: "plan" },
+          ],
+        },
+      );
+      yield* harness.startTurn(request === "command" ? "/review staged changes" : "hello");
+      assert.equal(inputs.length, 1);
+      const payload = inputs[0]!;
+      assert.equal(payload.agent, "plan");
+      if (kind === "supported" || kind === "unknown" || kind === "failure") {
+        assert.equal(payload.variant, "medium");
+      } else {
+        assert.equal(Object.hasOwn(payload, "variant"), false);
+      }
+      if (kind === "unset") assert.equal(inventoryCalls, 0);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("reuses successful model variants for the session and retries failed inventories", () =>
+    Effect.gen(function* () {
+      const sessionId = "variant-cache";
+      const nativeEvents = asyncEventStream();
+      const inputs: Array<Record<string, unknown>> = [];
+      let inventoryCalls = 0;
+      let variants: Record<string, object> = {};
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        sessionId,
+        sessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          provider: {
+            list: async () => {
+              inventoryCalls++;
+              if (inventoryCalls === 1) throw new Error("inventory unavailable");
+              return {
+                data: {
+                  all: [{ id: "opencode", models: { "big-pickle": { variants } } }],
+                },
+              };
+            },
+          },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: Record<string, unknown>) => {
+              inputs.push(input);
+              return { data: true };
+            },
+          },
+        },
+        {},
+        { model: "opencode/big-pickle", options: [{ id: "variant", value: "medium" }] },
+      );
+      const submit = Effect.fnUntraced(function* () {
+        yield* harness.startTurn();
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.updated",
+            properties: {
+              sessionID: sessionId,
+              info: {
+                id: inputs.at(-1)!.messageID,
+                sessionID: sessionId,
+                role: "user",
+                time: { created: 1 },
+              },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({ type: "session.idle", properties: { sessionID: sessionId } }),
+        );
+        yield* harness.runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        return inputs.at(-1)!;
+      });
+
+      assert.equal((yield* submit()).variant, "medium");
+      assert.equal(inventoryCalls, 1);
+      assert.isFalse(Object.hasOwn(yield* submit(), "variant"));
+      assert.equal(inventoryCalls, 2);
+      variants = { medium: {} };
+      assert.isFalse(Object.hasOwn(yield* submit(), "variant"));
+      assert.equal(inventoryCalls, 2);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("keeps queued steers behind a cold catalog lookup and cancels them on stop", () =>
+    Effect.gen(function* () {
+      const sessionId = "catalog-admission";
+      const nativeEvents = asyncEventStream();
+      const catalogStarted = promiseGate<void>();
+      const calls: string[] = [];
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        sessionId,
+        sessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          provider: {
+            list: async (_input: unknown, { signal }: { signal: AbortSignal }) => {
+              calls.push("catalog");
+              catalogStarted.resolve();
+              await new Promise<void>((_resolve, reject) => {
+                signal.addEventListener(
+                  "abort",
+                  () => {
+                    calls.push("catalog-aborted");
+                    reject(signal.reason);
+                  },
+                  { once: true },
+                );
+              });
+              return { data: { all: [] } };
+            },
+          },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            get: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            messages: async () => ({ data: [] }),
+            children: async () => ({ data: [] }),
+            promptAsync: async (_input: unknown, { signal }: { signal: AbortSignal }) => {
+              signal.throwIfAborted();
+              calls.push("prompt");
+              return { data: true };
+            },
+            abort: async () => {
+              calls.push("abort");
+              return { data: true };
+            },
+          },
+        },
+        {},
+        { model: "opencode/big-pickle", options: [{ id: "variant", value: "medium" }] },
+      );
+      const start = yield* harness.startTurn().pipe(Effect.forkScoped);
+      yield* Effect.promise(() => catalogStarted.promise);
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      const activeTurn = snapshot.providerTurns.at(-1)!;
+      const steer = (message: string) =>
+        harness.runtime
+          .steerTurn({
+            threadId: harness.threadId,
+            runId: harness.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: activeTurn.id,
+            message: {
+              messageId: MessageId.make(message),
+              text: message,
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+          })
+          .pipe(Effect.exit, Effect.forkScoped({ startImmediately: true }));
+      const firstSteer = yield* steer("first follow-up");
+      const secondSteer = yield* steer("second follow-up");
+      yield* TestClock.adjust("5 seconds");
+      assert.deepEqual(calls, ["catalog"]);
+
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: activeTurn.id,
+      });
+      yield* Fiber.join(start);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(firstSteer)));
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(secondSteer)));
+      assert.deepEqual(calls, ["catalog", "catalog-aborted", "abort"]);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect.each([
+    {
+      message: "<none>",
+      statusCode: 503,
+      responseBody: "<title> Service\n unavailable </title>",
+      expected: "Service unavailable (HTTP 503).",
+    },
+    {
+      message: " <NoNe> ",
+      statusCode: 502,
+      responseBody: "bad gateway",
+      expected: "The model provider failed the request (HTTP 502).",
+    },
+    {
+      message: "<none>",
+      expected: "The model provider failed the request and did not include an error message.",
+    },
+    {
+      message: "provider says no",
+      statusCode: 503,
+      responseBody: "<title>Unavailable</title>",
+      expected: "provider says no",
+    },
+    {
+      message: "<none>",
+      statusCode: 503,
+      responseBody: "<title>https://user:secret@example.com/error?token=secret</title>",
+      expected: "https://example.com/error (HTTP 503).",
+    },
+  ])("reports readable and sanitized session and turn failures: $expected", (sample) =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness("provider-error", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.error",
+          properties: { sessionID: "root", error: { name: "APIError", data: sample } },
+        }),
+      );
+      const events = yield* Fiber.join(received);
+      const session = events.findLast((event) => event.type === "provider_session.updated");
+      const terminal = events.findLast((event) => event.type === "turn.terminal");
+      assert.strictEqual(session?.providerSession.lastError, sample.expected);
+      assert.strictEqual(terminal?.failure?.message, sample.expected);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("classifies APIError 429 as a usage limit", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness("usage-limit", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.error",
+          properties: {
+            sessionID: "root",
+            error: {
+              name: "APIError",
+              data: {
+                message: "Provider rejected request",
+                statusCode: 429,
+                isRetryable: true,
+              },
+            },
+          },
+        }),
+      );
+      const terminal = (yield* Fiber.join(received)).find(
+        (event) => event.type === "turn.terminal",
+      );
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.failure?.class, "usage_limit");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("applies a changed runtime policy to the session on resume and turn start", () =>
+    Effect.gen(function* () {
+      const updates: Array<{ sessionID: string; permission: unknown }> = [];
+      const fullAccess = runtimePolicy("full-access", { cwd: "/workspace" });
+      const supervised = runtimePolicy("approval-required", { cwd: "/workspace" });
+      const harness = yield* makeOpenCodeRuntimeHarness("policy-change", "root", {
+        event: { subscribe: async () => ({ stream: asyncEventStream().stream }) },
+        session: {
+          create: async (input: { permission: unknown }) => ({
+            data: {
+              id: "root",
+              permission: input.permission,
+              time: { created: 1, updated: 1 },
+            },
+          }),
+          get: async () => ({
+            data: {
+              id: "root",
+              permission: openCodePermissionRules(fullAccess),
+              time: { created: 1, updated: 1 },
+            },
+          }),
+          update: async (input: { sessionID: string; permission: unknown }) => {
+            updates.push(input);
+            return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
+          },
+          promptAsync: async () => ({ data: true }),
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: fullAccess,
+      });
+      assert.deepStrictEqual(updates, []);
+
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: supervised,
+      });
+      assert.deepStrictEqual(updates, [
+        { sessionID: "root", permission: openCodePermissionRules(supervised) },
+      ]);
+
+      yield* harness.startTurn("hello", harness.providerThread, fullAccess);
+      assert.deepStrictEqual(updates.slice(1), [
+        { sessionID: "root", permission: openCodePermissionRules(fullAccess) },
+      ]);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("applies a changed runtime policy to existing subagent sessions", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
+      const updates: Array<{
+        sessionID: string;
+        permission: ReturnType<typeof openCodePermissionRules>;
+      }> = [];
+      const fullAccess = runtimePolicy("full-access", { cwd: "/workspace" });
+      const supervised = runtimePolicy("approval-required", { cwd: "/workspace" });
+      const root = "ses_root";
+      const child = "ses_child";
+      const taskDeny = { permission: "task", pattern: "*", action: "deny" as const };
+      const nativePermissions = new Map<string, (typeof updates)[number]["permission"]>([
+        [root, openCodePermissionRules(fullAccess)],
+        [child, [taskDeny]],
+      ]);
+      let failNextChildUpdate = false;
+      const harness = yield* makeOpenCodeRuntimeHarness("child-policy-change", root, {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+          get: async ({ sessionID }: { sessionID: string }) => ({
+            data: {
+              id: sessionID,
+              ...(sessionID === child ? { parentID: root } : {}),
+              permission: nativePermissions.get(sessionID),
+              time: { created: 1, updated: 1 },
+            },
+          }),
+          update: async (input: (typeof updates)[number]) => {
+            if (input.sessionID === child && failNextChildUpdate) {
+              failNextChildUpdate = false;
+              throw new Error("child update failed");
+            }
+            updates.push(input);
+            nativePermissions.set(input.sessionID, input.permission);
+            return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
+          },
+          promptAsync: async () => ({ data: true }),
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+
+      yield* harness.startTurn("hello", harness.providerThread, fullAccess);
+      yield* push({
+        type: "message.part.updated",
+        properties: {
+          sessionID: root,
+          part: {
+            id: "prt_task",
+            sessionID: root,
+            messageID: "msg_root_assistant",
+            type: "tool",
+            tool: "task",
+            callID: "call_task",
+            state: {
+              status: "running",
+              input: { description: "Explore", prompt: "look around", subagent_type: "general" },
+              title: "Explore",
+              metadata: { parentSessionId: root, sessionId: child },
+              time: { start: 3 },
+            },
+          },
+        },
+      });
+      const childUpdates = () => updates.filter((update) => update.sessionID === child);
+      assert.equal(permissionAction(childUpdates().at(-1)!.permission, "bash"), "allow");
+
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: supervised,
+      });
+      const childRules = childUpdates().at(-1)!.permission;
+      assert.equal(childUpdates().length, 2);
+      assert.equal(permissionAction(childRules, "bash"), "ask");
+      assert.equal(permissionAction(childRules, "task"), "deny");
+      assert.deepStrictEqual(childRules, openCodeChildPermissionRules(supervised, [taskDeny]));
+
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: fullAccess,
+      });
+      assert.equal(permissionAction(nativePermissions.get(child)!, "bash"), "allow");
+
+      failNextChildUpdate = true;
+      const failed = yield* Effect.exit(
+        harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          runtimePolicy: supervised,
+        }),
+      );
+      assert.isTrue(Exit.isFailure(failed));
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: supervised,
+      });
+      assert.equal(permissionAction(nativePermissions.get(child)!, "bash"), "ask");
+      assert.equal(permissionAction(nativePermissions.get(child)!, "task"), "deny");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect.each(["completed", "failed", "unavailable"] as const)(
     "normalizes OpenCode step usage for %s turns",
     (ending) =>
@@ -371,6 +922,159 @@ describe("OpenCodeAdapterV2", () => {
       ),
   );
 
+  // OpenCode 1.18.18 reports a context overflow as session.error, then auto-compacts and continues.
+  it.effect("keeps a turn running through a context overflow that OpenCode auto-compacts", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      let promptId = "";
+      const harness = yield* makeOpenCodeRuntimeHarness("context-overflow", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async (input: { messageID: string }) => {
+            promptId = input.messageID;
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const status = (type: "busy" | "idle") => ({
+        type: "session.status",
+        properties: { sessionID: "root", status: { type } },
+      });
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: { id: promptId, role: "user", time: { created: 1 } },
+          },
+        }),
+      );
+      yield* Effect.promise(() => nativeEvents.push(status("busy")));
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.error",
+          properties: {
+            sessionID: "root",
+            error: {
+              name: "ContextOverflowError",
+              data: {
+                message:
+                  "This model's maximum context length is 131070 tokens. However, your messages resulted in 140049 tokens.",
+              },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({ type: "session.compacted", properties: { sessionID: "root" } }),
+      );
+      yield* Effect.promise(() => nativeEvents.push(status("busy")));
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: "root",
+            part: {
+              id: "post-compaction-text",
+              sessionID: "root",
+              messageID: "post-compaction-assistant",
+              type: "text",
+              text: "Post-compaction step",
+              time: { start: 2 },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: {
+              id: "post-compaction-assistant",
+              sessionID: "root",
+              role: "assistant",
+              time: { created: 2, completed: 3 },
+              parentID: promptId,
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() => nativeEvents.push(status("idle")));
+
+      const events = Array.from(yield* Fiber.join(received));
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "completed");
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "Post-compaction step",
+        ),
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("fails an explicit compaction that OpenCode reports as a context overflow", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness("compact-overflow", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          summarize: async () => {
+            await nativeEvents.push({
+              type: "session.error",
+              properties: {
+                sessionID: "root",
+                error: {
+                  name: "ContextOverflowError",
+                  data: { message: "This model's maximum context length is 131070 tokens." },
+                },
+              },
+            });
+            return { data: true };
+          },
+        },
+      });
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* harness.startTurn("/compact");
+
+      const events = Array.from(yield* Fiber.join(received));
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "failed");
+      assert.equal(
+        terminal?.failure?.message,
+        "This model's maximum context length is 131070 tokens.",
+      );
+      assert.isFalse(
+        events.some(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        ),
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("preserves native multi-select and custom-answer flags through a live reply", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -423,6 +1127,10 @@ describe("OpenCodeAdapterV2", () => {
         }),
       );
       const events = yield* Fiber.join(received);
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["turn_item.updated", "runtime_request.updated"],
+      );
       const item = events.find((event) => event.type === "turn_item.updated");
       const request = events.find((event) => event.type === "runtime_request.updated");
       assert.equal(item?.type, "turn_item.updated");
@@ -495,19 +1203,35 @@ describe("OpenCodeAdapterV2", () => {
             error: "Command failed",
             time: { start: 3, end: 4 },
           },
+          {
+            status: "error",
+            input: { command: "sleep 60" },
+            error: "Interrupted",
+            metadata: { interrupted: true },
+            time: { start: 5, end: 6 },
+          },
+          // OpenCode 1.3 reports a stopped tool only through this message.
+          {
+            status: "error",
+            input: { command: "sleep 90" },
+            error: "Tool execution aborted",
+            time: { start: 6, end: 7 },
+          },
         ] satisfies ReadonlyArray<ToolPart["state"]>;
         for (const state of states) {
+          const callID =
+            state.status === "error" ? `call-ended-${state.time.start}` : "call-working";
           yield* Effect.promise(() =>
             nativeEvents.push({
               type: "message.part.updated",
               properties: {
                 sessionID: nativeSessionId,
                 part: {
-                  id: state.status === "error" ? "part-failed" : "part-working",
+                  id: `part-${callID}`,
                   sessionID: nativeSessionId,
                   messageID: "late-assistant",
                   type: "tool",
-                  callID: state.status === "error" ? "call-failed" : "call-working",
+                  callID,
                   tool: "bash",
                   state,
                 },
@@ -515,6 +1239,58 @@ describe("OpenCodeAdapterV2", () => {
             }),
           );
         }
+        for (const error of ["Task cancelled", "Task failed"]) {
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.part.updated",
+              properties: {
+                sessionID: nativeSessionId,
+                part: {
+                  id: `part-${error}`,
+                  sessionID: nativeSessionId,
+                  messageID: "late-assistant",
+                  type: "tool",
+                  callID: `call-${error}`,
+                  tool: "task",
+                  state: {
+                    status: "error",
+                    input: {
+                      description: "Sleep task",
+                      prompt: "sleep 120",
+                      subagent_type: "general",
+                    },
+                    error,
+                    time: { start: 7, end: 8 },
+                  },
+                },
+              },
+            }),
+          );
+        }
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: nativeSessionId,
+              part: {
+                id: "part-exit",
+                sessionID: nativeSessionId,
+                messageID: "late-assistant",
+                type: "tool",
+                callID: "call-exit",
+                tool: "bash",
+                state: {
+                  status: "completed",
+                  input: { command: "vp test" },
+                  output: "1 failed\n",
+                  title: "Run tests",
+                  metadata: { output: "1 failed\n", exit: 1, truncated: false },
+                  time: { start: 4, end: 5 },
+                },
+              },
+            },
+          }),
+        );
         yield* Effect.promise(() =>
           nativeEvents.push({
             type: "message.part.updated",
@@ -589,14 +1365,31 @@ describe("OpenCodeAdapterV2", () => {
         const commands = items.filter((item) => item.type === "command_execution");
         assert.deepEqual(
           commands.map((item) => item.status),
-          ["pending", "running", "completed", "failed"],
+          ["pending", "running", "completed", "failed", "interrupted", "interrupted", "failed"],
         );
         assert.deepEqual(
           commands.map((item) => item.input),
-          ["pwd", "pwd", "pwd", "pwd"],
+          ["pwd", "pwd", "pwd", "pwd", "sleep 60", "sleep 90", "vp test"],
         );
         assert.equal(commands[2]?.output, "/repo\n");
         assert.equal(commands[3]?.output, "Command failed");
+        assert.equal(commands[6]?.exitCode, 1);
+        assert.equal(
+          events
+            .flatMap((event) => (event.type === "node.updated" ? [event.node] : []))
+            .findLast((node) => node.id === commands[6]?.nodeId)?.status,
+          "failed",
+        );
+        assert.deepEqual(
+          items.filter((item) => item.type === "subagent").map((item) => item.status),
+          ["interrupted", "failed"],
+        );
+        assert.deepEqual(
+          events.flatMap((event) =>
+            event.type === "subagent.updated" ? [event.subagent.status] : [],
+          ),
+          ["interrupted", "failed"],
+        );
         assert.isTrue(
           events.some(
             (event) =>
@@ -954,6 +1747,13 @@ describe("OpenCodeAdapterV2", () => {
                   title: "Edit remote document",
                   metadata: {},
                   output,
+                  attachments: [
+                    {
+                      type: "file",
+                      mime: "image/png",
+                      url: "data:image/png;base64,iVBORw0KGgo=",
+                    },
+                  ],
                   error: "failed",
                   time: { start: 1, end: 2 },
                 },
@@ -1046,7 +1846,9 @@ describe("OpenCodeAdapterV2", () => {
         });
         assert.deepEqual(item.input, { document: "remote-doc" });
       }
-      assert.equal(items[1]?.output, output);
+      assert.deepEqual(toolOutputImages(items[1]?.output), [
+        { mimeType: "image/png", data: "iVBORw0KGgo=" },
+      ]);
       assert.equal(items[3]?.toolName, "ambiguous_server_edit_document");
       assert.isUndefined(items[3]?.toolSource);
       assert.equal(statusReads, 1);
@@ -1075,7 +1877,7 @@ describe("OpenCodeAdapterV2", () => {
             return { stream: nativeEvents.stream };
           },
         },
-        command: { list: async () => ({ data: [{ name: "review" }] }) },
+        command: { list: async () => ({ data: [{ name: "git/review" }] }) },
         session: {
           create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
           command: async (input: {
@@ -1094,9 +1896,9 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
       });
-      const start = yield* harness.startTurn("/review staged changes").pipe(Effect.forkScoped);
+      const start = yield* harness.startTurn("/git/review staged changes").pipe(Effect.forkScoped);
       const call = yield* Queue.take(calls);
-      assert.equal(call.command, "review");
+      assert.equal(call.command, "git/review");
       assert.equal(call.arguments, "staged changes");
       assert.equal(call.model, "anthropic/claude-sonnet");
       yield* Effect.promise(() =>
@@ -1116,6 +1918,86 @@ describe("OpenCodeAdapterV2", () => {
       yield* Fiber.join(start);
       assert.equal(promptCalls, 0);
       release.resolve();
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("keeps an admitted native command running when its HTTP request times out", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const commandCalled = promiseGate<string>();
+      let rejectCommand!: (cause: unknown) => void;
+      const commandResponse = new Promise<never>((_, reject) => {
+        rejectCommand = reject;
+      });
+      const sessionId = "native-command-timeout";
+      const harness = yield* makeOpenCodeRuntimeHarness("native-command-timeout", sessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        command: { list: async () => ({ data: [{ name: "review" }] }) },
+        session: {
+          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          command: (input: { messageID: string }) => {
+            commandCalled.resolve(input.messageID);
+            return commandResponse;
+          },
+        },
+      });
+      const start = yield* harness.startTurn("/review staged changes").pipe(Effect.forkScoped);
+      const messageID = yield* Effect.promise(() => commandCalled.promise);
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: sessionId,
+            info: {
+              id: messageID,
+              sessionID: sessionId,
+              role: "user",
+              time: { created: DateTime.toEpochMillis(harness.now) },
+            },
+          },
+        }),
+      );
+      yield* Fiber.join(start);
+      const terminal = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      // Node's fetch gives up on a command still running in OpenCode after 300 s.
+      rejectCommand(
+        new TypeError("fetch failed", {
+          cause: Object.assign(new Error("Headers Timeout Error"), {
+            name: "HeadersTimeoutError",
+            code: "UND_ERR_HEADERS_TIMEOUT",
+          }),
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: sessionId, status: { type: "busy" } },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({ type: "session.idle", properties: { sessionID: sessionId } }),
+      );
+
+      const [event] = yield* Fiber.join(terminal);
+      assert.equal(
+        event?.type === "turn.terminal" ? event.status : undefined,
+        "completed",
+        "a command admitted by its user receipt must not fail when its HTTP request times out",
+      );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
@@ -1302,6 +2184,62 @@ describe("OpenCodeAdapterV2", () => {
         ["user-kept", "assistant-kept"],
       );
       assert.equal(snapshot.providerThread.nativeConversationHeadRef?.nativeId, "user-kept");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("steers with the turn's agent, reasoning variant and system instructions", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const promptInputs: Array<{ agent?: string; variant?: string; system?: string }> = [];
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "steer-agent",
+        "root",
+        {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            messages: async () => ({ data: [] }),
+            promptAsync: async (input: { agent?: string; variant?: string; system?: string }) => {
+              promptInputs.push(input);
+              return { data: true };
+            },
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        },
+        {},
+        { options: [{ id: "variant", value: "high" }], interactionMode: "plan" },
+      );
+      yield* harness.startTurn();
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: harness.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: snapshot.providerTurns.at(-1)!.id,
+        message: {
+          messageId: MessageId.make("message-opencode-steer-agent"),
+          text: "also cover the README",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+
+      const [start, steer] = promptInputs;
+      assert.equal(start?.agent, "plan");
+      assert.equal(start?.variant, "high");
+      assert.include(start?.system ?? "", "OpenCode");
+      assert.deepEqual(
+        { agent: steer?.agent, variant: steer?.variant, system: steer?.system },
+        { agent: start?.agent, variant: start?.variant, system: start?.system },
+      );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
@@ -1622,6 +2560,97 @@ describe("OpenCodeAdapterV2", () => {
       );
       const interrupted = yield* runtime.readThreadSnapshot({ providerThread });
       assert.equal(interrupted.providerTurns.at(-1)?.status, "interrupted");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("rejects steering when stop wins the extracted-text lookup", () =>
+    Effect.gen(function* () {
+      const events = asyncEventStream();
+      const lookup = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let prompts = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "extraction-stop",
+        "root",
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => events.close(), { once: true });
+              return { stream: events.stream };
+            },
+          },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            promptAsync: async () => {
+              prompts++;
+              return { data: true };
+            },
+            status: async () => ({ data: { root: { type: "busy" } } }),
+            messages: async () => ({ data: [] }),
+            children: async () => ({ data: [] }),
+            abort: async () => ({ data: true }),
+          },
+          mcp: { add: async () => ({ data: true }) },
+        },
+        {
+          resolveAttachmentPath: () => "/workspace/report.docx",
+          resolveExtractedTextPath: () =>
+            Deferred.succeed(lookup, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as("/workspace/report.docx.txt"),
+            ),
+        },
+      );
+      yield* harness.startTurn();
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      const turn = snapshot.providerTurns.at(-1)!;
+      const steer = yield* harness.runtime
+        .steerTurn({
+          threadId: harness.threadId,
+          runId: harness.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: turn.id,
+          message: {
+            messageId: MessageId.make("steer-extraction-stop"),
+            text: "read this",
+            createdBy: "user",
+            creationSource: "web",
+            attachments: [
+              {
+                type: "file",
+                id: "report-docx",
+                name: "report.docx",
+                mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                sizeBytes: 1,
+              },
+            ],
+          },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(lookup);
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: turn.id,
+      });
+      yield* Deferred.succeed(release, undefined);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(steer)));
+      assert.equal(prompts, 1);
+      yield* Effect.promise(() =>
+        events.push({
+          type: "session.status",
+          properties: { sessionID: "root", status: { type: "idle" } },
+        }),
+      );
+      const stopped = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      assert.equal(stopped.providerTurns.at(-1)?.status, "interrupted");
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
@@ -2072,7 +3101,14 @@ describe("OpenCodeAdapterV2", () => {
         method: "session.prompt",
         payload: { prompt: secret, nested: { token: secret } },
       });
+      yield* logProtocolEvent({
+        direction: "incoming",
+        messageKind: "notification",
+        method: "message.part.delta",
+        payload: { type: "message.part.delta", properties: { delta: secret } },
+      });
 
+      assert.lengthOf(records, 1);
       const serialized = encodeUnknownJson(records);
       assert.notInclude(serialized, secret);
       assert.include(serialized, '"protocol":"opencode-sdk.sse"');
@@ -2121,9 +3157,7 @@ describe("OpenCodeAdapterV2", () => {
         runOpenCodeCommand: unused("runOpenCodeCommand"),
         createOpenCodeSdkClient: () => fakeClient,
         loadOpenCodeInventory: unused("loadOpenCodeInventory"),
-        loadInventoryFromCli: unused("loadInventoryFromCli"),
         loadOpenCodeSkills: unused("loadOpenCodeSkills"),
-        loadSkillsFromCli: unused("loadSkillsFromCli"),
       };
       const instanceId = ProviderInstanceId.make("opencode");
       const threadId = ThreadId.make("thread-opencode-adopt");
@@ -2280,6 +3314,17 @@ describe("OpenCodeAdapterV2", () => {
     ]);
     assert.equal(permissionAction(childApprovalRules, "bash"), "ask");
     assert.equal(permissionAction(childApprovalRules, "task"), "deny");
+
+    const fullAccessChildRules = openCodeChildPermissionRules(runtimePolicy("full-access"), [
+      { permission: "task", pattern: "*", action: "deny" },
+    ]);
+    const reappliedRules = openCodeChildPermissionRules(
+      approvalRequiredPolicy,
+      fullAccessChildRules,
+      openCodePermissionRules(runtimePolicy("full-access")),
+    );
+    assert.equal(permissionAction(reappliedRules, "bash"), "ask");
+    assert.equal(permissionAction(reappliedRules, "task"), "deny");
   });
 
   it("uses the next native user message as the exclusive fork and revert boundary", () => {
@@ -2360,4 +3405,124 @@ it.effect.each([false, true])(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
     ),
+);
+
+it.live.each([true, false])("opens an authenticated OpenCode session (external=%s)", (external) =>
+  Effect.gen(function* () {
+    const password = external ? "settings-password" : "environment-password";
+    const requests: string[] = [];
+    let eventConnected!: () => void;
+    const eventRequest = new Promise<void>((resolve) => {
+      eventConnected = resolve;
+    });
+    const server = yield* Effect.acquireRelease(
+      Effect.promise(
+        () =>
+          new Promise<ReturnType<typeof NodeHttp.createServer>>((resolve) => {
+            const server = NodeHttp.createServer((request, response) => {
+              if (
+                request.headers.authorization !==
+                `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
+              ) {
+                response.writeHead(401).end("Unauthorized");
+                return;
+              }
+              const url = new URL(request.url!, "http://localhost");
+              requests.push(url.pathname);
+              if (url.pathname === "/event") {
+                response.writeHead(200, { "Content-Type": "text/event-stream" });
+                response.write(": connected\n\n");
+                eventConnected();
+                return;
+              }
+              response.writeHead(200, { "Content-Type": "application/json" });
+              response.end(
+                JSON.stringify(
+                  url.pathname.endsWith("/children")
+                    ? []
+                    : url.pathname === "/session"
+                      ? { id: "native-auth", time: { created: 1, updated: 1 } }
+                      : { healthy: true, version: "1.14.19" },
+                ),
+              );
+            });
+            server.listen(0, "127.0.0.1", () => resolve(server));
+          }),
+      ),
+      (server) =>
+        Effect.promise(
+          () =>
+            new Promise<void>((resolve) => {
+              server.closeAllConnections();
+              server.close(() => resolve());
+            }),
+        ),
+    );
+    const address = server.address();
+    assert.isNotNull(address);
+    if (!address || typeof address === "string") return;
+    const url = `http://127.0.0.1:${address.port}`;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    let managedStarts = 0;
+    const runtimeLayer = OpenCodeRuntime.layer.pipe(
+      Layer.provide(
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            assert.isTrue(ChildProcess.isStandardCommand(command));
+            if (!ChildProcess.isStandardCommand(command)) return Effect.die("Unexpected pipeline");
+            assert.include(command.args, "serve");
+            assert.equal(command.options.env?.OPENCODE_SERVER_PASSWORD, password);
+            managedStarts += 1;
+            return spawner.spawn(
+              ChildProcess.make(
+                process.execPath,
+                [
+                  "-e",
+                  `console.log("server listening on " + process.argv[1]); setInterval(() => {}, 1000)`,
+                  url,
+                ],
+                command.options,
+              ),
+            );
+          }),
+        ),
+      ),
+      Layer.provide(OpenCodeServerLedger.layerTest),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    const instanceId = ProviderInstanceId.make("opencode-auth");
+    const adapter = yield* makeOpenCodeAdapterV2({
+      instanceId,
+      settings: yield* decodeOpenCodeSettings({
+        serverUrl: external ? url : "",
+        ...(external ? { serverPassword: password } : {}),
+      }),
+      environment: { OPENCODE_SERVER_PASSWORD: "environment-password" },
+    }).pipe(Effect.provide(runtimeLayer));
+    const session = yield* adapter.openSession({
+      threadId: ThreadId.make("thread-opencode-auth"),
+      providerSessionId: ProviderSessionId.make("session-opencode-auth"),
+      modelSelection: { instanceId, model: "anthropic/claude-sonnet", options: [] },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+    });
+    yield* session.ensureThread({
+      threadId: ThreadId.make("thread-opencode-auth"),
+      modelSelection: { instanceId, model: "anthropic/claude-sonnet", options: [] },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+    });
+    assert.include(requests, "/session");
+    yield* Effect.promise(() => eventRequest);
+    assert.include(requests, "/event");
+    assert.include(requests, "/global/health");
+    assert.equal(managedStarts, external ? 0 : 1);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide([
+      NodeServices.layer,
+      TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+      IdAllocator.layer,
+      McpProviderSessions.layer,
+    ]),
+  ),
 );

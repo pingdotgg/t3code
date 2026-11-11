@@ -75,7 +75,7 @@ export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
     reference && environmentId
       ? pullRequestEnvironment.detail({
           environmentId,
-          input: reference,
+          input: { ...reference, allowStale: false },
         })
       : null,
   ).data;

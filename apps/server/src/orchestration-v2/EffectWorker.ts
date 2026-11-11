@@ -95,7 +95,7 @@ export const layerExecutor: Layer.Layer<
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
     return OrchestrationEffectExecutorV2.of({
-      execute: (effect, options) => {
+      execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
           case "provider-runtime.continue": {
@@ -177,34 +177,49 @@ export const layerExecutor: Layer.Layer<
                         cause,
                       }),
                 ),
-                Effect.catch((cause) =>
-                  request.subagent === undefined &&
-                  isNonRetryableProviderTurnControlFailure(
-                    request.type,
-                    Cause.pretty(Cause.fail(cause)),
-                  )
-                    ? Effect.void
-                    : Effect.fail(cause),
+                Effect.map((outcome) => ({ unresponsive: false, outcome }) as const),
+                // Settling here would end the run while the agent may still be running; the
+                // user decides with Force stop instead.
+                Effect.catchIf(
+                  (cause) => request.subagent === undefined && cause.unresponsive === true,
+                  () => Effect.succeed({ unresponsive: true, outcome: undefined } as const),
                 ),
-                Effect.andThen((outcome) =>
-                  request.subagent !== undefined && outcome === undefined
-                    ? Effect.void
-                    : threads.dispatch({
-                        type: "thread.background-work.settle",
-                        commandId: CommandId.make(`${effect.id}:background-work-settled`),
-                        ...(request.subagent === undefined || outcome === undefined
-                          ? {}
-                          : {
-                              subagent: {
-                                id: request.subagent.id,
-                                stoppedAt: DateTime.makeUnsafe(effect.createdAt),
-                                outcome,
-                              },
-                            }),
+                Effect.catchIf(
+                  (cause) =>
+                    request.subagent === undefined &&
+                    isNonRetryableProviderTurnControlFailure(
+                      request.type,
+                      Cause.pretty(Cause.fail(cause)),
+                    ),
+                  () => Effect.succeed({ unresponsive: false, outcome: undefined } as const),
+                ),
+                Effect.andThen(({ unresponsive, outcome }) =>
+                  unresponsive
+                    ? threads.dispatch({
+                        type: "thread.interrupt.unresponsive",
+                        commandId: CommandId.make(`${effect.id}:unresponsive`),
                         threadId: effect.threadId,
                         providerThreadId: request.providerThreadId,
                         providerTurnId: request.providerTurnId,
-                      }),
+                      })
+                    : request.subagent !== undefined && outcome === undefined
+                      ? Effect.void
+                      : threads.dispatch({
+                          type: "thread.background-work.settle",
+                          commandId: CommandId.make(`${effect.id}:background-work-settled`),
+                          ...(request.subagent === undefined || outcome === undefined
+                            ? {}
+                            : {
+                                subagent: {
+                                  id: request.subagent.id,
+                                  stoppedAt: DateTime.makeUnsafe(effect.createdAt),
+                                  outcome,
+                                },
+                              }),
+                          threadId: effect.threadId,
+                          providerThreadId: request.providerThreadId,
+                          providerTurnId: request.providerTurnId,
+                        }),
                 ),
                 Effect.mapError(
                   (cause) =>
@@ -263,6 +278,10 @@ export const layerExecutor: Layer.Layer<
                     const message = projection.messages.find((item) => item.id === messageId);
                     const run = projection.runs.find((item) => item.id === message?.runId);
                     if (message === undefined || run === undefined) return yield* error;
+                    // Notifications must be queued messages.
+                    const queued =
+                      message.delegatedCompletion !== undefined ||
+                      message.notification !== undefined;
                     // Reuse message ids and receipts so retries cannot duplicate messages or follow-ups.
                     yield* threads
                       .dispatch({
@@ -277,10 +296,7 @@ export const layerExecutor: Layer.Layer<
                           ? {}
                           : { modelSelection: run.modelSelection }),
                         dispatchMode: {
-                          type:
-                            message.delegatedCompletion === undefined
-                              ? "start_immediately"
-                              : "queue_after_active",
+                          type: queued ? "queue_after_active" : "start_immediately",
                         },
                         createdBy: message.createdBy,
                         creationSource: message.creationSource,
@@ -557,10 +573,33 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
         }
-      },
+      }),
     });
   }),
 );
+
+// A running effect blocks later work on its thread and its lease is never reclaimed in-process,
+// so a stop that hangs must give up and fall through to the normal retry/fail path.
+const DELEGATED_TASKS_STOP_TIMEOUT = Duration.seconds(30);
+
+const boundExecution =
+  (effect: EffectOutbox.OrchestrationEffectV2) =>
+  (execution: Effect.Effect<void, OrchestrationEffectExecutionError>) =>
+    effect.request.type === "delegated-tasks.stop"
+      ? execution.pipe(
+          Effect.timeoutOrElse({
+            duration: DELEGATED_TASKS_STOP_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                new OrchestrationEffectExecutionError({
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  cause: `Timed out after ${Duration.format(DELEGATED_TASKS_STOP_TIMEOUT)}.`,
+                }),
+              ),
+          }),
+        )
+      : execution;
 
 export class OrchestrationEffectWorkerError extends Schema.TaggedError<OrchestrationEffectWorkerError>()(
   "OrchestrationEffectWorkerError",
@@ -573,14 +612,17 @@ export class OrchestrationEffectWorkerError extends Schema.TaggedError<Orchestra
 
 const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerError);
 
+type ClaimFilter = Omit<Parameters<EffectOutbox.EffectOutboxV2Shape["claimNext"]>[0], "workerId">;
+
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
-  readonly runOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
+  readonly runOnce: (input?: {
+    readonly maxRunningTitleGenerations?: number;
+  }) => Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
-  readonly nextClaimableAt: Effect.Effect<
-    Option.Option<DateTime.Utc>,
-    OrchestrationEffectWorkerError
-  >;
+  readonly nextClaimableAt: (input?: {
+    readonly maxRunningTitleGenerations?: number;
+  }) => Effect.Effect<Option.Option<DateTime.Utc>, OrchestrationEffectWorkerError>;
   readonly drain: (maxEffects?: number) => Effect.Effect<number, OrchestrationEffectWorkerError>;
 }
 
@@ -591,7 +633,6 @@ export class OrchestrationEffectWorkerV2 extends Context.Service<
 
 export interface OrchestrationEffectWorkerOptions {
   readonly workerId?: string;
-  readonly leaseDurationMs?: number;
   readonly maxAttempts?: number;
 }
 
@@ -608,7 +649,6 @@ export const layerWithOptions = (
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const executor = yield* OrchestrationEffectExecutorV2;
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
-      const leaseDurationMs = Math.max(1, options.leaseDurationMs ?? 30_000);
       const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
       const wasCancelled = (effectId: string) =>
         outbox.get(effectId).pipe(
@@ -702,10 +742,8 @@ export const layerWithOptions = (
 
       // The worker probes for work repeatedly, including when the outbox is empty.
       const runOnce = Effect.fnUntraced(
-        function* (excludeRestartContinuations = false) {
-          const claimExit = yield* Effect.exit(
-            outbox.claimNext({ workerId, leaseDurationMs, excludeRestartContinuations }),
-          );
+        function* (filter: ClaimFilter = {}) {
+          const claimExit = yield* Effect.exit(outbox.claimNext({ workerId, ...filter }));
           yield* increment(orchestrationEffectClaimsTotal, {
             result: Exit.isFailure(claimExit)
               ? "error"
@@ -747,7 +785,7 @@ export const layerWithOptions = (
 
           const execution = executor
             .execute(effect, { willRetry: effect.attemptCount < maxAttempts })
-            .pipe(Effect.as("executed" as const));
+            .pipe(boundExecution(effect), Effect.as("executed" as const));
           const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
             Effect.ensuring(outbox.clearCancellation(effect.id)),
           );
@@ -804,7 +842,7 @@ export const layerWithOptions = (
           }
           return true;
         },
-        (effect, _excludeRestartContinuations?: boolean) =>
+        (effect, _filter?: ClaimFilter) =>
           effect.pipe(
             Effect.mapError((cause) =>
               isOrchestrationEffectWorkerError(cause)
@@ -816,9 +854,13 @@ export const layerWithOptions = (
 
       return OrchestrationEffectWorkerV2.of({
         awaitWork: outbox.awaitAvailable,
-        runOnce: runOnce(),
-        runRecoveryOnce: runOnce(true),
-        nextClaimableAt: outbox.nextClaimableAt.pipe(
+        runOnce,
+        runRecoveryOnce: runOnce({ excludeRestartContinuations: true }),
+        // Idle workers poll this; a span per poll would bury useful traces.
+        nextClaimableAt: Effect.fnUntraced(
+          function* (input) {
+            return yield* outbox.nextClaimableAt(input);
+          },
           Effect.mapError(
             (cause) =>
               new OrchestrationEffectWorkerError({
@@ -861,10 +903,12 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       const livenessPollIntervalMs = Number.isFinite(requestedLivenessPollIntervalMs)
         ? Math.max(1, Math.floor(requestedLivenessPollIntervalMs))
         : DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS;
+      // Title generation can run for minutes; leave at least one worker free for turn work.
+      const claimLimits = concurrency > 1 ? { maxRunningTitleGenerations: concurrency - 1 } : {};
       // Notifications wake promptly; availableAt persists retry timing, and liveness polling recovers missed wakeups.
       const runWorker = Effect.gen(function* () {
         while (true) {
-          const outcome = yield* worker.runOnce.pipe(
+          const outcome = yield* worker.runOnce(claimLimits).pipe(
             Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
             Effect.catchCause((cause) =>
               Effect.logWarning("Orchestration effect worker failed", cause).pipe(
@@ -882,14 +926,16 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
             continue;
           }
 
-          const nextClaimableAt = yield* worker.nextClaimableAt.pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning(
-                "Failed to read the next orchestration effect deadline",
-                cause,
-              ).pipe(Effect.as(Option.none<DateTime.Utc>())),
-            ),
-          );
+          const nextClaimableAt = yield* worker
+            .nextClaimableAt(claimLimits)
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(
+                  "Failed to read the next orchestration effect deadline",
+                  cause,
+                ).pipe(Effect.as(Option.none<DateTime.Utc>())),
+              ),
+            );
           const now = DateTime.toEpochMillis(yield* DateTime.now);
           const sleepMs = Option.match(nextClaimableAt, {
             onNone: () => livenessPollIntervalMs,
@@ -916,7 +962,3 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
   );
 
 export const runDaemon = runDaemonWithOptions();
-
-const layerDaemon: Layer.Layer<never, never, OrchestrationEffectWorkerV2> = Layer.effectDiscard(
-  runDaemon.pipe(Effect.forkScoped),
-);
