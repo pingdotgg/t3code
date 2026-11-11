@@ -261,7 +261,15 @@ export const layer = Layer.effectDiscard(
         const onRunSettled = onRunSettledByMessage.get(event.payload.userMessageId);
         if (onRunSettled === undefined) return Effect.void;
         onRunSettledByMessage.delete(event.payload.userMessageId);
-        return onRunSettled();
+        // One failing callback must not end the subscription the others wait on.
+        return onRunSettled().pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-continuation.run-settled-failed", {
+              threadId: event.payload.threadId,
+              cause,
+            }),
+          ),
+        );
       }),
       Effect.catchCause((cause) =>
         Effect.logWarning("orchestration-v2.provider-continuation.run-settled-stream-failed", {

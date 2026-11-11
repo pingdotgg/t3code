@@ -4642,6 +4642,108 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect("keeps a child an external Codex turn spawned before it was adopted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-external-queue-child";
+        const childThreadId = `native-${scenario}-child-thread`;
+        const childTurnId = `native-${scenario}-child-turn`;
+        const nativeThreadId = `native-${scenario}-thread`;
+        const turnId = `native-${scenario}-external-turn`;
+        const frame = (threadId: string, method: string, params: Record<string, unknown>) =>
+          ({
+            type: "emit_inbound",
+            label: `${threadId} ${method}`,
+            frame: { method, params: { threadId, ...params } },
+          }) satisfies CodexReplay.CodexAppServerReplayEntry;
+        const agentMessage = (threadId: string, turn: string, text: string) =>
+          frame(threadId, "item/completed", {
+            item: {
+              type: "agentMessage",
+              id: `${turn}-answer`,
+              text,
+              phase: "final_answer",
+              memoryCitation: null,
+            },
+            turnId: turn,
+            completedAtMs: 1782622459200,
+          });
+        // No prompt item, so the wake is offered at the parent's end, after every child frame.
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...finalAnswerTranscript(scenario, [{ id: "answer-ready", text: "READY" }]).entries,
+            frame(nativeThreadId, "turn/started", {
+              turn: makeCodexReplayTurn({ id: turnId, status: "inProgress" }),
+            }),
+            frame(nativeThreadId, "item/completed", {
+              item: {
+                type: "subAgentActivity",
+                id: `${scenario}-spawn`,
+                kind: "started",
+                agentThreadId: childThreadId,
+                agentPath: "/root/child_agent",
+              },
+              turnId,
+              completedAtMs: 1782622459100,
+            }),
+            frame(childThreadId, "turn/started", {
+              turn: makeCodexReplayTurn({ id: childTurnId, status: "inProgress" }),
+            }),
+            agentMessage(childThreadId, childTurnId, "CHILD_DONE"),
+            frame(childThreadId, "turn/completed", {
+              turn: makeCodexReplayTurn({ id: childTurnId, status: "completed" }),
+            }),
+            agentMessage(nativeThreadId, turnId, "QUEUED"),
+            frame(nativeThreadId, "turn/completed", {
+              turn: makeCodexReplayTurn({ id: turnId, status: "completed" }),
+            }),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const startTurn = (attempt: string, text: string, messageId?: MessageId) =>
+          Effect.gen(function* () {
+            const turnInput = makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(attempt),
+              text,
+            });
+            yield* harness.runtime.startTurn(
+              messageId === undefined
+                ? turnInput
+                : { ...turnInput, message: { ...turnInput.message, messageId } },
+            );
+          });
+
+        yield* startTurn("attempt-ready", "Reply with the requested recovery marker.");
+        yield* harness.awaitTerminal(1);
+        yield* harness.until(() => harness.continuationRequests.length > 0);
+        const wake = harness.continuationRequests[0]!;
+        yield* startTurn("attempt-queued", "", wake.messageId);
+        yield* harness.awaitTerminal(2);
+        yield* harness.until(() =>
+          harness
+            .subagentUpdates()
+            .some(
+              (event) =>
+                event.subagent.status === "completed" && event.subagent.result === "CHILD_DONE",
+            ),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("stops holding an external Codex turn whose wake was rejected", () =>
     Effect.scoped(
       Effect.gen(function* () {

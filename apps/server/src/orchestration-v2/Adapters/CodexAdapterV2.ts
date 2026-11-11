@@ -4631,58 +4631,91 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             onRunSettled: rejectIfCurrent,
           });
         });
+        // Codex runs one turn per root thread, so a thread T3 does not know yet
+        // while an external turn is held is a descendant that turn spawned. Its
+        // frames wait with the parent's so the replayed spawn registers it first.
+        const heldDescendantOwner =
+          /* Runs for every Codex frame while a turn is held; avoid a span each. */
+          Effect.fnUntraced(function* (payload: unknown) {
+            const threadId = (payload as { readonly threadId?: unknown } | null)?.threadId;
+            if (typeof threadId !== "string" || rootProviderThreads.has(threadId)) return undefined;
+            if ((yield* Ref.get(subagentThreads)).has(threadId)) return undefined;
+            const owner = [...heldExternalTurns.keys()].at(-1);
+            if (owner !== undefined) return { owner, rejected: false };
+            return rejectedExternalTurns.size > 0
+              ? { owner: undefined, rejected: true }
+              : undefined;
+          });
+        const noExternalTurns = () =>
+          heldExternalTurns.size === 0 && rejectedExternalTurns.size === 0;
         const handleCodexNotification: CodexClient.CodexAppServerClient["Service"]["handleServerNotification"] =
           (method, handler) =>
-            client.handleServerNotification(method, (payload) => {
-              const nativeTurnId = externalTurnIdOf(payload);
-              if (nativeTurnId === undefined) return handler(payload);
-              if (rejectedExternalTurns.has(nativeTurnId)) {
-                if (method === "turn/completed") rejectedExternalTurns.delete(nativeTurnId);
-                return Effect.void;
-              }
-              const held = heldExternalTurns.get(nativeTurnId);
-              if (held === undefined) return handler(payload);
-              if (method === "turn/completed") held.completed = true;
-              held.frames.push((adopted) =>
-                adopted
-                  ? Effect.suspend(() => handler(payload)).pipe(Effect.exit, Effect.asVoid)
-                  : Effect.void,
-              );
-              return offerExternalTurnWake(nativeTurnId, payload);
-            });
+            client.handleServerNotification(method, (payload) =>
+              noExternalTurns()
+                ? handler(payload)
+                : Effect.gen(function* () {
+                    const nativeTurnId = externalTurnIdOf(payload);
+                    if (nativeTurnId !== undefined && rejectedExternalTurns.has(nativeTurnId)) {
+                      if (method === "turn/completed") rejectedExternalTurns.delete(nativeTurnId);
+                      return;
+                    }
+                    const own =
+                      nativeTurnId === undefined ? undefined : heldExternalTurns.get(nativeTurnId);
+                    const descendant =
+                      own === undefined ? yield* heldDescendantOwner(payload) : undefined;
+                    if (descendant?.rejected) return;
+                    const held =
+                      own ??
+                      (descendant?.owner === undefined
+                        ? undefined
+                        : heldExternalTurns.get(descendant.owner));
+                    if (held === undefined) return yield* handler(payload);
+                    if (own !== undefined && method === "turn/completed") held.completed = true;
+                    held.frames.push((adopted) =>
+                      adopted
+                        ? Effect.suspend(() => handler(payload)).pipe(Effect.exit, Effect.asVoid)
+                        : Effect.void,
+                    );
+                    if (own !== undefined) yield* offerExternalTurnWake(nativeTurnId!, payload);
+                  }),
+            );
         const handleCodexRequest: CodexClient.CodexAppServerClient["Service"]["handleServerRequest"] =
           (method, handler) =>
-            client.handleServerRequest(method, (payload) => {
-              const nativeTurnId = externalTurnIdOf(payload);
-              if (nativeTurnId === undefined) return handler(payload);
-              const notAdopted = CodexErrors.CodexAppServerRequestError.internalError(
-                `No T3 run adopted Codex turn ${nativeTurnId}.`,
-              );
-              if (rejectedExternalTurns.has(nativeTurnId)) return Effect.fail(notAdopted);
-              const held = heldExternalTurns.get(nativeTurnId);
-              if (held === undefined) return handler(payload);
-              return Effect.gen(function* () {
-                const response = yield* Deferred.make<
-                  Effect.Success<ReturnType<typeof handler>>,
-                  Effect.Error<ReturnType<typeof handler>>
-                >();
-                // Forked like the protocol reader forks live requests: an
-                // approval waits on the user, who answers through the effect
-                // outbox that this adoption's startTurn would otherwise block.
-                // Without adoption the request is answered here: handlers die
-                // without an active turn, which sends Codex no response at all.
-                held.frames.push((adopted) =>
-                  adopted
-                    ? Effect.suspend(() => handler(payload)).pipe(
-                        Deferred.into(response),
-                        Effect.forkIn(scope, { startImmediately: true }),
-                        Effect.asVoid,
-                      )
-                    : Deferred.fail(response, notAdopted).pipe(Effect.asVoid),
-                );
-                return yield* Deferred.await(response);
-              });
-            });
+            client.handleServerRequest(method, (payload) =>
+              noExternalTurns()
+                ? handler(payload)
+                : Effect.gen(function* () {
+                    const nativeTurnId = externalTurnIdOf(payload);
+                    if (nativeTurnId === undefined) return yield* handler(payload);
+                    const notAdopted = CodexErrors.CodexAppServerRequestError.internalError(
+                      `No T3 run adopted Codex turn ${nativeTurnId}.`,
+                    );
+                    if (rejectedExternalTurns.has(nativeTurnId)) return yield* notAdopted;
+                    const descendant = heldExternalTurns.has(nativeTurnId)
+                      ? undefined
+                      : yield* heldDescendantOwner(payload);
+                    if (descendant?.rejected) return yield* notAdopted;
+                    const held = heldExternalTurns.get(descendant?.owner ?? nativeTurnId);
+                    if (held === undefined) return yield* handler(payload);
+                    const response = yield* Deferred.make<
+                      Effect.Success<ReturnType<typeof handler>>,
+                      Effect.Error<ReturnType<typeof handler>>
+                    >();
+                    // Forked because an approval waits on the user, whose answer goes
+                    // through the outbox this adoption's startTurn would otherwise block.
+                    // Without adoption it is answered here; handlers without a turn send none.
+                    held.frames.push((adopted) =>
+                      adopted
+                        ? Effect.suspend(() => handler(payload)).pipe(
+                            Deferred.into(response),
+                            Effect.forkIn(scope, { startImmediately: true }),
+                            Effect.asVoid,
+                          )
+                        : Deferred.fail(response, notAdopted).pipe(Effect.asVoid),
+                    );
+                    return yield* Deferred.await(response);
+                  }),
+            );
         /** Adopts the native turn a provider continuation woke this run for. */
         const adoptExternalTurn = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,

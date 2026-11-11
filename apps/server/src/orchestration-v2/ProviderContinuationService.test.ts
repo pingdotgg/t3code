@@ -109,12 +109,27 @@ function layerTest(input: {
 }
 
 describe("ProviderContinuationService", () => {
-  it.effect("tells the source once the run its wake dispatched settles", () =>
+  it.effect("tells each source once the run its wake dispatched settles", () =>
     Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();
       const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
-      const settled = yield* Deferred.make<void>();
-      const messageId = MessageId.make("message-provider-continuation-woken");
+      const settled = new Map<string, Deferred.Deferred<void>>();
+      const wake = Effect.fnUntraced(function* (
+        id: string,
+        onRunSettled: (done: Effect.Effect<void>) => Effect.Effect<void>,
+      ) {
+        const messageId = MessageId.make(id);
+        const done = yield* Deferred.make<void>();
+        settled.set(id, done);
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request(),
+          messageId,
+          onRunSettled: () => onRunSettled(Deferred.succeed(done, undefined).pipe(Effect.asVoid)),
+        });
+        yield* Queue.take(dispatched);
+        return messageId;
+      });
       const runUpdated = (userMessageId: MessageId, status: string) =>
         ({
           type: "run.updated",
@@ -127,19 +142,21 @@ describe("ProviderContinuationService", () => {
         streamDomainEvents: Stream.fromQueue(events),
       });
       yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        yield* requests.offer({
-          ...request(),
-          messageId,
-          onRunSettled: () => Deferred.succeed(settled, undefined).pipe(Effect.asVoid),
-        });
-        yield* Queue.take(dispatched);
-        // Another message's run settling, or this run only starting, is not the signal.
+        const failing = yield* wake("message-failing", (done) =>
+          done.pipe(Effect.andThen(Effect.die("callback failed"))),
+        );
+        const first = yield* wake("message-first", (done) => done);
+        const last = yield* wake("message-last", (done) => done);
+        // Events are handled in order, so `first` settling proves the earlier ones were seen.
         yield* Queue.offer(events, runUpdated(MessageId.make("message-other"), "cancelled"));
-        yield* Queue.offer(events, runUpdated(messageId, "running"));
-        assert.isFalse(yield* Deferred.isDone(settled));
-        yield* Queue.offer(events, runUpdated(messageId, "cancelled"));
-        yield* Deferred.await(settled);
+        yield* Queue.offer(events, runUpdated(failing, "running"));
+        yield* Queue.offer(events, runUpdated(first, "cancelled"));
+        yield* Deferred.await(settled.get(first)!);
+        assert.isFalse(yield* Deferred.isDone(settled.get(failing)!));
+        yield* Queue.offer(events, runUpdated(failing, "cancelled"));
+        yield* Queue.offer(events, runUpdated(last, "failed"));
+        yield* Deferred.await(settled.get(failing)!);
+        yield* Deferred.await(settled.get(last)!);
       }).pipe(
         Effect.provide(
           Layer.merge(
