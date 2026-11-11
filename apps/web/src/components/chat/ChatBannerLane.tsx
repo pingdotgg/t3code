@@ -16,6 +16,7 @@ import { dismissThreadErrorBannerForSession, threadErrorBannerItem } from "./Thr
 import {
   isLowLimitDismissed,
   lowLimitBannerItem,
+  readLowLimitDismissals,
   resolveLowLimitSignal,
   resolveLowLimitSwitchTarget,
 } from "./ComposerUsageLimits";
@@ -67,7 +68,7 @@ export function useChatBannerLane(input: {
     setThreadError,
     setThreadErrorBannerDismissTick,
   } = input;
-  const [, setTrayNoticeDismissTick] = useState(0);
+  const [lowLimitDismissals, setLowLimitDismissals] = useState(readLowLimitDismissals);
   const lowLimitSignal = resolveLowLimitSignal(
     activeProviderStatus,
     providerStatuses,
@@ -78,7 +79,8 @@ export function useChatBannerLane(input: {
         ? getDefaultServerModel([activeProviderStatus], activeProviderStatus.driver)
         : undefined),
   );
-  const lowLimitVisible = lowLimitSignal !== null && !isLowLimitDismissed(lowLimitSignal.key);
+  const lowLimitVisible =
+    lowLimitSignal !== null && !isLowLimitDismissed(lowLimitDismissals, lowLimitSignal);
   const lowLimitSwitchTarget =
     lowLimitVisible && activeProviderStatus !== null && canSwitchProvider
       ? resolveLowLimitSwitchTarget(activeProviderStatus, providerStatuses)
@@ -122,7 +124,7 @@ export function useChatBannerLane(input: {
                 sources: usageLimitSources,
               }
             : null,
-        onDismissed: () => setTrayNoticeDismissTick((tick) => tick + 1),
+        onDismissed: setLowLimitDismissals,
       }),
     );
   }
