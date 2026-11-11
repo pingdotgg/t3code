@@ -748,6 +748,71 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect("follows a switch back after committing on the other branch", () =>
+      Effect.gen(function* () {
+        const turn = yield* captureTurnAcrossHeadMove("checkpoint-switch-commit-back", (cwd) =>
+          Effect.gen(function* () {
+            yield* git(cwd, ["switch", "branch-b"]);
+            yield* writeTextFile(NodePath.join(cwd, "shared.txt"), "C content\n");
+            yield* git(cwd, ["commit", "-am", "branch B commit"]);
+            yield* git(cwd, ["switch", "branch-a"]);
+          }),
+        );
+
+        expect(turn.changedLines).toEqual([]);
+        expect(turn.files).toEqual([]);
+      }),
+    );
+
+    it.effect("leaves a submodule a plain switch did not move", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const sub = NodePath.join(tmp, "sub");
+        yield* git(tmp, ["init", "sub"]);
+        yield* initRepoWithCommit(sub);
+        const s1 = yield* git(sub, ["rev-parse", "HEAD"]);
+        yield* writeTextFile(NodePath.join(sub, "s.txt"), "s2\n");
+        yield* git(sub, ["add", "."]);
+        yield* git(sub, ["commit", "-m", "s2"]);
+        yield* git(tmp, ["checkout", "-b", "branch-b"]);
+        yield* git(tmp, ["add", "sub"]);
+        yield* git(tmp, ["commit", "-m", "pin S2"]);
+        yield* git(sub, ["checkout", "-q", s1]);
+        yield* git(tmp, ["checkout", "-b", "branch-a", "HEAD~1"]);
+        yield* git(tmp, ["add", "sub"]);
+        yield* git(tmp, ["commit", "-m", "pin S1"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const id = ThreadId.make("checkpoint-switch-submodule");
+        const refs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(id, 1),
+          toCheckpointRef: checkpointRefForThreadTurn(id, 2),
+        };
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.fromCheckpointRef,
+        });
+
+        yield* git(tmp, ["switch", "branch-b"]);
+        yield* writeTextFile(NodePath.join(tmp, "turn.txt"), "turn\n");
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.toCheckpointRef,
+          previousCheckpointRef: refs.fromCheckpointRef,
+        });
+
+        const numstat = yield* checkpointStore.diffCheckpoints({
+          ...refs,
+          ignoreWhitespace: false,
+          format: "numstat",
+        });
+        expect(parseTurnDiffFilesFromNumstat(numstat).map((file) => file.path)).toEqual([
+          "turn.txt",
+        ]);
+      }),
+    );
+
     it.effect("keeps local edits that git switch -m carried to the new branch", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

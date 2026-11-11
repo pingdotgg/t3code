@@ -1447,6 +1447,26 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   args: [...indexConfig, "read-tree", previousTree],
                   env: commitEnv,
                 });
+                // Local edits the previous checkpoint held over its HEAD were merged by a switch
+                // (git switch -m), not replaced, so those paths keep the baseline's content.
+                const edited = new Set(
+                  (yield* execute({
+                    operation,
+                    cwd: input.cwd,
+                    args: [
+                      "-c",
+                      "core.quotePath=true",
+                      "diff-tree",
+                      "-r",
+                      "--no-renames",
+                      "--name-only",
+                      `${previousCommit}^1`,
+                      previousCommit,
+                    ],
+                    maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+                    outputMode: "error",
+                  })).stdout.split("\n"),
+                );
                 for (const { from, to } of switches) {
                   const changes = yield* execute({
                     operation,
@@ -1463,27 +1483,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                     maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
                     outputMode: "error",
                   });
-                  // A path with local edits was merged by the switch (git switch -m), not
-                  // replaced, so it keeps the baseline's content.
-                  const edited = new Set(
-                    (yield* execute({
-                      operation,
-                      cwd: input.cwd,
-                      args: [
-                        ...indexConfig,
-                        "-c",
-                        "core.quotePath=true",
-                        "diff-index",
-                        "--cached",
-                        "--no-renames",
-                        "--name-only",
-                        from,
-                      ],
-                      env: commitEnv,
-                      maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
-                      outputMode: "error",
-                    })).stdout.split("\n"),
-                  );
                   // Git's quoted paths round-trip through index-info, including non-UTF-8 names,
                   // and a deletion's zero mode drops the path.
                   yield* execute({
@@ -1492,7 +1491,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                     args: [...indexConfig, "update-index", "--index-info"],
                     stdin: changes.stdout
                       .split("\n")
-                      .filter((line) => !edited.has(line.slice(line.indexOf("\t") + 1)))
+                      .filter(
+                        (line) =>
+                          // A plain switch leaves submodules at their old commits.
+                          !/^:(?:160000 \d{6}|\d{6} 160000) /.test(line) &&
+                          !edited.has(line.slice(line.indexOf("\t") + 1)),
+                      )
                       .join("\n")
                       .replace(/^:[0-7]{6} ([0-7]{6}) [0-9a-f]+ ([0-9a-f]+) [A-Z]\t/gm, "$1 $2\t"),
                     env: commitEnv,
