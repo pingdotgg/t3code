@@ -288,6 +288,9 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
               step: "bundle",
               message: exported.stderr.trim() || "The checkout bundle was not created.",
             });
+          // Nothing the mirror lacks: git refuses an empty bundle, and an ack
+          // needs no bytes here.
+          if (exported.stdout === "") return true;
           const written = yield* deps.sink.write({
             environmentId: input.environmentId,
             drainId: input.drainId,

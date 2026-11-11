@@ -17,6 +17,7 @@ const deps = (input: {
   readonly failThread?: string;
   readonly failShell?: boolean;
   readonly bundleExitCode?: number;
+  readonly bundleStdout?: string;
   readonly liveThread?: string;
   readonly sequences?: Readonly<Record<string, number>>;
   readonly attachmentFiles?: Readonly<Record<string, ReadonlyArray<string>>>;
@@ -154,7 +155,7 @@ const deps = (input: {
           exported.push(workspaceRoot);
           return {
             exitCode: input.bundleExitCode ?? 0,
-            stdout: `QlVORExFOiR7d29ya3NwYWNlUm9vdH0=`,
+            stdout: input.bundleStdout ?? `QlVORExFOiR7d29ya3NwYWNlUm9vdH0=`,
             stderr: "",
           };
         }),
@@ -346,6 +347,21 @@ describe("fleet drain", () => {
       expect(outcome.worktrees).toEqual({ total: 0, acked: 0, failed: 0 });
       expect(dependencies.written).toHaveLength(0);
       expect(dependencies.exported).toHaveLength(0);
+    }),
+  );
+
+  it.effect("acks a checkout with nothing the mirror lacks without storing a bundle", () =>
+    Effect.gen(function* () {
+      const dependencies = deps({
+        threads: [],
+        projects: ["/work/a"],
+        bundleStdout: "",
+      });
+      const outcome = yield* drain(dependencies);
+
+      expect(outcome.state).toBe("acked");
+      expect(outcome.worktrees).toEqual({ total: 1, acked: 1, failed: 0 });
+      expect(dependencies.written).toHaveLength(0);
     }),
   );
 
