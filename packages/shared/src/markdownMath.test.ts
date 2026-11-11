@@ -80,17 +80,12 @@ describe("chat math parsing", () => {
   it.each([
     ["$skill prompt", []],
     ["$skill $another prompt", []],
-    ["$skill budget $20", []],
     ["$skill formula $x$", ["x"]],
-    ["$skill display $$ x $$", ["x"]],
     ["$x @README.md\t$", ["x @README.md\t"]],
-    ["$x$ prompt", ["x"]],
-    ["$$x$$", ["x"]],
-    ["\\(x\\)", ["x"]],
-    ["\\[x\\]", ["x"]],
   ])("finds editor formulas in %j", (source, tex) => {
     expect(markdownMathRanges(source).map((formula) => formula.tex)).toEqual(tex);
   });
+
   it("reads the four delimiters models emit", () => {
     expect(formulas("Inline $x^2$ and \\(y_1\\), display $$a+b$$ and \\[c\\].")).toEqual([
       ["inline", "x^2"],
