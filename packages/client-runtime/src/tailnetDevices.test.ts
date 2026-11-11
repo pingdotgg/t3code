@@ -44,7 +44,7 @@ const device = (
   environmentId,
   label: environmentId,
   urls: [`https://${environmentId}.ts.net`],
-  nodeId: null,
+  nodeId: `n-${environmentId}`,
   status: "online",
   access: "full-access",
   member: member(environmentId),
@@ -294,6 +294,8 @@ describe("machineControls", () => {
       add: false,
       linkHere: false,
       promote: false,
+      readd: false,
+      needsReadd: false,
       forgetHosts: [studio],
       limitHosts: [studio],
     });
@@ -317,6 +319,39 @@ describe("machineControls", () => {
     expect(controls(studioOld)).toMatchObject({ add: false, promote: true });
   });
 
+  it("offers only re-adding for a member the server left unbound after the update", () => {
+    const unbound = [
+      host(studio, { devices: [device(box, { nodeId: null })] }),
+      host(laptop, { self: null, devices: [] }),
+    ];
+    const [group] = view(unbound, studio);
+    const machine = group?.machines.find((row) => row.entry.environmentId === box);
+    if (group === undefined || machine === undefined) throw new Error("missing row");
+    expect(machineControls(machine, group, { canOpen: true })).toEqual({
+      open: false,
+      changeAccess: false,
+      revoke: false,
+      restore: false,
+      add: false,
+      linkHere: false,
+      promote: false,
+      readd: true,
+      needsReadd: true,
+      forgetHosts: [studio],
+      limitHosts: [],
+    });
+    // Without a machine to write through, it is still marked, with nothing to press.
+    const readOnly = view(
+      unbound.map((candidate) => ({ ...candidate, mayWrite: false })),
+      studio,
+    )[0]?.machines.find((row) => row.entry.environmentId === box);
+    expect(
+      readOnly && group
+        ? machineControls(readOnly, { ...group, authority: null }, { canOpen: true })
+        : null,
+    ).toMatchObject({ readd: false, needsReadd: true });
+  });
+
   it("offers no network writes without an authority", () => {
     const readOnly = hosts.map((candidate) => ({ ...candidate, mayWrite: false }));
     for (const group of view(readOnly, studio)) {
@@ -338,9 +373,22 @@ describe("machineControls", () => {
 describe("hostControls", () => {
   const now = DateTime.makeUnsafe(1_000_000);
   it("offers leaving to a member, warning when it is the last full-access one", () => {
+    // The server refuses the last full-access machine while other members remain.
     expect(
       hostControls(host(studio, { devices: [device(box, { member: member(box, "auto") })] }), now),
-    ).toEqual({ leave: true, lastFullAccess: true, allowJoin: false, joinOpenUntil: null });
+    ).toEqual({
+      leave: false,
+      leaveBlocked: true,
+      lastFullAccess: true,
+      allowJoin: false,
+      joinOpenUntil: null,
+    });
+    expect(
+      hostControls(
+        host(studio, { devices: [device(box, { member: member(box, "revoked") })] }),
+        now,
+      ),
+    ).toMatchObject({ leave: true, leaveBlocked: false, lastFullAccess: true });
     expect(hostControls(host(studio, { devices: [device(box)] }), now).lastFullAccess).toBe(false);
   });
 
@@ -348,6 +396,7 @@ describe("hostControls", () => {
     const later = DateTime.makeUnsafe(1_600_000);
     expect(hostControls(host(vps, { self: null, joinOpenUntil: later }), now)).toEqual({
       leave: false,
+      leaveBlocked: false,
       lastFullAccess: false,
       allowJoin: true,
       joinOpenUntil: later,
@@ -357,6 +406,10 @@ describe("hostControls", () => {
       hostControls(host(vps, { self: member(vps, "revoked"), joinOpenUntil: past }), now),
     ).toMatchObject({ leave: false, allowJoin: true, joinOpenUntil: null });
     expect(hostControls(host(vps, { self: null, mayWrite: false }), now).allowJoin).toBe(false);
+    // A member whose roster still holds unbound members from before the update must consent too.
+    expect(
+      hostControls(host(studio, { devices: [device(box, { nodeId: null })] }), now),
+    ).toMatchObject({ leave: true, allowJoin: true });
   });
 });
 

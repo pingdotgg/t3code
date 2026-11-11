@@ -203,13 +203,19 @@ function linkStatus(link: PeerLinkSummary, now: DateTime.Utc): string {
     : `Expires in ${health.expiresInDays} ${health.expiresInDays === 1 ? "day" : "days"}. Link it again to renew.`;
 }
 
+const NEEDS_READD = "Needs re-adding after the update";
+
 function machineDetails(
   group: DeviceNetworkGroup,
   machine: DeviceNetworkMachine,
   showAccess: boolean,
   now: DateTime.Utc,
+  needsReadd: boolean,
 ): ReadonlyArray<string | null> {
   const { entry } = machine;
+  if (needsReadd) {
+    return [`${NEEDS_READD}: allow joining on it, then add it again`, entry.tailnetName];
+  }
   const access = entry.member?.access ?? null;
   const live = access !== null && access !== "revoked";
   const limits = entry.views.flatMap(({ host, device }) =>
@@ -263,7 +269,7 @@ export function DeviceMachineRow({
   const openMember = useAtomCommand(networkMembers.open, { reportFailure: false });
   const now = DateTime.makeUnsafe(useNowMinute());
   const [busy, setBusy] = useState(false);
-  const [adding, setAdding] = useState<"found" | "promote" | null>(null);
+  const [adding, setAdding] = useState<AddMode | null>(null);
   const [limitHost, setLimitHost] = useState<EnvironmentId | null>(null);
   const access = entry.member?.access ?? "revoked";
   const authority = group.authority;
@@ -328,8 +334,12 @@ export function DeviceMachineRow({
   return (
     <RowLayout
       title={entry.label}
-      status={{ label: STATUS_LABEL[entry.status], dot: STATUS_DOT[entry.status] }}
-      details={machineDetails(group, machine, !controls.changeAccess, now)}
+      status={
+        controls.needsReadd
+          ? { label: NEEDS_READD, dot: "bg-warning" }
+          : { label: STATUS_LABEL[entry.status], dot: STATUS_DOT[entry.status] }
+      }
+      details={machineDetails(group, machine, !controls.changeAccess, now, controls.needsReadd)}
       actions={
         <>
           {controls.open ? (
@@ -365,6 +375,11 @@ export function DeviceMachineRow({
               onClick={() => setAdding(controls.add ? "found" : "promote")}
             >
               Add to network
+            </Button>
+          ) : null}
+          {controls.readd ? (
+            <Button size="xs" variant="outline" disabled={busy} onClick={() => setAdding("readd")}>
+              Add again
             </Button>
           ) : null}
           {hasMenu ? (
@@ -403,7 +418,7 @@ export function DeviceMachineRow({
               group={group}
               entry={entry}
               authority={authority}
-              promote={adding === "promote"}
+              mode={adding}
               onClose={() => setAdding(null)}
               onChanged={onChanged}
             />
@@ -453,25 +468,36 @@ export function DeviceMachineRow({
   );
 }
 
-/** Adds a found machine to the network or to the authority only, or promotes a linked one. */
+type AddMode = "found" | "promote" | "readd";
+
+/**
+ * Adds a found machine to the network or to the authority only, promotes a linked one, or adds
+ * again a member the update left unbound.
+ */
 function AddMachineDialog({
   group,
   entry,
   authority,
-  promote,
+  mode,
   onClose,
   onChanged,
 }: {
   readonly group: DeviceNetworkGroup;
   readonly entry: MachineEntry;
   readonly authority: EnvironmentId;
-  readonly promote: boolean;
+  readonly mode: AddMode;
   readonly onClose: () => void;
   readonly onChanged: () => void;
 }) {
   const admit = useAtomCommand(tailnetDevices.admit, { reportFailure: false });
   const [scope, setScope] = useState<"network" | "local">("network");
-  const [access, setAccess] = useState<AuthMcpClientAccess>("approval-required");
+  const previous = entry.member?.access;
+  // Re-adding keeps the access it had before the update unless the user picks another.
+  const [access, setAccess] = useState<AuthMcpClientAccess>(
+    mode === "readd" && previous !== undefined && previous !== "revoked"
+      ? previous
+      : "approval-required",
+  );
   const [busy, setBusy] = useState(false);
   const here = hostLabel(group, authority);
   const add = async () => {
@@ -501,16 +527,19 @@ function AddMachineDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add {entry.label}</DialogTitle>
+          <DialogTitle>
+            {mode === "readd" ? `Add ${entry.label} again` : `Add ${entry.label}`}
+          </DialogTitle>
           <DialogDescription>
-            Being on your Tailscale account is not permission. {entry.label} gets only the access
-            you pick now. A machine in no network must allow joining first: on it, choose{" "}
+            {mode === "readd"
+              ? `${entry.label} was in your network before the update, which now proves each machine's Tailscale identity. Until it is added again, the other machines refuse it. First, on ${entry.label}, open Settings → Environments → Device network and choose `
+              : `Being on your Tailscale account is not permission. ${entry.label} gets only the access you pick now. A machine in no network must allow joining first: on it, choose `}
             <em>Let a machine in your network add this one</em>.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="space-y-4">
-            {promote ? (
+            {mode === "readd" ? null : mode === "promote" ? (
               <p className="text-xs text-muted-foreground">
                 It is linked to one machine only today. Adding it to your network gives it this
                 access on every machine in the network.
@@ -565,7 +594,13 @@ function AddMachineDialog({
             Cancel
           </DialogClose>
           <Button disabled={busy} onClick={() => void add()}>
-            {busy ? "Adding…" : scope === "network" ? "Add to network" : `Link to ${here}`}
+            {busy
+              ? "Adding…"
+              : mode === "readd"
+                ? "Add again"
+                : scope === "network"
+                  ? "Add to network"
+                  : `Link to ${here}`}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -805,9 +840,7 @@ export function TakingPartRow({
   const controls = hostControls(host, now);
 
   const leaveNetwork = async () => {
-    const consequence = controls.lastFullAccess
-      ? ` It is your network's only full-access machine: afterwards no machine can add, change or restore the others. Give another machine full access first to keep managing them.`
-      : "";
+    const consequence = controls.lastFullAccess ? " It is the last machine in your network." : "";
     if (
       !(await confirmDestructive(
         `Leave your network on ${host.label}? Its links to the other machines end and they see it as revoked.${consequence} To come back, allow joining here and add it from a full-access machine.`,
@@ -845,6 +878,9 @@ export function TakingPartRow({
           ? null
           : `A machine in your network can add it until ${formatTime(controls.joinOpenUntil)}`,
         managedBy === null ? null : `Managed by ${managedBy}`,
+        controls.leaveBlocked
+          ? "It is your network's only full-access machine, so it cannot leave while others remain. Give another machine full access first."
+          : null,
       ]}
       actions={
         <>

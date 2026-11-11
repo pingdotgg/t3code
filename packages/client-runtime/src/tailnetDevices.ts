@@ -76,6 +76,9 @@ export interface DeviceNetworkGroup {
 const isLiveMember = (member: NetworkMember | null | undefined): member is NetworkMember =>
   member != null && member.access !== "revoked";
 
+/** A member from before the update that this host has not bound to a Tailscale node. */
+const isUnbound = (device: TailnetDevice) => isLiveMember(device.member) && device.nodeId === null;
+
 const inNetwork = (host: DeviceNetworkHost) => isLiveMember(host.snapshot?.selfMember);
 
 const listsAsMember = (host: DeviceNetworkHost, environmentId: EnvironmentId) =>
@@ -352,6 +355,10 @@ export interface MachineControls {
   readonly linkHere: boolean;
   /** Linked to one host only: add it to the network. */
   readonly promote: boolean;
+  /** A member from before the update that a host has not bound to a Tailscale node yet. */
+  readonly needsReadd: boolean;
+  /** Add it again through the authority, once joining is allowed on it; nothing else applies. */
+  readonly readd: boolean;
   /** Hosts that forget it, the authority first. A member is revoked everywhere first. */
   readonly forgetHosts: ReadonlyArray<EnvironmentId>;
   /** Hosts that may keep a limit of their own for it. */
@@ -385,7 +392,10 @@ export function machineControls(
   const { entry } = machine;
   const { authority } = group;
   const member = machine.kind === "member";
-  const live = member && isLiveMember(entry.member);
+  // The server refuses a member it holds no node for until it is added again.
+  const needsReadd =
+    member && isLiveMember(entry.member) && entry.views.some((view) => isUnbound(view.device));
+  const live = member && isLiveMember(entry.member) && !needsReadd;
   const manages = authority !== null && authority !== entry.environmentId;
   const forgetHosts = member
     ? manages
@@ -396,10 +406,12 @@ export function machineControls(
     open: live && !entry.isHost && !entry.savedInApp && options.canOpen,
     changeAccess: live && manages,
     revoke: live && manages,
-    restore: member && !live && manages,
+    restore: member && !live && !needsReadd && manages,
     add: machine.kind === "found" && authority !== null,
     linkHere: machine.kind === "found" && authority !== null,
     promote: machine.kind === "linked" && authority !== null,
+    needsReadd,
+    readd: needsReadd && manages,
     forgetHosts,
     limitHosts: live
       ? group.hosts
@@ -421,6 +433,8 @@ export const canForgetOther = (group: DeviceNetworkGroup, other: MachineEntry) =
 
 export interface HostControls {
   readonly leave: boolean;
+  /** The server refuses: it is the last full-access machine and other members remain. */
+  readonly leaveBlocked: boolean;
   /** It is the network's only full-access machine: leaving leaves nobody to change the network. */
   readonly lastFullAccess: boolean;
   readonly allowJoin: boolean;
@@ -432,13 +446,19 @@ export interface HostControls {
 export function hostControls(host: DeviceNetworkHost, now: DateTime.Utc): HostControls {
   const self = host.snapshot?.selfMember ?? null;
   const live = isLiveMember(self);
-  const otherFullAccess =
-    host.snapshot?.devices.some((device) => device.member?.access === "full-access") === true;
+  const others = (host.snapshot?.devices ?? []).filter((device) => isLiveMember(device.member));
+  const lastFullAccess =
+    live &&
+    self.access === "full-access" &&
+    !others.some((device) => device.member?.access === "full-access");
+  const leaveBlocked = lastFullAccess && others.length > 0;
   const openUntil = host.snapshot?.joinOpenUntil ?? null;
   return {
-    leave: host.mayWrite && live,
-    lastFullAccess: live && self.access === "full-access" && !otherFullAccess,
-    allowJoin: host.mayWrite && host.snapshot !== null && !live,
+    leave: host.mayWrite && live && !leaveBlocked,
+    leaveBlocked: host.mayWrite && leaveBlocked,
+    lastFullAccess,
+    // Re-adding a member left unbound by the update needs consent on this side too.
+    allowJoin: host.mayWrite && host.snapshot !== null && (!live || others.some(isUnbound)),
     joinOpenUntil: openUntil !== null && DateTime.isGreaterThan(openUntil, now) ? openUntil : null,
   };
 }

@@ -240,9 +240,7 @@ function TakingPartRow(props: {
     Dialog.confirm({
       title: `Leave your network on ${host.label}?`,
       message: `Its links to the other machines end and they see it as revoked.${
-        controls.lastFullAccess
-          ? " It is your network's only full-access machine: afterwards no machine can add, change or restore the others. Give another machine full access first to keep managing them."
-          : ""
+        controls.lastFullAccess ? " It is the last machine in your network." : ""
       } To come back, allow joining here and add it from a full-access machine.`,
       confirmText: "Leave",
       destructive: true,
@@ -267,6 +265,9 @@ function TakingPartRow(props: {
       ? null
       : `Can be added until ${formatTime(controls.joinOpenUntil)}`,
     props.managedBy === null ? null : `Managed by ${props.managedBy}`,
+    controls.leaveBlocked
+      ? "Only full-access machine: it cannot leave while others remain. Give another machine full access first."
+      : null,
   ]
     .filter((part): part is string => part !== null)
     .join(" · ");
@@ -477,6 +478,7 @@ function MachineRow(props: {
     controls.restore ||
     controls.add ||
     controls.promote ||
+    controls.readd ||
     controls.forgetHosts.length > 0 ||
     controls.limitHosts.length > 0 ||
     machine.others.some((other) => canForgetOther(group, other));
@@ -484,14 +486,20 @@ function MachineRow(props: {
   return (
     <ExpandableRow
       label={entry.label}
-      detail={machineDetail(group, machine, now)}
-      danger={entry.status === "revoked"}
+      detail={
+        controls.needsReadd
+          ? "Needs re-adding after the update: allow joining on it, then add it again"
+          : machineDetail(group, machine, now)
+      }
+      danger={entry.status === "revoked" || controls.needsReadd}
       value={
-        machine.kind === "member"
-          ? accessLabel(access)
-          : machine.kind === "found"
-            ? "Add"
-            : "Linked"
+        controls.needsReadd
+          ? "Add again"
+          : machine.kind === "member"
+            ? accessLabel(access)
+            : machine.kind === "found"
+              ? "Add"
+              : "Linked"
       }
       canExpand={canExpand}
       expanded={panel !== null}
@@ -520,6 +528,13 @@ function MachineRow(props: {
               tone="danger"
               loading={saving}
               onPress={() => changeAccess("revoked")}
+            />
+          ) : null}
+          {controls.readd ? (
+            <ListActionRow
+              label="Add again"
+              description={`First, on ${entry.label}, open Settings → Environments → Device network and choose Let a machine in your network add this one.`}
+              onPress={() => setPanel({ kind: "add", scope: "network" })}
             />
           ) : null}
           {controls.add || controls.promote ? (
@@ -581,7 +596,7 @@ function MachineRow(props: {
               key={choice.access}
               label={
                 panel.scope === "network"
-                  ? `Add as ${choice.label}`
+                  ? `${controls.readd ? "Add again" : "Add"} as ${choice.label}`
                   : `Link to ${authorityLabel} as ${choice.label}`
               }
               description={choice.description}

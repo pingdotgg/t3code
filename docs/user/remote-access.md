@@ -335,9 +335,14 @@ machine in the network picks them up.
 - **Forget** removes a machine from the list. A member is revoked everywhere
   first, so it cannot rejoin by itself.
 - **Leave network** takes a machine out of the network. The others see it as
-  revoked. If it was the only full-access machine, nothing can change the
-  network afterwards, so give another machine full access first. To come back,
-  allow joining on it and add it again.
+  revoked. The only full-access machine cannot leave while other members
+  remain: give another machine full access first. To come back, allow joining
+  on it and add it again.
+- After updating from a version before machines were tied to their Tailscale
+  identity, existing members show **Needs re-adding after the update**, and the
+  other machines refuse them until then. On that machine, choose **Let a
+  machine in your network add this one**, then choose **Add again** on its row
+  from a full-access machine.
 - **Open** adds a member to this app without a code. Below full access, it
   opens read-only.
 - When you create a pairing link on a full-access member, **Works on all your
