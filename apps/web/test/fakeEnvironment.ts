@@ -28,6 +28,7 @@ import {
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
   type TerminalMetadataStreamEvent,
+  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import type {
   ConnectionAttemptError,
@@ -109,8 +110,8 @@ const baseServerConfig: ServerConfig = {
 // A server only leaves threads out of the shell when it serves their families.
 const serverConfig = (): ServerConfig =>
   threads.some((thread) => thread.olderSettled)
-    ? { ...baseServerConfig, shellThreadFamilies: true }
-    : baseServerConfig;
+    ? { ...baseServerConfig, keybindings, shellThreadFamilies: true }
+    : { ...baseServerConfig, keybindings };
 
 const project: OrchestrationProjectShell = {
   id: PROJECT_ID,
@@ -331,6 +332,7 @@ let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null 
 let threads: ReadonlyArray<FakeThread> = [];
 let dispatched: OrchestrationV2Command[] = [];
 let acceptCommands = false;
+let keybindings = DEFAULT_RESOLVED_KEYBINDINGS;
 let sequence = 1;
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
 
@@ -465,11 +467,15 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 /** Serves the environment's HTTP API and these threads until disposed. */
 export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
-  options?: { readonly acceptCommands?: boolean },
+  options?: {
+    readonly acceptCommands?: boolean;
+    readonly keybindings?: ResolvedKeybindingsConfig;
+  },
 ): Disposable {
   threads = fixtures;
   dispatched = [];
   acceptCommands = options?.acceptCommands === true;
+  keybindings = options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -493,6 +499,7 @@ export function installFakeEnvironment(
       threads = [];
       dispatched = [];
       acceptCommands = false;
+      keybindings = DEFAULT_RESOLVED_KEYBINDINGS;
     },
   };
 }
