@@ -277,6 +277,7 @@ export class GitLabCli extends Context.Service<
 
     readonly listMergeRequests: (input: {
       readonly cwd: string;
+      readonly host?: string | undefined;
       readonly headSelector: string;
       readonly source?: SourceControlProvider.SourceControlRefSelector;
       readonly state: "open" | "closed" | "merged" | "all";
@@ -285,6 +286,7 @@ export class GitLabCli extends Context.Service<
 
     readonly getMergeRequest: (input: {
       readonly cwd: string;
+      readonly host?: string | undefined;
       readonly reference: string;
     }) => Effect.Effect<GitLabMergeRequestSummary, GitLabCliError>;
 
@@ -301,6 +303,7 @@ export class GitLabCli extends Context.Service<
 
     readonly createMergeRequest: (input: {
       readonly cwd: string;
+      readonly host?: string | undefined;
       readonly baseBranch: string;
       readonly headSelector: string;
       readonly source?: SourceControlProvider.SourceControlRefSelector;
@@ -311,10 +314,12 @@ export class GitLabCli extends Context.Service<
 
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
+      readonly host?: string | undefined;
     }) => Effect.Effect<string | null, GitLabCliError>;
 
     readonly checkoutMergeRequest: (input: {
       readonly cwd: string;
+      readonly host?: string | undefined;
       readonly reference: string;
       readonly force?: boolean;
     }) => Effect.Effect<void, GitLabCliError>;
@@ -460,6 +465,7 @@ export const make = Effect.gen(function* () {
 
   const executeMergeRequest = (input: {
     readonly cwd: string;
+    readonly host?: string | undefined;
     readonly reference: string;
     readonly args: ReadonlyArray<string>;
   }) =>
@@ -480,6 +486,7 @@ export const make = Effect.gen(function* () {
     listMergeRequests: Effect.fn("GitLabCli.listMergeRequests")(function (input) {
       return execute({
         cwd: input.cwd,
+        host: input.host,
         args: [
           "mr",
           "list",
@@ -518,6 +525,7 @@ export const make = Effect.gen(function* () {
     getMergeRequest: Effect.fn("GitLabCli.getMergeRequest")(function (input) {
       return executeMergeRequest({
         cwd: input.cwd,
+        host: input.host,
         reference: input.reference,
         args: ["mr", "view", "--output", "json", "--", input.reference],
       }).pipe(
@@ -635,6 +643,7 @@ export const make = Effect.gen(function* () {
       const sourceProject = sourceProjectIdentifier(input.source);
       return execute({
         cwd: input.cwd,
+        host: input.host,
         args: [
           "api",
           "--method",
@@ -655,6 +664,7 @@ export const make = Effect.gen(function* () {
     getDefaultBranch: Effect.fn("GitLabCli.getDefaultBranch")(function (input) {
       return execute({
         cwd: input.cwd,
+        host: input.host,
         args: ["api", "projects/:fullpath"],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -677,6 +687,7 @@ export const make = Effect.gen(function* () {
     checkoutMergeRequest: Effect.fn("GitLabCli.checkoutMergeRequest")(function (input) {
       return executeMergeRequest({
         cwd: input.cwd,
+        host: input.host,
         reference: input.reference,
         args: ["mr", "checkout", "--", input.reference],
       }).pipe(Effect.asVoid);

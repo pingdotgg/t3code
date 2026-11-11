@@ -166,6 +166,9 @@ export const discovery = {
     "Install the GitLab command-line tool (`glab`) from https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`).",
 } satisfies SourceControlCliDiscoverySpec;
 
+const contextHost = (context: SourceControlProvider.SourceControlProviderContext | undefined) =>
+  context === undefined ? undefined : new URL(context.provider.baseUrl).host;
+
 export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
   const { git } = yield* SourceControlHost.SourceControlHost;
@@ -234,6 +237,7 @@ export const make = Effect.gen(function* () {
         return gitlab
           .listMergeRequests({
             cwd: input.cwd,
+            host: contextHost(input.context),
             headSelector: input.headSelector,
             ...(source ? { source } : {}),
             state: input.state,
@@ -259,7 +263,7 @@ export const make = Effect.gen(function* () {
       },
     ),
     getChangeRequest: Effect.fn("GitLabSourceControlProvider.getChangeRequest")(function (input) {
-      return gitlab.getMergeRequest(input).pipe(
+      return gitlab.getMergeRequest({ ...input, host: contextHost(input.context) }).pipe(
         Effect.map(toChangeRequest),
         Effect.mapError(
           (error) =>
@@ -283,6 +287,7 @@ export const make = Effect.gen(function* () {
         return gitlab
           .createMergeRequest({
             cwd: input.cwd,
+            host: contextHost(input.context),
             baseBranch: input.baseRefName,
             headSelector: input.headSelector,
             ...(source ? { source } : {}),
@@ -347,7 +352,7 @@ export const make = Effect.gen(function* () {
       );
     }),
     getDefaultBranch: Effect.fn("GitLabSourceControlProvider.getDefaultBranch")(function (input) {
-      return gitlab.getDefaultBranch(input).pipe(
+      return gitlab.getDefaultBranch({ ...input, host: contextHost(input.context) }).pipe(
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
@@ -363,7 +368,7 @@ export const make = Effect.gen(function* () {
     }),
     checkoutChangeRequest: Effect.fn("GitLabSourceControlProvider.checkoutChangeRequest")(
       function (input) {
-        return gitlab.checkoutMergeRequest(input).pipe(
+        return gitlab.checkoutMergeRequest({ ...input, host: contextHost(input.context) }).pipe(
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({

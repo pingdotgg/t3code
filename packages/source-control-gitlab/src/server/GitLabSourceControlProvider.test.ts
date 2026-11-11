@@ -281,3 +281,58 @@ it.effect.each(["read", "decode"] as const)(
       else assert.propertyVal(error.cause, "_tag", "SchemaError");
     }),
 );
+
+it.effect("sends merge request calls to the bound remote's host", () =>
+  Effect.gen(function* () {
+    const hosts: Array<string | undefined> = [];
+    const provider = yield* GitLabSourceControlProvider.make.pipe(
+      Effect.provide(
+        GitLabCli.layer.pipe(
+          Layer.provideMerge(
+            TestSourceControlHost.layer({
+              process: {
+                run: (input) => {
+                  hosts.push(input.env?.GITLAB_HOST);
+                  return Effect.succeed(
+                    processOutput(input.args[0] === "mr" ? "[]" : '{"default_branch":"main"}'),
+                  );
+                },
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    const context = {
+      provider: {
+        kind: SourceControlProviderKind.make("gitlab"),
+        name: "GitLab Self-Hosted",
+        baseUrl: "https://gitlab.example.test",
+      },
+      remoteName: "work",
+      remoteUrl: "git@gitlab.example.test:group/project.git",
+    };
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context,
+      headSelector: "feature",
+      state: "open",
+    });
+    yield* provider.getDefaultBranch({ cwd: "/repo", context });
+    yield* provider.createChangeRequest({
+      cwd: "/repo",
+      context,
+      baseRefName: "main",
+      headSelector: "feature",
+      title: "Feature",
+      bodyFile: "/tmp/body.md",
+    });
+
+    assert.deepStrictEqual(hosts, [
+      "gitlab.example.test",
+      "gitlab.example.test",
+      "gitlab.example.test",
+    ]);
+  }),
+);
