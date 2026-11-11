@@ -519,82 +519,27 @@ describe("Android delivery routing", () => {
     ),
   );
 
-  const cardsOff = { name: "with activity cards off", cards: false, notificationOnly: false };
-  const notificationOnly = {
-    name: "for a notification-only environment",
-    cards: true,
-    notificationOnly: true,
-  };
-  const cardsOn = { name: "with activity cards on", cards: true, notificationOnly: false };
   it.effect.each([
     {
-      ...cardsOff,
-      queued: "while hidden",
-      hiddenDelivery: true,
-      order: "replay stale pending new",
-    },
-    {
-      ...notificationOnly,
-      queued: "while hidden",
-      hiddenDelivery: true,
-      order: "replay stale pending new",
-    },
-    {
-      ...cardsOff,
-      queued: "before disable",
-      hiddenDelivery: true,
-      order: "replay stale pending new",
-    },
-    {
-      ...notificationOnly,
-      queued: "before disable",
-      hiddenDelivery: true,
-      order: "replay stale new pending",
-    },
-    {
-      ...cardsOff,
+      name: "with activity cards off",
+      cards: false,
+      notificationOnly: false,
       queued: "before disable",
       hiddenDelivery: false,
       order: "stale replay new pending",
     },
     {
-      ...notificationOnly,
-      queued: "before disable",
-      hiddenDelivery: false,
-      order: "stale new replay pending",
-    },
-    {
-      ...cardsOff,
+      name: "for a notification-only environment",
+      cards: true,
+      notificationOnly: true,
       queued: "while hidden",
-      hiddenDelivery: false,
-      order: "new stale pending replay",
-    },
-    {
-      ...notificationOnly,
-      queued: "while hidden",
-      hiddenDelivery: false,
-      order: "new replay stale pending",
-    },
-    {
-      ...cardsOn,
-      queued: "before disable",
-      hiddenDelivery: false,
-      order: "stale new pending replay",
-    },
-    {
-      ...cardsOn,
-      queued: "while hidden",
-      hiddenDelivery: false,
-      order: "stale new pending replay",
-    },
-    {
-      ...cardsOn,
-      queued: "before disable",
       hiddenDelivery: true,
-      order: "stale new pending replay",
+      order: "replay stale pending new",
     },
     {
-      ...cardsOn,
+      name: "with activity cards on",
+      cards: true,
+      notificationOnly: false,
       queued: "while hidden",
       hiddenDelivery: true,
       order: "stale new pending replay",
