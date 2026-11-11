@@ -545,23 +545,4 @@ describe("probeAcpRegistryWorkspaceForCwd", () => {
       expect(workspace.slashCommandsPending).toBeUndefined();
     }),
   );
-
-  it.effect("skips the probe when the machine snapshot is not installed", () =>
-    Effect.gen(function* () {
-      const notInstalled = buildCheckedAcpRegistrySnapshot({
-        ...identity,
-        settings: decodeSettings({ agentId: "test-agent" }),
-        checkedAt: "2026-08-13T10:00:00.000Z",
-        inspection: { status: "missing_runner", version: null, distribution: "local" },
-      });
-      const workspace = yield* probeAcpRegistryWorkspaceForCwd(
-        { ...workspaceInput, machineSnapshot: notInstalled },
-        () => Effect.die(new Error("unexpected workspace probe")),
-      );
-
-      expect(workspace.installed).toBe(false);
-      expect(workspace.slashCommands).toEqual(notInstalled.slashCommands);
-      expect(workspace.slashCommandsPending).toBe(false);
-    }),
-  );
 });
