@@ -148,10 +148,10 @@ export class ExtensionRegistry {
     });
   }
 
-  private async persist() {
+  private async persist(entries = [...this.registrations.values()]) {
     const temp = `${this.registryPath}.${NodeCrypto.randomUUID()}.tmp`;
     try {
-      await NodeFSP.writeFile(temp, JSON.stringify([...this.registrations.values()]), {
+      await NodeFSP.writeFile(temp, JSON.stringify(entries), {
         mode: 0o600,
       });
       await NodeFSP.rename(temp, this.registryPath);
@@ -385,15 +385,18 @@ export class ExtensionRegistry {
             throw cause;
           }
         }
-        this.registrations.set(id, next);
         try {
-          await this.persist();
+          await this.persist(
+            [...this.registrations.values()].map((entry) =>
+              entry.manifest.id === id ? next : entry,
+            ),
+          );
         } catch (cause) {
-          this.registrations.set(id, previous);
           if (next.directory !== previous.directory) await this.removePackage(next);
           throw cause;
         }
         await this.stop(id);
+        this.registrations.set(id, next);
         if (next.enabled) {
           const activated = await this.start(next);
           if (!activated && next.directory !== previous.directory) {

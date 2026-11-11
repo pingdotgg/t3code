@@ -5,9 +5,15 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
-import { it, expect, vi } from "@effect/vitest";
+import { it, expect } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import { ExtensionProcess } from "./ExtensionProcess.ts";
 import { ExtensionRegistry } from "./ExtensionRegistry.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...original, rename: vi.fn(original.rename) };
+});
 
 it.live(
   "persists lifecycle and settings, runs tools in a host process, and contains activation failures",
@@ -212,14 +218,28 @@ it.live("updates managed packages transactionally and removes only their owned i
               apiVersion: 1,
               description: "Package test",
               main: "main.mjs",
+              commands: [
+                {
+                  id: "version",
+                  title: "Version",
+                  description: "Generation",
+                  inputSchema: {
+                    type: "object",
+                    properties: { generation: { const: version } },
+                    required: ["generation"],
+                  },
+                },
+              ],
+              panels: [{ id: "version", title: "Version", entry: "panel.html" }],
             }),
           );
           await NodeFSP.writeFile(
             NodePath.join(destination, "main.mjs"),
             broken
               ? "export default {activate(){throw new Error('broken update')}};"
-              : "export default {activate(){}};",
+              : `export default {activate(context){context.registerCommand('version',()=>${JSON.stringify(version)});}};`,
           );
+          await NodeFSP.writeFile(NodePath.join(destination, "panel.html"), version);
         },
       });
       try {
@@ -250,7 +270,73 @@ it.live("updates managed packages transactionally and removes only their owned i
         expect(await NodeFSP.readdir(NodePath.join(directory, "packages"))).toHaveLength(1);
         broken = false;
         version = "1.1.0";
-        await registry.manage("test.package", "update");
+        const previousRuntime = registry.list()[0]?.runtimeId;
+        {
+          using _failure = vi
+            .spyOn(NodeFSP, "rename")
+            .mockRejectedValueOnce(new Error("disk failure"));
+          await expect(registry.manage("test.package", "update")).rejects.toMatchObject({
+            reason: "storage-failed",
+          });
+          expect(registry.list()[0]).toMatchObject({
+            status: "running",
+            runtimeId: previousRuntime,
+            manifest: { version: "1.0.0" },
+          });
+          expect(
+            await registry.invoke({
+              id: "test.package",
+              kind: "command",
+              name: "version",
+              input: { generation: "1.0.0" },
+            }),
+          ).toBe("1.0.0");
+          expect(await NodeFSP.readdir(NodePath.join(directory, "packages"))).toHaveLength(1);
+        }
+
+        const persisting = Promise.withResolvers<void>();
+        const resume = Promise.withResolvers<void>();
+        using _persistence = vi
+          .spyOn(NodeFSP, "rename")
+          .mockImplementationOnce(async (from, to) => {
+            persisting.resolve();
+            await resume.promise;
+            const original =
+              await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+            return original.rename(from, to);
+          });
+        const updating = registry.manage("test.package", "update");
+        try {
+          await persisting.promise;
+          const [command, panel] = await Promise.allSettled([
+            registry.invoke({
+              id: "test.package",
+              kind: "command",
+              name: "version",
+              input: { generation: "1.0.0" },
+            }),
+            registry.panel("test.package", "version", previousRuntime),
+          ]);
+          expect({ version: registry.list()[0]?.manifest.version, command, panel }).toMatchObject({
+            version: "1.0.0",
+            command: { status: "fulfilled", value: "1.0.0" },
+            panel: { status: "fulfilled", value: "1.0.0" },
+          });
+        } finally {
+          resume.resolve();
+          await updating;
+        }
+        expect(
+          await registry.invoke({
+            id: "test.package",
+            kind: "command",
+            name: "version",
+            input: { generation: "1.1.0" },
+          }),
+        ).toBe("1.1.0");
+        await expect(
+          registry.panel("test.package", "version", previousRuntime),
+        ).rejects.toMatchObject({ reason: "not-running" });
         expect(registry.list()[0]).toMatchObject({
           status: "running",
           manifest: { version: "1.1.0" },

@@ -481,7 +481,8 @@ function OpenCommandPaletteDialog(props: {
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
-  const extensionEnvironmentId = activeThread?.environmentId ?? primaryEnvironmentId;
+  const extensionEnvironmentId =
+    activeThread?.environmentId ?? activeDraftThread?.environmentId ?? primaryEnvironmentId;
   const extensionSupported =
     environments.find((entry) => entry.environmentId === extensionEnvironmentId)?.serverConfig
       ?.environment.capabilities.extensions === true;
