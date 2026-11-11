@@ -151,6 +151,7 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         showOpenInPicker={false}
         openInShortcutEnabled={false}
         gitCwd={state.folder}
+        workspaceMutationId={null}
         isGitRepo={false}
         envLocked
         availableEnvironments={[]}
