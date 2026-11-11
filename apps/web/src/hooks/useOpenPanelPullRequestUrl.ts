@@ -8,7 +8,7 @@ import {
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 import { useProject } from "../state/entities";
-import { pullRequestEnvironment } from "../state/pullRequests";
+import { pullRequestEnvironment, pullRequestSnapshotStorage } from "../state/pullRequests";
 import { useEnvironmentQuery } from "../state/query";
 import { useSupportsMultiplePullRequests } from "./useSupportsMultiplePullRequests";
 
@@ -61,11 +61,7 @@ export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
   // Keep all reference/project reads before the query hook to preserve caching of reference and its detail atom.
   const cachedDetail =
     reference && environmentId
-      ? readPullRequestDetailSnapshot(
-          typeof window === "undefined" ? undefined : window.localStorage,
-          environmentId,
-          reference,
-        )
+      ? readPullRequestDetailSnapshot(pullRequestSnapshotStorage(), environmentId, reference)
       : null;
   const fallbackUrl = reference
     ? (requestedReference?.url ??

@@ -222,7 +222,7 @@ function observePullRequestSummary(
 }
 
 // Reading localStorage throws where the browser blocks storage; that must not break the page.
-function snapshotStorage(): Storage | undefined {
+export function pullRequestSnapshotStorage(): Storage | undefined {
   if (typeof window === "undefined") return undefined;
   try {
     return window.localStorage;
@@ -366,14 +366,14 @@ export function restorePullRequestList(
 export function restoredPullRequestList(
   targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>,
 ): MergedPullRequestList | null {
-  return restorePullRequestList(snapshotStorage(), targets);
+  return restorePullRequestList(pullRequestSnapshotStorage(), targets);
 }
 
 // Answers are stamped on arrival: older servers leave no other ordering for same-dated reads.
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
   list: ({ environmentId, input }, answer, registry) =>
     Effect.map(Clock.currentTimeMillis, (observedAt) => {
-      rememberPullRequestListAnswer(snapshotStorage(), { environmentId, input }, answer);
+      rememberPullRequestListAnswer(pullRequestSnapshotStorage(), { environmentId, input }, answer);
       for (const entry of answer.entries) {
         observePullRequestSummary(
           registry,
@@ -387,7 +387,7 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
     Effect.map(Clock.currentTimeMillis, (at) => {
       // Only fresh reads seed the cold-start snapshot; a stale one could replace a newer record.
       if (input.allowStale === false) {
-        writePullRequestDetailSnapshot(snapshotStorage(), environmentId, input, detail);
+        writePullRequestDetailSnapshot(pullRequestSnapshotStorage(), environmentId, input, detail);
       }
       observePullRequestSummary(
         registry,

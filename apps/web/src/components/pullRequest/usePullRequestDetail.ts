@@ -15,6 +15,7 @@ import { useEnvironmentScope } from "~/state/session";
 import {
   newestPullRequestSummary,
   pullRequestEnvironment,
+  pullRequestSnapshotStorage,
   pullRequestListEntryToSummary,
   useSharedPullRequestSummary,
 } from "~/state/pullRequests";
@@ -84,22 +85,14 @@ export function usePullRequestDetail(
     checks: liveDetail?.checks ?? [],
   });
   const [cachedDetail, setCachedDetail] = useState(() =>
-    readPullRequestDetailSnapshot(
-      typeof window === "undefined" ? undefined : window.localStorage,
-      environmentId,
-      reference,
-    ),
+    readPullRequestDetailSnapshot(pullRequestSnapshotStorage(), environmentId, reference),
   );
   const [cachedDetailKey, setCachedDetailKey] = useState(scopeKey);
   if (cachedDetailKey !== scopeKey) {
     setCachedDetailKey(scopeKey);
     setCachedDetail(
       detailQuery.data ??
-        readPullRequestDetailSnapshot(
-          typeof window === "undefined" ? undefined : window.localStorage,
-          environmentId,
-          reference,
-        ),
+        readPullRequestDetailSnapshot(pullRequestSnapshotStorage(), environmentId, reference),
     );
   } else if (detailQuery.data !== null && detailQuery.data !== cachedDetail) {
     setCachedDetail(detailQuery.data);
