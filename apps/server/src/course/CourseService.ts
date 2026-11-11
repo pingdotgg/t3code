@@ -83,6 +83,7 @@ export class CourseService extends Context.Service<
       readonly transcript?: string;
       readonly pset?: number;
       readonly references?: ReadonlyArray<CourseProblemReference>;
+      readonly solutionSearchedAt?: string;
     }) => Effect.Effect<Course, CourseError>;
     readonly remove: (courseId: string) => Effect.Effect<void, CourseError>;
     readonly recordPrepThread: (
@@ -537,6 +538,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
     readonly transcript?: string;
     readonly pset?: number;
     readonly references?: ReadonlyArray<CourseProblemReference>;
+    readonly solutionSearchedAt?: string;
   }) {
     return yield* locked(
       Effect.gen(function* () {
@@ -552,7 +554,11 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
           (!course.problemSets || !course.problemSets[input.pset - 1])
         )
           return yield* failure(`Problem set ${input.pset} was not found.`);
-        const next = input.position ? { ...course, position: input.position } : course;
+        const next = {
+          ...course,
+          ...(input.position ? { position: input.position } : {}),
+          ...(input.solutionSearchedAt ? { solutionSearchedAt: input.solutionSearchedAt } : {}),
+        };
         if (input.unit === undefined) {
           if (input.pset === undefined) {
             yield* write(next);
@@ -686,6 +692,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
         );
         const needsPublishedSearch =
           !input.reveal &&
+          course.solutionSearchedAt === undefined &&
           selected.some((pset) => !pset.hasSolution && pset.references === undefined);
         return {
           ...attribution,

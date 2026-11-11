@@ -52,6 +52,7 @@ export const Course = Schema.Struct({
   createdAt: Schema.String,
   units: Schema.Array(CourseUnit),
   problemSets: Schema.optional(Schema.Array(CourseProblemSet)),
+  solutionSearchedAt: Schema.optional(Schema.String),
   position: Schema.optional(CoursePosition),
   prepThreadIds: Schema.Array(ThreadId),
 });
