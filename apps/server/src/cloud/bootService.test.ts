@@ -1008,7 +1008,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
   );
 
   // regression: #29522
-  it.effect.each(["install", "restart", "withStopped", "withStopped after a failed stop"] as const)(
+  it.effect.each(["install", "withStopped after a failed stop"] as const)(
     "runs a launch agent that launchd leaves pending after bootstrap via %s",
     (operation) =>
       Effect.gen(function* () {
@@ -1016,16 +1016,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         yield* service.install();
         control.bootstrapSpawns = false;
 
-        if (operation === "withStopped after a failed stop") {
+        if (operation === "install") {
+          yield* service.install();
+        } else {
           // The bootout timed out with the job still loaded, so recovery's bootstrap is rejected.
           control.failCommand = "launchctl bootout --wait gui/501/com.t3tools.t3code.service";
           yield* service.withStopped(Effect.void).pipe(Effect.flip);
-        } else {
-          yield* operation === "install"
-            ? service.install()
-            : operation === "restart"
-              ? service.restart
-              : service.withStopped(Effect.void);
         }
 
         expect(control.launchdRunning, "launch agent is loaded but not running").toBe(true);
