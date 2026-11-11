@@ -872,8 +872,8 @@ function queueTailModelSelection(
 
 /**
  * The provider's latest run stopped on its usage limit, and either nothing
- * ran after it or the limit has not reset yet. A run that completed on
- * another provider since does not lift the limit; an unknown reset never does.
+ * ran after it or it reported a reset still in the future. A run on another
+ * provider since lifts a limit whose reset is unknown, as transient 429s are.
  */
 function usageLimitHoldsQueue(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
@@ -898,9 +898,7 @@ function usageLimitHoldsQueue(
   if (limited === null) return false;
   if (latestExecutedRun(projection.runs)?.id === limited.id) return true;
   const resetAt = latestRootProviderFailure(limited, projection.turnItems)?.resetAt;
-  if (resetAt == null) return true;
-  const resetMs = Date.parse(resetAt);
-  return !Number.isFinite(resetMs) || resetMs > DateTime.toEpochMillis(now);
+  return resetAt != null && Date.parse(resetAt) > DateTime.toEpochMillis(now);
 }
 
 function latestStableRun(
