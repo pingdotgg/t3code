@@ -251,12 +251,12 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
   }
 }
 
-class AcpModelOptionError extends Schema.TaggedError<AcpModelOptionError>()("AcpModelOptionError", {
-  optionId: Schema.String,
-  value: Schema.Unknown,
-}) {
+class AcpModelOptionError extends Schema.TaggedError<AcpModelOptionError>()(
+  "AcpModelOptionError",
+  {},
+) {
   override get message(): string {
-    return `The agent did not apply option "${this.optionId}" = ${JSON.stringify(this.value)}, which this task was approved to run with, so it did not start.`;
+    return "The agent did not apply an approved option, so the delegated task did not start.";
   }
 }
 
@@ -759,6 +759,9 @@ export const AcpProviderCapabilitiesV2 = {
 } satisfies OrchestrationV2ProviderCapabilities;
 
 const STEER_DELIVERY_BOUND = "2 seconds";
+
+/** Kiro 2.27.0 advertised its model 40-90 ms after the write's result. */
+const LATE_MODEL_OPTION_BOUND = "2 seconds";
 
 /**
  * `session/fork` `_meta` for a fork from `providerTurnId`: none for the session head,
@@ -7316,10 +7319,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // them; plan mode replaces any mode, as for the choices checked below.
           const refused = aboveCeiling[0];
           if (refused !== undefined && runtimePolicy.interactionMode !== "plan") {
-            return yield* new AcpModelOptionError({
-              optionId: refused.id,
-              value: refused.value,
-            });
+            return yield* new AcpModelOptionError({});
           }
           const sessionId = yield* Ref.get(activeSessionId);
           const configuredModel =
@@ -7347,10 +7347,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ? finalModeId
                 : finalOptions.find((option) => option.id === nativeId)?.currentValue;
             if (current !== selection.value) {
-              return yield* new AcpModelOptionError({
-                optionId: selection.id,
-                value: selection.value,
-              });
+              return yield* new AcpModelOptionError({});
             }
           }
         });
@@ -7573,6 +7570,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               nativeBuildConfigurationBySessionId.delete(startResult.sessionId);
             }
+          }
+          // A late model advert after the write leaves nothing to check the model against,
+          // so a strict task waits for it rather than start on a model nobody checked.
+          if (
+            runtimePolicy.strictModelOptions === true &&
+            flavor.modelOptionArrivesLate === true &&
+            appliedModel !== undefined &&
+            !observableModelSessions.has(startResult.sessionId)
+          ) {
+            const advertised = yield* runtime.configOptionChanges.pipe(
+              Stream.filter((options) => findModelConfigOption(options) !== undefined),
+              Stream.runHead,
+              Effect.timeoutOption(LATE_MODEL_OPTION_BOUND),
+              Effect.map(Option.flatten),
+            );
+            if (Option.isNone(advertised)) {
+              return yield* new AcpModelSelectionError({
+                model: modelSelection.model,
+                cause: "The session did not report its model.",
+              });
+            }
+            observableModelSessions.add(startResult.sessionId);
+            configuredNativeModels.set(startResult.sessionId, appliedModel);
           }
           yield* validateModelOptions(modelSelection, runtimePolicy);
           yield* validateModelSelection(modelSelection);

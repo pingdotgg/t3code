@@ -5630,7 +5630,10 @@ describe("AcpAdapterV2", () => {
   const approvedAgent = { id: "agent", value: "example" } as const;
   it.effect.each([
     { name: "an option the session lacks", options: [{ id: "missing", value: "x" }] },
-    { name: "a value the option does not offer", options: [{ id: "agent", value: "other" }] },
+    {
+      name: "a value the option does not offer",
+      options: [{ id: "agent", value: "https://example.invalid/?token=test-only-private-value" }],
+    },
     { name: "a value the agent rejects", options: [approvedAgent], set: "reject" },
     { name: "a value the agent leaves unchanged", options: [approvedAgent], set: "ignore" },
     { name: "an idle update resets the option", options: [approvedAgent], set: "drift" },
@@ -5869,6 +5872,7 @@ describe("AcpAdapterV2", () => {
             "model" in agent ? "AcpModelSelectionError" : "AcpModelOptionError",
           );
         }
+        assert.notInclude(JSON.stringify(result), "test-only-private-value");
         assert.equal(prompts, restored ? 1 : 0);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );

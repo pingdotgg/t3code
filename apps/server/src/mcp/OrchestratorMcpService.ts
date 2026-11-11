@@ -1566,11 +1566,13 @@ const make = Effect.gen(function* () {
           `Unable to read the delegation request: ${errorMessage(error)}`,
         );
       // An approval counts only while the run that asked is still open, so
-      // a stopped parent never starts the child it asked for.
+      // a stopped parent never starts the child it asked for. A run stays
+      // active until its provider confirms Stop, so the request itself counts.
       const readAnswer = () =>
         threadManagement
           .getThreadRecords(threadId, ["runs", "turnItems"], {
-            turnItemTypes: ["delegation_approval"],
+            turnItemTypes: ["delegation_approval", "run_interrupt_request"],
+            turnItemRunIds: [parentRun.id],
             messageRoles: [],
           })
           .pipe(
@@ -1578,7 +1580,13 @@ const make = Effect.gen(function* () {
             Effect.map((records) => {
               const item = records.turnItems.find((candidate) => candidate.id === turnItemId);
               const run = records.runs.find((candidate) => candidate.id === parentRun.id);
-              const open = run !== undefined && ThreadManagementService.isActiveRun(run);
+              const open =
+                run !== undefined &&
+                ThreadManagementService.isActiveRun(run) &&
+                !records.turnItems.some(
+                  (candidate) =>
+                    candidate.type === "run_interrupt_request" && candidate.runId === parentRun.id,
+                );
               if (item?.type === "delegation_approval" && item.approvalStatus !== "pending") {
                 return item.approvalStatus === "approved" &&
                   !(open && sameSelection(item.proposed, proposed))
@@ -1588,7 +1596,6 @@ const make = Effect.gen(function* () {
               return open ? ("pending" as const) : ("cancelled" as const);
             }),
           );
-      yield* record("pending");
       const closeCard = record("cancelled").pipe(
         Effect.catch((error) =>
           Effect.logWarning("Could not close a delegation approval card", {
@@ -1596,7 +1603,7 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
-      const answer = yield* Effect.gen(function* () {
+      const wait = Effect.gen(function* () {
         // One cursor before the first read catches an answer that lands between them.
         const afterSequence = yield* threadManagement
           .getThreadEventSequence(threadId)
@@ -1624,13 +1631,27 @@ const make = Effect.gen(function* () {
       }).pipe(
         Effect.timeoutOption(Duration.millis(DEFAULT_WAIT_TIMEOUT_MS)),
         Effect.map(Option.flatten),
-        Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeCard)),
+      );
+      // The card write finishes before an interrupt lands, so a written card always gets
+      // its close, and a write that failed leaves no card to close.
+      const answer = yield* Effect.uninterruptibleMask((restore) =>
+        record("pending").pipe(
+          Effect.andThen(
+            restore(wait).pipe(
+              Effect.onExit((exit) =>
+                Exit.isFailure(exit) ||
+                Option.isNone(exit.value) ||
+                exit.value.value === "cancelled"
+                  ? closeCard
+                  : Effect.void,
+              ),
+            ),
+          ),
+        ),
       );
       const status = Option.getOrElse(answer, () => "cancelled" as const);
       yield* Effect.annotateCurrentSpan({ "delegation_approval.status": status });
       if (status === "approved") return;
-      // A card nobody answered closes now; a declined one keeps its answer.
-      if (status === "cancelled") yield* closeCard;
       return yield* failure(
         "delegation_not_approved",
         `The user ${status === "declined" ? "declined" : "did not approve"} running this task on ${describeSelection(proposed)}, so it did not start. ${
@@ -2676,20 +2697,31 @@ const make = Effect.gen(function* () {
             `${ANTIGRAVITY_DEFAULT_MODEL} names whichever model the child picks when it starts. Pass a concrete target.model from orchestrator_capabilities.`,
           );
         }
-        const authorized = yield* resolveTarget({
+        const resolved = yield* resolveTarget({
           parent: { thread: { ...parent.thread, modelSelection: parentRun.modelSelection } },
           target: undefined,
           providers,
         }).pipe(
-          Effect.map((resolved) => resolved.modelSelection),
+          Effect.map((result) => result.modelSelection),
           Effect.orElseSucceed(() => parentRun.modelSelection),
         );
+        // An option the catalog no longer lists may still be one this run applied, so a
+        // child without it asks first.
+        const unlisted = (parentRun.modelSelection.options ?? []).filter(
+          (option) => !resolved.options?.some((kept) => kept.id === option.id),
+        );
+        const authorized =
+          unlisted.length === 0
+            ? resolved
+            : { ...resolved, options: [...(resolved.options ?? []), ...unlisted] };
         yield* awaitDelegationApproval({
           scope,
           parentRun,
           requestKey: key,
           current: authorized,
-          inheritsRun: sameSelection(parentRun.modelSelection, parent.thread.modelSelection),
+          inheritsRun:
+            unlisted.length === 0 &&
+            sameSelection(parentRun.modelSelection, parent.thread.modelSelection),
           proposed: target.modelSelection,
           title: input.title,
           task: taskPrompt(input),
