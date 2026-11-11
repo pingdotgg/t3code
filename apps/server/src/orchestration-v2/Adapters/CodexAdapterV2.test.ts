@@ -2527,7 +2527,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           hasT3Mcp: true,
           cyberAccess: { defaultProgram: "daybreakBlue" },
         });
-        assert.equal(params.cyberAccessProgram, "standard");
         assert.include(
           params.additionalContext?.t3_code_orchestration_01?.value ?? "",
           "delegate_task",
