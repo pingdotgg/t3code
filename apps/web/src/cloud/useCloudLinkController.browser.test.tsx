@@ -4,7 +4,12 @@ import {
   EnvironmentId,
   type EnvironmentCloudLinkStateResult,
 } from "@t3tools/contracts";
-import type { RelayManagedEndpointProviderKind } from "@t3tools/contracts/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import {
+  RelayEnvironmentLinkLimitExceededError,
+  type RelayManagedEndpointProviderKind,
+} from "@t3tools/contracts/relay";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useLayoutEffect } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -33,7 +38,7 @@ vi.mock(import("@effect/atom-react"), async (original) => ({
         ? []
         : [
             [
-              "primary",
+              "service",
               { environment: { endpoint: { providerKind: testState.relayProviderKind } } },
             ],
           ],
@@ -68,35 +73,30 @@ vi.mock(import("../state/use-atom-command"), async (original) => ({
 }));
 vi.mock(import("./linkEnvironmentAtoms"), async (original) => ({
   ...(await original()),
-  linkPrimaryEnvironment: testState.link as never,
-  unlinkPrimaryEnvironment: testState.unlink as never,
-  updatePrimaryEnvironmentPreferences: testState.preferences as never,
+  linkEnvironment: testState.link as never,
+  unlinkEnvironment: testState.unlink as never,
+  updateEnvironmentPreferences: testState.preferences as never,
 }));
-vi.mock(import("./primaryCloudLinkState"), async (original) => ({
+vi.mock(import("./cloudLinkState"), async (original) => ({
   ...(await original()),
-  readCachedPrimaryCloudLinkState: () => testState.snapshot,
-  usePrimaryCloudLinkState: (() => ({
-    target,
+  readCachedCloudLinkState: () => testState.snapshot,
+  useCloudLinkState: ((environmentId: EnvironmentId | null) => ({
+    target: environmentId === null ? null : { environmentId },
     data: testState.renderedSnapshot,
     error: null,
     isPending: false,
     refresh: testState.refreshLink,
   })) as never,
 }));
-// The Clerk JWT template is build-time config the test environment does not set.
 vi.mock(import("./publicConfig"), async (original) => ({
   ...(await original()),
   resolveRelayClerkTokenOptions: () => ({}) as never,
 }));
 
+import { CloudEnvironmentLinkError } from "./linkEnvironment";
 import { useCloudLinkController, type CloudLinkDesiredState } from "./useCloudLinkController";
 
-const target = {
-  environmentId: EnvironmentId.make("primary"),
-  label: "Primary",
-  httpBaseUrl: "http://localhost:3773",
-  wsBaseUrl: "ws://localhost:3773/ws",
-};
+const target = { environmentId: EnvironmentId.make("service") };
 const linkedState: EnvironmentCloudLinkStateResult = {
   linked: true,
   cloudUserId: "account-1",
@@ -109,7 +109,7 @@ const linkedState: EnvironmentCloudLinkStateResult = {
 type Controller = ReturnType<typeof useCloudLinkController>;
 
 function ControllerProbe({ onRender }: { onRender: (controller: Controller) => void }) {
-  const value = useCloudLinkController();
+  const value = useCloudLinkController(target.environmentId);
   useLayoutEffect(() => {
     onRender(value);
   });
@@ -126,9 +126,8 @@ async function mountController() {
     />,
   );
   return Object.assign(screen, {
-    get controller() {
-      return controller;
-    },
+    // Object.assign would copy a getter's value once, so read the latest render through a function.
+    controller: () => controller,
     async reconcile(desired: CloudLinkDesiredState) {
       let succeeded = false;
       await act(async () => {
@@ -225,5 +224,34 @@ describe("useCloudLinkController", () => {
     expect(testState.unlink).toHaveBeenCalledExactlyOnceWith({ target, clerkToken: null });
     expect(testState.link).not.toHaveBeenCalled();
     expect(testState.preferences).not.toHaveBeenCalled();
+  });
+
+  it("reports a relay tunnel cap refusal as tunnelLimit instead of an error", async () => {
+    using _setup = setup();
+    testState.snapshot = { ...linkedState, linked: false, managedTunnelActive: false };
+    testState.link.mockResolvedValueOnce(
+      AsyncResult.failure(
+        Cause.fail(
+          new CloudEnvironmentLinkError({
+            message: "environment-links failed",
+            cause: new ManagedRelay.ManagedRelayRequestFailedError({
+              action: "link relay environment",
+              cause: null,
+              relayError: new RelayEnvironmentLinkLimitExceededError({
+                code: "environment_link_limit_exceeded",
+                maxTunnels: 3,
+                traceId: "trace-1",
+              }),
+            }),
+          }),
+        ),
+      ),
+    );
+    await using screen = await mountController();
+
+    expect(await screen.reconcile({ managedTunnel: true, publish: false })).toBe(false);
+    expect(screen.controller()?.tunnelLimit).toBe(3);
+    expect(screen.controller()?.operationError).toBeNull();
+    expect(testState.toast).not.toHaveBeenCalled();
   });
 });

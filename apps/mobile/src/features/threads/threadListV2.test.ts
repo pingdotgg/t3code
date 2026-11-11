@@ -1,7 +1,9 @@
+import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
+import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
   createPendingThreadOrder,
   createThreadMovePlanner,
@@ -12,7 +14,7 @@ import {
   type ThreadMoveAvailability,
 } from "./threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
   EnvironmentId,
@@ -21,9 +23,11 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import type { MenuAction } from "@react-native-menu/menu";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
@@ -32,7 +36,10 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  layoutThreadListV2RowMenuActions,
   resolveThreadListV2SnoozeMenuSelection,
+  resolveThreadListV2SwipeActions,
+  resolveThreadListV2SnoozePresets,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
   sortThreadsForListV2,
@@ -56,21 +63,90 @@ function makeThread(
 const NOW = "2026-06-02T00:00:00.000Z";
 
 describe("resolveThreadListV2SnoozeMenuSelection", () => {
-  it("recomputes presets that remain available instead of using old timestamps", () => {
-    const displayedPresets = resolveSnoozePresets(new Date(2026, 4, 8, 10));
+  it("recomputes the environment's presets instead of using old timestamps", () => {
+    const presets = [{ kind: "after", minutes: 360 }] as const;
+    const displayedPresets = resolveSnoozePresets(new Date(2026, 4, 8, 10), { presets });
     const selectedAt = new Date(2026, 4, 8, 10, 30);
     const selection = resolveThreadListV2SnoozeMenuSelection({
-      event: "snooze:hour",
+      event: "snooze:after:360",
       displayedPresets,
       now: selectedAt,
+      presets,
     });
 
     expect(selection._tag).toBe("selected");
     if (selection._tag === "selected") {
       expect(selection.preset.snoozedUntil).toBe(
-        new Date(selectedAt.getTime() + 60 * 60 * 1_000).toISOString(),
+        new Date(selectedAt.getTime() + 6 * 60 * 60 * 1_000).toISOString(),
       );
     }
+  });
+});
+
+describe("resolveThreadListV2SnoozePresets", () => {
+  it("reads preset times from the list minute, not the clock at first render", () => {
+    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+    vi.useFakeTimers({ now: new Date(2026, 4, 8, 10) });
+    const laterMinute = new Date(2026, 4, 8, 19, 15).toISOString();
+
+    const presets = resolveThreadListV2SnoozePresets({
+      secondary: "snooze",
+      now: laterMinute,
+      presets: undefined,
+    });
+
+    expect(presets.find((preset) => preset.id === "after:60")?.snoozedUntil).toBe(
+      new Date(2026, 4, 8, 20, 15).toISOString(),
+    );
+    // The evening preset is gone by 19:15; a reading from 10:00 would still offer it.
+    expect(presets.map((preset) => preset.id)).not.toContain("at:today:18:00");
+  });
+});
+
+describe("layoutThreadListV2RowMenuActions", () => {
+  const actions = (...ids: string[]): MenuAction[] => ids.map((id) => ({ id, title: id }));
+  const leafIds = (items: readonly MenuAction[]): string[] =>
+    items.flatMap((item) => (item.subactions ? leafIds(item.subactions) : [item.id!]));
+
+  it("keeps every action once while nesting iOS secondary actions under More", () => {
+    const full = {
+      direct: actions("new-thread-on-branch", "copy-thread", "copy-thread-id", "settle", "snooze"),
+      reorder: actions("arrange", "move-up", "move-down"),
+      pin: actions("unpin"),
+      secondary: actions("rename", "regenerate-title", "turn-into-project", "archive", "delete"),
+    };
+    const flat = layoutThreadListV2RowMenuActions({ ...full, nested: false });
+    const nested = layoutThreadListV2RowMenuActions({ ...full, nested: true });
+
+    expect(flat.map((action) => action.id)).toEqual(
+      [...full.direct, ...full.reorder, ...full.pin, ...full.secondary].map((action) => action.id),
+    );
+    expect(nested.map((action) => action.id)).toEqual([
+      "new-thread-on-branch",
+      "copy-thread",
+      "copy-thread-id",
+      "settle",
+      "snooze",
+      "unpin",
+      "more",
+    ]);
+    expect(nested.at(-1)?.subactions?.map((action) => action.id)).toEqual([
+      "arrange-menu",
+      "rename",
+      "regenerate-title",
+      "turn-into-project",
+      "archive",
+      "delete",
+    ]);
+    expect(leafIds(nested).toSorted()).toEqual(leafIds(flat).toSorted());
+
+    // Slim rows only offer "Arrange threads…", which needs no submenu of its own.
+    const slim = layoutThreadListV2RowMenuActions({
+      ...full,
+      reorder: actions("arrange"),
+      nested: true,
+    });
+    expect(slim.at(-1)?.subactions?.[0]?.id).toBe("arrange");
   });
 });
 
@@ -99,12 +175,25 @@ describe("resolveThreadListV2Status", () => {
     );
   });
 
+  it("shows a waiting guest message as Request, after the agent's own requests", () => {
+    const thread = presentThreadShell(
+      environmentId,
+      decodeThreadShell(makeRawThreadShell({ status: "running" })),
+    );
+    const guest = { ...thread, pendingGuestMessageCount: 1 };
+
+    expect(resolveThreadListV2Status(guest)).toBe("request");
+    expect(resolveThreadListV2Status({ ...guest, hasPendingUserInput: true })).toBe("input");
+    expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
+  });
+
   it.each([
-    { kind: "command", status: "ready" },
-    { kind: "monitor", status: "waiting" },
+    { roster: "dev server", task: { kind: "command" }, status: "ready" },
+    { roster: "dev server watchdog", task: { kind: "monitor" }, status: "ready" },
+    { roster: "awaited command", task: { kind: "command", awaited: true }, status: "waiting" },
   ] as const)(
-    "presents an unseen completion with a $kind roster as $status",
-    ({ kind, status }) => {
+    "presents an unseen completion with a $roster roster as $status",
+    ({ task, status }) => {
       const thread = presentThreadShell(
         environmentId,
         makeRawThreadShell({
@@ -112,7 +201,7 @@ describe("resolveThreadListV2Status", () => {
           status: "completed",
           latestRunCompletedAt: DateTime.makeUnsafe(NOW),
           lastVisitedAt: DateTime.makeUnsafe("2026-06-01T23:59:00.000Z"),
-          pendingBackgroundTasks: [{ taskId: "background-work", kind }],
+          pendingBackgroundTasks: [{ taskId: "background-work", ...task }],
         }),
       );
 
@@ -122,32 +211,62 @@ describe("resolveThreadListV2Status", () => {
   );
 });
 
-describe("queued messages keep a settled thread active", () => {
-  const threads = [
-    makeThread({ id: ThreadId.make("active"), title: "Active" }),
-    makeThread({ id: ThreadId.make("settled"), title: "Settled", settledOverride: "settled" }),
-    makeThread({
-      id: ThreadId.make("settled-queued"),
-      title: "Settled with outbox",
-      settledOverride: "settled",
-    }),
-  ];
-  const queuedThreadKeys = new Set([`${environmentId}:settled-queued`]);
+describe("resolveThreadListV2SwipeActions", () => {
+  it("offers snooze for a presented input request and moves it onto the snoozed shelf", () => {
+    const raw = makeRawThreadShell({
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("question"),
+        kind: "user_input",
+        createdAt: DateTime.makeUnsafe(NOW),
+      },
+    });
+    const thread = presentThreadShell(environmentId, raw);
+    expect(thread.pendingUserInputAt).toBe(NOW);
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "card",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: canSnooze(thread, { now: NOW }),
+      }).secondary,
+    ).toBe("snooze");
 
-  it("lists the thread in the active block instead of the settled shelf", () => {
     const layout = buildThreadListV2Items({
-      threads,
+      threads: [{ ...thread, snoozedAt: NOW, snoozedUntil: "2026-06-03T00:00:00.000Z" }],
       environmentId: null,
       searchQuery: "",
       now: NOW,
-      queuedThreadKeys,
+      snoozedShelfExpanded: true,
+      snoozeEnvironmentIds: new Set([environmentId]),
     });
-    expect(layout.items.map((item) => [item.thread.id, item.variant] as const)).toEqual([
-      ["active", "card"],
-      ["settled-queued", "card"],
-      ["settled", "slim"],
+    expect(layout.snoozedCount).toBe(1);
+  });
+});
+
+describe("search lists ranked matches", () => {
+  const matchKey = (id: string) =>
+    threadSearchMatchKey({ environmentId, threadId: ThreadId.make(id) });
+
+  it("lists matches by rank across shelves, then threads listed for their messages", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("notes"), title: "Deploy notes" }),
+        makeThread({ id: ThreadId.make("mentioned"), title: "Weekly notes" }),
+        makeThread({ id: ThreadId.make("exact"), title: "Deploy", settledOverride: "settled" }),
+      ],
+      environmentId: null,
+      searchQuery: "deploy",
+      matchedThreadKeys: new Set([matchKey("mentioned"), matchKey("notes")]),
+      settledShelfExpanded: false,
+      now: NOW,
+    });
+    // The exact title leads even from a collapsed Settled shelf, and keeps its look.
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["exact", "slim"],
+      ["notes", "card"],
+      ["mentioned", "card"],
     ]);
-    expect(layout.settledCount).toBe(1);
+    expect([...layout.contentOnlyThreadKeys]).toEqual([matchKey("mentioned")]);
   });
 });
 
@@ -428,6 +547,20 @@ describe("buildThreadListV2Items", () => {
     ]);
   });
 
+  it("forgives a typo even when a hidden thread matches the query exactly", () => {
+    const { items } = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("visible"), title: "Restore drag handles" }),
+        makeThread({ id: ThreadId.make("archived"), title: "Drga notes", archivedAt: NOW }),
+      ],
+      environmentId: null,
+      searchQuery: "drga",
+      now: NOW,
+    });
+
+    expect(items.map((item) => item.thread.id)).toEqual(["visible"]);
+  });
+
   it("scopes the flat list to every environment member of a logical project", () => {
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
     const projectId = ProjectId.make("project-1");
@@ -492,6 +625,47 @@ describe("buildThreadListV2Items settled paging", () => {
       "settled-3",
       "settled-2",
     ]);
+  });
+
+  it("lists only loaded settled rows and counts the threads the shell left out", () => {
+    const settled = (index: number) =>
+      makeThread({
+        id: ThreadId.make(`settled-${index}`),
+        title: `Settled ${index}`,
+        settledOverride: "settled",
+        settledAt: `2026-06-0${index}T00:00:00.000Z`,
+      });
+    const threads = [settled(1), settled(2), settled(3)];
+    const layout = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      settledLimit: 10,
+      now: NOW,
+      // settled-1 came back mid-session, below the loaded range; the route keeps it visible.
+      isListedSettled: (thread) => thread.id !== "settled-1",
+      unloadedSettledCount: 40,
+      selectedThreadKey: `${threads[0]!.environmentId}:settled-1`,
+    });
+    expect(layout.items.map((item) => item.thread.id)).toEqual([
+      "settled-3",
+      "settled-2",
+      "settled-1",
+    ]);
+    expect(layout.settledCount).toBe(43);
+    expect(layout.hiddenSettledCount).toBe(40);
+
+    // A scope whose settled threads are all older still shows its Settled header.
+    const unloadedOnly = buildThreadListV2Items({
+      threads: [],
+      environmentId: null,
+      searchQuery: "",
+      settledLimit: 10,
+      now: NOW,
+      unloadedSettledCount: 5,
+    });
+    expect(unloadedOnly.settledCount).toBe(5);
+    expect(unloadedOnly.settledShelfHeaderIndex).toBe(0);
   });
 });
 
@@ -631,7 +805,6 @@ describe("buildThreadListV2ListItems", () => {
           projectId: ProjectId.make("project-1"),
           projectTitle: undefined,
           projectCwd: undefined,
-          branch: null,
           title: "unsent",
           createdAt: NOW,
           draftKey: "new-task:unsent",
@@ -726,11 +899,10 @@ describe("pending mobile thread moves", () => {
     const ordered = getThreadListV2OrderedSection({ threads: rows, section, now: NOW });
     const orderedIds = ordered.map((row) => `${row.environmentId}:${row.id}`);
     const movedId = orderedIds[2]!;
-    const assignments = planPinnedMove({
-      orderedIds,
+    const assignments = planPinnedReorder({
+      orderedIds: orderedIds.toSpliced(2, 1).toSpliced(1, 0, movedId),
       keysById: new Map(orderedIds.map((id) => [id, null])),
       movedId,
-      direction: "up",
     })!;
     const pending = createPendingThreadOrder({
       section,
@@ -1390,6 +1562,30 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
   });
   const allEnvironments = new Set<EnvironmentId>([environmentId]);
 
+  it("ages a read row from its latest reply", () => {
+    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+    vi.useFakeTimers({ now: BASE_MS });
+    const label = (latestUserMessageAt: string, completedAt: string) => {
+      const thread = makeThread({
+        id: ThreadId.make("stamp-read"),
+        title: "stamp read",
+        latestUserMessageAt,
+        lastVisitedAt: isoAt(BASE_MS),
+        latestRun: {
+          runId: RunId.make("stamp-read-run"),
+          status: "completed",
+          requestedAt: latestUserMessageAt,
+          startedAt: latestUserMessageAt,
+          completedAt,
+          assistantMessageId: null,
+        },
+      });
+      const row = buildTickList([thread], BASE_MS, [])[0]!;
+      return row.type === "v2-thread" ? row.timeLabel : null;
+    };
+    expect(label(isoAt(BASE_MS - 40 * MINUTE_MS), isoAt(BASE_MS - 2 * MINUTE_MS))).toBe("2m");
+  });
+
   it("stamps queued outbox messages onto the matching row and notices removal", () => {
     const queued = buildTickList([readyThread, settledThread], BASE_MS, [], {
       queuedThreadKeys: new Set([`${environmentId}:stamp-ready`]),
@@ -1507,6 +1703,34 @@ describe("Working section beta", () => {
     expect(off.workingCount).toBe(0);
   });
 
+  it("keeps an inactive row in Working during the shared grace and returns it on expiry", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    const tracker = createInboxReturnTracker();
+    const working = makeThread({ id: ThreadId.make("grace"), title: "grace", runtime: running });
+    const inactive = { ...working, runtime: null };
+    const render = () =>
+      build({
+        threads: [inactive],
+        workingShelfExpanded: true,
+        isWorking: tracker.isWorking,
+        inboxReturnAt: tracker.returnedAt,
+      });
+    try {
+      tracker.observe([working]);
+      tracker.observe([inactive]);
+      expect(render().workingCount).toBe(1);
+      expect(render().items[0]?.thread.runtime).toBeNull();
+      vi.advanceTimersByTime(2_000);
+      expect(render().workingCount).toBe(0);
+      expect(ids(render())).toEqual(["grace"]);
+      expect(tracker.returnedAt(inactive)).toBe(Date.parse(NOW) + 2_000);
+    } finally {
+      tracker.observe(null);
+      vi.useRealTimers();
+    }
+  });
+
   it("orders the inbox by the latest return this device observed", () => {
     const layout = build({
       inboxReturnAt: (thread) =>
@@ -1571,5 +1795,34 @@ describe("Working section beta", () => {
       "v2-settled-shelf",
       "settled",
     ]);
+  });
+});
+
+describe("queued messages keep a settled thread active", () => {
+  const threads = [
+    makeThread({ id: ThreadId.make("active"), title: "Active" }),
+    makeThread({ id: ThreadId.make("settled"), title: "Settled", settledOverride: "settled" }),
+    makeThread({
+      id: ThreadId.make("settled-queued"),
+      title: "Settled with outbox",
+      settledOverride: "settled",
+    }),
+  ];
+  const queuedThreadKeys = new Set([`${environmentId}:settled-queued`]);
+
+  it("lists the thread in the active block instead of the settled shelf", () => {
+    const layout = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      queuedThreadKeys,
+    });
+    expect(layout.items.map((item) => [item.thread.id, item.variant] as const)).toEqual([
+      ["active", "card"],
+      ["settled-queued", "card"],
+      ["settled", "slim"],
+    ]);
+    expect(layout.settledCount).toBe(1);
   });
 });
