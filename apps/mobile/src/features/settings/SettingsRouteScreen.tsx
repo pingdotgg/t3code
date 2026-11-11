@@ -104,7 +104,10 @@ export function SettingsListScreen(props: {
                   placeholder: "Search settings",
                   active: searching,
                   onOpen: () => workspace.dispatch({ type: "search", tab: "settings" }),
-                  onClose: () => workspace.dispatch({ type: "cancel", tab: "settings" }),
+                  onClose: () => {
+                    Keyboard.dismiss();
+                    workspace.dispatch({ type: "cancel", tab: "settings" });
+                  },
                 }
               : undefined
           }
