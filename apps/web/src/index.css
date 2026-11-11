@@ -608,6 +608,26 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@utility pane-mobile-chrome {
+  @media (width < 48rem) {
+    background-color: var(--app-chrome-background);
+
+    & > [data-pane-header] {
+      background-color: var(--app-chrome-background);
+    }
+
+    & > [data-pane-header] + * {
+      border-start-start-radius: var(--radius-pane);
+      border-start-end-radius: var(--radius-pane);
+      background-color: var(--background);
+    }
+
+    & > [data-chat-header] + * {
+      overflow: hidden;
+    }
+  }
+}
+
 /* The font tokens are declared outside the inline theme so utilities reference
    the variables and Settings -> Appearance can override them at runtime. The
    default stacks are mirrored in `appearanceFonts.ts`. */
@@ -3251,6 +3271,10 @@ html[data-theme-id] [data-app-sidebar] {
   }
 }
 
+html[data-theme-id] [data-mobile="true"] [data-app-sidebar] {
+  --dim-foreground: var(--sidebar-muted-foreground);
+}
+
 /* T3 Chat's panel divider is deliberately pink, and its resize affordance
    keeps that color while hovered. Do not neutralize this branded edge. */
 html[data-theme-id="t3-chat"] [data-app-sidebar] {
@@ -3333,8 +3357,10 @@ html:root[data-theme-id="t3-code-classic"] > body {
 
 /* Main's toolbar is its page color. The lifted pane takes its header with it, or the strip
    between the tab notches reads as a black bar. */
-html:root[data-theme-id="t3-code-classic"] [data-chat-header] {
-  background-color: var(--background);
+@media (width >= 48rem) {
+  html:root[data-theme-id="t3-code-classic"] [data-chat-header] {
+    background-color: var(--background);
+  }
 }
 
 html:root[data-theme-id="t3-code-classic"] [data-app-modal] {
@@ -5877,6 +5903,17 @@ body {
 .composer-prompt-body[data-composer-overflow]
   [data-testid="composer-editor"]::-webkit-scrollbar-track {
   margin-top: var(--composer-corner-h);
+}
+
+@media (width < 40rem) {
+  .composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"] {
+    padding-inline-end: var(--composer-corner-w);
+    mask-image: none;
+  }
+
+  .composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"]::before {
+    display: none;
+  }
 }
 
 .composer-prompt-body [data-composer-placeholder] {

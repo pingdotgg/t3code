@@ -397,7 +397,7 @@ export function LayoutLauncherPane({
 }) {
   const { focused, leadingEdge } = useLayoutPane();
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-background">
+    <div className="pane-mobile-chrome flex min-h-0 flex-1 flex-col md:bg-background">
       {/* A chat pane's header, so the notches of panes side by side line up. */}
       <header
         data-pane-header=""
