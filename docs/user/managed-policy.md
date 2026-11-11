@@ -75,7 +75,7 @@ Administrative Templates > T3 Code. Set **Organization** whenever you set any ot
 Locks and provider fields go in the two JSON policies, as the same objects a policy file would hold.
 Machines pick up a change at the next Group Policy refresh; run `gpupdate /target:computer /force`
 to apply it now, then restart T3 Code.
-Setting **Allow T3 Connect**, **Allow webhook tasks**, **Allow importing browser cookies**, or
+Setting **Allow webhook tasks**, **Allow importing browser cookies**, or
 **Allow usage data** to **Disabled** turns that feature off. Setting any other T3 Code policy to
 **Disabled** restricts nothing, the same as **Not Configured**.
 
@@ -166,7 +166,6 @@ A few settings need care:
   "limits": {
     "maxRuntimeMode": "auto-accept-edits",
     "clients": ["desktop"],
-    "connect": false,
     "webhookTasks": false,
     "browserCookieImport": false,
     "telemetry": false,
@@ -212,7 +211,7 @@ T3 Code can place under the limit. Users still choose which ACP Registry agent r
 The limit decides which modes T3 Code asks the provider for. It is not a sandbox; see
 [What a policy does not cover](#what-a-policy-does-not-cover).
 
-### Clients and T3 Connect
+### Clients
 
 `clients` lists how the server may run:
 
@@ -230,8 +229,7 @@ address or `localhost`. A [background service](./background-service.md) installe
 `T3CODE_LAN` existed keeps private-network access, so without `remote` it refuses to start.
 Run `t3 up --no-lan` when its `service.env` sets no `T3CODE_HOST`, or set
 `T3CODE_HOST=127.0.0.1` in `service.env`, then run `t3 service restart`. The desktop app starts
-with network access and Tailscale Serve off, whatever the user chose. That also turns off
-T3 Connect. To keep other remote access but turn off T3 Connect alone, set `"connect": false`.
+with network access and Tailscale Serve off, whatever the user chose.
 
 When it starts, the server also turns off each Tailscale Serve route, HTTPS or TCP, that forwards
 to it, such as one `t3 pair --tailscale` set up, and leaves other routes alone. It does not start
@@ -250,9 +248,8 @@ so restart T3 Code after that.
   but do not run, and cannot be turned back on. Users can still edit or delete them.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
-- `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
-  relay connection traces. A policy cannot turn them on. A browser that opens the server, such as
-  app.t3.codes, still sends its own relay traces.
+- `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md). A
+  policy cannot turn it on.
 
 ### Providers
 

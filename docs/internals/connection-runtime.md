@@ -37,8 +37,13 @@ attempt; a short one leaves it alone.
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration
 and cached data. Explicit removal closes the scope and clears credentials,
-projections, and platform-owned state such as drafts. Cloud-account changes apply
-to relay registrations; they must not discard directly paired environments.
+projections, and platform-owned state such as drafts.
+
+Catalogs saved by builds with T3 Connect can hold relay targets, relay-only
+registrations, and relay-minted DPoP tokens. Loading a catalog drops those and
+keeps every direct route and its token. An environment left with no route is
+removed, and the app shows a one-time notice to pair it again directly; it never
+silently keeps a record it cannot reach.
 
 ## HTTP authorization
 
@@ -49,10 +54,9 @@ Replacing a healthy socket for HTTP renewal would interrupt conversations and
 change the transport generation without a transport failure. Refresh failure
 belongs to the HTTP operation.
 
-The server closes a socket when its session is revoked or expires. T3 Connect
-access tokens last one hour, so the driver renews a live socket's token in its
-last minute. The server then moves the socket to the newer session for the same
-DPoP key, subject, and scopes
+The server closes a socket when its session is revoked or expires. When the
+driver renews a live socket's token before it expires, the server moves the
+socket to the newer session for the same DPoP key, subject, and scopes
 ([`SessionStore.awaitInvalidation`](../../apps/server/src/auth/SessionStore.ts)).
 If renewal fails, the socket closes at expiry and the supervisor reconnects.
 
