@@ -299,7 +299,7 @@ it.effect.each([
   ["starts_threads", supervised, {}, "approval-required/default"],
   ["starts_threads", supervised, { runtimeMode: "full-access" }, "runtime_mode_escalation_denied"],
   ["starts_threads", plan, {}, "approval-required/plan"],
-  ["starts_threads", fullAccess, { runtimeMode: "auto" }, "auto/default"],
+  ["starts_threads", fullAccess, { runtimeMode: "auto", interactionMode: "plan" }, "auto/default"],
   ["starts_threads", ended, {}, "parent_not_active"],
   ["starts_threads", supervisedClient, {}, "approval-required/default"],
   ["starts_threads", supervisedClient, { runtimeMode: "auto" }, "runtime_mode_escalation_denied"],
