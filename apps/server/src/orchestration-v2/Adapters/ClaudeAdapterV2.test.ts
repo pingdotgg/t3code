@@ -3676,6 +3676,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         1,
         "a steer sent while compacting reached Claude before the compaction ended",
       );
+      // Settled while held, so the thread's outbox is free for a Stop.
+      yield* Fiber.joinAll(pending);
       yield* harness.offerAndWait(
         claudeSdkFrame({
           type: "system",
@@ -3686,7 +3688,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           session_id: WAKE_NATIVE_SESSION,
         }),
       );
-      yield* Fiber.joinAll(pending);
       const steers = harness.offeredMessages.slice(1);
       assert.deepEqual(
         steers.map((message) => message.priority),
@@ -3738,7 +3739,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("fails a steer held for compaction when the turn ends first", () =>
+  it.effect("does not send a held steer once its turn has ended", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       const turn = yield* startCompactingTurn(harness, "turn-ends-during-compaction");
@@ -3746,11 +3747,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.offerAndWait(
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000823", result: "Done." }),
       );
-      const steerExit = yield* Fiber.await(steer);
-      assert.match(
-        Exit.isFailure(steerExit) ? Cause.pretty(steerExit.cause) : "steer succeeded",
-        /ended before the steer was sent/,
-      );
+      yield* Fiber.join(steer);
+      yield* Queue.take(harness.terminalReceipts);
       assert.lengthOf(harness.offeredMessages, 1);
     }).pipe(
       Effect.provide(

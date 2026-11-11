@@ -4410,11 +4410,6 @@ interface HeldClaudeSteer {
   readonly live: ClaudeLiveQueryContext;
   readonly message: SDKUserMessage;
   readonly pdfReservation: Effect.Success<ReturnType<typeof reserveClaudePdfBudget>>;
-  // steerTurn waits on this, so it succeeds only once the steer is offered.
-  readonly sent: Deferred.Deferred<
-    void,
-    ClaudeAgentSdkQueryRunnerError | ProviderAdapter.ProviderAdapterProtocolError
-  >;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -8001,9 +7996,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         // Never offered once their turn ended: that would start a turn nobody asked for.
         const dropHeldSteers = Effect.fnUntraced(function* (context: ActiveClaudeTurnContext) {
-          for (const steer of context.heldSteers.splice(0)) {
-            yield* Deferred.fail(steer.sent, steerNotSent(context.providerTurnId));
-          }
+          const dropped = context.heldSteers.splice(0).length;
+          if (dropped === 0) return;
+          yield* Effect.logWarning("orchestration-v2.claude-held-steers-dropped", {
+            providerTurnId: context.providerTurnId,
+            dropped,
+          });
         });
         // Callers hold sdkMessageLock, so a newer steer cannot overtake the held ones.
         const releaseHeldSteers = Effect.fnUntraced(function* (context: ActiveClaudeTurnContext) {
@@ -8017,9 +8015,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return yield* dropHeldSteers(context);
             }
             context.heldSteers.shift();
-            yield* Deferred.done(
-              steer.sent,
-              yield* Effect.exit(offerSteer({ ...steer, providerTurnId: context.providerTurnId })),
+            yield* offerSteer({ ...steer, providerTurnId: context.providerTurnId }).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("orchestration-v2.claude-held-steer-offer-failed", {
+                  providerTurnId: context.providerTurnId,
+                  cause: Cause.pretty(cause),
+                }),
+              ),
             );
           }
         });
@@ -11797,15 +11799,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(Path.Path, path),
             );
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
-            const held: HeldClaudeSteer = {
-              live: existing,
-              message: userMessage,
-              pdfReservation,
-              sent: yield* Deferred.make<
-                void,
-                ClaudeAgentSdkQueryRunnerError | ProviderAdapter.ProviderAdapterProtocolError
-              >(),
-            };
+            const held: HeldClaudeSteer = { live: existing, message: userMessage, pdfReservation };
             // Under the frame lock, so a compaction cannot end between the check and the hold.
             const delivery = yield* sdkMessageLock.withPermits(1)(
               Effect.sync(() => {
@@ -11832,19 +11826,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return yield* steerNotSent(turnInput.providerTurnId);
             }
             if (delivery === "held") {
+              // Returning frees the thread's outbox so Stop can reach interruptTurn, which sends
+              // held steers first. Committed now: this scope's release would otherwise drop it.
+              pdfReservation.commit();
               yield* Effect.logInfo("orchestration-v2.claude-steer-held-for-compaction", {
                 providerTurnId: turnInput.providerTurnId,
               });
-              return yield* Deferred.await(held.sent).pipe(
-                Effect.onInterrupt(() =>
-                  sdkMessageLock.withPermits(1)(
-                    Effect.sync(() => {
-                      const index = currentTurn.heldSteers.indexOf(held);
-                      if (index !== -1) currentTurn.heldSteers.splice(index, 1);
-                    }),
-                  ),
-                ),
-              );
+              return;
             }
             yield* offerSteer({
               live: existing,
