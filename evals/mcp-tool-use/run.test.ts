@@ -1163,8 +1163,11 @@ it.effect("reads the branch's PR only once the agent has opened it", () =>
       input: { command: "git checkout -b layer-2 2>&1" },
       output: "",
     });
+    // An unrelated world PR keeps its number.
+    world.prs.push({ number: 130, title: "Other", headRefName: "other" } as never);
     const layer = yield* layerPr("b2");
     assert.notEqual(layer, first);
+    assert.equal(layer, "131");
     assert.equal(yield* layerPr("b3"), layer);
     sample.shell.push({
       tool: "Bash",

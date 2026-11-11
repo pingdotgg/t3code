@@ -1384,6 +1384,7 @@ export const t3Default = (
               Math.max(
                 branchPullRequest(sample).number,
                 ...sample.openedByBranch.values(),
+                ...worldPullRequests(sample).map((pr) => Number(pr.number) || 0),
                 ...[...sample.linked].map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]) || 0),
               ) + 1);
         sample.openedByBranch.set(checkedOut, number);
