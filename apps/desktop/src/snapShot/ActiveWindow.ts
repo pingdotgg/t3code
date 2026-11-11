@@ -28,8 +28,10 @@ export type ActiveWindow = {
 const MAC_LOOKUP_TIMEOUT_MS = 5_000;
 
 const MAC_HELPER_STRIP_MAX_THICKNESS_RATIO = 0.25;
-// While another app captures it, macOS adds a titled ~66x20 indicator on the window's top edge.
-const MAC_SHARING_INDICATOR_MAX_SIZE = 100;
+// While another app captures it, macOS adds a titled ~66x20 indicator on the window's top edge,
+// shorter than any title bar, so no real window has that shape.
+const MAC_SHARING_INDICATOR_MAX_WIDTH = 100;
+const MAC_SHARING_INDICATOR_MAX_HEIGHT = 28;
 
 const MacActiveWindowLookup = Schema.Struct({
   owner: Schema.Struct({
@@ -122,8 +124,8 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   const window = visible.find((candidate, index) => {
     const bounds = candidate.bounds;
     const isSharingIndicator =
-      bounds.width < MAC_SHARING_INDICATOR_MAX_SIZE &&
-      bounds.height < MAC_SHARING_INDICATOR_MAX_SIZE &&
+      bounds.width < MAC_SHARING_INDICATOR_MAX_WIDTH &&
+      bounds.height < MAC_SHARING_INDICATOR_MAX_HEIGHT &&
       visible.some(
         (reference, referenceIndex) =>
           referenceIndex > index &&

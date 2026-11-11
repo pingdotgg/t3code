@@ -157,6 +157,11 @@ it.each([
     title: "Timer",
     bounds: { x: 200, y: 200, width: 80, height: 60 },
   },
+  {
+    name: "small titled palette on the document's top edge",
+    title: "Timer",
+    bounds: { x: 200, y: 0, width: 80, height: 60 },
+  },
   { name: "offset untitled strip", title: "", bounds: { x: 100, y: 100, width: 800, height: 50 } },
   { name: "tall untitled window", title: "", bounds: { x: 0, y: 0, width: 800, height: 900 } },
   {
