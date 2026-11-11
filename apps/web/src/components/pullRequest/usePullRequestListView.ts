@@ -15,10 +15,10 @@ import { useAllEnvironmentShellsBootstrapped, useProjects } from "~/state/entiti
 import { useEnvironments } from "~/state/environments";
 import {
   applyPullRequestOverrides,
+  displayPullRequestGroups,
   findProjectForRepository,
   findScopedProject,
   matchesPullRequestFilters,
-  pullRequestDiffStatKey,
   pullRequestEntryKey,
   pullRequestEntryViewer,
   pullRequestEnvironmentSetKey,
@@ -26,8 +26,6 @@ import {
   resolveProjectScope,
   resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
-  sortPullRequestGroups,
-  withDiffStat,
   type EnvironmentPullRequestEntry,
   type MergedPullRequestList,
   type PullRequestDiffStats,
@@ -250,6 +248,7 @@ export function usePullRequestDisplayGroups({
   host,
   groups,
   statsByRow,
+  sortStatsByRow,
   overrides,
   state,
   localFilters,
@@ -263,6 +262,7 @@ export function usePullRequestDisplayGroups({
   host: string | undefined;
   groups: ReadonlyArray<PullRequestGroup<EnvironmentPullRequestEntry>>;
   statsByRow: PullRequestDiffStats;
+  sortStatsByRow: PullRequestDiffStats;
   overrides: ReadonlyMap<string, PullRequestListOverride>;
   state: PullRequestListState;
   localFilters: PullRequestListFilters;
@@ -289,7 +289,7 @@ export function usePullRequestDisplayGroups({
   const displayGroups = (() => {
     const enriched = groups.map((group) => {
       const overridden = applyPullRequestOverrides(
-        group.entries.map((entry) => withDiffStat(entry, statsByRow)),
+        group.entries,
         overrides,
         pullRequestEntryKey,
         state,
@@ -310,14 +310,7 @@ export function usePullRequestDisplayGroups({
             : overridden,
       };
     });
-    return sortPullRequestGroups(
-      enriched,
-      sort,
-      text,
-      (entry) =>
-        entry.additions + entry.deletions > 0 || statsByRow.has(pullRequestDiffStatKey(entry)),
-      involvement,
-    );
+    return displayPullRequestGroups(enriched, sort, text, statsByRow, sortStatsByRow, involvement);
   })();
   const shownCount = displayGroups.reduce((count, group) => count + group.entries.length, 0);
   const hostActionsOf = pullRequestHostActions(hosts);
