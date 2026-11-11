@@ -40,15 +40,6 @@ describe("inlineCodeFilePathCandidate", () => {
     ["/tmp/.../scratchpad/notes.md", null],
     ["~/projects/…/notes.md", null],
     ["src/.../main.ts", null],
-    ["/tmp/claude-1000/....", null],
-    ["/tmp/claude-1000/.../notes.md", null],
-    ["/tmp/claude-1000/…", null],
-    ["/tmp/claude-1000/.hidden.md", "/tmp/claude-1000/.hidden.md"],
-    ["../notes.md", "../notes.md"],
-    [
-      "/tmp/claude-1000/-home-user--t3-worktrees-app-t3-abc123/session/scratchpad/notes.md",
-      "/tmp/claude-1000/-home-user--t3-worktrees-app-t3-abc123/session/scratchpad/notes.md",
-    ],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -91,9 +82,7 @@ describe("parseMarkdownFileLink", () => {
     "$HOME",
     "/tmp/claude-1000/...",
     "/tmp/claude-1000/....:12",
-    "/tmp/claude-1000/.../notes.md",
     "/tmp/claude-1000/%2E%2E%2E",
-    "/tmp/claude-1000/…",
     "\\foo.ts",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();

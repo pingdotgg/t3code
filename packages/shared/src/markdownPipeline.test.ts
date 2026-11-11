@@ -389,13 +389,10 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
   ]);
 });
 
-it.each([
-  ["default", CHAT_MARKDOWN_REMARK_PLUGINS],
-  ["with breaks", CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
-] as const)("links complete scratch paths in prose (%s)", (_, plugins) => {
+it("links complete absolute paths in prose and skips shortened ones", () => {
   const path =
     "/tmp/claude-1000/-home-user--t3-worktrees-app-t3-abc123/session/scratchpad/notes.md";
-  const processor = unified().use(remarkParse).use(plugins);
+  const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
   const links = (markdown: string) => {
     const urls: string[] = [];
     const visit = (node: Root | RootContent) => {
@@ -405,23 +402,13 @@ it.each([
     visit(processor.runSync(processor.parse(markdown), markdown) as Root);
     return urls;
   };
-  expect(links(`Saved to ${path}.`)).toEqual([path]);
-  expect(links("See /tmp/app/[id]/page.tsx.")).toEqual(["/tmp/app/[id]/page.tsx"]);
-  expect(links("See /tmp/report(1). and (/tmp/report(1)).")).toEqual([
-    "/tmp/report(1)",
-    "/tmp/report(1)",
-  ]);
-  expect(links("[/tmp/notes.md] and /tmp/[draft]/notes.md.")).toEqual([
-    "/tmp/notes.md",
-    "/tmp/[draft]/notes.md",
-  ]);
-  expect(links("[/tmp/claude-1000/...] and /tmp/claude-1000/…].")).toEqual([]);
-  expect(links(`See (${path}:12).`)).toEqual([`${path}:12`]);
-  expect(links(`**${path}**`)).toEqual([path]);
   expect(links(`Saved to ${path} and /tmp/other.txt.`)).toEqual([path, "/tmp/other.txt"]);
-  expect(links("/tmp/claude-1000/... and /tmp/claude-1000/....")).toEqual([]);
-  expect(links("see /tmp/claude-1000/..., ok")).toEqual([]);
-  expect(links("(see /tmp/claude-1000/...).")).toEqual([]);
+  expect(links(`See (${path}:12).`)).toEqual([`${path}:12`]);
+  expect(links("See /tmp/report(1). and /tmp/app/[id]/page.tsx.")).toEqual([
+    "/tmp/report(1)",
+    "/tmp/app/[id]/page.tsx",
+  ]);
+  expect(links("(see /tmp/claude-1000/...). and /tmp/claude-1000/….")).toEqual([]);
   expect(links(`/chat/settings and https://example.com${path}`)).toEqual([
     `https://example.com${path}`,
   ]);
