@@ -5254,6 +5254,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // A running subagent stays with the run that launched it, and that run keeps ingesting
         // its events after a later run settles, so its approvals need that run's context.
         const settledTurnsByRunId = new Map<RunId, ActiveClaudeTurnContext>();
+        // No run is left to interrupt after settle, so a settled request closes when its subagent ends.
+        const settledRequestStopsByTaskId = new Map<string, Set<Deferred.Deferred<void>>>();
         const subagentStopOutcomes = new Map<
           string,
           Deferred.Deferred<ProviderAdapter.ProviderAdapterV2SubagentOutcome>
@@ -6967,6 +6969,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return [true, new Map(current).set(input.taskId, subagent)] as const;
           });
           if (!accepted) return;
+          if (input.status !== "running") {
+            for (const stopped of settledRequestStopsByTaskId.get(input.taskId) ?? []) {
+              yield* Deferred.succeed(stopped, undefined);
+            }
+          }
           if (input.nativeOutcome !== undefined) appliedSubagentOutcomes.add(input.nativeOutcome);
           if (existingSubagent !== undefined && input.status !== "running") {
             const openCalls = [...subagentToolCalls.values()].filter(
@@ -10363,6 +10370,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) {
           let context = yield* Ref.get(activeTurn);
           const settled = context === null;
+          let ownerTaskId: string | undefined;
           if (settled && !callbackOptions.signal.aborted) {
             const live = yield* Ref.get(queryContext);
             if (live !== null && !live.stopping && live.closed === options?.owningQueryClosed) {
@@ -10377,12 +10385,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     subagent.task.status === "running" &&
                     !live.subagentsFromEarlierProcesses.has(subagent) &&
                     owner?.nativeThreadId === live.nativeThreadId
-                    ? [owner]
+                    ? [{ taskId, owner }]
                     : [];
                 },
               );
               const latest = settledTurnByNativeThread.get(live.nativeThreadId);
-              context = owners.find((owner) => owner === latest) ?? owners[0] ?? null;
+              const selected = owners.find(({ owner }) => owner === latest) ?? owners[0];
+              context = selected?.owner ?? null;
+              ownerTaskId = selected?.taskId;
             }
           }
           if (context === null) {
@@ -10393,6 +10403,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          const ownerStopped = yield* Deferred.make<void>();
+          const untilOwnerStops = <A, E, R>(wait: Effect.Effect<A, E, R>, onStop: A) =>
+            ownerTaskId === undefined
+              ? wait
+              : Effect.acquireUseRelease(
+                  Effect.sync(() => {
+                    const stops = settledRequestStopsByTaskId.get(ownerTaskId) ?? new Set();
+                    settledRequestStopsByTaskId.set(ownerTaskId, stops.add(ownerStopped));
+                    return stops;
+                  }),
+                  () =>
+                    Effect.raceFirst(wait, Deferred.await(ownerStopped).pipe(Effect.as(onStop))),
+                  (stops) =>
+                    Effect.sync(() => {
+                      stops.delete(ownerStopped);
+                      if (stops.size === 0) settledRequestStopsByTaskId.delete(ownerTaskId);
+                    }),
+                );
           const nativeRequestId = callbackOptions.toolUseID;
           const nativeToolInput = claudeNativeToolInputFromRecord(toolInput);
           const heldForEcho = context.heldRootFrames.length > 0;
@@ -10480,9 +10508,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ],
               { concurrency: 1 },
             );
-            const resolvedAnswers = yield* awaitClaudeUserInputAnswers(
-              answers,
-              callbackOptions.signal,
+            const resolvedAnswers = yield* untilOwnerStops(
+              awaitClaudeUserInputAnswers(answers, callbackOptions.signal),
+              {},
             ).pipe(
               Effect.ensuring(
                 Ref.update(pendingRuntimeRequests, (current) => {
@@ -10492,8 +10520,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               ),
             );
-            if (!(yield* Deferred.isDone(answers))) yield* cancelWithdrawnRequest(artifacts);
-            return callbackOptions.signal.aborted
+            const withdrawn = !(yield* Deferred.isDone(answers));
+            if (withdrawn) yield* cancelWithdrawnRequest(artifacts);
+            return withdrawn
               ? ({
                   behavior: "deny",
                   message: "User cancelled tool execution.",
@@ -10622,9 +10651,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             { concurrency: 1 },
           );
 
-          const resolvedDecision = yield* awaitClaudeApprovalDecision(
-            decision,
-            callbackOptions.signal,
+          const resolvedDecision = yield* untilOwnerStops(
+            awaitClaudeApprovalDecision(decision, callbackOptions.signal),
+            { decision: "cancel" },
           ).pipe(
             Effect.ensuring(
               Ref.update(pendingRuntimeRequests, (current) => {
