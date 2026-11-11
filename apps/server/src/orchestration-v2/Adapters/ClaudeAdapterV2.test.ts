@@ -10754,6 +10754,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
       }
     });
+  const scheduledWork = (harness: Effect.Success<typeof makeWakeHarness>) =>
+    harness.runtime.hasScheduledWork ?? Effect.succeed(false);
   const pendingSessionCron: SessionCronSummary = {
     id: "4e805017",
     schedule: "20 12 22 10 *",
@@ -10782,15 +10784,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.offerAndWait(turnOneResult);
         yield* harness.awaitTerminal(1);
         assert.isTrue(
-          yield* harness.hasPendingBackgroundWork,
+          yield* scheduledWork(harness),
           "a pending session cron must keep the idle session alive",
         );
+        // Crons are not shown to clients, so they must not block a provider switch.
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
 
         yield* harness.runtime.startTurn(turn(2, "Cancel that job."));
         yield* runStopHook(harness, []);
         yield* harness.offerAndWait(turnOneResult);
         yield* harness.awaitTerminal(2);
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        assert.isFalse(yield* scheduledWork(harness));
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -10827,7 +10831,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* runStopHook(harness, [pendingSessionCron]);
         yield* harness.offerAndWait(turnOneResult);
         yield* harness.awaitTerminal(1);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        assert.isTrue(yield* scheduledWork(harness));
 
         // Stop closes the CLI that owns the crons, and the SDK Stop hook never reports them gone.
         const second = turn(2, "Keep going.");
@@ -10841,7 +10845,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         yield* harness.awaitTerminal(2);
         assert.equal(harness.terminalEvents()[1]?.status, "interrupted");
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        assert.isFalse(yield* scheduledWork(harness));
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -10875,7 +10879,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* runStopHook(harness, [pendingSessionCron]);
         yield* harness.offerAndWait(turnOneResult);
         yield* harness.awaitTerminal(1);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        assert.isTrue(yield* scheduledWork(harness));
 
         // A usage limit fails the turn through StopFailure, which carries no crons, and the
         // CLI keeps running with the job still scheduled.
@@ -10892,7 +10896,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.awaitTerminal(2);
         assert.equal(harness.terminalEvents()[1]?.status, "failed");
         assert.isTrue(
-          yield* harness.hasPendingBackgroundWork,
+          yield* scheduledWork(harness),
           "a failed turn must not forget crons the live CLI still holds",
         );
       }).pipe(

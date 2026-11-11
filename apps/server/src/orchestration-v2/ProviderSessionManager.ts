@@ -1190,12 +1190,13 @@ export const layerWithOptions = (
           }
           // Capture runtime identity before yielding; replacements can reuse the session id.
           const probedRuntime = entry.runtime;
-          const hasPendingWork =
-            probedRuntime.hasPendingBackgroundWork === undefined
-              ? false
-              : yield* probedRuntime.hasPendingBackgroundWork.pipe(
-                  Effect.catchCause(() => Effect.succeed(false)),
-                );
+          const hasPendingWork = yield* Effect.forEach(
+            [probedRuntime.hasPendingBackgroundWork, probedRuntime.hasScheduledWork],
+            (probe) =>
+              probe === undefined
+                ? Effect.succeed(false)
+                : probe.pipe(Effect.catchCause(() => Effect.succeed(false))),
+          ).pipe(Effect.map((results) => results.includes(true)));
           if (hasPendingWork) {
             const now = yield* Clock.currentTimeMillis;
             const pinnedSinceMs = entry.pinnedSinceMs ?? now;

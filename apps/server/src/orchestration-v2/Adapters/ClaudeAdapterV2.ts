@@ -11919,14 +11919,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return true;
               }
             }
-            // A session cron fires only in the live process, so releasing it would drop the job.
-            for (const cronCount of (yield* Ref.get(
-              pendingSessionCronCountByNativeThread,
-            )).values()) {
-              if (cronCount > 0) {
-                return true;
-              }
-            }
             const buffers = yield* Ref.get(wakeBuffers);
             for (const entry of buffers.values()) {
               if (
@@ -11942,6 +11934,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return false;
           }),
+          // A session cron fires only in the live process, so releasing it would drop the job.
+          hasScheduledWork: Ref.get(pendingSessionCronCountByNativeThread).pipe(
+            Effect.map((counts) => [...counts.values()].some((count) => count > 0)),
+          ),
           // Untraced: the run's event stream calls this once per provider event.
           hasPendingBackgroundWorkForThread: Effect.fnUntraced(function* (providerThread, options) {
             const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
