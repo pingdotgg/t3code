@@ -224,19 +224,22 @@ export const make = Effect.gen(function* () {
                 }
               : null;
 
-          // A PR the user checked out stays with the threads made for it, however long ago it closed.
+          // Only a new association is refused: a thread keeps a PR it already saved, and a PR the
+          // user checked out stays with the threads made for it, however long ago it closed.
+          const isHistoricalFor = (thread: (typeof group)[number]) =>
+            detected !== null &&
+            pullRequestPredatesThread(detected, thread.createdAt) &&
+            !samePullRequest(thread.branchPullRequest, detectedReference);
           const dropsHistorical =
             detected !== null &&
             first.branch !== null &&
-            group.some((thread) => pullRequestPredatesThread(detected, thread.createdAt)) &&
+            group.some(isHistoricalFor) &&
             !(yield* git.checkedOutPullRequest({ cwd, branch: first.branch, url: detected.url }));
 
           const plans = yield* Effect.forEach(group, (thread) =>
             Effect.gen(function* () {
               let branchPullRequest =
-                dropsHistorical && pullRequestPredatesThread(detected, thread.createdAt)
-                  ? null
-                  : detectedReference;
+                dropsHistorical && isHistoricalFor(thread) ? null : detectedReference;
               if (
                 branchPullRequest === null &&
                 thread.branch !== null &&
@@ -248,8 +251,7 @@ export const make = Effect.gen(function* () {
                 });
                 if (
                   previous.headBranch === thread.branch &&
-                  (previous.state === "merged" || previous.state === "closed") &&
-                  !pullRequestPredatesThread(previous, thread.createdAt)
+                  (previous.state === "merged" || previous.state === "closed")
                 ) {
                   branchPullRequest = thread.branchPullRequest;
                 }

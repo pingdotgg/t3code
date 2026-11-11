@@ -562,7 +562,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     { state: "closed", checkedOut: false },
     { state: "merged", checkedOut: true },
   ] as const)(
-    "associates a $state branch PR (checkedOut=$checkedOut) only with threads that predate its completion",
+    "associates a $state branch PR (checkedOut=$checkedOut) only with threads that predate its completion or saved it",
     ({ state, checkedOut }) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -673,13 +673,10 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               return [command.threadId, command.branchPullRequest];
             }),
           ).toEqual(
-            state === "open" || checkedOut
-              ? ["older", "same-time", "new", "explicit"].map((id) => [id, reference])
-              : [
-                  ["older", reference],
-                  ["same-time", reference],
-                  ["saved", null],
-                ],
+            (state === "open" || checkedOut
+              ? ["older", "same-time", "new", "explicit"]
+              : ["older", "same-time"]
+            ).map((id) => [id, reference]),
           );
         }),
       ),
