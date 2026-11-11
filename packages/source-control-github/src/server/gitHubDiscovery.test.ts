@@ -1,11 +1,17 @@
-import { ServerSettings, SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  ServerSettings,
+  SourceControlProviderKind,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -178,5 +184,51 @@ it.effect.each([
       authenticated ? Option.some("octocat") : Option.none(),
     );
     assert.include(Option.getOrThrow(item.auth.detail), scenario.detail);
+  }),
+);
+
+it.effect.each([
+  {
+    name: "no failed span when gh is not signed in",
+    error: (host: string) => new GitHubCredentials.GitHubNotSignedInError({ host }),
+    failedSpans: [],
+  },
+  {
+    name: "a failed probe span when the lookup fails for real",
+    error: (host: string) =>
+      new GitHubCredentials.GitHubCliFailedError({
+        host,
+        cause: new VcsProcessTimeoutError({
+          operation: "GitHubCredentials.get",
+          command: "gh",
+          cwd: "/repo",
+          timeoutMs: 10_000,
+        }),
+      }),
+    failedSpans: ["GitHubSourceControlProvider.refineUnknownRemote"],
+  },
+])("records $name for an unknown host", (scenario) =>
+  Effect.gen(function* () {
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    const discovery = yield* makeDiscovery((host) =>
+      Effect.fail(scenario.error(host)).pipe(Effect.withSpan("GitHubRest.credential")),
+    );
+    if (discovery.type !== "managed-cli") return assert.fail("expected a managed CLI");
+    yield* discovery
+      .refineUnknownRemote({ cwd: "/repo", context: unknownContext("https://code.example.test") })
+      .pipe(Effect.withTracer(tracer), Effect.exit);
+    assert.deepStrictEqual(
+      spans.flatMap((span) =>
+        span.status._tag === "Ended" && Exit.isFailure(span.status.exit) ? [span.name] : [],
+      ),
+      scenario.failedSpans,
+    );
   }),
 );
