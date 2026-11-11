@@ -23,6 +23,7 @@ import * as McpOAuth from "../auth/McpOAuth.ts";
 import * as McpOAuthHttp from "../auth/mcpOAuthHttp.ts";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as CloudLink from "../cloud/CloudLink.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerHttp from "../http.ts";
@@ -101,7 +102,23 @@ export const servePeer = <E, R>(
     );
     const layerRoutes = Layer.mergeAll(
       HttpApiBuilder.layer(PeerTestApi).pipe(
-        Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
+        Layer.provide(
+          McpOAuthHttp.layer.pipe(
+            Layer.provide(McpOAuth.layer),
+            Layer.provide(
+              Layer.mock(CloudLink.CloudLink)({
+                linkState: () =>
+                  Effect.succeed({
+                    linked: false,
+                    cloudUserId: null,
+                    relayUrl: null,
+                    relayIssuer: null,
+                    publishAgentActivity: false,
+                  }),
+              }),
+            ),
+          ),
+        ),
         Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
         Layer.provide(AuthHttp.layerAuthenticatedAuth),
       ),
@@ -167,6 +184,8 @@ export const layerLinkingEnvironment = <E = never>(
     Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
     Layer.provideMerge(database),
     Layer.provide(Layer.mergeAll(secrets, FetchHttpClient.layer)),
+    // Peers here are served on 127.0.0.1, so only `localhost` stands for this machine.
+    Layer.provide(Layer.succeed(PeerLinks.LoopbackHost, (host) => host === "localhost")),
     // Services that act for this environment, such as delegation, name it too.
     Layer.provideMerge(
       Layer.succeed(ServerEnvironment.ServerEnvironment, {
