@@ -70,7 +70,9 @@ function environment() {
     environmentId,
     label: "Laptop",
     connection: { phase: state.connected ? "connected" : "disconnected" },
-    serverConfig: state.connected ? { environment: { platform: "linux" } } : null,
+    serverConfig: state.connected
+      ? { environment: { platform: "linux", capabilities: { oneTimeSchedules: true } } }
+      : null,
   };
 }
 

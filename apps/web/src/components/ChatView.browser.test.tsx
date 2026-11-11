@@ -7,6 +7,9 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
+// The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
+// takes 6-11s; importing it here keeps that out of the test's timeout.
+import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
@@ -14,6 +17,7 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   installFakeEnvironment,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { render } from "../../test/render";
@@ -63,7 +67,33 @@ it("a new draft does not load its reserved thread before the server lists it", a
   expect(threadRequests).toEqual([]);
 });
 
-async function draftRouterWithPrompt(prompt: string) {
+it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
+  const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("older-settled: question 0")).toBeVisible();
+
+  await page.getByRole("button", { name: `Thread actions for ${thread.title}` }).click();
+  // Without a bound the poll runs to the test deadline and reports a bare timeout.
+  await expect
+    .element(page.getByRole("menuitem", { name: "Rename thread" }), { timeout: 5_000 })
+    .toBeVisible();
+});
+
+it("a stashed prompt ending in a file chip restores with the chip", async () => {
+  using _environment = installFakeEnvironment([]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -73,15 +103,9 @@ async function draftRouterWithPrompt(prompt: string) {
   drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
     threadId: ThreadId.make("thread-28338"),
   });
-  drafts.setPrompt(draftId, prompt);
+  drafts.setPrompt(draftId, "Check [package.json](package.json) ");
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
-  return router;
-}
-
-it("a stashed prompt ending in a file chip restores with the chip", async () => {
-  using _environment = installFakeEnvironment([]);
-  const router = await draftRouterWithPrompt("Check [package.json](package.json) ");
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
     router: false,
@@ -89,12 +113,12 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
   const chip = page.getByRole("button", { name: "Preview package.json" });
   await expect.element(chip).toBeVisible();
 
-  await userEvent.click(page.getByTestId("composer-editor"));
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
   await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
   await expect.element(chip).not.toBeInTheDocument();
   await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
 
-  const editor = page.getByTestId("composer-editor");
   await vi.waitFor(() => expect(editor.element().textContent).toContain("Check"));
   expect(editor.element().textContent).not.toContain("[package.json](package.json)");
   await expect.element(chip).toBeVisible();
@@ -102,7 +126,18 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
 
 it("a stashed unfinished mention query restores as text", async () => {
   using _environment = installFakeEnvironment([]);
-  const router = await draftRouterWithPrompt("Check @Rea");
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-28338");
+  const drafts = useComposerDraftStore.getState();
+  drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+    threadId: ThreadId.make("thread-28338"),
+  });
+  drafts.setPrompt(draftId, "Check @Rea");
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
     router: false,

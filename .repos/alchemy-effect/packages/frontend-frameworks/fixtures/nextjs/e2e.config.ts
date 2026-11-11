@@ -1,15 +1,11 @@
-import {
-  KvNamespace,
-  Text,
-} from "@alchemy.run/cloudflare-runtime/core/bindings";
+import { KvNamespace, Text } from "@alchemy.run/cloudflare-runtime/core/bindings";
 import * as Options from "@alchemy.run/cloudflare-test-tools/e2e/Options";
 import { make } from "@alchemy.run/frontend-frameworks/nextjs";
 import { kCurrentWorker } from "miniflare";
 
 export default Options.make({
   // Exercise explicit OpenNext configuration for direct framework consumers.
-  framework: (options) =>
-    make({ ...options, nextjs: { configPath: "open-next.config.ts" } }),
+  framework: (options) => make({ ...options, nextjs: { configPath: "open-next.config.ts" } }),
   vite: {
     compatibilityDate: "2026-05-12",
     compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
