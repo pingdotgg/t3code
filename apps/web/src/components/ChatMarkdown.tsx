@@ -1476,10 +1476,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
         />
       );
     }
-    if (mediaKind === null && imageSource._tag === "WorkspaceFile") {
+    if (mediaKind === null && imageSource._tag !== "Direct") {
       const fileLinkMeta = resolveMarkdownFileLinkMeta(srcString, cwd, imageBaseDir ?? cwd);
       if (fileLinkMeta && !keepFileLink(fileLinkMeta, fileLinkScope)) return <span>{altText}</span>;
-      if (fileLinkMeta) return fileLinkChip(fileLinkMeta, copyMarkdown, srcString);
+      if (fileLinkMeta && imageSource._tag === "WorkspaceFile") {
+        return fileLinkChip(fileLinkMeta, copyMarkdown, srcString);
+      }
     }
     const kind = mediaKind ?? "image";
     const directUri = imageSource._tag === "Direct" ? imageSource.uri : null;

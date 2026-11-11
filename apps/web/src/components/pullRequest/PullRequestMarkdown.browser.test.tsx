@@ -81,7 +81,7 @@ it("chips only inline code paths inside the repository", async () => {
 it("chips only links and images to files inside the repository", async () => {
   await using screen = await renderBody("github", {
     cwd: "/home/alice/repo",
-    text: "See [hosts](/etc/hosts), [key](~/.ssh/id_rsa), [up](file:///etc/hosts), ![rc](/home/alice/.bashrc) and [y](packages/x/y.ts).",
+    text: "See [hosts](/etc/hosts), [key](~/.ssh/id_rsa), [up](file:///etc/hosts), ![rc](/home/alice/.bashrc), ![profile](~/.profile) and [y](packages/x/y.ts).",
   });
   await expect
     .element(screen.getByRole("button", { name: "File options for y.ts" }))
@@ -91,7 +91,7 @@ it("chips only links and images to files inside the repository", async () => {
     "[y](packages/x/y.ts)",
   ]);
   expect(screen.container.querySelectorAll("a")).toHaveLength(0);
-  expect(screen.container.textContent).toContain("See hosts, key, up, rc and");
+  expect(screen.container.textContent).toContain("See hosts, key, up, rc, profile and");
 });
 
 it("loads the body's host media in the pull request's repository, not the checkout's", async () => {
