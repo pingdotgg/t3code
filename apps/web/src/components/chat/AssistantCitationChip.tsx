@@ -255,7 +255,7 @@ export function AssistantCitationChip({
                 inputRef={commentInputRef}
                 onVoiceSetupOpenChange={setVoiceSetupOpen}
                 onViewSource={() => {
-                  void navigate(assistantCitationNavigation(citation));
+                  void navigate(assistantCitationNavigation(citation, sourceThread));
                 }}
                 onDraftChange={(comment) => {
                   draftCommentRef.current = comment;
