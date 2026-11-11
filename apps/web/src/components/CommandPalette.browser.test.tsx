@@ -106,12 +106,20 @@ describe("CommandPalette open intents", () => {
     setup({
       projects: [project("acme", "Acme"), project("beta", "Beta"), project("gamma", "Gamma")],
     });
+    const readStorage = Storage.prototype.getItem;
+    using _lastUsedProject = vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (
+      this: Storage,
+      key,
+    ) {
+      return key === LAST_USED_PROJECT_STORAGE_KEY ? null : readStorage.call(this, key);
+    });
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
 
     openCommandPalette({});
     await expect
       .element(page.getByPlaceholder("Search threads, projects, and commands…"))
       .toHaveFocus();
+    await expect.element(page.getByRole("option").first()).toHaveAttribute("data-highlighted");
     await userEvent.keyboard("{ArrowDown}");
     await expect
       .element(page.getByRole("option", { name: /^New thread in\.\.\./ }))
