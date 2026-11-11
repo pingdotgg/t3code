@@ -23,12 +23,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
@@ -41,13 +43,14 @@ import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 import * as DeviceService from "./DeviceService.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import { agentDeviceSession, releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
+import { ensureDeviceHub } from "./DeviceToolchain.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
 
 it.effect.each([400, 500])(
-  "distinguishes screenshot HTTP rejection (%s) from transport failure",
+  "retries a hub-rejected (%s) screenshot with simctl only on iOS 26 and older",
   (status) =>
     Effect.gen(function* () {
       const operations = makeDeviceHubOperations({
@@ -58,21 +61,25 @@ it.effect.each([400, 500])(
             HttpClientResponse.fromWeb(request, new Response("private hub output", { status })),
           ),
         ),
-        run: () => Effect.die("Screenshot does not run a command"),
-        androidAvailable: Effect.succeed(false),
+        run: () => Effect.succeed({ code: 0, stdout: "iVBORw==", stderr: "" }),
+        platformAvailable: () => Effect.succeed(false),
       });
-      const result = yield* operations
-        .screenshot({
-          id: "phone",
-          name: "Phone",
-          version: "iOS 26.3",
-          platform: "ios",
-          booted: true,
-          physical: false,
-        })
-        .pipe(Effect.result);
-      expect(result).toMatchObject({
+      const screenshot = (version: string) =>
+        operations
+          .screenshot({
+            id: "phone",
+            name: "Phone",
+            version,
+            platform: "ios",
+            booted: true,
+            physical: false,
+          })
+          .pipe(Effect.result);
+      expect(yield* screenshot("iOS 27.0")).toMatchObject({
         failure: { _tag: "DeviceOperationError", reason: "hub_rejected" },
+      });
+      expect(yield* screenshot("iOS 26.3")).toMatchObject({
+        success: new Uint8Array([137, 80, 78, 71]),
       });
     }),
 );
@@ -103,7 +110,9 @@ const fixture = Effect.fn("fixture")(function* (
   const devices: Array<Omit<DeviceSummary, "hostId">> = [];
   const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
   const androidAvailable = yield* Ref.make(true);
+  const iosAvailable = yield* Ref.make(true);
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
+  const listing = { hangs: false, requested: yield* Deferred.make<void>() };
   let booted = false;
   let shutDown = false;
   const connection = { online: true, kind: "local" as "local" | "ssh", failShutdown: false };
@@ -168,6 +177,11 @@ const fixture = Effect.fn("fixture")(function* (
       if (request.url.endsWith("/grid/api/start")) {
         return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
       }
+      if (listing.hangs) {
+        return yield* Deferred.succeed(listing.requested, undefined).pipe(
+          Effect.andThen(Effect.never),
+        );
+      }
       return HttpClientResponse.fromWeb(
         request,
         Response.json({
@@ -205,7 +219,8 @@ const fixture = Effect.fn("fixture")(function* (
         origin: "http://device.test",
         http,
         run,
-        androidAvailable: Ref.get(androidAvailable),
+        platformAvailable: (platform) =>
+          Ref.get(platform === "ios" ? iosAvailable : androidAvailable),
       }),
       ...(options.endsDevices ? { endsDevices: true } : {}),
     },
@@ -330,6 +345,8 @@ const fixture = Effect.fn("fixture")(function* (
     encoderResult,
     discoveryErrors,
     androidAvailable,
+    iosAvailable,
+    listing,
     endDevice,
   };
 });
@@ -363,6 +380,45 @@ describe("device setup consent", () => {
         detail: startupError.message,
       });
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("names the missing npm in the host status when device support cannot install", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-no-npm-" });
+      const installError = yield* ensureDeviceHub(baseDir).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) =>
+            Effect.fail(
+              new ProcessRunner.ProcessSpawnError({
+                command: input.command,
+                argumentCount: input.args.length,
+                cause: PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                  description: `spawn ${input.command} ENOENT`,
+                }),
+              }),
+            ),
+        }),
+        Effect.flip,
+      );
+      const { service, settings } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        new DeviceHost.DeviceHostError({
+          hostId: LOCAL_DEVICE_HOST_ID,
+          step: "installing device support",
+          cause: installError,
+        }),
+      );
+      yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
+      const detail = (yield* service.list).hostStatuses[LOCAL_DEVICE_HOST_ID]?.detail;
+      expect(detail).toMatch(/\bnpm\b/);
+      expect(detail).toMatch(/Node\.js/);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
@@ -829,6 +885,101 @@ it.effect("keeps the cause from the hub's error in discovery warnings, without t
   }).pipe(Effect.scoped),
 );
 
+it.effect(
+  "keeps the last simulators while simctl cannot list them, and drops them once it can",
+  () =>
+    Effect.gen(function* () {
+      const { service, devices, discoveryErrors } = yield* fixture();
+      const simulator = {
+        id: DeviceId.make("iphone"),
+        name: "iPhone",
+        platform: "ios",
+        version: "iOS 26",
+        booted: true,
+        physical: false,
+      } as const;
+      devices.push(simulator, { ...simulator, id: DeviceId.make("pixel"), platform: "android" });
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      yield* service.agentReadinessIfSupported();
+      devices.length = 0;
+      yield* Ref.set(discoveryErrors, [{ message: simctlMessage }]);
+      const failed = yield* service.list;
+      expect(failed.devices.map((device) => device.id)).toEqual(["iphone", "Pixel_API_35"]);
+      expect(failed.hostStatuses.local).toEqual({
+        status: "ready",
+        detail: simctlMessage,
+        incompletePlatforms: ["ios"],
+      });
+      yield* service.agentReadinessIfSupported();
+      expect((yield* service.state).hostStatuses.local).toEqual(failed.hostStatuses.local);
+      yield* Ref.set(discoveryErrors, []);
+      const recovered = yield* service.list;
+      expect(recovered.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
+      expect(recovered.hostStatuses.local).toEqual({ status: "ready" });
+    }).pipe(Effect.scoped),
+);
+
+it.effect.each([
+  {
+    ios: true,
+    android: true,
+    incompletePlatforms: ["ios", "android"],
+    kept: ["iphone", "Pixel_API_35"],
+  },
+  { ios: true, android: false, incompletePlatforms: ["ios"], kept: ["iphone"] },
+  { ios: false, android: true, incompletePlatforms: ["android"], kept: ["Pixel_API_35"] },
+] as const)(
+  "keeps the devices of listable platforms when the hub does not answer within 40 seconds (iOS: $ios, Android SDK: $android)",
+  ({ ios, android, incompletePlatforms, kept }) =>
+    Effect.gen(function* () {
+      const { service, devices, listing, androidAvailable, iosAvailable } = yield* fixture();
+      yield* Ref.set(androidAvailable, android);
+      yield* Ref.set(iosAvailable, ios);
+      devices.push({
+        id: DeviceId.make("iphone"),
+        name: "iPhone",
+        platform: "ios",
+        version: "iOS 26",
+        booted: true,
+        physical: false,
+      });
+      yield* service.configure({ enabled: true });
+      listing.hangs = true;
+      const listed = yield* service.list.pipe(Effect.forkScoped);
+      yield* Deferred.await(listing.requested);
+      yield* TestClock.adjust("40 seconds");
+      const timedOut = yield* Fiber.join(listed);
+      expect(timedOut.devices.map((device) => device.id)).toEqual(kept);
+      expect(timedOut.hostStatuses.local).toEqual({
+        status: "ready",
+        detail: "The device hub did not answer within 40 seconds.",
+        incompletePlatforms,
+      });
+    }).pipe(Effect.scoped),
+);
+
+it.effect("does not open a retained pre-boot entry when the post-boot listing is incomplete", () =>
+  Effect.gen(function* () {
+    const afterBoot = { run: Effect.void as Effect.Effect<void> };
+    const android = yield* fixture(Effect.suspend(() => afterBoot.run));
+    afterBoot.run = Effect.sync(() => {
+      android.listing.hangs = true;
+    });
+    yield* android.service.configure({ enabled: true });
+    const opening = yield* android.service
+      .open({
+        threadId: ThreadId.make("boot-timeout"),
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      })
+      .pipe(Effect.flip, Effect.forkScoped);
+    yield* Deferred.await(android.listing.requested);
+    yield* TestClock.adjust("40 seconds");
+    expect((yield* Fiber.join(opening))._tag).toBe("DeviceNotFoundError");
+    expect((yield* android.service.state).sessions).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([
   {
     diagnostic: "Insufficient disk space at /private/user/path",
@@ -964,7 +1115,7 @@ it.effect.each(["shutdown", "close"] as const)(
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -1126,7 +1277,7 @@ it.effect("leaves a session its host leases to every thread open when one thread
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         agentEndpoint: () =>
           Effect.succeed({
@@ -1248,7 +1399,7 @@ it.effect.each([
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -1320,7 +1471,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
+          platformAvailable: () => Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,

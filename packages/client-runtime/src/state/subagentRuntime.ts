@@ -176,6 +176,17 @@ function workflowMembersToRuntime(
   });
 }
 
+function promptTitle(prompt: string): string {
+  if (prompt.length <= 80) return prompt;
+  let end = 77;
+  const previous = prompt.charCodeAt(end - 1);
+  const next = prompt.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${prompt.slice(0, end)}...`;
+}
+
 export function workflowMemberModelSelection(
   member: Pick<RuntimeSubagent, "model" | "effort" | "speed">,
   instanceId: ModelSelection["instanceId"],
@@ -216,9 +227,7 @@ export function projectedSubagentsToRuntime(
     const coordinator = {
       id: subagent.id,
       kind: workflow === undefined ? "subagent" : "workflow",
-      title:
-        subagent.title ??
-        (subagent.prompt.length > 80 ? `${subagent.prompt.slice(0, 77)}...` : subagent.prompt),
+      title: subagent.title ?? promptTitle(subagent.prompt),
       role: null,
       model: subagent.model,
       effort: null,
