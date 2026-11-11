@@ -1,6 +1,6 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { SOURCE_CONTROL_MEDIA_ASSET, type EnvironmentId } from "@t3tools/contracts";
-import type { FilePreviewItem } from "../../components/FilePreviewModal.types";
+import type { FilePreviewItem } from "../../components/ui/FilePreviewModal.types";
 
 export interface PullRequestMediaLocation {
   readonly environmentId: EnvironmentId;

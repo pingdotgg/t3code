@@ -125,7 +125,7 @@ const MODS =
   "(?:\\s+(?!(?i:when|once|after|if|whether|that|you|I|we|it|so|to|and then)\\b)[\\w'’+./-]+){0,3}";
 // Secret nouns, and environment variable names such as CLOUDFLARE_API_TOKEN ("… value").
 const SECRET_NOUN =
-  "(?:(?i:passwords?|passcodes?|passphrases?|logins?|login details|credentials|creds|pairing codes?|(?:6|six)-digit codes?|verification codes?|one-time codes?|PINs?|tokens?|API keys?|PATs?|secret keys?|secrets?)|[A-Z0-9_]*(?:TOKEN|_KEY|SECRET|PASSWORD|PASSPHRASE)[A-Z0-9_]*(?:\\s+(?i:value))?)";
+  "(?:(?i:passwords?|passcodes?|passphrases?|logins?|login details|credentials|creds|pairing codes?|(?:6|six)-digit codes?|verification codes?|authorization codes?|one-time codes?|PINs?|tokens?|API keys?|PATs?|secret keys?|secrets?)|[A-Z0-9_]*(?:TOKEN|_KEY|SECRET|PASSWORD|PASSPHRASE)[A-Z0-9_]*(?:\\s+(?i:value))?)";
 // A noun followed by one of these names metadata, not the secret: "the token permissions". One
 // followed by an extension names a file: "login.mjs".
 const NOUN_META =
@@ -138,7 +138,7 @@ const CHAT_HERE =
 const PRIVATE_ROUTE =
   "(?<!(?i:\\b(?:not|no|without)\\s+(?:\\w+\\s+){0,2}))(?<!(?i:\\bfrom\\s+(?:(?:the|your|its|that|this|my)\\s+)?(?:\\w+\\s+)?))(?:\\b|(?=\\.env\\b))(?i:card(?![\\s-]*(?:numbers?|details|brand))|(?:private|secure) (?:\\w+ )?(?:input|prompt|field|form|card)|(?:request|collect)\\w*\\b[^.;!?\\n]{0,40}\\b(?:securely|privately)|(?:securely|privately) (?:request|collect)|request_secret|secret prompt|Device panel|\\.env\\b|your (?:own )?terminal|dashboard|1Password|keychain|GitHub secrets?|Settings|password manager|when (?:it|the (?:CLI|prompt|tool)|\\w+) (?:asks|prompts))";
 const CODE_NOUN =
-  "(?i:passwords?|passcodes?|pairing codes?|(?:6|six)-digit codes?|verification codes?|one-time codes?|PINs?|tokens?|API keys?|credentials|logins?)";
+  "(?i:passwords?|passcodes?|pairing codes?|(?:6|six)-digit codes?|verification codes?|authorization codes?|one-time codes?|PINs?|tokens?|API keys?|credentials|logins?)";
 // An API key named earlier in the message, which makes a bare "key" one: "API key",
 // OPENROUTER_API_KEY, "no OpenRouter key".
 const API_KEY_CONTEXT =
@@ -166,14 +166,15 @@ const ASKS: ReadonlyArray<readonly [pattern: string, excusable: boolean]> = [
     true,
   ],
   // "send it here", "paste them in the chat", "share it in your next message", once the message
-  // names a secret: "paste it here" about a build log asks for nothing secret.
+  // names a secret: "paste it here" about a build log asks for nothing secret, and neither does
+  // "provide it without putting it in chat".
   [
-    `(?:(?<=${SECRET_CONTEXT}[\\s\\S]*)|(?=[\\s\\S]*${SECRET_CONTEXT}))${NEG}\\b${VERB}${WHO}\\s+(?i:it|them|those|both)\\b${C}{0,30}\\b(?i:here|in (?:the |this )?(?:chat|thread)|in (?:your|a) (?:next )?(?:reply|message))\\b`,
+    `(?:(?<=${SECRET_CONTEXT}[\\s\\S]*)|(?=[\\s\\S]*${SECRET_CONTEXT}))${NEG}\\b${VERB}${WHO}\\s+(?i:it|them|those|both)\\b(?:(?!\\b(?i:without\\s+(?:putting|pasting|posting|sending|sharing|typing)\\s+(?:it|them)\\s+(?:here|in(?:to)?\\s+(?:the\\s+|this\\s+)?(?:chat|thread)|in\\s+(?:your|a)\\s+(?:next\\s+)?(?:reply|message)))\\b)${C}){0,30}\\b(?i:here|in (?:the |this )?(?:chat|thread)|in (?:your|a) (?:next )?(?:reply|message))\\b`,
     false,
   ],
   // "What's the pairing code?", "which password should I use?": a question, so its clause ends in "?"
   [
-    `\\b(?i:what(?:['’]s| is| are)|which)\\s+(?i:the|your)?\\s*(?:[\\w'’+-]+\\s+){0,3}(?i:password|passcode|pairing code|(?:6|six)-digit code|PIN|credentials|login|token|API key)\\b${NOUN_META}(?![\\s-]*(?i:used|needed|meant|required|stored|kept|saved|set|called|named|located)\\b)(?!\\s+for\\s*\\?)(?!${C}{0,40}\\b(?i:card|private)\\b)(?=${C}*\\?)`,
+    `\\b(?i:what(?:['’]s| is| are)|which)\\s+(?i:the|your)?\\s*(?:[\\w'’+-]+\\s+){0,3}(?i:password|passcode|pairing code|(?:6|six)-digit code|verification code|authorization code|PIN|credentials|login|token|API key)\\b${NOUN_META}(?![\\s-]*(?i:used|needed|meant|required|stored|kept|saved|set|called|named|located)\\b)(?!\\s+for\\s*\\?)(?!${C}{0,40}\\b(?i:card|private)\\b)(?=${C}*\\?)`,
     false,
   ],
   // "reply with the code shown on the phone", "send me the code from the dialog"
@@ -209,9 +210,10 @@ export const CHAT_ASK: ReadonlyArray<string> = ASKS.map(([pattern]) => pattern);
 const ASK_RES = ASKS.map(([pattern, excusable]) => ({ re: new RegExp(pattern, "g"), excusable }));
 const PRIVATE_ROUTE_RE = new RegExp(PRIVATE_ROUTE);
 const CHAT_HERE_RE = new RegExp(`^${CHAT_HERE}`);
-// "in chat" or "in your reply" anywhere in the ask's clause, unless negated ("not in chat").
+// "in chat" or "in your reply" anywhere in the ask's clause, unless negated ("not in chat",
+// "without pasting it in this chat").
 const IN_CHAT_RE =
-  /(?<!\b(?:not|never|don['’]t|do not)\s+(?:\w+\s+){0,2})\b(?:in (?:the |this )?(?:chat|thread)|in (?:your|a) (?:next )?(?:reply|message))\b/i;
+  /(?<!\b(?:(?:not|never|don['’]t|do not)\s+(?:\w+\s+){0,2}|without\s+(?:putting|pasting|posting|sending|sharing|typing)\s+(?:it|them)\s+))\b(?:in (?:the |this )?(?:chat|thread)|in (?:your|a) (?:next )?(?:reply|message))\b/i;
 
 /**
  * Where a private route can excuse an ask: its clause (bounded by . ! ? or ; before a space), from
