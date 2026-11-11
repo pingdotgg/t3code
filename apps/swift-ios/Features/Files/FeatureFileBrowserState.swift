@@ -31,7 +31,9 @@ final class FeatureFileBrowserState {
         fetch: () async throws -> [FeatureFileEntry]
     ) async {
         let previous = listing(for: directory)
-        guard refresh || (previous.entries == nil && !previous.isLoading) else { return }
+        // A handoff can start the new view before the old cancelled load unwinds.
+        // The request ID keeps that old load from replacing the new result.
+        guard !Task.isCancelled, refresh || previous.entries == nil else { return }
         let requestID = UUID()
         listings[directory, default: Listing()].requestID = requestID
         listings[directory, default: Listing()].isLoading = true

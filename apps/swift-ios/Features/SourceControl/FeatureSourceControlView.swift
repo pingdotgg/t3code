@@ -31,6 +31,7 @@ public struct FeatureSourceControlView: View {
     let client: any FeatureClient
     let threadID: String
     let initialDestination: FeatureThreadDestination?
+    let onClose: (() -> Void)?
 
     @State private var status: FeatureSourceControlStatus?
     @State private var isLoading = true
@@ -48,10 +49,12 @@ public struct FeatureSourceControlView: View {
     @State private var pendingCommitAction: FeatureSourceControlAction?
     @AccessibilityFocusState private var recoveryFocus: FeatureToolRecoveryFocus?
 
-    public init(client: any FeatureClient, threadID: String, initialDestination: FeatureThreadDestination? = nil) {
+    public init(client: any FeatureClient, threadID: String, initialDestination: FeatureThreadDestination? = nil,
+                onClose: (() -> Void)? = nil) {
         self.client = client
         self.threadID = threadID
         self.initialDestination = initialDestination
+        self.onClose = onClose
     }
 
     private var canWrite: Bool {
@@ -142,7 +145,9 @@ public struct FeatureSourceControlView: View {
         }
         .navigationDestination(isPresented: $showsBranches) {
             FeatureGitBranchesView(client: client, threadID: threadID)
+                .toolbar { FeatureToolCloseToolbar(close: onClose) }
         }
+        .toolbar { FeatureToolCloseToolbar(close: onClose) }
         .onChange(of: showsBranches) { _, visible in
             if !visible { Task { await reload() } }
         }

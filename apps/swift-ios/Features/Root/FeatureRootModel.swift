@@ -23,6 +23,13 @@ enum FeatureThreadLoadState: Equatable {
     case failed(String)
 }
 
+/// Advances when a thread's detail changes outside its message content.
+@MainActor
+@Observable
+final class FeatureThreadChromeSignal {
+    fileprivate(set) var revision: UInt64 = 0
+}
+
 @MainActor
 @Observable
 public final class FeatureRootModel {
@@ -46,7 +53,31 @@ public final class FeatureRootModel {
         }
     }
 
-    public private(set) var snapshot = FeatureSnapshot()
+    @ObservationIgnored private var snapshotStorage = FeatureSnapshot()
+    public private(set) var snapshot: FeatureSnapshot {
+        get {
+            access(keyPath: \.snapshot)
+            return snapshotStorage
+        }
+        set {
+            // Like the Observation macro for Equatable values: equal writes notify no one.
+            guard newValue != snapshotStorage else { return }
+            var previous = snapshotStorage
+            withMutation(keyPath: \.snapshot) { snapshotStorage = newValue }
+            previous.threads = newValue.threads
+            if previous != newValue {
+                withMutation(keyPath: \.snapshotExceptThreads) {}
+            }
+        }
+    }
+
+    /// The snapshot, observed only for changes outside `threads`. Rows change
+    /// several times a second while replies stream; views that never read rows
+    /// (the open thread) use this so that churn does not re-render them.
+    public var snapshotExceptThreads: FeatureSnapshot {
+        access(keyPath: \.snapshotExceptThreads)
+        return snapshotStorage
+    }
     @ObservationIgnored private(set) var inboxReturns = FeatureInboxReturnTracker()
     /// Why the last `startTask` returned nil, for the sheet that made the request.
     public private(set) var lastTaskStartError: String?
@@ -66,6 +97,10 @@ public final class FeatureRootModel {
     /// The latest detail revision for each loaded thread.
     public private(set) var detailRevisions: [String: UInt64] = [:]
     private(set) var detailRenderUpdates: [String: FeatureDetailRenderUpdate] = [:]
+    @ObservationIgnored private var detailChromeSignals: [String: FeatureThreadChromeSignal] = [:]
+    @ObservationIgnored private var deferredStreamedRows: [String: FeatureThread] = [:]
+    @ObservationIgnored private var transcriptObservers: [String: [UUID: @MainActor () -> Void]] = [:]
+    @ObservationIgnored private var streamedRowFlush: Task<Void, Never>?
     public private(set) var isLoading = true
     public private(set) var isPerformingAction = false
     private(set) var isArrangingThreads = false
@@ -958,7 +993,7 @@ public final class FeatureRootModel {
               !pendingCompletionSubmissionIDs.contains(submission.id),
               !pendingDiscardSubmissionIDs.contains(submission.id),
               pendingRecoveryReasons[submission.id] == nil else { return false }
-        let detail = details[threadID]
+        let detail = chromeDetail(for: threadID)
         return detail?.messages.contains(where: { $0.id == messageID && $0.state != .queued }) != true
             && detail?.execution?.queuedEntries.contains(where: { $0.messageID == messageID }) != true
     }
@@ -1042,7 +1077,7 @@ public final class FeatureRootModel {
         guard !rewindingThreadIDs.contains(threadID),
               !pendingRewindRecoveryIDs.contains(threadID),
               activeSubmissionCounts[threadID] == nil,
-              let detail = details[threadID],
+              let detail = chromeDetail(for: threadID),
               FeatureConversationRewind.canStart(in: detail),
               let environmentID = detail.thread.environmentID,
               isEnvironmentConnected(environmentID),
@@ -1405,7 +1440,7 @@ public final class FeatureRootModel {
         case let .detailDelta(value, delta):
             pendingThreadsByID.removeValue(forKey: value.thread.id)
             store(value, delta: delta)
-            upsert(value.thread)
+            upsertStreamedRow(value.thread)
         case let .threadSync(id, state):
             if threadSyncStates[id] != state {
                 threadSyncStates[id] = state
@@ -1442,7 +1477,31 @@ public final class FeatureRootModel {
         }
     }
 
+    /// Streamed deltas rewrite a row's preview and timestamps several times a
+    /// second. Each write changes `snapshot`, which re-renders every view that
+    /// reads it, including the open thread. Those fields land at most once a
+    /// second; any other row change lands immediately.
+    private func upsertStreamedRow(_ thread: FeatureThread) {
+        guard let current = snapshot.threads.first(where: { $0.id == thread.id }),
+              current.withoutStreamingFields() == thread.withoutStreamingFields() else {
+            upsert(thread)
+            return
+        }
+        guard current != thread else { return }
+        deferredStreamedRows[thread.id] = thread
+        guard streamedRowFlush == nil else { return }
+        streamedRowFlush = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self else { return }
+            streamedRowFlush = nil
+            let rows = deferredStreamedRows
+            deferredStreamedRows.removeAll()
+            rows.values.forEach(upsert)
+        }
+    }
+
     private func upsert(_ thread: FeatureThread) {
+        deferredStreamedRows[thread.id] = nil
         let thread = applyingLocalMessageVisibility(retainingPendingSettlement(in: thread))
         var metadataChanged = false
         var orderChanged = false
@@ -1483,6 +1542,7 @@ public final class FeatureRootModel {
     }
 
     private func removeThread(id: String) {
+        deferredStreamedRows[id] = nil
         guard let index = snapshot.threads.firstIndex(where: { $0.id == id }) else { return }
         let projectID = snapshot.threads[index].projectID
         snapshot.threads.remove(at: index)
@@ -1499,6 +1559,8 @@ public final class FeatureRootModel {
 
     private func install(_ value: FeatureSnapshot) {
         var value = value
+        // The snapshot is newer than any row held back from a streamed delta.
+        deferredStreamedRows.removeAll()
         let environmentIDs = Set(value.environments.map(\.id))
         for thread in snapshot.threads where thread.environmentID.map({ !environmentIDs.contains($0) }) == true {
             recoveredRewindDrafts[thread.id] = nil
@@ -1583,6 +1645,8 @@ public final class FeatureRootModel {
         id: String,
         _ mutation: (inout FeatureThread) -> Void
     ) {
+        // A local change must not be overwritten by an older streamed row.
+        deferredStreamedRows[id] = nil
         var metadataChanged = false
         if let index = snapshot.threads.firstIndex(where: { $0.id == id }) {
             let previous = snapshot.threads[index]
@@ -1617,7 +1681,7 @@ public final class FeatureRootModel {
         let prepared = addingPendingMessages(to: incoming)
         let next = details[id].map { $0.mergingChangedSuffix(from: prepared) } ?? prepared
         guard details[id] != next else { return }
-        details[id] = next
+        setDetail(next, for: id)
         markDetailRecentlyUsed(id)
         if invalidatesInFlightLoad {
             bumpDetailLoadRevision(id: id)
@@ -1634,7 +1698,7 @@ public final class FeatureRootModel {
         let queuedIDs = Set(incoming.execution?.queuedEntries.map(\.messageID) ?? [])
         let removedOptimisticMessage = !queuedIDs.isEmpty
             && details[id]?.messages.contains { queuedIDs.contains($0.id) } == true
-        details[id] = next
+        setDetail(next, for: id)
         markDetailRecentlyUsed(id)
         bumpDetailLoadRevision(id: id)
         let appended = next.messages.dropFirst(incoming.messages.count).map(\.id)
@@ -1663,7 +1727,7 @@ public final class FeatureRootModel {
         let previous = detail
         mutation(&detail)
         guard detail != previous else { return false }
-        details[id] = detail
+        setDetail(detail, for: id)
         markDetailRecentlyUsed(id)
         if invalidatesInFlightLoad {
             bumpDetailLoadRevision(id: id)
@@ -1673,7 +1737,8 @@ public final class FeatureRootModel {
     }
 
     private func removeDetail(id: String) {
-        if details.removeValue(forKey: id) != nil {
+        if details[id] != nil {
+            setDetail(nil, for: id)
             detailRecency.removeAll { $0 == id }
         }
         storedDetailLoadRequestRevisions.removeValue(forKey: id)
@@ -1694,12 +1759,70 @@ public final class FeatureRootModel {
         detailMetadataRevisions.removeAll()
         let hadDetails = !details.isEmpty
         details.removeAll()
+        detailChromeSignals.values.forEach { $0.revision &+= 1 }
         detailRecency.removeAll()
         if hadDetails {
             detailRevision &+= 1
         }
         detailRevisions.removeAll()
         detailRenderUpdates.removeAll()
+        transcriptObservers.values.forEach { $0.values.forEach { $0() } }
+    }
+
+    /// Observes only what the thread screen shows outside its transcript.
+    /// Pair with `untrackedDetail(for:)`: streamed text then redraws the
+    /// transcript host alone, not the screen with its composer and menus.
+    func observeDetailChrome(for id: String) {
+        let signal = detailChromeSignals[id] ?? {
+            let signal = FeatureThreadChromeSignal()
+            detailChromeSignals[id] = signal
+            return signal
+        }()
+        _ = signal.revision
+    }
+
+    /// Reads a thread's detail without observing it; `_details` is the
+    /// Observation macro's untracked storage for `details`.
+    func untrackedDetail(for id: String) -> FeatureThreadDetail? {
+        _details[id]
+    }
+
+    /// For predicates the thread screen evaluates in its body (menus, edit
+    /// affordances): they refresh with the chrome, not with every streamed chunk.
+    private func chromeDetail(for id: String) -> FeatureThreadDetail? {
+        observeDetailChrome(for: id)
+        return _details[id]
+    }
+
+    func untrackedDetailRevision(for id: String) -> UInt64 {
+        _detailRevisions[id] ?? 0
+    }
+
+    func untrackedRenderUpdate(for id: String) -> FeatureDetailRenderUpdate? {
+        _detailRenderUpdates[id]
+    }
+
+    /// Calls `onChange` after each change to a thread's detail, outside
+    /// Observation. The transcript applies streamed text through this, so no
+    /// SwiftUI body re-runs per chunk: nested Observation scopes merge into
+    /// their parents, so one SwiftUI reader would pull the whole screen along.
+    func observeTranscript(of threadID: String, _ onChange: @escaping @MainActor () -> Void) -> UUID {
+        let token = UUID()
+        transcriptObservers[threadID, default: [:]][token] = onChange
+        return token
+    }
+
+    func stopObservingTranscript(of threadID: String, token: UUID) {
+        transcriptObservers[threadID]?[token] = nil
+        if transcriptObservers[threadID]?.isEmpty == true { transcriptObservers[threadID] = nil }
+    }
+
+    private func setDetail(_ detail: FeatureThreadDetail?, for id: String) {
+        let previous = _details[id]
+        details[id] = detail
+        guard let signal = detailChromeSignals[id] else { return }
+        if let previous, let detail, previous.hasSameChrome(as: detail) { return }
+        signal.revision &+= 1
     }
 
     private func bumpDetailLoadRevision(id: String) {
@@ -1733,6 +1856,7 @@ public final class FeatureRootModel {
             revision: detailRevision,
             change: change
         )
+        transcriptObservers[id]?.values.forEach { $0() }
     }
 
     private func restoreOutbox() async {

@@ -5,7 +5,7 @@ struct FeatureThreadPullRequestsView: View {
   let model: FeatureRootModel
   let threadID: String
   let fallbackThread: FeatureThread
-  let openURL: (URL) -> Void
+  @SwiftUI.Environment(\.openURL) private var openURL
   @SwiftUI.Environment(\.dismiss) private var dismiss
   @State private var showsLinkPrompt = false
   @State private var reference = ""

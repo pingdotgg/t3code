@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct FeatureRootView: View {
     @State private var model: FeatureRootModel
+    @State private var foldSidebarWidth: CGFloat?
     private let navigationRequest: FeatureWorkspaceNavigationRequest?
     private let onNavigationRequestConsumed: @MainActor (UUID) -> Void
 
@@ -26,7 +27,7 @@ public struct FeatureRootView: View {
             if model.isLoading {
                 FeatureLoadingView()
             } else if shouldShowWorkspace {
-                WorkspaceView(
+                FeatureWorkspaceTabs(
                     model: model,
                     navigationRequest: navigationRequest,
                     onNavigationRequestConsumed: onNavigationRequestConsumed
@@ -39,6 +40,15 @@ public struct FeatureRootView: View {
         .t3AppTextSize(steps: model.snapshot.settings.textSize.steps)
         .t3CodeSizing(steps: model.snapshot.settings.codeSize.steps)
         .tint(T3Colors.accent)
+        .environment(\.featureWorkspaceFoldSidebarWidth, foldSidebarWidth)
+        .background {
+            // Detect the hinge before onboarding finishes, so connection
+            // screens can rotate too. The probe stays local to this window.
+            PlatformWorkspaceGeometryObserver { foldSidebarWidth = $0 }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .background(T3Colors.background.ignoresSafeArea())
         .task { await model.start() }
         .alert(

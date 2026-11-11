@@ -3640,6 +3640,97 @@ struct FeatureRootModelTests {
         #expect(delta.changedMessages == [completedMessage, appendedMessage])
     }
 
+    @Test
+    func streamedTextRedrawsOnlyTheTranscript() async {
+        let client = FeatureClientStub()
+        var thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Streaming")
+        thread.state = .working
+        thread.preview = "Hel"
+        let first = FeatureThreadDetail(
+            thread: thread, messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Hel")]
+        )
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        await nextChange { _ = model.detailRevisions[thread.id] } after: { client.emit(.detail(first)) }
+
+        let transcriptChanges = ChangeCount()
+        let token = model.observeTranscript(of: thread.id) { transcriptChanges.value += 1 }
+        defer { model.stopObservingTranscript(of: thread.id, token: token) }
+        let chromeChanged = ChangeCount()
+        let snapshotChanged = ChangeCount()
+        let nonRowSnapshotChanged = ChangeCount()
+        withObservationTracking { model.observeDetailChrome(for: thread.id) } onChange: { chromeChanged.value += 1 }
+        withObservationTracking { _ = model.snapshot } onChange: { snapshotChanged.value += 1 }
+        withObservationTracking { _ = model.snapshotExceptThreads } onChange: { nonRowSnapshotChanged.value += 1 }
+
+        var streamed = thread
+        streamed.preview = "Hello"
+        streamed.updatedAt = thread.updatedAt.addingTimeInterval(1)
+        let message = FeatureMessage(id: "message-1", role: .assistant, text: "Hello")
+        client.emit(.detailDelta(
+            FeatureThreadDetail(thread: streamed, messages: [message]),
+            FeatureDetailDelta(changedMessages: [message])
+        ))
+        client.finishEvents()
+        await run.value
+
+        #expect(model.details[thread.id]?.messages.first?.text == "Hello")
+        #expect(transcriptChanges.value > 0)
+        #expect(chromeChanged.value == 0)
+        // The row's preview and timestamp land later, in a batch.
+        #expect(snapshotChanged.value == 0)
+        #expect(model.snapshot.threads.first?.preview == "Hel")
+        #expect(nonRowSnapshotChanged.value == 0)
+    }
+
+    @Test
+    func turnEndRedrawsTheThreadScreenAndHomeRowAtOnce() async {
+        let client = FeatureClientStub()
+        var thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Streaming")
+        thread.state = .working
+        let first = FeatureThreadDetail(
+            thread: thread, messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Hel")]
+        )
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        await nextChange { _ = model.detailRevisions[thread.id] } after: { client.emit(.detail(first)) }
+
+        let chromeChanged = ChangeCount()
+        let nonRowSnapshotChanged = ChangeCount()
+        withObservationTracking { model.observeDetailChrome(for: thread.id) } onChange: { chromeChanged.value += 1 }
+        withObservationTracking { _ = model.snapshotExceptThreads } onChange: { nonRowSnapshotChanged.value += 1 }
+
+        var finished = thread
+        finished.state = .idle
+        finished.preview = "Hello"
+        client.emit(.detailDelta(
+            FeatureThreadDetail(thread: finished, messages: first.messages),
+            FeatureDetailDelta(changedMessages: [])
+        ))
+        client.finishEvents()
+        await run.value
+
+        #expect(chromeChanged.value > 0)
+        #expect(model.snapshot.threads.first?.state == .idle)
+        #expect(model.snapshot.threads.first?.preview == "Hello")
+        #expect(nonRowSnapshotChanged.value == 0)
+    }
+
+}
+
+private final class ChangeCount: @unchecked Sendable {
+    var value = 0
+}
+
+/// Runs `action` and returns after the first change to what `read` observes.
+@MainActor
+private func nextChange(_ read: @escaping @MainActor () -> Void, after action: () -> Void) async {
+    await withCheckedContinuation { continuation in
+        withObservationTracking(read) { continuation.resume() }
+        action()
+    }
 }
 
 @MainActor

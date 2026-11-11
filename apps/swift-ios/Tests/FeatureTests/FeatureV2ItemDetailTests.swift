@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import XCTest
 @testable import T3Code
 
@@ -84,6 +85,32 @@ final class FeatureV2ItemDetailTests: XCTestCase {
         await state.load(updated, context: context)
         XCTAssertEqual(client.sources.count, 2)
         XCTAssertEqual(client.sources.last?.detailRevision, updated.source.updatedAt)
+    }
+
+    func testLoadingDetailsDoesNotInvalidateExpansionObservers() async throws {
+        let item = try workItem(status: "completed", updatedAt: V2Fixture.now)
+        let client = InspectionClient()
+        let state = FeatureV2TimelineState()
+        let context = FeatureV2ItemInspectionContext(threadID: "fork", client: client, state: state)
+        let key = FeatureV2TimelineState.Key(threadID: context.threadID, source: item.source)
+        let changes = AsyncStream<String>.makeStream()
+        withObservationTracking {
+            _ = state.expandedIDs
+        } onChange: {
+            changes.continuation.yield("expansion")
+        }
+        withObservationTracking {
+            _ = state.details[key]
+        } onChange: {
+            changes.continuation.yield("details")
+        }
+
+        await state.load(item, context: context)
+        changes.continuation.finish()
+        var observed: [String] = []
+        for await change in changes.stream { observed.append(change) }
+        XCTAssertEqual(observed, ["details"])
+        XCTAssertEqual(state.details[key], .missing)
     }
 
     func testMissingAndFailedOutputStayDistinctAndRetryCanRecover() async throws {

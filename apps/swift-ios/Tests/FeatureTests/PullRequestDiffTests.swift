@@ -69,6 +69,36 @@ struct PullRequestDiffTests {
     }
 
     @Test
+    func documentFlattensFilesIntoUniqueRows() {
+        let patch = """
+        diff --git a/A.swift b/A.swift
+        --- a/A.swift
+        +++ b/A.swift
+        @@ -1 +1 @@
+        -a
+        +\t\t\tb
+        diff --git a/B.swift b/B.swift
+        --- a/B.swift
+        +++ b/B.swift
+        @@ -1 +1 @@
+        -longer
+        +line
+        """
+
+        let document = PullRequestDiffDocument(files: PullRequestDiffParser.parse(patch))
+        let rows = document.rows
+
+        #expect(rows.count == 8)
+        #expect(Set(rows.map(\.id)).count == rows.count)
+        #expect(rows[0].id == .file(document.files[0].id))
+        #expect(rows[0].line == nil)
+        #expect(rows[4].id == .file(document.files[1].id))
+        #expect(rows[5...].allSatisfy { $0.fileIndex == 1 })
+        // Three tabs count as twelve columns, wider than the hunk headers.
+        #expect(document.widestLine?.text == "+\t\t\tb")
+    }
+
+    @Test
     func repeatedDiffCursorsStopPaginationAndMarkDiffIncomplete() {
         var pagination = PullRequestDiffPagination()
 

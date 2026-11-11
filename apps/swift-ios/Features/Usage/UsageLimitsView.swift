@@ -4,7 +4,7 @@ struct UsageLimitsView: View {
     let client: any FeatureClient
     @Binding var resetCreditStates: [UsageResetCreditTarget: UsageResetCreditState]
     /// The parent keeps this view mounted behind the usage tab. Only the visible
-    /// tab may add toolbar items.
+    /// tab may add toolbar items or apply live snapshots.
     var isActive = true
 
     @State private var environments: [FeatureEnvironmentUsageLimits] = []
@@ -20,6 +20,12 @@ struct UsageLimitsView: View {
     @State private var subscriptionID = UUID()
     /// Subscriptions start on the first visit and then outlive tab switches.
     @State private var hasActivated = false
+    /// Mirrors `isActive` for the subscription task, which outlives the view
+    /// value it captured. The body never reads it.
+    @State private var isVisible = false
+    /// The latest snapshot that arrived while hidden. Applying it then would lay
+    /// out this hidden tab while the user scrolls usage, so it waits until shown.
+    @State private var parkedSnapshot: [FeatureEnvironmentUsageLimits]?
 
     private var hasLimits: Bool { groups.contains(where: \.hasLimits) }
     private var isWaiting: Bool {
@@ -30,12 +36,9 @@ struct UsageLimitsView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                Picker("Limits grouping", selection: $showEnvironments) {
-                    Text("Pooled").tag(false)
-                    Text("By environment").tag(true)
-                }
-                .pickerStyle(.segmented)
+            // A plain stack: a few sections with live bars. A lazy stack would
+            // rebuild them as they scroll in and out.
+            VStack(alignment: .leading, spacing: 24) {
                 if let streamError { notice(streamError) }
                 if let refreshError { notice(refreshError) }
                 if isRefreshing {
@@ -78,7 +81,7 @@ struct UsageLimitsView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.top, 12)
+            .padding(.top, 16)
             .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
@@ -86,15 +89,34 @@ struct UsageLimitsView: View {
         .toolbar {
             if isActive {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Refresh limits", systemImage: "arrow.clockwise") {
-                        Task { await refresh() }
+                    Menu("Limits options", systemImage: "ellipsis") {
+                        Section("Group") {
+                            Picker("Group", selection: $showEnvironments) {
+                                Text("Pooled").tag(false)
+                                Text("By environment").tag(true)
+                            }
+                            .pickerStyle(.inline)
+                            .labelsHidden()
+                        }
+                        Section {
+                            Button("Refresh limits", systemImage: "arrow.clockwise") {
+                                Task { await refresh() }
+                            }
+                            .disabled(isRefreshing)
+                        }
                     }
-                    .disabled(isRefreshing)
+                    .accessibilityValue(showEnvironments ? "By environment" : "Pooled")
                 }
             }
         }
         .onChange(of: isActive, initial: true) { _, active in
-            if active { hasActivated = true }
+            isVisible = active
+            guard active else { return }
+            hasActivated = true
+            if let parkedSnapshot {
+                self.parkedSnapshot = nil
+                receive(parkedSnapshot)
+            }
         }
         .task(id: hasActivated ? subscriptionID : nil) {
             guard hasActivated else { return }
@@ -103,8 +125,12 @@ struct UsageLimitsView: View {
                 for try await snapshot in client.usageLimitsUpdates() {
                     try Task.checkCancellation()
                     guard subscription == subscriptionID else { return }
-                    receive(snapshot)
-                    streamError = nil
+                    if isVisible {
+                        receive(snapshot)
+                    } else {
+                        parkedSnapshot = snapshot
+                    }
+                    if streamError != nil { streamError = nil }
                 }
             } catch is CancellationError {
                 return
