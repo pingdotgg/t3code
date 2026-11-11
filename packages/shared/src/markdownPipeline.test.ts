@@ -409,6 +409,12 @@ it("links complete absolute paths in prose and skips shortened ones", () => {
     "/tmp/app/[id]/page.tsx",
   ]);
   expect(links("(see /tmp/claude-1000/...). and /tmp/claude-1000/….")).toEqual([]);
+  expect(links("Served at /index.html; GET /api/users.json; see /tmp/x.md:3.")).toEqual([
+    "/tmp/x.md:3",
+  ]);
+  expect(
+    links('<a href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**'),
+  ).toEqual([]);
   expect(links(`/chat/settings and https://example.com${path}`)).toEqual([
     `https://example.com${path}`,
   ]);

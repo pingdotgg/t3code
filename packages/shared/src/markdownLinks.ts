@@ -442,25 +442,35 @@ export function isWindowsDrivePathHref(href: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(safeDecodeURIComponent(href));
 }
 
+// Bare prose paths need a filesystem root or a position, so `/api/users.json` stays a route.
 export function absoluteFilePathMatches(text: string): Array<{ index: number; path: string }> {
   const paths: Array<{ index: number; path: string }> = [];
   for (const match of text.matchAll(/(^|[\s(["'])(\/[^\s<>"'`]+)/g)) {
-    if (/(?:^|\/)(?:\.{3,}|…)(?:\/|[.,;!?:)\]]*$)/.test(match[2]!)) continue;
-    let path = match[2]!;
+    const source = match[2]!;
     let parentheses = 0;
     let brackets = 0;
-    for (const character of path) {
+    for (const character of source) {
       if (character === "(") parentheses += 1;
       if (character === ")") parentheses -= 1;
       if (character === "[") brackets += 1;
       if (character === "]") brackets -= 1;
     }
-    while (path.length > 0) {
-      if (path.endsWith(")") && parentheses < 0) parentheses += 1;
-      else if (path.endsWith("]") && brackets < 0) brackets += 1;
-      else if (!/[.,;!?:]$/.test(path)) break;
-      path = path.slice(0, -1);
+    let end = source.length;
+    while (end > 0) {
+      const character = source[end - 1]!;
+      if (character === ")" && parentheses < 0) parentheses += 1;
+      else if (character === "]" && brackets < 0) brackets += 1;
+      else if (!".,;!?:".includes(character)) break;
+      end -= 1;
     }
+    const path = source.slice(0, end);
+    // Trimming `/tmp/a/....` to `/tmp/a/` would hide its elided segment.
+    if (path.endsWith("/") && source.startsWith("...", end)) continue;
+    if (
+      !POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix)) &&
+      !POSITION_SUFFIX_PATTERN.test(path)
+    )
+      continue;
     if (!parseMarkdownFileLink(path)) continue;
     paths.push({ index: match.index + match[1]!.length, path });
   }

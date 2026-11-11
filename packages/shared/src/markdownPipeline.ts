@@ -453,10 +453,20 @@ function remarkKeepAutolinkSuffixes(): Transformer<Root> {
 
 function remarkLinkAbsoluteFilePaths(): Transformer<Root> {
   return (tree) => {
+    // Raw `<a>` tags are sibling html nodes, so text inside one is not under a link node.
+    let rawAnchorDepth = 0;
     const visit = (node: Root | RootContent) => {
       if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
       node.children = node.children.flatMap((child): typeof node.children => {
-        if (child.type !== "text") {
+        if (child.type === "html") {
+          rawAnchorDepth = Math.max(
+            0,
+            rawAnchorDepth +
+              (child.value.match(/<a[\s>]/gi)?.length ?? 0) -
+              (child.value.match(/<\/a\s*>/gi)?.length ?? 0),
+          );
+        }
+        if (child.type !== "text" || rawAnchorDepth > 0) {
           visit(child);
           return [child];
         }

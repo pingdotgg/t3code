@@ -89,6 +89,7 @@ describe("inline code that names a file", () => {
 
   it("becomes a link to the same path", () => {
     expect(rewrite("See `/tmp/claude-1000/...`.")).toBe("See `/tmp/claude-1000/...`.");
+    expect(rewrite("See `bin/python3.12`.")).toBe("See [bin/python3.12](<bin/python3.12>).");
     expect(rewrite("See `src/math.ts:2` and `./README.md`.")).toBe(
       "See [src/math.ts:2](<src/math.ts:2>) and [./README.md](<./README.md>).",
     );

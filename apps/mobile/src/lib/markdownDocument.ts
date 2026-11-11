@@ -3,10 +3,7 @@ import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
-import {
-  absoluteFilePathMatches,
-  inlineCodeFilePathCandidate,
-} from "@t3tools/shared/markdownLinks";
+import { absoluteFilePathMatches, parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
@@ -322,7 +319,7 @@ function transformNativeMarkdown(
         start !== undefined &&
         end !== undefined &&
         fileLink?.test(node.value) &&
-        inlineCodeFilePathCandidate(node.value) !== null &&
+        parseMarkdownFileLink(node.value) !== null &&
         !/[<>]/.test(node.value)
       ) {
         const edit = {
