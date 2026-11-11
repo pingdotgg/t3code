@@ -316,10 +316,8 @@ export const make = Effect.gen(function* () {
     {
       readonly input: ForgejoCli.ForgejoRepositoryInput;
       readonly repository: string;
-      readonly state: string;
     }
   >();
-  // An updated pull request sorts onto each lookup's fresh first page, so a reused scan rarely misses a change.
   const repositoryScans = yield* Cache.makeWith(
     (key: string) =>
       Effect.gen(function* () {
@@ -327,7 +325,7 @@ export const make = Effect.gen(function* () {
         if (!target) return yield* Effect.die(new Error(`No Forgejo scan target for ${key}`));
         const pulls: Array<typeof ForgejoPullRequestSchema.Type> = [];
         for (let page = 1; ; page++) {
-          const items = yield* listPullsPage(target.input, target.repository, target.state, page);
+          const items = yield* listPullsPage(target.input, target.repository, "all", page);
           if (items.length === 0) return pulls;
           pulls.push(...items);
         }
@@ -400,10 +398,11 @@ export const make = Effect.gen(function* () {
         const headIgnored = items.some(
           (item) => item.head.ref !== branch && item.head.label !== branch,
         );
-        if (headIgnored && results.length < limit) {
-          // Forgejo ignores `head`, so branches share one full scan instead of each paging through every pull request.
-          const key = [repo.baseUrl, repo.login, repo.repository, state].join("\n");
-          scanTargets.set(key, { input, repository: repo.repository, state });
+        // Forgejo ignores `head`, so background `all` lookups share one full scan. A state change
+        // moves a pull request to the fresh first page of `all`, never of `open` or `closed`.
+        if (input.state === "all" && headIgnored && results.length < limit) {
+          const key = [repo.baseUrl, repo.login, repo.repository].join("\n");
+          scanTargets.set(key, { input, repository: repo.repository });
           collect(yield* Cache.get(repositoryScans, key));
         } else {
           for (let page = 2; items.length > 0 && results.length < limit; page++) {
