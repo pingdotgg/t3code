@@ -56,6 +56,7 @@ function fillSolidPowerlineSeparator(
   top: number,
   width: number,
   height: number,
+  seamOverlap: number,
 ): void {
   const right = left + width;
   const middle = top + height / 2;
@@ -65,9 +66,9 @@ function fillSolidPowerlineSeparator(
     context.beginPath();
     context.ellipse(base, middle, width, height / 2, 0, start, start + Math.PI);
     context.closePath();
-    // Overlap the segment this cap closes by a pixel so anti-aliasing at a
-    // fractional cell edge does not leave a hairline seam.
-    context.rect(Math.min(base, base + inward), top, 1, height);
+    // Overlap the segment this cap closes so anti-aliasing at a fractional
+    // cell edge does not leave a hairline seam.
+    context.rect(Math.min(base, base + inward * seamOverlap), top, seamOverlap, height);
     context.fill();
     return;
   }
@@ -254,6 +255,7 @@ export function renderGhosttySnapshot(options: {
             top,
             metrics.width,
             height,
+            1,
           );
         }
         runStart += 1;
@@ -331,7 +333,7 @@ export function renderGhosttySnapshot(options: {
       if (cell?.text) {
         context.fillStyle = cssColor(snapshot.background);
         if (isSolidPowerlineSeparator(cell.text)) {
-          fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height);
+          fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height, 0);
         } else {
           context.font = fontForCell(cell, fontSize, fontFamily);
           context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
