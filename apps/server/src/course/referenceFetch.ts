@@ -62,6 +62,16 @@ const validateUrl = (raw: string | URL) => {
   return url;
 };
 
+type DispatcherLookup = (
+  host: string,
+  options: { readonly all?: boolean },
+  callback: (
+    error: NodeJS.ErrnoException | null,
+    address: string | ReadonlyArray<{ address: string; family: number }>,
+    family?: number,
+  ) => void,
+) => void;
+
 export const checkedDispatcher = async (
   hostname: string,
   lookup: typeof NodeDnsPromises.lookup = NodeDnsPromises.lookup,
@@ -70,21 +80,13 @@ export const checkedDispatcher = async (
   const blocked =
     !addresses.length || addresses.some(({ address }) => !isPublicFaviconHost(address));
   const address = addresses[0]!;
-  const pinnedLookup = ((
-    _host: string,
-    options: { readonly all?: boolean },
-    callback: (
-      error: NodeJS.ErrnoException | null,
-      address: string | ReadonlyArray<{ address: string; family: number }>,
-      family?: number,
-    ) => void,
-  ) =>
+  const pinnedLookup: DispatcherLookup = (_host, options, callback) =>
     options?.all
       ? callback(
           null,
           addresses.map(({ address: value, family }) => ({ address: value, family })),
         )
-      : callback(null, address.address, address.family)) as never;
+      : callback(null, address.address, address.family);
   return {
     ips: addresses.map(({ address }) => address),
     connectLookup: pinnedLookup,
