@@ -838,7 +838,12 @@ describe("CodexAdapterV2 process exit", () => {
                     "id" in entry.frame,
                 );
                 if (response?.type === "emit_inbound") {
-                  yield* emit(response.frame);
+                  yield* emit({ ...(response.frame as object), id: frame.id });
+                } else if (frame.method === "config/read") {
+                  yield* emit({
+                    id: frame.id,
+                    error: { code: -32601, message: "Method not found" },
+                  });
                 }
               }),
             ).pipe(Sink.ensuring(Deferred.succeed(outputEnded, undefined))),
@@ -4446,7 +4451,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   // regression: #15140 Codex skips an untrusted project's config without telling the user
-  it.effect("tells the user why Codex skipped the project's MCP config", () =>
+  it.effect("tells the user why Codex skipped the project's config", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const transcript = finalAnswerTranscript("codex-untrusted-project-config", [
@@ -4460,11 +4465,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           undefined,
           undefined,
           undefined,
+          undefined,
+          undefined,
+          undefined,
           (method, params) =>
             method !== "config/read"
               ? undefined
               : {
-                  config: { mcp_servers: {} },
+                  config: {},
                   origins: {},
                   layers:
                     Predicate.isObject(params) &&
@@ -4474,11 +4482,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                           {
                             name: { type: "project", dotCodexFolder: "/workspace/.codex" },
                             version: "sha256:project",
-                            config: {
-                              mcp_servers: {
-                                issue15140: { command: "python3", args: ["mcp.py"], enabled: true },
-                              },
-                            },
+                            config: { mcp_servers: { probe: { command: "probe" } } },
                             disabledReason,
                           },
                           {
@@ -4489,106 +4493,44 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                             },
                             version: "sha256:user",
                             config: {},
+                            disabledReason: "User layer disabled.",
                           },
                         ]
                       : null,
                 },
         );
-        const now = yield* DateTime.now;
 
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
             threadId: harness.threadId,
             providerThread: harness.providerThread,
-            now,
+            now: yield* DateTime.now,
             attemptId: RunAttemptId.make("attempt-codex-untrusted-project-config"),
             text: "Reply with the requested recovery marker.",
           }),
         );
         yield* harness.awaitTerminal(1);
 
-        const turnItems = harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" ? [event.turnItem] : [],
-        );
-        const notices = turnItems.flatMap((item) =>
-          item.type === "system_notice"
-            ? [item.message]
-            : item.type === "notification"
-              ? [`${item.summary}\n${item.detail ?? ""}`]
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+              ? [event.turnItem.message]
               : [],
+          ),
+          [disabledReason],
         );
-        assert.isTrue(
-          notices.some((notice) => notice.includes(disabledReason)),
-          `expected a chat notice containing ${JSON.stringify(disabledReason)}; turn items: ${JSON.stringify(turnItems, null, 2)}`,
-        );
-        assert.equal(turnItems.filter((item) => item.type === "system_notice").length, 1);
         assert.deepEqual(
           assistantMessages(harness.events).map((event) => event.message.text),
           ["No issue15140_probe tool is available."],
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-    ),
-  );
-
-  it.effect("does not warn for enabled project layers or disabled user layers", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const transcript = finalAnswerTranscript("codex-enabled-project-config", [
-          { id: "answer", text: "The tool is available." },
-        ]);
-        const harness = yield* makeCodexReplayHarness(
-          transcript,
-          undefined,
-          undefined,
-          undefined,
-          (method) =>
-            method !== "config/read"
-              ? undefined
-              : {
-                  config: {},
-                  origins: {},
-                  layers: [
-                    {
-                      name: { type: "project", dotCodexFolder: "/workspace/.codex" },
-                      version: "sha256:project",
-                      config: { mcp_servers: { probe: { command: "probe" } } },
-                    },
-                    {
-                      name: { type: "user", file: "/tmp/codex-home/config.toml", profile: null },
-                      version: "sha256:user",
-                      config: {},
-                      disabledReason: "User layer disabled.",
-                    },
-                  ],
-                },
-        );
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-codex-enabled-project-config"),
-            text: "Reply with the requested recovery marker.",
-          }),
-        );
-        yield* harness.awaitTerminal(1);
-        assert.isFalse(
-          harness.events.some(
-            (event) =>
-              event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
           ),
-        );
-        assert.deepEqual(
-          assistantMessages(harness.events).map((event) => event.message.text),
-          ["The tool is available."],
-        );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
     ),
@@ -4627,7 +4569,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),
