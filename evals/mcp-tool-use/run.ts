@@ -1241,7 +1241,7 @@ const worldState = (pr: Readonly<Record<string, unknown>> | undefined) => {
  * The PR for the sample's branch: the world's, else the one a create would open. A case that
  * mocks `gh pr create` names that URL, so the T3 tool opens the same number.
  */
-const branchPullRequest = (sample: Sample) => {
+const worldBranchPullRequest = (sample: Sample) => {
   const branch = sample.testCase.setup.world?.branch;
   const prs = worldPullRequests(sample);
   const own = prs.find((pr) => pr.headRefName === branch);
@@ -1255,6 +1255,24 @@ const branchPullRequest = (sample: Sample) => {
   const fromMock = Number(/\/pull\/(\d+)/.exec(mocked?.output ?? "")?.[1]);
   const number =
     fromMock > 0 ? fromMock : Math.max(123, ...prs.map((pr) => Number(pr.number) || 0)) + 1;
+  return { number, created: true, pr: undefined };
+};
+
+/** The PR for the checked-out branch: a stack layer's own, or the world branch's. */
+const branchPullRequest = (sample: Sample) => {
+  const checkedOut = checkedOutBranch(sample);
+  if (checkedOut === sample.testCase.setup.world?.branch) return worldBranchPullRequest(sample);
+  const known = worldPullRequests(sample).find((pr) => pr.headRefName === checkedOut);
+  if (known !== undefined) return { number: Number(known.number), created: false, pr: known };
+  const opened = sample.openedByBranch.get(checkedOut);
+  if (opened !== undefined) return { number: opened, created: false, pr: undefined };
+  const number =
+    Math.max(
+      worldBranchPullRequest(sample).number,
+      ...sample.openedByBranch.values(),
+      ...worldPullRequests(sample).map((pr) => Number(pr.number) || 0),
+      ...[...sample.linked].map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]) || 0),
+    ) + 1;
   return { number, created: true, pr: undefined };
 };
 
@@ -1373,29 +1391,13 @@ export const t3Default = (
     }
     case "pull_request_create": {
       const checkedOut = checkedOutBranch(sample);
-      if (checkedOut !== sample.testCase.setup.world?.branch) {
-        // Another layer of a stack: its own PR, opened once per branch like the real tool.
-        const known = worldPullRequests(sample).find((pr) => pr.headRefName === checkedOut);
-        const opened = sample.openedByBranch.get(checkedOut);
-        const number =
-          known !== undefined
-            ? Number(known.number)
-            : (opened ??
-              Math.max(
-                branchPullRequest(sample).number,
-                ...sample.openedByBranch.values(),
-                ...worldPullRequests(sample).map((pr) => Number(pr.number) || 0),
-                ...[...sample.linked].map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]) || 0),
-              ) + 1);
-        sample.openedByBranch.set(checkedOut, number);
-        const target = pullRequest(sample.repo, { number });
-        sample.linked.add(target.url);
-        return { ...target, created: known === undefined && opened === undefined };
-      }
       const { number, created } = branchPullRequest(sample);
       const target = pullRequest(sample.repo, { number });
       sample.linked.add(target.url);
-      if (created) sample.openedPullRequest = number;
+      // Another layer of a stack gets its own PR, opened once per branch like the real tool.
+      if (checkedOut !== sample.testCase.setup.world?.branch) {
+        sample.openedByBranch.set(checkedOut, number);
+      } else if (created) sample.openedPullRequest = number;
       return { ...target, created };
     }
     case "pull_request_read": {
