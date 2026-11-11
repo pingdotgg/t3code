@@ -23,7 +23,7 @@ export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
     baseDir: config.baseDir,
     logsDir: config.logsDir,
     cliVersion: packageJson.version,
-  }).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(FetchHttpClient.layer));
+  }).pipe(Layer.provide(ProcessRunner.layerWithSpawner), Layer.provide(FetchHttpClient.layer));
 
 export type ServiceReconcileResult =
   | {
@@ -332,7 +332,7 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
         const protection =
           status.installed && (yield* HostProcess.Platform) === "linux"
             ? yield* ServiceProtection.readProtection(path.dirname(status.unitPath)).pipe(
-                Effect.provide(ProcessRunner.layer),
+                Effect.provide(ProcessRunner.layerWithSpawner),
               )
             : undefined;
         yield* Console.log(formatServiceStatus(status, packageJson.version, protection));
@@ -444,7 +444,7 @@ const serviceProtectCommand = Command.make("protect", {
           yield* Console.log(
             "Protected T3 Code. Memory protection applies now; the server takes its OOM score after `t3 service restart`. Undo with `t3 service protect --undo`.",
           );
-        }).pipe(Effect.provide(ProcessRunner.layer)),
+        }).pipe(Effect.provide(ProcessRunner.layerWithSpawner)),
       );
     }),
   ),

@@ -441,7 +441,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
 
     // An unreachable server may still be running; never write behind it.
     yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath).pipe(
-      Effect.provide(ProcessRunner.layer),
+      Effect.provide(ProcessRunner.layerWithSpawner),
     );
     yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
     return yield* Effect.gen(function* () {

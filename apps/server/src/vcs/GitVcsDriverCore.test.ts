@@ -1734,7 +1734,7 @@ describe("rejected git refs", () => {
 
   const failWith = (stderr: string) => {
     const spawner = ChildProcessSpawner.make(() => Effect.succeed(makeFailedHandle(stderr)));
-    const layer = GitVcsDriver.layer.pipe(
+    const layer = GitVcsDriver.layerWithSpawner.pipe(
       Layer.provide(layerServerConfig),
       Layer.provideMerge(
         Layer.merge(
