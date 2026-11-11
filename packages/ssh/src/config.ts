@@ -112,6 +112,7 @@ const expandGlob = Effect.fnUntraced(function* (pattern: string) {
   const entries = yield* fs.readDirectory(directory);
   const matchedPaths: string[] = [];
   for (const entry of entries) {
+    if (entry.startsWith(".") && !basePattern.startsWith(".")) continue;
     if (!matcher.test(entry)) {
       continue;
     }

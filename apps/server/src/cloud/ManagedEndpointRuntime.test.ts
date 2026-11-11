@@ -955,6 +955,54 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
+  it.effect.each(["SIGINT", "SIGTERM"] as const)(
+    "does not restart a connector that exits after the server receives %s",
+    (signal) =>
+      Effect.gen(function* () {
+        const spawned: Array<number> = [];
+        const firstExit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        const firstKilled = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.gen(function* () {
+            const pid = 400 + spawned.length;
+            spawned.push(pid);
+            const handle = makeHandle({
+              pid,
+              exitCode:
+                pid === 400
+                  ? Deferred.await(firstExit)
+                  : (Effect.never as Effect.Effect<ChildProcessSpawner.ExitCode>),
+              onKill: () => {
+                if (pid === 400) Deferred.doneUnsafe(firstKilled, Exit.void);
+              },
+            });
+            yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+            return handle;
+          }),
+        );
+        // Invoke only the runtime's own listeners; emitting would reach the test worker's too.
+        const listenersBefore = new Set(process.listeners(signal));
+        const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+        const runtimeListeners = process
+          .listeners(signal)
+          .filter((listener) => !listenersBefore.has(listener));
+
+        yield* runtime.applyConfig({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "token",
+          tunnelId: "tunnel-1",
+        });
+        for (const listener of runtimeListeners) listener(signal);
+        // The process group receives the signal too, so the connector exits cleanly.
+        yield* Deferred.succeed(firstExit, ChildProcessSpawner.ExitCode(0));
+        yield* Deferred.await(firstKilled);
+        // Holding the reconcile lock waits out the supervisor's restart decision.
+        yield* runtime.restartConnector(400, Effect.succeed(true));
+
+        expect(spawned).toEqual([400]);
+      }),
+  );
+
   it.effect("serializes concurrent connector config changes", () =>
     Effect.gen(function* () {
       const spawned: Array<number> = [];

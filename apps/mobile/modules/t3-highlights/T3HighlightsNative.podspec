@@ -18,6 +18,10 @@ Pod::Spec.new do |s|
   # slower. They are generated code, so optimize them in every configuration.
   s.compiler_flags = '-O2'
   s.pod_target_xcconfig = {
+    # Under C11, wasm2c makes its stack depth counter thread-local, so every lexer
+    # function entry calls _tlv_get_addr (2–9% of lexing time on an iPhone 12).
+    # Callers already serialize the lexer (t3_highlights.h), so a plain global is safe.
+    'GCC_C_LANGUAGE_STANDARD' => 'gnu99',
     # Plain malloc memory with explicit bounds checks: no guard-page signal
     # handlers competing with the app's crash reporting.
     'GCC_PREPROCESSOR_DEFINITIONS' => '$(inherited) WASM_RT_USE_MMAP=0 WASM_RT_MEMCHECK_BOUNDS_CHECK=1 WASM_RT_SKIP_SIGNAL_RECOVERY=1',
