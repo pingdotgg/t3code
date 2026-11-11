@@ -5,6 +5,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  CommandId,
   MessageId,
   GitCommandError,
   type ModelSelection,
@@ -2229,6 +2230,27 @@ layer("ProviderEventIngestorV2", (it) => {
         );
         assert.equal((yield* projectionStore.getThread(rootEvent.threadId)).title, "Native Name");
         assert.deepEqual(yield* retitle(), []);
+
+        // Renaming to the current name still cancels a pending generated title.
+        const named = yield* projectionStore.getThread(rootEvent.threadId);
+        yield* eventSink.write({
+          events: [
+            {
+              ...rootEvent,
+              id: yield* idAllocator.allocate.event({ threadId: rootEvent.threadId }),
+              type: "thread.metadata-updated",
+              payload: {
+                ...named,
+                titleRegeneration: { requestId: CommandId.make("pending-title"), startedAt: now },
+              },
+            },
+          ],
+        });
+        assert.deepEqual(
+          (yield* retitle()).map((stored) => stored.event.type),
+          ["thread.metadata-updated"],
+        );
+        assert.isNotOk((yield* projectionStore.getThread(rootEvent.threadId)).titleRegeneration);
       }),
   );
 

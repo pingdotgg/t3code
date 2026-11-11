@@ -499,13 +499,23 @@ export const layer: Layer.Layer<
                   ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
                 }),
               );
-              if (existing === null || existing.title === input.event.title) return [];
+              // A native rename is a user rename: a pending generated title must not replace it.
+              if (
+                existing === null ||
+                (existing.title === input.event.title && existing.titleRegeneration == null)
+              )
+                return [];
               const now = yield* DateTime.now;
               return [
                 yield* makeDomainEvent(input, {
                   type: "thread.metadata-updated",
                   threadId: existing.id,
-                  payload: { ...existing, title: input.event.title, updatedAt: now },
+                  payload: {
+                    ...existing,
+                    title: input.event.title,
+                    titleRegeneration: null,
+                    updatedAt: now,
+                  },
                   occurredAt: now,
                 }),
               ];
