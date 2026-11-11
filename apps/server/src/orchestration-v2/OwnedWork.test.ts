@@ -157,10 +157,17 @@ it.layer(layerTest)("owned work assign → claim → progress → handoff", (it)
         commandId: CommandId.make("owned-work-complete"),
         threadId: homeThreadId,
         itemId,
+        closureReason: "no_follow_on",
+        closureNote: "Diff landed; nothing else to hand on.",
         actorThreadId: handoffThreadId,
       });
       projection = yield* orchestrator.getThreadProjection(homeThreadId);
       assert.equal(projection.thread.ownedWorkItems?.[0]?.status, "completed");
+      assert.equal(projection.thread.ownedWorkItems?.[0]?.closureReason, "no_follow_on");
+      assert.equal(
+        projection.thread.ownedWorkItems?.[0]?.closureNote,
+        "Diff landed; nothing else to hand on.",
+      );
       assert.equal(
         (yield* orchestrator.getShellSnapshot()).threads.find(
           (thread) => thread.id === homeThreadId,
@@ -200,6 +207,87 @@ it.layer(layerTest)("owned work assign → claim → progress → handoff", (it)
         .pipe(Effect.flip);
       assert.equal(error._tag, "OrchestratorDispatchError");
       assert.match(String(error.cause), /not claimable/);
+    }),
+  );
+
+  it.effect("refuses complete without a closure target when the reason needs one", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* setup;
+      const needsTargetId = OwnedWorkItemId.make("owned-work:needs-target");
+      yield* orchestrator.dispatch({
+        type: "owned-work.assign",
+        commandId: CommandId.make("owned-work-assign-target"),
+        threadId: homeThreadId,
+        itemId: needsTargetId,
+        title: "Needs a destination",
+        description: "",
+        createdByThreadId: homeThreadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "owned-work.claim",
+        commandId: CommandId.make("owned-work-claim-target"),
+        threadId: homeThreadId,
+        itemId: needsTargetId,
+        claimedByThreadId: assigneeThreadId,
+      });
+      const missingTarget = yield* orchestrator
+        .dispatch({
+          type: "owned-work.complete",
+          commandId: CommandId.make("owned-work-complete-missing-target"),
+          threadId: homeThreadId,
+          itemId: needsTargetId,
+          closureReason: "handed_off",
+          actorThreadId: assigneeThreadId,
+        })
+        .pipe(Effect.flip);
+      assert.equal(missingTarget._tag, "OrchestratorDispatchError");
+      assert.match(String(missingTarget.cause), /closureTarget is required/);
+
+      yield* orchestrator.dispatch({
+        type: "owned-work.complete",
+        commandId: CommandId.make("owned-work-complete-with-target"),
+        threadId: homeThreadId,
+        itemId: needsTargetId,
+        closureReason: "handed_off",
+        closureTarget: ThreadId.make("thread:next-stage"),
+        actorThreadId: assigneeThreadId,
+      });
+      const projection = yield* orchestrator.getThreadProjection(homeThreadId);
+      const item = projection.thread.ownedWorkItems?.find(
+        (candidate) => candidate.id === needsTargetId,
+      );
+      assert.equal(item?.status, "completed");
+      assert.equal(item?.closureReason, "handed_off");
+      assert.equal(item?.closureTarget, "thread:next-stage");
+    }),
+  );
+
+  it.effect("records cancel as closure reason canceled", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* setup;
+      const cancelId = OwnedWorkItemId.make("owned-work:cancel-me");
+      yield* orchestrator.dispatch({
+        type: "owned-work.assign",
+        commandId: CommandId.make("owned-work-assign-cancel"),
+        threadId: homeThreadId,
+        itemId: cancelId,
+        title: "Withdraw",
+        description: "",
+        createdByThreadId: homeThreadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "owned-work.cancel",
+        commandId: CommandId.make("owned-work-cancel"),
+        threadId: homeThreadId,
+        itemId: cancelId,
+        closureNote: "Scope dropped.",
+        actorThreadId: homeThreadId,
+      });
+      const projection = yield* orchestrator.getThreadProjection(homeThreadId);
+      const item = projection.thread.ownedWorkItems?.find((candidate) => candidate.id === cancelId);
+      assert.equal(item?.status, "cancelled");
+      assert.equal(item?.closureReason, "canceled");
+      assert.equal(item?.closureNote, "Scope dropped.");
     }),
   );
 });

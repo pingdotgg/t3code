@@ -2,6 +2,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ServerCommand,
   type OwnedWorkItem,
+  ownedWorkClosureError,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
@@ -59,8 +60,8 @@ const actorOwns = (item: OwnedWorkItem, actorThreadId: string | undefined) => {
 };
 
 /**
- * Applies an owned-work command to the home thread. The orchestrator serializes commands, so
- * claim checks here are what make an item leave the unclaimed queue once.
+ * Applies an owned-work command to the home thread. Complete/cancel require a closure reason
+ * (delivery, not acceptance). Claim checks serialize who leaves the unclaimed queue.
  */
 export function decideOwnedWorkCommand(input: {
   readonly thread: OrchestrationV2AppThread;
@@ -90,6 +91,9 @@ export function decideOwnedWorkCommand(input: {
         claimedByThreadId: null,
         progress: null,
         handoffNote: null,
+        closureReason: null,
+        closureTarget: null,
+        closureNote: null,
         createdByThreadId: command.createdByThreadId,
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -182,11 +186,20 @@ export function decideOwnedWorkCommand(input: {
       if (!actorOwns(item, command.actorThreadId)) {
         return Result.fail(`Owned work item ${command.itemId} is owned by another thread.`);
       }
+      const closureError = ownedWorkClosureError({
+        closureReason: command.closureReason,
+        closureTarget: command.closureTarget,
+      });
+      if (closureError !== null) return Result.fail(closureError);
+      const status = command.closureReason === "canceled" ? "cancelled" : "completed";
       return withItems(
         thread,
         replaceAt(items, index, {
           ...item,
-          status: "completed",
+          status,
+          closureReason: command.closureReason,
+          closureTarget: command.closureTarget ?? null,
+          closureNote: command.closureNote ?? null,
           completedAt: nowIso,
           updatedAt: nowIso,
         }),
@@ -212,6 +225,9 @@ export function decideOwnedWorkCommand(input: {
         replaceAt(items, index, {
           ...item,
           status: "cancelled",
+          closureReason: "canceled",
+          closureTarget: null,
+          closureNote: command.closureNote ?? null,
           completedAt: nowIso,
           updatedAt: nowIso,
         }),

@@ -15,6 +15,7 @@ import {
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
+  OwnedWorkClosureReason,
   OwnedWorkItem,
   OwnedWorkItemId,
   ThreadId,
@@ -114,7 +115,7 @@ const OWNED_WORK_READ_ACTIONS = ["list", "read"] as const;
 const OwnedWorkTool = Tool.make("t3_owned_work", {
   ...commandTool,
   description:
-    "Owned work queue on a thread: assign → claim → progress → handoff. Omit `threadId` for this thread. list/read. assign: `title`. claim/progress/handoff/complete/cancel: `itemId` (+ `progress` or `toThreadId`).",
+    "Owned work queue on a thread: assign → claim → progress → handoff → close. Omit `threadId` for this thread. list/read. assign: `title`. claim/progress/handoff: `itemId` (+ `progress` or `toThreadId`). complete: `itemId` + `closureReason` (handed_off|denied|canceled|no_follow_on|escalation|superseded); `handed_off`/`escalation` also need `closureTarget`. cancel: `itemId` (records canceled). Closure records delivery, not acceptance.",
   parameters: Schema.Struct({
     action: Schema.Literals([
       ...OWNED_WORK_READ_ACTIONS,
@@ -134,6 +135,8 @@ const OwnedWorkTool = Tool.make("t3_owned_work", {
     toThreadId: Schema.optional(ThreadId),
     progress: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
     note: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    closureReason: Schema.optional(OwnedWorkClosureReason),
+    closureTarget: Schema.optional(TrimmedNonEmptyString),
     openOnly: Schema.optional(Schema.Boolean),
   }),
   success: Schema.Union([

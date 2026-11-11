@@ -45,7 +45,7 @@ import {
 import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
-import { OwnedWorkItem } from "./ownedWork.ts";
+import { OwnedWorkClosureReason, OwnedWorkItem } from "./ownedWork.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import {
   OrchestrationSearchThreadsInput,
@@ -3123,6 +3123,11 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     itemId: OwnedWorkItemId,
+    /** Where the work went; required. Not acceptance of the next stage. */
+    closureReason: OwnedWorkClosureReason,
+    /** Required for `handed_off` and `escalation`. */
+    closureTarget: Schema.optional(TrimmedNonEmptyString),
+    closureNote: Schema.optional(Schema.String),
     actorThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({
@@ -3130,6 +3135,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     itemId: OwnedWorkItemId,
+    /** Always recorded as `canceled`; optional note only. */
+    closureNote: Schema.optional(Schema.String),
     actorThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({

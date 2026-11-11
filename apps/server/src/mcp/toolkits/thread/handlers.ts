@@ -414,10 +414,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           }
           case "complete": {
             const itemId = yield* required(input.itemId, "itemId");
+            const closureReason = yield* required(input.closureReason, "closureReason");
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
               type: "owned-work.complete",
               itemId,
+              closureReason,
+              closureTarget: input.closureTarget,
+              closureNote: input.note,
               actorThreadId,
             }));
           }
@@ -427,6 +431,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               ...common,
               type: "owned-work.cancel",
               itemId,
+              closureNote: input.note,
               actorThreadId,
             }));
           }
