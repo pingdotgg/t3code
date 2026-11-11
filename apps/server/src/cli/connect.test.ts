@@ -162,3 +162,70 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     );
   },
 );
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
+  "t3 connect status",
+  (it) => {
+    it.effect(
+      "reports the running server's tunnel hostname, the address other machines link to",
+      () =>
+        Effect.gen(function* () {
+          const server = yield* Effect.acquireRelease(
+            Effect.callback<NodeHttp.Server>((resume) => {
+              const listening = NodeHttp.createServer((request, response) => {
+                if (request.url !== "/api/connect/link-state") {
+                  response.writeHead(404).end();
+                  return;
+                }
+                response.writeHead(200, { "content-type": "application/json" });
+                response.end(
+                  JSON.stringify({
+                    linked: true,
+                    cloudUserId: "user-1",
+                    relayUrl: "https://relay.example",
+                    relayIssuer: null,
+                    publishAgentActivity: false,
+                    tunnelHostname: "box-1.tunnel.example",
+                  }),
+                );
+              });
+              listening.listen(0, "127.0.0.1", () => resume(Effect.succeed(listening)));
+            }),
+            (listening) => Effect.sync(() => listening.close()),
+          );
+          const address = server.address();
+          if (address === null || typeof address === "string") {
+            return yield* Effect.die(new Error("Expected a TCP address"));
+          }
+          const fs = yield* FileSystem.FileSystem;
+          const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-connect-status-test-" });
+          yield* persistServerRuntimeState({
+            path: `${baseDir}/userdata/server-runtime.json`,
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: address.port,
+            }),
+          });
+
+          yield* Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
+            "connect",
+            "status",
+            "--json",
+            "--base-dir",
+            baseDir,
+          ]);
+
+          const status = JSON.parse((yield* TestConsole.logLines).join("\n"));
+          assert.equal(status.tunnelHostname, "box-1.tunnel.example");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+              Layer.fresh(TestConsole.layer),
+            ),
+          ),
+        ),
+    );
+  },
+);

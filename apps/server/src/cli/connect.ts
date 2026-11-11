@@ -153,6 +153,8 @@ interface CloudCliStatus {
   readonly linkMode: CliState.CliDesiredLinkMode;
   /** `null` when no server answered the live check, or none ran because no tunnel is wanted. */
   readonly reachability: EnvironmentConnectReachability | null;
+  /** The address other machines link to. `null` when no server answers or no tunnel is up. */
+  readonly tunnelHostname: string | null;
 }
 
 function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): ReadonlyArray<string> {
@@ -208,6 +210,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
     `  Authorization: ${status.authenticated ? "stored credential" : "missing"}`,
     `  Environment link: ${provisioned}`,
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
+    `  Tunnel: ${status.tunnelHostname ? `https://${status.tunnelHostname}` : "not connected"}`,
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
     ...formatRelayClientStatus(status.relayClient),
     ...(!status.desired || status.linkMode !== "managed"
@@ -348,6 +351,23 @@ const checkLiveReachability = Effect.fn("cloud.cli.check_live_reachability")(fun
         client.connect.checkReachability({ headers: { authorization: `Bearer ${token}` } }),
       ),
       Effect.timeout(CLOUD_CLI_REACHABILITY_TIMEOUT),
+    ),
+  ).pipe(Effect.orElseSucceed(() => null));
+});
+
+/** Asks the running server for its tunnel hostname. `null` when no server answers or no tunnel is up. */
+const readLiveTunnelHostname = Effect.fn("cloud.cli.read_live_tunnel_hostname")(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+  if (Option.isNone(runtimeState)) return null;
+  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  return yield* withCloudCliSessionToken(environmentAuth, AuthRelayReadScope, (token) =>
+    HttpApiClient.make(EnvironmentHttpApi, { baseUrl: runtimeState.value.origin }).pipe(
+      Effect.flatMap((client) =>
+        client.connect.linkState({ headers: { authorization: `Bearer ${token}` } }),
+      ),
+      Effect.map((state) => state.tunnelHostname ?? null),
+      Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
     ),
   ).pipe(Effect.orElseSucceed(() => null));
 });
@@ -706,6 +726,7 @@ const connectStatusCommand = Command.make("status", {
         // A publish-only link has no tunnel for other devices to reach.
         const reachability =
           desired && linkMode === "managed" ? yield* checkLiveReachability() : null;
+        const tunnelHostname = yield* readLiveTunnelHostname();
         const status: CloudCliStatus = {
           desired,
           authenticated,
@@ -719,6 +740,7 @@ const connectStatusCommand = Command.make("status", {
           relayClient: executable,
           linkMode,
           reachability,
+          tunnelHostname,
         };
         yield* Console.log(formatCloudStatus(status, { json: flags.json }));
       }),
