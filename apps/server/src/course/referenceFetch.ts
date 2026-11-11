@@ -55,9 +55,19 @@ const checkedDispatcher = async (
       connect: {
         lookup: ((
           _host: string,
-          _options: unknown,
-          callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void,
-        ) => callback(null, address.address, address.family)) as never,
+          options: { readonly all?: boolean },
+          callback: (
+            error: NodeJS.ErrnoException | null,
+            address: string | ReadonlyArray<{ address: string; family: number }>,
+            family?: number,
+          ) => void,
+        ) =>
+          options.all
+            ? callback(
+                null,
+                addresses.map(({ address: value, family }) => ({ address: value, family })),
+              )
+            : callback(null, address.address, address.family)) as never,
       },
     }),
   };
