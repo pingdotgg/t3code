@@ -328,6 +328,12 @@ export default defineConfig({
         rules: { "t3code/prefer-effect-fn": "off" },
       },
       {
+        files: ["apps/web/src/**", "apps/mobile/src/**", "apps/desktop/src/**"],
+        // Users still pick their own project icon from the full Lucide set.
+        excludeFiles: ["apps/web/src/projectIconOptions.ts"],
+        rules: { "t3code/no-sparkles-icon": "error" },
+      },
+      {
         files: ["apps/web/**/*.test.{ts,tsx}"],
         rules: { "t3code/require-disposable-render": "error" },
       },
@@ -783,7 +789,6 @@ export default defineConfig({
         "apps/web/src/components/settings/ConnectionsSettings.tsx": 7,
         "apps/web/src/components/settings/AddEnvironmentDialog.tsx": 13,
         "apps/web/src/components/settings/AuthorizedClientsSettings.tsx": 26,
-        "apps/web/src/components/onboarding/WelcomeWizard.tsx": 41,
         "apps/web/src/components/usage/UsagePage.tsx": 38,
         "apps/web/src/components/GitActionsControl.tsx": 33,
         "apps/web/src/components/Sidebar.tsx": 3,
