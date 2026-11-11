@@ -1503,7 +1503,7 @@ function PullRequestCodeTab({
               </CollapsibleTrigger>
             </h2>
             <CollapsiblePanel>
-              <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
+              <div className="max-h-64 space-y-1 overflow-auto px-1 pb-1">
                 {[...orphanFiles].map(([path, threads]) => (
                   <div key={path}>
                     <Tooltip>
