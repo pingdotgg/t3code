@@ -296,25 +296,14 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const scratchProjectRoot: ManagedProjectFolders["Service"]["scratchProjectRoot"] =
-    scratchRoot.pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.succeedNone,
-          onSome: (root) =>
-            existingScratchProject(root).pipe(
-              Effect.map((project) =>
-                Option.some(
-                  Option.match(project, {
-                    onNone: () => root,
-                    onSome: (found) => found.workspaceRoot,
-                  }),
-                ),
-              ),
-            ),
-        }),
-      ),
-    );
+  const scratchProjectRoot: ManagedProjectFolders["Service"]["scratchProjectRoot"] = Effect.gen(
+    function* () {
+      const root = yield* scratchRoot;
+      if (Option.isNone(root)) return root;
+      const project = yield* existingScratchProject(root.value);
+      return Option.some(Option.isSome(project) ? project.value.workspaceRoot : root.value);
+    },
+  );
 
   const isScratchFolder: ManagedProjectFolders["Service"]["isScratchFolder"] = Effect.fn(
     "ManagedProjectFolders.isScratchFolder",
