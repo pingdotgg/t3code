@@ -3695,6 +3695,103 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect.each([
     {
+      name: "separate frames",
+      postText:
+        "The picture isn't right yet. The yellow angle arcs sit outside the drops, and the wax drop isn't drawn at the angle its label says. I'm fixing the geometry before rendering.",
+      expected: [
+        ["assistant_message", "Let's test the idea."],
+        [
+          "reasoning",
+          "The picture isn't right yet. The yellow angle arcs sit outside the drops, and the wax drop isn't drawn at the angle its label says. I'm fixing the geometry before rendering.",
+        ],
+      ],
+    },
+    {
+      name: "combined text card and preview frame",
+      combined: true,
+      expected: [["assistant_message", "Let's test the idea."]],
+    },
+  ] as const)("lesson card text before html_preview ($name)", ({ postText, combined, expected }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(
+            `card-html-preview-${combined === true ? "combined" : postText}`,
+          ),
+          text: "Teach me",
+          attachments: [],
+          lesson: true,
+        }),
+      );
+      const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
+        claudeSdkFrame({
+          type: "assistant",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: { id: uuid, model: "claude-sonnet-5-5", content },
+        });
+      const card = {
+        type: "tool_use",
+        id: "post-card-quiz",
+        name: "mcp__t3-code__quiz_card",
+        input: { reply: "What angle do you see?" },
+      };
+      const preview = {
+        type: "tool_use",
+        id: "post-card-html",
+        name: "mcp__t3-code__html_preview",
+        input: {},
+      };
+      const frames =
+        combined === true
+          ? [
+              snapshot("combined-card-frame", [
+                { type: "text", text: "Let's test the idea." },
+                card,
+                preview,
+              ]),
+            ]
+          : [
+              snapshot("post-card-root", [{ type: "text", text: "Let's test the idea." }]),
+              snapshot("pre-card-preview", [preview]),
+              snapshot("post-card-card", [card]),
+              snapshot("post-card-check", [{ type: "text", text: postText! }]),
+              snapshot("post-card-preview", [preview]),
+            ];
+      for (const frame of [...frames, makeResultFrame({ uuid: "post-card-result", result: "" })]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(1);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        (event.turnItem.type === "reasoning" || event.turnItem.type === "assistant_message")
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        items.map((item) => [item.type, item.text] as const),
+        expected as ReadonlyArray<readonly [string, string]>,
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    {
       lead: "Right, and your reasoning separates all four cases correctly. You've now covered X.",
       reply:
         "Right, and your reasoning separates all four cases correctly. Here is the explain-back.",

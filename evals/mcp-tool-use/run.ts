@@ -1915,8 +1915,9 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
   const calls = attempted.filter((call) => !(call.failed && isPageTool(call.tool)));
   const count = (tool: string) => calls.filter((call) => call.tool === tool).length;
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request".
+  const matchesTool = (tool: string, actual: string) => tool.split("|").includes(actual);
   const found = ({ tool, args = {} }: McpToolUseCall, among = calls) =>
-    among.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
+    among.some((call) => matchesTool(tool, call.tool) && matches(args, call.input));
   const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
   if (expect.distinctCalls !== undefined) {
@@ -1947,7 +1948,9 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
   for (const tool of expect.notCalls ?? [])
     add(`notCalls ${tool}`, !attempted.some((call) => call.tool === tool));
   if (expect.order !== undefined) {
-    const firsts = expect.order.map((tool) => calls.findIndex((call) => call.tool === tool));
+    const firsts = expect.order.map((tool) =>
+      calls.findIndex((call) => matchesTool(tool, call.tool)),
+    );
     const inOrder = firsts.every((at, i) => at > (firsts[i - 1] ?? -1));
     add(`order ${expect.order.join(" > ")}`, inOrder);
   }
@@ -2343,7 +2346,11 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
           normalizeToolName(block.name) === "question_card";
         const isT3Mcp = block.name.startsWith("mcp__t3-code__");
         // The adapter keeps short narration before a non-T3 tool as a Thought (APP-108).
-        if (isT3Mcp || held.join("").length > 300) {
+        // After a card, short text before a drawing tool is working talk and stays a Thought too.
+        if (
+          (isT3Mcp && (!sample.lessonCardSeen || isCard)) ||
+          held.reduce((total, text) => total + text.length, 0) > 300
+        ) {
           if (isCard) {
             texts.push(
               ...held.flatMap((text) => {
