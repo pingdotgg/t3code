@@ -4,10 +4,12 @@ import {
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserEvent as DesktopBrowserEventType,
+  type PreviewAutomationLoadError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -26,6 +28,9 @@ const AGENT_INPUT_COMMAND =
 const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|callFunctionOn)$)/;
 const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
 const FOCUS_IDLE = "5 seconds";
+/** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
+const FIRST_PAGE_TIMEOUT = "5 seconds";
+const ERR_ABORTED = -3;
 
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
@@ -44,7 +49,7 @@ interface AttachedTab {
   readonly debuggee: DesktopBrowserTabDebugger;
   relay: CdpRelayConnection | null;
   screenshotTurn: object | null;
-  /** Each holds focus and painting while `held` and whoever queued it still waits on it. */
+  /** Each keeps the guest painting while whoever queued it still waits, and focused while `held`. */
   readonly waitingScreenshots: Array<{
     readonly start: () => void;
     readonly live: () => boolean;
@@ -57,10 +62,9 @@ interface AttachedTab {
   focusChange: Promise<void> | null;
   focusUses: number;
   /** Each pending command, by the extra session waiting on it; the main connection's have none. */
-  readonly focusPending: Map<
-    object,
-    { readonly owner: string | undefined; readonly paints: boolean }
-  >;
+  readonly focusPending: Map<object, string | undefined>;
+  /** Screenshots Chromium was sent and has not answered; each keeps its wake lock until then. */
+  readonly capturing: Set<object>;
   /** Whether the client keeps the guest painting, as published on `painting`. */
   painting: boolean;
   /**
@@ -78,6 +82,8 @@ interface AttachedTab {
     sessionId: string,
   ) => void;
   readonly onNewDocument: () => void;
+  /** Stops waiting for the first page; set until the tab is announced. */
+  stopWaiting: (() => void) | null;
 }
 
 export class DesktopBrowserHost extends Context.Service<
@@ -87,6 +93,7 @@ export class DesktopBrowserHost extends Context.Service<
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
+    readonly loadFailed: (key: DesktopBrowserTabKey, failure: PreviewAutomationLoadError) => void;
     readonly setShown: (key: DesktopBrowserTabKey, shown: boolean | undefined) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
@@ -142,7 +149,7 @@ export const make = Effect.gen(function* () {
     tab: AttachedTab,
     relay: CdpRelayConnection,
     ownerLive: () => boolean,
-    /** Sends only while `current` holds; holds focus and painting only while `held`. */
+    /** Sends only while `current` holds; holds focus only while `held`. */
     capture: (current: () => boolean, held: boolean) => Promise<unknown>,
   ) =>
     new Promise<unknown>((resolve, reject) => {
@@ -230,38 +237,42 @@ export const make = Effect.gen(function* () {
     const active =
       tabs.get(keyOf(tab.key)) === tab &&
       (tab.screencasts.size > 0 ||
-        waitingHolds(tab) ||
-        [...tab.focusPending.values()].some((hold) => hold.paints));
+        tab.capturing.size > 0 ||
+        tab.waitingScreenshots.some((waiting) => waiting.live()));
     if (tab.painting === active) return;
     tab.painting = active;
     runFork(PubSub.publish(painting, { key: tab.key, active }));
   };
 
   /** A command may wait on the page's next frame, so the guest stays focused until it settles. */
-  const holdFocus = <A>(
-    tab: AttachedTab,
-    method: string,
-    owner: string | undefined,
-    work: () => Promise<A>,
-  ) => {
+  const holdFocus = <A>(tab: AttachedTab, owner: string | undefined, work: () => Promise<A>) => {
     const pending = {};
-    tab.focusPending.set(pending, { owner, paints: method === "Page.captureScreenshot" });
+    tab.focusPending.set(pending, owner);
     tab.focusUses += 1;
     setFocusEmulation(tab, true);
     releaseFocusWhenIdle(tab);
-    syncPainting(tab);
     return work().finally(() => {
       if (!tab.focusPending.delete(pending)) return;
       tab.focusUses += 1;
       releaseFocusWhenIdle(tab);
+    });
+  };
+
+  /** Chromium answers a capture, and frees its wake lock, only once the guest paints a frame. */
+  const paintUntilAnswered = <A>(tab: AttachedTab, send: () => Promise<A>) => {
+    const sent = {};
+    tab.capturing.add(sent);
+    syncPainting(tab);
+    return send().finally(() => {
+      tab.capturing.delete(sent);
       syncPainting(tab);
     });
   };
 
   /**
    * Chromium can leave a command unanswered, so the screenshot guard's release points
-   * also end every hold: a released relay has no one waiting, and a new document answers
-   * nothing pending from the old one. A released relay's screencast has no viewer to stop it.
+   * also end every focus hold: a released relay has no one waiting, and a new document
+   * answers nothing pending from the old one. A released relay's screencast has no viewer.
    */
   const dropFocusHolds = (tab: AttachedTab) => {
     tab.focusPending.clear();
@@ -279,8 +290,8 @@ export const make = Effect.gen(function* () {
   /** A detached session, such as a closed viewer, waits on nothing it sent. */
   const dropSessionHolds = (tab: AttachedTab, owner: string) => {
     tab.screencasts.delete(owner);
-    for (const [pending, hold] of tab.focusPending) {
-      if (hold.owner === owner) tab.focusPending.delete(pending);
+    for (const [pending, holder] of tab.focusPending) {
+      if (holder === owner) tab.focusPending.delete(pending);
     }
     releaseFocusWhenIdle(tab);
     syncPainting(tab);
@@ -288,7 +299,7 @@ export const make = Effect.gen(function* () {
 
   /**
    * A command the server stopped waiting on, such as a timed-out screenshot or evaluation,
-   * may never settle; the turn's end ends every hold. The agent also sends on its own extra
+   * may never settle; the turn's end ends every focus hold. The agent also sends on its own extra
    * session, so this cannot spare other sessions; a viewer's screencast still holds.
    */
   const endAgentTurn = (threadId: string) => {
@@ -296,7 +307,7 @@ export const make = Effect.gen(function* () {
     for (const tab of tabs.values()) {
       if (tab.key.threadId !== threadId) continue;
       tab.agentUsed = false;
-      // Still sent in turn, so the queue keeps moving, but no longer kept painting.
+      // Still sent in turn, so the queue keeps moving, but no longer kept focused.
       for (const waiting of tab.waitingScreenshots) waiting.held = false;
       dropFocusHolds(tab);
     }
@@ -317,8 +328,10 @@ export const make = Effect.gen(function* () {
           if (sessionId === undefined && method === "Page.startScreencast") {
             tab.screencasts.add(owner);
             if (owner !== undefined) streamingOwners.add(owner);
+            syncPainting(tab);
           } else if (sessionId === undefined && method === "Page.stopScreencast") {
             tab.screencasts.delete(owner);
+            syncPainting(tab);
           }
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
           if (
@@ -331,9 +344,11 @@ export const make = Effect.gen(function* () {
           const forward = (current?: () => boolean) => {
             const change = tab.focusChange;
             const run = () =>
-              tab.relay === relay && (current === undefined || current())
-                ? send(method, params, sessionId)
-                : Promise.reject(new Error("The page this screenshot was for has moved on."));
+              tab.relay !== relay || (current !== undefined && !current())
+                ? Promise.reject(new Error("The page this screenshot was for has moved on."))
+                : current === undefined
+                  ? send(method, params, sessionId)
+                  : paintUntilAnswered(tab, () => send(method, params, sessionId));
             return change === null ? run() : change.then(run);
           };
           return method === "Page.captureScreenshot"
@@ -342,17 +357,17 @@ export const make = Effect.gen(function* () {
                 relay,
                 () => owner === undefined || !detachedOwners.has(owner),
                 (current, held) =>
-                  held ? holdFocus(tab, method, owner, () => forward(current)) : forward(current),
+                  held ? holdFocus(tab, owner, () => forward(current)) : forward(current),
               )
             : method === "Page.startScreencast"
-              ? holdFocus(tab, method, owner, forward).catch((cause: unknown) => {
+              ? holdFocus(tab, owner, forward).catch((cause: unknown) => {
                   // A viewer can outlive a refused stream; nothing is streaming for it.
                   if (sessionId === undefined && tab.relay === relay) tab.screencasts.delete(owner);
                   releaseFocusWhenIdle(tab);
                   syncPainting(tab);
                   throw cause;
                 })
-              : holdFocus(tab, method, owner, forward);
+              : holdFocus(tab, owner, forward);
         },
         sessionDetached: (owner) => {
           detachedOwners.add(owner);
@@ -413,11 +428,13 @@ export const make = Effect.gen(function* () {
     const tab = tabs.get(id);
     if (!tab) return;
     tabs.delete(id);
+    const announced = tab.stopWaiting === null;
+    tab.stopWaiting?.();
     tab.relay = null;
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
     syncPainting(tab);
-    emit({ type: "detached", ...key });
+    if (announced) emit({ type: "detached", ...key });
   };
 
   const attach = (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => {
@@ -437,6 +454,7 @@ export const make = Effect.gen(function* () {
       focusChange: null,
       focusUses: 0,
       focusPending: new Map(),
+      capturing: new Set(),
       painting: false,
       agentUsed: false,
       focusReleasing: false,
@@ -451,17 +469,58 @@ export const make = Effect.gen(function* () {
       // A screenshot pending when the page loads a new document, a reload included, can
       // stay unanswered. A crashed page lands here once it reloads, well after its renderer died.
       onNewDocument: () => {
-        // Before the next screenshot starts, so its own hold survives.
+        // Before the next screenshot starts, so its own holds survive.
+        tab.capturing.clear();
         dropFocusHolds(tab);
         if (tab.screenshotTurn !== null) nextScreenshot(tab);
       },
+      stopWaiting: null,
     };
     tabs.set(id, tab);
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
-    emit({ type: "attached", ...key });
-    const shown = shownTabs.get(id);
-    if (shown !== undefined) emit({ type: "shown", ...key, shown });
+    const announce = () => {
+      emit({ type: "attached", ...key });
+      const shown = shownTabs.get(id);
+      if (shown !== undefined) emit({ type: "shown", ...key, shown });
+    };
+    if (!debuggee.webContents.isLoadingMainFrame()) {
+      announce();
+      return;
+    }
+    // Electron does not pause a guest for the debugger, so Playwright connecting during its first
+    // commit builds its utility world in the discarded document and every wait on it hangs.
+    const { webContents } = debuggee;
+    // ERR_ABORTED is a newer navigation replacing this one, whose commit is still to come.
+    const onFailLoad = (
+      _event: Electron.Event,
+      code: number,
+      _description: string,
+      _url: string,
+      isMainFrame: boolean,
+    ) => {
+      if (isMainFrame && code !== ERR_ABORTED) ready();
+    };
+    const ready = () => {
+      if (tab.stopWaiting === null) return;
+      // The manager's cleanup for a destroyed guest can still be queued behind another tab's attach.
+      if (webContents.isDestroyed()) return detach(key);
+      tab.stopWaiting();
+      announce();
+    };
+    const timeout = runFork(
+      Effect.sleep(FIRST_PAGE_TIMEOUT).pipe(Effect.andThen(Effect.sync(ready))),
+    );
+    tab.stopWaiting = () => {
+      tab.stopWaiting = null;
+      webContents.off("dom-ready", ready);
+      webContents.off("did-stop-loading", ready);
+      webContents.off("did-fail-load", onFailLoad);
+      runFork(Fiber.interrupt(timeout));
+    };
+    webContents.on("dom-ready", ready);
+    webContents.on("did-stop-loading", ready);
+    webContents.on("did-fail-load", onFailLoad);
   };
 
   const setShown = (key: DesktopBrowserTabKey, shown: boolean | undefined) => {
@@ -472,7 +531,11 @@ export const make = Effect.gen(function* () {
     }
     if (shownTabs.get(id) === shown) return;
     shownTabs.set(id, shown);
-    if (tabs.has(id)) emit({ type: "shown", ...key, shown });
+    if (tabs.get(id)?.stopWaiting === null) emit({ type: "shown", ...key, shown });
+  };
+
+  const loadFailed: DesktopBrowserHost["Service"]["loadFailed"] = (key, failure) => {
+    if (tabs.has(keyOf(key))) emit({ type: "loadFailed", ...key, ...failure });
   };
 
   const handleCommandLine = (line: string) =>
@@ -511,6 +574,8 @@ export const make = Effect.gen(function* () {
       [...tabs.values()],
       (tab) => {
         dropRelay(tab);
+        // Announced once its first page is up.
+        if (tab.stopWaiting !== null) return Effect.void;
         const shown = shownTabs.get(keyOf(tab.key));
         return PubSub.publish(outbox, { type: "attached", ...tab.key }).pipe(
           Effect.andThen(
@@ -538,6 +603,7 @@ export const make = Effect.gen(function* () {
     handleCommandLine,
     attach,
     detach,
+    loadFailed,
     setShown,
     placeDownload,
     humanStartedDownload,
