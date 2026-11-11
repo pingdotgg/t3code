@@ -17,7 +17,6 @@ import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlPro
 
 const withRepository = <A, E>(
   test: (input: {
-    readonly cwd: string;
     readonly git: (...args: string[]) => Effect.Effect<string, GitCommandError>;
     readonly write: (path: string, contents: string) => Effect.Effect<void>;
     readonly commit: Effect.Effect<void, GitCommandError>;
@@ -52,7 +51,6 @@ const withRepository = <A, E>(
       Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({})),
     );
     return yield* test({
-      cwd,
       git,
       write,
       commit,
@@ -93,11 +91,11 @@ it.effect("reads the default-branch template whatever branch the pull request ta
   ),
 );
 
-// Microsoft searches these locations in order; extension choice must not override folder precedence.
+// Microsoft searches these locations in order, ignoring case; extension must not override folder.
 it.effect.each([
-  [".azuredevops/pull_request_template.txt", ".vsts/pull_request_template.md"],
-  [".vsts/pull_request_template.txt", "docs/pull_request_template.md"],
-  ["docs/pull_request_template.txt", "pull_request_template.md"],
+  [".AzureDevOps/PULL_REQUEST_TEMPLATE.txt", ".vsts/pull_request_template.md"],
+  [".VSTS/pull_request_template.TXT", "docs/pull_request_template.md"],
+  ["Docs/Pull_Request_Template.txt", "pull_request_template.md"],
 ] as const)("prefers %s over %s", ([preferred, fallback]) =>
   withRepository(({ git, write, commit, readTemplate }) =>
     Effect.gen(function* () {
@@ -111,25 +109,8 @@ it.effect.each([
   ),
 );
 
-it.effect.each([
-  ".AzUrEdEvOpS/PuLl_ReQuEsT_TeMpLaTe.MD",
-  ".VsTs/PULL_REQUEST_TEMPLATE.TxT",
-  "DoCs/Pull_Request_Template.mD",
-  "PULL_REQUEST_TEMPLATE.TXT",
-])("recognizes case-insensitive Azure template path %s", (templatePath) =>
-  withRepository(({ git, write, commit, readTemplate }) =>
-    Effect.gen(function* () {
-      yield* write(templatePath, "Case-insensitive template");
-      yield* commit;
-      yield* publishMain(git);
-
-      assert.deepStrictEqual(yield* readTemplate(), Option.some("Case-insensitive template"));
-    }),
-  ),
-);
-
 it.effect("ignores missing, blank, symlinked, and nested templates", () =>
-  withRepository(({ cwd, git, write, commit, readTemplate }) =>
+  withRepository(({ git, write, commit, readTemplate }) =>
     Effect.gen(function* () {
       yield* commit;
       yield* publishMain(git);
@@ -142,15 +123,17 @@ it.effect("ignores missing, blank, symlinked, and nested templates", () =>
 
       yield* git("rm", "-q", ".azuredevops/pull_request_template.md");
       yield* write("template.md", "Not a default template");
-      yield* Effect.sync(() => {
-        NodeFS.mkdirSync(NodePath.join(cwd, ".azuredevops"), { recursive: true });
-        NodeFS.symlinkSync(
-          NodePath.join(cwd, "template.md"),
-          NodePath.join(cwd, ".azuredevops/pull_request_template.md"),
-        );
-      });
       yield* write("docs/nested/pull_request_template.md", "Nested template");
       yield* commit;
+      // An index mode commits a symlink even on hosts without symlink support.
+      const blob = yield* git("rev-parse", "HEAD:template.md");
+      yield* git(
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        `120000,${blob},.azuredevops/pull_request_template.md`,
+      );
+      yield* git("commit", "-m", "Add a symlinked template");
       yield* publishMain(git);
       assert.deepStrictEqual(yield* readTemplate(), Option.none());
     }),
@@ -160,17 +143,12 @@ it.effect("ignores missing, blank, symlinked, and nested templates", () =>
 it.effect("bounds template content and marks truncation", () =>
   withRepository(({ git, write, commit, readTemplate }) =>
     Effect.gen(function* () {
-      yield* write("pull_request_template.md", "x".repeat(10_000));
+      const prefix = "x".repeat(8_000);
+      yield* write("pull_request_template.md", prefix + "EXCLUDED_SUFFIX");
       yield* commit;
       yield* publishMain(git);
 
-      const template = yield* readTemplate();
-      assert.isTrue(Option.isSome(template));
-      if (Option.isSome(template)) {
-        assert.isTrue(template.value.startsWith("x".repeat(8_000)));
-        assert.isTrue(template.value.endsWith("[truncated]"));
-        assert.isBelow(template.value.length, 8_100);
-      }
+      assert.deepStrictEqual(yield* readTemplate(), Option.some(prefix + "\n\n[truncated]"));
     }),
   ),
 );
