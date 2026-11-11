@@ -5,6 +5,7 @@ import {
 import type { LocalThreadMessage } from "../lib/threadActivity";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { Atom } from "effect/reactivity";
 import * as DateTime from "effect/DateTime";
 
@@ -134,10 +135,7 @@ export function pendingThreadCreationMessage(message: QueuedThreadMessage): Loca
   };
 }
 
-/**
- * Threads this client is launching read as preparing from Send until their first run lands.
- * The server commits the thread before its run, so the list would otherwise place it twice.
- */
+/** Launches show as preparing from Send, before the server's shell exists, until their first run. */
 export function withLaunchingThreads(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly launches: ReadonlyArray<QueuedThreadMessage>;
@@ -155,26 +153,13 @@ export function withLaunchingThreads(input: {
     const launch = launchByKey.get(key);
     if (!launch) return thread;
     launchByKey.delete(key);
-    return thread.latestRun === null && thread.runtime === null
-      ? { ...thread, runtime: launchingRuntime(thread) }
-      : thread;
+    return asLaunchingThread(thread);
   });
   for (const launch of launchByKey.values()) {
     const shell = pendingThreadCreationShell(launch);
-    if (shell) threads.push({ ...shell, runtime: launchingRuntime(shell) });
+    if (shell) threads.push(asLaunchingThread(shell));
   }
   return threads;
-}
-
-function launchingRuntime(thread: EnvironmentThreadShell): EnvironmentThreadShell["runtime"] {
-  return {
-    status: "preparing",
-    activeRunId: null,
-    providerInstanceId: thread.providerInstanceId,
-    providerName: null,
-    lastError: null,
-    updatedAt: thread.updatedAt,
-  };
 }
 
 export function pendingThreadCreationShell(
