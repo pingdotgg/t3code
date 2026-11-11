@@ -769,7 +769,13 @@ describe("source control tools", () => {
         sections: ["summary", "conversation"],
       });
       expect(asked).toEqual([
-        { projectId: PROJECT_ID, host: "github.com", repository: "t3tools/t3code", number: 42 },
+        {
+          projectId: PROJECT_ID,
+          host: "github.com",
+          repository: "t3tools/t3code",
+          number: 42,
+          allowStale: false,
+        },
       ]);
       expect(result.summary?.headSha).toBe("abc123");
       expect(result.checks).toBeUndefined();

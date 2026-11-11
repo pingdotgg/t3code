@@ -311,8 +311,9 @@ const make = Effect.gen(function* () {
     const wants = (section: PullRequestReadSection) => sections.includes(section);
     const [detail, activity, diff] = yield* Effect.all(
       [
+        // Agents pin merges to this headSha, so it must not come from a stale snapshot.
         wants("summary") || wants("checks")
-          ? pullRequests.detail(ref).pipe(Effect.asSome)
+          ? pullRequests.detail({ ...ref, allowStale: false }).pipe(Effect.asSome)
           : Effect.succeedNone,
         wants("conversation") ? pullRequests.activity(ref).pipe(Effect.asSome) : Effect.succeedNone,
         wants("diff")
