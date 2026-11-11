@@ -60,6 +60,12 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
+const CONNECTED_STATE = {
+  ...AVAILABLE_CONNECTION_STATE,
+  desired: true,
+  phase: "connected",
+} as const;
+
 const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(function* (input: {
   readonly commands: OrchestrationV2Command[];
   readonly projects: ProjectMutation[];
@@ -126,7 +132,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   };
   return EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
-    state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+    state: yield* SubscriptionRef.make(CONNECTED_STATE),
     session: yield* SubscriptionRef.make(Option.some(session)),
     prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
     connect: Effect.void,
@@ -403,7 +409,7 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestRandom)),
   );
 
-  it.effect("gives a lost message back when no replacement session arrives", () =>
+  it.effect("holds a lost message through reconnect backoff until disconnect", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
       const supervisor = yield* makeSupervisor({ commands, projects: [] });
@@ -451,7 +457,10 @@ describe("V2 environment commands", () => {
       expect((yield* Fiber.join(optedOut))._tag).toBe("RpcClientError");
 
       const waiting = yield* send(true);
-      yield* TestClock.adjust("15 seconds");
+      yield* SubscriptionRef.set(supervisor.state, { ...CONNECTED_STATE, phase: "backoff" });
+      yield* TestClock.adjust("2 minutes");
+      expect(waiting.pollUnsafe()).toBeUndefined();
+      yield* SubscriptionRef.set(supervisor.state, AVAILABLE_CONNECTION_STATE);
       expect((yield* Fiber.join(waiting))._tag).toBe("RpcClientError");
       expect(commands.map((command) => command.commandId)).toEqual([
         "command-host-gone-false",

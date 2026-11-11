@@ -286,12 +286,11 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 
-// A socket can close after the server accepted the frame but before it answered.
-// The server replays an accepted commandId from its receipt, so resending on the
-// next session cannot duplicate the message. The resend cap stops a frame that
-// kills the socket from looping; the wait cap hands long outages back to the caller.
+// The socket can close after the server accepted the frame but before it answered.
+// The server replays an accepted commandId from its receipt, so the same command
+// waits out reconnect backoff until the supervisor stops trying. The resend cap
+// stops a frame that kills the socket from looping.
 const MAX_LOST_TRANSPORT_RESENDS = 2;
-const REPLACEMENT_SESSION_WAIT = "15 seconds";
 
 const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* (
   command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
@@ -306,14 +305,20 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
     if (!isRpcClientError(result.failure) || resends >= MAX_LOST_TRANSPORT_RESENDS) {
       return yield* result.failure;
     }
-    const replacement = yield* SubscriptionRef.changes(supervisor.session).pipe(
-      Stream.filter(
-        (session) =>
-          Option.isSome(session) &&
-          !(Option.isSome(attemptSession) && session.value === attemptSession.value),
+    const replacement = yield* Effect.raceFirst(
+      SubscriptionRef.changes(supervisor.session).pipe(
+        Stream.filter(
+          (session) =>
+            Option.isSome(session) &&
+            !(Option.isSome(attemptSession) && session.value === attemptSession.value),
+        ),
+        Stream.runHead,
       ),
-      Stream.runHead,
-      Effect.timeoutOption(REPLACEMENT_SESSION_WAIT),
+      SubscriptionRef.changes(supervisor.state).pipe(
+        Stream.filter((state) => state.phase === "available" || state.phase === "blocked"),
+        Stream.runHead,
+        Effect.as(Option.none()),
+      ),
     );
     if (Option.isNone(replacement)) return yield* result.failure;
   }
