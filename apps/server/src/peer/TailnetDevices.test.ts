@@ -1581,6 +1581,41 @@ describe("crossing the upgrade without trusting a claim", () => {
         ).toEqual(Option.some(null));
       }),
   );
+
+  // Continuity restores the binding only; the roster's level on the granting side still decides.
+  const sessionsFor = (device: Device) =>
+    device.sql<{ readonly session_id: string; readonly scopes: string }>`
+      SELECT session_id, scopes FROM auth_sessions
+      WHERE peer_environment_id = ${studio.environmentId} AND revoked_at IS NULL
+    `;
+
+  it.live("does not bring back a member the laptop revoked before the upgrade", () =>
+    Effect.gen(function* () {
+      const { a, b, studioNode } = yield* upgradedPair;
+      yield* a.sql`UPDATE network_members SET access = 'revoked' WHERE environment_id = ${studio.environmentId}`;
+      const before = (yield* sessionsFor(a)).length;
+
+      yield* b.devices.linkIfMine({ url: a.url }).pipe(Effect.ignore);
+
+      expect(yield* studioNode).toEqual(Option.some(null));
+      expect((yield* sessionsFor(a)).length).toBe(before);
+    }),
+  );
+
+  it.live("rebinds a member the laptop narrowed at its narrowed level", () =>
+    Effect.gen(function* () {
+      const { tailnet, a, b, studioNode } = yield* upgradedPair;
+      yield* a.sql`UPDATE network_members SET access = 'read-only' WHERE environment_id = ${studio.environmentId}`;
+      const before = new Set((yield* sessionsFor(a)).map((row) => row.session_id));
+
+      yield* b.devices.linkIfMine({ url: a.url });
+
+      expect(yield* studioNode).toEqual(Option.some(tailnet.nodeIdOf(b.url)));
+      const issued = (yield* sessionsFor(a)).filter((row) => !before.has(row.session_id));
+      expect(issued).toHaveLength(1);
+      expect(issued[0]?.scopes).not.toContain("orchestration:operate");
+    }),
+  );
 });
 
 describe("joining a network", () => {
