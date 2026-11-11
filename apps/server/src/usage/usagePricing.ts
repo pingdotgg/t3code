@@ -126,9 +126,10 @@ export function parseRateTable(document: unknown): RateTable {
 
   const aliasCandidates = new Map<string, { rate: ModelRate | null; firstParty: boolean }>();
   for (const [key, rate] of table) {
-    const alias = bareModelName(key);
+    const slash = key.indexOf("/");
+    const alias = slash === -1 ? bedrockBaseModelName(key) : bareModelName(key);
     if (alias.length === 0 || alias === key || table.has(alias)) continue;
-    const firstParty = FIRST_PARTY_PROVIDERS.has(key.slice(0, key.indexOf("/")));
+    const firstParty = slash !== -1 && FIRST_PARTY_PROVIDERS.has(key.slice(0, slash));
     const held = aliasCandidates.get(alias);
     if (held === undefined || (firstParty && !held.firstParty)) {
       aliasCandidates.set(alias, { rate, firstParty });
@@ -178,6 +179,11 @@ function normalizeRateKey(model: string): string {
 function bareModelName(key: string): string {
   const slash = key.lastIndexOf("/");
   return slash === -1 ? key : key.slice(slash + 1);
+}
+
+// Only Bedrock's base ID gives a bare alias; its regional (us., eu.) and GovCloud IDs carry markups.
+function bedrockBaseModelName(key: string): string {
+  return key.startsWith("anthropic.") ? key.slice("anthropic.".length) : key;
 }
 
 // Price Claude's bracketed context variants at the base tier, the only name the rate table knows.

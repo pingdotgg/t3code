@@ -91,15 +91,6 @@ describe("OrchestratorMcpService", () => {
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
-        contextTransfers: [
-          {
-            id: resultTransferId,
-            type: "subagent_result",
-            sourceThreadId: childThreadId,
-            targetThreadId: parentThreadId,
-            sourcePoint: { runId: childRunId },
-          },
-        ],
         subagents: [
           {
             id: taskId,
@@ -131,7 +122,15 @@ describe("OrchestratorMcpService", () => {
             completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
           },
         ],
-        contextTransfers: [],
+        contextTransfers: [
+          {
+            id: resultTransferId,
+            type: "subagent_result",
+            sourceThreadId: childThreadId,
+            targetThreadId: parentThreadId,
+            sourcePoint: { runId: childRunId },
+          },
+        ],
         messages: [
           {
             id: MessageId.make("message:mcp-ack-result"),
@@ -160,6 +159,7 @@ describe("OrchestratorMcpService", () => {
                 return hasNestedWork
                   ? {
                       ...childProjection,
+                      contextTransfers: [],
                       subagents: [
                         { ...parentProjection.subagents[0]!, status: "running" as const },
                       ],
@@ -169,7 +169,6 @@ describe("OrchestratorMcpService", () => {
               const snapshot = hasNestedWork
                 ? {
                     ...parentProjection,
-                    contextTransfers: [],
                     subagents: parentProjection.subagents.map((task) => ({
                       ...task,
                       result: null,
@@ -2912,7 +2911,13 @@ describe("OrchestratorMcpService provider resolution", () => {
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(masterRepository, saved)),
+          Effect.provide(
+            service(masterRepository, saved, {
+              ...existing,
+              threadId: ThreadId.make("thread:scheduled-base"),
+              threadMode: "continue",
+            }),
+          ),
         );
         yield* mcp.updateScheduledTask(client, {
           scheduledTaskId: existing.id,
@@ -2921,6 +2926,20 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(yield* Ref.get(saved), [
           { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
         ]);
+      }),
+    );
+
+    it.effect("keeps the saved workspace when an unbound task stays unbound", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(masterRepository, saved)),
+        );
+        yield* mcp.updateScheduledTask(client, {
+          scheduledTaskId: existing.id,
+          bindToCurrentThread: false,
+        });
+        assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
       }),
     );
 
