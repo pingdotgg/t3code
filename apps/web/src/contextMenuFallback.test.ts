@@ -238,27 +238,34 @@ describe("showContextMenuFallback", () => {
     await expect(selectionPromise).resolves.toBe("rename");
   });
 
-  it("opens a submenu that would overflow the viewport to the left of its parent menu", () => {
-    vi.stubGlobal("window", { ...window, innerWidth: 400, innerHeight: 800 });
+  it.each([
+    { innerWidth: 400, left: 200, submenuLeft: 16 },
+    { innerWidth: 300, left: 4, submenuLeft: 116 },
+  ])(
+    "places an overflowing submenu on the side with more room ($innerWidth)",
+    ({ innerWidth, left, submenuLeft }) => {
+      vi.stubGlobal("window", { ...window, innerWidth, innerHeight: 800 });
 
-    void showContextMenuFallback(
-      [
-        {
-          id: "group",
-          label: "Group with",
-          children: [{ id: "terminal-1", label: "Terminal 1" }],
-        },
-      ],
-      { x: 200, y: 0 },
-    );
-    const trigger = findButton("Group with");
-    trigger!.style.left = "200px";
-    trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      void showContextMenuFallback(
+        [
+          {
+            id: "group",
+            label: "Group with",
+            children: [{ id: "terminal-1", label: "Terminal 1" }],
+          },
+        ],
+        { x: left, y: 0 },
+      );
+      const trigger = findButton("Group with");
+      trigger!.style.left = `${left}px`;
+      trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
-    const parent = trigger?.parent?.parent?.getBoundingClientRect();
-    const submenu = findButton("Terminal 1")?.parent?.parent?.getBoundingClientRect();
-    expect(submenu!.right).toBeLessThanOrEqual(parent!.left);
-  });
+      const parent = trigger?.parent?.parent?.getBoundingClientRect();
+      const submenu = findButton("Terminal 1")?.parent?.parent?.getBoundingClientRect();
+      expect(submenu!.left).toBe(submenuLeft);
+      if (innerWidth === 400) expect(submenu!.right).toBeLessThanOrEqual(parent!.left);
+    },
+  );
 
   it("shows an item's detail beside its label and reads both to screen readers", () => {
     void showContextMenuFallback([{ id: "snooze:hour", label: "In 1 hour", detail: "3:00 PM" }]);

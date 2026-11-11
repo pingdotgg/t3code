@@ -588,14 +588,19 @@ export function showContextMenuFallback<T extends string>(
       submenuTriggerStack[level] = parentTrigger;
 
       requestAnimationFrame(() => {
-        // A submenu that would overflow flips to the trigger's left. Clamping the
-        // right-hand position instead would slide it back over its parent.
+        // Keep the measured width independent of the submenu's initial position.
+        if (parentTrigger) {
+          menu.style.width = "max-content";
+          menu.style.maxWidth = "min(24rem, calc(100vw - 0.5rem))";
+        }
         const { width } = menu.getBoundingClientRect();
         const flipLeft = parentTrigger?.getBoundingClientRect().left;
         const overflows = preferredLeft + width > window.innerWidth;
+        const shouldFlipLeft =
+          overflows && flipLeft !== undefined && flipLeft - 4 > window.innerWidth - preferredLeft;
         clampMenuPosition(
           menu,
-          overflows && flipLeft !== undefined ? flipLeft - width - 4 : preferredLeft,
+          shouldFlipLeft ? flipLeft - width - 4 : preferredLeft,
           preferredTop,
         );
       });
