@@ -7,19 +7,16 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
-import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
-import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import type * as Scope from "effect/Scope";
-import * as Schema from "effect/Schema";
+import * as Logger from "effect/Logger";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import * as ClaudeAdapterV2 from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import * as ServerConfig from "../config.ts";
 import { makeCodexAppServerSpawnCommand } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -45,19 +42,29 @@ describe("classifyScope", () => {
   });
 });
 
+interface FakeUnit {
+  activeState: string;
+  result: string;
+  controlGroup?: string;
+}
+
 const withFakeSystemd = <A, E>(
   body: (input: {
     readonly scope: Effect.Success<typeof make>;
-    readonly units: Map<string, { activeState: string; result: string }>;
+    readonly units: Map<string, FakeUnit>;
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
+    readonly cgroupRoot: string;
   }) => Effect.Effect<A, E>,
+  // A user manager older than systemd 253 rejects OOMPolicy on scopes.
   {
     oomPolicy = true,
+    stopFails = false,
     leftovers = false,
     liveOwner = false,
   }: {
     readonly oomPolicy?: boolean;
+    readonly stopFails?: boolean;
     readonly leftovers?: boolean;
     readonly liveOwner?: boolean;
   } = {},
@@ -67,7 +74,8 @@ const withFakeSystemd = <A, E>(
     for (const name of ["systemd-run", "systemctl", "agent"]) {
       NodeFS.writeFileSync(NodePath.join(bin, name), "", { mode: 0o755 });
     }
-    const units = new Map<string, { activeState: string; result: string }>();
+    const cgroupRoot = NodePath.join(bin, "cgroup");
+    const units = new Map<string, FakeUnit>();
     const calls: Array<ReadonlyArray<string>> = [];
     const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
       stdout,
@@ -87,26 +95,43 @@ const withFakeSystemd = <A, E>(
             return output("", 1);
           }
           const [, verb, unit = ""] = args;
+          if (stopFails && verb === "stop") {
+            return {
+              ...output(""),
+              stderr: `Failed to stop ${args.at(-1)}: Unit not loaded.`,
+              code: ChildProcessSpawner.ExitCode(5),
+            };
+          }
           if (verb === "reset-failed") units.delete(unit);
           if (verb !== "show") return output("");
           const state = units.get(unit);
           return output(
             state === undefined
               ? "LoadState=not-found\nActiveState=inactive\nResult=success\n"
-              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n`,
+              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n` +
+                  `ControlGroup=${state.controlGroup ?? ""}\n`,
           );
         }),
     });
+    const fileSystem = yield* FileSystem.FileSystem;
     const { stateDir } = yield* ServerConfig.ServerConfig;
-    if (leftovers)
+    if (leftovers) {
       units.set(ownedAgentSlice(stateDir), { activeState: "active", result: "success" });
+    }
     const scope = yield* make.pipe(
       Effect.provideService(ProviderProcesses.ProviderProcesses, { hasOtherLiveOwner: liveOwner }),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" }),
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fileSystem,
+        readFileString: (path, encoding) =>
+          fileSystem.readFileString(path.replace("/sys/fs/cgroup", cgroupRoot), encoding),
+        writeFileString: (path, data, options) =>
+          fileSystem.writeFileString(path.replace("/sys/fs/cgroup", cgroupRoot), data, options),
+      }),
     );
-    return yield* body({ scope, units, calls, stateDir }).pipe(
+    return yield* body({ scope, units, calls, stateDir, cgroupRoot }).pipe(
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(bin, { recursive: true, force: true }))),
     );
   }).pipe(
@@ -118,12 +143,40 @@ const withFakeSystemd = <A, E>(
     ),
   );
 
-const unitOf = (launch: { readonly args: ReadonlyArray<string> }) =>
-  launch.args.find((arg) => arg.startsWith("--unit="))?.slice("--unit=".length) ?? "";
+const unitOf = (launch: Pick<ChildProcess.StandardCommand, "args">) =>
+  launch.args
+    .map(String)
+    .find((arg) => arg.startsWith("--unit="))
+    ?.slice("--unit=".length) ?? "";
 
 const sliceOf = (launch: { readonly args: ReadonlyArray<string> }) =>
   launch.args.find((arg) => arg.startsWith("--slice="))?.slice("--slice=".length) ?? "";
 
+/** An active scope as systemd and the kernel report it, with the agent itself gone. */
+const exitedAgent = (
+  units: Map<string, FakeUnit>,
+  cgroupRoot: string,
+  unit: string,
+  { populated, oomKills }: { readonly populated: boolean; readonly oomKills: number | undefined },
+) => {
+  const controlGroup = `/${unit}`;
+  NodeFS.mkdirSync(NodePath.join(cgroupRoot, controlGroup), { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(cgroupRoot, controlGroup, "cgroup.events"),
+    `populated ${populated ? 1 : 0}\nfrozen 0\n`,
+  );
+  // An undefined count leaves memory.events unreadable.
+  if (oomKills !== undefined) {
+    NodeFS.writeFileSync(
+      NodePath.join(cgroupRoot, controlGroup, "memory.events"),
+      `low 0\nhigh 0\nmax 0\noom ${oomKills}\noom_kill ${oomKills}\noom_group_kill 0\n`,
+    );
+  }
+  units.set(unit, { activeState: "active", result: "success", controlGroup });
+};
+
+const stopsOf = (calls: ReadonlyArray<ReadonlyArray<string>>) =>
+  calls.filter(([, verb]) => verb === "stop");
 const launchCodex = (scope: Effect.Success<typeof make>, threadId: string) =>
   makeCodexAppServerSpawnCommand({ command: "agent", args: ["app-server"], threadId }).pipe(
     Effect.provideService(AgentScope, scope),
@@ -181,6 +234,36 @@ describe("AgentScope service", () => {
       ),
   );
 
+  it.effect.each([{ oomPolicy: true }, { oomPolicy: false }])(
+    "Force stop kills a thread's own scope but never a shared Codex scope (OOM policy $oomPolicy)",
+    ({ oomPolicy }) =>
+      withFakeSystemd(
+        ({ scope, units, calls, cgroupRoot }) =>
+          Effect.gen(function* () {
+            const agent = yield* scope.wrap({
+              command: "agent",
+              args: [],
+              name: "t",
+              threadId: "a",
+            });
+            exitedAgent(units, cgroupRoot, unitOf(agent), { populated: true, oomKills: 0 });
+            const codex = yield* launchCodex(scope, "b");
+            exitedAgent(units, cgroupRoot, unitOf(codex), { populated: true, oomKills: 0 });
+
+            expect(yield* scope.kill("a")).toBe(true);
+            expect(
+              NodeFS.readFileSync(NodePath.join(cgroupRoot, unitOf(agent), "cgroup.kill"), "utf8"),
+            ).toBe("1");
+            expect(yield* scope.kill("b")).toBe(false);
+            expect(NodeFS.existsSync(NodePath.join(cgroupRoot, unitOf(codex), "cgroup.kill"))).toBe(
+              false,
+            );
+            expect(calls.filter(([, verb]) => verb === "kill")).toEqual([]);
+          }),
+        { oomPolicy },
+      ),
+  );
+
   it.effect("keeps a running scope while hundreds of other threads launch", () =>
     withFakeSystemd(({ scope, units }) =>
       Effect.gen(function* () {
@@ -195,12 +278,57 @@ describe("AgentScope service", () => {
     ),
   );
 
-  it.effect("stops agents a killed server left during acquisition before the first launch", () =>
+  it.effect("delegates every agent scope so rootless containers can manage their cgroups", () =>
+    withFakeSystemd(({ scope }) =>
+      Effect.gen(function* () {
+        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        const codex = yield* launchCodex(scope, "a");
+        const terminal = yield* scope.wrap({
+          command: "agent",
+          args: [],
+          name: "terminal",
+          survivesRestart: true,
+        });
+        for (const launch of [agent, codex, terminal]) {
+          expect(launch.args).toContain("--property=Delegate=yes");
+        }
+      }),
+    ),
+  );
+
+  it.effect("caps agent memory and yields CPU, disk, and tasks to the server", () =>
+    withFakeSystemd(({ scope, calls }) =>
+      Effect.gen(function* () {
+        yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        const setProperties = calls.filter(([, verb]) => verb === "set-property");
+        expect(setProperties).toEqual([
+          [
+            "--user",
+            "set-property",
+            "--runtime",
+            "app-t3code-agents.slice",
+            expect.stringMatching(/^MemoryHigh=\d+$/),
+            expect.stringMatching(/^MemoryMax=\d+$/),
+          ],
+          [
+            "--user",
+            "set-property",
+            "--runtime",
+            "app-t3code.slice",
+            "CPUWeight=10",
+            "IOWeight=10",
+            "TasksMax=25%",
+          ],
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("stops agents a killed server left before startup completes", () =>
     withFakeSystemd(
       ({ scope, calls, stateDir }) =>
         Effect.gen(function* () {
-          const stops = calls.filter(([, verb]) => verb === "stop");
-          expect(stops).toEqual([["--user", "stop", ownedAgentSlice(stateDir)]]);
+          expect(stopsOf(calls)).toEqual([["--user", "stop", ownedAgentSlice(stateDir)]]);
           const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
           expect(sliceOf(agent)).toBe(ownedAgentSlice(stateDir));
           expect(agent.args).toContain("--property=TimeoutStopSec=10s");
@@ -211,25 +339,108 @@ describe("AgentScope service", () => {
             survivesRestart: true,
           });
           expect(sliceOf(terminal)).toBe("app-t3code-agents.slice");
-          expect(calls.filter(([, verb]) => verb === "stop")).toHaveLength(1);
+          expect(stopsOf(calls)).toHaveLength(1);
         }),
       { leftovers: true },
     ),
   );
 
-  it.effect("does not stop the owned slice while another recorded server is alive", () =>
-    withFakeSystemd(
-      ({ calls }) =>
-        Effect.sync(() => {
-          expect(calls.filter(([, verb]) => verb === "stop")).toEqual([]);
-        }),
-      { leftovers: true, liveOwner: true },
+  it.effect("leaves the slice to another live server sharing this home", () =>
+    withFakeSystemd(({ calls }) => Effect.sync(() => expect(stopsOf(calls)).toEqual([])), {
+      leftovers: true,
+      liveOwner: true,
+    }),
+  );
+
+  it.effect("stops leftover processes only in an active agent scope", () =>
+    withFakeSystemd(({ scope, units, calls, cgroupRoot }) =>
+      Effect.gen(function* () {
+        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        const unit = unitOf(agent);
+        expect(agent.unit).toBe(unit);
+
+        yield* scope.stop("session-2.scope");
+        expect(calls.some((args) => args.includes("session-2.scope"))).toBe(false);
+        yield* scope.stop(unit);
+        exitedAgent(units, cgroupRoot, unit, { populated: false, oomKills: 0 });
+        yield* scope.stop(unit);
+        exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills: 0 });
+        units.get(unit)!.activeState = "deactivating";
+        yield* scope.stop(unit);
+        expect(stopsOf(calls)).toEqual([]);
+
+        units.get(unit)!.activeState = "active";
+        yield* scope.stop(unit);
+        expect(stopsOf(calls)).toEqual([["--user", "stop", "--no-block", unit]]);
+        expect(yield* scope.oomKilled("a")).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect.each([true, false])(
+    "cleans up an OOM exit without losing its diagnosis (OOMPolicy=%s)",
+    (oomPolicy) =>
+      withFakeSystemd(
+        ({ scope, units, calls, cgroupRoot }) =>
+          Effect.gen(function* () {
+            const agent = yield* scope.wrap({
+              command: "agent",
+              args: [],
+              name: "t",
+              threadId: "a",
+            });
+            const unit = unitOf(agent);
+            exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills: undefined });
+            yield* scope.stop(unit);
+            expect(stopsOf(calls)).toEqual(
+              oomPolicy ? [] : [["--user", "stop", "--no-block", unit]],
+            );
+
+            // The kernel records the kill before systemd records the OOM result.
+            exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills: 1 });
+            yield* scope.stop(unit);
+            expect(stopsOf(calls)).toHaveLength(oomPolicy ? 0 : 2);
+
+            if (oomPolicy) {
+              units.set(unit, { activeState: "failed", result: "oom-kill" });
+              expect(yield* scope.oomKilled("a")).toBe(true);
+              units.delete(unit);
+              expect(yield* scope.oomKilled("a")).toBe(true);
+            }
+          }),
+        { oomPolicy },
+      ),
+  );
+
+  it.effect("reports failed daemon cleanup without failing session teardown", () => {
+    const warnings: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => {
+      warnings.push(message);
+    });
+    return withFakeSystemd(
+      ({ scope, units, cgroupRoot }) =>
+        Effect.gen(function* () {
+          const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          exitedAgent(units, cgroupRoot, unitOf(agent), { populated: true, oomKills: 0 });
+          yield* scope.stop(unitOf(agent));
+          expect(warnings.flat()).toContain("Could not stop an exited agent's scope");
+        }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false }))),
+      { stopFails: true },
+    );
+  });
+
+  it.effect("leaves a quiet slice alone", () =>
+    withFakeSystemd(({ scope, calls }) =>
+      Effect.gen(function* () {
+        yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        expect(calls.filter(([, verb]) => verb === "stop")).toEqual([]);
+      }),
     ),
   );
 });
 
-// These fixtures only signal PIDs captured at spawn; no server or provider credentials are used.
-const ownedProcessFixture = Effect.gen(function* () {
+// Real child processes stand in for servers and CLIs; only PIDs captured at spawn are signalled.
+const ownedProcess = Effect.gen(function* () {
   const ready = yield* Deferred.make<void>();
   const exited = yield* Deferred.make<void>();
   const child = yield* Effect.acquireRelease(
@@ -248,9 +459,9 @@ const ownedProcessFixture = Effect.gen(function* () {
       Effect.sync(() => child.kill("SIGKILL")).pipe(Effect.andThen(Deferred.await(exited))),
   );
   yield* Deferred.await(ready);
-  assert(child.pid !== undefined);
-  const controller = AcpSessionRuntime.makePosixProcessTreeController("linux");
   const pid = child.pid;
+  assert(pid !== undefined);
+  const controller = AcpSessionRuntime.makePosixProcessTreeController("linux");
   const identity = controller.identity(pid);
   assert(identity !== undefined);
   const boot = NodeFS.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
@@ -266,261 +477,77 @@ const ownedProcessFixture = Effect.gen(function* () {
   };
 });
 
-const withRestartOwnership = <A, E, R>(
-  body: (input: {
-    readonly record: (
-      owner: { readonly pid: number; readonly startTime: string },
-      processes: ReadonlyArray<{
-        readonly pid: number;
-        readonly startTime: string;
-        readonly pgid: number;
-      }>,
-    ) => void;
-    readonly restart: Effect.Effect<void, never, Scope.Scope>;
-  }) => Effect.Effect<A, E, R>,
-) =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const { stateDir } = config;
-    const directory = NodePath.join(stateDir, "provider-processes");
-    NodeFS.mkdirSync(directory, { recursive: true });
-    const record = (
-      owner: { readonly pid: number; readonly startTime: string },
-      processes: ReadonlyArray<{
-        readonly pid: number;
-        readonly startTime: string;
-        readonly pgid: number;
-      }>,
-    ) => {
-      const instanceId = NodeCrypto.randomUUID();
-      NodeFS.writeFileSync(
-        NodePath.join(directory, `${instanceId}.json`),
-        JSON.stringify({
-          version: 1,
-          instanceId,
-          hostname: NodeOS.hostname(),
-          stateDir,
-          owner,
-          processes,
-        }),
-      );
-    };
-    // Acquiring the production layer is the barrier before orchestration recovery may run.
-    const restart = Layer.build(layer).pipe(
-      Effect.provideService(ServerConfig.ServerConfig, config),
-      Effect.provide(NodeServices.layer),
-      Effect.asVoid,
-    );
-    return yield* body({ record, restart });
-  }).pipe(
-    Effect.scoped,
-    Effect.provideService(HostProcess.Platform, "linux"),
-    Effect.provideService(HostProcess.Environment, { PATH: process.env.PATH }),
-    Effect.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "t3-restart-ownership-" }).pipe(
-        Layer.provideMerge(NodeServices.layer),
-      ),
-    ),
-  );
-
 describe.runIf(HostProcess.Platform.defaultValue() === "linux")(
-  "provider restart ownership without systemd",
+  "provider restart ownership",
   () => {
-    it.live(
-      "stops both recorded survivors before startup completes and leaves an unrecorded process alone",
-      () =>
-        withRestartOwnership(({ record, restart }) =>
-          Effect.gen(function* () {
-            const owner = yield* ownedProcessFixture;
-            const first = yield* ownedProcessFixture;
-            const second = yield* ownedProcessFixture;
-            const unrelated = yield* ownedProcessFixture;
-            record(owner, [first]);
-            record(owner, [second]);
-            yield* owner.stop;
+    it.live("reaps only recorded CLIs of dead servers before startup completes", () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const directory = NodePath.join(config.stateDir, "provider-processes");
+        NodeFS.mkdirSync(directory, { recursive: true });
+        type Identity = { readonly pid: number; readonly startTime: string };
+        const record = (owner: Identity, processes: ReadonlyArray<Identity>) => {
+          const instanceId = NodeCrypto.randomUUID();
+          NodeFS.writeFileSync(
+            NodePath.join(directory, `${instanceId}.json`),
+            JSON.stringify({
+              version: 1,
+              instanceId,
+              hostname: NodeOS.hostname(),
+              stateDir: config.stateDir,
+              owner: { pid: owner.pid, startTime: owner.startTime },
+              processes: processes.map(({ pid, startTime }) => ({ pid, startTime, pgid: 0 })),
+            }),
+          );
+        };
+        const reused = (identity: Identity) => ({
+          ...identity,
+          startTime: identity.startTime.replace(/:\d+$/, ":1"),
+        });
+        const deadOwner = yield* ownedProcess;
+        const liveOwner = yield* ownedProcess;
+        const reusedOwner = yield* ownedProcess;
+        const liveProvider = yield* ownedProcess;
+        const reusedProvider = yield* ownedProcess;
+        const orphan = yield* ownedProcess;
+        const orphanOfReusedOwner = yield* ownedProcess;
+        const unrecorded = yield* ownedProcess;
+        record(liveOwner, [liveProvider]);
+        record(deadOwner, [reused(reusedProvider)]);
+        record(deadOwner, [orphan]);
+        record(reused(reusedOwner), [orphanOfReusedOwner]);
+        yield* deadOwner.stop;
 
-            yield* restart;
+        yield* Layer.build(layer).pipe(
+          Effect.provideService(ServerConfig.ServerConfig, config),
+          Effect.provide(NodeServices.layer),
+        );
 
-            expect([first.running(), second.running()]).toEqual([false, false]);
-            expect(unrelated.running()).toBe(true);
-          }),
+        expect({
+          orphan: orphan.running(),
+          orphanOfReusedOwner: orphanOfReusedOwner.running(),
+          liveProvider: liveProvider.running(),
+          reusedProvider: reusedProvider.running(),
+          reusedOwner: reusedOwner.running(),
+          unrecorded: unrecorded.running(),
+        }).toEqual({
+          orphan: false,
+          orphanOfReusedOwner: false,
+          liveProvider: true,
+          reusedProvider: true,
+          reusedOwner: true,
+          unrecorded: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Environment, { PATH: process.env.PATH }),
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-restart-ownership-" }).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
         ),
-    );
-
-    it.live(
-      "preserves a live server's provider and a reused provider PID while reaping a matching orphan",
-      () =>
-        withRestartOwnership(({ record, restart }) =>
-          Effect.gen(function* () {
-            const deadOwner = yield* ownedProcessFixture;
-            const liveOwner = yield* ownedProcessFixture;
-            const liveProvider = yield* ownedProcessFixture;
-            const reusedProvider = yield* ownedProcessFixture;
-            const orphan = yield* ownedProcessFixture;
-            record(liveOwner, [liveProvider]);
-            record(deadOwner, [
-              { ...reusedProvider, startTime: reusedProvider.startTime.replace(/:\d+$/, ":1") },
-            ]);
-            record(deadOwner, [orphan]);
-            yield* deadOwner.stop;
-
-            yield* restart;
-
-            expect(liveProvider.running()).toBe(true);
-            expect(reusedProvider.running()).toBe(true);
-            expect(orphan.running()).toBe(false);
-          }),
-        ),
-    );
-
-    it.live("does not mistake a reused owner PID for a live owning server", () =>
-      withRestartOwnership(({ record, restart }) =>
-        Effect.gen(function* () {
-          const reusedOwner = yield* ownedProcessFixture;
-          const orphan = yield* ownedProcessFixture;
-          record({ ...reusedOwner, startTime: reusedOwner.startTime.replace(/:\d+$/, ":1") }, [
-            orphan,
-          ]);
-
-          yield* restart;
-
-          expect(reusedOwner.running()).toBe(true);
-          expect(orphan.running()).toBe(false);
-        }),
       ),
     );
   },
 );
-
-const LaunchObservation = Schema.Struct({
-  pid: Schema.Number,
-  record: Schema.Struct({
-    version: Schema.Literal(1),
-    owner: Schema.Struct({ pid: Schema.Number, startTime: Schema.String }),
-    processes: Schema.Array(Schema.Struct({ pid: Schema.Number, startTime: Schema.String })),
-  }),
-});
-
-// The fake CLI reports ownership at entry and answers SDK control requests.
-// It never starts a provider or reads provider credentials.
-const decodeLaunchObservation = Schema.decodeEffect(Schema.fromJsonString(LaunchObservation));
-
-const FAKE_CLI = `
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as readline from "node:readline";
-const directory = process.env.T3_TEST_PROCESS_DIRECTORY;
-const ready = process.env.T3_TEST_PROCESS_READY;
-const records = fs.readdirSync(directory)
-  .filter((file) => file.endsWith(".json"))
-  .map((file) => JSON.parse(fs.readFileSync(path.join(directory, file), "utf8")));
-const record = records.find((record) => record.processes.some((entry) => entry.pid === process.pid));
-fs.writeFileSync(ready + ".pending", JSON.stringify({ pid: process.pid, record }));
-fs.renameSync(ready + ".pending", ready);
-readline.createInterface({ input: process.stdin }).on("line", (line) => {
-  const frame = JSON.parse(line);
-  if (frame.type !== "control_request") return;
-  process.stdout.write(JSON.stringify({
-    type: "control_response",
-    response: { subtype: "success", request_id: frame.request_id, response: {} },
-  }) + "\\n");
-});
-`;
-
-describe.runIf(HostProcess.Platform.defaultValue() === "linux")("Claude process ownership", () => {
-  it.live("records the production SDK child before it executes and forgets it after exit", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const directory = NodePath.join(config.stateDir, "provider-processes");
-      const readyPath = NodePath.join(config.stateDir, "ready.json");
-      const cliPath = NodePath.join(config.stateDir, "fake-cli.mjs");
-      NodeFS.writeFileSync(cliPath, FAKE_CLI);
-      const ready = yield* Deferred.make<void>();
-      const removed = yield* Deferred.make<void>();
-      yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          NodeFS.watch(config.stateDir, (_, file) => {
-            if (file === "ready.json" && NodeFS.existsSync(readyPath)) {
-              Deferred.doneUnsafe(ready, Effect.void);
-            }
-          }),
-        ),
-        (watcher) => Effect.sync(() => watcher.close()),
-      );
-      yield* Effect.gen(function* () {
-        const runner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
-        yield* Effect.acquireRelease(
-          Effect.sync(() =>
-            NodeFS.watch(directory, (_, file) => {
-              if (
-                file !== null &&
-                file.endsWith(".json") &&
-                !NodeFS.existsSync(NodePath.join(directory, file))
-              ) {
-                Deferred.doneUnsafe(removed, Effect.void);
-              }
-            }),
-          ),
-          (watcher) => Effect.sync(() => watcher.close()),
-        );
-        yield* Effect.gen(function* () {
-          yield* Effect.acquireRelease(
-            runner.open({
-              threadId: ThreadId.make("ownership-thread"),
-              providerSessionId: ProviderSessionId.make("ownership-session"),
-              options: {
-                ...ClaudeAdapterV2.makeClaudeQueryOptions({
-                  modelSelection: {
-                    instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-                    model: "claude-sonnet-4-6",
-                  },
-                  nativeThreadId: NodeCrypto.randomUUID(),
-                  resume: false,
-                  cwd: config.stateDir,
-                }),
-                pathToClaudeCodeExecutable: cliPath,
-                env: {
-                  PATH: `${NodePath.dirname(process.execPath)}:/usr/bin:/bin`,
-                  T3_TEST_PROCESS_DIRECTORY: directory,
-                  T3_TEST_PROCESS_READY: readyPath,
-                },
-              },
-            }),
-            (session) => session.close.pipe(Effect.orDie),
-          );
-          yield* Deferred.await(ready);
-          const observation = yield* decodeLaunchObservation(
-            NodeFS.readFileSync(readyPath, "utf8"),
-          );
-          assert.equal(observation.record.owner.pid, process.pid);
-          assert.deepEqual(
-            observation.record.processes.map(({ pid }) => pid),
-            [observation.pid],
-          );
-          const boot = NodeFS.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-          assert.isTrue(observation.record.processes[0]?.startTime.startsWith(`${boot}:`));
-          const files = NodeFS.readdirSync(directory).filter((file) => file.endsWith(".json"));
-          // One record belongs to the server; the other belongs to this CLI.
-          assert.lengthOf(files, 2);
-        }).pipe(Effect.scoped);
-        yield* Deferred.await(removed);
-      }).pipe(
-        Effect.provide(ClaudeAdapterV2.layerQueryRunner),
-        Effect.provideService(
-          ProviderEventLoggers.ProviderEventLoggers,
-          ProviderEventLoggers.NoOpProviderEventLoggers,
-        ),
-        Effect.provide(layer),
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.Environment, { PATH: process.env.PATH }),
-      Effect.provide(
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-process-launch-" }).pipe(
-          Layer.provideMerge(NodeServices.layer),
-        ),
-      ),
-    ),
-  );
-});
