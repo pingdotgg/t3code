@@ -1128,6 +1128,12 @@ describe("planComposerTurn", () => {
       shouldQueueBehindActiveRun: false,
       baseBranchForWorktree: null,
     });
+    expect(
+      planComposerTurn({ ...running, sendQueuesBehindSetup: true, dispatchMode: "steer" }),
+    ).toMatchObject({
+      turnDispatchMode: "steer",
+      shouldQueueBehindActiveRun: true,
+    });
     // A fresh session cannot join the running turn, and a stale one is not compacted first.
     expect(
       planComposerTurn({
