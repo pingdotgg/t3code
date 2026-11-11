@@ -12,28 +12,25 @@ import { vi } from "vite-plus/test";
 
 import * as HostResources from "./HostResources.ts";
 
-// An 8-CPU host; every cpus() call advances each CPU by 100 ms at `host.busy` utilization.
-const host = vi.hoisted(() => ({ busy: 0, reads: 0 }));
+// An 8-CPU host; every cpus() call advances each CPU by 100 ms at its `host.busy` utilization.
+const host = vi.hoisted(() => ({ busy: [] as ReadonlyArray<number>, reads: 0 }));
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeOS>();
   return {
     ...actual,
-    availableParallelism: () => 8,
+    totalmem: () => 4 * 1024 ** 3,
     cpus: () => {
       const elapsed = 100 * host.reads++;
-      const times = {
-        user: elapsed * host.busy,
-        nice: 0,
-        sys: 0,
-        idle: elapsed * (1 - host.busy),
-        irq: 0,
-      };
-      return Array.from({ length: 8 }, () => ({ model: "test", speed: 1, times }));
+      return host.busy.map((busy) => ({
+        model: "test",
+        speed: 1,
+        times: { user: elapsed * busy, nice: 0, sys: 0, idle: elapsed * (1 - busy), irq: 0 },
+      }));
     },
   };
 });
-const setup = (busy = 0) => {
-  host.busy = busy;
+const setup = (busy: number | ReadonlyArray<number> = 0) => {
+  host.busy = typeof busy === "number" ? Array.from({ length: 8 }, () => busy) : busy;
   host.reads = 0;
 };
 
@@ -146,6 +143,43 @@ describe("HostResources.layer", () => {
         linuxHost({
           ...unlimitedCgroup,
           [`${cgroup}/cpu.max`]: ["200000 100000\n"],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("counts only the CPUs the server is pinned to as host idle", () =>
+    Effect.gen(function* () {
+      // A neighbour saturates CPUs 0-1, the server's whole cpuset; CPUs 2-7 sit idle.
+      setup([1, 1, 0, 0, 0, 0, 0, 0]);
+      const snapshot = yield* read;
+
+      assert.strictEqual(snapshot.cpuCount, 2);
+      assert.strictEqual(snapshot.cpuUtilization, 1);
+    }).pipe(
+      Effect.provide(
+        linuxHost({
+          ...unlimitedCgroup,
+          "/proc/self/status": ["Name:\tnode\nCpus_allowed_list:\t0-1\n"],
+          [`${cgroup}/cpu.max`]: ["400000 100000\n"],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("keeps host memory when the cgroup's memory.current is unreadable", () =>
+    Effect.gen(function* () {
+      setup();
+      const snapshot = yield* read;
+
+      assert.strictEqual(snapshot.totalMemoryBytes, 4 * GiB);
+      assert.strictEqual(snapshot.availableMemoryBytes, 2 * GiB);
+    }).pipe(
+      Effect.provide(
+        linuxHost({
+          ...unlimitedCgroup,
+          [`${cgroup}/memory.max`]: [`${GiB}\n`],
+          [`${cgroup}/memory.current`]: [""],
         }),
       ),
     ),

@@ -15,8 +15,21 @@ export class HostResources extends Context.Service<
   { readonly read: Effect.Effect<HostResourcesSnapshot> }
 >()("t3/resourceTelemetry/HostResources") {}
 
-function readCpu() {
-  const cpus = NodeOS.cpus();
+// Linux CPU list syntax, as in Cpus_allowed_list: "0-3,8,10-11".
+function parseCpuList(list: string): ReadonlySet<number> | null {
+  const cpus = new Set<number>();
+  for (const range of list.split(",")) {
+    const match = /^(\d+)(?:-(\d+))?$/.exec(range.trim());
+    if (!match) return null;
+    for (let cpu = Number(match[1]); cpu <= Number(match[2] ?? match[1]); cpu++) cpus.add(cpu);
+  }
+  return cpus;
+}
+
+function readCpu(allowed: ReadonlySet<number> | null) {
+  const all = NodeOS.cpus();
+  const pinned = allowed ? all.filter((_, index) => allowed.has(index)) : all;
+  const cpus = pinned.length > 0 ? pinned : all;
   const cpu = cpus.reduce(
     (sum, { times }) => ({
       idle: sum.idle + times.idle,
@@ -67,12 +80,19 @@ const make = Effect.fn("makeHostResources")(function* () {
             cgroupNumber(stat, /^usage_usec (\d+)$/m),
           )
         : Effect.succeed(null);
+    // Affinity (cpuset) pins the server to some CPUs; idle CPUs outside it are of no use.
+    const allowedCpus =
+      platform === "linux"
+        ? parseCpuList(
+            /^Cpus_allowed_list:\s*(\S+)$/m.exec(yield* readFile("/proc/self/status"))?.[1] ?? "",
+          )
+        : null;
 
-    const previousCpu = readCpu();
+    const previousCpu = readCpu(allowedCpus);
     const previousUsage = yield* readCpuUsage();
     const startedAt = yield* Clock.currentTimeMillis;
     yield* Effect.sleep("200 millis");
-    const cpu = readCpu();
+    const cpu = readCpu(allowedCpus);
     const usage = yield* readCpuUsage();
     const elapsedMicros = ((yield* Clock.currentTimeMillis) - startedAt) * 1000;
     const totalDelta = cpu.total - previousCpu.total;
@@ -84,11 +104,7 @@ const make = Effect.fn("makeHostResources")(function* () {
         : null;
     let cpuUtilization = hostUtilization;
     if (cpuMax) {
-      // availableParallelism also honours CPU affinity (cpusets).
-      const capacity = Math.min(
-        Number(cpuMax[1]) / Number(cpuMax[2]),
-        NodeOS.availableParallelism(),
-      );
+      const capacity = Math.min(Number(cpuMax[1]) / Number(cpuMax[2]), cpu.count);
       cpuCount = Math.max(1, Math.floor(capacity));
       const cgroupIdle =
         previousUsage !== null && usage !== null && elapsedMicros > 0
@@ -122,15 +138,20 @@ const make = Effect.fn("makeHostResources")(function* () {
     const memoryMax = cgroup
       ? cgroupNumber(yield* readFile(`${cgroup}/memory.max`), /^(\d+)$/m)
       : null;
-    if (memoryMax !== null) {
+    const memoryCurrent =
+      memoryMax === null
+        ? null
+        : cgroupNumber(yield* readFile(`${cgroup}/memory.current`), /^(\d+)$/m);
+    // Without usage, a capped total would read as a near-empty cgroup; keep host values instead.
+    if (memoryMax !== null && memoryCurrent !== null) {
       totalMemoryBytes = Math.min(totalMemoryBytes, memoryMax);
-      const current = cgroupNumber(yield* readFile(`${cgroup}/memory.current`), /^(\d+)$/m);
-      if (current !== null) {
-        // inactive_file is page cache the kernel reclaims before hitting memory.max.
-        const stat = yield* readFile(`${cgroup}/memory.stat`);
-        const reclaimable = cgroupNumber(stat, /^inactive_file (\d+)$/m) ?? 0;
-        availableMemoryBytes = Math.min(availableMemoryBytes, memoryMax - (current - reclaimable));
-      }
+      // inactive_file is page cache the kernel reclaims before hitting memory.max.
+      const stat = yield* readFile(`${cgroup}/memory.stat`);
+      const reclaimable = cgroupNumber(stat, /^inactive_file (\d+)$/m) ?? 0;
+      availableMemoryBytes = Math.min(
+        availableMemoryBytes,
+        memoryMax - (memoryCurrent - reclaimable),
+      );
     }
     return {
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
