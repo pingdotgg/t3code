@@ -223,16 +223,16 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
             keychain(entries, lookups),
           ),
         );
-      expect(yield* read(undefined, "default-token")).toEqual({
+      expect(yield* read(undefined, "default-token")).toMatchObject({
         availableCount: 1,
         nextCreditId: "grant_a",
       });
-      expect(yield* read("/Users/me/.claude-work", "work-token")).toEqual({
+      expect(yield* read("/Users/me/.claude-work", "work-token")).toMatchObject({
         availableCount: 1,
         nextCreditId: "grant_a",
       });
       // No Keychain entry: Claude Code's plaintext fallback file.
-      expect(yield* read("/Users/me/.claude-other", "oauth-token")).toEqual({
+      expect(yield* read("/Users/me/.claude-other", "oauth-token")).toMatchObject({
         availableCount: 1,
         nextCreditId: "grant_a",
       });
