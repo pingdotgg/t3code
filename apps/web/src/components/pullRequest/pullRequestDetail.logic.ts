@@ -8,6 +8,7 @@ import { stripInlineContextReferences } from "~/lib/composerContextReferences";
 import type { Nodes as MdastNodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import {
+  aiReviewerDisplayBody,
   aiReviewerFixText,
   parseAiReviewerFeedback,
 } from "@t3tools/client-runtime/ai-reviewer-feedback";
@@ -712,6 +713,13 @@ function findingBody(comment: Pick<PullRequestComment, "author" | "body">): stri
   return readableBody(comment.body);
 }
 
+/** Compact finding for chat chips so analysis chrome cannot crowd replies out of the bound. */
+function chatBody(comment: Pick<PullRequestComment, "author" | "body">): string | null {
+  const parsed = comment.author?.isBot === true ? parseAiReviewerFeedback(comment.body) : null;
+  if (parsed !== null) return readableBody(aiReviewerDisplayBody(parsed));
+  return readableBody(comment.body);
+}
+
 /**
  * Merged wins over closed: GitHub sets both timestamps on a merge, and reporting "closed" for a
  * merged pull request would misstate what happened.
@@ -898,10 +906,10 @@ export function buildPullRequestTimeline(
 const FINDING_LIMIT = 20;
 const FINDING_BODY_MAX_LENGTH = 1_000;
 
-function bounded(value: string): string {
+function boundedTo(value: string, maxLength: number): string {
   const trimmed = value.trim();
-  if (trimmed.length <= FINDING_BODY_MAX_LENGTH) return trimmed;
-  let end = FINDING_BODY_MAX_LENGTH - 3;
+  if (trimmed.length <= maxLength) return trimmed;
+  let end = maxLength - 3;
   const previous = trimmed.charCodeAt(end - 1);
   const next = trimmed.charCodeAt(end);
   if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
@@ -910,8 +918,30 @@ function bounded(value: string): string {
   return `${trimmed.slice(0, end)}...`;
 }
 
+function bounded(value: string): string {
+  return boundedTo(value, FINDING_BODY_MAX_LENGTH);
+}
+
 function boundedField(value: string): string {
   return bounded(value.replace(/\s+/gu, " "));
+}
+
+/** Prefer keeping later replies when a thread exceeds the bound. */
+function joinThreadCommentBodies(
+  bodies: ReadonlyArray<string>,
+  options: { readonly reserveReplies: boolean },
+): string {
+  if (bodies.length === 0) return "";
+  if (!options.reserveReplies || bodies.length === 1) return bounded(bodies.join("\n"));
+  const root = bodies[0]!;
+  const replies = bodies.slice(1).join("\n");
+  if (root.length + 1 + replies.length <= FINDING_BODY_MAX_LENGTH) {
+    return `${root}\n${replies}`;
+  }
+  const minRoot = Math.min(root.length, 48);
+  const replyBudget = Math.min(replies.length, FINDING_BODY_MAX_LENGTH - minRoot - 1);
+  const clippedReplies = boundedTo(replies, replyBudget);
+  return `${boundedTo(root, FINDING_BODY_MAX_LENGTH - clippedReplies.length - 1)}\n${clippedReplies}`;
 }
 
 // Prompt builders are handed a change request's URL, not its detail; a URL no host claims reads
@@ -936,14 +966,13 @@ function reviewThreadContext(
     endIndex: lineIndex,
     rangeLabel:
       thread.line === null ? "file" : `L${thread.line}${thread.side === "left" ? " (before)" : ""}`,
-    // A Fix prefers AI agent prompts; otherwise strip bot bookkeeping before the bound.
-    text: bounded(
-      thread.comments
-        .flatMap((comment) => {
-          const body = forFix ? findingBody(comment) : readableBody(comment.body);
-          return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
-        })
-        .join("\n"),
+    // Fix prefers agent prompts; chat uses the compact finding and keeps replies in the bound.
+    text: joinThreadCommentBodies(
+      thread.comments.flatMap((comment) => {
+        const body = forFix ? findingBody(comment) : chatBody(comment);
+        return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
+      }),
+      { reserveReplies: !forFix },
     ),
     diff: "",
     fenceLanguage: inferReviewCommentFenceLanguage(thread.path),
@@ -1265,7 +1294,7 @@ export function buildPullRequestCommentContext(
       : { ...context, id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}` };
   }
   const comment = subject.comment;
-  const body = readableBody(comment.body);
+  const body = chatBody(comment);
   if (body === null) return null;
   const author = comment.author?.login ?? "ghost";
   return {

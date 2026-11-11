@@ -986,6 +986,8 @@ In apps/web/src/page.tsx around line 12, Guard against null before calling helpe
       { kind: "thread", thread },
     );
     expect(chat?.text).toContain("Null deref on empty input");
+    expect(chat?.text).not.toContain("Analysis chain");
+    expect(chat?.text).not.toContain("Noise the agent should not see");
     expect(pullRequestFixFindingLabel({ kind: "thread", thread }, false)).toBe("Fix in a thread");
     expect(pullRequestFixFindingLabel({ kind: "thread", thread }, true)).toBe("Fix");
   });
@@ -1268,6 +1270,52 @@ describe("adding a remark to the chat", () => {
         },
       }),
     ).toBeNull();
+  });
+
+  it("keeps a human reply when a long bot analysis would fill the bound", () => {
+    const bot = { login: "coderabbitai[bot]", name: null, avatarUrl: null, isBot: true };
+    const analysis = `ANALYSIS ${"x".repeat(1_200)}`;
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "thread",
+      thread: {
+        id: "t1",
+        path: "src/app.ts",
+        line: 3,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          {
+            id: "tc1",
+            author: bot,
+            body: `_⚠️ Potential issue_ | _🟠 Major_
+
+**Null deref on empty input.**
+
+<details>
+<summary>🧩 Analysis chain</summary>
+
+${analysis}
+</details>
+`,
+            createdAt: "2026-07-03T00:00:00Z",
+            url: null,
+          },
+          {
+            id: "tc2",
+            author: { login: "octocat", name: null, avatarUrl: null },
+            body: "Please also rename the helper.",
+            createdAt: "2026-07-03T01:00:00Z",
+            url: null,
+          },
+        ],
+      },
+    });
+
+    expect(context?.text).toContain("Null deref on empty input");
+    expect(context?.text).toContain("Please also rename the helper.");
+    expect(context?.text).not.toContain("ANALYSIS");
+    expect(context?.text.length).toBeLessThanOrEqual(1_000);
   });
 });
 
