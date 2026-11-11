@@ -154,7 +154,7 @@ describe("followNetworkRoster", () => {
     }),
   );
 
-  it.effect("drops a member any followed host reports revoked, even while another lists it", () =>
+  it.effect("drops a member whose newest entry is a revocation, even while another lists it", () =>
     Effect.gen(function* () {
       const catalog = yield* makeCatalog([record(laptop, studio), record(vps, studio)]);
       catalog.saved.add(studio).add(box).add(laptop);
@@ -165,6 +165,30 @@ describe("followNetworkRoster", () => {
       ]);
       expect(ids(catalog.records())).toEqual([vps]);
       expect(catalog.forgotten).toEqual([laptop]);
+    }),
+  );
+
+  it.effect("keeps a member another host restored after a stale host's revocation", () =>
+    Effect.gen(function* () {
+      const catalog = yield* makeCatalog([record(laptop, studio)]);
+      catalog.saved.add(studio).add(box).add(laptop);
+      const revokedAt = { wallMs: 2, counter: 0, node: studio };
+      const stale = {
+        ...device(laptop, "revoked"),
+        member: { ...member(laptop, "revoked"), updatedAt: revokedAt },
+      };
+      const restored = {
+        ...device(laptop),
+        member: {
+          ...member(laptop, "full-access"),
+          updatedAt: { wallMs: 3, counter: 0, node: box },
+          restores: revokedAt,
+        },
+      };
+
+      yield* catalog.follow([report(studio, [stale]), report(box, [restored])]);
+      expect(catalog.records()).toEqual([record(laptop, box)]);
+      expect(catalog.forgotten).toEqual([]);
     }),
   );
 
@@ -296,13 +320,16 @@ describe("leaving a network", () => {
       catalog.saved.add(studio).add(laptop).add(box);
       const third = EnvironmentId.make("env-third");
 
+      const desk = EnvironmentId.make("env-desk");
+
+      // Networks are disjoint: the new one lists none of the old one's machines.
       yield* catalog.follow([
         withApps(studio, [device(laptop), device(vps), device(box)], app, "revoked"),
-        withApps(third, [device(box), device(laptop)], appNew, "full-access"),
+        withApps(third, [device(box), device(desk)], appNew, "full-access"),
       ]);
 
       expect(catalog.records()).toEqual([
-        { environmentId: laptop, label: laptop, via: third, appId: appNew },
+        { environmentId: desk, label: desk, via: third, appId: appNew },
       ]);
       expect(
         followedNetwork(catalog.records(), [withApps(third, [], appNew, "full-access")]),
@@ -310,6 +337,46 @@ describe("leaving a network", () => {
       // Neither the hand-paired box nor the opened laptop's saved connection is forgotten.
       expect(catalog.forgotten).toEqual([]);
       expect([...catalog.saved]).toEqual([studio, laptop, box]);
+    }),
+  );
+
+  it.effect("a stale revoke of this app does not disown it", () =>
+    Effect.gen(function* () {
+      const catalog = yield* makeCatalog([record(vps, studio)]);
+      catalog.saved.add(studio).add(box);
+      const stale = withApps(studio, [device(vps), device(laptop)], app, "revoked");
+      const current = withApps(box, [], app, "full-access");
+      const newer = {
+        ...current,
+        roster: {
+          ...current.roster,
+          apps: current.roster.apps.map((entry) => ({
+            ...entry,
+            updatedAt: { wallMs: 2, counter: 0, node: box },
+          })),
+        },
+      };
+
+      yield* catalog.follow([stale, newer]);
+      expect(catalog.records()).toEqual([record(vps, studio), record(laptop, studio)]);
+      expect(catalog.forgotten).toEqual([]);
+    }),
+  );
+
+  it.effect("re-pairing the app moves the network to its new id", () =>
+    Effect.gen(function* () {
+      const catalog = yield* makeCatalog([record(laptop, studio), record(vps, studio)]);
+      catalog.saved.add(studio).add(laptop);
+      // The old app is revoked and hidden everywhere, so the host lists only the new one.
+      const repaired = withApps(studio, [device(laptop), device(vps)], appNew, "full-access");
+
+      yield* catalog.follow([repaired]);
+      expect(catalog.records()).toEqual([
+        { ...record(laptop, studio), appId: appNew },
+        { ...record(vps, studio), appId: appNew },
+      ]);
+      expect(followedNetwork(catalog.records(), [repaired]).reports).toEqual([repaired]);
+      expect(catalog.forgotten).toEqual([]);
     }),
   );
 

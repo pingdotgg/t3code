@@ -1,7 +1,10 @@
 import {
   EnvironmentId,
+  type NetworkApp,
+  type NetworkMember,
   type TailnetDeviceClientCredential,
   type TailnetDevicesSnapshot,
+  type TailnetHlc,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -40,12 +43,58 @@ export interface NetworkRosterReport {
   readonly roster: NetworkRoster;
 }
 
-/** This client's app id on `roster`'s host, when the host takes part in a network it is an app of. */
-function callerAppIdOf(roster: NetworkRoster): string | null {
+const compareStamps = (a: TailnetHlc, b: TailnetHlc): number =>
+  a.wallMs - b.wallMs || a.counter - b.counter || (a.node < b.node ? -1 : a.node > b.node ? 1 : 0);
+
+/**
+ * The server's roster order (`Membership.ts`): a revocation outranks any entry that does not name
+ * it in `restores`, and an entry naming it outranks it. Positive when `a` is newer.
+ */
+function compareMembers(a: NetworkMember, b: NetworkMember): number {
+  const epoch = (entry: NetworkMember) =>
+    entry.access === "revoked" ? entry.updatedAt : (entry.restores ?? null);
+  const epochA = epoch(a);
+  const epochB = epoch(b);
+  const byEpoch =
+    epochA === null
+      ? epochB === null
+        ? 0
+        : -1
+      : epochB === null
+        ? 1
+        : compareStamps(epochA, epochB);
+  const kind = (entry: NetworkMember) => (entry.access === "revoked" ? 0 : 1);
+  return byEpoch || kind(a) - kind(b) || compareStamps(a.updatedAt, b.updatedAt);
+}
+
+/** The newest entry for each app id across hosts that take part; a revocation wins a tie. */
+function newestApps(reports: ReadonlyArray<NetworkRosterReport>): ReadonlyMap<string, NetworkApp> {
+  const apps = new Map<string, NetworkApp>();
+  for (const { roster } of reports) {
+    if (!roster.enabled) continue;
+    for (const app of roster.apps) {
+      const current = apps.get(app.appId);
+      const order =
+        current === undefined
+          ? 1
+          : compareStamps(app.updatedAt, current.updatedAt) ||
+            (app.access === "revoked" ? 1 : 0) - (current.access === "revoked" ? 1 : 0);
+      if (order > 0) apps.set(app.appId, app);
+    }
+  }
+  return apps;
+}
+
+/** This client's app id on `roster`'s host, when the host is in a network that still takes it. */
+function callerAppIdOf(
+  roster: NetworkRoster,
+  apps: ReadonlyMap<string, NetworkApp>,
+): string | null {
   const appId = roster.callerAppId;
   if (!roster.enabled || appId === null) return null;
   if (roster.selfMember === null || roster.selfMember.access === "revoked") return null;
-  return roster.apps.some((app) => app.appId === appId && app.access !== "revoked") ? appId : null;
+  const app = apps.get(appId);
+  return app !== undefined && app.access !== "revoked" ? appId : null;
 }
 
 /**
@@ -57,8 +106,9 @@ export function followedNetwork(
   records: ReadonlyArray<NetworkMemberRecord>,
   reports: ReadonlyArray<NetworkRosterReport>,
 ): { readonly appId: string | null; readonly reports: ReadonlyArray<NetworkRosterReport> } {
+  const apps = newestApps(reports);
   const candidates = reports.flatMap((report) => {
-    const appId = callerAppIdOf(report.roster);
+    const appId = callerAppIdOf(report.roster, apps);
     return appId === null ? [] : [{ appId, report }];
   });
   const appId =
@@ -74,40 +124,52 @@ export function followedNetwork(
 }
 
 /**
- * Drops the followed network's records once it has disowned this client: a host still calling it
- * by its app id lists that app revoked or not at all (revoke, forget, or the host left), and no
- * such host still takes it. Offline or switched-off hosts never clear it. Returns `records` itself
- * otherwise; a later follow then binds to whichever network a host reports.
+ * Rebinds the records once the followed network no longer takes this client's app id: its newest
+ * entry is revoked, or a host speaking for the network lists it no more (forgotten, re-paired, or
+ * the host left). A host of the same network that takes a new id (it lists the records' machines)
+ * keeps them under it; otherwise they are dropped. Offline or switched-off hosts never rebind.
  */
-function releaseDisownedNetwork(
+function rebindNetwork(
   records: ReadonlyArray<NetworkMemberRecord>,
   reports: ReadonlyArray<NetworkRosterReport>,
 ): ReadonlyArray<NetworkMemberRecord> {
-  const appId = records.find((record) => record.appId !== undefined)?.appId;
-  if (appId === undefined) return records;
-  const ours = reports.filter(
-    (report) => report.roster.enabled && report.roster.callerAppId === appId,
-  );
-  const disowning = new Set(
-    ours.flatMap((report) =>
-      report.roster.apps.some((app) => app.appId === appId && app.access !== "revoked")
-        ? []
-        : [report.host],
+  const pinned = records.find((record) => record.appId !== undefined)?.appId;
+  if (pinned === undefined) return records;
+  const apps = newestApps(reports);
+  const entry = apps.get(pinned);
+  if (entry !== undefined && entry.access !== "revoked") return records;
+  const known = new Set(records.flatMap((record) => [record.environmentId, record.via]));
+  const successors = reports.flatMap((report) => {
+    const appId = callerAppIdOf(report.roster, apps);
+    const sameNetwork =
+      known.has(report.host) ||
+      report.roster.devices.some(
+        (device) => device.member !== null && known.has(device.environmentId),
+      );
+    return appId === null || !sameNetwork ? [] : [appId];
+  });
+  const speaking = new Set(
+    reports.flatMap((report) =>
+      report.roster.enabled && report.roster.callerAppId === pinned ? [report.host] : [],
     ),
   );
-  if (disowning.size === 0 || ours.some((report) => callerAppIdOf(report.roster) === appId)) {
-    return records;
+  if (entry === undefined && speaking.size === 0 && successors.length === 0) return records;
+  const successor = successors.sort()[0];
+  if (successor !== undefined) {
+    return records.map((record) =>
+      record.appId === pinned ? { ...record, appId: successor } : record,
+    );
   }
   return records.filter((record) =>
-    record.appId === undefined ? !disowning.has(record.via) : record.appId !== appId,
+    record.appId === undefined ? !speaking.has(record.via) : record.appId !== pinned,
   );
 }
 
 /**
- * A member any followed host reports revoked is dropped. Otherwise a record goes only when no
- * followed host lists it (a host vouching for itself counts) and its `via` host is followed and
- * omits it: an offline, switched-off or foreign host says nothing. `userSaved` environments never
- * become records. Returns `records` itself when nothing changed.
+ * Each member is decided by its newest entry across the followed hosts, as the server merges them:
+ * a newest revocation drops it. Otherwise a record goes only when no followed host lists it (a
+ * host vouching for itself counts) and its `via` host is followed and omits it. `userSaved`
+ * environments never become records. Returns `records` itself when nothing changed.
  */
 function followRoster(
   records: ReadonlyArray<NetworkMemberRecord>,
@@ -118,28 +180,36 @@ function followRoster(
 ): ReadonlyArray<NetworkMemberRecord> {
   const network = followedNetwork(records, input.reports);
   const hosts = new Set(network.reports.map((report) => report.host));
+  const newest = new Map<EnvironmentId, NetworkMember>();
+  const offer = (entry: NetworkMember) => {
+    const current = newest.get(entry.environmentId);
+    if (current === undefined || compareMembers(entry, current) > 0) {
+      newest.set(entry.environmentId, entry);
+    }
+  };
   const listed = new Map<EnvironmentId, { label: string; hosts: Array<EnvironmentId> }>();
-  const revoked = new Set<EnvironmentId>();
   for (const { host, roster } of network.reports) {
+    if (roster.selfMember !== null) offer(roster.selfMember);
     for (const device of roster.devices) {
       if (device.member === null || device.environmentId === host) continue;
-      if (device.access === "revoked" || device.member.access === "revoked") {
-        revoked.add(device.environmentId);
-        continue;
-      }
+      offer(device.member);
+      if (device.member.access === "revoked") continue;
       const entry = listed.get(device.environmentId);
-      if (entry === undefined)
+      if (entry === undefined) {
         listed.set(device.environmentId, { label: device.label, hosts: [host] });
-      else entry.hosts.push(host);
+      } else {
+        entry.hosts.push(host);
+      }
     }
   }
+  const revoked = (environmentId: EnvironmentId) => newest.get(environmentId)?.access === "revoked";
   const appId = network.appId ?? undefined;
   let changed = false;
   const next: Array<NetworkMemberRecord> = [];
   for (const record of records) {
     const entry = listed.get(record.environmentId);
     if (
-      revoked.has(record.environmentId) ||
+      revoked(record.environmentId) ||
       (entry === undefined && !hosts.has(record.environmentId) && hosts.has(record.via))
     ) {
       changed = true;
@@ -170,7 +240,7 @@ function followRoster(
   for (const [environmentId, entry] of listed) {
     if (
       kept.has(environmentId) ||
-      revoked.has(environmentId) ||
+      revoked(environmentId) ||
       hosts.has(environmentId) ||
       input.userSaved.has(environmentId)
     ) {
@@ -267,8 +337,8 @@ export const followNetworkRoster = Effect.fn("NetworkMembers.follow")(function* 
       const saved = yield* input.savedEnvironmentIds;
       // Saved members that are records stay managed; only the user's own entries are skipped.
       const managed = new Set(current.map((record) => record.environmentId));
-      // Released records are only unmanaged; their saved connections stay with the user.
-      const released = releaseDisownedNetwork(current, input.reports);
+      // Records a rebind drops are only unmanaged; their saved connections stay with the user.
+      const released = rebindNetwork(current, input.reports);
       const next = followRoster(released, {
         reports: input.reports,
         userSaved: new Set([...saved].filter((id) => !managed.has(id))),

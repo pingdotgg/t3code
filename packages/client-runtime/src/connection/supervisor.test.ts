@@ -525,24 +525,6 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("retries a blocked connection when platform credentials change", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        prepare: (attempt) =>
-          attempt === 1 ? Effect.fail(blocked()) : Effect.succeed(PREPARED_CONNECTION),
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
-
-      yield* awaitState(supervisor.state, (state) => state.phase === "blocked");
-      yield* harness.wake("credentials-changed");
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-
-      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
-    }),
-  );
-
   it.effect("does not let platform wakeups reset an in-flight attempt", () =>
     Effect.gen(function* () {
       const firstAttemptStarted = yield* Deferred.make<void>();
@@ -564,9 +546,9 @@ describe("EnvironmentSupervisor", () => {
       yield* Deferred.await(firstAttemptStarted);
       yield* Effect.all(
         [
-          harness.wake("credentials-changed"),
+          harness.wake("application-active-probe"),
           harness.wake("application-active"),
-          harness.wake("credentials-changed"),
+          harness.wake("application-active-probe"),
         ],
         { concurrency: "unbounded" },
       );
@@ -1362,23 +1344,6 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
-  it.effect("does not churn a healthy session when credentials change", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
-
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      yield* harness.wake("credentials-changed");
-      yield* Effect.yieldNow;
-
-      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
-      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
-    }),
-  );
-
   it.effect("does not lose an explicit disconnect among concurrent wakeup signals", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -1390,9 +1355,9 @@ describe("EnvironmentSupervisor", () => {
       yield* Effect.all(
         [
           supervisor.disconnect,
-          harness.wake("credentials-changed"),
+          harness.wake("application-active-probe"),
           harness.wake("application-active"),
-          harness.wake("credentials-changed"),
+          harness.wake("application-active-probe"),
         ],
         { concurrency: "unbounded" },
       );
