@@ -5,9 +5,7 @@ export const ASSISTANT_CITATION_MAX_TEXT_LENGTH = 8_000;
 export const ASSISTANT_CITATION_MAX_COMMENT_LENGTH = 8_000;
 export const ASSISTANT_CITATION_CONTEXT_LENGTH = 32;
 
-/**
- * Positions are UTF-16 offsets, not Markdown offsets.
- */
+/** Positions are UTF-16 offsets, not Markdown offsets. */
 export const AssistantCitation = Schema.Struct({
   version: Schema.Literal(1),
   environmentId: EnvironmentId.check(Schema.isMaxLength(512)),
