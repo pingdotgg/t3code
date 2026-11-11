@@ -1,3 +1,4 @@
+import { pullRequestProjectFilterQueries } from "@t3tools/client-runtime/pull-request-project-filter";
 import { usePaneRole } from "../../components/ui/Pane";
 import { Button } from "../../components/ui/Button";
 import {
@@ -26,6 +27,7 @@ import { PullRequestListRow } from "./PullRequestListRow";
 import {
   PullRequestListFilters,
   usePullRequestListFilters,
+  usePullRequestProjectGroups,
   type PullRequestFilterMenu,
 } from "./PullRequestListFilters";
 import { usePullRequestList } from "./usePullRequestList";
@@ -144,23 +146,42 @@ export function PullRequestsScreen(
     () => withoutScratchProjectScope(savedControls, allProjects),
     [allProjects, savedControls],
   );
-  const targets = useMemo(
-    () =>
-      environments
-        .filter(
-          (environment) =>
-            configs.get(environment.environmentId) !== undefined &&
-            (environmentId === null || environment.environmentId === environmentId) &&
-            (!controls.projectEnvironmentId ||
-              environment.environmentId === controls.projectEnvironmentId),
-        )
-        .sort((left, right) => left.environmentId.localeCompare(right.environmentId))
-        .map((environment) => ({
-          environmentId: environment.environmentId,
-          input: pullRequestListInput(controls, query),
-        })),
-    [environments, environmentId, configs, controls, query],
-  );
+  const projectGroups = usePullRequestProjectGroups();
+  const projects = pullRequestProjectChoices(allProjects, {
+    environmentId,
+    controls,
+    groups: projectGroups,
+    servesPullRequests: (id) => configs.get(id)?.environment.capabilities.pullRequests === true,
+  });
+  const selectedProject = controls.projectId
+    ? { id: controls.projectId, environmentId: controls.projectEnvironmentId }
+    : undefined;
+  const projectRefs =
+    selectedProject === undefined
+      ? undefined
+      : (projects.find(
+          (project) =>
+            project.id === selectedProject.id &&
+            project.environmentId === selectedProject.environmentId,
+        )?.memberProjectRefs ?? []);
+  const targets = pullRequestProjectFilterQueries(
+    projects,
+    environments
+      .filter(
+        (environment) =>
+          configs.get(environment.environmentId) !== undefined &&
+          (environmentId === null || environment.environmentId === environmentId),
+      )
+      .map((environment) => environment.environmentId)
+      .sort(),
+    selectedProject,
+  ).map(({ environmentId: targetEnvironmentId, projectIds }) => ({
+    environmentId: targetEnvironmentId,
+    input: {
+      ...pullRequestListInput({ ...controls, projectId: undefined }, query),
+      ...(projectIds ? { projectIds } : {}),
+    },
+  }));
   const result = usePullRequestList(targets);
   const connectedTargets = targets.filter((target) =>
     environments.some(
@@ -186,8 +207,9 @@ export function PullRequestsScreen(
         query,
         result.data.localSearchHosts,
         new Set(connectedKey.split("\n")),
+        projectRefs,
       ),
-    [result.entries, controls, query, result.data, connectedKey],
+    [result.entries, controls, query, result.data, connectedKey, projectRefs],
   );
   const facets = pullRequestListFacets(result.entries);
   const [knownFacets, setKnownFacets] = useState({ environmentId, source: facets, ...facets });
@@ -215,14 +237,6 @@ export function PullRequestsScreen(
   }
   const labelColors =
     knownFacets.environmentId === environmentId ? knownFacets.labelColors : facets.labelColors;
-  const projects = pullRequestProjectChoices(allProjects, {
-    environmentId,
-    controls,
-    environmentLabels: new Map(
-      environments.map((item) => [item.environmentId, item.environmentLabel]),
-    ),
-    servesPullRequests: (id) => configs.get(id)?.environment.capabilities.pullRequests === true,
-  });
   const filters = usePullRequestListFilters({
     environments: environments.map((item) => ({
       id: String(item.environmentId),
