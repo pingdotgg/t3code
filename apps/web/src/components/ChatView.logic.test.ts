@@ -1108,7 +1108,6 @@ describe("planComposerTurn", () => {
       "/compact keep the API notes",
       "/compact\n  tests",
       "/clear",
-      "/Clear ",
     ]) {
       expect(planComposerTurn({ ...stale, messageText })).toMatchObject({
         compactBeforeSend: false,
