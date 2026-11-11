@@ -2,10 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
-import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
 
@@ -81,9 +79,9 @@ it.live("closes a tab's relay connection when the desktop detaches the tab", () 
 
       yield* send({ type: "attached", ...key });
       yield* channel.awaitAttached(key, "5 seconds");
-      const scope = yield* Scope.make();
-      const url = yield* channel.endpoint(key).pipe(Scope.provide(scope));
+      const url = yield* channel.endpoint(key);
       const socket = new WebSocket(url);
+      yield* Effect.addFinalizer(() => Effect.sync(() => socket.close()));
       const closed = new Promise<void>((resolve) =>
         socket.addEventListener("close", () => resolve()),
       );
@@ -94,8 +92,8 @@ it.live("closes a tab's relay connection when the desktop detaches the tab", () 
       // Playwright waits on this socket for CDP replies; it must learn the tab is gone.
       yield* send({ type: "detached", ...key });
       yield* Effect.promise(() => closed).pipe(Effect.timeout("2 seconds"));
-      yield* Scope.close(scope, Exit.void);
     }).pipe(
+      Effect.scoped,
       Effect.provide(
         DesktopBrowserChannel.layer.pipe(
           Layer.provide(
