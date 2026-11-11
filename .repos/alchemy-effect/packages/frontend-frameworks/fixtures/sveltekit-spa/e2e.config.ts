@@ -11,9 +11,7 @@ export default Options.make({
   // Typed factory form: map harness options onto SvelteKit options, then pin
   // the dev port so parallel fixture runs don't collide.
   framework: (options) => {
-    const base = SvelteKit.fromHarnessOptions(
-      options as SvelteKit.HarnessOptions,
-    );
+    const base = SvelteKit.fromHarnessOptions(options as SvelteKit.HarnessOptions);
     return SvelteKit.layer({
       ...base,
       dev: { ...base.dev, port: 3108 },
