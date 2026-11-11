@@ -11,11 +11,11 @@ import {
 } from "@t3tools/shared/assistantCitations";
 
 import * as Dialog from "../../components/ui/Dialog";
-import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
   captureComposerDraftInsertion,
   insertComposerDraftText,
 } from "../../state/use-composer-drafts";
+import { activeComposerDraftKey } from "../../state/use-thread-composer-state";
 
 export function citeAssistantText(
   source: {
@@ -31,7 +31,10 @@ export function citeAssistantText(
     Dialog.alert("Selection is too long to cite", "Select a shorter passage and try again.");
     return;
   }
-  const draftKey = scopedThreadKey(source.environmentId, source.threadId);
+  const draftKey = activeComposerDraftKey({
+    environmentId: source.environmentId,
+    id: source.threadId,
+  });
   const insertion = captureComposerDraftInsertion(draftKey);
   const start = Math.max(0, selection.start);
   // Native offsets are per rendered block, not per message, and carry no surrounding context;
@@ -45,24 +48,28 @@ export function citeAssistantText(
     prefix: "",
     suffix: "",
   };
-  Dialog.prompt({
-    title: "Cite",
-    message: "Add a comment about this quote (optional).",
-    placeholder: "Comment",
-    initialValue: "",
-    confirmText: "Cite",
-    onConfirm: (comment) => {
-      if (comment.trim().length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH) {
-        Dialog.alert("Comment is too long", "Shorten the comment and cite again.");
-        return;
-      }
-      const before = insertion.text.slice(0, insertion.start);
-      const lead = before.length > 0 && !/\s$/.test(before) ? " " : "";
-      insertComposerDraftText(
-        draftKey,
-        `${lead}${serializeAssistantCitation(withAssistantCitationComment(citation, comment))} `,
-        insertion,
-      );
-    },
-  });
+  const askForComment = (initialValue: string) =>
+    Dialog.prompt({
+      title: "Cite",
+      message: "Add a comment about this quote (optional).",
+      placeholder: "Comment",
+      initialValue,
+      confirmText: "Cite",
+      onConfirm: (comment) => {
+        if (comment.trim().length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH) {
+          Dialog.alert("Comment is too long", "Shorten the comment and try again.", [
+            { text: "OK", onPress: () => askForComment(comment) },
+          ]);
+          return;
+        }
+        const before = insertion.text.slice(0, insertion.start);
+        const lead = before.length > 0 && !/\s$/.test(before) ? " " : "";
+        insertComposerDraftText(
+          draftKey,
+          `${lead}${serializeAssistantCitation(withAssistantCitationComment(citation, comment))} `,
+          insertion,
+        );
+      },
+    });
+  askForComment("");
 }
