@@ -124,6 +124,59 @@ describe("preview guest input", () => {
     },
   );
 
+  it.each([{ userClicksStuckTab: false }, { userClicksStuckTab: true }])(
+    "keeps the right focus when a sibling press finishes beside a stuck one, user clicks: $userClicksStuckTab",
+    async ({ userClicksStuckTab }) => {
+      const document = { activeElement: {} as object };
+      const composer = {
+        isConnected: true,
+        focus: () => {
+          document.activeElement = composer;
+        },
+      };
+      document.activeElement = composer;
+      const context = NodeVM.createContext({ document });
+      const host = {
+        isDestroyed: () => false,
+        executeJavaScript: async (script: string) => NodeVM.runInContext(script, context),
+      };
+      const previews = new Map(
+        [7, 8].map((id) => [id, { tagName: "WEBVIEW", getWebContentsId: () => id }]),
+      );
+      const stuckPressFocused = Promise.withResolvers<void>();
+      const stuckPressEnds = Promise.withResolvers<void>();
+      const press = (id: number) => {
+        const debuggee = {
+          sendCommand: async () => {
+            document.activeElement = previews.get(id)!;
+            if (id === 7) {
+              stuckPressFocused.resolve();
+              await stuckPressEnds.promise;
+            } else if (userClicksStuckTab) {
+              document.activeElement = previews.get(7)!;
+            }
+            return {};
+          },
+        };
+        return sendPageCommand(
+          { id, focusedFrame: null, hostWebContents: host } as unknown as Electron.WebContents,
+          debuggee as unknown as Electron.Debugger,
+          "Input.dispatchMouseEvent",
+          { type: "mousePressed", x: 10, y: 10, button: "left" },
+        );
+      };
+      // A press held open, as by a page's confirm() on mousedown, must not block or win focus.
+      const stuck = press(7);
+      await stuckPressFocused.promise;
+      await press(8);
+      const expected = userClicksStuckTab ? previews.get(7) : composer;
+      expect(document.activeElement).toBe(expected);
+      stuckPressEnds.resolve();
+      await stuck;
+      expect(Object.keys(context)).toEqual(["document"]);
+    },
+  );
+
   it.each([
     {
       method: "Input.dispatchMouseEvent",
