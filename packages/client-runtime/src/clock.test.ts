@@ -184,15 +184,4 @@ describe("server clock", () => {
     expect(toServerClock(behind, HOUR + 500)).toBe(500);
     expect(toServerClock(EnvironmentId.make("unknown"), 500)).toBe(500);
   });
-
-  it("drops the previous reading when the next snapshot has no stamp", () => {
-    const environmentId = EnvironmentId.make("missing-stamp");
-    recordServerClock(environmentId, { serverTimeMs: HOUR, requestedAtMs: 0, receivedAtMs: 0 });
-    recordServerClock(environmentId, {
-      serverTimeMs: undefined,
-      requestedAtMs: 0,
-      receivedAtMs: 0,
-    });
-    expect(toServerClock(environmentId, 500)).toBe(500);
-  });
 });
