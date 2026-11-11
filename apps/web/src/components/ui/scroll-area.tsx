@@ -22,6 +22,7 @@ function getVirtualizedScrollFadeClassName({ top, bottom }: { top: boolean; bott
 function ScrollArea({
   className,
   children,
+  orientation = "both",
   scrollFade = false,
   scrollFadePadding = true,
   scrollbarGutter = false,
@@ -31,6 +32,7 @@ function ScrollArea({
   viewportTabIndex,
   ...props
 }: ScrollAreaPrimitive.Root.Props & {
+  orientation?: "both" | "vertical" | "horizontal";
   scrollFade?: boolean;
   scrollFadePadding?: boolean;
   scrollbarGutter?: boolean;
@@ -50,6 +52,13 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         {...(viewportTabIndex === undefined ? {} : { tabIndex: viewportTabIndex })}
+        style={
+          orientation === "vertical"
+            ? { overflowX: "hidden" }
+            : orientation === "horizontal"
+              ? { overflowY: "hidden" }
+              : undefined
+        }
         className={cn(
           "h-full max-h-[inherit] overflow-auto overscroll-contain rounded-[inherit] outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring data-has-overflow-x:overscroll-x-contain",
           chainVerticalScroll && "overscroll-y-auto",
@@ -67,9 +76,9 @@ function ScrollArea({
       </ScrollAreaPrimitive.Viewport>
       {!hideScrollbars && (
         <>
-          <ScrollBar orientation="vertical" />
-          <ScrollBar orientation="horizontal" />
-          <ScrollAreaPrimitive.Corner data-slot="scroll-area-corner" />
+          {orientation !== "horizontal" && <ScrollBar orientation="vertical" />}
+          {orientation !== "vertical" && <ScrollBar orientation="horizontal" />}
+          {orientation === "both" && <ScrollAreaPrimitive.Corner data-slot="scroll-area-corner" />}
         </>
       )}
     </ScrollAreaPrimitive.Root>
