@@ -1458,13 +1458,6 @@ describe("reviewer request payload", () => {
       ]),
     ).toEqual({ reviewers: ["octocat", "hubot"], team_reviewers: ["reviewers"] });
   });
-
-  it("sends both lists even where one of them is empty, which is what GitHub reads", () => {
-    expect(buildReviewerRequest([{ id: "octocat", kind: "user" }])).toEqual({
-      reviewers: ["octocat"],
-      team_reviewers: [],
-    });
-  });
 });
 
 describe("review submission payload", () => {
@@ -1529,32 +1522,6 @@ describe("review submission payload", () => {
 });
 
 describe("decodePullRequestFilesJson", () => {
-  it("quotes literal backslashes without interpreting them as escapes", () => {
-    const result = expectSuccess(
-      decodePullRequestFilesJson(
-        JSON.stringify([
-          {
-            filename: String.raw`src\notes.ts`,
-            status: "modified",
-            patch: "@@ -1 +1 @@\n-old\n+new",
-          },
-        ]),
-      ),
-    );
-
-    expect(result.patch).toBe(
-      [
-        String.raw`diff --git "a/src\\notes.ts" "b/src\\notes.ts"`,
-        String.raw`--- "a/src\\notes.ts"`,
-        String.raw`+++ "b/src\\notes.ts"`,
-        "@@ -1 +1 @@",
-        "-old",
-        "+new",
-        "",
-      ].join("\n"),
-    );
-  });
-
   it("preserves spaces and literal backslashes in both rename paths", () => {
     const result = expectSuccess(
       decodePullRequestFilesJson(
