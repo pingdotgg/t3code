@@ -30,7 +30,10 @@ export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDevi
     readonly prepared: PreparedConnection;
     readonly hubBasePath: string;
   }): Effect.fn.Return<DeviceHubAccess, RemoteEnvironmentRequestError, HttpClient.HttpClient> {
-    const httpBase = yield* ticketedEnvironmentEndpointUrl(input.prepared, input.hubBasePath).pipe(
+    const ticketedUrl = yield* ticketedEnvironmentEndpointUrl(
+      input.prepared,
+      input.hubBasePath,
+    ).pipe(
       Effect.mapError((error) =>
         hopUrlFailed(
           error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
@@ -40,9 +43,14 @@ export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDevi
         ),
       ),
     );
+    const base = new URL(ticketedUrl);
+    const gatewayTicket = base.searchParams.get("gatewayTicket");
+    const query: DeviceHubAccess["query"] = gatewayTicket === null ? {} : { gatewayTicket };
+    base.search = "";
+    const httpBase = base.toString();
     const wsBase = httpBase.replace(/^http/, "ws");
     if (input.prepared.httpAuthorization === null) {
-      return { httpBase, wsBase, query: {}, credentials: true };
+      return { httpBase, wsBase, query, credentials: true };
     }
     const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
     const remoteAuthorization = yield* Effect.serviceOption(
@@ -62,7 +70,7 @@ export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDevi
     return {
       httpBase,
       wsBase,
-      query: { wsTicket: Redacted.value(ticket.ticket) },
+      query: { ...query, wsTicket: Redacted.value(ticket.ticket) },
       credentials: false,
     };
   },

@@ -35,6 +35,7 @@ import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
+import { resolveDeviceHubAccess, withDeviceHubQuery } from "./deviceHubAccess.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
@@ -501,7 +502,11 @@ describe("authenticated environment HTTP requests", () => {
 
   it.effect("sends each LAN gateway request with a freshly minted hop ticket", () =>
     Effect.gen(function* () {
-      const harness = makeHarness(() => Response.json(SESSION));
+      const harness = makeHarness((count) =>
+        Response.json(
+          count <= 2 ? SESSION : { ticket: "peer-media", expiresAt: "2030-01-01T00:00:00Z" },
+        ),
+      );
       let minted = 0;
       const input = {
         ...harness.input,
@@ -524,6 +529,26 @@ describe("authenticated environment HTTP requests", () => {
         "https://gateway.example.test/__t3_gateway/environment-1/api/auth/session?gatewayTicket=hop-1",
         "https://gateway.example.test/__t3_gateway/environment-1/api/auth/session?gatewayTicket=hop-2",
       ]);
+      for (const httpAuthorization of [input.prepared.httpAuthorization, null]) {
+        const access = yield* resolveDeviceHubAccess({
+          prepared: { ...input.prepared, httpAuthorization },
+          hubBasePath: "/api/browser",
+        }).pipe(Effect.provide(harness.httpLayer));
+        expect(access.httpBase).toBe(
+          "https://gateway.example.test/__t3_gateway/environment-1/api/browser",
+        );
+        const stream = new URL(withDeviceHubQuery(`${access.wsBase}/ws?tabId=tab`, access));
+        expect(stream.protocol).toBe("wss:");
+        expect(stream.pathname).toBe("/__t3_gateway/environment-1/api/browser/ws");
+        expect(stream.searchParams.get("tabId")).toBe("tab");
+        expect(stream.searchParams.get("gatewayTicket")).toBe(
+          httpAuthorization === null ? "hop-5" : "hop-3",
+        );
+        expect(stream.searchParams.get("wsTicket")).toBe(
+          httpAuthorization === null ? null : "peer-media",
+        );
+        expect(access.credentials).toBe(httpAuthorization === null);
+      }
     }),
   );
 
