@@ -5,7 +5,6 @@ import type { ToolbarProps } from "./Toolbar.types";
 
 import { useControlTheme } from "./useControlTheme";
 
-/** Native toolbar surface; hosted RN controls retain their existing menus and accessibility. */
 function ToolbarRoot(props: ToolbarProps) {
   const { colors } = useControlTheme();
   if (props.placement) return <NativeHeaderToolbar {...props} />;

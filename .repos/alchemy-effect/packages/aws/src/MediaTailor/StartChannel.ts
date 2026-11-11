@@ -1,0 +1,32 @@
+import type * as mediatailor from "@distilled.cloud/aws/mediatailor";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `mediatailor:StartChannel` — start a channel-assembly
+ * channel so it begins producing its linear stream.
+ *
+ * Channel names are runtime parameters, so the binding is account-level and
+ * grants `mediatailor:StartChannel` on `*`. Provide the implementation with
+ * `Effect.provide(AWS.MediaTailor.StartChannelHttp)`.
+ *
+ * ### Channel Assembly
+ * **Example:** Start a channel
+ * ```typescript
+ * const startChannel = yield* AWS.MediaTailor.StartChannel();
+ *
+ * yield* startChannel({ ChannelName: "my-channel" });
+ * ```
+ *
+ * @binding
+ */
+export interface StartChannel extends Binding.Service<
+  StartChannel,
+  "AWS.MediaTailor.StartChannel",
+  () => Effect.Effect<
+    (
+      request: mediatailor.StartChannelRequest,
+    ) => Effect.Effect<mediatailor.StartChannelResponse, mediatailor.StartChannelError>
+  >
+> {}
+export const StartChannel = Binding.Service<StartChannel>("AWS.MediaTailor.StartChannel");

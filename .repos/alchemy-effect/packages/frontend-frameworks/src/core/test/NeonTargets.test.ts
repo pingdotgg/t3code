@@ -1,18 +1,15 @@
+import { fileURLToPath, pathToFileURL } from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { target as vite } from "../../vite/neon.ts";
 import { target as astro } from "../../astro/neon.ts";
 import { target as nextjs } from "../../nextjs/neon.ts";
+import { target as vite } from "../../vite/neon.ts";
 import type { BuildOutput } from "../BuildOutput.ts";
 
-const fixture = (
-  kind: "vite" | "astro" | "nextjs",
-  files: Record<string, string>,
-) =>
+const fixture = (kind: "vite" | "astro" | "nextjs", files: Record<string, string>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -25,12 +22,7 @@ const fixture = (
       directory: base,
       prefix: `${kind}-`,
     });
-    const dependencies = path.join(
-      workspace,
-      "examples",
-      `aws-website-${kind}`,
-      "node_modules",
-    );
+    const dependencies = path.join(workspace, "examples", `aws-website-${kind}`, "node_modules");
     yield* fs.symlink(dependencies, path.join(root, "node_modules"));
     for (const [name, contents] of Object.entries({
       "package.json": '{"private":true,"type":"module"}',
@@ -47,10 +39,7 @@ const load = (output: BuildOutput) =>
     const path = yield* Path.Path;
     expect(output.serverModules?.[0]?.name).toContain("serve-neon.mjs");
     const url = yield* Effect.sync(
-      () =>
-        pathToFileURL(
-          path.join(output.distDirectory!, output.serverModules![0]!.name),
-        ).href,
+      () => pathToFileURL(path.join(output.distDirectory!, output.serverModules![0]!.name)).href,
     );
     return yield* Effect.tryPromise(
       () =>
@@ -60,15 +49,8 @@ const load = (output: BuildOutput) =>
     );
   });
 const run = <A, E>(
-  effect: Effect.Effect<
-    A,
-    E,
-    FileSystem.FileSystem | Path.Path | import("effect/Scope").Scope
-  >,
-) =>
-  Effect.runPromise(
-    effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | import("effect/Scope").Scope>,
+) => Effect.runPromise(effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer)));
 
 describe("Neon production target feasibility", { concurrent: false }, () => {
   it(
@@ -77,8 +59,7 @@ describe("Neon production target feasibility", { concurrent: false }, () => {
       run(
         Effect.gen(function* () {
           const root = yield* fixture("vite", {
-            "index.html":
-              '<h1>Neon Vite</h1><script type="module" src="/src.js"></script>',
+            "index.html": '<h1>Neon Vite</h1><script type="module" src="/src.js"></script>',
             "src.js": 'document.body.dataset.ready="true";',
           });
           const output = yield* vite().build!({ root });
@@ -87,9 +68,7 @@ describe("Neon production target feasibility", { concurrent: false }, () => {
             module.default.fetch(new Request("https://example.com/deep")),
           );
           expect(response.status).toBe(200);
-          expect(yield* Effect.tryPromise(() => response.text())).toContain(
-            "Neon Vite",
-          );
+          expect(yield* Effect.tryPromise(() => response.text())).toContain("Neon Vite");
         }),
       ),
     120_000,
@@ -111,9 +90,7 @@ describe("Neon production target feasibility", { concurrent: false }, () => {
             module.default.fetch(new Request("https://example.com/?name=Neon")),
           );
           expect(response.status).toBe(200);
-          expect(yield* Effect.tryPromise(() => response.text())).toContain(
-            "Hello Neon",
-          );
+          expect(yield* Effect.tryPromise(() => response.text())).toContain("Hello Neon");
         }),
       ),
     120_000,
@@ -126,8 +103,7 @@ describe("Neon production target feasibility", { concurrent: false }, () => {
           const root = yield* fixture("nextjs", {
             "app/layout.jsx":
               "export default function Layout({children}) {return <html><body>{children}</body></html>}",
-            "app/page.jsx":
-              "export default function Home() {return <h1>Neon Next</h1>}",
+            "app/page.jsx": "export default function Home() {return <h1>Neon Next</h1>}",
             "app/api/echo/route.js":
               "export async function POST(request) {return Response.json({value:await request.text(),url:request.url})}",
             "app/redirect/route.js":
@@ -142,9 +118,7 @@ describe("Neon production target feasibility", { concurrent: false }, () => {
             module.default.fetch(new Request("https://example.com/")),
           );
           expect(response.status).toBe(200);
-          expect(yield* Effect.tryPromise(() => response.text())).toContain(
-            "Neon Next",
-          );
+          expect(yield* Effect.tryPromise(() => response.text())).toContain("Neon Next");
           const post = yield* Effect.tryPromise(() =>
             module.default.fetch(
               new Request("https://example.com/api/echo", {
@@ -180,16 +154,12 @@ describe("Neon production target feasibility", { concurrent: false }, () => {
                   ),
                 );
                 expect(redirect.status).toBe(307);
-                expect(redirect.headers.get("location")).toBe(
-                  `${origin}/?redirected=yes`,
-                );
+                expect(redirect.headers.get("location")).toBe(`${origin}/?redirected=yes`);
                 const external = yield* Effect.tryPromise(() =>
                   module.default.fetch(new Request(`${origin}/external`)),
                 );
                 expect(external.status).toBe(303);
-                expect(external.headers.get("location")).toBe(
-                  "https://external.example/account",
-                );
+                expect(external.headers.get("location")).toBe("https://external.example/account");
                 const post = yield* Effect.tryPromise(() =>
                   module.default.fetch(
                     new Request(`${origin}/api/echo?source=origin`, {

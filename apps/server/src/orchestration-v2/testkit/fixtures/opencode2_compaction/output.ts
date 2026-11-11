@@ -13,11 +13,7 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/**
- * `/compact` runs `session.compact`: OpenCode queues a compaction item and
- * summarizes in its own execution, which ends the `/compact` turn. The next
- * turn answers from the summary.
- */
+/** session.compact queues a compaction execution that ends /compact; the next turn uses its summary. */
 export function assertOpenCode2CompactionOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

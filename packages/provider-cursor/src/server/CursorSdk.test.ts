@@ -5,9 +5,8 @@ import { vi } from "vite-plus/test";
 
 import * as CursorSdk from "./CursorSdk.ts";
 
-vi.mock("./sdk.ts", () => ({ Agent: {}, createAgentPlatform: {}, SqliteLocalAgentStore: {} }));
-
 // Shaped like the SDK's minified class: the constructor is not named after the error.
+// @effect-diagnostics-next-line extendsNativeError:off - mimics the Cursor SDK's own native Error class.
 class o extends Error {
   override name = "WriteIterableClosedError";
 }
@@ -45,19 +44,26 @@ describe("CursorSdk unhandled rejection guard", () => {
     }),
   );
 
-  it.effect("still exits on an abort that did not come from the stall detector", () =>
-    Effect.gen(function* () {
-      const abort = new DOMException("This operation was aborted", "AbortError");
-      abort.stack = "AbortError: This operation was aborted\n    at somewhereElse (app.js:1:1)";
-      assert.deepStrictEqual(yield* rejectThroughGuard(abort), [[1]]);
-    }),
-  );
-
-  it.effect("still exits on an abort whose message merely mentions onStall", () =>
+  it.effect("still exits on an abort that was not raised from onStall", () =>
     Effect.gen(function* () {
       const abort = new DOMException("onStall was aborted", "AbortError");
       abort.stack = "AbortError: onStall was aborted\n    at somewhereElse (app.js:1:1)";
       assert.deepStrictEqual(yield* rejectThroughGuard(abort), [[1]]);
+    }),
+  );
+
+  it.effect("keeps the server running when the SDK writes after its request stream ended", () =>
+    Effect.gen(function* () {
+      // Shaped like `ConnectError.from(e, Code.Aborted)` from the SDK's connect-node body pump.
+      const cause = Object.assign(new Error("write after end"), {
+        code: "ERR_STREAM_WRITE_AFTER_END",
+      });
+      const reason = Object.assign(new Error("[aborted] write after end", { cause }), {
+        name: "ConnectError",
+        code: 10,
+        rawMessage: "write after end",
+      });
+      assert.deepStrictEqual(yield* rejectThroughGuard(reason), []);
     }),
   );
 
@@ -66,6 +72,17 @@ describe("CursorSdk unhandled rejection guard", () => {
       assert.deepStrictEqual(yield* rejectThroughGuard(new Error("WritableIterable is closed")), [
         [1],
       ]);
+    }),
+  );
+
+  it.effect("still exits on aborted requests other than a write after end", () =>
+    Effect.gen(function* () {
+      const cause = Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+      const reason = Object.assign(new Error("[aborted] socket hang up", { cause }), {
+        name: "ConnectError",
+        code: 10,
+      });
+      assert.deepStrictEqual(yield* rejectThroughGuard(reason), [[1]]);
     }),
   );
 });

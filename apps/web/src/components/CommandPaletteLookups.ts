@@ -1,14 +1,13 @@
 import {
   type ClientSettings,
   type EnvironmentId,
-  type ProjectId,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useClientSettings } from "../hooks/useSettings";
-import { getProjectOrderKey } from "../logicalProject";
-import { useProjects, useThreadShells } from "../state/entities";
+import { getProjectOrderKey } from "@t3tools/client-runtime/state/project-grouping";
+import { useProjects, useVisibleThreadShells } from "../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -41,16 +40,10 @@ export function useEnvironmentLookups() {
 
 export function useProjectLookups() {
   const projects = useProjects();
-  const projectCwdById = new Map<ProjectId, string>(
-    projects.map((project) => [project.id, project.workspaceRoot]),
-  );
   const projectByKey = new Map(
     projects.map((project) => [`${project.environmentId}:${project.id}`, project]),
   );
-  const projectTitleById = new Map<ProjectId, string>(
-    projects.map((project) => [project.id, project.title]),
-  );
-  return { projectCwdById, projectByKey, projectTitleById };
+  return { projectByKey };
 }
 
 export const selectCommandPaletteClientSettings = (settings: ClientSettings) => ({
@@ -62,7 +55,7 @@ export const selectCommandPaletteClientSettings = (settings: ClientSettings) => 
 
 export function useSortedProjectGroups(environmentLabelById: ReadonlyMap<EnvironmentId, string>) {
   const projects = useProjects();
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
