@@ -19,6 +19,7 @@ import {
   hostControls,
   isTailnetDevicesForbidden,
   machineControls,
+  machinesToReadd,
   networkFailureMessage,
   openAccessHint,
 } from "./tailnetDevices.ts";
@@ -313,6 +314,7 @@ describe("machineControls", () => {
       linkHere: false,
       promote: false,
       readd: false,
+      readdVia: null,
       needsReadd: false,
       left: false,
       forgetHosts: [studio],
@@ -356,19 +358,62 @@ describe("machineControls", () => {
       linkHere: false,
       promote: false,
       readd: true,
+      readdVia: studio,
       needsReadd: true,
       left: false,
       forgetHosts: [studio],
       limitHosts: [],
     });
     // Without a machine to write through, it is still marked, with nothing to press.
-    const readOnly = view(
+    const [readOnlyGroup] = view(
       unbound.map((candidate) => ({ ...candidate, mayWrite: false })),
       studio,
-    )[0]?.machines.find((row) => row.entry.environmentId === box);
+    );
+    const readOnly = readOnlyGroup?.machines.find((row) => row.entry.environmentId === box);
     expect(
-      readOnly && group ? machineControls(readOnly, { ...group, authority: null }) : null,
-    ).toMatchObject({ readd: false, needsReadd: true });
+      readOnly && readOnlyGroup ? machineControls(readOnly, readOnlyGroup) : null,
+    ).toMatchObject({ readd: false, readdVia: null, needsReadd: true });
+  });
+
+  it("re-adds an unbound machine through another one, and avoids it as the authority", () => {
+    const bound = (id: EnvironmentId) => member(id, "full-access", `n-${id}`);
+    const unboundStudio = device(studio, { member: member(studio) });
+    // Box's roster has studio unbound; studio's has box bound.
+    const hosts = [
+      host(studio, { self: bound(studio), devices: [device(box)] }),
+      host(box, { self: bound(box), devices: [unboundStudio] }),
+    ];
+    const [group] = view(hosts, studio);
+    const row = group?.machines.find((machine) => machine.entry.environmentId === studio);
+    if (group === undefined || row === undefined) throw new Error("missing row");
+    expect(group.authority).toBe(box);
+    expect(machineControls(row, group)).toMatchObject({ readd: true, readdVia: box });
+    expect(machinesToReadd(view(hosts, studio))).toEqual(new Set([studio]));
+    // Both unbound in each other's roster: each is re-added through the other.
+    const both = [
+      host(studio, { self: bound(studio), devices: [device(box, { member: member(box) })] }),
+      host(box, { self: bound(box), devices: [unboundStudio] }),
+    ];
+    const [mutual] = view(both, studio);
+    const studioRow = mutual?.machines.find((machine) => machine.entry.environmentId === studio);
+    if (mutual === undefined || studioRow === undefined) throw new Error("missing row");
+    expect(mutual.authority).toBe(studio);
+    expect(machineControls(studioRow, mutual)).toMatchObject({ readd: true, readdVia: box });
+  });
+
+  it("does not offer starting a second network beside one already shown", () => {
+    const groups = view(
+      [
+        host(studio, { devices: [device(box), found(laptop)] }),
+        host(box, { devices: [device(studio)] }),
+        host(vps, { self: null, devices: [found(laptop)] }),
+      ],
+      studio,
+    );
+    const lone = groups.find((group) => !group.inNetwork);
+    const row = lone?.machines.find((machine) => machine.entry.environmentId === laptop);
+    if (lone === undefined || row === undefined) throw new Error("missing row");
+    expect(machineControls(row, lone)).toMatchObject({ add: false, linkHere: true });
   });
 
   it("offers adding a machine that left again, not restoring it", () => {
@@ -442,7 +487,8 @@ describe("hostControls", () => {
       leave: false,
       leaveBlocked: true,
       lastFullAccess: true,
-      allowJoin: false,
+      // A local link needs consent here even in a network.
+      allowJoin: true,
       joinOpenUntil: null,
     });
     expect(
@@ -476,28 +522,47 @@ describe("hostControls", () => {
 });
 
 describe("appControls", () => {
+  const groupWith = (apps: ReadonlyArray<NetworkApp>, mayWrite = true) => {
+    const [group] = view([host(studio, { apps, mayWrite })], studio);
+    if (group === undefined) throw new Error("missing group");
+    return group;
+  };
   it("offers only narrowing; more access is pairing again under the same app", () => {
-    expect(appControls(app("full-access"), studio)).toEqual({
+    const controls = (access: NetworkApp["access"], mayWrite = true) =>
+      appControls(app(access), groupWith([app(access)], mayWrite));
+    expect(controls("full-access")).toEqual({
       narrowTo: ["read-only", "revoked"],
       pairAgain: false,
+      pairAsNew: false,
       forget: false,
     });
-    expect(appControls(app("read-only"), studio)).toEqual({
+    expect(controls("read-only")).toEqual({
       narrowTo: ["revoked"],
       pairAgain: true,
+      pairAsNew: false,
       forget: false,
     });
     // Stored levels below full access are read-only for an app.
-    expect(appControls(app("auto"), studio)).toMatchObject({ narrowTo: ["revoked"] });
-    expect(appControls(app("revoked"), studio)).toEqual({
+    expect(controls("auto")).toMatchObject({ narrowTo: ["revoked"] });
+    expect(controls("revoked")).toEqual({
       narrowTo: [],
       pairAgain: true,
+      pairAsNew: false,
       forget: true,
     });
-    expect(appControls(app("full-access"), null)).toEqual({
+    expect(controls("full-access", false)).toEqual({
       narrowTo: [],
       pairAgain: false,
+      pairAsNew: false,
       forget: false,
+    });
+  });
+
+  it("pairs as a new app when the authority no longer lists the old one", () => {
+    // Another host still lists it revoked; the authority replaced or forgot it.
+    expect(appControls(app("revoked"), groupWith([]))).toMatchObject({
+      pairAgain: false,
+      pairAsNew: true,
     });
   });
 });

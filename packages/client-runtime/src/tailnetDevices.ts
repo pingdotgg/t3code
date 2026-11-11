@@ -71,6 +71,8 @@ export interface DeviceNetworkGroup {
   readonly hosts: ReadonlyArray<DeviceNetworkHost>;
   /** The host every network write goes through, or null when none here may write. */
   readonly authority: EnvironmentId | null;
+  /** Adding a machine to a network from here: false for a lone host beside a shown network. */
+  readonly addsToNetwork: boolean;
   /** Members first, then machines linked to one host, then machines only found. */
   readonly machines: ReadonlyArray<DeviceNetworkMachine>;
   readonly apps: ReadonlyArray<NetworkApp>;
@@ -157,19 +159,32 @@ export function canManageNetwork(
 }
 
 /** Any switched-on full-access host this client may write to, the preferred one first. */
+const writers = (hosts: ReadonlyArray<DeviceNetworkHost>) =>
+  hosts.filter(
+    (host) =>
+      host.mayWrite && host.enabled && host.snapshot !== null && canManageNetwork(host.snapshot),
+  );
+
+/** Another host holds `environmentId` unbound, so writes through it do not reach that host. */
+const unboundElsewhere = (hosts: ReadonlyArray<DeviceNetworkHost>, environmentId: EnvironmentId) =>
+  hosts.some(
+    (host) =>
+      host.environmentId !== environmentId &&
+      host.snapshot?.devices.some(
+        (device) => device.environmentId === environmentId && isUnbound(device),
+      ) === true,
+  );
+
+/** A writable full-access host, bound everywhere and preferred first. */
 function chooseAuthority(
   hosts: ReadonlyArray<DeviceNetworkHost>,
   preferred: EnvironmentId | null,
 ): EnvironmentId | null {
-  const candidates = hosts.filter(
-    (host) =>
-      host.mayWrite && host.enabled && host.snapshot !== null && canManageNetwork(host.snapshot),
-  );
-  return (
-    candidates.find((host) => host.environmentId === preferred)?.environmentId ??
-    candidates[0]?.environmentId ??
-    null
-  );
+  const candidates = writers(hosts);
+  const bound = candidates.filter((host) => !unboundElsewhere(hosts, host.environmentId));
+  const pick = (from: ReadonlyArray<DeviceNetworkHost>) =>
+    from.find((host) => host.environmentId === preferred) ?? from[0];
+  return (pick(bound) ?? pick(candidates))?.environmentId ?? null;
 }
 
 const STATUS_RANK: Record<TailnetDeviceStatus, number> = { online: 2, offline: 1, revoked: 0 };
@@ -322,6 +337,7 @@ export function deviceNetworkView(input: {
       inNetwork: ordered.some(inNetwork),
       hosts: ordered,
       authority: chooseAuthority(ordered, input.preferredHost),
+      addsToNetwork: true,
       machines: groupMachines(ordered, input.savedEnvironmentIds),
       apps: mergeApps(ordered),
     };
@@ -343,6 +359,8 @@ export function deviceNetworkView(input: {
         ? group
         : {
             ...group,
+            // Adding from a lone host would start a second network beside the one shown.
+            addsToNetwork: !groups.some((other) => other.inNetwork),
             machines: group.machines.filter(
               (machine) =>
                 machine.kind !== "found" ||
@@ -375,6 +393,8 @@ export interface MachineControls {
   readonly left: boolean;
   /** Unbound or left: add it again through the authority, once it allows joining. */
   readonly readd: boolean;
+  /** The host the re-add goes through: the authority, or another writer when it is the target. */
+  readonly readdVia: EnvironmentId | null;
   /** Hosts that forget it, the authority first. A member is revoked everywhere first. */
   readonly forgetHosts: ReadonlyArray<EnvironmentId>;
   /** Hosts that may keep a limit of their own for it. */
@@ -413,6 +433,13 @@ export function machineControls(
   const left = member && entry.member !== null && hasLeftNetwork(entry.member);
   const live = member && isLiveMember(entry.member) && !needsReadd;
   const manages = authority !== null && authority !== entry.environmentId;
+  const readdVia =
+    needsReadd || left
+      ? manages
+        ? authority
+        : (writers(group.hosts).find((host) => host.environmentId !== entry.environmentId)
+            ?.environmentId ?? null)
+      : null;
   const forgetHosts = member
     ? manages
       ? [authority, ...hostsListing(group, entry, null).filter((id) => id !== authority)]
@@ -423,12 +450,13 @@ export function machineControls(
     changeAccess: live && manages,
     revoke: live && manages,
     restore: member && !live && !needsReadd && !left && manages,
-    add: machine.kind === "found" && authority !== null,
+    add: machine.kind === "found" && authority !== null && group.addsToNetwork,
     linkHere: machine.kind === "found" && authority !== null,
-    promote: machine.kind === "linked" && authority !== null,
+    promote: machine.kind === "linked" && authority !== null && group.addsToNetwork,
     needsReadd,
     left,
-    readd: (needsReadd || left) && manages,
+    readd: readdVia !== null,
+    readdVia,
     forgetHosts,
     limitHosts: live
       ? group.hosts
@@ -510,8 +538,8 @@ export function hostControls(host: DeviceNetworkHost, now: DateTime.Utc): HostCo
     leave: host.mayWrite && live && !leaveBlocked,
     leaveBlocked: host.mayWrite && leaveBlocked,
     lastFullAccess,
-    // Re-adding a member left unbound by the update needs consent on this side too.
-    allowJoin: host.mayWrite && host.snapshot !== null && (!live || others.some(isUnbound)),
+    // Every add or local link needs consent on the target, in a network or not.
+    allowJoin: host.mayWrite && host.snapshot !== null,
     joinOpenUntil: openUntil !== null && DateTime.isGreaterThan(openUntil, now) ? openUntil : null,
   };
 }
@@ -521,6 +549,8 @@ export interface AppControls {
   readonly narrowTo: ReadonlyArray<NetworkAppAccess>;
   /** More access only comes from pairing again, which replaces this app everywhere. */
   readonly pairAgain: boolean;
+  /** The authority no longer lists it, so a new pairing link adds it as a new app. */
+  readonly pairAsNew: boolean;
   readonly forget: boolean;
 }
 
@@ -531,13 +561,35 @@ const NARROWER: Record<NetworkAppAccess, ReadonlyArray<NetworkAppAccess>> = {
 };
 
 /** The server refuses widening an app in place, so only narrowing is a level change. */
-export function appControls(app: NetworkApp, authority: EnvironmentId | null): AppControls {
+export function appControls(app: NetworkApp, group: DeviceNetworkGroup): AppControls {
+  const { authority } = group;
   const level = appAccessLevel(app.access);
+  // The server replaces only an app it still lists; a replaced or forgotten one pairs as new.
+  const listed =
+    group.hosts
+      .find((host) => host.environmentId === authority)
+      ?.snapshot?.apps.some((candidate) => candidate.appId === app.appId) === true;
+  const widens = authority !== null && level !== "full-access";
   return {
     narrowTo: authority === null ? [] : NARROWER[level],
-    pairAgain: authority !== null && level !== "full-access",
+    pairAgain: widens && listed,
+    pairAsNew: widens && !listed,
     forget: authority !== null && level === "revoked",
   };
+}
+
+/** Machines a group shows as left or unbound: adding again is their only way back, not Open. */
+export function machinesToReadd(
+  groups: ReadonlyArray<DeviceNetworkGroup>,
+): ReadonlySet<EnvironmentId> {
+  return new Set(
+    groups.flatMap((group) =>
+      group.machines.flatMap((machine) => {
+        const controls = machineControls(machine, group);
+        return controls.needsReadd || controls.left ? [machine.entry.environmentId] : [];
+      }),
+    ),
+  );
 }
 
 /** The machine's own reason for refusing a Device network change, which says what to do. */

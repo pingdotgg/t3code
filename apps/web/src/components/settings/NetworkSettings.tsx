@@ -2,17 +2,13 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
   type DeviceNetworkHostState,
-  deviceNetworkHostsKey,
   refreshDeviceNetwork,
 } from "@t3tools/client-runtime/state/deviceNetwork";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  type DeviceNetworkGroup,
-  deviceNetworkView,
-} from "@t3tools/client-runtime/tailnet-devices";
+import type { DeviceNetworkGroup } from "@t3tools/client-runtime/tailnet-devices";
 import {
   AuthAccessWriteScope,
   type AuthMcpClientAccess,
@@ -26,12 +22,7 @@ import { useContext, useId, useRef, useState } from "react";
 
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines, useNetworkHosts } from "~/state/peerLinks";
-import {
-  type EnvironmentPresentation,
-  useEnvironments,
-  usePrimaryEnvironmentId,
-} from "~/state/environments";
-import { deviceNetworkHosts } from "~/state/tailnetDevices";
+import type { EnvironmentPresentation } from "~/state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
@@ -50,7 +41,12 @@ import { Input } from "../ui/input";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { LinkAccessPicker } from "./LinkAccessPicker";
 import { ANOTHER_ADDRESS, LinkMachineSelect } from "./LinkMachineSelect";
-import { DeviceMachineRow, NetworkAppRow, TakingPartRow } from "./NetworkRows";
+import {
+  DeviceMachineRow,
+  NetworkAppRow,
+  TakingPartRow,
+  useDeviceNetworkView,
+} from "./NetworkRows";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -79,22 +75,8 @@ function DeviceNetworkSection({
 }: {
   readonly hosts: ReadonlyArray<EnvironmentPresentation>;
 }) {
-  const key = deviceNetworkHostsKey(
-    hosts.map((environment) => ({
-      environmentId: environment.environmentId,
-      label: environment.label,
-      enabled: environment.serverConfig?.settings.linkedEnvironmentsEnabled === true,
-    })),
-  );
-  const states = useAtomValue(deviceNetworkHosts(key));
+  const { states, groups } = useDeviceNetworkView(hosts);
   const registry = useContext(RegistryContext);
-  const preferredHost = usePrimaryEnvironmentId();
-  const { environments } = useEnvironments();
-  const groups = deviceNetworkView({
-    hosts: states,
-    savedEnvironmentIds: new Set(environments.map((environment) => environment.environmentId)),
-    preferredHost,
-  });
   const stateById = new Map(states.map((state) => [state.environmentId, state] as const));
   const presentationById = new Map(hosts.map((host) => [host.environmentId, host] as const));
   const onChanged = () => refreshDeviceNetwork(registry, peerLinkEnvironment.list, states);
@@ -126,6 +108,9 @@ function DeviceNetworkSection({
 }
 
 function groupDescription(group: DeviceNetworkGroup): string {
+  if (!group.inNetwork && !group.addsToNetwork) {
+    return "Not in your network. To add it, choose Allow joining here, then add it from a full-access machine in your network.";
+  }
   if (!group.inNetwork) {
     return group.machines.some((machine) => machine.kind === "found")
       ? "Not in a network yet. Machines join only when you add them; adding one starts your network with this machine at full access."

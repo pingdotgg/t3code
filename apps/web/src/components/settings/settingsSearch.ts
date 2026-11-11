@@ -1276,7 +1276,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "device-network",
     searchTerms: [
       "tailscale tailnet machines members add to network access revoke restore apps forget leave network",
-      "taking part switch allow joining limit only on this machine promote link to this machine only add again left pair again app",
+      "taking part switch allow joining limit only on this machine promote link to this machine only add again left pair again pair as new app",
       "linked environments link peer another machine vps agents work there handoff pairing code",
     ],
   },

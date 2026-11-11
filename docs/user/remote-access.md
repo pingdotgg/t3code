@@ -321,13 +321,14 @@ old install from that row.
 Changes go through a full-access machine this app is connected to, and every
 machine in the network picks them up.
 
-- **Add to network** gives a found machine the access you pick on every
-  machine. **Link to … only** links it to one machine, as a pairing code would.
+- **Add to network** gives a machine the access you pick on every machine. A
+  limit one machine already set for it stays until you clear it. **Link to … only** links it to one machine, as a pairing code would.
   A machine linked that way, or with a pairing code, can be added to the
   network later.
-- A machine that is in no network must agree first: on it, choose **Let a
-  machine in your network add this one**. That stays open for 10 minutes, and
-  the list shows until when.
+- A machine must agree before another machine adds it or links to it: on it,
+  choose **Allow joining**. That stays open for 10 minutes, and the list shows
+  until when. A machine already in a network needs this too before a link
+  from outside it.
 - A member's access is the most it may do on every machine. A full-access
   machine can narrow it, **Revoke** it everywhere, or restore it at a level you
   pick. **Only on …: limit** narrows it on one machine alone; choose **No
@@ -335,25 +336,27 @@ machine in the network picks them up.
 - **Forget** removes a machine from the list. A member is revoked everywhere
   first, so it cannot rejoin by itself. If it is still on your tailnet, it
   shows up again as a machine you can add.
-- **Leave network** takes a machine out of the network. The others see it as
-  revoked. The only full-access machine cannot leave while other members
+- **Leave network** takes a machine out of the network. Apps that reach it
+  through the network are signed out, and the others see it as left. The only full-access machine cannot leave while other members
   remain: give another machine full access first. The others then show it as
-  **Left the network**; to bring it back, allow joining on it and choose **Add
-  again** on its row.
+  **Left the network**; to bring it back, choose **Allow joining** on it, then
+  **Add again** on its row from a full-access machine. If your app loses its
+  connection to it, pair with it directly first.
 - After updating from a version before machines were tied to their Tailscale
   identity, existing members show **Needs re-adding after the update**, and the
-  other machines refuse them until then. On that machine, choose **Let a
-  machine in your network add this one**, then choose **Add again** on its row
-  from a full-access machine.
+  other machines refuse them until then. On that machine, choose **Allow
+  joining**, then choose **Add again** on its row from another full-access
+  machine.
 - **Open** adds a member to this app without a code. Below full access, it
-  opens read-only.
+  opens read-only, and its row shows **Read-only in this app**.
 - When you create a pairing link on a full-access member, **Works on all your
   network's machines** pairs the phone or browser with the whole network at
   once. It is listed in Device network once it pairs. Apps are full access or
   read-only. **Make read-only** or **Revoke** signs it out everywhere. To give
   it more access or bring it back, choose **Pair again** on web or desktop and
   open the new link on that device; it replaces the old entry on every
-  machine.
+  machine. If the network no longer lists the old entry, choose **Pair as
+  new** instead, then forget the old entry.
 - Other people's machines, and anything off your tailnet, still link with a
   pairing code as described below.
 

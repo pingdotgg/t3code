@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { DeviceNetworkHostState } from "@t3tools/client-runtime/state/deviceNetwork";
+import {
+  type DeviceNetworkHostState,
+  deviceNetworkHostsKey,
+} from "@t3tools/client-runtime/state/deviceNetwork";
 import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
 import {
   type AtomCommandResult,
@@ -12,15 +15,18 @@ import {
   canForgetOther,
   type DeviceNetworkGroup,
   type DeviceNetworkMachine,
+  deviceNetworkView,
   hostControls,
   hostsListing,
   type MachineEntry,
   machineControls,
+  machinesToReadd,
   networkFailureMessage,
   openAccessHint,
 } from "@t3tools/client-runtime/tailnet-devices";
 import {
   AuthMcpClientAccess,
+  AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type EnvironmentId,
   NETWORK_ACCESS_CEILING,
@@ -39,8 +45,14 @@ import { networkMembers } from "~/state/networkMembers";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
 import { authEnvironment } from "~/state/auth";
-import { useEnvironmentHttpBaseUrl } from "~/state/environments";
-import { deviceNetwork, tailnetDevices } from "~/state/tailnetDevices";
+import {
+  type EnvironmentPresentation,
+  useEnvironmentHttpBaseUrl,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
+import { useNetworkHosts } from "~/state/peerLinks";
+import { deviceNetwork, deviceNetworkHosts, tailnetDevices } from "~/state/tailnetDevices";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -219,6 +231,8 @@ function machineDetails(
   now: DateTime.Utc,
   readd: "unbound" | "left" | null,
   openHint: ReturnType<typeof openAccessHint>,
+  /** Opened in this app and its session there cannot change anything. */
+  readOnlyHere: boolean,
 ): ReadonlyArray<string | null> {
   const { entry } = machine;
   if (readd !== null) {
@@ -250,13 +264,10 @@ function machineDetails(
     ...limits,
     ...localOnly,
     ...links,
-    entry.savedInApp ? "In this app" : null,
-    !entry.savedInApp && !entry.isHost && live
-      ? openHint === "read-only"
-        ? "Opens read-only"
-        : openHint === "unknown"
-          ? "May open read-only"
-          : null
+    entry.savedInApp ? (readOnlyHere ? "Read-only in this app" : "In this app") : null,
+    // Only a known limit is shown before opening; the result shows once it is open.
+    !entry.savedInApp && !entry.isHost && live && openHint === "read-only"
+      ? "Opens read-only"
       : null,
     entry.tailnetName,
   ];
@@ -277,13 +288,15 @@ export function DeviceMachineRow({
 }) {
   const { entry } = machine;
   const controls = machineControls(machine, group);
+  const [adding, setAdding] = useState<AddMode | null>(null);
+  const operatesHere = useEnvironmentScope(entry.environmentId, AuthOrchestrationOperateScope);
   const readdReason = controls.needsReadd ? "unbound" : controls.left ? "left" : null;
+  const addVia = adding === "unbound" || adding === "left" ? controls.readdVia : group.authority;
   const setAccess = useAtomCommand(tailnetDevices.setAccess, { reportFailure: false });
   const forget = useAtomCommand(deviceNetwork.forget, { reportFailure: false });
   const openMember = useAtomCommand(networkMembers.open, { reportFailure: false });
   const now = DateTime.makeUnsafe(useNowMinute());
   const [busy, setBusy] = useState(false);
-  const [adding, setAdding] = useState<AddMode | null>(null);
   const [limitHost, setLimitHost] = useState<EnvironmentId | null>(null);
   const access = entry.member?.access ?? "revoked";
   const authority = group.authority;
@@ -360,6 +373,7 @@ export function DeviceMachineRow({
         now,
         readdReason,
         openAccessHint(machine, group),
+        entry.savedInApp && !operatesHere,
       )}
       actions={
         <>
@@ -439,11 +453,11 @@ export function DeviceMachineRow({
               </MenuPopup>
             </Menu>
           ) : null}
-          {adding !== null && authority !== null ? (
+          {adding !== null && addVia !== null ? (
             <AddMachineDialog
               group={group}
               entry={entry}
-              authority={authority}
+              authority={addVia}
               mode={adding}
               onClose={() => setAdding(null)}
               onChanged={onChanged}
@@ -563,16 +577,17 @@ function AddMachineDialog({
               ? `${entry.label} left your network. To bring it back, first open ${ALLOW_JOINING_PATH} for ${entry.label} and choose `
               : mode === "unbound"
                 ? `${entry.label} was in your network before the update, which now proves each machine's Tailscale identity. Until it is added again, the other machines refuse it. First open ${ALLOW_JOINING_PATH} for ${entry.label} and choose `
-                : `Being on your Tailscale account is not permission. ${entry.label} gets only the access you pick now. A machine in no network must allow joining first: on it, choose `}
-            <em>Let a machine in your network add this one</em>.
+                : `Being on your Tailscale account is not permission. ${entry.label} gets only the access you pick now. It must agree first: open ${ALLOW_JOINING_PATH} for ${entry.label} and choose `}
+            <em>Allow joining</em>.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="space-y-4">
             {mode === "unbound" || mode === "left" ? null : mode === "promote" ? (
               <p className="text-xs text-muted-foreground">
-                It is linked to one machine only today. Adding it to your network gives it this
-                access on every machine in the network.
+                It is linked to one machine only today. In the network, no machine gives it more
+                than the access you pick. A machine that keeps its own limit for it, such as the
+                pairing-code level it was linked with, keeps that limit until you clear it.
               </p>
             ) : (
               <RadioGroup
@@ -741,7 +756,7 @@ export function NetworkAppRow({
   const [pairing, setPairing] = useState(false);
   const level = appAccessLevel(app.access);
   const authority = group.authority;
-  const controls = appControls(app, authority);
+  const controls = appControls(app, group);
   const narrow = async (next: NetworkAppAccess) => {
     if (
       authority === null ||
@@ -778,7 +793,9 @@ export function NetworkAppRow({
       title={app.label}
       status={null}
       details={[
-        level === "revoked" ? "Revoked app" : "App paired with your network",
+        level === "revoked"
+          ? "Signed out: revoked, or paired again as a new entry"
+          : "App paired with your network",
         APP_ACCESS_LABEL[level],
       ]}
       actions={
@@ -793,9 +810,9 @@ export function NetworkAppRow({
               Make read-only
             </Button>
           ) : null}
-          {controls.pairAgain ? (
+          {controls.pairAgain || controls.pairAsNew ? (
             <Button size="xs" variant="outline" disabled={busy} onClick={() => setPairing(true)}>
-              Pair again…
+              {controls.pairAgain ? "Pair again…" : "Pair as new…"}
             </Button>
           ) : null}
           {controls.narrowTo.includes("revoked") ? (
@@ -821,6 +838,7 @@ export function NetworkAppRow({
           {pairing && authority !== null ? (
             <PairAgainDialog
               app={app}
+              replaces={controls.pairAgain}
               authority={authority}
               authorityLabel={hostLabel(group, authority)}
               onClose={() => setPairing(false)}
@@ -838,11 +856,14 @@ export function NetworkAppRow({
  */
 function PairAgainDialog({
   app,
+  replaces,
   authority,
   authorityLabel,
   onClose,
 }: {
   readonly app: NetworkApp;
+  /** The authority still lists it, so the link replaces it; otherwise it pairs as a new app. */
+  readonly replaces: boolean;
   readonly authority: EnvironmentId;
   readonly authorityLabel: string;
   readonly onClose: () => void;
@@ -862,7 +883,7 @@ function PairAgainDialog({
       scopes: NETWORK_ACCESS_CEILING[level].app,
       network: true,
       // Redeeming removes the old app everywhere and adds this one in its place.
-      replacesAppId: app.appId,
+      ...(replaces ? { replacesAppId: app.appId } : {}),
     };
     const result = await createPairingCredential({ environmentId: authority, input });
     setBusy(false);
@@ -875,7 +896,16 @@ function PairAgainDialog({
               resolveDesktopPairingUrl(baseUrl, credential)),
       );
     } else if (!isAtomCommandInterrupted(result)) {
-      failureToast(`Could not create a link for ${app.label}`, result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not create a link for ${app.label}`,
+          // The server reports an app it no longer lists only as a failed issue.
+          description: replaces
+            ? `${authorityLabel} may no longer list ${app.label}, for example after it was paired again or forgotten. Choose Pair as new once the list updates, or create a pairing link under Connections.`
+            : networkFailureMessage(squashAtomCommandFailure(result)),
+        }),
+      );
     }
   };
   return (
@@ -889,8 +919,11 @@ function PairAgainDialog({
         <DialogHeader>
           <DialogTitle>Pair {app.label} again</DialogTitle>
           <DialogDescription>
-            Open this link on {app.label}. Once it pairs, it replaces the old {app.label} on every
-            machine in your network, at the access you pick. The link comes from {authorityLabel}.
+            Open this link on {app.label}.{" "}
+            {replaces
+              ? `Once it pairs, it replaces the old ${app.label} on every machine in your network, at the access you pick.`
+              : `It pairs as a new app of your network, at the access you pick. Forget the old entry when it is no longer needed.`}{" "}
+            The link comes from {authorityLabel}.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -972,7 +1005,7 @@ export function TakingPartRow({
     const consequence = controls.lastFullAccess ? " It is the last machine in your network." : "";
     if (
       !(await confirmDestructive(
-        `Leave your network on ${host.label}? Its links to the other machines end and they see it as revoked.${consequence} To come back, allow joining here and add it from a full-access machine.`,
+        `Leave your network on ${host.label}? Its links to the other machines end, apps that reach it through the network are signed out, and the others see it as left.${consequence} To bring it back, choose Allow joining on ${host.label}, then Add again from a full-access machine. If this app loses its connection to ${host.label}, pair with it directly first.`,
       ))
     )
       return;
@@ -990,8 +1023,8 @@ export function TakingPartRow({
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: `${host.label} can be added until ${formatTime(result.value.openUntil)}`,
-        description: "Add it from a full-access machine in your network before then.",
+        title: `${host.label} can be added or linked until ${formatTime(result.value.openUntil)}`,
+        description: "Add or link it from another machine before then.",
       });
     }
   };
@@ -1005,7 +1038,7 @@ export function TakingPartRow({
         host.enabled ? null : "Not taking part: nothing new starts over a link",
         controls.joinOpenUntil === null
           ? null
-          : `A machine in your network can add it until ${formatTime(controls.joinOpenUntil)}`,
+          : `Joining allowed until ${formatTime(controls.joinOpenUntil)}: another machine can add or link it`,
         managedBy === null ? null : `Managed by ${managedBy}`,
         controls.leaveBlocked
           ? "It is your network's only full-access machine, so it cannot leave while others remain. Give another machine full access first."
@@ -1025,7 +1058,7 @@ export function TakingPartRow({
           ) : null}
           {controls.allowJoin && controls.joinOpenUntil === null && host.enabled ? (
             <Button size="xs" variant="outline" disabled={busy} onClick={() => void openJoin()}>
-              Let a machine in your network add this one
+              Allow joining
             </Button>
           ) : null}
           <Switch
@@ -1045,16 +1078,50 @@ export function TakingPartRow({
   );
 }
 
+/** Every connected host's snapshot, merged into the Device network groups. */
+export function useDeviceNetworkView(hosts: ReadonlyArray<EnvironmentPresentation>) {
+  const states = useAtomValue(
+    deviceNetworkHosts(
+      deviceNetworkHostsKey(
+        hosts.map((environment) => ({
+          environmentId: environment.environmentId,
+          label: environment.label,
+          enabled: environment.serverConfig?.settings.linkedEnvironmentsEnabled === true,
+        })),
+      ),
+    ),
+  );
+  const preferredHost = usePrimaryEnvironmentId();
+  const { environments } = useEnvironments();
+  const groups = deviceNetworkView({
+    hosts: states,
+    savedEnvironmentIds: new Set(environments.map((environment) => environment.environmentId)),
+    preferredHost,
+  });
+  return { states, groups };
+}
+
 /** Machines your network lists that this app has not opened yet: one tap adds each. */
 export function UnopenedNetworkMemberRows() {
   const unopened = useAtomValue(networkMembers.unopenedAtom);
-  return unopened.map((member) => <UnopenedMemberRow key={member.environmentId} member={member} />);
+  const { groups } = useDeviceNetworkView(useNetworkHosts());
+  const readd = machinesToReadd(groups);
+  return unopened.map((member) => (
+    <UnopenedMemberRow
+      key={member.environmentId}
+      member={member}
+      needsReadd={readd.has(member.environmentId)}
+    />
+  ));
 }
 
 function UnopenedMemberRow({
   member,
+  needsReadd,
 }: {
   readonly member: { readonly environmentId: EnvironmentId; readonly label: string };
+  /** It must be added to the network again before any machine opens it. */
+  readonly needsReadd: boolean;
 }) {
   const openMember = useAtomCommand(networkMembers.open, { reportFailure: false });
   const [busy, setBusy] = useState(false);
@@ -1072,11 +1139,17 @@ function UnopenedMemberRow({
     <RowLayout
       title={member.label}
       status={null}
-      details={["In your network, not open in this app"]}
+      details={[
+        needsReadd
+          ? "Needs adding to your network again before it opens: see Device network below"
+          : "In your network, not open in this app",
+      ]}
       actions={
-        <Button size="xs" variant="outline" disabled={busy} onClick={() => void open()}>
-          {busy ? "Opening…" : "Open"}
-        </Button>
+        needsReadd ? null : (
+          <Button size="xs" variant="outline" disabled={busy} onClick={() => void open()}>
+            {busy ? "Opening…" : "Open"}
+          </Button>
+        )
       }
     />
   );

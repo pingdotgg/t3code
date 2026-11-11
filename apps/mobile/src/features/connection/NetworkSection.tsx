@@ -25,6 +25,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthAccessReadScope,
+  AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type AuthMcpClientAccess,
   type EnvironmentId,
@@ -170,6 +171,9 @@ function DeviceNetworkContent(props: {
 function groupFooter(group: DeviceNetworkGroup): string {
   const prefix =
     "Each machine has its own switch. While it is off, its agents start nothing over a link; running tasks finish.";
+  if (!group.inNetwork && !group.addsToNetwork) {
+    return `${prefix} Not in your network. To add it, choose Allow joining here, then add it from a full-access machine in your network.`;
+  }
   if (!group.inNetwork) {
     return `${prefix} Not in a network yet. Being on the same Tailscale account is not permission: you add each machine.`;
   }
@@ -246,9 +250,9 @@ function TakingPartRow(props: {
   const leaveNetwork = () =>
     Dialog.confirm({
       title: `Leave your network on ${host.label}?`,
-      message: `Its links to the other machines end and they see it as revoked.${
+      message: `Its links to the other machines end, apps that reach it through the network are signed out, and the others see it as left.${
         controls.lastFullAccess ? " It is the last machine in your network." : ""
-      } To come back, allow joining here and add it from a full-access machine.`,
+      } To bring it back, choose Allow joining on ${host.label}, then Add again from a full-access machine. If this app loses its connection to ${host.label}, pair with it directly first.`,
       confirmText: "Leave",
       destructive: true,
       onConfirm: () => {
@@ -270,7 +274,7 @@ function TakingPartRow(props: {
     selfState(host),
     controls.joinOpenUntil === null
       ? null
-      : `Can be added until ${formatTime(controls.joinOpenUntil)}`,
+      : `Joining allowed until ${formatTime(controls.joinOpenUntil)}`,
     props.managedBy === null ? null : `Managed by ${props.managedBy}`,
     controls.leaveBlocked
       ? "Only full-access machine: it cannot leave while others remain. Give another machine full access first."
@@ -295,8 +299,8 @@ function TakingPartRow(props: {
       />
       {controls.allowJoin && controls.joinOpenUntil === null && host.enabled ? (
         <ListActionRow
-          label="Let a machine in your network add this one"
-          description="For 10 minutes, a full-access machine in your network can add it."
+          label="Allow joining"
+          description="For 10 minutes, another machine can add this one to its network or link to it."
           loading={busy}
           onPress={openJoin}
         />
@@ -361,13 +365,14 @@ function ExpandableRow(props: {
 
 type Panel =
   | { readonly kind: "menu" }
-  | { readonly kind: "add"; readonly scope: "network" | "local" }
+  | { readonly kind: "add"; readonly scope: "network" | "local"; readonly readd?: boolean }
   | { readonly kind: "limit"; readonly host: EnvironmentId };
 
 function machineDetail(
   group: DeviceNetworkGroup,
   machine: DeviceNetworkMachine,
   now: DateTime.Utc,
+  readOnlyHere: boolean,
 ) {
   const { entry } = machine;
   const live = entry.member !== null && entry.member.access !== "revoked";
@@ -385,11 +390,10 @@ function machineDetail(
       const health = peerLinkHealth(link, now);
       return `Paired with ${hostLabel(group, host)}${health.kind === "expired" ? ", expired" : health.kind === "reachable" ? "" : ", not answering"}`;
     }),
-    entry.savedInApp ? "In this app" : null,
-    !entry.savedInApp && !entry.isHost && live
-      ? { "read-only": "Opens read-only", unknown: "May open read-only", full: null }[
-          openAccessHint(machine, group) ?? "full"
-        ]
+    entry.savedInApp ? (readOnlyHere ? "Read-only in this app" : "In this app") : null,
+    // Only a known limit is shown before opening; the result shows once it is open.
+    !entry.savedInApp && !entry.isHost && live && openAccessHint(machine, group) === "read-only"
+      ? "Opens read-only"
       : null,
     ...machine.others.map((other) => `Also seen as ${other.label} from an earlier install`),
   ]
@@ -416,6 +420,7 @@ function MachineRow(props: {
   const forget = useAtomCommand(deviceNetwork.forget, { reportFailure: false });
   const openMember = useAtomCommand(networkMembers.open, { reportFailure: false });
   const now = DateTime.makeUnsafe(useNowMinuteMs());
+  const operatesHere = useEnvironmentScope(entry.environmentId, AuthOrchestrationOperateScope);
   const [panel, setPanel] = useState<Panel | null>(null);
   const [saving, setSaving] = useState(false);
   const access = entry.member?.access ?? "revoked";
@@ -447,11 +452,13 @@ function MachineRow(props: {
       onConfirm: save,
     });
   };
-  const add = (scope: "network" | "local", level: AuthMcpClientAccess) => {
-    if (authority === null) return;
+  const add = (scope: "network" | "local", level: AuthMcpClientAccess, readd: boolean) => {
+    // A machine re-added after the update or a leave goes through another machine than itself.
+    const via = readd ? controls.readdVia : authority;
+    if (via === null) return;
     run(
       admit({
-        environmentId: authority,
+        environmentId: via,
         input: { environmentId: entry.environmentId, access: level, scope },
       }),
       `Could not add ${entry.label}`,
@@ -505,7 +512,7 @@ function MachineRow(props: {
       detail={
         readdState !== null
           ? `${readdState}: allow joining on it, then add it again`
-          : machineDetail(group, machine, now)
+          : machineDetail(group, machine, now, entry.savedInApp && !operatesHere)
       }
       danger={entry.status === "revoked" || readdState !== null}
       value={
@@ -549,14 +556,14 @@ function MachineRow(props: {
           {controls.readd ? (
             <ListActionRow
               label="Add again"
-              description={`First open ${ALLOW_JOINING_PATH} for ${entry.label} and choose Let a machine in your network add this one.`}
-              onPress={() => setPanel({ kind: "add", scope: "network" })}
+              description={`First open ${ALLOW_JOINING_PATH} for ${entry.label} and choose Allow joining.`}
+              onPress={() => setPanel({ kind: "add", scope: "network", readd: true })}
             />
           ) : null}
           {controls.add || controls.promote ? (
             <ListActionRow
               label="Add to network"
-              description="On every machine in your network, at the access you pick."
+              description="No machine in the network gives it more than the access you pick. A machine's own limit for it stays until you clear it."
               onPress={() => setPanel({ kind: "add", scope: "network" })}
             />
           ) : null}
@@ -612,13 +619,13 @@ function MachineRow(props: {
               key={choice.access}
               label={
                 panel.scope === "network"
-                  ? `${controls.readd ? "Add again" : "Add"} as ${choice.label}`
+                  ? `${panel.readd === true ? "Add again" : "Add"} as ${choice.label}`
                   : `Link to ${authorityLabel} as ${choice.label}`
               }
               description={choice.description}
               selected={false}
               disabled={saving}
-              onPress={() => add(panel.scope, choice.access)}
+              onPress={() => add(panel.scope, choice.access, panel.readd === true)}
             />
           ))
         : null}
@@ -689,7 +696,7 @@ function AppRow(props: {
       }
     });
   };
-  const controls = appControls(app, authority);
+  const controls = appControls(app, group);
   const narrow = (next: NetworkAppAccess) => {
     if (authority === null) return;
     Dialog.confirm({
@@ -708,8 +715,10 @@ function AppRow(props: {
   // This app cannot create pairing links, so it says where to make one.
   const pairAgain = () =>
     Dialog.alert(
-      `Pair ${app.label} again`,
-      `On web or desktop, open Settings → Environments → Device network and choose Pair again on ${app.label}. Open that link on ${app.label}: it replaces the old one on every machine, at the access you pick.`,
+      controls.pairAgain ? `Pair ${app.label} again` : `Pair ${app.label} as new`,
+      controls.pairAgain
+        ? `On web or desktop, open Settings → Environments → Device network and choose Pair again on ${app.label}. Open that link on ${app.label}: it replaces the old one on every machine, at the access you pick.`
+        : `On web or desktop, open Settings → Environments → Device network and choose Pair as new on ${app.label}. Open that link on ${app.label}: it joins as a new app; forget this entry afterwards.`,
     );
   const forget = () => {
     if (authority === null) return;
@@ -728,7 +737,11 @@ function AppRow(props: {
   return (
     <ExpandableRow
       label={app.label}
-      detail={level === "revoked" ? "Revoked app" : "App paired with your network"}
+      detail={
+        level === "revoked"
+          ? "Signed out: revoked, or paired again as a new entry"
+          : "App paired with your network"
+      }
       danger={level === "revoked"}
       value={APP_ACCESS_LABEL[level]}
       canExpand={authority !== null}
@@ -744,9 +757,9 @@ function AppRow(props: {
           onPress={() => narrow(next)}
         />
       ))}
-      {controls.pairAgain ? (
+      {controls.pairAgain || controls.pairAsNew ? (
         <ListActionRow
-          label="Pair again"
+          label={controls.pairAgain ? "Pair again" : "Pair as new"}
           description="More access, or coming back after a revoke, takes a new pairing link."
           onPress={pairAgain}
         />
