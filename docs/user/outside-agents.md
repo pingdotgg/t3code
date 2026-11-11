@@ -80,6 +80,22 @@ policy. Approving without a code starts at **Read only**:
   threads in every project. A thread it starts or steers cannot run with more
   permissions than the mode you chose.
 
+## What outside agents can call
+
+Some tools only work for an agent running inside a T3 thread, because they act
+as that thread: subagents, secret requests, rendered HTML, the browser preview,
+devices, and worktree handoff. They still appear in an outside agent's tool
+list, but calling one returns an error saying it needs an agent running inside
+T3 Code.
+
+- To hand off work, start a thread with `t3_thread_launch`, then follow it with
+  `t3_thread_wait` or `t3_thread_read`, instead of `create_threads` or
+  `delegate_task`.
+- Tools that default to the caller's own project or thread need an explicit
+  `projectId` or `threadId`.
+- To list threads across projects, call `t3_thread_list` with
+  `allProjects: true`, or use `t3_thread_search`.
+
 ## Claude Code
 
 ```sh

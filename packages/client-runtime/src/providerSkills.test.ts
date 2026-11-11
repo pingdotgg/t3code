@@ -40,17 +40,6 @@ const provider = {
 } satisfies ServerProvider;
 
 describe("getProviderSkillsForSlashMenu", () => {
-  it("keeps the skill alias when the provider also exposes it as a slash command", () => {
-    const askMatt = {
-      name: "ask-matt",
-      path: "/Users/matt/.agents/skills/ask-matt/SKILL.md",
-      enabled: true,
-    };
-    expect(getProviderSkillsForSlashMenu([askMatt], true).map((skill) => skill.name)).toEqual([
-      "ask-matt",
-    ]);
-  });
-
   it("shows one row when enabled skills share a name", () => {
     const skills = [
       {

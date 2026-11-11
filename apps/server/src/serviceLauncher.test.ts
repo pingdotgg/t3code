@@ -7,7 +7,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import { SERVER_EXIT_CODE_STATE_DIR_OWNED } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -19,6 +19,7 @@ import { renderBootServicePlist, renderBootServiceUnit } from "./cloud/bootServi
 import {
   databaseBackupBlocker,
   Launcher,
+  main,
   readServiceEnvironment,
   type BackupSpaceProbe,
   readServiceState,
@@ -139,6 +140,15 @@ const writeFakeRuntime = (
     return entryPath;
   });
 
+const runLauncher = async (root: string) => {
+  vi.stubEnv("T3CODE_HOME", root);
+  try {
+    await main();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+};
+
 const fakeServiceUnit = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -210,6 +220,102 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           EMPTY: "",
         });
       }),
+  );
+
+  it.effect("adopts a legacy install record without rewriting it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-migrate-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const activeVersion = "0.0.43-nightly.20260919.1962+build.1";
+      const versionDir = path.join(root, "runtime", "versions", activeVersion);
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        versionDir,
+        `
+import { writeFileSync } from "node:fs";
+writeFileSync(new URL("./started", import.meta.url), "");
+process.exit(0);
+`,
+      );
+      const legacyContents = `{ "protocol": 2, "activeVersion": "${activeVersion}" }`;
+      yield* fs.writeFileString(statePath, legacyContents);
+      const restartPending = path.join(root, "runtime", ".restart-pending");
+      yield* fs.writeFileString(restartPending, `${activeVersion}\n`);
+
+      yield* Effect.promise(() =>
+        expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
+      );
+
+      assert.isTrue(yield* fs.exists(path.join(versionDir, "started")));
+      assert.isFalse(yield* fs.exists(restartPending));
+      assert.equal(yield* fs.readFileString(statePath), legacyContents);
+    }),
+  );
+
+  it.effect("refuses non-install legacy documents without rewriting or spawning", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-reject-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        "process.exit(0);\n",
+      );
+      const legacy = { protocol: 2, activeVersion: "1.0.0" };
+      const childCount = spawnedChildren.length;
+      for (const contents of [
+        JSON.stringify({
+          ...legacy,
+          update: {
+            id: "u",
+            fromVersion: "1.0.0",
+            targetVersion: "1.1.0",
+            dbPath: "/tmp/state.sqlite",
+            status: "pending",
+          },
+        }),
+        JSON.stringify({ ...legacy, update: null }),
+        JSON.stringify({ ...legacy, extra: true }),
+        JSON.stringify({ ...legacy, protocol: 1 }),
+        JSON.stringify({ ...legacy, protocol: 5 }),
+        JSON.stringify({ ...legacy, activeVersion: "latest" }),
+        "{ invalid JSON",
+      ]) {
+        yield* fs.writeFileString(statePath, contents);
+        yield* Effect.promise(() =>
+          expect(runLauncher(root)).rejects.toThrow("Service state is invalid or unsupported."),
+        );
+        assert.equal(yield* fs.readFileString(statePath), contents);
+        assert.equal(spawnedChildren.length, childCount);
+      }
+    }),
+  );
+
+  it.effect("refuses a legacy state whose runtime is missing without rewriting or spawning", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-layout-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const contents = '{ "protocol": 2, "activeVersion": "1.0.0" }';
+      yield* fs.makeDirectory(path.dirname(statePath), { recursive: true });
+      yield* fs.writeFileString(statePath, contents);
+      const childCount = spawnedChildren.length;
+
+      yield* Effect.promise(() =>
+        expect(runLauncher(root)).rejects.toThrow(
+          "Selected t3@1.0.0 runtime is missing or incomplete.",
+        ),
+      );
+      assert.equal(yield* fs.readFileString(statePath), contents);
+      assert.equal(spawnedChildren.length, childCount);
+    }),
   );
 
   it.effect("a fresh launcher clears a restart deferred by t3 update", () =>

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  serializeCodeBlockToMarkdown,
   serializeRenderedMarkdownFragment,
   serializeTableElementToMarkdown,
 } from "./markdown-clipboard";
@@ -209,13 +210,37 @@ describe("serializeRenderedMarkdownFragment", () => {
     );
   });
 
-  it("keeps fences when a bare list item sits alongside the code block", () => {
+  it("keeps a bare list item that sits alongside the code block", () => {
     const container = new FakeElement("DIV").append(
       new FakeElement("UL").append(new FakeElement("LI")),
       renderedCodeBlock(["pnpm test"]),
     );
 
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\n```\npnpm test\n```");
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\npnpm test");
+  });
+
+  it("copies a command and the prose after it as shown, without code fences", () => {
+    const container = new FakeElement("DIV").append(
+      renderedCodeBlock(["printf 'hello\\n'"]),
+      new FakeElement("P").append(new FakeText("T")),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("printf 'hello\\n'\n\nT");
+  });
+
+  it("keeps a diagram's source exactly as written when copied with prose", () => {
+    const source = 'flowchart TD\n  A["first   \n\n\nlast"]';
+    const container = new FakeElement("DIV").append(
+      new FakeElement("DIV", [], {
+        "data-markdown-mermaid": "",
+        "data-markdown-copy": serializeCodeBlockToMarkdown(source, "mermaid"),
+      }),
+      new FakeElement("P").append(new FakeText("After")),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      `\`\`\`mermaid\n${source}\n\`\`\`\n\nAfter`,
+    );
   });
 
   it("keeps blank lines inside a code block in a list item, quote, or longer fence", () => {
@@ -233,14 +258,14 @@ describe("serializeRenderedMarkdownFragment", () => {
     );
 
     expect(serializeRenderedMarkdownFragment(asNode(nestedFence))).toBe(
-      "Example:\n\n````\n```js\na()\n\n\nb()  \n```\n````",
+      "Example:\n\n```js\na()\n\n\nb()  \n```",
     );
 
     expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
-      "1. Create it:\n   ```\n   import os\n\n\n   def main():\n   ```",
+      "1. Create it:\n   import os\n\n\n   def main():",
     );
     expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(quote)))).toBe(
-      "> Note:\n>\n> ```\n> import os\n>\n>\n> def main():\n> ```",
+      "> Note:\n>\n> import os\n>\n>\n> def main():",
     );
   });
 
@@ -330,5 +355,22 @@ describe("copying rendered Markdown tables", () => {
       type: "link",
       url: "https://example.com/?q=a|b",
     });
+  });
+
+  it("copies code and diagrams in cells without markers or unescaped pipes", () => {
+    const code = new FakeElement("PRE").append(
+      new FakeElement("CODE").append(new FakeText("a  b")),
+    );
+    const diagram = new FakeElement("DIV", [], {
+      "data-markdown-mermaid": "",
+      "data-markdown-copy": serializeCodeBlockToMarkdown("A -->|hi| B", "mermaid"),
+    });
+    expect(
+      serializeTableElementToMarkdown(
+        asNode(
+          renderedTable([new FakeText("Command"), new FakeText("Diagram")], [code, diagram]),
+        ) as Element,
+      ),
+    ).toBe("| Command | Diagram |\n| --- | --- |\n| a  b | ```mermaid A -->\\|hi\\| B ``` |");
   });
 });
