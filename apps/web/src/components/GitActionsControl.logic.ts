@@ -212,7 +212,7 @@ export function resolveQuickAction(
   }
 
   if (hasChanges) {
-    if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
+    if (isBehind || (!gitStatus.hasUpstream && !hasPrimaryRemote)) {
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
     }
     if (hasOpenPr || isDefaultRef) {
@@ -365,10 +365,7 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   };
 }
 
-/**
- * Why the default-ref dialog cannot check out a feature branch, or null when it can.
- * The server names that branch from the uncommitted changes, so a clean tree cannot use it.
- */
+/** Clean trees cannot create feature branches because the server derives names from uncommitted changes. */
 export function resolveFeatureBranchUnavailableReason(input: {
   branchName: string;
   hasWorkingTreeChanges: boolean;
@@ -429,4 +426,30 @@ export function resolveLiveThreadBranchUpdate(input: {
   };
 }
 
-export { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
+export type ChangesLineTotals = {
+  readonly insertions: number;
+  readonly deletions: number;
+  /** Ref the counts compare against; `null` means they are uncommitted changes against HEAD. */
+  readonly baseRef: string | null;
+};
+
+// `branchChanges ?? workingTree` treats `{0,0}` as present, so a zero branch total hid a dirty
+// working tree and the Changes row read +0 while Diff still showed the work.
+export function resolveChangesTotals(
+  status: VcsStatusResult | null | undefined,
+): ChangesLineTotals | null {
+  if (!status) return null;
+  const branch = status.branchChanges;
+  const tree = { ...status.workingTree, baseRef: null };
+  const selected =
+    branch && (branch.insertions > 0 || branch.deletions > 0)
+      ? branch
+      : tree.insertions > 0 || tree.deletions > 0
+        ? tree
+        : (branch ?? tree);
+  return {
+    insertions: selected.insertions,
+    deletions: selected.deletions,
+    baseRef: selected.baseRef,
+  };
+}

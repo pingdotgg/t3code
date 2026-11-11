@@ -57,4 +57,19 @@ describe("mobile activity filters", () => {
         .activity.reviewThreads,
     ).toEqual([]);
   });
+
+  it("keeps bot review verdicts when bot comments are hidden", () => {
+    const result = filterPullRequestActivity(
+      {
+        ...activity,
+        comments: [
+          comment("approved", bot, "APPROVED"),
+          comment("changes", bot, "CHANGES_REQUESTED"),
+          comment("commented", bot, "COMMENTED"),
+        ],
+      },
+      DEFAULT_ACTIVITY_FILTER,
+    );
+    expect(result.activity.comments.map((entry) => entry.id)).toEqual(["approved", "changes"]);
+  });
 });

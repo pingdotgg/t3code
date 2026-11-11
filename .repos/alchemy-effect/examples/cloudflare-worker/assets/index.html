@@ -347,11 +347,7 @@
           <button
             id="clear-chat"
             title="Clear chat"
-            style="
-              background: #475569;
-              font-size: 0.8rem;
-              padding: 0.35rem 0.75rem;
-            "
+            style="background: #475569; font-size: 0.8rem; padding: 0.35rem 0.75rem"
           >
             Clear
           </button>
@@ -369,24 +365,14 @@
       <div id="auth-panel">
         <h2>Auth</h2>
         <div id="auth-fields">
-          <input
-            id="auth-email"
-            type="email"
-            placeholder="Email"
-            autocomplete="email"
-          />
+          <input id="auth-email" type="email" placeholder="Email" autocomplete="email" />
           <input
             id="auth-password"
             type="password"
             placeholder="Password"
             autocomplete="current-password"
           />
-          <input
-            id="auth-name"
-            type="text"
-            placeholder="Display name"
-            autocomplete="name"
-          />
+          <input id="auth-name" type="text" placeholder="Display name" autocomplete="name" />
         </div>
         <div id="auth-actions">
           <button id="auth-signup" type="button">Sign Up</button>
@@ -417,9 +403,7 @@
               outline: none;
             "
           />
-          <span style="align-self: center; color: #94a3b8; font-size: 0.8rem"
-            >seconds</span
-          >
+          <span style="align-self: center; color: #94a3b8; font-size: 0.8rem">seconds</span>
           <input
             id="reminder-msg"
             type="text"
@@ -453,8 +437,7 @@
             line-height: 1.4;
           "
         >
-          Type /remind &lt;seconds&gt; &lt;message&gt; in chat, or use the form
-          above.
+          Type /remind &lt;seconds&gt; &lt;message&gt; in chat, or use the form above.
         </div>
       </div>
       <div id="artifacts-panel">
@@ -476,30 +459,14 @@
               outline: none;
             "
           />
-          <button
-            id="artifacts-create"
-            type="button"
-            style="background: #10b981"
-          >
-            Create
-          </button>
-          <button id="artifacts-info" type="button" style="background: #6366f1">
-            Info
-          </button>
-          <button
-            id="artifacts-token"
-            type="button"
-            style="background: #eab308; color: #1f2937"
-          >
+          <button id="artifacts-create" type="button" style="background: #10b981">Create</button>
+          <button id="artifacts-info" type="button" style="background: #6366f1">Info</button>
+          <button id="artifacts-token" type="button" style="background: #eab308; color: #1f2937">
             New token
           </button>
-          <button id="artifacts-list" type="button" style="background: #475569">
-            List
-          </button>
+          <button id="artifacts-list" type="button" style="background: #475569">List</button>
         </div>
-        <div id="artifacts-status">
-          Create a repo, then mint scoped tokens for git clone/push.
-        </div>
+        <div id="artifacts-status">Create a repo, then mint scoped tokens for git clone/push.</div>
       </div>
       <div id="ai-panel">
         <h2>AI Gateway</h2>
@@ -520,31 +487,20 @@
               outline: none;
             "
           />
-          <button id="ai-send" type="button" style="background: #f43f5e">
-            Ask
-          </button>
+          <button id="ai-send" type="button" style="background: #f43f5e">Ask</button>
         </div>
         <div id="ai-status">
-          Routes Workers AI calls through Cloudflare AI Gateway for caching,
-          rate limiting and observability.
+          Routes Workers AI calls through Cloudflare AI Gateway for caching, rate limiting and
+          observability.
         </div>
       </div>
       <div id="workflow-panel">
         <h2>NotifyWorkflow</h2>
-        <button id="workflow-run" type="button">
-          Run workflow (broadcasts to this room)
-        </button>
-        <div id="workflow-status">
-          Idle — messages will appear in the chat above.
-        </div>
+        <button id="workflow-run" type="button">Run workflow (broadcasts to this room)</button>
+        <div id="workflow-status">Idle — messages will appear in the chat above.</div>
       </div>
       <form id="form">
-        <input
-          id="input"
-          type="text"
-          placeholder="Type a message…"
-          autocomplete="off"
-        />
+        <input id="input" type="text" placeholder="Type a message…" autocomplete="off" />
         <button type="submit">Send</button>
       </form>
     </div>
@@ -552,8 +508,7 @@
     <script>
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       const BASE = `${proto}//${location.host}`;
-      const roomId =
-        new URLSearchParams(location.search).get("room") || "default";
+      const roomId = new URLSearchParams(location.search).get("room") || "default";
 
       const statusEl = document.getElementById("status");
       const messagesEl = document.getElementById("messages");
@@ -617,8 +572,7 @@
           setAuthStatus(`status: ${response.status}\n${payload}`);
           addMessage(`${buttonLabel} -> HTTP ${response.status}`, true);
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
+          const message = error instanceof Error ? error.message : String(error);
           setAuthStatus(`request failed: ${message}`);
           addMessage(`${buttonLabel} failed: ${message}`, true);
         } finally {
@@ -633,11 +587,7 @@
           setAuthStatus("Email and password are required.");
           return;
         }
-        await submitAuth(
-          "/auth/sign-up/email",
-          { email, password, name },
-          "Sign Up",
-        );
+        await submitAuth("/auth/sign-up/email", { email, password, name }, "Sign Up");
       });
 
       authSignInBtn.addEventListener("click", async () => {
@@ -750,9 +700,7 @@
       function formatWorkflowStatus(status) {
         const lines = [
           `status: ${status.status ?? "(none)"}`,
-          status.output !== undefined
-            ? `output: ${JSON.stringify(status.output)}`
-            : null,
+          status.output !== undefined ? `output: ${JSON.stringify(status.output)}` : null,
           status.error ? `error: ${JSON.stringify(status.error)}` : null,
         ].filter(Boolean);
         return lines.join("\n");
@@ -772,10 +720,9 @@
           true,
         );
         try {
-          const startResp = await fetch(
-            `/workflow/start/${encodeURIComponent(roomId)}`,
-            { method: "POST" },
-          );
+          const startResp = await fetch(`/workflow/start/${encodeURIComponent(roomId)}`, {
+            method: "POST",
+          });
           if (!startResp.ok) {
             const errText = await startResp.text();
             throw new Error(errText || `HTTP ${startResp.status}`);
@@ -798,24 +745,19 @@
                 addMessage("Workflow status polling timed out.", true);
                 return;
               }
-              const stResp = await fetch(
-                `/workflow/status/${encodeURIComponent(instanceId)}`,
-              );
+              const stResp = await fetch(`/workflow/status/${encodeURIComponent(instanceId)}`);
               if (!stResp.ok) {
                 workflowStatusEl.textContent = `status fetch failed: HTTP ${stResp.status}`;
                 workflowRunBtn.disabled = false;
                 return;
               }
               const st = await stResp.json();
-              workflowStatusEl.textContent =
-                `instance: ${instanceId}\n` + formatWorkflowStatus(st);
+              workflowStatusEl.textContent = `instance: ${instanceId}\n` + formatWorkflowStatus(st);
               if (isWorkflowTerminal(st)) {
                 workflowRunBtn.disabled = false;
                 addMessage(
                   `Workflow finished: ${st.status}` +
-                    (st.output !== undefined
-                      ? ` — ${JSON.stringify(st.output)}`
-                      : ""),
+                    (st.output !== undefined ? ` — ${JSON.stringify(st.output)}` : ""),
                   true,
                 );
                 return;
@@ -842,10 +784,7 @@
       const artifactsListBtn = document.getElementById("artifacts-list");
 
       function setArtifactsStatus(label, payload) {
-        const body =
-          typeof payload === "string"
-            ? payload
-            : JSON.stringify(payload, null, 2);
+        const body = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
         artifactsStatusEl.textContent = `${label}\n${body}`;
       }
 
@@ -881,16 +820,12 @@
         artifactsCreateBtn.disabled = true;
         setArtifactsStatus(`POST /repos/create ${name}`, "...");
         try {
-          const { status, body } = await callArtifacts(
-            "POST",
-            "/repos/create",
-            { name, description: "Created from Room Chat" },
-          );
+          const { status, body } = await callArtifacts("POST", "/repos/create", {
+            name,
+            description: "Created from Room Chat",
+          });
           setArtifactsStatus(`HTTP ${status}`, body);
-          addMessage(
-            `Artifacts: created repo "${name}" -> HTTP ${status}`,
-            true,
-          );
+          addMessage(`Artifacts: created repo "${name}" -> HTTP ${status}`, true);
         } catch (e) {
           setArtifactsStatus("request failed", e.message);
         } finally {
