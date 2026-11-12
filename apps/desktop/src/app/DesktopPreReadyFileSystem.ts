@@ -32,9 +32,7 @@ const syncFs = <A>(method: string, path: string, run: () => A) =>
       }),
   });
 
-/**
- * @public Service construction is part of the canonical Effect module API.
- */
+/** @public */
 export const make = FileSystem.makeNoop({
   exists: (path) =>
     syncFs("exists", path, () => {
@@ -51,6 +49,13 @@ export const make = FileSystem.makeNoop({
     syncFs("makeDirectory", path, () => {
       NodeFS.mkdirSync(path, { recursive: options?.recursive ?? false });
     }),
+  remove: (path, options) =>
+    syncFs("remove", path, () =>
+      NodeFS.rmSync(path, {
+        recursive: options?.recursive ?? false,
+        force: options?.force ?? false,
+      }),
+    ),
   writeFileString: (path, data, options) =>
     syncFs("writeFileString", path, () =>
       NodeFS.writeFileSync(path, data, { flag: options?.flag ?? "w" }),

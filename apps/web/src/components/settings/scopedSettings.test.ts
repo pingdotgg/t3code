@@ -31,7 +31,6 @@ function environment(
     connected?: boolean;
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
-    projectOverrides?: boolean;
   } = {},
 ) {
   return {
@@ -45,9 +44,6 @@ function environment(
         ? null
         : {
             settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings },
-            environment: {
-              capabilities: { projectSettingsOverrides: options.projectOverrides !== false },
-            },
           },
   };
 }
@@ -95,6 +91,8 @@ const group: SidebarProjectSnapshot = {
   allRemoteMembersAreDesktopLocal: false,
   allRemoteMembersAreWsl: false,
   remoteEnvironmentLabels: [server.label, laptop.label],
+  pinned: false,
+  archived: false,
 };
 const project = resolveSettingsScope({ project: group.projectKey }, [group], environments);
 const checkout = resolveSettingsScope(
@@ -460,17 +458,38 @@ describe("scoped settings writes", () => {
     }
   });
 
-  it("refuses environment-wide keys and older servers at project scope", () => {
+  it("refuses environment-wide keys at project scope", () => {
     expect(
       planScopedSettingsPatch(project, environments, { enableProviderUpdateChecks: false }),
     ).toMatchObject({
       serverWrites: [],
       unavailableReason: "This setting is environment-wide and cannot be overridden by a project.",
     });
-    const legacy = environment("Server", { projectOverrides: false });
-    expect(
-      planScopedSettingsPatch(checkout, [laptop, legacy], { defaultAutoPull: true }),
-    ).toMatchObject({ serverWrites: [], unavailableReason: expect.stringContaining("update") });
+  });
+
+  // regression: #35093 client settings saved in project scope overwrote the global default
+  it("refuses client-only keys at project scope", () => {
+    for (const scope of [project, checkout]) {
+      expect(
+        planScopedSettingsPatch(scope, environments, {
+          browserDefaultViewport: { _tag: "freeform", width: 1440, height: 900 },
+        }),
+      ).toMatchObject({
+        clientPatch: {},
+        hasClientWrite: false,
+        serverWrites: [],
+        unavailableReason:
+          "This setting is environment-wide and cannot be overridden by a project.",
+      });
+      expect(
+        planScopedSettingsPatch(
+          scope,
+          environments,
+          { fontSizeInterface: 15 },
+          { deviceOnly: true },
+        ),
+      ).toMatchObject({ clientPatch: { fontSizeInterface: 15 }, unavailableReason: null });
+    }
   });
 
   it("clears overrides per member and removes an emptied entry", () => {
@@ -697,7 +716,6 @@ describe("partial object patches at project scope", () => {
           connection: { phase: "connected" },
           serverConfig: {
             settings,
-            environment: { capabilities: { projectSettingsOverrides: true } },
           },
         },
       ],

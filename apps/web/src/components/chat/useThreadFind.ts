@@ -1,38 +1,23 @@
 import type { InlineSkill } from "@t3tools/shared/inlineSkills";
 import type { OrchestrationV2SearchThreadResult, ScopedThreadRef } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { useStableCallback } from "~/hooks/useStableCallback";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { useThreadProjection } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
+import { type ThreadFindMatch, type ThreadFindStart, stepThreadFindIndex } from "./threadFind";
 import {
-  type ThreadFindPositionReader,
-  type ThreadFindStart,
-  stepThreadFindIndex,
-} from "./threadFind";
-import { subscribeThreadFindOpen } from "./threadFindActionBus";
-import { toastManager } from "../ui/toast";
+  CLOSED_THREAD_FIND,
+  closeThreadFind,
+  setThreadFindQuery,
+  useThreadFindOpen,
+  useThreadFindStore,
+  type ThreadFindLocalSelection,
+  type ThreadFindState,
+} from "./threadFindStore";
 
 const EMPTY_SKILLS: readonly InlineSkill[] = [];
-
-const CLOSED_FIND = {
-  threadKey: null as string | null,
-  query: "",
-  offset: 0,
-  start: undefined as ThreadFindStart | undefined,
-  focusRequestId: 0,
-  navigationId: 0,
-  requestId: 0,
-  localSelection: null as {
-    base: OrchestrationV2SearchThreadResult;
-    baseNavigationId: number;
-    activeIndex: number;
-    match: NonNullable<OrchestrationV2SearchThreadResult["match"]>;
-    navigationId: number;
-  } | null,
-};
 
 export function useThreadFind({
   thread,
@@ -48,52 +33,17 @@ export function useThreadFind({
   // Read here rather than passed in: a streamed delta re-renders only the find
   // provider, which refreshes open results from it.
   const content = useThreadProjection(enabled ? thread : null)?.projection;
-  // Held in state so the timeline props that carry it can be stored in state too.
-  const [positionReader] = useState<RefObject<ThreadFindPositionReader | null>>(() => ({
-    current: null,
-  }));
   const lastContentRef = useRef(content);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshAfterSearchRef = useRef(false);
   const threadKey = thread ? scopedThreadKey(thread) : null;
-  const [state, setState] = useState(CLOSED_FIND);
-  if (state.threadKey !== null && (!enabled || state.threadKey !== threadKey))
-    setState(CLOSED_FIND);
-  const isOpen = enabled && threadKey !== null && state.threadKey === threadKey;
-  const open = useStableCallback(() => {
-    if (threadKey === null) return;
-    if (!enabled) {
-      toastManager.add({
-        id: "thread-find-unavailable",
-        title: "Thread search is unavailable on this server.",
-        description: "Update the server to enable it.",
-      });
-      return;
-    }
-    const start =
-      state.threadKey === threadKey && state.query.trim()
-        ? positionReader.current?.(state.query.trim())
-        : undefined;
-    setState((previous) => {
-      const current = previous.threadKey === threadKey ? previous : CLOSED_FIND;
-      return {
-        ...current,
-        threadKey,
-        focusRequestId: previous.focusRequestId + 1,
-        ...(current.query.trim()
-          ? {
-              start,
-              offset: 0,
-              localSelection: null,
-              navigationId: current.navigationId + 1,
-              requestId: current.navigationId + 1,
-            }
-          : {}),
-      };
-    });
-  });
-  const close = useStableCallback(() => setState(CLOSED_FIND));
-  useEffect(() => subscribeThreadFindOpen(open), [open]);
+  const isOpen = useThreadFindOpen(thread, enabled);
+  const stored = useThreadFindStore();
+  const state = isOpen ? stored : CLOSED_THREAD_FIND;
+  const setState = (update: (previous: ThreadFindState) => Partial<ThreadFindState>) =>
+    useThreadFindStore.setState((previous) =>
+      previous.threadKey === threadKey ? update(previous) : previous,
+    );
 
   const remote = useServerResults(
     isOpen ? thread : null,
@@ -124,7 +74,7 @@ export function useThreadFind({
   const navigationId = localSelection?.navigationId ?? remote.navigationId;
   const findExpanded = isOpen && state.query.trim().length > 0;
   const findQuery = isOpen && remote.data?.match ? state.query : "";
-  const nextTimeline = {
+  const nextTimeline: TimelineFields = {
     findOpen: isOpen,
     findExpanded,
     findQuery,
@@ -134,21 +84,14 @@ export function useThreadFind({
         : null,
     findNavigationId: navigationId,
   };
-  // Finishing the count or a pending response must not rerender the timeline or
-  // request another jump, so these keep their identity until a field changes.
-  const [storedTimeline, setTimeline] = useState(() => ({
-    fields: nextTimeline,
-    props: { ...nextTimeline, findPositionReaderRef: positionReader },
-  }));
+  // Keep timeline identity stable during count and response updates to avoid extra jumps.
+  const [storedTimeline, setTimeline] = useState(nextTimeline);
   let timeline = storedTimeline;
-  if (!sameTimeline(timeline.fields, nextTimeline)) {
-    timeline = {
-      fields: nextTimeline,
-      props: { ...nextTimeline, findPositionReaderRef: positionReader },
-    };
+  if (!sameTimeline(timeline, nextTimeline)) {
+    timeline = nextTimeline;
     setTimeline(timeline);
   }
-  const match = timeline.fields.activeFindMatch;
+  const match = timeline.activeFindMatch;
   const step = (delta: number) => {
     if (count === 0 || counting) return;
     setState((previous) => {
@@ -207,52 +150,53 @@ export function useThreadFind({
     });
   };
 
-  const refreshLiveResultsRef = useRef(() => {});
-  useLayoutEffect(() => {
-    refreshLiveResultsRef.current = () => {
-      if (!isOpen || !state.query.trim()) return;
-      // Paging can change client content while the server is still counting.
-      // Coalesce those updates instead of repeatedly restarting the scan.
-      if (progressive && remote.isPending) {
-        refreshAfterSearchRef.current = true;
-        return;
-      }
-      if (!match || state.navigationId !== navigationId) {
-        remote.refresh();
-        return;
-      }
-      const start = { entryId: match.entryId, occurrence: match.occurrence };
-      if (
-        state.offset === 0 &&
-        state.start?.entryId === start.entryId &&
-        state.start.occurrence === start.occurrence &&
-        state.requestId === state.navigationId
-      ) {
-        remote.refresh();
-      } else {
-        setState((previous) => ({
-          ...previous,
-          start,
-          offset: 0,
-          requestId: previous.navigationId,
-        }));
-      }
-    };
+  // Runs from the refresh timer and after a coalesced search settles, against
+  // the results and selection showing by then.
+  const refreshLiveResults = useEffectEvent(() => {
+    if (!isOpen || !state.query.trim()) return;
+    // Coalesce paging updates while the server counts to avoid restarting scans.
+    if (progressive && remote.isPending) {
+      refreshAfterSearchRef.current = true;
+      return;
+    }
+    if (!match || state.navigationId !== navigationId) {
+      remote.refresh();
+      return;
+    }
+    const start = { entryId: match.entryId, occurrence: match.occurrence };
+    if (
+      state.offset === 0 &&
+      state.start?.entryId === start.entryId &&
+      state.start.occurrence === start.occurrence &&
+      state.requestId === state.navigationId
+    ) {
+      remote.refresh();
+    } else {
+      setState((previous) => ({
+        ...previous,
+        start,
+        offset: 0,
+        requestId: previous.navigationId,
+      }));
+    }
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reruns a live refresh that was coalesced behind a server search once that search settles
   useEffect(() => {
     if (!refreshAfterSearchRef.current || remote.isPending) return;
     refreshAfterSearchRef.current = false;
-    if (!remote.error) refreshLiveResultsRef.current();
+    if (!remote.error) refreshLiveResults();
   }, [remote.isPending, remote.error]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a debounce timer to refresh find results when streamed thread content changes
   useEffect(() => {
     if (lastContentRef.current === content) return;
     lastContentRef.current = content;
     if (!isOpen || !state.query.trim() || refreshTimerRef.current !== null) return;
     refreshTimerRef.current = setTimeout(() => {
       refreshTimerRef.current = null;
-      refreshLiveResultsRef.current();
+      refreshLiveResults();
     }, 300);
   }, [content, isOpen, state.query]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending refresh timer when the thread, open state or query changes
   useEffect(() => {
     if (!isOpen || threadKey === null || !state.query.trim()) return;
     return () => {
@@ -263,9 +207,6 @@ export function useThreadFind({
   }, [threadKey, isOpen, state.query]);
 
   return {
-    isOpen,
-    open,
-    close,
     barProps: {
       open: isOpen,
       query: state.query,
@@ -276,29 +217,23 @@ export function useThreadFind({
       focusRequestId: state.focusRequestId,
       onRetry: remote.refresh,
       onQueryChange: (query: string) => {
-        const start = positionReader.current?.(query.trim());
-        setState((previous) => ({
-          ...previous,
-          query,
-          offset: 0,
-          start,
-          localSelection: null,
-          navigationId: previous.navigationId + 1,
-          requestId: previous.navigationId + 1,
-        }));
+        if (threadKey !== null) setThreadFindQuery(threadKey, query);
       },
       onNext: () => step(1),
       onPrevious: () => step(-1),
-      onClose: close,
+      onClose: closeThreadFind,
     },
-    timelineProps: timeline.props,
+    timelineProps: timeline,
   };
 }
 
-type TimelineFields = Omit<
-  ReturnType<typeof useThreadFind>["timelineProps"],
-  "findPositionReaderRef"
->;
+export interface TimelineFields {
+  readonly findOpen: boolean;
+  readonly findExpanded: boolean;
+  readonly findQuery: string;
+  readonly activeFindMatch: ThreadFindMatch | null;
+  readonly findNavigationId: number;
+}
 
 function sameTimeline(a: TimelineFields, b: TimelineFields) {
   const aMatch = a.activeFindMatch;
@@ -317,7 +252,7 @@ function sameTimeline(a: TimelineFields, b: TimelineFields) {
 }
 
 function rebaseLocalSelection(
-  selection: typeof CLOSED_FIND.localSelection,
+  selection: ThreadFindLocalSelection | null,
   data: OrchestrationV2SearchThreadResult | null,
   navigationId: number,
 ) {
@@ -358,8 +293,6 @@ function useServerResults(
         }
       : null;
   const targetKey = target ? JSON.stringify([progressive, target]) : null;
-  // Resolving the atom only when the request changes keeps unrelated renders from
-  // touching the atom family.
   const [storedAtom, setStoredAtom] = useState(() => ({
     key: targetKey,
     atom: resolveThreadFindAtom(target, progressive),

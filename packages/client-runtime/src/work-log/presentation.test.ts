@@ -9,7 +9,6 @@ import {
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
-  workEntryIndicatesToolSuccess,
 } from "./presentation.js";
 
 function commandItem(
@@ -32,7 +31,6 @@ function commandItem(
     updatedAt: DateTime.makeUnsafe("2026-09-08T00:00:00.000Z"),
     type: "command_execution",
     input: 'rg "command not found"',
-    exitCode: 0,
     ...fields,
   };
 }
@@ -60,10 +58,25 @@ describe("workEntryIndicatesToolFailure", () => {
         structuredPayload,
       };
       expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(failed);
-      expect(workEntryIndicatesToolSuccess(entry)).toBe(!failed);
       expect(JSON.stringify(toolItemForDisplay(structuredPayload))).not.toContain('"output":');
     },
   );
+
+  it.each([
+    "logs/app.log:12: Error: ENOENT: no such file or directory",
+    "fixtures/ci.txt:3: Process exited with exit code 2",
+  ])("trusts a zero exit code over failure text in the output and command: %s", (output) => {
+    const entry: WorkLogPresentationEntry = {
+      ...base,
+      tone: "tool",
+      itemType: "command_execution",
+      toolLifecycleStatus: "completed",
+      command: 'rg -n "ENOENT|exit code" logs fixtures',
+      structuredPayload: commandItem({ output, exitCode: 0, outputIndicatesFailure: true }),
+    };
+    expect(workEntryIndicatesToolFailure(entry)).toBe(false);
+    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
+  });
 
   it("ignores failure phrases in reasoning text", () => {
     const entry: WorkLogPresentationEntry = {
@@ -110,7 +123,6 @@ describe("resolveWorkEntryToolPresentation", () => {
       "Failed to clone a repository",
     );
     expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(true);
-    expect(workEntryIndicatesToolSuccess(entry)).toBe(false);
     const childFailure = {
       ...entry,
       label: "T3-code.task_status",
@@ -118,7 +130,6 @@ describe("resolveWorkEntryToolPresentation", () => {
       toolData: { output: { taskId: "child", status: "failed", summary: "command not found" } },
     };
     expect(workEntryDisplayIndicatesToolFailure(childFailure)).toBe(false);
-    expect(workEntryIndicatesToolSuccess(childFailure)).toBe(true);
   });
   it.each([
     "mcp__t3-code__preview_click",
@@ -161,6 +172,19 @@ describe("resolveWorkEntryToolPresentation", () => {
       resolveWorkEntryToolPresentation({ ...entry, toolLifecycleStatus: "failed" }, "completed")
         ?.displayName,
     ).toBe("Failed to click in the preview browser");
+  });
+
+  it.each([
+    ["https://github.com/acme/web/pull/7", "PR #7"],
+    ["https://gitlab.com/acme/web/-/merge_requests/7", "MR #7"],
+  ])("names a linked change request with its host's term (%s)", (url, target) => {
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: "T3-code.link_pull_request",
+        toolLifecycleStatus: "completed",
+        toolData: { arguments: { url } },
+      })?.displayName,
+    ).toMatch(new RegExp(` ${target}$`));
   });
 
   it("does not brand unknown tools or another server's matching tool name", () => {
