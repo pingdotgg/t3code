@@ -476,7 +476,7 @@ describe("t3 pair", () => {
       (origin) =>
         Effect.gen(function* () {
           const baseDir = NodeFS.mkdtempSync(
-            NodePath.join(NodeOS.tmpdir(), "t3 pair protocol test-"),
+            NodePath.join(NodeOS.tmpdir(), "t3 pair's $protocol` test-"),
           );
           yield* persistServerRuntimeState({
             path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
@@ -496,7 +496,13 @@ describe("t3 pair", () => {
           assert.isTrue(Exit.isFailure(exit));
           if (Exit.isFailure(exit)) {
             const platform = yield* HostProcess.Platform;
-            const quotedBaseDir = platform === "win32" ? `"${baseDir}"` : `'${baseDir}'`;
+            const quotedBaseDir =
+              platform === "win32"
+                ? `"${baseDir
+                    .replaceAll("`", "``")
+                    .replaceAll("$", "`$")
+                    .replace(/["\u201C\u201D\u201E]/g, "$&$&")}"`
+                : `'${baseDir.replaceAll("'", `'"'"'`)}'`;
             assert.include(
               String(Cause.squash(exit.cause)),
               `npx t3@0.0.45 pair --base-dir ${quotedBaseDir}`,
