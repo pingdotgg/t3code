@@ -2558,14 +2558,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }
         yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset", "--quiet"]);
       }
+      // Status paths are repository-relative, while cwd can be a subdirectory.
+      const pathspecs = filePaths.map((file) => `:(top,literal)${file}`);
+      const fromStdin = yield* supportsPathspecFromFile(cwd);
       yield* runGit(
         "GitVcsDriver.commit.addSelected",
         cwd,
-        [...config, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
+        fromStdin
+          ? [...config, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"]
+          : [...config, "add", "-A", "--", ...pathspecs],
         {
           ...(env ? { env } : {}),
-          // Status paths are repository-relative, while cwd can be a subdirectory.
-          stdin: filePaths.map((file) => `:(top,literal)${file}\0`).join(""),
+          ...(fromStdin ? { stdin: pathspecs.map((pathspec) => `${pathspec}\0`).join("") } : {}),
         },
       );
     } else {
