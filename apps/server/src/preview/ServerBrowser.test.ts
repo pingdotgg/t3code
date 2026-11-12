@@ -1344,10 +1344,25 @@ it.live("a tab whose renderer crashes stays open for its viewer", () =>
       yield* Effect.yieldNow;
       const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
       const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* Effect.promise(() => contexts[0]!.page.goto("http://127.0.0.1:8765/"));
       yield* Queue.clear(viewer.output);
       contexts[0]!.page.emit("crash");
-      const received = yield* Queue.clear(viewer.output);
-      expect(received.filter((item) => item._tag === "gone")).toEqual([]);
+      let ended = yield* Queue.take(viewer.output);
+      while (ended._tag !== "gone" && ended._tag !== "reconnect") {
+        ended = yield* Queue.take(viewer.output);
+      }
+      expect(ended).toEqual({ _tag: "reconnect" });
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.find((session) => session.tabId === opened.tabId)?.navStatus).toMatchObject({
+        _tag: "LoadFailed",
+        url: "http://127.0.0.1:8765/",
+      });
+      const reconnected = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* reconnected.input({ type: "reload" });
+      expect(contexts.at(-1)!.page.goto).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/",
+        expect.objectContaining({ waitUntil: "commit" }),
+      );
     }),
   ).pipe(Effect.provide(layer)),
 );

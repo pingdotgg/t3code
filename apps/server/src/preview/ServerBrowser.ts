@@ -788,7 +788,7 @@ const make = Effect.gen(function* () {
     clearTimeout(timeout);
   };
 
-  const dropTab = (tab: ServerTab, closeSession: boolean) => {
+  const dropTab = (tab: ServerTab, closeSession: boolean, reconnect = false) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
@@ -796,7 +796,8 @@ const make = Effect.gen(function* () {
     tab.viewerAttached?.resolve();
     clearAbortedNavigation(tab);
     // A desktop page outlives the connection unless its session closed with it.
-    const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
+    const end =
+      (reconnect || tab.desktop) && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
     if (tab.desktop) void tab.desktop.close().catch(constVoid);
@@ -959,7 +960,14 @@ const make = Effect.gen(function* () {
       desktopViewportRead: Promise.resolve(null),
       desktopViewportNext: null,
       loading: false,
-      loadError: undefined,
+      loadError:
+        snapshot.navStatus._tag === "LoadFailed" && snapshot.navStatus.download === undefined
+          ? {
+              url: snapshot.navStatus.url,
+              code: snapshot.navStatus.code,
+              description: snapshot.navStatus.description,
+            }
+          : undefined,
       closing: false,
       recording: null,
       recordingStart: null,
@@ -1085,14 +1093,40 @@ const make = Effect.gen(function* () {
     updateFileChooserInterception(tab);
     // Popups become tabs and keep `window.opener`, so sign-in popups can report back.
     page.on("popup", (popup) => void adoptPopup(tab, popup));
-    // Playwright cannot reload a crashed page, so it must leave the tab list.
     const key = tabKey(tab.threadId, tab.tabId);
     if (closedPendingTabs.delete(key)) {
       await control.close().catch(constVoid);
       throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
     }
     page.on("close", () => dropTab(tab, true));
-    page.on("crash", () => dropTab(tab, true));
+    // Playwright cannot reload a crashed page, so the session keeps the failure and viewers
+    // reconnect to a fresh page, which stays blank until Reload so a crashing site cannot loop.
+    page.on("crash", () => {
+      if (tabs.get(key) !== tab) return;
+      const url = ServerBrowserPage.withoutDataPayload(page.url()).slice(0, 2048);
+      runFork(
+        manager
+          .reportStatus({
+            threadId: tab.threadId,
+            tabId: tab.tabId,
+            serverControlled: true,
+            navStatus: {
+              _tag: "LoadFailed",
+              url,
+              title: "",
+              code: -2,
+              description: "Page crashed",
+            },
+            canGoBack: false,
+            canGoForward: false,
+          })
+          .pipe(
+            Effect.ignore,
+            // Viewers reconnect once the session holds the failure the fresh page starts from.
+            Effect.ensuring(Effect.sync(() => dropTab(tab, false, true))),
+          ),
+      );
+    });
     tabs.set(key, tab);
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
@@ -2652,6 +2686,13 @@ const make = Effect.gen(function* () {
         );
         return;
       case "reload":
+        // A tab rebuilt after a crash is blank, so Reload retries the page that failed.
+        if (tab.page.url() === "about:blank" && tab.loadError) {
+          tab.control.trackUntilHandoff(
+            tab.page.goto(tab.loadError.url, VIEWER_NAVIGATION_OPTIONS),
+          );
+          return;
+        }
         if (message.ignoreCache === true) {
           await session.send("Page.reload", { ignoreCache: true });
           return;
