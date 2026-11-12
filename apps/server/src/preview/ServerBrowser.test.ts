@@ -936,6 +936,44 @@ it.live.each([
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a viewer whose first still never answers opens, and later snapshots still run", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const context = contexts[0]!;
+      const captureStarted = Promise.withResolvers<void>();
+      const unanswered = Promise.withResolvers<Record<string, unknown>>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => unanswered.reject(new Error("closed"))));
+      // A tab the desktop host does not draw never answers the viewer's capture.
+      const newSession = context.newCDPSession;
+      context.newCDPSession = async (target) => {
+        const session = await newSession(target);
+        const send = session.send.getMockImplementation()!;
+        session.send.mockImplementation((method, input) => {
+          if (method !== "Page.captureScreenshot") return send(method, input);
+          captureStarted.resolve();
+          return unanswered.promise;
+        });
+        return session;
+      };
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const attaching = yield* browser
+        .attachViewer(viewerInput(tabId, true))
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Effect.promise(() => captureStarted.promise);
+      const snapshotting = yield* broker
+        .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+      yield* TestClock.adjust("10 seconds");
+      expect(attaching.pollUnsafe()).toBeDefined();
+      expect(snapshotting.pollUnsafe()).toBeDefined();
+      expect((yield* Fiber.join(snapshotting)).screenshot?.data).toBe(PNG_HEADER);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("enforces provider ownership and explicit targets when a session has multiple tabs", () =>
   Effect.scoped(
     Effect.gen(function* () {
