@@ -32,6 +32,13 @@ const RATE_LIMIT_ERROR = errorPayload(
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
 );
+// The harness renders a gateway failure with its HTTP status line in place of a gRPC status.
+const BAD_GATEWAY_ERROR = Buffer.concat([
+  errorPayload(
+    "Error 502, Message: Bad Gateway: Failed to connect to backend API, Status: 502 Bad Gateway, Details: []",
+  ),
+  Buffer.from("\nThe model is currently unreachable."),
+]);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -129,6 +136,17 @@ describe("watchAntigravityPromptOutcome", () => {
           retryable: false,
         },
       );
+      assert.deepInclude(
+        yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, BAD_GATEWAY_ERROR],
+        ]),
+        {
+          class: "provider_error",
+          message: "Bad Gateway: Failed to connect to backend API",
+          retryable: true,
+        },
+      );
       // A completed tool keeps its usage, and the turn still fails.
       assert.equal(
         (yield* turn(
@@ -158,6 +176,48 @@ describe("watchAntigravityPromptOutcome", () => {
         code: "QUOTA_EXHAUSTED",
         retryable: true,
       });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps only an absolute reset time for a prompt the watchdog retired", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      const sessionId = "e6aba774-5472-4277-b6ee-27b2e05570a7";
+      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+      yield* fs.makeDirectory(conversations, { recursive: true });
+      const retiredTurn = (error: Uint8Array) =>
+        Effect.gen(function* () {
+          const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
+          const database = new NodeSqlite.DatabaseSync(path.join(conversations, `${sessionId}.db`));
+          try {
+            database.exec(
+              "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)",
+            );
+            database
+              .prepare("INSERT INTO steps (step_type, step_payload) VALUES (?, ?)")
+              .run(ERROR_MESSAGE, error);
+          } finally {
+            database.close();
+          }
+          return yield* check({ stopReason: "end_turn" }, { retired: true });
+        });
+
+      assert.deepEqual(yield* retiredTurn(RATE_LIMIT_ERROR), {
+        class: "usage_limit",
+        message: "Resource has been exhausted (e.g. check quota).",
+        code: "RESOURCE_EXHAUSTED",
+        retryable: true,
+      });
+      assert.equal(
+        (yield* retiredTurn(
+          errorPayload(
+            "Error 429, Message: Quota exhausted for test model., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com metadata:map[quotaResetDelay:3600s quotaResetTimeStamp:2026-11-09T01:05:00Z] reason:QUOTA_EXHAUSTED]]",
+          ),
+        ))?.resetAt,
+        "2026-11-09T01:05:00.000Z",
+      );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

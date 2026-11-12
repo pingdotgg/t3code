@@ -18,7 +18,10 @@ const ERROR_STEP_TYPE = 17;
 // The harness error text leads the payload; a Go stack trace follows it.
 const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
-const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
+// Status is a gRPC code, or an HTTP status line such as "502 Bad Gateway". A message
+// stops at the next error, so each start scans its own span and the match stays linear.
+const API_ERROR =
+  /Error (\d{3}), Message: ((?:(?!, Status: |Error \d{3}, Message: ).)+), Status: ([A-Z_]+|\d{3}[^,\n]*)/s;
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
@@ -89,12 +92,12 @@ const lastStepAfter =
     return { type: row.type, payload: row.payload instanceof Uint8Array ? row.payload : null };
   };
 
-function resetAtFrom(text: string, now: DateTime.Utc): string | undefined {
+function resetAtFrom(text: string, now: DateTime.Utc | undefined): string | undefined {
   // makeProviderFailure drops a timestamp that does not parse, so fall back to the delay.
   const timestamp = RESET_TIMESTAMP.exec(text)?.[1];
   if (timestamp !== undefined && Option.isSome(DateTime.make(timestamp))) return timestamp;
   const delay = RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1];
-  if (delay === undefined) return undefined;
+  if (delay === undefined || now === undefined) return undefined;
   let delayMs = 0;
   for (const [, amount, unit] of delay.matchAll(GO_DURATION_PART)) {
     delayMs += Number(amount) * (GO_DURATION_UNIT_MS[unit!] ?? 0);
@@ -105,7 +108,7 @@ function resetAtFrom(text: string, now: DateTime.Utc): string | undefined {
 function turnFailure(
   stopReason: EffectAcpSchema.StopReason,
   step: LastStep | undefined,
-  now: DateTime.Utc,
+  now: DateTime.Utc | undefined,
 ): OrchestrationV2ProviderFailure | undefined {
   const errorText =
     step?.type === ERROR_STEP_TYPE
@@ -193,6 +196,7 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
   }
   return Effect.fn("AntigravityTurnOutcome.check")(function* (
     result: EffectAcpSchema.PromptResponse,
+    options?: { readonly retired?: boolean },
   ) {
     // The same file as before the prompt, or one this prompt created, still unlinked.
     const after = yield* Effect.tryPromise({
@@ -211,6 +215,8 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
           Effect.orElseSucceed(() => undefined),
         )
       : undefined;
-    return turnFailure(result.stopReason, step, yield* DateTime.now);
+    // A retired prompt's check runs long after the error, so a relative delay has no anchor.
+    const now = options?.retired === true ? undefined : yield* DateTime.now;
+    return turnFailure(result.stopReason, step, now);
   });
 });
