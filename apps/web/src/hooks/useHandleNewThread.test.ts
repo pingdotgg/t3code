@@ -6,6 +6,7 @@ const testState = vi.hoisted(() => {
   let projectFileRead = Promise.resolve<null>(null);
   let projectRemoved = false;
   let connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
+  let targetConfigLoaded = true;
   let targetSettings = {
     defaultThreadEnvMode: "local" as "local" | "worktree" | null,
     newWorktreesStartFromOrigin: false,
@@ -70,6 +71,12 @@ const testState = vi.hoisted(() => {
     removeProject() {
       projectRemoved = true;
     },
+    get targetConfigLoaded() {
+      return targetConfigLoaded;
+    },
+    forgetTargetConfig() {
+      targetConfigLoaded = false;
+    },
     hasUserText: (draft: { readonly draftId?: string } | null | undefined) =>
       draft?.draftId !== undefined && draftsWithUserText.has(draft.draftId),
     giveUserText(draftId: string) {
@@ -96,6 +103,7 @@ const testState = vi.hoisted(() => {
       draftsWithUserText = new Set();
       projectRemoved = false;
       connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
+      targetConfigLoaded = true;
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
@@ -126,7 +134,9 @@ const testServerConfigs = () =>
         },
       },
     ],
-    ["environment-ssh", { settings: testState.targetSettings }],
+    ...(testState.targetConfigLoaded
+      ? [["environment-ssh", { settings: testState.targetSettings }] as const]
+      : []),
   ]);
 
 vi.mock("../rpc/atomRegistry", () => ({
@@ -152,7 +162,7 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
 }));
 vi.mock("@t3tools/contracts", () => ({
   DEFAULT_RUNTIME_MODE: "default",
-  DEFAULT_SERVER_SETTINGS: {},
+  DEFAULT_SERVER_SETTINGS: { defaultThreadEnvMode: null },
 }));
 vi.mock("@t3tools/shared/projectSettings", () => ({
   resolveProjectSettings: (
@@ -314,6 +324,24 @@ describe.each([
     await expect(pendingOpen).resolves.toBeNull();
     expect(testState.router.navigate).not.toHaveBeenCalled();
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  });
+
+  it("does not default to local while the environment's worktree setting is not loaded", async () => {
+    testState.reset(draft, { envMode: "worktree", startFromOrigin: false });
+    testState.forgetTargetConfig();
+    const pendingOpen = useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
+
+    const persistedModes = [
+      ...testState.draftStore.setDraftThreadContext.mock.calls,
+      ...testState.draftStore.setLogicalProjectDraftThreadId.mock.calls,
+    ].map((call) => (call.at(-1) as { envMode?: string } | undefined)?.envMode);
+    expect(persistedModes).not.toContain("local");
   });
 });
 
