@@ -408,7 +408,6 @@ function SubmissionProbeContent({
   const value = useEnvironmentSpeechInput({
     environmentId: environmentId as EnvironmentId,
     ownerKey: owner,
-    draftText: text,
     readDraft,
     commitDraft: (next) => {
       mocks.drafts[owner] = next;

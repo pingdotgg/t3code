@@ -2181,7 +2181,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       event?.preventDefault();
       if (activePendingProgress) {
         submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
-        return;
+        return false;
       }
       const transcript = new Promise<string | null>((resolve) => {
         submitAfterDictation(
@@ -2202,15 +2202,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         undefined,
         dispatchMode ??
           resolveComposerDispatchMode({
-            running: phase === "running",
+            running: phase === "running" || phase === "connecting",
             alternateModifier: false,
             activeTurnDefault: followUpBehavior,
-            canSteer: !isCompacting,
+            canSteer,
           }),
         submissionIntent,
         transcript,
       );
-      return;
+      return false;
     }
     // An empty draft has nothing to send; Enter does what the Resume thread button does.
     if (showResumeAction && !activePendingProgress) {

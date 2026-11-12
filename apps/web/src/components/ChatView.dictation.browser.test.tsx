@@ -1,7 +1,9 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { MessageId, TurnItemId, WS_METHODS } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
@@ -9,10 +11,12 @@ import { AppRoot } from "~/AppRoot";
 import "~/components/ChatView";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { responseContextRecord } from "~/lib/composerContextRecords";
 import { getRouter } from "~/router";
 import { chooseAudioDestination, chooseTranscriptCleanup } from "~/speech/voiceConsent";
 import {
   ENVIRONMENT_ID,
+  answerRpc,
   dispatchedCommands,
   installFakeEnvironment,
   threadWithHistory,
@@ -57,6 +61,9 @@ it.each([
   const editing = scenario.startsWith("queued-");
   const a = editing ? queued : normal;
   using _environment = installFakeEnvironment([normal, b, queued], { acceptCommands: true });
+  using _assetUrls = answerRpc(WS_METHODS.assetsCreateUrl, () =>
+    Effect.succeed({ relativeUrl: "/fixtures/report.txt", expiresAt: 4102444800000 }),
+  );
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -67,6 +74,25 @@ it.each([
   const bRef = scopeThreadRef(ENVIRONMENT_ID, b.id);
   const mainPrompt = scenario === "queued-equal" ? "Queued message" : "Fix";
   useComposerDraftStore.getState().setPrompt(aRef, mainPrompt);
+  if (editing)
+    useComposerDraftStore.getState().setReplyTo(
+      aRef,
+      responseContextRecord({
+        citation: {
+          version: 1,
+          environmentId: ENVIRONMENT_ID,
+          threadId: a.id,
+          messageId: MessageId.make("dictation-reply"),
+          text: "Normal draft reply",
+          start: 0,
+          end: 18,
+          prefix: "",
+          suffix: "",
+        },
+        itemId: TurnItemId.make("dictation-reply"),
+        subagents: [],
+      }),
+    );
   const file = {
     type: "file" as const,
     id: `dictation-file-${scenario}`,
