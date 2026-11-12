@@ -6,6 +6,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeStreamPromises from "node:stream/promises";
 import * as NodeUtil from "node:util";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
 
@@ -187,6 +188,7 @@ function repointServiceUnit(contents: string, version: string): string {
 }
 
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
+const BACKUP_SOURCE_STAMP = "source-stamp.json";
 const RESTORE_MARKER = ".restore-pending";
 
 const databaseBackupDir = (baseDir: string, updateId: string) =>
@@ -461,8 +463,21 @@ async function startOnlineDatabaseBackup(
   };
 }
 
+async function databaseSourceStamp(dbPath: string): Promise<string> {
+  const stamp: Array<ReadonlyArray<number> | null> = [];
+  for (const suffix of DB_FILE_SUFFIXES) {
+    const stat = await NodeFSP.stat(`${dbPath}${suffix}`).catch((cause: unknown) => {
+      if (suffix !== "" && (cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw cause;
+    });
+    stamp.push(stat === undefined ? null : [stat.dev, stat.ino, stat.size, stat.mtimeMs]);
+  }
+  return JSON.stringify(stamp);
+}
+
 // Preserve completed backups; restarted trials may already have changed the live database.
-async function backupDatabaseOnce(
+// A copy stopped or killed partway resumes while the database files are unchanged.
+export async function backupDatabaseOnce(
   baseDir: string,
   pending: PendingServiceUpdate,
   signal: AbortSignal,
@@ -471,21 +486,41 @@ async function backupDatabaseOnce(
   if (await pathExists(backupDir)) return;
 
   const stagingDir = `${backupDir}.staging`;
-  await NodeFSP.rm(stagingDir, { recursive: true, force: true });
-  await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+  const stampPath = NodePath.join(stagingDir, BACKUP_SOURCE_STAMP);
+  const stamp = await databaseSourceStamp(pending.dbPath);
+  const resuming = (await NodeFSP.readFile(stampPath, "utf8").catch(() => undefined)) === stamp;
+  if (!resuming) {
+    await NodeFSP.rm(stagingDir, { recursive: true, force: true });
+    await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+    await NodeFSP.writeFile(stampPath, stamp, { mode: 0o600 });
+  }
   try {
     for (const suffix of DB_FILE_SUFFIXES) {
       signal.throwIfAborted();
       const source = `${pending.dbPath}${suffix}`;
       if (suffix !== "" && !(await pathExists(source))) continue;
       const destination = databaseBackupFile(stagingDir, suffix);
-      await copyDatabaseFile(source, destination, signal);
+      const copied = resuming
+        ? ((await NodeFSP.stat(destination).catch(() => undefined))?.size ?? 0)
+        : 0;
+      if (copied > 0 && copied <= (await NodeFSP.stat(source)).size) {
+        await NodeStreamPromises.pipeline(
+          NodeFS.createReadStream(source, { start: copied }),
+          NodeFS.createWriteStream(destination, { flags: "r+", start: copied }),
+          { signal },
+        );
+      } else {
+        await copyDatabaseFile(source, destination, signal);
+      }
       await syncFile(destination);
     }
+    await NodeFSP.rm(stampPath);
     await NodeFSP.rename(stagingDir, backupDir);
     await syncDirectory(NodePath.dirname(backupDir));
   } catch (cause) {
-    await NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+    if (!signal.aborted) {
+      await NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+    }
     throw cause;
   }
 }
