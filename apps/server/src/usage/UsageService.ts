@@ -553,21 +553,44 @@ export const make = Effect.gen(function* () {
         failed: true,
       };
 
+    const identity = (record: UsageRecord) =>
+      encodeUsageRecordKey([
+        record.provider,
+        record.sessionId,
+        record.timestampMs,
+        record.model,
+        record.rateModel,
+        record.totals,
+        record.reportedCostUsd,
+        record.dedupeKey,
+      ]);
+    if (!parsed.resumed && cached !== undefined && cached.provider === provider) {
+      // A whole-file re-parse re-emits saved requests unresolved. Keep their saved tier
+      // corrections, since the history that resolved them may no longer be available.
+      // Equal requests keep their own corrections by matching occurrences in order.
+      const saved = new Map<string, UsageRecord[]>();
+      for (const previous of [...cached.records, ...cached.tailRecords]) {
+        const corrected = correctedRecord(previous);
+        const key = identity(corrected);
+        const occurrences = saved.get(key);
+        if (occurrences === undefined) saved.set(key, [corrected]);
+        else occurrences.push(corrected);
+      }
+      for (const record of [...parsed.records, ...parsed.tailRecords]) {
+        const corrected = saved.get(identity(record))?.shift();
+        if (
+          record.unresolvedServiceTierTurnId !== undefined &&
+          corrected !== undefined &&
+          corrected.unresolvedServiceTierTurnId === undefined
+        ) {
+          resolvedRecords.set(record, corrected);
+        }
+      }
+    }
     if (parsed.resumed && cached !== undefined && cached.tailRecords.length > 0) {
       // Completing a tentative line reparses it. Reuse its saved correction only when the
       // same usage is emitted again, without putting inferred tiers in the parser state.
       const reparsed = [...parsed.records, ...parsed.tailRecords];
-      const identity = (record: UsageRecord) =>
-        encodeUsageRecordKey([
-          record.provider,
-          record.sessionId,
-          record.timestampMs,
-          record.model,
-          record.rateModel,
-          record.totals,
-          record.reportedCostUsd,
-          record.dedupeKey,
-        ]);
       for (const [index, previous] of cached.tailRecords.entries()) {
         const record = reparsed[index];
         const corrected = correctedRecord(previous);
