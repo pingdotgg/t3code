@@ -1,5 +1,6 @@
 import {
   SecretReference,
+  secretRequestPageUrl,
   type OrchestrationV2TurnItem,
   type SecretProviderId,
   type SecretRequestAnswerInput,
@@ -21,6 +22,59 @@ export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery
     ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
     : "Stored securely, never shown to the agent";
 export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
+
+// Backticks, <angle brackets> and markdown link targets (balanced parentheses allowed) keep their
+// exact text; a bare link drops trailing sentence punctuation.
+const REASON_LINK =
+  /`(https?:\/\/[^`\s]+)`|<(https?:\/\/[^>\s]+)>|\]\((https?:\/\/(?:[^()\s]|\([^()\s]*\))+)\)|(https?:\/\/[^\s<>"'`[\]]+)/giu;
+/** Drops trailing sentence punctuation; a `)` stays when the link opened a matching `(`. */
+function trimPunctuation(link: string): string {
+  let end = link.length;
+  while (end > 0 && ".,;:!?)".includes(link[end - 1]!)) {
+    const kept = link.slice(0, end);
+    if (link[end - 1] === ")" && kept.split("(").length > kept.split(")").length - 1) break;
+    end -= 1;
+  }
+  return link.slice(0, end);
+}
+
+/** Drops a closing `*` or `_` run only when the same run opened emphasis before the link and is still open. */
+function trimEmphasis(link: string, before: string) {
+  const run = /(\*{1,3}|_{1,3})$/u.exec(link)?.[1];
+  if (run === undefined) return link;
+  const escaped = run.replaceAll("*", "\\*");
+  // Nested emphasis (`**_url_**`) opens one run right after another.
+  const opener = [...before.matchAll(new RegExp(`(?:^|[\\s(*_])${escaped}(?=\\S|$)`, "gu"))].at(-1);
+  if (opener === undefined) return link;
+  const closed = new RegExp(`\\S${escaped}(?:[\\s.,;:!?)]|$)`, "u").test(
+    before.slice(opener.index + opener[0].length),
+  );
+  return closed ? link : trimPunctuation(link.slice(0, -run.length));
+}
+
+/** The one distinct http(s) link in `reason`, for agents that put it there instead of in `url`. */
+function reasonLink(reason: string): string | undefined {
+  const raw = Array.from(reason.matchAll(REASON_LINK), (match) => {
+    const [, ticked, angled, target, bare] = match;
+    if (bare === undefined) return ticked ?? angled ?? target ?? "";
+    const before = reason.slice(0, match.index);
+    let link = trimPunctuation(bare);
+    for (let next = trimEmphasis(link, before); next !== link; next = trimEmphasis(link, before)) {
+      link = next;
+    }
+    return link;
+  });
+  // Two spellings of one page (`https://a.dev` and `https://a.dev/`) count once.
+  const links = new Set(raw.map((link) => secretRequestPageUrl(link)?.href ?? link));
+  return links.size === 1 ? [...links][0] : undefined;
+}
+
+/** Only http(s), so an agent cannot make the card open another scheme. */
+export function secretRequestLink(item: Pick<SecretRequestItem, "url" | "reason">) {
+  const raw = item.url ?? reasonLink(item.reason);
+  const url = raw === undefined ? null : secretRequestPageUrl(raw);
+  return url === null ? null : { href: url.href, host: url.host };
+}
 
 export type SecretRequestDisplay =
   | { readonly kind: "pending" }

@@ -33,6 +33,7 @@ import {
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
+  PAGE_UNHANDLED_SHORTCUT_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_POINTER_CHANNEL,
   RECORDING_KEY_CHANNEL,
@@ -49,6 +50,16 @@ const MAX_MARQUEE_ELEMENTS = 20;
 const ELEMENT_CONTEXT_TIMEOUT_MS = 5_000;
 const CONTENT_LAYER_Z_INDEX = 1;
 const CHROME_LAYER_Z_INDEX = 10;
+// Page dialogs (Radix, react-remove-scroll) dismiss, refocus or block scrolling on document events
+// that shadow retargeting attributes to the overlay host.
+const PAGE_ISOLATED_EVENTS = [
+  "pointerdown",
+  "focusin",
+  "focusout",
+  "wheel",
+  "touchstart",
+  "touchmove",
+] as const;
 
 let recordingCursor: ReturnType<typeof installRecordingCursor> | null = null;
 ipcRenderer.on(
@@ -138,6 +149,7 @@ interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
   setSendEnabled: (enabled: boolean) => void;
+  handleOverlayKey: (event: KeyboardEvent) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -193,6 +205,38 @@ const reportHumanKeyInput = (event: KeyboardEvent): void => {
 
 window.addEventListener("pointerdown", reportHumanPointerInput, true);
 window.addEventListener("keydown", reportHumanKeyInput, true);
+
+// Capture runs before a page can stop the event; the task delay lets every page
+// listener call preventDefault before the host is told the key went unhandled.
+const reportUnhandledShortcut = (event: KeyboardEvent): void => {
+  if (!event.isTrusted || event.repeat || event.isComposing) return;
+  if (!event.metaKey && !event.ctrlKey && !event.altKey && !/^F\d{1,2}$/u.test(event.key)) return;
+  setTimeout(() => {
+    if (event.defaultPrevented) return;
+    ipcRenderer.send(PAGE_UNHANDLED_SHORTCUT_CHANNEL, {
+      key: event.key,
+      code: event.code,
+      metaKey: event.metaKey,
+      ctrlKey: event.ctrlKey,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey,
+    });
+  }, 0);
+};
+
+window.addEventListener("keydown", reportUnhandledShortcut, true);
+
+// Registered before page scripts so their capture listeners never see keys typed into the
+// overlay; the closed shadow root retargets those to the host, hiding that they edit text.
+const isolateOverlayKey = (event: KeyboardEvent): void => {
+  if (!activeSession || !(event.target instanceof Element) || !isAnnotationNode(event.target))
+    return;
+  activeSession.handleOverlayKey(event);
+  event.stopImmediatePropagation();
+};
+
+for (const type of ["keydown", "keypress", "keyup"] as const)
+  window.addEventListener(type, isolateOverlayKey, true);
 
 const MOUSE_BUTTON_BACK = 3;
 const MOUSE_BUTTON_FORWARD = 4;
@@ -1549,6 +1593,13 @@ function startAnnotation(
     event.stopPropagation();
   };
 
+  const stopAtOverlay = (event: Event): void => event.stopPropagation();
+  // Focus moving from the page into the overlay targets the page element, so the host never sees it.
+  const onFocusOutToOverlay = (event: FocusEvent): void => {
+    if (event.relatedTarget instanceof Element && isAnnotationNode(event.relatedTarget))
+      event.stopPropagation();
+  };
+
   const onPointerOut = (event: PointerEvent): void => {
     if (event.relatedTarget === null) clearHoverOutline();
   };
@@ -1592,6 +1643,8 @@ function startAnnotation(
     dragHandle.removeEventListener("pointermove", onEditorPointerMove);
     dragHandle.removeEventListener("pointerup", onEditorPointerUp);
     dragHandle.removeEventListener("pointercancel", onEditorPointerUp);
+    for (const type of PAGE_ISOLATED_EVENTS) host.removeEventListener(type, stopAtOverlay);
+    document.documentElement.removeEventListener("focusout", onFocusOutToOverlay);
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
@@ -1633,13 +1686,13 @@ function startAnnotation(
         return;
       }
     }
-    if (isAnnotationNode(event.target as Element) && event.key !== "Escape") return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       teardown(true);
       return;
     }
+    if (shadowRoot.activeElement?.matches("input, textarea, select")) return;
     if (event.key === "v") tool = "select";
     else if (event.key === "r") tool = "marquee";
     else if (event.key === "d") tool = "draw";
@@ -1722,15 +1775,17 @@ function startAnnotation(
       });
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
-  root.addEventListener("keydown", (event) => {
+  const handleOverlayKey = (event: KeyboardEvent): void => {
+    if (event.type === "keyup") onVoiceKeyUp(event);
+    if (event.type !== "keydown") return;
+    onKeyDown(event);
+    if (event.cancelBubble) return;
     const submission =
-      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
-    // Bubble phase lets editor inputs handle events before hiding them from the page.
-    event.stopImmediatePropagation();
+      shadowRoot.activeElement === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
     if (!submission) return;
     event.preventDefault();
     submitAnnotation(submission);
-  });
+  };
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
@@ -1743,6 +1798,10 @@ function startAnnotation(
   window.addEventListener("keyup", onVoiceKeyUp, { capture: true });
   window.addEventListener("scroll", repaint, { capture: true, passive: true });
   window.addEventListener("resize", repaint, { passive: true });
+  // Bubble phase, so the overlay's own handlers still see these events.
+  for (const type of PAGE_ISOLATED_EVENTS)
+    host.addEventListener(type, stopAtOverlay, { passive: true });
+  document.documentElement.addEventListener("focusout", onFocusOutToOverlay);
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   if (voice) ipcRenderer.on(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
@@ -1762,6 +1821,7 @@ function startAnnotation(
       sendEnabled = enabled;
       updateSendHint();
     },
+    handleOverlayKey,
   };
 }
 

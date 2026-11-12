@@ -5,9 +5,8 @@ need a separate branch and working directory.
 
 ## Start a thread
 
-On web and desktop, **New thread** opens the project picker when you have multiple
-projects in the default or project-grouped sidebar. The legacy sidebar always
-starts in the current project. **Shift-click** to start in
+On web and desktop, **New thread** opens the project picker when you have more than one
+open project in the default or project-grouped sidebar. Archived projects don't count. **Shift-click** to start in
 the current project, or use a project's own new-thread action. A new thread carries
 your model and mode selections, unless the destination project has its own model default.
 Its branch and workspace mode come from your configured defaults. To continue in
@@ -197,9 +196,10 @@ resumed after it closed. Only your own messages count as resuming. A turn that
 finished background work or a pull request watch starts on its own does not.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
-choose **Auto-settle behavior**, and pick **Disabled**. The current option is checked. Pick
-**Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
-is disabled.
+choose **Auto-settle behavior**, and pick **Never**. The current option is checked. Pick
+**Follow settings** to return to the rules in **Settings → Threads**. While those rules are off,
+a thread on **Follow settings** does not settle automatically either. Manual settle, snooze, and
+archive still work while it is set to **Never**.
 
 Change these rules in **Settings → Threads**.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the
