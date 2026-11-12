@@ -105,7 +105,7 @@ export type PinnedRuntimeProgress =
 
 interface PinnedRuntimeInstallInput {
   readonly baseDir: string;
-  readonly stateDir?: string;
+  readonly stateDir: string;
   readonly version: string;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
@@ -126,11 +126,8 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   httpClient: HttpClient.HttpClient,
   url: string,
   step: string,
-  onProgress?: (progress: PinnedRuntimeProgress) => void,
-  stateDir?: string,
+  onProgress: ((progress: PinnedRuntimeProgress) => void) | undefined,
 ) {
-  let responseStatus: number | undefined;
-  let responseContentType: string | null = null;
   let received = 0;
   // Bound stalls while holding the install lock, but allow transfers that keep
   // receiving bytes to finish regardless of their total duration.
@@ -139,8 +136,6 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
     Effect.timeout(PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT),
     Effect.flatMap(
       Effect.fn(function* (response) {
-        responseStatus = response.status;
-        responseContentType = response.headers["content-type"] ?? null;
         const length = Number(response.headers["content-length"]);
         const total = Number.isFinite(length) && length > 0 ? length : undefined;
         onProgress?.({ stage: "download", received, total });
@@ -166,19 +161,11 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
           bytes.set(chunk, offset);
           offset += chunk.byteLength;
         }
-        if (stateDir !== undefined)
-          yield* Effect.promise(() =>
-            auditDownload(
-              { stateDir },
-              {
-                url,
-                status: responseStatus ?? null,
-                bytes: received,
-                contentType: responseContentType,
-              },
-            ),
-          );
-        return bytes;
+        return {
+          bytes,
+          status: response.status,
+          contentType: response.headers["content-type"] ?? null,
+        };
       }),
     ),
     Effect.mapError(
@@ -195,16 +182,6 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
           cause,
         }),
     ),
-    (effect) =>
-      effect.pipe(
-        Effect.tapCause((cause) =>
-          Effect.promise(() =>
-            stateDir === undefined
-              ? Promise.resolve()
-              : auditDownload({ stateDir }, { url, bytes: received, error: Cause.pretty(cause) }),
-          ),
-        ),
-      ),
   );
 });
 
@@ -222,24 +199,49 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   const httpClient = input.httpClient;
   input.onProgress?.({ stage: "download", received: 0, total: undefined });
   const { fileName, expected } = yield* publishedArchive(input, platformKey);
-  const archive = yield* fetchReleaseAsset(
-    httpClient,
-    cliReleaseAssetUrl(input.version, fileName, input.releaseBaseUrl),
-    "downloading the t3 release archive",
-    input.onProgress,
-    input.stateDir,
-  );
-  input.onProgress?.({ stage: "verify" });
-  const digest = yield* Effect.tryPromise({
-    try: () => crypto.subtle.digest("SHA-256", archive),
-    catch: (cause) =>
-      new PinnedRuntimeInstallError({ step: "verifying the t3 release archive", cause }),
-  });
-  if (Hex.encode(new Uint8Array(digest)) !== expected) {
-    return yield* new PinnedRuntimeInstallError({
-      step: "verifying the t3 release archive checksum",
+  const archiveUrl = cliReleaseAssetUrl(input.version, fileName, input.releaseBaseUrl);
+  const archiveResult = yield* Effect.gen(function* () {
+    const result = yield* fetchReleaseAsset(
+      httpClient,
+      archiveUrl,
+      "downloading the t3 release archive",
+      input.onProgress,
+    );
+    input.onProgress?.({ stage: "verify" });
+    const digest = yield* Effect.tryPromise({
+      try: () => crypto.subtle.digest("SHA-256", result.bytes),
+      catch: (cause) =>
+        new PinnedRuntimeInstallError({ step: "verifying the t3 release archive", cause }),
     });
-  }
+    const sha256 = Hex.encode(new Uint8Array(digest));
+    if (sha256 !== expected)
+      return yield* new PinnedRuntimeInstallError({
+        step: "verifying the t3 release archive checksum",
+      });
+    yield* Effect.promise(() =>
+      auditDownload(
+        { stateDir: input.stateDir },
+        {
+          url: archiveUrl,
+          status: result.status,
+          bytes: result.bytes.byteLength,
+          contentType: result.contentType,
+          sha256,
+        },
+      ),
+    );
+    return result;
+  }).pipe(
+    Effect.tapCause((cause) =>
+      Effect.promise(() =>
+        auditDownload(
+          { stateDir: input.stateDir },
+          { url: archiveUrl, error: Cause.pretty(cause) },
+        ),
+      ),
+    ),
+  );
+  const archive = archiveResult.bytes;
 
   const archivePath = path.join(stagingDir, PINNED_RUNTIME_ARCHIVE_FILE);
   yield* fs
@@ -280,12 +282,38 @@ const publishedArchive = Effect.fn("cloud.pinned_runtime.published_archive")(fun
   platformKey: CliArchivePlatformKey,
 ) {
   const fileName = cliArchiveFileName(input.version, platformKey);
-  const checksums = parseChecksums(
-    new TextDecoder().decode(
-      yield* fetchReleaseAsset(
-        input.httpClient,
-        cliReleaseAssetUrl(input.version, CLI_RELEASE_CHECKSUMS_FILE, input.releaseBaseUrl),
-        "downloading the t3 release checksums",
+  const checksumsUrl = cliReleaseAssetUrl(
+    input.version,
+    CLI_RELEASE_CHECKSUMS_FILE,
+    input.releaseBaseUrl,
+  );
+  const checksums = yield* Effect.gen(function* () {
+    const result = yield* fetchReleaseAsset(
+      input.httpClient,
+      checksumsUrl,
+      "downloading the t3 release checksums",
+      undefined,
+    );
+    const checksums = parseChecksums(new TextDecoder().decode(result.bytes));
+    yield* Effect.promise(() =>
+      auditDownload(
+        { stateDir: input.stateDir },
+        {
+          url: checksumsUrl,
+          status: result.status,
+          bytes: result.bytes.byteLength,
+          contentType: result.contentType,
+        },
+      ),
+    );
+    return checksums;
+  }).pipe(
+    Effect.tapCause((cause) =>
+      Effect.promise(() =>
+        auditDownload(
+          { stateDir: input.stateDir },
+          { url: checksumsUrl, error: Cause.pretty(cause) },
+        ),
       ),
     ),
   );
@@ -430,9 +458,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
 });
 
 export const ensurePinnedRuntimeInstalled = (input: PinnedRuntimeInstallInput) =>
-  pinnedRuntimeInstallLock.withPermit(
-    installPinnedRuntime({ ...input, stateDir: input.stateDir ?? input.baseDir }),
-  );
+  pinnedRuntimeInstallLock.withPermit(installPinnedRuntime(input));
 
 const PINNED_RUNTIME_PRUNED_PREFIX = ".pruned-";
 /**

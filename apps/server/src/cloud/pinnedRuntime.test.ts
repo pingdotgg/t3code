@@ -80,6 +80,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const commands: string[] = [];
       const paths = yield* ensurePinnedRuntimeInstalled({
         baseDir,
+        stateDir: path.join(baseDir, "userdata"),
         version,
         fs,
         path,
@@ -103,11 +104,15 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.deepEqual(commands, ["tar"]);
       assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
       assert.isFalse(yield* fs.exists(path.join(paths.versionDir, "t3-runtime-archive")));
-      const auditFiles = yield* fs.readDirectory(path.join(baseDir, "audit"));
-      const audit = JSON.parse(
-        yield* fs.readFileString(path.join(baseDir, "audit", auditFiles[0]!)),
-      ) as { url: string };
+      const auditFiles = yield* fs.readDirectory(path.join(baseDir, "userdata", "audit"));
+      const audit = (yield* fs.readFileString(
+        path.join(baseDir, "userdata", "audit", auditFiles[0]!),
+      ))
+        .split("\n")
+        .filter((line) => line.includes(archiveName))
+        .map((line) => JSON.parse(line) as { url: string; sha256?: string })[0]!;
       assert.equal(audit.url, `https://releases.example/download/v${version}/${archiveName}`);
+      assert.equal(audit.sha256, yield* archiveHex(archiveBytes));
     }),
   );
 
@@ -141,6 +146,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const firstChunk = yield* Deferred.make<void>();
       const install = yield* ensurePinnedRuntimeInstalled({
         baseDir,
+        stateDir: path.join(baseDir, "userdata"),
         version,
         fs,
         path,
@@ -173,6 +179,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const failsWith = (status: number) =>
         ensurePinnedRuntimeInstalled({
           baseDir,
+          stateDir: path.join(baseDir, "userdata"),
           version,
           fs,
           path,
@@ -206,6 +213,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const commands: string[] = [];
       const error = yield* ensurePinnedRuntimeInstalled({
         baseDir,
+        stateDir: path.join(baseDir, "userdata"),
         version,
         fs,
         path,
@@ -219,6 +227,16 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.equal(error.step, "verifying the t3 release archive checksum");
       assert.deepEqual(commands, []);
       assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
+      const auditFiles = yield* fs.readDirectory(path.join(baseDir, "userdata", "audit"));
+      const auditLines = (yield* fs.readFileString(
+        path.join(baseDir, "userdata", "audit", auditFiles[0]!),
+      ))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { url: string; error?: string });
+      const audit = auditLines.find((line) => line.url.endsWith(`/${archiveName}`));
+      assert.isDefined(audit);
+      assert.isString(audit.error);
     }),
   );
 
@@ -232,6 +250,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
 
       const installed = yield* ensurePinnedRuntimeInstalled({
         baseDir,
+        stateDir: path.join(baseDir, "userdata"),
         version,
         fs,
         path,
@@ -263,6 +282,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
 
       yield* ensurePinnedRuntimeInstalled({
         baseDir,
+        stateDir: path.join(baseDir, "userdata"),
         version,
         fs,
         path,
@@ -295,6 +315,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
 
       yield* ensurePinnedRuntimeInstalled({
         baseDir,
+        stateDir: path.join(baseDir, "userdata"),
         version,
         fs,
         path,
@@ -322,6 +343,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const install = (checksums: string, requests: string[]) =>
         ensurePinnedRuntimeInstalled({
           baseDir,
+          stateDir: path.join(baseDir, "userdata"),
           version,
           fs,
           path,
@@ -360,6 +382,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const requests: string[] = [];
       yield* ensurePinnedRuntimeInstalled({
         baseDir,
+        stateDir: path.join(baseDir, "userdata"),
         version,
         fs,
         path,

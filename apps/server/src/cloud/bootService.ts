@@ -586,7 +586,7 @@ export interface BootServiceHost {
 
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly baseDir: string;
-  readonly stateDir?: string;
+  readonly stateDir: string;
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
@@ -868,7 +868,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
     yield* ensurePinnedRuntimeInstalled({
       baseDir: input.baseDir,
-      stateDir: input.stateDir ?? input.baseDir,
+      stateDir: input.stateDir,
       version: input.cliVersion,
       fs,
       path,
@@ -1268,7 +1268,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
 export const layer = (input: {
   readonly baseDir: string;
-  readonly stateDir?: string;
+  readonly stateDir: string;
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;

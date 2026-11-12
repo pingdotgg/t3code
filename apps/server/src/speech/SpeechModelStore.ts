@@ -220,18 +220,12 @@ const make = Effect.gen(function* () {
       }),
       Stream.run(fs.sink(partialPath, { flag: resumed ? "a" : "w", mode: 0o600 })),
     );
-    yield* Effect.promise(() =>
-      auditDownload(
-        { stateDir: config.stateDir },
-        {
-          url,
-          status: response.status,
-          bytes: downloaded - start,
-          contentType: response.headers["content-type"] ?? null,
-        },
-      ),
-    );
-    return downloaded;
+    return {
+      downloaded,
+      received: downloaded - start,
+      status: response.status,
+      contentType: response.headers["content-type"] ?? null,
+    };
   });
 
   const filesUnder = Effect.fn("SpeechModelStore.filesUnder")(function* (source: string) {
@@ -311,37 +305,73 @@ const make = Effect.gen(function* () {
       }
       const partialPath = `${finalPath}.${yield* random.uuidV4()}.part`;
       const url = `https://huggingface.co/${model.id}/resolve/${model.revision}/${model.filename}`;
+      let attemptBytes = 0;
+      const attempts: Array<{
+        readonly bytes: number;
+        readonly status: number;
+        readonly contentType: string | null;
+      }> = [];
       return yield* Effect.gen(function* () {
         for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
           const offset = Number((yield* statFile(partialPath))?.size ?? 0);
           if (offset === model.size) break;
           // Transport and disk failures resume from the partial file; a bad response does not.
-          const downloaded = yield* fetchInto(
-            model,
-            url,
-            partialPath,
-            offset,
-            progress.onProgress,
-          ).pipe(
+          attemptBytes = 0;
+          const result = yield* fetchInto(model, url, partialPath, offset, (downloaded) => {
+            attemptBytes = Math.max(0, downloaded - offset);
+            progress.onProgress?.(downloaded);
+          }).pipe(
             Effect.tapCause((cause) =>
               Effect.promise(() =>
                 auditDownload(
                   { stateDir: config.stateDir },
-                  { url, bytes: offset, error: Cause.pretty(cause) },
+                  { url, bytes: attemptBytes, error: Cause.pretty(cause) },
                 ),
               ),
             ),
             Effect.catchIf(
               (error) => attempt < DOWNLOAD_ATTEMPTS && error._tag !== "SpeechModelDownloadError",
-              () => Effect.succeed(-1),
+              () =>
+                Effect.succeed({
+                  downloaded: -1,
+                  received: attemptBytes,
+                  status: 0,
+                  contentType: null,
+                }),
             ),
           );
-          if (downloaded === model.size) break;
+          attemptBytes = result.received;
+          if (result.downloaded >= 0) attempts.push(result);
+          if (result.downloaded === model.size) {
+            break;
+          }
         }
         progress.onVerificationStart?.();
         const complete = yield* expectedFile(model, partialPath);
-        if (!complete || !(yield* digestMatches(model, partialPath)))
-          return yield* new SpeechModelDownloadError({ modelId: model.id, reason: "verification" });
+        if (!complete || !(yield* digestMatches(model, partialPath))) {
+          const error = new SpeechModelDownloadError({ modelId: model.id, reason: "verification" });
+          yield* Effect.promise(() =>
+            auditDownload(
+              { stateDir: config.stateDir },
+              { url, bytes: attemptBytes, error: error.message },
+            ),
+          );
+          return yield* error;
+        }
+        yield* Effect.forEach(attempts, (attempt) =>
+          Effect.promise(() =>
+            auditDownload(
+              { stateDir: config.stateDir },
+              {
+                url,
+                bytes: attempt.bytes,
+                contentType: attempt.contentType,
+                sha256: model.sha256,
+                status: attempt.status,
+              },
+            ),
+          ),
+        );
         yield* fs.rename(partialPath, finalPath);
         yield* fs.remove(`${finalPath}.source`, { force: true }).pipe(Effect.ignore);
         // Rename changes file metadata, so record the verified file's final identity.

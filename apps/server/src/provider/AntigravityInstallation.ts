@@ -124,7 +124,7 @@ export class AntigravityInstallation extends Context.Service<
 
 export interface AntigravityInstallationOptions {
   readonly baseDir: string;
-  readonly stateDir?: string;
+  readonly stateDir: string;
   readonly releaseAsset?: AntigravityReleaseAsset | null;
   readonly validate?: (
     executable: AntigravityExecutable,
@@ -561,25 +561,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       const pairDirectory = path.join(staging, "runtime");
       yield* fs.makeDirectory(pairDirectory);
       const hash = NodeCrypto.createHash("sha256");
-      let downloadedBytes = 0;
-      let responseStatus = 0;
-      let responseContentType: string | null = null;
-      let lastProgressAt = yield* Clock.currentTimeMillis;
       yield* Effect.gen(function* () {
-        const response = yield* http.execute(HttpClientRequest.get(asset.url)).pipe(
-          Effect.flatMap(HttpClientResponse.filterStatusOk),
-          Effect.tapCause((cause) =>
-            Effect.promise(() =>
-              auditDownload(
-                { stateDir: options.stateDir ?? options.baseDir },
-                { url: asset.url, error: Cause.pretty(cause) },
-              ),
-            ),
-          ),
-        );
-        responseStatus = response.status;
-        responseContentType = response.headers["content-type"] ?? null;
-        // dl.google.com may gzip the zip: content-length is encoded, while byte/hash checks use decoded data.
+        const response = yield* http
+          .execute(HttpClientRequest.get(asset.url))
+          .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
         const contentLength = response.headers["content-length"];
         const contentEncoding = response.headers["content-encoding"]?.trim().toLowerCase();
         const identityBody = contentEncoding === undefined || contentEncoding === "identity";
@@ -587,22 +572,22 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           identityBody &&
           contentLength !== undefined &&
           Number(contentLength) !== asset.archiveBytes
-        ) {
+        )
           return yield* installationError(
             "download",
             "The Antigravity download size did not match the pinned release.",
           );
-        }
+        let downloadedBytes = 0;
+        let lastProgressAt = yield* Clock.currentTimeMillis;
         yield* response.stream.pipe(
           Stream.tap((chunk) =>
             Effect.gen(function* () {
               downloadedBytes += chunk.byteLength;
-              if (downloadedBytes > asset.archiveBytes) {
+              if (downloadedBytes > asset.archiveBytes)
                 return yield* installationError(
                   "download",
                   "The Antigravity download exceeded the pinned release size.",
                 );
-              }
               hash.update(chunk);
               const now = yield* Clock.currentTimeMillis;
               if (now - lastProgressAt >= 250 || downloadedBytes === asset.archiveBytes) {
@@ -615,32 +600,35 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             }),
           ),
           Stream.run(fs.sink(archivePath, { flag: "wx", mode: 0o600 })),
-          Effect.tapCause((cause) =>
-            Effect.promise(() =>
-              auditDownload(
-                { stateDir: options.stateDir ?? options.baseDir },
-                { url: asset.url, bytes: downloadedBytes, error: Cause.pretty(cause) },
-              ),
-            ),
+        );
+        const sha256 = hash.digest("hex");
+        if (downloadedBytes !== asset.archiveBytes || sha256 !== asset.sha256)
+          return yield* installationError(
+            "download",
+            "The Antigravity download failed its size or SHA-256 check. Nothing was installed.",
+          );
+        yield* Effect.promise(() =>
+          auditDownload(
+            { stateDir: options.stateDir },
+            {
+              url: asset.url,
+              status: response.status,
+              bytes: downloadedBytes,
+              contentType: response.headers["content-type"] ?? null,
+              sha256,
+            },
           ),
         );
-      }).pipe(Effect.timeout(DOWNLOAD_TIMEOUT));
-      if (downloadedBytes !== asset.archiveBytes || hash.digest("hex") !== asset.sha256) {
-        return yield* installationError(
-          "download",
-          "The Antigravity download failed its size or SHA-256 check. Nothing was installed.",
-        );
-      }
-      yield* Effect.promise(() =>
-        auditDownload(
-          { stateDir: options.stateDir ?? options.baseDir },
-          {
-            url: asset.url,
-            status: responseStatus,
-            bytes: downloadedBytes,
-            contentType: responseContentType,
-            sha256: asset.sha256,
-          },
+        return response;
+      }).pipe(
+        Effect.timeout(DOWNLOAD_TIMEOUT),
+        Effect.tapCause((cause) =>
+          Effect.promise(() =>
+            auditDownload(
+              { stateDir: options.stateDir },
+              { url: asset.url, error: Cause.pretty(cause) },
+            ),
+          ),
         ),
       );
 

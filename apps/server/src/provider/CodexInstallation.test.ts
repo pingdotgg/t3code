@@ -86,6 +86,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   const spawner = input.spawner ?? (yield* ChildProcessSpawner.ChildProcessSpawner);
   const installation = yield* CodexInstallation.makeCodexInstallation({
     baseDir,
+    stateDir: `${baseDir}/userdata`,
     releaseAsset: { ...asset, sha256 },
     validate: () => Effect.void,
     ...input.options,
@@ -192,9 +193,9 @@ it.effect.each([
     expect(executable.source).toBe("managed");
     expect(installed.executablePath).toBe(executable.executablePath);
     expect(h.downloads()).toBe(1);
-    const auditFiles = yield* h.fs.readDirectory(`${h.baseDir}/audit`);
+    const auditFiles = yield* h.fs.readDirectory(`${h.baseDir}/userdata/audit`);
     const audit = JSON.parse(
-      yield* h.fs.readFileString(`${h.baseDir}/audit/${auditFiles[0]!}`),
+      yield* h.fs.readFileString(`${h.baseDir}/userdata/audit/${auditFiles[0]!}`),
     ) as { url: string; sha256: string };
     expect(audit).toMatchObject({ url: asset.url, sha256: h.sha256 });
     expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
@@ -395,7 +396,7 @@ it.effect("updates an older supported managed installation to the pinned release
 
 it.effect("rejects corrupted downloads without publishing a runtime", () =>
   Effect.gen(function* () {
-    const { installation, fs } = yield* makeHarness({
+    const { installation, fs, baseDir } = yield* makeHarness({
       options: { releaseAsset: { ...asset, sha256: "0".repeat(64) } },
     });
     yield* installation.start;
@@ -404,6 +405,11 @@ it.effect("rejects corrupted downloads without publishing a runtime", () =>
     expect(state.message).toContain("SHA-256");
     expect(yield* fs.exists(`${installation.managedDirectory}/active.json`)).toBe(false);
     expect(yield* fs.exists(`${installation.managedDirectory}/0.156.1`)).toBe(false);
+    const auditFiles = yield* fs.readDirectory(`${baseDir}/userdata/audit`);
+    const audit = JSON.parse(
+      yield* fs.readFileString(`${baseDir}/userdata/audit/${auditFiles[0]!}`),
+    ) as { url: string; error?: string };
+    expect(audit).toMatchObject({ url: asset.url, error: expect.any(String) });
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
