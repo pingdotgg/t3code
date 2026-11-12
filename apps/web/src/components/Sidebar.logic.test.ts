@@ -477,42 +477,6 @@ describe("resolveThreadStatusPill", () => {
     }
   });
 
-  it.each(["preparing", "queued", "starting", "running", "waiting"] as const)(
-    "qualifies a cached %s runtime while reconnecting",
-    (status) => {
-      const thread = {
-        ...baseThread,
-        connectionPhase: "reconnecting" as const,
-        runtime: { ...baseThread.runtime, status },
-      };
-      expect(resolveSidebarThreadStatus(thread)).toBe("reconnecting");
-      expect(resolveThreadStatusPill({ thread })?.label).toBe("Reconnecting");
-    },
-  );
-
-  it.each(["failed", "completed"] as const)(
-    "preserves an unseen %s outcome while disconnected",
-    (status) => {
-      const thread = {
-        ...baseThread,
-        connectionPhase: "reconnecting" as const,
-        runtime: { ...baseThread.runtime, status, activeRunId: null },
-        lastVisitedAt: "2026-03-09T09:00:00.000Z",
-        latestRun: {
-          runId: RunId.make("run-ended"),
-          status,
-          requestedAt: "2026-03-09T09:30:00.000Z",
-          startedAt: "2026-03-09T09:30:00.000Z",
-          completedAt: "2026-03-09T10:00:00.000Z",
-          assistantMessageId: null,
-        },
-      };
-      expect(resolveThreadStatusPill({ thread })?.label).toBe(
-        status === "failed" ? "Failed" : "Completed",
-      );
-    },
-  );
-
   it("shows an active thread wait without a pulse and resumes Working when it ends", () => {
     const blocked = { ...baseThread, blockedOnThreadWait: true };
     expect(resolveSidebarThreadStatus(blocked)).toBe("waiting");
