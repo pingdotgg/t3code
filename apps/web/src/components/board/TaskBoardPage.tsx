@@ -544,6 +544,7 @@ export function TaskBoardPage() {
   const [activeId, setActiveId] = useState<BoardPanelId | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const dropTargetRef = useRef<DropTarget | null>(null);
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -608,20 +609,25 @@ export function TaskBoardPage() {
   };
   const handleDragEnd = (event: DragEndEvent) => {
     const moved = event.active.id as BoardPanelId;
-    // A quick flick can release before any pointermove reaches the tracker below.
-    const start = event.activatorEvent;
+    // The move that activates a drag reaches neither dnd-kit's delta nor the tracker below, so a
+    // quick flick is resolved from the last pointer position instead.
     const board = boardRef.current;
+    const pointer = pointerRef.current;
     const target =
       dropTargetRef.current ??
-      (board !== null && start instanceof PointerEvent
-        ? findDropTarget(board, moved, {
-            x: start.clientX + event.delta.x,
-            y: start.clientY + event.delta.y,
-          })
-        : null);
+      (board !== null && pointer !== null ? findDropTarget(board, moved, pointer) : null);
     if (target !== null) updateLayout((current) => moveBoardPanel(current, moved, target));
     endDrag();
   };
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- remembers the pointer position for drops that end before a drag-time move
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY };
+    };
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    return () => window.removeEventListener("pointermove", onPointerMove);
+  }, []);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks the pointer against panel rects while a panel drag is active
   useEffect(() => {

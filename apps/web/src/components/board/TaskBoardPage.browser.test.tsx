@@ -134,6 +134,21 @@ describe("TaskBoardPage", () => {
     ]);
   });
 
+  it("stacks a panel dropped by a single quick move", async () => {
+    localStorage.clear();
+    await using _screen = await render(<TaskBoardPage />);
+    const header = panel("Working").querySelector("h2")!;
+    const from = header.getBoundingClientRect();
+    const target = panel("Needs you").getBoundingClientRect();
+    const drop = { x: target.left + target.width / 2, y: target.bottom - 10 };
+    header.dispatchEvent(pointer("pointerdown", from.left + 10, from.top + 5));
+    // The only move both activates the drag and lands on the target.
+    document.dispatchEvent(pointer("pointermove", drop.x, drop.y));
+    await vi.waitFor(() => expect(panel("Working").className).toContain("opacity-50"));
+    document.dispatchEvent(pointer("pointerup", drop.x, drop.y));
+    await vi.waitFor(() => expect(column("Working")).toBe(column("Needs you")));
+  });
+
   it("resizes stacked panels, keeps the split across remounts, and resets on double-click", async () => {
     localStorage.clear();
     // A layout saved before weights existed loads as equal shares.
