@@ -634,6 +634,36 @@ export const make = Effect.gen(function* () {
             payload: cancelledItem(item, now),
           });
         }
+        // Queued runs and unsent resumes leave no visible turn behind, so there is nothing to explain.
+        if (run.status === "queued" || unsentResumeRunIds.includes(run.id)) continue;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "turn-item.updated",
+          threadId: projection.thread.id,
+          runId: run.id,
+          ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: ids.derive.runSignalTurnItem({ runId: run.id, signal: "server-recovery" }),
+            threadId: projection.thread.id,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            providerThreadId: run.providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            // EventSink allocates the real position, after the run's existing items.
+            ordinal: 0,
+            status: "completed",
+            title: trigger === "startup" ? "Server restarted" : "Server shut down",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "system_notice",
+            message: detail,
+          },
+        });
       }
       // Blocking waits die with their turn; let child results wake the parent continuation as async tasks.
       const cutRunIds = new Set(runs.map((run) => run.id));
