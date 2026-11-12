@@ -7,6 +7,7 @@ import {
   moveBoardPanel,
   resetBoardColumnWeights,
   resolveBoardDropEdge,
+  resolveBoardKeyboardMove,
   resolveBoardLayout,
   setBoardColumnWidth,
   setBoardPanelWeights,
@@ -239,6 +240,24 @@ describe("board layout", () => {
     const split = moveBoardPanel(start, "a" as never, { panelId: "c" as never, edge: "right" });
     expect(split.columns).toEqual([["b"], ["c"], ["a"]]);
     expect(split.widths).toEqual({ b: 400 });
+  });
+
+  it.each([
+    ["b", "up", false, [["b", "a"], ["c"], ["d"]]],
+    ["a", "down", false, [["b", "a"], ["c"], ["d"]]],
+    ["a", "up", false, null],
+    ["b", "right", false, [["a"], ["b"], ["c"], ["d"]]],
+    ["b", "left", false, [["b"], ["a"], ["c"], ["d"]]],
+    ["c", "right", false, [["a", "b"], ["d"], ["c"]]],
+    ["c", "left", false, [["c"], ["a", "b"], ["d"]]],
+    ["d", "right", false, null],
+    ["c", "left", true, [["a", "b", "c"], ["d"]]],
+    ["a", "right", true, [["b"], ["c", "a"], ["d"]]],
+    ["d", "right", true, null],
+  ] as const)("keyboard move of %s %s (join %s)", (id, direction, join, expected) => {
+    const start = layout([["a", "b"], ["c"], ["d"]]);
+    const target = resolveBoardKeyboardMove(start, id as never, direction, join);
+    expect(target && moveBoardPanel(start, id as never, target).columns).toEqual(expected);
   });
 
   it.each([

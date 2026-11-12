@@ -149,6 +149,23 @@ describe("TaskBoardPage", () => {
     await vi.waitFor(() => expect(column("Working")).toBe(column("Needs you")));
   });
 
+  it("moves the focused panel with Alt+arrows and keeps focus on it", async () => {
+    localStorage.clear();
+    await using screen = await render(<TaskBoardPage />);
+    const toggle = () => screen.getByRole("button", { name: "Collapse Working" }).element();
+    (toggle() as HTMLElement).focus();
+    await userEvent.keyboard("{Alt>}{Shift>}{ArrowLeft}{/Shift}{/Alt}");
+    expect(column("Working")).toBe(column("Needs you"));
+    expect(document.activeElement).toBe(toggle());
+    await userEvent.keyboard("{Alt>}{ArrowUp}{/Alt}");
+    expect(
+      [...column("Working")!.querySelectorAll("section")].map((section) => section.ariaLabel),
+    ).toEqual(["Working", "Needs you"]);
+    await userEvent.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    expect(column("Working")).not.toBe(column("Needs you"));
+    expect(document.activeElement).toBe(toggle());
+  });
+
   it("resizes stacked panels, keeps the split across remounts, and resets on double-click", async () => {
     localStorage.clear();
     // A layout saved before weights existed loads as equal shares.

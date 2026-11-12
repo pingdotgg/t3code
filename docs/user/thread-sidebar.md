@@ -169,7 +169,10 @@ the same menu as in the sidebar.
 Arrange the board to match how you work. Drag a panel by its header onto the side of another to
 move it, or onto its top or bottom half to stack both in one column. Drag the line between two
 stacked panels to change their heights, and the right edge of a column to change its width;
-double-click either, or press `Enter` on it, to reset it. Collapse a panel from its header. The arrangement is saved in this
+double-click either, or press `Enter` on it, to reset it. Collapse a panel from its header.
+From the keyboard, focus anything in a panel and press `Alt` with an arrow key to move it: up and
+down reorder a stack, left and right move the panel to a column of its own or past the next
+column, and adding `Shift` stacks it under the next column. The arrangement is saved in this
 browser.
 
 ## Settle finished work

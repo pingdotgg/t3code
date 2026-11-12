@@ -25,6 +25,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -57,6 +58,7 @@ import {
   moveBoardPanel,
   resetBoardColumnWeights,
   resolveBoardDropEdge,
+  resolveBoardKeyboardMove,
   resolveBoardLayout,
   setBoardPanelWeights,
   splitBoardPanelPair,
@@ -64,10 +66,17 @@ import {
   type BoardPanelPair,
   type BoardDropEdge,
   type BoardLayout,
+  type BoardMoveDirection,
   type BoardPanelId,
 } from "./taskBoard.logic";
 
 const PAGE_SIZE = 50;
+const MOVE_KEYS: Partial<Record<string, BoardMoveDirection>> = {
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  ArrowUp: "up",
+  ArrowDown: "down",
+};
 const LAYOUT_STORAGE_KEY = "t3code:task-board:layout";
 const SavedLayoutSchema = Schema.NullOr(BoardLayoutSchema);
 const PANEL_LABELS = new Map(BOARD_PANELS.map((panel) => [panel.id, panel.label]));
@@ -235,6 +244,7 @@ function BoardPanelHeader(props: {
         size="icon-micro"
         aria-label={props.collapsed ? `Expand ${props.label}` : `Collapse ${props.label}`}
         aria-expanded={!props.collapsed}
+        aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
         onClick={() => props.onToggle(props.panelId)}
       >
         <ToggleIcon />
@@ -257,6 +267,7 @@ function BoardPanelRail(props: {
       type="button"
       aria-label={`Expand ${props.label}`}
       aria-expanded={false}
+      aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
       onClick={() => props.onToggle(props.panelId)}
       className="flex min-h-0 flex-1 touch-none flex-col items-center gap-2 rounded-xl py-2 text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
@@ -282,6 +293,7 @@ const BoardPanel = memo(function BoardPanel(
     nowMs: number;
     onShowMore: (panelId: BoardPanelId) => void;
     onToggle: (panelId: BoardPanelId) => void;
+    onMoveKey: (panelId: BoardPanelId, event: ReactKeyboardEvent<HTMLElement>) => void;
   },
 ) {
   const { panelId, label, mode, items } = props;
@@ -289,6 +301,7 @@ const BoardPanel = memo(function BoardPanel(
     <section
       aria-label={label}
       data-board-panel={panelId}
+      onKeyDown={(event) => props.onMoveKey(panelId, event)}
       className={cn(
         "relative flex min-h-0 flex-1 flex-col rounded-xl bg-muted/40",
         props.dragging && "opacity-50",
@@ -596,6 +609,22 @@ export function TaskBoardPage() {
   };
   const togglePanel = (panelId: BoardPanelId) =>
     updateLayout((current) => toggleBoardPanelCollapsed(current, panelId));
+  // Alt+arrows move the panel that holds focus; Shift joins the next column instead.
+  const movePanelByKey = (panelId: BoardPanelId, event: ReactKeyboardEvent<HTMLElement>) => {
+    const direction = MOVE_KEYS[event.key];
+    if (!direction || !event.altKey || event.ctrlKey || event.metaKey) return;
+    // Alt+arrows move the caret by word while a card is being renamed.
+    if (event.target instanceof HTMLInputElement) return;
+    event.preventDefault();
+    flushSync(() =>
+      updateLayout((current) => {
+        const target = resolveBoardKeyboardMove(current, panelId, direction, event.shiftKey);
+        return target ? moveBoardPanel(current, panelId, target) : current;
+      }),
+    );
+    // The move remounts the panel's column, so focus returns to its header button.
+    boardRef.current?.querySelector<HTMLElement>(`[data-board-panel="${panelId}"] button`)?.focus();
+  };
   const resizePanels = (weights: PanelWeights) =>
     updateLayout((current) => setBoardPanelWeights(current, weights));
   const resizeColumn = (panelId: BoardPanelId, width: number | null) =>
@@ -736,6 +765,7 @@ export function TaskBoardPage() {
                             onCancelRename={cancelRename}
                             onShowMore={showMore}
                             onToggle={togglePanel}
+                            onMoveKey={movePanelByKey}
                           />
                           {lowerId ? (
                             <BoardPanelResizeHandle

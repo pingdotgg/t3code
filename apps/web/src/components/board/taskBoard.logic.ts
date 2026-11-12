@@ -235,6 +235,33 @@ export function moveBoardPanel(
   return { columns, collapsed: layout.collapsed, weights, widths };
 }
 
+export type BoardMoveDirection = "left" | "right" | "up" | "down";
+
+/**
+ * Where a keyboard move sends a panel. Up and down reorder it within its stack. Left and right
+ * take it out of a stack into a column of its own, or carry a lone panel past the next column;
+ * with `join` it stacks at the bottom of the next column instead. Null when there is nowhere to go.
+ */
+export function resolveBoardKeyboardMove(
+  layout: BoardLayout,
+  id: BoardPanelId,
+  direction: BoardMoveDirection,
+  join: boolean,
+): { readonly panelId: BoardPanelId; readonly edge: BoardDropEdge } | null {
+  const columnIndex = layout.columns.findIndex((column) => column.includes(id));
+  const column = layout.columns[columnIndex];
+  if (column === undefined) return null;
+  if (direction === "up" || direction === "down") {
+    const neighbor = column[column.indexOf(id) + (direction === "up" ? -1 : 1)];
+    return neighbor ? { panelId: neighbor, edge: direction === "up" ? "top" : "bottom" } : null;
+  }
+  const next = layout.columns[columnIndex + (direction === "left" ? -1 : 1)];
+  if (join) return next ? { panelId: next.at(-1)!, edge: "bottom" } : null;
+  const stackMate = column.find((panelId) => panelId !== id);
+  if (stackMate) return { panelId: stackMate, edge: direction };
+  return next ? { panelId: next[0]!, edge: direction } : null;
+}
+
 export interface BoardPanelPair {
   readonly upperWeight: number;
   readonly lowerWeight: number;
