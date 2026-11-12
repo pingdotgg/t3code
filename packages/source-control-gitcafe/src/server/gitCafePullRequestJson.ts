@@ -1,3 +1,4 @@
+import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 import * as DateTime from "effect/DateTime";
@@ -304,9 +305,24 @@ const ATTACHMENT_LINK =
  * origin, so the attachments are made absolute here, where they become credentialed media.
  */
 export function toBody(text: string | null, host: string): string {
-  return (text ?? "").replace(
-    ATTACHMENT_LINK,
-    (_, prefix: string) => `${prefix}https://${host}/api/attachments/`,
+  const body = text ?? "";
+  if (!body.includes("/api/attachments/")) return body;
+  const codeRanges: Array<{ start: number; end: number }> = [];
+  const tree = parseMarkdownWithMath(body);
+  const visit = (node: typeof tree | (typeof tree.children)[number]): void => {
+    if (node.type === "code" || node.type === "inlineCode") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined) codeRanges.push({ start, end });
+    } else if ("children" in node) {
+      node.children.forEach(visit);
+    }
+  };
+  visit(tree);
+  return body.replace(ATTACHMENT_LINK, (match, prefix: string, offset: number) =>
+    codeRanges.some(({ start, end }) => offset >= start && offset < end)
+      ? match
+      : `${prefix}https://${host}/api/attachments/`,
   );
 }
 

@@ -224,6 +224,13 @@ describe("toActivity", () => {
       '<img src="/api/attachments/attach_html" width="400">',
       "[shot]: /api/attachments/attach_reference",
       "![Docs](/docs/shot.png) and plain text /api/attachments/attach_text",
+      "",
+      '`<img src="/api/attachments/attach_inline">`',
+      "~~~html",
+      '<img src="/api/attachments/attach_fenced">',
+      "~~~",
+      "",
+      "    ![example](/api/attachments/attach_indented)",
     ].join("\n");
     const result = activity(
       [{ ...lineComment, id: "c", threadId: "c", path: null, line: null, side: null, body }],
@@ -237,6 +244,13 @@ describe("toActivity", () => {
         '<img src="https://staging.git.cafe/api/attachments/attach_html" width="400">',
         "[shot]: https://staging.git.cafe/api/attachments/attach_reference",
         "![Docs](/docs/shot.png) and plain text /api/attachments/attach_text",
+        "",
+        '`<img src="/api/attachments/attach_inline">`',
+        "~~~html",
+        '<img src="/api/attachments/attach_fenced">',
+        "~~~",
+        "",
+        "    ![example](/api/attachments/attach_indented)",
       ].join("\n"),
     );
   });
