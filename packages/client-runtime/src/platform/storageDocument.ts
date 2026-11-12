@@ -8,6 +8,7 @@ import {
   ConnectionProfile,
 } from "../connection/catalog.ts";
 import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
+import { credentialConnectionId } from "../connection/routes.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import { StoredPullRequestRoutingPermission } from "../connection/pullRequestRoutingPermissions.ts";
 
@@ -134,7 +135,35 @@ export function registerConnectionInCatalog(
   switch (registration._tag) {
     case "RelayConnectionRegistration":
       return next;
-    case "BearerConnectionRegistration":
+    case "BearerConnectionRegistration": {
+      // Every direct address reaches the same environment, so a fresh pairing replaces the
+      // login all of them send; learned routes borrow it through their paired route's id.
+      const connectionIds = new Set([registration.target.connectionId]);
+      for (const route of routes) {
+        if (
+          route._tag === "BearerConnectionTarget" &&
+          route.environmentId === registration.target.environmentId &&
+          credentialConnectionId(route.connectionId) === route.connectionId
+        ) {
+          connectionIds.add(route.connectionId);
+        }
+      }
+      return {
+        ...next,
+        profiles: replaceCatalogValue(
+          next.profiles,
+          (value) => value.connectionId,
+          registration.profile,
+        ),
+        credentials: [
+          ...next.credentials.filter((value) => !connectionIds.has(value.connectionId)),
+          ...Array.from(connectionIds, (connectionId) => ({
+            connectionId,
+            credential: registration.credential,
+          })),
+        ],
+      };
+    }
     case "SshConnectionRegistration":
       return {
         ...next,
