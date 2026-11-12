@@ -118,6 +118,27 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
     label: "vps",
     environmentId: "environment-vps",
   },
+  response: {
+    ...base,
+    kind: "response",
+    label: "Reviewer (search) finished",
+    citation: {
+      version: 1,
+      environmentId: "environment-1",
+      threadId: "thread-1",
+      messageId: "message-1",
+      text: "Reviewer (search) finished and returned blocked on one finding.",
+      start: 0,
+      end: 63,
+      prefix: "",
+      suffix: " I read its report",
+    },
+    itemId: "turn-item-1",
+    subagents: [
+      { threadId: "thread-2", title: "review pr 412 (search)" },
+      { threadId: "thread-3", title: "review pr 413", environmentId: "environment-2" },
+    ],
+  },
 };
 
 describe("ComposerContextRecord", () => {
