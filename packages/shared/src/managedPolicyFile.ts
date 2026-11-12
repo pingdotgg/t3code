@@ -186,13 +186,15 @@ const ERROR_NO_MORE_ITEMS = 259;
 // Value and key names are at most 16,383 characters.
 const MAX_NAME_CHARS = 16_384;
 
-class Win32Failure extends Error {
-  readonly code: number;
-  constructor(code: number) {
-    super(`Windows error ${code}`);
-    this.code = code;
+class Win32Failure extends Schema.TaggedError<Win32Failure>()("Win32Failure", {
+  code: Schema.Number,
+}) {
+  override get message(): string {
+    return `Windows error ${this.code}`;
   }
 }
+
+const isWin32Failure = Schema.is(Win32Failure);
 
 /**
  * Each app passes how it loads ffi-rs: a server single-executable resolves packages on disk only
@@ -263,7 +265,7 @@ export const layerWindowsRegistry = (loadFfi: () => Promise<typeof import("ffi-r
         const handle = Buffer.alloc(8);
         const opened = api.open(subkey, handle);
         if (opened === ERROR_FILE_NOT_FOUND) return undefined;
-        if (opened !== 0) throw new Win32Failure(opened);
+        if (opened !== 0) throw new Win32Failure({ code: opened });
         const key = handle.readBigInt64LE();
         try {
           const name = Buffer.alloc(MAX_NAME_CHARS * 2);
@@ -285,7 +287,7 @@ export const layerWindowsRegistry = (loadFfi: () => Promise<typeof import("ffi-r
               code = attempt();
             }
             if (code === ERROR_NO_MORE_ITEMS) break;
-            if (code !== 0) throw new Win32Failure(code);
+            if (code !== 0) throw new Win32Failure({ code: code });
             const valueName = name.subarray(0, chars.readUInt32LE() * 2).toString("utf16le");
             const stored = data.subarray(0, bytes.readUInt32LE());
             const valueType = type.readUInt32LE();
@@ -306,7 +308,7 @@ export const layerWindowsRegistry = (loadFfi: () => Promise<typeof import("ffi-r
             chars.writeUInt32LE(MAX_NAME_CHARS);
             const code = api.enumKey(key, index, name, chars);
             if (code === ERROR_NO_MORE_ITEMS) break;
-            if (code !== 0) throw new Win32Failure(code);
+            if (code !== 0) throw new Win32Failure({ code: code });
             subkeys.push(name.subarray(0, chars.readUInt32LE() * 2).toString("utf16le"));
           }
           return { values, subkeys };
@@ -322,7 +324,7 @@ export const layerWindowsRegistry = (loadFfi: () => Promise<typeof import("ffi-r
             try: () => readKey(api, subkey),
             catch: (cause) =>
               new WindowsRegistryError(
-                cause instanceof Win32Failure ? { code: cause.code, cause } : { cause },
+                isWin32Failure(cause) ? { code: cause.code, cause } : { cause },
               ),
           });
         }),
