@@ -187,16 +187,15 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     }
     setSubmitting(true);
     setError(null);
-    const projectId = newProjectId();
     try {
-      await addProjectToMachine({
+      const projectId = await addProjectToMachine({
         source: { environmentId: project.environmentId, cwd: project.workspaceRoot },
         subdirectory: projectSubdirectory(
           project.repositoryIdentity?.rootPath,
           project.workspaceRoot,
         ),
         target: { environmentId: target.environmentId, label: target.label },
-        projectId,
+        projectId: newProjectId(),
         title: project.title,
         remoteUrl,
         destinationPath: destinationPath.trim(),
