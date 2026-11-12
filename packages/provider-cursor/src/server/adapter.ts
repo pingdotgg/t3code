@@ -958,7 +958,51 @@ interface ActiveCursorTurn {
   finalized: boolean;
   /** The agent's latest turn ended and no new work has started since. */
   turnEnded: boolean;
+  /** Token counts summed over this run's turn-ended updates. */
+  usage: CursorTurnUsage | null;
+  /** A turn-ended update lacked usable counts. */
+  usageIncomplete: boolean;
 }
+
+interface CursorTurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+}
+
+const isTokenCount = (value: number | undefined): value is number =>
+  value !== undefined && Number.isSafeInteger(value) && value >= 0;
+
+const addTurnEndedUsage = (
+  context: ActiveCursorTurn,
+  usage: Extract<InteractionUpdate, { readonly type: "turn-ended" }>["usage"],
+) => {
+  if (
+    usage === undefined ||
+    !isTokenCount(usage.inputTokens) ||
+    !isTokenCount(usage.outputTokens) ||
+    !isTokenCount(usage.cacheReadTokens) ||
+    !isTokenCount(usage.cacheWriteTokens) ||
+    (usage.reasoningTokens !== undefined && !isTokenCount(usage.reasoningTokens))
+  ) {
+    context.usageIncomplete = true;
+    return;
+  }
+  const total = (context.usage ??= {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+  });
+  total.inputTokens += usage.inputTokens;
+  total.outputTokens += usage.outputTokens;
+  total.cacheReadTokens += usage.cacheReadTokens;
+  total.cacheWriteTokens += usage.cacheWriteTokens;
+  total.reasoningTokens += usage.reasoningTokens ?? 0;
+};
 
 interface CursorLiveAgent {
   readonly nativeThreadId: string;
@@ -2060,8 +2104,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               yield* completeReasoning(context);
               yield* handleToolUpdate(context, update);
               return;
-            case "step-completed":
             case "turn-ended":
+              addTurnEndedUsage(context, update.usage);
+              yield* completeAssistant(context);
+              yield* completeReasoning(context);
+              return;
+            case "step-completed":
               yield* completeAssistant(context);
               yield* completeReasoning(context);
               return;
@@ -2117,6 +2165,25 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           status: input.status,
           startedAt: input.context.startedAt,
           completedAt: input.completedAt,
+          ...(input.context.usage === null
+            ? {}
+            : {
+                turnTokenUsage: {
+                  usageScope: "main_agent" as const,
+                  usageStatus:
+                    input.status === "completed" && !input.context.usageIncomplete
+                      ? ("complete" as const)
+                      : ("partial" as const),
+                  inputTokens: input.context.usage.inputTokens,
+                  outputTokens: input.context.usage.outputTokens,
+                  cachedInputTokens: input.context.usage.cacheReadTokens,
+                  cacheCreationTokens: input.context.usage.cacheWriteTokens,
+                  ...(input.context.usage.reasoningTokens > 0
+                    ? { reasoningTokens: input.context.usage.reasoningTokens }
+                    : {}),
+                  hasSubagents: input.context.subagents.size > 0,
+                },
+              }),
         });
 
         const finalizeTurn = Effect.fnUntraced(function* (input: {
@@ -2496,6 +2563,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               interrupted: false,
               finalized: false,
               turnEnded: false,
+              usage: null,
+              usageIncomplete: false,
             };
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
