@@ -83,7 +83,9 @@ it is synchronized, or it disconnects, and environments that get there within tw
 seconds of each other show together. Only an environment that is connected or on
 its first attempt, and still owes its snapshot, is waited for; a retry can take
 minutes. A move in a list is refused while its rows wait, because its plan would
-use order keys the server may have replaced. The hold stops only changes the user
+use order keys the server may have replaced. Every other row action looks up the
+live row before it reads thread state, so an undo plan or a guard never uses a held
+row. The hold stops only changes the user
 did not cause: a command that moves or removes a row (settle, snooze, pin, archive,
 delete, and their reverses) makes that environment's rows follow the live snapshot
 until it is live. Point reads (a
