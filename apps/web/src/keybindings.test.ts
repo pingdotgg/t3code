@@ -991,6 +991,34 @@ describe("composer and pull request shortcuts", () => {
       "terminal.splitVertical",
     );
   });
+  it.each(["MacIntel", "Win32", "Linux"])(
+    "opens the machine and branch pickers and toggles the worktree outside the terminal on %s",
+    (platform) => {
+      const mod = { metaKey: platform === "MacIntel", ctrlKey: platform !== "MacIntel" };
+      for (const [input, command] of [
+        [{ key: "h", shiftKey: true }, "composer.host"],
+        [{ key: "g", shiftKey: true }, "composer.branch"],
+        [{ key: "x", shiftKey: true }, "composer.workspace"],
+        [{ key: "x", code: "KeyX", altKey: true }, "composer.toggleWorktree"],
+      ] as const) {
+        const shortcut = event({ ...mod, ...input });
+        assert.strictEqual(
+          resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+            platform,
+            context: { terminalFocus: false },
+          }),
+          command,
+        );
+        assert.isNull(
+          resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+            platform,
+            context: { terminalFocus: true },
+          }),
+        );
+      }
+    },
+  );
+
   it("fills missing number shortcuts without replacing the saved URL binding", () => {
     const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(
       (binding) =>

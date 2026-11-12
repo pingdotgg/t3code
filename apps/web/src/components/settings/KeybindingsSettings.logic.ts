@@ -500,6 +500,7 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "composer.decreaseEffort": msg("Composer: Decrease Effort"),
   "composer.mode": msg("Composer: Mode"),
   "composer.workspace": msg("Composer: Workspace"),
+  "composer.toggleWorktree": msg("Composer: Toggle New Worktree"),
   "composer.previousWorktree": msg("Composer: Previous Worktree"),
   "composer.branch": msg("Composer: Branch"),
   "chat.new": msg("Chat: New"),

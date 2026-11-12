@@ -19,6 +19,7 @@ To free a default shortcut, choose **Unassign** from its row menu (**Reset to de
 | Pick effort                 | `mod+shift+e`     | Bind **Increase/Decrease Effort** to step without a menu.          |
 | Pick permissions            | `mod+shift+a`     |                                                                    |
 | Pick workspace mode         | `mod+shift+x`     | `mod+shift+l` reuses the previous worktree directly.               |
+| Toggle new worktree         | `mod+alt+x`       | Switches a new thread between the current checkout and a worktree. |
 | Pick Git branch             | `mod+shift+g`     |                                                                    |
 
 Configure whether `Enter` sends or requires `mod+Enter` in **Settings → Chat → Send shortcut** (`Shift+Enter` always inserts a newline).
