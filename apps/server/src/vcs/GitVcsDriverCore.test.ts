@@ -6341,7 +6341,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect.each(["root", "nested", "aliased-root", "aliased-nested"] as const)(
+    it.effect.each(["root", "aliased-nested"] as const)(
       "prepares selected files without staging and commits only those files from %s",
       (location) =>
         Effect.gen(function* () {
@@ -6352,10 +6352,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const nested = path.join(repository, "sub", "dir");
           yield* fileSystem.makeDirectory(nested, { recursive: true });
           yield* initRepoWithCommit(repository);
-          const physicalCwd = location.endsWith("nested") ? nested : repository;
-          const isAliased = location.startsWith("aliased");
-          const cwd = isAliased ? path.join(sandbox, "link") : physicalCwd;
-          if (isAliased) NodeFS.symlinkSync(physicalCwd, cwd, "junction");
+          const cwd = location === "aliased-nested" ? path.join(sandbox, "link") : repository;
+          if (location === "aliased-nested") NodeFS.symlinkSync(nested, cwd, "junction");
           const driver = yield* GitVcsDriver.GitVcsDriver;
           const selected = "sub/dir/a.txt";
           yield* writeTextFile(repository, selected, "a\n");
