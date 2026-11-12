@@ -494,41 +494,76 @@ export const captureFinalRecordingFrame = (cdp: CDPSession, quality: number) =>
   );
 
 /** Runs in the page's own isolated world, as the server has no image library. */
-const SHRINK_PNG = `async function (png, width, height) {
-  const bytes = Uint8Array.from(atob(png), (char) => char.charCodeAt(0));
-  const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+const SHRINK_IMAGE = `async function (image, type, quality, maxWidth, maxHeight) {
+  const bytes = Uint8Array.from(atob(image), (char) => char.charCodeAt(0));
+  const bitmap = await createImageBitmap(new Blob([bytes], { type }));
+  const scale = Math.min(1, maxWidth / bitmap.width, maxHeight / bitmap.height);
+  if (scale === 1) {
+    bitmap.close();
+    return image;
+  }
   // Namespaced, as an XML document's createElement makes a plain element with no getContext.
   const canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
   const context = canvas.getContext("2d");
   context.imageSmoothingQuality = "high";
-  context.drawImage(bitmap, 0, 0, width, height);
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
-  return canvas.toDataURL("image/png").slice("data:image/png;base64,".length);
+  return canvas.toDataURL(type, quality).slice(("data:" + type + ";base64,").length);
 }`;
 
-const shrinkPng = async (cdp: CDPSession, png: string, scale: number) => {
-  const size = pngSize(png);
+/** Shrinks a base64 image to fit within the bounds, keeping its aspect ratio. */
+const shrinkImage = async (
+  cdp: CDPSession,
+  image: string,
+  options: {
+    readonly type: "image/png" | "image/jpeg";
+    readonly quality?: number;
+    readonly maxWidth: number;
+    readonly maxHeight: number;
+  },
+) => {
   const { frameTree } = await cdp.send("Page.getFrameTree");
   const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
     frameId: frameTree.frame.id,
     worldName: "t3-preview-screenshot",
   });
   const { result, exceptionDetails } = await cdp.send("Runtime.callFunctionOn", {
-    functionDeclaration: SHRINK_PNG,
+    functionDeclaration: SHRINK_IMAGE,
     executionContextId,
     arguments: [
-      { value: png },
-      { value: Math.round(size.width * scale) },
-      { value: Math.round(size.height * scale) },
+      { value: image },
+      { value: options.type },
+      { value: options.quality === undefined ? 1 : options.quality / 100 },
+      { value: options.maxWidth },
+      { value: options.maxHeight },
     ],
     awaitPromise: true,
     returnByValue: true,
   });
-  if (exceptionDetails) throw new Error("The snapshot could not shrink its screenshot.");
+  if (exceptionDetails) throw new Error("The page could not shrink its screenshot.");
   return result.value as string;
 };
+
+const shrinkPng = (cdp: CDPSession, png: string, scale: number) => {
+  const size = pngSize(png);
+  return shrinkImage(cdp, png, {
+    type: "image/png",
+    maxWidth: Math.round(size.width * scale),
+    maxHeight: Math.round(size.height * scale),
+  });
+};
+
+/** A JPEG of the viewport that fits within the bounds, as screencast frames do. */
+export const captureViewportWithin = async (
+  cdp: CDPSession,
+  options: { readonly quality: number; readonly maxWidth: number; readonly maxHeight: number },
+) =>
+  shrinkImage(cdp, await captureViewport(cdp, { format: "jpeg", quality: options.quality }), {
+    type: "image/jpeg",
+    ...options,
+  });
 
 type SnapshotInput = {
   readonly page: Page;

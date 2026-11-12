@@ -114,8 +114,11 @@ function makeSession(
         // A snapshot sizes its screenshot from the PNG header; viewers get JPEG frames as-is.
         return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
       }
-      // Snapshots shrink their screenshot in the page; the header stands in for the result.
-      if (method === "Runtime.callFunctionOn") return { result: { value: PNG_HEADER } };
+      // Screenshots shrink in the page; their input stands in for the result.
+      if (method === "Runtime.callFunctionOn") {
+        const args = (input as { arguments?: Array<{ value?: unknown }> }).arguments;
+        return { result: { value: args?.[0]?.value ?? PNG_HEADER } };
+      }
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
       if (method === "Page.createIsolatedWorld") {
         return {
@@ -1019,6 +1022,82 @@ it.live("enforces provider ownership and explicit targets when a session has mul
       });
       expect(result).toBe("evaluated");
       expect(contexts).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+/** A JPEG start-of-frame, enough for a reader to size the image. */
+const jpegOfSize = (width: number, height: number) => {
+  const sof = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 0, 0, 0, 0, 3]);
+  sof.writeUInt16BE(height, 7);
+  sof.writeUInt16BE(width, 9);
+  return sof;
+};
+const jpegSize = (bytes: Uint8Array) => {
+  const data = Buffer.from(bytes);
+  for (let i = 2; i + 9 < data.length;) {
+    if (data[i] !== 0xff) return null;
+    const marker = data[i + 1]!;
+    if (marker >= 0xc0 && marker <= 0xc3)
+      return { width: data.readUInt16BE(i + 7), height: data.readUInt16BE(i + 5) };
+    i += 2 + data.readUInt16BE(i + 2);
+  }
+  return null;
+};
+
+it.live("a viewer's still fits the size it asked for", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const context = contexts[0]!;
+      // Chromium captures the viewport at device pixels: 1280x800 CSS at the 2x render scale.
+      const captureAtDevicePixels = (session: (typeof context.sessions)[number]) => {
+        const send = session.send.getMockImplementation()!;
+        session.send.mockImplementation(async (method, input) => {
+          const options = input as {
+            format?: string;
+            clip?: { width: number; height: number; scale: number };
+          };
+          const args = (input as { arguments?: Array<{ value: unknown }> } | undefined)?.arguments;
+          if (method === "Runtime.callFunctionOn" && args?.[1]?.value === "image/jpeg") {
+            // The page's canvas fits the still within the bounds it was given.
+            const size = jpegSize(Buffer.from(args[0]!.value as string, "base64"))!;
+            const [maxWidth, maxHeight] = [args[3]!.value as number, args[4]!.value as number];
+            const scale = Math.min(1, maxWidth / size.width, maxHeight / size.height);
+            const fitted = jpegOfSize(
+              Math.round(size.width * scale),
+              Math.round(size.height * scale),
+            );
+            return { result: { value: fitted.toString("base64") } };
+          }
+          if (method !== "Page.captureScreenshot" || options.format !== "jpeg") {
+            return send(method, input);
+          }
+          const { clip } = options;
+          const still = clip
+            ? jpegOfSize(Math.round(clip.width * clip.scale), Math.round(clip.height * clip.scale))
+            : jpegOfSize(2560, 1600);
+          return { data: still.toString("base64") };
+        });
+        return session;
+      };
+      context.sessions.forEach(captureAtDevicePixels);
+      const newCDPSession = context.newCDPSession;
+      context.newCDPSession = async (target) => captureAtDevicePixels(await newCDPSession(target));
+      const viewer = yield* browser.attachViewer({
+        ...viewerInput(tabId, true),
+        maxWidth: 640,
+        maxHeight: 400,
+      });
+      const stills = (yield* Queue.takeAll(viewer.output)).flatMap((item) =>
+        item._tag === "frame" ? [jpegSize(item.data)] : [],
+      );
+      expect(stills).not.toHaveLength(0);
+      for (const still of stills) {
+        expect(still).not.toBeNull();
+        expect(still!.width).toBeLessThanOrEqual(640);
+        expect(still!.height).toBeLessThanOrEqual(400);
+      }
     }),
   ).pipe(Effect.provide(layer)),
 );
