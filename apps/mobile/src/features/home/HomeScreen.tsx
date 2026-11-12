@@ -102,6 +102,8 @@ import { ThreadListFilters } from "./ThreadListFilters";
 import { deriveHomeEmptyState } from "./home-empty-state";
 
 interface HomeScreenProps {
+  /** Whether this list is the one on screen; see `useHomeRouteVisible`. */
+  readonly visible: boolean;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
@@ -606,10 +608,11 @@ export function HomeScreen(props: HomeScreenProps) {
     props.threads.some((thread) => thread.archivedAt === null) ||
     props.pendingTasks.length > 0 ||
     threadListV2Layout.settledCount > 0;
-  const hasRowsToLayOut = hasAnyThreads && threadListV2Items.length > 0;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the native launch splash, which is outside React; a layout effect runs before the splash hides in this commit
+  // A hidden list gets no layout, so it never reports its rows as laid out.
+  const hasRowsToLayOut = props.visible && hasAnyThreads && threadListV2Items.length > 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the native launch splash, which is outside React, until the rows are gone or this list unmounts; a layout effect runs before the splash hides in this commit
   useLayoutEffect(() => {
-    if (hasRowsToLayOut) holdLaunchSplashForHomeRows();
+    return hasRowsToLayOut ? holdLaunchSplashForHomeRows() : undefined;
   }, [hasRowsToLayOut]);
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null

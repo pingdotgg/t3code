@@ -1,6 +1,6 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
-import { splashCanHide } from "./home-launch-splash";
+import { createLaunchSplashHomeRows, splashCanHide } from "./home-launch-splash";
 
 const launched = {
   preferencesReady: true,
@@ -42,4 +42,29 @@ it.each([
   },
 ])("the launch splash $name", ({ input, hides }) => {
   expect(splashCanHide(input)).toBe(hides);
+});
+
+it("the launch splash is held only while a Home list has rows to lay out", () => {
+  const rows = createLaunchSplashHomeRows();
+  const onChange = vi.fn();
+  rows.subscribe(onChange);
+
+  const release = rows.hold();
+  expect(rows.pending()).toBe(true);
+  // The server answered with no rows, or the list unmounted, before its first layout.
+  release();
+  expect(rows.pending(), "a list that lost its rows releases the splash").toBe(false);
+  expect(onChange).toHaveBeenCalledTimes(2);
+
+  const releaseLater = rows.hold();
+  const releaseOther = rows.hold();
+  releaseLater();
+  release();
+  expect(rows.pending(), "another list still has rows to lay out").toBe(true);
+
+  rows.settle();
+  expect(rows.pending()).toBe(false);
+  releaseOther();
+  rows.hold();
+  expect(rows.pending(), "a list that mounts after the launch holds nothing").toBe(false);
 });
