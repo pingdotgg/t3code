@@ -15,6 +15,9 @@ import {
   LONG_TURN_WORK_ROWS,
   SHELL_IDLE_SUBAGENTS,
   SHELL_SETTLED_THREADS,
+  STALE_TODO_LIVE_ROWS,
+  STALE_TODO_SETTLED_RUNS,
+  STALE_TODO_SUBAGENTS_PER_RUN,
 } from "./TransferBudgetV2Fixture.integration.ts";
 
 export interface WebSocketCatchUpMeasurement extends WebSocketTransferTotals {
@@ -25,6 +28,15 @@ export interface TimelineHttpMeasurement {
   readonly http: HttpTransferMeasurement;
   readonly rows: number;
 }
+
+const STALE_TODO_RECORD_KINDS = [
+  "nodes",
+  "subagents",
+  "plans",
+  "providerTurns",
+  "checkpoints",
+] as const;
+type StaleTodoRecordCounts = Readonly<Record<(typeof STALE_TODO_RECORD_KINDS)[number], number>>;
 
 export interface TransferBudgetRun {
   readonly provider: ProviderDriverKind;
@@ -46,6 +58,13 @@ export interface TransferBudgetRun {
   /** The cold-connect shell snapshot after the settled-thread fleet is written. */
   readonly fleetShell: TimelineHttpMeasurement;
   readonly fleetShellLegacy: TimelineHttpMeasurement;
+  /**
+   * The compact bounded snapshot of the long thread whose finished runs left todo lists open,
+   * with the count of each record kind that rides along with its rows.
+   */
+  readonly staleTodoColdOpen: TimelineHttpMeasurement & {
+    readonly records: StaleTodoRecordCounts;
+  };
 }
 
 interface ProviderTransferBudget {
@@ -82,6 +101,21 @@ const LONG_TURN_BUDGET = {
 const FLEET_SHELL_BUDGET = {
   decodedBytes: 55_000,
   rows: 27,
+};
+
+// About 14% above the observed 75 KB. The window holds the working run only: 2 nodes, 2 subagents,
+// 1 plan, 1 provider turn and the last finished turn's checkpoint. When finished runs ride along
+// it holds 82 nodes, 82 subagents, 41 plans, 41 provider turns, 40 checkpoints and 740 KB.
+const STALE_TODO_BUDGET = {
+  decodedBytes: 85_000,
+  rows: 75,
+  records: {
+    nodes: 4,
+    subagents: 4,
+    plans: 2,
+    providerTurns: 2,
+    checkpoints: 2,
+  } satisfies StaleTodoRecordCounts,
 };
 
 function totalWireBytes(run: TransferBudgetRun): number {
@@ -245,6 +279,20 @@ export function transferBudgetViolations(runs: ReadonlyArray<TransferBudgetRun>)
         FLEET_SHELL_BUDGET.decodedBytes,
       ],
       ["fleet shell snapshot rows", run.fleetShell.rows, FLEET_SHELL_BUDGET.rows],
+      [
+        "stale todo list cold open decoded bytes",
+        run.staleTodoColdOpen.http.decodedBodyBytes,
+        STALE_TODO_BUDGET.decodedBytes,
+      ],
+      ["stale todo list cold open rows", run.staleTodoColdOpen.rows, STALE_TODO_BUDGET.rows],
+      ...STALE_TODO_RECORD_KINDS.map(
+        (kind) =>
+          [
+            `stale todo list cold open ${kind}`,
+            run.staleTodoColdOpen.records[kind],
+            STALE_TODO_BUDGET.records[kind],
+          ] as const,
+      ),
     ] as const;
     for (const [metric, observed, maximum] of checks) {
       if (observed > maximum) {
@@ -264,6 +312,7 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Synthetic V2 domain events exercise persistence, wire projection, and production HTTP/subscription handlers; this does not measure provider adapter ingestion. Payloads contain no user data.`,
     `The long-turn rows open a second thread through the compact bounded snapshot web and mobile use, then load one older page. Its last user turn holds ${LONG_TURN_WORK_ROWS} rows of reasoning, commands, file changes, MCP calls, progress messages, checkpoints, and subagents.`,
     `The fleet shell rows read the cold-connect shell after ${SHELL_SETTLED_THREADS} settled threads and ${SHELL_IDLE_SUBAGENTS} idle subagent children are added. Budgeted reads send the opt-ins current clients send; "older client" rows show the same read without the opt-ins added since row budgets.`,
+    `The stale todo list rows open a third thread the same way: ${STALE_TODO_SETTLED_RUNS} finished runs, then one run still at work with ${STALE_TODO_LIVE_ROWS} rows. Every run left its todo list open and has ${STALE_TODO_SUBAGENTS_PER_RUN} finished subagents, a provider turn and, once finished, a checkpoint. The record counts must not grow with the number of finished runs.`,
     "",
     "| Provider | Total thread wire | Budget | Result |",
     "| --- | ---: | ---: | --- |",
@@ -352,6 +401,22 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
       ...legacyRows(run.provider, "long-turn history page", run.longTurnHistoryPageLegacy),
       ...timelineRows(run.provider, "fleet shell snapshot", run.fleetShell, FLEET_SHELL_BUDGET),
       ...legacyRows(run.provider, "fleet shell snapshot", run.fleetShellLegacy),
+      ...timelineRows(
+        run.provider,
+        "stale todo list cold open",
+        run.staleTodoColdOpen,
+        STALE_TODO_BUDGET,
+      ),
+      ...STALE_TODO_RECORD_KINDS.map((kind) =>
+        row(
+          run.provider,
+          "stale todo list cold open",
+          kind,
+          run.staleTodoColdOpen.records[kind],
+          STALE_TODO_BUDGET.records[kind],
+          String,
+        ),
+      ),
     );
   }
 
