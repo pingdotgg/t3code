@@ -1,5 +1,6 @@
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
 import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClassification";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -723,7 +724,7 @@ export const parseTailscaleServeRootHolders = (
   return [...tcp, ...web];
 };
 
-export const readTailscaleServeRootHolders = (
+const readTailscaleServeRootHolders = (
   servePort: number,
   target: { readonly host: string; readonly port: number },
 ) =>
@@ -735,6 +736,25 @@ export const readTailscaleServeRootHolders = (
         : Effect.succeed(holders);
     }),
   );
+
+/**
+ * Who holds the root of `servePort`: nobody, the server at `target`, only dead loopback ports (an
+ * unclean exit leaves one), or another live server or app, whose route must be left alone.
+ */
+export const readTailscaleServeRootHolder = Effect.fn("tailscale.readTailscaleServeRootHolder")(
+  function* (servePort: number, target: { readonly host: string; readonly port: number }) {
+    const net = yield* NetService.NetService;
+    const holders = yield* readTailscaleServeRootHolders(servePort, target);
+    if (holders.length === 0) return "none" as const;
+    if (holders.some((holder) => holder.ours)) return "ours" as const;
+    const live = yield* Effect.forEach(holders, (holder) =>
+      holder.ours || holder.loopback === undefined
+        ? Effect.succeed(true)
+        : net.hasListenerOnHost(holder.loopback.port, holder.loopback.host),
+    );
+    return live.includes(true) ? ("other" as const) : ("dead" as const);
+  },
+);
 
 export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(
   function* (input: { readonly baseUrl: string; readonly timeout?: Duration.Input }) {
