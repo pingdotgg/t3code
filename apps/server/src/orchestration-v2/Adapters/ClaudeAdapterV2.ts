@@ -4547,9 +4547,11 @@ function buildAssistantArtifacts(input: {
   readonly nativeItemId: string;
   readonly text: string;
   readonly ordinal: number;
-  readonly status?: "completed" | "interrupted";
+  readonly status?: "running" | "completed" | "interrupted";
   readonly startedAt: DateTime.Utc;
   readonly completedAt: DateTime.Utc;
+  // A streamed message keeps its first timestamp across updates.
+  readonly createdAt?: DateTime.Utc;
 }): {
   readonly node: OrchestrationV2ExecutionNode;
   readonly message: OrchestrationV2ConversationMessage;
@@ -4572,6 +4574,9 @@ function buildAssistantArtifacts(input: {
     nativeId: input.nativeItemId,
     strength: "strong" as const,
   };
+  const status = input.status ?? "completed";
+  const streaming = status === "running";
+  const completedAt = streaming ? null : input.completedAt;
 
   return {
     node: {
@@ -4581,7 +4586,7 @@ function buildAssistantArtifacts(input: {
       parentNodeId: input.turnInput.rootNodeId,
       rootNodeId: input.turnInput.rootNodeId,
       kind: "assistant_message",
-      status: input.status ?? "completed",
+      status,
       countsForRun: false,
       providerThreadId: input.turnInput.providerThread.id,
       providerTurnId: input.providerTurnId,
@@ -4589,7 +4594,7 @@ function buildAssistantArtifacts(input: {
       runtimeRequestId: null,
       checkpointScopeId: null,
       startedAt: input.startedAt,
-      completedAt: input.completedAt,
+      completedAt,
     },
     message: {
       createdBy: "agent",
@@ -4601,8 +4606,8 @@ function buildAssistantArtifacts(input: {
       role: "assistant",
       text: input.text,
       attachments: [],
-      streaming: false,
-      createdAt: input.completedAt,
+      streaming,
+      createdAt: input.createdAt ?? input.completedAt,
       updatedAt: input.completedAt,
     },
     turnItem: {
@@ -4615,15 +4620,15 @@ function buildAssistantArtifacts(input: {
       nativeItemRef,
       parentItemId: null,
       ordinal: input.ordinal,
-      status: input.status ?? "completed",
+      status,
       title: null,
       startedAt: input.startedAt,
-      completedAt: input.completedAt,
+      completedAt,
       updatedAt: input.completedAt,
       type: "assistant_message",
       messageId,
       text: input.text,
-      streaming: false,
+      streaming,
     },
   };
 }
@@ -4685,6 +4690,19 @@ interface ActiveClaudeTurnContext {
     fallbackText: string;
     fallbackNativeItemId: string;
     emittedNativeItemIds: Set<string>;
+    // Text blocks stream as `${message.id}:text:${n}`; the block's snapshot has its own uuid.
+    readonly streamBlocks: Map<number, string>;
+    readonly nextBlockIndex: Map<string, number>;
+    readonly snapshotBlockIndex: Map<string, number>;
+    readonly streamItems: Map<
+      string,
+      {
+        readonly startedAt: DateTime.Utc;
+        status: "completed" | "interrupted";
+        // Set when the block stops; the snapshot only corrects it.
+        text: string | null;
+      }
+    >;
     // The root reply the latest assistant frame carried; a steer's aborted_streaming cuts it off.
     lastReply: {
       readonly nativeItemId: string;
@@ -8434,6 +8452,78 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }),
         });
 
+        const publishAssistantArtifacts = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly nativeItemId: string;
+          readonly text: string;
+          readonly status: "running" | "completed" | "interrupted";
+          readonly startedAt: DateTime.Utc;
+          readonly completedAt: DateTime.Utc;
+          readonly createdAt?: DateTime.Utc;
+        }) {
+          const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
+          const artifacts = buildAssistantArtifacts({
+            idAllocator,
+            turnInput: input.context.input,
+            providerTurnId: input.context.providerTurnId,
+            nativeItemId: input.nativeItemId,
+            text: input.text,
+            ordinal,
+            status: input.status,
+            startedAt: input.startedAt,
+            completedAt: input.completedAt,
+            ...(input.createdAt === undefined ? {} : { createdAt: input.createdAt }),
+          });
+          yield* Effect.all(
+            [
+              emitProviderEvent({
+                type: "node.updated",
+                driver: CLAUDE_PROVIDER,
+                node: artifacts.node,
+              }),
+              emitProviderEvent({
+                type: "message.updated",
+                driver: CLAUDE_PROVIDER,
+                message: artifacts.message,
+              }),
+              emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: artifacts.turnItem,
+              }),
+            ],
+            { concurrency: 1 },
+          );
+        });
+
+        const assistantDeltas = yield* makeProviderTextDeltaCoalescer({
+          flushIntervalMs: 50,
+          emit:
+            /* Provider events include streaming deltas; avoid a span for each update. */
+            Effect.fnUntraced(function* (update) {
+              const context = yield* Ref.get(activeTurn);
+              if (context === null || context.nativeTurnId !== update.turnId) return;
+              const item = context.assistant.streamItems.get(update.itemId);
+              if (item === undefined || update.text.length === 0) return;
+              context.assistant.emittedNativeItemIds.add(update.itemId);
+              yield* publishAssistantArtifacts({
+                context,
+                nativeItemId: update.itemId,
+                text: update.text,
+                status: update.completed ? item.status : "running",
+                startedAt: item.startedAt,
+                createdAt: item.startedAt,
+                completedAt: yield* DateTime.now,
+              });
+            }),
+        });
+
+        // Streamed text no snapshot will complete ends where the stream stopped.
+        const cutOffStreamedText = Effect.fnUntraced(function* (context: ActiveClaudeTurnContext) {
+          for (const item of context.assistant.streamItems.values()) item.status = "interrupted";
+          yield* assistantDeltas.flushTurn(context.nativeTurnId);
+        });
+
         const endToolCalls = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext | null;
           readonly toolCalls: ReadonlyArray<ActiveClaudeToolCall>;
@@ -8531,6 +8621,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         }) {
           input.context.steersClosed = true;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
+          if (input.status === "completed") {
+            yield* assistantDeltas.flushTurn(input.context.nativeTurnId);
+          } else {
+            yield* cutOffStreamedText(input.context);
+          }
           // A turn that completes has taken in every steer; one that stops drops them unread.
           const droppedSteers = [...input.context.pendingSteers];
           input.context.pendingSteers.clear();
@@ -8895,48 +8990,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             next.delete(input.context.providerTurnId);
             return next;
           });
-        });
-
-        const publishAssistantArtifacts = Effect.fnUntraced(function* (input: {
-          readonly context: ActiveClaudeTurnContext;
-          readonly nativeItemId: string;
-          readonly text: string;
-          readonly status: "completed" | "interrupted";
-          readonly startedAt: DateTime.Utc;
-          readonly completedAt: DateTime.Utc;
-        }) {
-          const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
-          const artifacts = buildAssistantArtifacts({
-            idAllocator,
-            turnInput: input.context.input,
-            providerTurnId: input.context.providerTurnId,
-            nativeItemId: input.nativeItemId,
-            text: input.text,
-            ordinal,
-            status: input.status,
-            startedAt: input.startedAt,
-            completedAt: input.completedAt,
-          });
-          yield* Effect.all(
-            [
-              emitProviderEvent({
-                type: "node.updated",
-                driver: CLAUDE_PROVIDER,
-                node: artifacts.node,
-              }),
-              emitProviderEvent({
-                type: "message.updated",
-                driver: CLAUDE_PROVIDER,
-                message: artifacts.message,
-              }),
-              emitProviderEvent({
-                type: "turn_item.updated",
-                driver: CLAUDE_PROVIDER,
-                turnItem: artifacts.turnItem,
-              }),
-            ],
-            { concurrency: 1 },
-          );
         });
 
         const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
@@ -9911,6 +9964,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (event.type === "message_start") {
               reasoning.messageId = event.message.id;
               reasoning.streamBlocks.clear();
+              context.assistant.streamBlocks.clear();
               const usage: ClaudeMessageUsage | undefined = event.message.usage;
               context.streamUsage =
                 usage === undefined ? null : { messageId: event.message.id, usage };
@@ -9949,6 +10003,37 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   delta: event.delta.thinking,
                 });
               }
+            } else if (
+              event.type === "content_block_start" &&
+              event.content_block.type === "text" &&
+              reasoning.messageId !== null
+            ) {
+              const assistant = context.assistant;
+              const index = assistant.nextBlockIndex.get(reasoning.messageId) ?? 0;
+              assistant.nextBlockIndex.set(reasoning.messageId, index + 1);
+              const itemId = `${reasoning.messageId}:text:${index}`;
+              assistant.streamBlocks.set(event.index, itemId);
+              assistant.lastReply = null;
+              assistant.streamItems.set(itemId, {
+                startedAt: yield* DateTime.now,
+                status: "completed",
+                text: null,
+              });
+              yield* resolveItemOrdinal(context, itemId);
+              yield* assistantDeltas.append({
+                turnId: context.nativeTurnId,
+                itemId,
+                delta: event.content_block.text,
+              });
+            } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+              const itemId = context.assistant.streamBlocks.get(event.index);
+              if (itemId !== undefined) {
+                yield* assistantDeltas.append({
+                  turnId: context.nativeTurnId,
+                  itemId,
+                  delta: event.delta.text,
+                });
+              }
             } else if (event.type === "content_block_stop") {
               const itemId = reasoning.streamBlocks.get(event.index);
               if (itemId !== undefined) {
@@ -9959,9 +10044,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 });
                 reasoning.streamBlocks.delete(event.index);
               }
+              const textItemId = context.assistant.streamBlocks.get(event.index);
+              const textItem =
+                textItemId === undefined
+                  ? undefined
+                  : context.assistant.streamItems.get(textItemId);
+              if (textItemId !== undefined && textItem !== undefined) {
+                textItem.text = yield* assistantDeltas.complete({
+                  turnId: context.nativeTurnId,
+                  itemId: textItemId,
+                  emitEmpty: false,
+                });
+                context.assistant.streamBlocks.delete(event.index);
+              }
             }
             return;
           }
+          // Snapshot text the stream did not deliver, once any of it streamed.
+          const unstreamedSnapshotText: Array<string> = [];
+          let streamedSnapshotReply: NonNullable<
+            ActiveClaudeTurnContext["assistant"]["lastReply"]
+          > | null = null;
           if (
             message.type === "assistant" &&
             !message.parent_tool_use_id &&
@@ -9970,6 +10073,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             context.reasoning.snapshots.add(message.uuid);
             // The SDK snapshots each completed block; count thinking blocks separately to preserve streamed ids.
             for (const block of message.message.content) {
+              if (block.type === "text") {
+                const assistant = context.assistant;
+                const index = assistant.snapshotBlockIndex.get(message.message.id) ?? 0;
+                assistant.snapshotBlockIndex.set(message.message.id, index + 1);
+                const itemId = `${message.message.id}:text:${index}`;
+                const streamed = assistant.streamItems.get(itemId);
+                if (streamed === undefined) {
+                  unstreamedSnapshotText.push(block.text);
+                } else {
+                  const text =
+                    streamed.text !== null && (!block.text || block.text === streamed.text)
+                      ? streamed.text
+                      : yield* assistantDeltas.complete({
+                          turnId: context.nativeTurnId,
+                          itemId,
+                          ...(block.text ? { finalText: block.text } : {}),
+                          emitEmpty: false,
+                        });
+                  streamed.text = text;
+                  if (text.length > 0) {
+                    streamedSnapshotReply = {
+                      nativeItemId: itemId,
+                      text,
+                      startedAt: streamed.startedAt,
+                    };
+                  }
+                }
+              }
               if (block.type !== "thinking") {
                 const update = context.reasoning.lastThinking;
                 context.reasoning.lastThinking = null;
@@ -10008,6 +10139,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     followsThinking: previous !== null && previous.messageId === message.message.id,
                   }
                 : null;
+            }
+            // A repeated snapshot frame must not re-emit streamed text under its uuid.
+            if (streamedSnapshotReply !== null && unstreamedSnapshotText.join("").length === 0) {
+              context.assistant.emittedNativeItemIds.add(message.uuid);
             }
           }
 
@@ -10786,7 +10921,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           const assistantText = assistantTextFromSdkMessage(message);
           if (message.type === "assistant" && assistantParentToolUseId === null) {
-            context.assistant.lastReply = null;
+            context.assistant.lastReply = streamedSnapshotReply;
           }
           if (
             assistantText !== null &&
@@ -10836,13 +10971,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (assistantText !== null && assistantText.text.length > 0) {
+            const text =
+              streamedSnapshotReply === null ? assistantText.text : unstreamedSnapshotText.join("");
+            if (text.length === 0) return;
             const startedAt = yield* emitAssistantTextArtifacts({
               context,
               nativeItemId: assistantText.nativeItemId,
-              text: assistantText.text,
+              text,
             });
             if (startedAt !== undefined) {
-              context.assistant.lastReply = { ...assistantText, startedAt };
+              context.assistant.lastReply = {
+                nativeItemId: assistantText.nativeItemId,
+                text,
+                startedAt,
+              };
             }
             return;
           }
@@ -10918,6 +11060,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
               const cutOffReply = context.assistant.lastReply;
               context.assistant.lastReply = null;
+              if (message.terminal_reason === "aborted_streaming") {
+                yield* cutOffStreamedText(context);
+              }
               if (message.terminal_reason === "aborted_streaming" && cutOffReply !== null) {
                 yield* publishAssistantArtifacts({
                   context,
@@ -12246,6 +12391,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
                 emittedNativeItemIds: new Set(),
+                streamBlocks: new Map(),
+                nextBlockIndex: new Map(),
+                snapshotBlockIndex: new Map(),
+                streamItems: new Map(),
                 lastReply: null,
                 noticeTexts: new Set(),
               },
