@@ -386,6 +386,46 @@ it.effect("checkpoint capture refuses a truncated nested repository listing", ()
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+// A clean filter that kills its `git add` stands in for the timeout kill, deterministically.
+it.effect.each([
+  { platform: "darwin" as const, bigFileThreshold: null },
+  { platform: "linux" as const, bigFileThreshold: "1" },
+])(
+  "checkpoint capture killed mid-add leaves no Git temporary objects on $platform",
+  ({ platform, bigFileThreshold }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+      );
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-killed-add-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      if (bigFileThreshold !== null)
+        yield* git(["config", "core.bigFileThreshold", bigFileThreshold]);
+      yield* fs.writeFileString(path.join(cwd, "a-large.txt"), "x".repeat(64 * 1024));
+      yield* fs.writeFileString(path.join(cwd, "z-kill.txt"), "z\n");
+      yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "z-kill.txt filter=kill\n");
+      yield* git(["config", "filter.kill.clean", "kill -9 $PPID"]);
+      const objects = path.join(cwd, ".git", "objects");
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = yield* Effect.result(
+          driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
+        );
+        assert.strictEqual(result._tag, "Failure");
+      }
+
+      const leftovers = [
+        ...(yield* fs.readDirectory(objects)).filter((name) => name.startsWith("tmp_objdir-")),
+        ...(yield* fs.readDirectory(path.join(objects, "pack"))).filter((name) =>
+          name.startsWith("tmp_pack_"),
+        ),
+      ];
+      assert.deepEqual(leftovers, []);
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("checkpoint capture skips an ignored project while keeping its allowed sibling", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
