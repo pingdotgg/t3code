@@ -827,6 +827,23 @@ it.effect(
       yield* sql`INSERT INTO orchestration_v2_projection_context_handoffs
         (context_handoff_id, thread_id, target_run_id, to_provider_thread_id, strategy, status, updated_at, payload_json)
         VALUES ('obsolete-handoff', ${threadId}, 'old-run', 'old-provider-thread', 'full_thread_summary', 'ready', ${DateTime.formatIso(now)}, '{"obsolete":true}')`;
+      for (const status of [
+        "resolved_native",
+        "resolved_portable",
+        "failed",
+        "consumed",
+        "superseded",
+      ]) {
+        yield* sql`INSERT INTO orchestration_v2_projection_context_transfers
+          (context_transfer_id, source_thread_id, target_thread_id, target_run_id,
+            type, status, updated_at, payload_json)
+          VALUES (${`obsolete-transfer:${status}`}, 'old-source', ${threadId}, NULL,
+            'merge_back', ${status}, ${DateTime.formatIso(now)}, '{"obsolete":true}')`;
+      }
+      assert.equal(
+        (yield* Effect.exit(projections.getThreadRecords(threadId, ["contextTransfers"])))._tag,
+        "Failure",
+      );
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make("dispatch-with-old-history"),
@@ -842,6 +859,9 @@ it.effect(
         turnItemTypes: ["user_message"],
       });
       assert.isAbove(fresh.turnItems.at(-1)!.ordinal, 900);
+      // Deletion reads transfer history separately to find side chats.
+      yield* sql`DELETE FROM orchestration_v2_projection_context_transfers
+        WHERE target_thread_id = ${threadId}`;
       yield* orchestrator.dispatch({
         type: "thread.archive",
         commandId: CommandId.make("archive-with-old-history"),
