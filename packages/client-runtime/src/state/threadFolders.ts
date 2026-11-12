@@ -1,3 +1,4 @@
+import { Atom } from "effect/reactivity";
 import type {
   EnvironmentId,
   ThreadFolder,
@@ -242,4 +243,39 @@ export async function readThreadFolderMembers<
     }
   }
   return [...members.values()];
+}
+
+export function createThreadFolderMemberKeysAtom(
+  foldersAtom: Atom.Atom<ReadonlyArray<EnvironmentThreadFolder>>,
+  snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<{
+    readonly threads: ReadonlyArray<{ readonly id: ThreadId }>;
+  } | null>,
+) {
+  return Atom.make((get) => {
+    const missing = new Map<EnvironmentId, Set<ThreadId>>();
+    const present = new Map<EnvironmentId, Set<ThreadId>>();
+    for (const folder of get(foldersAtom)) {
+      let ids = present.get(folder.environmentId);
+      if (ids === undefined) {
+        ids = new Set(get(snapshotAtom(folder.environmentId))?.threads.map((thread) => thread.id));
+        present.set(folder.environmentId, ids);
+      }
+      for (const id of folder.threadIds) {
+        if (ids.has(id)) continue;
+        const members = missing.get(folder.environmentId) ?? new Set<ThreadId>();
+        members.add(id);
+        missing.set(folder.environmentId, members);
+      }
+    }
+    return JSON.stringify(
+      [...missing]
+        .flatMap(([environmentId, ids]) =>
+          [...ids].map((threadId) => ({ environmentId, threadId })),
+        )
+        .sort(
+          (a, b) =>
+            a.environmentId.localeCompare(b.environmentId) || a.threadId.localeCompare(b.threadId),
+        ),
+    );
+  });
 }

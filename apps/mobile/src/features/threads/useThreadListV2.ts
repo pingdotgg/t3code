@@ -1,8 +1,12 @@
+import { createThreadFolderMemberKeysAtom } from "@t3tools/client-runtime/state/thread-folders";
+import { environmentSnapshotAtom } from "../../state/shell";
+import { threadFamilies } from "../../state/threads";
+import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomValue } from "@effect/atom-react";
 import { threadFoldersAtom } from "../../state/server";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo, useSyncExternalStore } from "react";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
@@ -27,6 +31,11 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
     [newlineSeparatedKeys],
   );
 }
+
+const threadFolderMemberKeysAtom = createThreadFolderMemberKeysAtom(
+  threadFoldersAtom,
+  environmentSnapshotAtom,
+);
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
@@ -71,6 +80,16 @@ export function useThreadListV2(input: {
 }) {
   const { threads, workingShelfEnabled } = input;
   const folders = useAtomValue(threadFoldersAtom);
+  const memberKeys = useAtomValue(threadFolderMemberKeysAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retains paged-out folder member shells in the family registry while the list is mounted
+  useEffect(() => {
+    const releases = (JSON.parse(memberKeys) as ReadonlyArray<ScopedThreadRef>).map((ref) =>
+      threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId),
+    );
+    return () => {
+      for (const release of releases) release();
+    };
+  }, [memberKeys]);
   const collapsedFolderKeys = useKeySet([...input.collapsedFolders].sort().join("\n"));
   const layoutTime = useMemo(
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),

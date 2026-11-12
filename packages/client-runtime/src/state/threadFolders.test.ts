@@ -1,7 +1,9 @@
 import { EnvironmentId, ThreadFolderId, ThreadId, type ThreadFolderRule } from "@t3tools/contracts";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  createThreadFolderMemberKeysAtom,
   type EnvironmentThreadFolder,
   layoutThreadFolders,
   readThreadFolderMembers,
@@ -176,4 +178,26 @@ describe("readThreadFolderMembers", () => {
       }),
     ).rejects.toThrow("offline");
   });
+});
+
+it("retains only folder members omitted from each environment's shell", () => {
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  const folders = Atom.make([folder(local, "a", ["live", "old"]), folder(remote, "b", ["live"])]);
+  const localSnapshot = Atom.make({ threads: [{ id: ThreadId.make("live") }] });
+  const remoteSnapshot = Atom.make({ threads: [] as ReadonlyArray<{ readonly id: ThreadId }> });
+  const keys = createThreadFolderMemberKeysAtom(folders, (environmentId) =>
+    environmentId === local ? localSnapshot : remoteSnapshot,
+  );
+  const read = () => JSON.parse(registry.get(keys));
+  expect(read()).toEqual([
+    { environmentId: local, threadId: "old" },
+    { environmentId: remote, threadId: "live" },
+  ]);
+  registry.set(localSnapshot, {
+    threads: [{ id: ThreadId.make("live") }, { id: ThreadId.make("old") }],
+  });
+  expect(read()).toEqual([{ environmentId: remote, threadId: "live" }]);
+  registry.set(folders, []);
+  expect(read()).toEqual([]);
 });

@@ -12,11 +12,13 @@ import { olderSettledThreads } from "../../state/threads";
 import { makeRawThreadShell } from "../../test-fixtures";
 import { useThreadListV2 } from "./useThreadListV2";
 
+vi.mock("../../state/shell", () => ({ environmentSnapshotAtom: () => Atom.make(null) }));
+
 vi.mock("../../state/server", () => ({ threadFoldersAtom: Atom.make([]) }));
 
 vi.mock("../../state/threads", () => ({
   olderSettledThreads: { shelfAtom: vi.fn() },
-  threadFamilies: { mountRows: () => () => {} },
+  threadFamilies: { mountRows: () => () => {}, mount: () => () => {} },
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: undefined }));
 

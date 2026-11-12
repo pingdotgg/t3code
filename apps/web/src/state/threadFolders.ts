@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import {
@@ -7,6 +8,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  createThreadFolderMemberKeysAtom,
   type EnvironmentThreadFolder,
   findThreadFolder,
   scopedThreadFolderKey,
@@ -29,6 +31,8 @@ import { randomUUID } from "../lib/utils";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { readEnvironmentScope } from "./session";
+import { environmentSnapshotAtom } from "./shell";
+import { threadFamilies } from "./threads";
 
 const EMPTY_FOLDERS: ReadonlyArray<EnvironmentThreadFolder> = Object.freeze([]);
 
@@ -69,8 +73,23 @@ const threadFoldersAtom = (() => {
   }).pipe(Atom.withLabel("web-thread-folders"));
 })();
 
+const threadFolderMemberKeysAtom = createThreadFolderMemberKeysAtom(
+  threadFoldersAtom,
+  environmentSnapshotAtom,
+);
+
 /** Every folder on every environment that supports them, in folder order. */
 export function useThreadFolders(): ReadonlyArray<EnvironmentThreadFolder> {
+  const memberKeys = useAtomValue(threadFolderMemberKeysAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retains paged-out folder member shells in the family registry while the sidebar is mounted
+  useEffect(() => {
+    const releases = (JSON.parse(memberKeys) as ReadonlyArray<ScopedThreadRef>).map((ref) =>
+      threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId),
+    );
+    return () => {
+      for (const release of releases) release();
+    };
+  }, [memberKeys]);
   return useAtomValue(threadFoldersAtom);
 }
 
