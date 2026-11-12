@@ -16,7 +16,8 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { use, useEffect, useState } from "react";
-import { Platform, RefreshControl, View } from "react-native";
+import { Platform, View } from "react-native";
+import { RefreshControl } from "../../../components/ui/RefreshControl";
 import { NativeScrollView } from "../../../native/NativeScrollViewMarker";
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";

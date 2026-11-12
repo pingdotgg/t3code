@@ -4,6 +4,7 @@ import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area
 import { FormSheet } from "react-native-screens";
 import { useResolveClassNames } from "uniwind";
 
+import { BottomSheetContext } from "../../components/ui/BottomSheetContext";
 import { PaneContext } from "../../components/ui/Pane";
 import { RoutedFormSheetContext } from "../../components/ui/RoutedFormSheetContext";
 import { formSheetDetents } from "../../native/sheet-surface";
@@ -67,28 +68,32 @@ export function WorkspaceInspectorSheet(props: {
       }}
     >
       <InspectorSheetContext value={close}>
-        <RoutedFormSheetContext value={false}>
-          {/* The sheet starts below the status bar. */}
-          <SafeAreaInsetsContext value={{ ...insets, top: 0 }}>
-            <PaneContext value="inspector">
-              {/* Android FormSheet does not bound flex children. */}
-              <View
-                collapsable={false}
-                className={
-                  Platform.OS === "android" ? "absolute inset-0 bg-header pt-3" : "flex-1 bg-sheet"
-                }
-              >
-                <InspectorPanes content={props.content} onClose={() => close()} />
-                {Platform.OS === "android" ? (
-                  <View
-                    pointerEvents="none"
-                    className="absolute top-1 h-1 w-8 self-center rounded-full bg-header-foreground/40"
-                  />
-                ) : null}
-              </View>
-            </PaneContext>
-          </SafeAreaInsetsContext>
-        </RoutedFormSheetContext>
+        <BottomSheetContext value>
+          <RoutedFormSheetContext value={false}>
+            {/* The sheet starts below the status bar. */}
+            <SafeAreaInsetsContext value={{ ...insets, top: 0 }}>
+              <PaneContext value="inspector">
+                {/* Android FormSheet does not bound flex children. */}
+                <View
+                  collapsable={false}
+                  className={
+                    Platform.OS === "android"
+                      ? "absolute inset-0 bg-header pt-3"
+                      : "flex-1 bg-sheet"
+                  }
+                >
+                  <InspectorPanes content={props.content} onClose={() => close()} />
+                  {Platform.OS === "android" ? (
+                    <View
+                      pointerEvents="none"
+                      className="absolute top-1 h-1 w-8 self-center rounded-full bg-header-foreground/40"
+                    />
+                  ) : null}
+                </View>
+              </PaneContext>
+            </SafeAreaInsetsContext>
+          </RoutedFormSheetContext>
+        </BottomSheetContext>
       </InspectorSheetContext>
     </FormSheet>
   );

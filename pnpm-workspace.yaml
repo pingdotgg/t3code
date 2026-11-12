@@ -235,6 +235,9 @@ patchedDependencies:
   "@effect/vitest@4.1.2": patches/@effect__vitest@4.1.2.patch
   expo-sharing@58.0.22: patches/expo-sharing@58.0.22.patch
   expo-widgets@58.0.27: patches/expo-widgets@58.0.27.patch
+  # Android: a host of buttons (an app bar) no longer claims nested scrolling, so a Material
+  # bottom sheet's drags reach the scroll view below its header.
+  "@expo/ui@58.0.27": patches/@expo__ui@58.0.27.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
   # Exports the dependency-light subpaths mobile and the web diff parser import, and makes find
   # cover folded files and collapsed context (onRevealSearchMatch).
