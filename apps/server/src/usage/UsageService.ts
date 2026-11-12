@@ -406,6 +406,7 @@ export const make = Effect.gen(function* () {
           Effect.catchCause(() => Effect.succeed(null)),
         );
       let document = yield* readDocument(scanCachePath);
+      const current = document !== null;
       for (const fileName of LEGACY_SCAN_CACHE_FILE_NAMES) {
         if (document !== null) break;
         document = yield* readDocument(path.join(config.stateDir, fileName));
@@ -419,8 +420,8 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(sources)) {
         for (const [key, source] of Object.entries(sources.value.sources))
           sourceCache.set(key, source);
-        // Coverage describes the saved files, so a rejected document keeps none of it.
-        if (fileCache.size > 0) {
+        // Coverage describes the saved files; an older version's files may parse differently.
+        if (current && fileCache.size > 0) {
           for (const [key, since] of Object.entries(sources.value.coveredSince ?? {}))
             coveredSince.set(key, since);
         }
@@ -613,6 +614,8 @@ export const make = Effect.gen(function* () {
           readonly malformedRecords: number;
         }[]
       | null;
+    /** Every transcript path the walk listed, in walk order, whatever its mtime. */
+    readonly walked?: readonly string[];
     readonly refreshing?: true;
   }
 
@@ -631,7 +634,7 @@ export const make = Effect.gen(function* () {
     }
     // scanSummary aggregates the saved files, as it does for a deleted directory.
     if (fromMemory) return { provider, dir, volumeId, files: [] } satisfies ScannedDir;
-    const { files, failedPaths } = yield* Effect.promise(() =>
+    const { files, walked, failedPaths } = yield* Effect.promise(() =>
       listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
     );
     const read = yield* Effect.forEach(
@@ -673,6 +676,7 @@ export const make = Effect.gen(function* () {
       dir,
       volumeId,
       files: parsedFiles,
+      walked,
       ...(unread > 0
         ? {
             status: "partial",
@@ -778,8 +782,14 @@ export const make = Effect.gen(function* () {
     const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
     const awaitRefresh = input.awaitRefresh === true;
-    const resolved = yield* resolveTranscriptDirs(settings, retentionCutoffMs, awaitRefresh).pipe(
-      Effect.provideContext(readerContext),
+    const [resolved] = yield* Effect.all(
+      [
+        resolveTranscriptDirs(settings, retentionCutoffMs, awaitRefresh).pipe(
+          Effect.provideContext(readerContext),
+        ),
+        provisional ? Effect.void : ensureRates(false),
+      ],
+      { concurrency: 2 },
     );
     // A window no complete scan has read would show partial totals, so every directory must cover it.
     const fromMemory =
@@ -789,7 +799,7 @@ export const make = Effect.gen(function* () {
       );
     const [, scannedDirs] = yield* Effect.all(
       [
-        fromMemory ? loadSavedRates : ensureRates(false),
+        fromMemory ? loadSavedRates : provisional ? ensureRates(false) : Effect.void,
         collectDirs(resolved, windowStartMs, settings, retentionCutoffMs, awaitRefresh, fromMemory),
       ],
       { concurrency: 2 },
@@ -811,12 +821,10 @@ export const make = Effect.gen(function* () {
 
     // Deleted transcripts' saved usage still aggregates and deduplicates normally.
     const retainedSinceMs = Math.max(windowStartMs, retentionCutoffMs);
-    const filesByDir = scannedDirs.map(({ provider, dir, files }) => {
-      const retainedFiles = [...(files ?? [])];
-      const livePaths = new Set(retainedFiles.map((file) => file.path));
-      // Saved paths are files below a scanned root, so their folder decides; folders repeat thousands of times.
+    // Saved paths are files below a scanned root, so their folder decides; folders repeat thousands of times.
+    const withinDir = (dir: string) => {
       const foldersWithin = new Map<string, boolean>();
-      const isRetained = (filePath: string) => {
+      return (filePath: string) => {
         const folder = path.dirname(filePath);
         let within = foldersWithin.get(folder);
         if (within === undefined) {
@@ -825,6 +833,11 @@ export const make = Effect.gen(function* () {
         }
         return within;
       };
+    };
+    const filesByDir = scannedDirs.map(({ provider, dir, files }) => {
+      const retainedFiles = [...(files ?? [])];
+      const livePaths = new Set(retainedFiles.map((file) => file.path));
+      const isRetained = withinDir(dir);
       for (const [filePath, entry] of fileCache) {
         if (
           entry.provider !== provider ||
@@ -844,14 +857,25 @@ export const make = Effect.gen(function* () {
       }
       return retainedFiles;
     });
-    // Usage two transcripts share counts in the first one, so saved files keep the order of the last walk.
-    for (const files of fromMemory ? [] : filesByDir) {
-      const walked = files.flatMap((file) => (fileCache.has(file.path) ? [file.path] : []));
-      const members = new Set(walked);
+    // Usage two transcripts share counts in the first one, so saved files take the order an exact
+    // scan reads them in: walked files in walk order, then the directory's deleted files.
+    for (const { provider, dir, walked } of fromMemory ? [] : scannedDirs) {
+      if (walked === undefined) continue;
+      const within = withinDir(dir);
       const saved = [...fileCache.keys()];
+      const members = new Set(
+        saved.filter(
+          (filePath) => fileCache.get(filePath)!.provider === provider && within(filePath),
+        ),
+      );
+      if (members.size < 2) continue;
+      const listed = new Set(walked);
+      const target = [
+        ...walked.filter((filePath) => members.has(filePath)),
+        ...saved.filter((filePath) => members.has(filePath) && !listed.has(filePath)),
+      ];
       let next = 0;
-      // Only the slots these files hold change, so files this walk did not list keep their place.
-      const ordered = saved.map((filePath) => (members.has(filePath) ? walked[next++]! : filePath));
+      const ordered = saved.map((filePath) => (members.has(filePath) ? target[next++]! : filePath));
       if (ordered.every((filePath, index) => filePath === saved[index])) continue;
       const entries = new Map(fileCache);
       fileCache.clear();

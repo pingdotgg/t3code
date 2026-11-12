@@ -76,7 +76,11 @@ export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
   options?: { readonly fileName?: string },
-): Promise<{ readonly files: readonly TranscriptFile[]; readonly failedPaths: number }> {
+): Promise<{
+  readonly files: readonly TranscriptFile[];
+  readonly walked: readonly string[];
+  readonly failedPaths: number;
+}> {
   const fileName = options?.fileName;
   let failedPaths = 0;
   let reading = 0;
@@ -133,7 +137,7 @@ export async function listTranscriptFiles(
   await Promise.all(
     Array.from({ length: Math.min(STAT_CONCURRENCY, candidates.length) }, statQueued),
   );
-  return { files: found.filter((file) => file !== undefined), failedPaths };
+  return { files: found.filter((file) => file !== undefined), walked: candidates, failedPaths };
 }
 
 export async function readDirectoryVolumeId(path: string): Promise<string> {

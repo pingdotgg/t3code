@@ -249,6 +249,7 @@ const layerService = (input: {
   );
 
 const BEFORE_NARROW_WINDOW = Date.parse("2026-08-01T10:00:00Z") / 1000;
+const NARROW_WINDOW_MTIME = Date.parse("2026-09-01T10:00:00Z") / 1000;
 const NARROW_WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-09-01"),
@@ -2438,6 +2439,15 @@ describe("UsageService", () => {
           const refreshed = yield* restarted.readSummary({ ...WINDOW, awaitRefresh: true });
           assert.strictEqual(totalOutputTokens(refreshed), 12);
           assert.isUndefined(claude(refreshed)?.refreshing);
+          // Saved usage with nothing to show marks nothing refreshing, so it must not be the answer.
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(transcript, claudeLine(3, 11, "claude-other")),
+          );
+          const unseen = yield* restarted.readSummary({
+            ...provisional,
+            modelFilter: { include: [{ model: "claude-other" }] },
+          });
+          assert.strictEqual(totalOutputTokens(unseen), 11);
           yield* restarted.awaitPersisted;
         }).pipe(
           Effect.scoped,
@@ -3228,6 +3238,31 @@ describe("UsageService", () => {
         assert.deepStrictEqual(saved.buckets, exact.buckets);
       }).pipe(
         Effect.provide(layerService({ prefix: "usage-service-saved-order-test", home, settings })),
+      );
+
+      // A narrow scan that first saves the earlier copy still puts it before a later file it skipped.
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(first, forked(claudeLine(1, 5)) + forked(claudeLine(2, 7)));
+        await NodeFSP.utimes(
+          first,
+          Date.parse("2026-07-01T00:00:00Z") / 1000,
+          Date.parse("2026-07-01T00:00:00Z") / 1000,
+        );
+        await NodeFSP.writeFile(second, claudeLine(1, 5));
+        await NodeFSP.utimes(second, BEFORE_NARROW_WINDOW, BEFORE_NARROW_WINDOW);
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        yield* service.readSummary(WINDOW);
+        yield* Effect.promise(() =>
+          NodeFSP.utimes(first, NARROW_WINDOW_MTIME, NARROW_WINDOW_MTIME),
+        );
+        yield* service.readSummary(NARROW_WINDOW);
+        const saved = yield* service.readSummary({ ...WINDOW, provisional: true });
+        const exact = yield* service.readSummary(WINDOW);
+        assert.deepStrictEqual(saved.buckets, exact.buckets);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-narrow-order-test", home, settings })),
       );
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
