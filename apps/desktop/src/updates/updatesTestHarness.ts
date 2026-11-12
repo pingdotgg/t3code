@@ -236,7 +236,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
       : DesktopAppSettings.layer;
 
-  const updateRestartMarkers = new Set<string>();
   const installRecords = new Map<string, string>();
   let previousInstallRecord = options.installRecord;
   const isInstallRecord = (path: string) =>
@@ -262,11 +261,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     writeFileString: (path, data) =>
       Effect.sync(() => {
         if (isInstallRecord(path)) installRecords.set(path, data);
-        else updateRestartMarkers.add(path);
       }),
     remove: (path) =>
       Effect.sync(() => {
-        updateRestartMarkers.delete(path);
         installRecords.delete(path);
         if (isInstallRecord(path)) previousInstallRecord = undefined;
       }),
@@ -297,7 +294,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     checkCount: () => checkCount,
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
-    updateRestartMarkers,
     installRecords,
     previousInstallRecord: () => previousInstallRecord,
     downloadCount: () => downloadCount,
