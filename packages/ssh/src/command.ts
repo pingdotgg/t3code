@@ -147,6 +147,42 @@ function redactSshErrorOutput(output: string, keepTail = false): string {
     : `${redacted.slice(0, MAX_SSH_ERROR_OUTPUT_LENGTH)}\n[truncated]`;
 }
 
+export function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+const SAFE_SHELL_ARG = /^[\w@%+=:,./-]+$/u;
+
+// cmd.exe and PowerShell both read double quotes, but not POSIX single quotes.
+function terminalArg(value: string, platform: NodeJS.Platform): string {
+  if (SAFE_SHELL_ARG.test(value)) return value;
+  return platform === "win32" ? `"${value}"` : shellSingleQuote(value);
+}
+
+// ssh prints this for unknown and changed host keys when it cannot ask. The app
+// never answers host key prompts, so the user checks the fingerprint in a terminal.
+function hostKeyVerificationMessage(input: {
+  readonly target: DesktopSshEnvironmentTarget;
+  readonly hostSpec: string;
+  readonly stderr: string;
+  readonly platform: NodeJS.Platform;
+}): string | null {
+  const { target, hostSpec, stderr, platform } = input;
+  if (!stderr.includes("Host key verification failed")) return null;
+  const command = [
+    "ssh",
+    ...(target.port !== null ? ["-p", String(target.port)] : []),
+    ...(hostSpec.startsWith("-") ? ["--"] : []),
+    hostSpec,
+  ]
+    .map((arg) => terminalArg(arg, platform))
+    .join(" ");
+  const guidance = stderr.includes("REMOTE HOST IDENTIFICATION HAS CHANGED")
+    ? `The host key for ${hostSpec} has changed since it was trusted. Only if you expect this change, remove the old key with the \`ssh-keygen -R\` command in the output below, run \`${command}\` in a terminal, check that the new host key fingerprint is the one you expect, then try again.`
+    : `SSH could not verify the host key for ${hostSpec}. Run \`${command}\` in a terminal, check that the host key fingerprint is the one you expect, then try again.`;
+  return `${guidance}\n\n${stderr.trim()}`;
+}
+
 function normalizeSshErrorMessage(input: {
   readonly stdout?: string;
   readonly stderr: string;
@@ -284,11 +320,18 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
       exitCode,
       stdout: diagnosticStdout,
       stderr,
-      message: normalizeSshErrorMessage({
-        stdout: diagnosticStdout,
-        stderr,
-        fallbackMessage: `SSH command failed for ${hostSpec} (exit ${exitCode}).`,
-      }),
+      message:
+        hostKeyVerificationMessage({
+          target,
+          hostSpec,
+          stderr,
+          platform: yield* HostProcess.Platform,
+        }) ??
+        normalizeSshErrorMessage({
+          stdout: diagnosticStdout,
+          stderr,
+          fallbackMessage: `SSH command failed for ${hostSpec} (exit ${exitCode}).`,
+        }),
     });
   }
 

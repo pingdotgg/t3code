@@ -22,7 +22,6 @@ import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
   getClaudeCatalogModelCapabilities,
-  isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
@@ -68,7 +67,13 @@ const decodeClaudeOutput = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Union([ClaudeOutputEnvelope, Schema.Array(ClaudeOutputMessage)])),
 );
 
-const ClaudeErrorResult = Schema.Struct({ is_error: Schema.Literal(true), result: Schema.String });
+// Only `success` results carry `result`; error subtypes such as
+// error_max_structured_output_retries report through `errors` instead.
+const ClaudeErrorResult = Schema.Struct({
+  is_error: Schema.Literal(true),
+  result: Schema.optionalKey(Schema.String),
+  errors: Schema.optionalKey(Schema.Array(Schema.String)),
+});
 const isClaudeErrorResult = Schema.is(ClaudeErrorResult);
 const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
@@ -78,7 +83,14 @@ function claudeErrorResult(stdout: string): string | undefined {
   const messages: ReadonlyArray<unknown> = Array.isArray(output) ? output : [output];
   return messages
     .filter(isClaudeErrorResult)
-    .map((message) => message.result.trim())
+    .map((message) =>
+      (
+        message.result ??
+        // error_during_execution mixes CLI telemetry into the list.
+        message.errors?.filter((error) => !error.startsWith("[ede_diagnostic]")).join("\n") ??
+        ""
+      ).trim(),
+    )
     .findLast((result) => result.length > 0);
 }
 
@@ -164,7 +176,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       resolvedEffort,
       resolvedModelSelection.model,
     );
-    const ultracode = isClaudeCatalogUltracodeEffort(resolvedEffort);
+    const ultracode = findDescriptor("ultracode")?.currentValue;
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
     // Only a chosen value; otherwise Claude Code's own default applies, as in chat turns.
@@ -178,7 +190,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
-      ...(ultracode ? { ultracode: true } : {}),
+      ...(typeof ultracode === "boolean" ? { ultracode } : {}),
     };
     const settingsJson = yield* encodeJsonForOperation(
       operation,
