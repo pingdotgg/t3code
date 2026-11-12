@@ -22,7 +22,6 @@ import {
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   PASTED_TEXT_ATTACHMENT_THRESHOLDS,
-  type PastedTextAttachmentThreshold,
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
@@ -157,13 +156,6 @@ const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
   hold: msg("Hold"),
   "double-click": msg("Double press"),
 };
-
-function pastedTextThresholdOptionLabel(threshold: PastedTextAttachmentThreshold) {
-  const label = pastedTextThresholdLabel(threshold);
-  return threshold === DEFAULT_UNIFIED_SETTINGS.pastedTextAttachmentThreshold
-    ? `${label} (default)`
-    : label;
-}
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 function AboutVersionSection() {
@@ -1229,36 +1221,6 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
-        <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>
-          <SettingsRow
-            {...searchableSetting("skills-in-slash-menu")}
-            description="Also include skills in the / command menu. Skills always appear when you type $."
-            resetAction={
-              settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu ? (
-                <SettingResetButton
-                  label="skills in slash menu"
-                  onClick={() =>
-                    updateSettings({
-                      showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
-                    })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <Switch
-                checked={settings.showSkillsInSlashMenu}
-                onCheckedChange={(checked) =>
-                  updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
-                }
-                aria-label="Show skills in slash menu"
-              />
-            }
-          />
-        </AdvancedSettings>
-      </SettingsSection>
-
-      <SettingsSection id="follow-ups" title="Follow-ups">
         <SettingsRow
           {...searchableSetting("large-paste-threshold")}
           description={`Pastes this size or larger become a text file attachment. Non-Latin text and emoji use more bytes per character, so they reach it sooner. Press ${modifierLabel} + Shift + V to paste inline instead.`}
@@ -1292,14 +1254,14 @@ export function ChatSettingsPanel() {
                 aria-label="Large paste threshold"
               >
                 <SelectValue>
-                  {pastedTextThresholdOptionLabel(settings.pastedTextAttachmentThreshold)}
+                  {pastedTextThresholdLabel(settings.pastedTextAttachmentThreshold)}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {PASTED_TEXT_ATTACHMENT_THRESHOLDS.map((threshold) => (
                   <SelectItem key={threshold} value={String(threshold)}>
                     <span className="flex items-center justify-between gap-4">
-                      {pastedTextThresholdOptionLabel(threshold)}
+                      {pastedTextThresholdLabel(threshold)}
                       {settings.pastedTextAttachmentThreshold === threshold && (
                         <CheckIcon aria-hidden="true" />
                       )}
@@ -1310,7 +1272,36 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
+        <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>
+          <SettingsRow
+            {...searchableSetting("skills-in-slash-menu")}
+            description="Also include skills in the / command menu. Skills always appear when you type $."
+            resetAction={
+              settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu ? (
+                <SettingResetButton
+                  label="skills in slash menu"
+                  onClick={() =>
+                    updateSettings({
+                      showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.showSkillsInSlashMenu}
+                onCheckedChange={(checked) =>
+                  updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
+                }
+                aria-label="Show skills in slash menu"
+              />
+            }
+          />
+        </AdvancedSettings>
+      </SettingsSection>
 
+      <SettingsSection id="follow-ups" title="Follow-ups">
         <SettingsRow
           {...searchableSetting("follow-up-behavior")}
           description={

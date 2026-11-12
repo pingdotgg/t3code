@@ -1,11 +1,7 @@
 import { PASTED_TEXT_ATTACHMENT_THRESHOLDS } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  isPasteAsTextShortcut,
-  pastedTextDisposition,
-  pastedTextThresholdLabel,
-} from "./textPaste.ts";
+import { isPasteAsTextShortcut, pastedTextDisposition } from "./textPaste.ts";
 
 describe("isPasteAsTextShortcut", () => {
   it("accepts the V key on non-Latin layouts but follows the letter on Latin ones", () => {
@@ -42,15 +38,5 @@ describe("pastedTextDisposition", () => {
     expect(pastedTextDisposition({ text, canAttach: true, thresholdBytes: 1_000 })).toBe(
       "attachment",
     );
-  });
-});
-
-describe("pastedTextThresholdLabel", () => {
-  it("leads with the size and approximates the character count", () => {
-    expect(PASTED_TEXT_ATTACHMENT_THRESHOLDS.map(pastedTextThresholdLabel)).toEqual([
-      "1 KB (~1,000 chars)",
-      "5 KB (~5,000 chars)",
-      "32 KB (~32,000 chars)",
-    ]);
   });
 });

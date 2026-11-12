@@ -10,8 +10,7 @@ import {
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
-  PASTED_TEXT_ATTACHMENT_THRESHOLDS,
-  type PastedTextAttachmentThreshold,
+  PastedTextAttachmentThreshold,
   type ProviderInstanceId,
   type PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
@@ -29,6 +28,7 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const isPastedTextAttachmentThreshold = Schema.is(PastedTextAttachmentThreshold);
 
 export const PullRequestListControls = Schema.Struct({
   state: PullRequestListState,
@@ -312,12 +312,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (parsed.followUpBehavior === "queue" || parsed.followUpBehavior === "steer") {
     preferences.followUpBehavior = parsed.followUpBehavior;
   }
-  if (
-    typeof parsed.pastedTextAttachmentThreshold === "number" &&
-    (PASTED_TEXT_ATTACHMENT_THRESHOLDS as readonly number[]).includes(
-      parsed.pastedTextAttachmentThreshold,
-    )
-  ) {
+  if (isPastedTextAttachmentThreshold(parsed.pastedTextAttachmentThreshold)) {
     preferences.pastedTextAttachmentThreshold = parsed.pastedTextAttachmentThreshold;
   }
   if (typeof parsed.language === "string") preferences.language = parsed.language;
