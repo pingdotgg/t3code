@@ -297,6 +297,14 @@ export function HtmlRenderTimelineRow({
   const messageId = row.anchorMessageId;
   const ask = ctx.onAskInSideChatFromEmbed;
 
+  if (row.picturePending) {
+    return (
+      <div className="px-1 text-sm text-muted-foreground">
+        Picture shows after you answer the card.
+      </div>
+    );
+  }
+
   if (ctx.renderHtmlRender) {
     return <div className="min-w-0 px-1">{ctx.renderHtmlRender(row)}</div>;
   }

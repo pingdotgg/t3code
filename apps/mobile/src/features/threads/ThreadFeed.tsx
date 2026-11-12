@@ -1763,6 +1763,15 @@ function renderFeedEntry(
   }
 
   if (entry.type === "html-render") {
+    if (entry.picturePending) {
+      return (
+        <View className="px-1">
+          <Text className="text-sm text-foreground-muted">
+            Picture shows after you answer the card.
+          </Text>
+        </View>
+      );
+    }
     return (
       <ThreadHtmlRender
         environmentId={props.environmentId}
