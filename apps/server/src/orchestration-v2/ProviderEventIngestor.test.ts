@@ -37,7 +37,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 
-import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1551,7 +1550,7 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
-  it.effect("stores tool image bytes only where a tool-output-image asset serves them", () =>
+  it.effect("keeps tool image bytes out of both SQLite tables, served ones included", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -1628,17 +1627,12 @@ layer("ProviderEventIngestorV2", (it) => {
       });
 
       assert.equal(storedJson.includes(readBase64), false);
-      assert.equal(storedJson.includes(screenshotBase64), true);
+      assert.equal(storedJson.includes(screenshotBase64), false);
       assert.deepEqual(projectedRead?.type === "dynamic_tool" ? projectedRead.output : null, {
         type: "image",
         file: { type: "image/png", originalSize: 30_000, sizeBytes: 30_000 },
       });
-      assert.deepEqual(
-        toolOutputImages(
-          projectedScreenshot?.type === "dynamic_tool" ? projectedScreenshot.output : null,
-        ),
-        [{ mimeType: "image/png", data: screenshotBase64 }],
-      );
+      assert.equal(JSON.stringify(projectedScreenshot).includes(screenshotBase64), false);
     }),
   );
 
