@@ -138,7 +138,10 @@ export function pickProjectLinkMatch(
   return new Set(matches).size === 1 ? (matches[0] ?? null) : null;
 }
 
-const COMMAND_CD_PATTERN = /(?:^|[\s;&|('"])cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|()'"]+))/g;
+// Only a `cd` that opens the command, optionally inside Codex's `sh -lc` wrapper, and is followed
+// by a separator: a `cd` inside an argument (`printf 'cd /x'`) changes nothing.
+const COMMAND_CD_PATTERN =
+  /^\s*(?:(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+["'])?cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|()'"]+))(?=\s*(?:&&|;|\n|["']?\s*$))/;
 
 /** Absolute directories the thread's commands `cd` into outside `cwd`, where its links may point. */
 export function threadCommandDirectories(
@@ -148,16 +151,16 @@ export function threadCommandDirectories(
   const directories = new Set<string>();
   for (const item of items) {
     if (item.type !== "command_execution") continue;
-    for (const match of item.input.matchAll(COMMAND_CD_PATTERN)) {
-      const directory = (match[1] ?? match[2] ?? match[3] ?? "").replace(/(.)[\\/]+$/, "$1");
-      // Searching an ancestor of the workspace (`cd ~`, `cd /`) would crawl far past the checkout.
-      if (
-        isAbsolutePath(directory) &&
-        workspaceRelativeFilePath(directory, cwd) === null &&
-        workspaceRelativeFilePath(cwd, directory) === null
-      ) {
-        directories.add(directory);
-      }
+    const match = COMMAND_CD_PATTERN.exec(item.input);
+    if (match === null) continue;
+    const directory = (match[1] ?? match[2] ?? match[3] ?? "").replace(/(.)[\\/]+$/, "$1");
+    // Searching an ancestor of the workspace (`cd ~`, `cd /`) would crawl far past the checkout.
+    if (
+      isAbsolutePath(directory) &&
+      workspaceRelativeFilePath(directory, cwd) === null &&
+      workspaceRelativeFilePath(cwd, directory) === null
+    ) {
+      directories.add(directory);
     }
   }
   return [...directories];

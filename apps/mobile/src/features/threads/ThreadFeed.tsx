@@ -2904,11 +2904,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             .turnItems ?? [],
           workspaceRoot,
         );
-        const otherRoots = [...new Set([...projectRoots, ...commandDirectories])];
-        match =
-          otherRoots.length === 0
-            ? null
-            : pickProjectLinkMatch(relativePath, await Promise.all(otherRoots.map(searchRoot)));
+        // The checkout the agent worked in outranks other projects that share the path.
+        for (const roots of [commandDirectories, projectRoots]) {
+          if (match !== null || roots.length === 0) continue;
+          match = pickProjectLinkMatch(relativePath, await Promise.all(roots.map(searchRoot)));
+        }
       }
       if (!match || match === relativePath || signal.aborted) return relativePath;
       const metadata = await executeAtomQuery(

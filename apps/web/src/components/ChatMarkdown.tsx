@@ -827,8 +827,7 @@ function useChatMarkdownState({
           cwd,
         )
       : [];
-    const otherRoots = [...new Set([...projectRoots, ...commandDirectories])];
-    if (otherRoots.length === 0) return null;
+    if (projectRoots.length === 0 && commandDirectories.length === 0) return null;
     // Another project's file never replaces a thread-local file the search missed.
     if (needsWorkspaceBasenameLookup(workspaceRelativePath)) {
       const metadata = await getFilesystemMetadata({
@@ -837,9 +836,18 @@ function useChatMarkdownState({
       });
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
+    // The checkout the agent worked in outranks other projects that share the path.
+    const commandMatch =
+      commandDirectories.length === 0
+        ? null
+        : pickProjectLinkMatch(
+            workspaceRelativePath,
+            await Promise.all(commandDirectories.map(searchRoot)),
+          );
+    if (commandMatch !== null || projectRoots.length === 0) return commandMatch;
     return pickProjectLinkMatch(
       workspaceRelativePath,
-      await Promise.all(otherRoots.map(searchRoot)),
+      await Promise.all(projectRoots.map(searchRoot)),
     );
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
