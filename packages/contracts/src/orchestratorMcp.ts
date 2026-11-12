@@ -188,7 +188,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     }),
   ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
-    description: "Mode 'wait' only. Default 10 min. A timeout does not cancel the child.",
+    description: "Mode 'wait' only. Default 4 min. A timeout does not cancel the child.",
   }),
   clientRequestId: OrchestratorMcpOptionalClientRequestId,
   runtimeMode: Schema.optional(
