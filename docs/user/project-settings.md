@@ -93,7 +93,8 @@ expression: minute, hour, day of month, month, and weekday. For example,
 Cron schedules use the environment's time zone, like fixed-time schedules. If
 the environment is offline at run time, only its first missed run can still
 happen, and only if the environment is back within 10 minutes of it. Other
-missed runs are skipped, and the task waits for its next time.
+missed runs are skipped, the task shows the miss as a failed run, and it waits
+for its next time.
 
 Under **Destination**, choose where runs go. **New thread each run** keeps every
 run separate. The two one-thread choices start a thread on the first run and post
