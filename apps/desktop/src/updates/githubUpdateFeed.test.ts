@@ -28,7 +28,7 @@ const atomFeed = (tags: ReadonlyArray<string>) =>
 const offeredRelease = async (
   feedTags: ReadonlyArray<string>,
   pointerTag: string | undefined,
-  listedTag?: string,
+  listedTag?: string | Error,
 ) => {
   let apiScans = 0;
   const request = async ({ path = "" }: { readonly path?: string | null }) => {
@@ -40,6 +40,7 @@ const offeredRelease = async (
     const manifest = /\/releases\/download\/v([^/]+)\/nightly\.yml$/.exec(path ?? "");
     if (manifest) return `version: ${manifest[1]}\npath: T3-Code.exe\nsha512: abc\n`;
     apiScans += 1;
+    if (listedTag instanceof Error) throw listedTag;
     return JSON.stringify(listedTag ? [{ tag_name: listedTag, body: "API notes" }] : []);
   };
   const provider = new GitHubProvider(
@@ -77,6 +78,14 @@ describe("GitHubProvider nightly lookup", () => {
     expect(await offeredRelease(crowdedFeed, nightly(4580), nightly(4606))).toEqual({
       tag: nightly(4606),
       releaseNotes: "API notes",
+      apiScans: 1,
+    });
+  });
+
+  it("keeps the pointer's answer when the API scan fails", async () => {
+    const rateLimited = new Error("403");
+    expect(await offeredRelease(crowdedFeed, nightly(4580), rateLimited)).toMatchObject({
+      tag: nightly(4580),
       apiScans: 1,
     });
   });

@@ -49,7 +49,8 @@ jobs:
   # published nightly, so stable only ever ships a build that nightly users
   # have already run. Scheduled runs also decide here whether a nightly is due.
   # The PAUSE_NIGHTLY repository variable skips scheduled runs only; every later
-  # job needs this one, so a skip here skips the whole run.
+  # job needs this one, so a skip here skips the whole run. `update_feed` runs
+  # without it and checks the variable itself.
   resolve_commit:
     name: Resolve release commit
     if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'schedule' || vars.PAUSE_NIGHTLY != 'true')
@@ -181,7 +182,6 @@ jobs:
               --github-output
 
             echo "release_channel=preview" >> "$GITHUB_OUTPUT"
-            echo "cli_dist_tag=preview" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           else
@@ -1048,8 +1048,8 @@ jobs:
 
   # A nightly install finds updates in releases.atom, which holds the 10 newest git tags of any
   # kind, so a burst of other tags hides every nightly. The `update-feed` release is the fixed URL
-  # newer installs read first. Every scheduled tick and every nightly repairs it, then fails when
-  # the feed no longer lists the newest nightly. See docs/operations/release.md#update-feed.
+  # newer installs also read. Every scheduled tick and every nightly repairs it, then fails when
+  # the feed's first nightly is not the newest one. See docs/operations/release.md#update-feed.
   update_feed:
     name: Check the update feed
     needs: [preflight, release]
@@ -1076,7 +1076,7 @@ jobs:
             core.info(`Newest nightly: ${tag}. Pointer: ${pointerTag}. Feed: ${feedTags?.join(', ')}.`);
             core.setOutput('tag', tag);
             core.setOutput('pointer_stale', pointerTag !== tag);
-            core.setOutput('feed_names_it', feedNightly === tag);
+            core.setOutput('feed', feedTags === undefined ? 'unreadable' : feedNightly === tag ? 'ok' : 'hidden');
 
       - name: Point the update feed at the newest nightly
         if: steps.feed.outputs.pointer_stale == 'true'
@@ -1090,13 +1090,20 @@ jobs:
             gh release create update-feed --prerelease --latest=false --title "Update feed" \
               --notes "The desktop updater reads this release to find the newest nightly. Do not delete it. See docs/operations/release.md."
           gh release upload update-feed nightly.json --clobber
+          # A draft's files are not public, so a release someone drafted would hide the pointer.
+          gh release edit update-feed --draft=false
 
       - name: Fail when the feed hides the newest nightly
-        if: steps.feed.outputs.feed_names_it == 'false'
+        if: steps.feed.outputs.tag != '' && steps.feed.outputs.feed != 'ok'
         env:
           RELEASE_TAG: ${{ steps.feed.outputs.tag }}
+          FEED: ${{ steps.feed.outputs.feed }}
         run: |
-          echo "::error::releases.atom could not be read, or its first nightly is not $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot reach it. A preview from a branch not rebased onto main is the usual cause. See docs/operations/release.md#update-feed."
+          if [[ "$FEED" == "unreadable" ]]; then
+            echo "::error::releases.atom could not be read, so this run could not check it. No tag cleanup is needed unless a later run reports a hidden nightly."
+          else
+            echo "::error::The first nightly in releases.atom is not $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot reach it. A preview from a branch not rebased onto main is the usual cause. See docs/operations/release.md#update-feed."
+          fi
           exit 1
 
   # The `t3` npm package is a launcher that downloads this version's CLI

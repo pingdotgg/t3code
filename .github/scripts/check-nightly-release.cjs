@@ -135,16 +135,27 @@ async function readNightlyUpdateFeed({ github, context, fetch = globalThis.fetch
   if (!pointer.ok && pointer.status !== 404) {
     throw new Error(`The update-feed pointer answered HTTP ${pointer.status}.`);
   }
-  const pointerTag = pointer.ok ? (await pointer.json().catch(() => null))?.tag_name : undefined;
+  let pointerTag;
+  if (pointer.ok) {
+    // A body that fails to arrive throws here; only one that is not JSON counts as malformed.
+    const body = await pointer.text();
+    try {
+      pointerTag = JSON.parse(body)?.tag_name;
+    } catch {}
+  }
 
-  // An unreadable feed leaves `feedNightly` unset, so the pointer is still repaired.
-  const feed = await fetch(`${base}/releases.atom`).catch(() => undefined);
-  const feedTags = feed?.ok
-    ? Array.from((await feed.text()).matchAll(/href="[^"]*\/releases\/tag\/([^"]+)"/g), (match) =>
-        decodeURIComponent(match[1]),
-      )
-    : undefined;
-  const feedNightly = feedTags?.find((tag) => /^v\d+\.\d+\.\d+-nightly\./.test(tag));
+  // An unreadable feed leaves `feedTags` unset, so the pointer is still repaired.
+  let feedTags;
+  try {
+    const feed = await fetch(`${base}/releases.atom`);
+    if (feed.ok) {
+      feedTags = Array.from(
+        (await feed.text()).matchAll(/href="[^"]*\/releases\/tag\/([^"]+)"/g),
+        (match) => decodeURIComponent(match[1]),
+      );
+    }
+  } catch {}
+  const feedNightly = feedTags?.find((tag) => /^v?\d+\.\d+\.\d+-nightly\./.test(tag));
 
   return { tag: latest.tagName, pointerTag, feedNightly, feedTags };
 }

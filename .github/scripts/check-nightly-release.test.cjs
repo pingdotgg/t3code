@@ -261,6 +261,9 @@ function updateFeedFixture({ feed, pointer }) {
 }
 
 const missing = () => new Response("Not Found", { status: 404 });
+// HTTP 200, then the connection drops before the body arrives.
+const brokenBody = () =>
+  new Response(new ReadableStream({ start: (controller) => controller.error(new Error("reset")) }));
 for (const [name, { feed, pointer }, expected] of [
   [
     "a nightly crowded out of the feed and a missing pointer",
@@ -277,6 +280,11 @@ for (const [name, { feed, pointer }, expected] of [
     { feed: new Response("", { status: 503 }), pointer: Response.json(null) },
     { pointerTag: undefined, feedNightly: undefined },
   ],
+  [
+    "the pointer when the feed's body fails to arrive",
+    { feed: brokenBody(), pointer: Response.json({ tag_name: NEWEST }) },
+    { pointerTag: NEWEST, feedNightly: undefined },
+  ],
 ]) {
   test(`update feed check reports ${name}`, async () => {
     const { tag, pointerTag, feedNightly } = await readNightlyUpdateFeed(
@@ -286,10 +294,12 @@ for (const [name, { feed, pointer }, expected] of [
   });
 }
 
-test("update feed check does not call a pointer stale when GitHub fails to serve it", async () => {
-  const options = updateFeedFixture({
-    feed: atomFeed([NEWEST]),
-    pointer: new Response("", { status: 503 }),
+for (const [name, pointer, error] of [
+  ["answers with an error", () => new Response("", { status: 503 }), /pointer answered HTTP 503/],
+  ["drops the connection", brokenBody, /reset/],
+]) {
+  test(`update feed check does not call a pointer stale when GitHub ${name}`, async () => {
+    const options = updateFeedFixture({ feed: atomFeed([NEWEST]), pointer: pointer() });
+    await assert.rejects(readNightlyUpdateFeed(options), error);
   });
-  await assert.rejects(readNightlyUpdateFeed(options), /pointer answered HTTP 503/);
-});
+}
