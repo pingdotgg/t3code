@@ -1,3 +1,4 @@
+import { PullRequestComposerNotice } from "./PullRequestComposerNotice";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AppBar as AndroidScreenHeader } from "../../components/ui/AppBar";
 import { Menu } from "../../components/ui/Menu";
@@ -621,6 +622,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
   return (
     <PullRequestMarkdownRepository params={params} changeRequest={pr}>
       <View className="flex-1 android:bg-header ios:bg-screen">
+        <PullRequestComposerNotice bottomInset={toolbarHeight + 8} />
         <AppBar
           title={`#${params.number}`}
           subtitle={connected ? params.repository : `${params.repository} · Offline`}
@@ -1630,6 +1632,7 @@ export function PullRequestDiffContent({
   const loadingDiff = (result.isPending && !data.rows.length) || (seekingFile && !result.error);
   return (
     <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
+      {!embedded ? <PullRequestComposerNotice bottomInset={toolbarHeight + 8} /> : null}
       {!embedded ? (
         <NativeStackScreenOptions
           options={{
