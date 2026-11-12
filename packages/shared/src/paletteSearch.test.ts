@@ -338,6 +338,9 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
     expect(scoreThreadSearch("t3", flat, NOW)).toBeNull();
     expect(scoreThreadSearch("t3 connect", flat, NOW)).toBeNull();
     expect(scoreThreadSearch("abcd1234", flat, NOW)).not.toBeNull();
+    for (const query of ["t3-abcd", "t3-abcd1234 connect", "connect t3-abcd1234"]) {
+      expect(scoreThreadSearch(query, { ...flat, projectTitle: "connect" }, NOW)).not.toBeNull();
+    }
   });
 
   it("reads letters and numbers typed together, without forgiving typos in numbers", () => {
