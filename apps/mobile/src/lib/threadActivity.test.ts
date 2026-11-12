@@ -183,6 +183,66 @@ it("hides a lesson picture before an unanswered card until the card is answered"
   expect(answeredRows.find((entry) => entry.type === "html-render")).not.toMatchObject({
     picturePending: true,
   });
+
+  const answeredPicture = {
+    ...visual,
+    output: { htmlRender: { ...visual.output.htmlRender, forCard: "old-card" } },
+  };
+  const oldCardAnswer = projected(
+    {
+      ...userMessage("2026-06-20T00:00:03.000Z"),
+      id: TurnItemId.make("old-card-answer"),
+      messageId: MessageId.make("old-card-answer-message"),
+      text: 'Quiz answer: "A", right.\n\n(card old-card)',
+    },
+    3,
+  );
+  const taggedRows = deriveThreadFeedPresentation(
+    buildThreadFeed([
+      projected(userMessage(), 0),
+      projected({ ...assistantMessage(), id: TurnItemId.make("text-before") }, 1),
+      projected(answeredPicture, 2),
+      projected({ ...assistantMessage(), id: TurnItemId.make("text-after") }, 3),
+      projected(card, 4),
+      oldCardAnswer,
+    ]),
+    null,
+    new Set(),
+    new Set(),
+    null,
+    false,
+    undefined,
+    undefined,
+    true,
+  );
+  expect(taggedRows.find((entry) => entry.type === "html-render")).not.toMatchObject({
+    picturePending: true,
+  });
+
+  const openCardPicture = {
+    ...visual,
+    output: { htmlRender: { ...visual.output.htmlRender, forCard: "card" } },
+  };
+  const openCardRows = deriveThreadFeedPresentation(
+    buildThreadFeed([
+      projected(userMessage(), 0),
+      projected({ ...assistantMessage(), id: TurnItemId.make("text-before") }, 1),
+      projected(openCardPicture, 2),
+      projected({ ...assistantMessage(), id: TurnItemId.make("text-after") }, 3),
+      projected(card, 4),
+    ]),
+    null,
+    new Set(),
+    new Set(),
+    null,
+    false,
+    undefined,
+    undefined,
+    true,
+  );
+  expect(openCardRows.find((entry) => entry.type === "html-render")).toMatchObject({
+    picturePending: true,
+  });
 });
 
 it("keeps historical plan detail accessible from its paged turn item", () => {

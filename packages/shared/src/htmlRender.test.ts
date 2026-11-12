@@ -6,10 +6,25 @@ import {
   readHtmlRenderSelection,
   readHtmlRenderTextResult,
   readHtmlRenderLinkRequest,
+  readHtmlRenderReference,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
+
+describe("readHtmlRenderReference forCard", () => {
+  it.each([
+    ["item-q1", "item-q1"],
+    ["", undefined],
+    [123, undefined],
+    ["x".repeat(257), undefined],
+  ])("keeps only a valid card id (%s)", (forCard, expected) => {
+    expect(readHtmlRenderReference({ ...reference, forCard })).toEqual({
+      ...reference,
+      ...(expected === undefined ? {} : { forCard: expected }),
+    });
+  });
+});
 
 describe("injectHtmlRenderBootstrap", () => {
   it("puts the theme ahead of the page's own head content", () => {

@@ -77,7 +77,7 @@ const handlers = {
         .publish({ ...source, threadId: thread.threadId, title: input.title, height: input.height })
         .pipe(Effect.mapError(toFailure));
       return {
-        htmlRender: reference,
+        htmlRender: { ...reference, ...(input.forCard ? { forCard: input.forCard } : {}) },
         message:
           "Shown to the reader above your reply. Don't mention or describe the page; reply with only what it doesn't already say.",
       };

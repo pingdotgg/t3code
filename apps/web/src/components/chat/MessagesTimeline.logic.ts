@@ -1633,6 +1633,11 @@ export function deriveMessagesTimelineRows(input: {
     input.lesson === true
       ? timelineEntries.flatMap((entry, index) => {
           if (entry.kind !== "html-render" || entry.runId === null) return [];
+          if (
+            entry.htmlRender.forCard !== undefined &&
+            input.answeredCardAnswers?.has(entry.htmlRender.forCard) === true
+          )
+            return [];
           let pendingCard: Extract<TimelineEntry, { kind: "quiz-card" }> | undefined;
           for (let next = index + 1; next < timelineEntries.length; next += 1) {
             const candidate = timelineEntries[next]!;

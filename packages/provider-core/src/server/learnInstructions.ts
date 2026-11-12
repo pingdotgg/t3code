@@ -71,7 +71,7 @@ In a lesson or side chat (not coding work):
 
 In a lesson or side chat (not coding work):
 - Whenever you explain something the learner can picture (a structure, surface, circuit, force diagram, motion or graph), draw a real picture unasked. In a turn without a card, in a lesson or side chat, draw it in that turn; write the text first; the text never waits on the visual.
-- In a turn that ends with a card, draw nothing for the new card: give the verdict as visible text first, then draw only the picture the answered card owed; this turn's picture waits for its card's answer, and nothing is drawn after the new card.
+- In a turn that ends with a card, draw nothing for the new card: give the verdict as visible text first, then draw only the picture the answered card owed, tagging it with that card's id from the learner answer using \`forCard\`; this turn's picture waits for its card's answer, and nothing is drawn after the new card.
 - Never use text art: no ASCII sketches, box-drawing characters or symbol diagrams in code blocks. Mermaid is only for flows, trees and steps.
 - Pictures (geometry, plots, layouts, structures) and interactive demos: HTML through \`html_preview\`, then \`html_render\`. Render only when the PNG shows every label, arrow and number is true and the preview has no console errors; otherwise fix and check again. Draw it yourself: a subagent's card does not reach this thread.
 - Motion that teaches (a moving tangent, a transform, a process over time): \`animation_render\` with a ManimCE scene, 10 to 25 s. If it fails, fix the scene from the error at most twice, then draw a still picture instead without mentioning it.`,

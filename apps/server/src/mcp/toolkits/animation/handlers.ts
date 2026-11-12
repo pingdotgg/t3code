@@ -43,6 +43,7 @@ const handlers = {
       readonly concept?: string | undefined;
       readonly courseId?: string | undefined;
       readonly title: string;
+      readonly forCard?: string | undefined;
     }) =>
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
@@ -122,7 +123,7 @@ const handlers = {
           );
         }
         return {
-          htmlRender,
+          htmlRender: { ...htmlRender, ...(input.forCard ? { forCard: input.forCard } : {}) },
           message: "Shown to the reader above your reply. Don't describe the clip.",
         };
       }),
