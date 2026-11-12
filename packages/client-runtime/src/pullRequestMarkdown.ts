@@ -70,7 +70,10 @@ const DETAILS_START_PATTERN = /^\s*<details\b/iu;
 const DETAILS_END_PATTERN = /<\/details\s*>\s*$/iu;
 const DETAILS_OPEN_PATTERN = /<details\b/giu;
 const DETAILS_CLOSE_PATTERN = /<\/details\s*>/giu;
-const DETAILS_OPEN_TAG_PATTERN = /^\s*<details\b([^>]*)>/iu;
+/** Quoted values may hold `>`; the alternatives are disjoint, as in `TABLE_STRUCTURE_TAG_PATTERN`. */
+const DETAILS_OPEN_TAG_PATTERN = /^\s*<details\b((?:[^<>"']|"[^"]*"|'[^']*')*)>/iu;
+/** Deeper folds stay markdown, so a crafted body cannot recurse once per nesting level. */
+const DETAILS_MAX_DEPTH = 8;
 const SUMMARY_PATTERN = /^\s*<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/iu;
 
 /** Rows are laid out independently, so a spanning cell would shift the cells after it. */
@@ -104,7 +107,7 @@ type TableRows = ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>>;
  * Cells of a table made only of rows and cells, or null when anything else is in it: a caption,
  * text between cells, a nested table. Cell contents are split on their own, so tables never nest.
  */
-function tableRows(html: string, htmlOffset: number): TableRows | null {
+function tableRows(html: string, htmlOffset: number, foldDepth: number): TableRows | null {
   const rows: PullRequestBodyTableCell[][] = [];
   let row: PullRequestBodyTableCell[] | null = null;
   let cell: { tag: string; contentStart: number } | null = null;
@@ -122,7 +125,7 @@ function tableRows(html: string, htmlOffset: number): TableRows | null {
         return null;
       row!.push({
         header: tag === "th",
-        segments: splitBodyAt(content, htmlOffset + cell.contentStart),
+        segments: splitBodyAt(content, htmlOffset + cell.contentStart, foldDepth),
       });
       cell = null;
     } else {
@@ -157,6 +160,7 @@ function mediaTableAt(
   lines: ReadonlyArray<string>,
   start: number,
   startOffset: number,
+  foldDepth: number,
 ): { end: number; rows: TableRows | null } {
   const lastCandidate = Math.min(start + TABLE_MAX_LINES, lines.length) - 1;
   let depth = 0;
@@ -170,7 +174,7 @@ function mediaTableAt(
   }
   if (depth !== 0 || !TABLE_END_PATTERN.test(lines[end]!)) return { end, rows: null };
   // Lifting attachment links out of a table's cells would tear the table apart.
-  const rows = tableRows(lines.slice(start, end + 1).join("\n"), startOffset);
+  const rows = tableRows(lines.slice(start, end + 1).join("\n"), startOffset, foldDepth);
   const hasMedia = rows?.some((cells) =>
     cells.some((cell) => cell.segments.some((segment) => segment.kind !== "markdown")),
   );
@@ -186,14 +190,22 @@ function mediaDetailsAt(
   lines: ReadonlyArray<string>,
   start: number,
   startOffset: number,
+  foldDepth: number,
 ): {
   end: number;
   segment: Omit<Extract<PullRequestBodySegment, { kind: "details" }>, "id"> | null;
 } {
   let depth = 0;
   let end = start;
+  let openFence: string | null = null;
   for (; end < lines.length; end += 1) {
     const line = lines[end]!;
+    const fence = fenceAfter(openFence, line);
+    if (fence !== undefined) {
+      openFence = fence;
+      continue;
+    }
+    if (openFence !== null || INDENTED_CODE_PATTERN.test(line)) continue;
     depth +=
       (line.match(DETAILS_OPEN_PATTERN)?.length ?? 0) -
       (line.match(DETAILS_CLOSE_PATTERN)?.length ?? 0);
@@ -202,13 +214,18 @@ function mediaDetailsAt(
   end = Math.min(end, lines.length - 1);
   if (depth !== 0 || !DETAILS_END_PATTERN.test(lines[end]!)) return { end, segment: null };
   const html = lines.slice(start, end + 1).join("\n");
-  const openTag = DETAILS_OPEN_TAG_PATTERN.exec(html)!;
+  const openTag = DETAILS_OPEN_TAG_PATTERN.exec(html);
+  if (openTag === null) return { end, segment: null };
   let bodyStart = openTag[0].length;
   const summary = SUMMARY_PATTERN.exec(html.slice(bodyStart));
   if (summary !== null) bodyStart += summary[0].length;
   const bodyEnd = html.search(DETAILS_END_PATTERN);
   if (bodyEnd < bodyStart) return { end, segment: null };
-  const segments = splitBodyAt(html.slice(bodyStart, bodyEnd), startOffset + bodyStart);
+  const segments = splitBodyAt(
+    html.slice(bodyStart, bodyEnd),
+    startOffset + bodyStart,
+    foldDepth + 1,
+  );
   if (segments.every((segment) => segment.kind === "markdown")) return { end, segment: null };
   return {
     end,
@@ -222,12 +239,33 @@ function mediaDetailsAt(
   };
 }
 
+/**
+ * The open fence after `line`, or undefined when `line` is not a fence. A fence closes only on
+ * the same marker, at least as long as the one that opened it, and with nothing after it:
+ * `~~~` cannot end a ``` block, and ```` ```ts ```` is an info string opening a nested fence.
+ */
+function fenceAfter(openFence: string | null, line: string): string | null | undefined {
+  const fenceMatch = FENCE_PATTERN.exec(line);
+  if (fenceMatch === null) return undefined;
+  const fence = fenceMatch[1]!;
+  if (openFence === null) return fence;
+  const closes =
+    fence[0] === openFence[0] &&
+    fence.length >= openFence.length &&
+    fenceMatch[2]!.trim().length === 0;
+  return closes ? null : openFence;
+}
+
 export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
-  return splitBodyAt(body, 0);
+  return splitBodyAt(body, 0, 0);
 }
 
 /** `baseOffset` is where `body` starts in the whole body, so a table cell's edits write back. */
-function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullRequestBodySegment> {
+function splitBodyAt(
+  body: string,
+  baseOffset: number,
+  foldDepth: number,
+): ReadonlyArray<PullRequestBodySegment> {
   const segments: PullRequestBodySegment[] = [];
   const markdown: string[] = [];
   let markdownStart = 0;
@@ -257,22 +295,9 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   for (let index = 0; index < lines.length; lineStart += lines[index]!.length + 1, index += 1) {
     const line = lines[index]!;
     if (markdown.length === 0) markdownStart = lineStart;
-    const fenceMatch = FENCE_PATTERN.exec(line);
-    if (fenceMatch !== null) {
-      const fence = fenceMatch[1]!;
-      // A fence closes only on the same marker, at least as long as the one that opened it,
-      // and with nothing after it: `~~~` cannot end a ``` block, and ```` ```ts ```` is an
-      // info string opening a nested fence, not a close.
-      const closes =
-        openFence !== null &&
-        fence[0] === openFence[0] &&
-        fence.length >= openFence.length &&
-        fenceMatch[2]!.trim().length === 0;
-      if (openFence === null) {
-        openFence = fence;
-      } else if (closes) {
-        openFence = null;
-      }
+    const fence = fenceAfter(openFence, line);
+    if (fence !== undefined) {
+      openFence = fence;
       markdown.push(line);
       continue;
     }
@@ -282,7 +307,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
     }
 
     if (index > tableScannedThrough && TABLE_START_PATTERN.test(line)) {
-      const table = mediaTableAt(lines, index, lineStart);
+      const table = mediaTableAt(lines, index, lineStart, foldDepth);
       tableScannedThrough = table.end;
       if (table.rows !== null) {
         flushMarkdown();
@@ -292,8 +317,12 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       }
     }
 
-    if (index > detailsScannedThrough && DETAILS_START_PATTERN.test(line)) {
-      const details = mediaDetailsAt(lines, index, lineStart);
+    if (
+      foldDepth < DETAILS_MAX_DEPTH &&
+      index > detailsScannedThrough &&
+      DETAILS_START_PATTERN.test(line)
+    ) {
+      const details = mediaDetailsAt(lines, index, lineStart, foldDepth);
       detailsScannedThrough = details.end;
       if (details.segment !== null) {
         flushMarkdown();

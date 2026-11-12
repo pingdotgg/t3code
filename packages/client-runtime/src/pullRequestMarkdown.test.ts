@@ -150,7 +150,7 @@ describe("pull request body segmentation", () => {
 
   it("keeps a video inside a details block within its fold", () => {
     const body = [
-      "<details open>",
+      '<details title="Before > after" open>',
       "<summary>Videos</summary>",
       "",
       "Caption one",
@@ -182,6 +182,42 @@ describe("pull request body segmentation", () => {
       if (segment.kind !== "markdown") continue;
       expect(count(segment.text, /<details\b/giu)).toBe(count(segment.text, /<\/details\s*>/giu));
     }
+  });
+
+  it("does not close a fold on a closing tag inside fenced code", () => {
+    const body = [
+      "<details>",
+      "<summary>Demo</summary>",
+      "",
+      "https://example.com/inside.mp4",
+      "",
+      "```html",
+      "</details>",
+      "```",
+      "",
+      "</details>",
+      "",
+      "https://example.com/outside.mp4",
+    ].join("\n");
+    expect(splitPullRequestBody(body)).toMatchObject([
+      {
+        kind: "details",
+        segments: [
+          { kind: "attachment", url: "https://example.com/inside.mp4" },
+          { kind: "markdown", text: "```html\n</details>\n```" },
+        ],
+      },
+      { kind: "attachment", url: "https://example.com/outside.mp4" },
+    ]);
+  });
+
+  it("splits deeply nested folds without recursing once per level", () => {
+    const body = [
+      "<details>\n".repeat(3000),
+      "https://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-abcdef123456\n",
+      "</details>\n".repeat(3000),
+    ].join("");
+    expect(() => splitPullRequestBody(body)).not.toThrow();
   });
 
   it("refuses a non-http source rather than making a link out of it", () => {
