@@ -317,15 +317,29 @@ export function useThreadComposerState(input: {
   const selectedDraft = useComposerDraftSettings(selectedThreadKey);
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
-  const modelSelection = selectedDraft.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const modelSelection =
+    selectedDraft.modelSelection ??
+    selectedThread?.nextTurnModelSelection ??
+    selectedThread?.modelSelection ??
+    null;
   const serverConfig = selectedEnvironmentRuntime?.serverConfig;
-  const pendingHandoff = resolvePendingHandoff(
-    selectedThreadProjection?.projection,
-    isModelSelectionUnavailable(serverConfig, modelSelection, selectedThread?.projectId ?? null)
-      ? null
-      : modelSelection,
-    serverConfig?.providers ?? [],
-  );
+  const stagedProviderSwitch =
+    selectedThread?.nextTurnModelSelection != null &&
+    selectedThread.nextTurnModelSelection.instanceId !== selectedThread.modelSelection.instanceId
+      ? {
+          from: [selectedThread.modelSelection],
+          to: selectedThread.nextTurnModelSelection,
+        }
+      : null;
+  const pendingHandoff =
+    stagedProviderSwitch ??
+    resolvePendingHandoff(
+      selectedThreadProjection?.projection,
+      isModelSelectionUnavailable(serverConfig, modelSelection, selectedThread?.projectId ?? null)
+        ? null
+        : modelSelection,
+      serverConfig?.providers ?? [],
+    );
   const runtimeMode = selectedDraft.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   // Plan mode is not offered to users; every send runs in build mode.
   const interactionMode = selectedThread ? DEFAULT_PROVIDER_INTERACTION_MODE : null;

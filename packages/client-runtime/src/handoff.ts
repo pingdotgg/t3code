@@ -23,6 +23,22 @@ export type HandoffTimelineRun = Pick<
 
 export type HandoffEndpoints = ReturnType<typeof resolveHandoffEndpoints>;
 
+/** Staged cross-provider pick for the next turn, while the live selection stays current. */
+export function resolveStagedProviderSwitch(
+  thread:
+    | {
+        readonly modelSelection: ModelSelection;
+        readonly nextTurnModelSelection?: ModelSelection | null | undefined;
+      }
+    | null
+    | undefined,
+): { readonly current: ModelSelection; readonly next: ModelSelection } | null {
+  const next = thread?.nextTurnModelSelection;
+  if (thread == null || next == null) return null;
+  if (next.instanceId === thread.modelSelection.instanceId) return null;
+  return { current: thread.modelSelection, next };
+}
+
 export function resolvePendingHandoff(
   projection: Pick<ThreadStructure, "runs" | "visibleTurnItems"> | null | undefined,
   selection: ModelSelection | null | undefined,

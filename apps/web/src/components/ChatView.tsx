@@ -96,7 +96,10 @@ import {
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { compactionBlocksSteering } from "@t3tools/client-runtime/state/composer-dispatch";
-import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
+import {
+  resolvePendingHandoff,
+  resolveStagedProviderSwitch,
+} from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
@@ -445,6 +448,9 @@ export default function ChatView(props: ChatViewProps) {
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const setThreadRuntimeMode = useOrchestrationCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
+  });
+  const setThreadModelSelection = useOrchestrationCommand(threadEnvironment.setModelSelection, {
+    label: "change model",
   });
   const setThreadInteractionMode = useOrchestrationCommand(threadEnvironment.setInteractionMode, {
     reportFailure: false,
@@ -2434,18 +2440,33 @@ export default function ChatView(props: ChatViewProps) {
       item.type === "user_message" &&
       (item.text.trim().toLowerCase() !== "/compact" || item.attachments.length > 0),
   );
-  const pendingHandoffSelection = composerSelectedModelSelection ?? activeThread?.modelSelection;
+  const stagedProviderSwitch = resolveStagedProviderSwitch(
+    activeThread === undefined
+      ? null
+      : {
+          modelSelection: activeThread.modelSelection,
+          nextTurnModelSelection: activeThread.nextTurnModelSelection,
+        },
+  );
+  const pendingHandoffSelection =
+    stagedProviderSwitch?.next ?? composerSelectedModelSelection ?? activeThread?.modelSelection;
   const pendingHandoffSelectionUsable = providerInstanceEntries.some(
     (entry) =>
       entry.instanceId === pendingHandoffSelection?.instanceId &&
       entry.enabled &&
       entry.isAvailable,
   );
-  const pendingHandoff = resolvePendingHandoff(
-    serverProjection,
-    pendingHandoffSelectionUsable ? pendingHandoffSelection : null,
-    providerStatuses,
-  );
+  const pendingHandoff =
+    stagedProviderSwitch !== null
+      ? {
+          from: [stagedProviderSwitch.current],
+          to: stagedProviderSwitch.next,
+        }
+      : resolvePendingHandoff(
+          serverProjection,
+          pendingHandoffSelectionUsable ? pendingHandoffSelection : null,
+          providerStatuses,
+        );
   const compactThreadUnavailable =
     !canOperateThread ||
     !activeThread ||
@@ -3106,7 +3127,21 @@ export default function ChatView(props: ChatViewProps) {
               environmentId={environmentId}
               endpoints={pendingHandoff}
               providers={providerStatuses}
-              pending
+              pending={stagedProviderSwitch === null}
+              nextTurn={stagedProviderSwitch !== null}
+              {...(stagedProviderSwitch === null || activeThread === undefined
+                ? {}
+                : {
+                    onCancel: () => {
+                      void setThreadModelSelection({
+                        environmentId,
+                        input: {
+                          threadId: activeThread.id,
+                          modelSelection: stagedProviderSwitch.current,
+                        },
+                      });
+                    },
+                  })}
             />
           </div>
         )}
@@ -3666,7 +3701,10 @@ export default function ChatView(props: ChatViewProps) {
                                 activeProjectDefaultModelSelection={
                                   activeProjectDefaultModelSelection
                                 }
-                                activeThreadModelSelection={activeThread?.modelSelection}
+                                activeThreadModelSelection={
+                                  activeThread?.nextTurnModelSelection ??
+                                  activeThread?.modelSelection
+                                }
                                 activeProjectId={activeProject?.id ?? null}
                                 projectName={activeProject?.title}
                                 compactThreadUnavailable={compactThreadUnavailable}

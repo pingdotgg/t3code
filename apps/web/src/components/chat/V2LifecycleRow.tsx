@@ -638,7 +638,10 @@ export function HandoffRow(props: {
   readonly endpoints: HandoffEndpoints;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly pending?: boolean;
+  /** Staged for the next turn while the current turn keeps the from endpoint. */
+  readonly nextTurn?: boolean;
   readonly failed?: boolean;
+  readonly onCancel?: () => void;
 }) {
   const { from: fromEndpoints, to } = props.endpoints;
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
@@ -646,10 +649,17 @@ export function HandoffRow(props: {
   const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
   return (
     <TimelineSystemDivider
-      label={props.pending ? "Context handoff pending" : "Context handoff"}
+      label={
+        props.nextTurn
+          ? "Provider switch on next turn"
+          : props.pending
+            ? "Context handoff pending"
+            : "Context handoff"
+      }
       icon={ArrowRightLeftIcon}
       showDetailSeparator={false}
       tone={props.failed ? "danger" : "neutral"}
+      {...(props.onCancel === undefined ? {} : { actionLabel: "Cancel", onAction: props.onCancel })}
       detail={
         <span className="inline-flex min-w-0 flex-wrap items-center justify-center gap-1.5">
           {fromEndpoints.map((endpoint, index) => (

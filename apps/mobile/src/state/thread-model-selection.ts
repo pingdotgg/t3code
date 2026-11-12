@@ -10,7 +10,7 @@ import { scopedThreadKey } from "../lib/scopedEntities";
 import * as Dialog from "../components/ui/Dialog";
 import { appAtomRegistry } from "./atom-registry";
 import { readEnvironmentScope } from "./session";
-import { environmentThreadShells, threadEnvironment } from "./threads";
+import { threadEnvironment } from "./threads";
 import {
   releaseComposerDraftModelSelection,
   updateComposerDraftSettings,
@@ -25,13 +25,8 @@ export function selectThreadModel(
   // Its own object, so an older reply for an equal pick cannot release this one.
   const modelSelection = { ...value };
   updateComposerDraftSettings(threadKey, { modelSelection });
-  const thread = appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
-  // Another instance replaces the live session, which may hold an open question; that pick
-  // still waits for a sent message.
-  if (
-    thread?.modelSelection.instanceId !== modelSelection.instanceId ||
-    !readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)
-  ) {
+  // Cross-instance may stage for the next turn while the current turn keeps running.
+  if (!readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)) {
     return;
   }
   void runAtomCommand(

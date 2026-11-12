@@ -10,6 +10,7 @@ import {
   resolveHandoffEndpoints,
   resolveModelSwitchChange,
   resolvePendingHandoff,
+  resolveStagedProviderSwitch,
   type HandoffTimelineRun,
 } from "./handoff.ts";
 
@@ -171,6 +172,35 @@ describe("pending context handoff", () => {
     })) as unknown as ServerProvider[];
     expect(
       resolvePendingHandoff(projection, { instanceId: to, model: "target" }, providers),
+    ).toBeNull();
+  });
+});
+
+describe("staged next-turn provider switch", () => {
+  it("exposes current vs next when a cross-provider pick is staged", () => {
+    expect(
+      resolveStagedProviderSwitch({
+        modelSelection: { instanceId: from, model: "source" },
+        nextTurnModelSelection: { instanceId: to, model: "target" },
+      }),
+    ).toEqual({
+      current: { instanceId: from, model: "source" },
+      next: { instanceId: to, model: "target" },
+    });
+  });
+
+  it("hides staging when next-turn matches the live selection or is absent", () => {
+    expect(
+      resolveStagedProviderSwitch({
+        modelSelection: { instanceId: from, model: "source" },
+        nextTurnModelSelection: { instanceId: from, model: "other" },
+      }),
+    ).toBeNull();
+    expect(
+      resolveStagedProviderSwitch({
+        modelSelection: { instanceId: from, model: "source" },
+        nextTurnModelSelection: null,
+      }),
     ).toBeNull();
   });
 });

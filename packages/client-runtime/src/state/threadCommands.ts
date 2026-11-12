@@ -549,10 +549,20 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       activeOrderKey: input.orderKey,
     })),
-    // Shown at once, so a composer that releases its accepted pick keeps showing it.
-    setModelSelection: optimistic.wrap(commands.setModelSelection, (thread, input) => ({
-      ...thread,
-      modelSelection: input.modelSelection,
-    })),
+    // Same-instance applies now. Cross-instance stages next-turn while a turn may still
+    // be running; restoring the live selection clears a staged switch.
+    setModelSelection: optimistic.wrap(commands.setModelSelection, (thread, input) => {
+      if (input.modelSelection.instanceId === thread.modelSelection.instanceId) {
+        return {
+          ...thread,
+          modelSelection: input.modelSelection,
+          nextTurnModelSelection: null,
+        };
+      }
+      return {
+        ...thread,
+        nextTurnModelSelection: input.modelSelection,
+      };
+    }),
   };
 }

@@ -465,6 +465,11 @@ export const OrchestrationV2AppThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
+  /**
+   * Cross-provider pick staged for the next turn while the current turn keeps running.
+   * Absent/null means no staged switch. `modelSelection` stays the live occupant.
+   */
+  nextTurnModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
@@ -2183,6 +2188,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   title: Schema.String,
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
+  nextTurnModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),

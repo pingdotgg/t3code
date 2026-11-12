@@ -82,6 +82,7 @@ export interface ContextHandoffServiceV2Shape {
       "delta_since_target_last_seen" | "full_thread_summary"
     >;
     readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly identity?: ProviderHandoffIdentity;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   /** Parent activity after the fork point, prepended to a side chat's first provider turn. */
@@ -112,6 +113,78 @@ function compactText(text: string, maxLength = 240): string {
   const end = maxLength - 3;
   const last = compacted.charCodeAt(end - 1);
   return `${compacted.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end)}...`;
+}
+
+/** Durable thread identity carried across Claude↔Codex (and other) harness switches. */
+export type ProviderHandoffIdentity = {
+  readonly title: string | null;
+  readonly worktreePath: string | null;
+  readonly branch: string | null;
+  readonly fromProviderInstanceId: ProviderInstanceId;
+  readonly toProviderInstanceId: ProviderInstanceId;
+  readonly openQueuedRunCount?: number;
+  readonly reason?: string | null;
+};
+
+export function providerHandoffIdentity(input: {
+  readonly thread: Pick<OrchestrationV2AppThread, "title" | "worktreePath" | "branch">;
+  readonly fromProviderInstanceId: ProviderInstanceId;
+  readonly toProviderInstanceId: ProviderInstanceId;
+  readonly runs?: ReadonlyArray<Pick<OrchestrationV2Run, "status">>;
+  readonly reason?: string | null;
+}): ProviderHandoffIdentity {
+  return {
+    title: input.thread.title,
+    worktreePath: input.thread.worktreePath,
+    branch: input.thread.branch,
+    fromProviderInstanceId: input.fromProviderInstanceId,
+    toProviderInstanceId: input.toProviderInstanceId,
+    openQueuedRunCount: input.runs?.filter((run) => run.status === "queued").length ?? 0,
+    ...(input.reason === undefined ? {} : { reason: input.reason }),
+  };
+}
+
+/**
+ * Cross-harness switch framing (OpenRig set-runtime-inspired): same thread name/place/open
+ * work; fresh native conversation; only the handover carries prior context.
+ */
+export function makeProviderHandoffIdentityCoverage(input: {
+  readonly threadId: ThreadId;
+  readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
+  readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly identity: ProviderHandoffIdentity;
+}): string {
+  const place =
+    input.identity.worktreePath === null
+      ? "unresolved workspace"
+      : input.identity.branch === null || input.identity.branch === ""
+        ? input.identity.worktreePath
+        : `${input.identity.worktreePath} (branch ${input.identity.branch})`;
+  const queued =
+    input.identity.openQueuedRunCount !== undefined && input.identity.openQueuedRunCount > 0
+      ? `Open queued runs on this thread: ${input.identity.openQueuedRunCount}.`
+      : "No open queued runs on this thread.";
+  const reason =
+    input.identity.reason !== undefined &&
+    input.identity.reason !== null &&
+    input.identity.reason !== ""
+      ? `Switch reason: ${compactText(input.identity.reason)}.`
+      : null;
+  return [
+    "Provider switch. You continue the same thread; keep its name, workspace, and open work.",
+    `Thread: ${input.threadId}.`,
+    `Title: ${input.identity.title ?? "(untitled)"}.`,
+    `Workspace: ${place}.`,
+    `Harness: ${input.identity.fromProviderInstanceId} → ${input.identity.toProviderInstanceId}.`,
+    queued,
+    ...(reason === null ? [] : [reason]),
+    "Native conversation starts fresh; only this handover carries prior context. Earlier activity is summarized below.",
+    handoffCoverage({
+      threadId: input.threadId,
+      coveredRunOrdinals: input.coveredRunOrdinals,
+      items: input.items,
+    }),
+  ].join("\n");
 }
 
 export function visibleDeltaRunOrdinals(
@@ -500,6 +573,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         "delta_since_target_last_seen" | "full_thread_summary"
       >;
       readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+      readonly identity?: ProviderHandoffIdentity;
       readonly createdAt: DateTime.Utc;
     }) {
       const handoffId = yield* idAllocator.allocate
@@ -521,7 +595,15 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage(input);
+      const coverage =
+        input.identity === undefined
+          ? handoffCoverage(input)
+          : makeProviderHandoffIdentityCoverage({
+              threadId: input.threadId,
+              coveredRunOrdinals: input.coveredRunOrdinals,
+              items: input.items,
+              identity: input.identity,
+            });
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
           const message = historicalMessage(item);
