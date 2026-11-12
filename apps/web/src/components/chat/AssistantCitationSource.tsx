@@ -83,6 +83,64 @@ export function observeAssistantCitationCommentSource({
   return dispose;
 }
 
+const CITATION_REVEAL_INSET = 120;
+
+/** The last client rect of a cited range, the line the comment popup anchors to. */
+export function assistantCitationAnchorRect(range: Range): DOMRect {
+  const rects = range.getClientRects();
+  return rects.item(rects.length - 1) ?? range.getBoundingClientRect();
+}
+
+/** Scrolls the timeline to the quote when the user types in its comment box after scrolling away. */
+export function revealAssistantCitationSource(anchor: AssistantCitationSourceAnchor): void {
+  const rect = assistantCitationAnchorRect(anchor.range);
+  // A range inside a hidden ancestor measures as zero; revealing it would scroll on every keystroke.
+  if (rect.width === 0 && rect.height === 0) return;
+  const visible = anchor.viewport.getBoundingClientRect();
+  if (rect.top >= visible.top && rect.bottom <= visible.bottom) return;
+  const scroller = findScrollableAncestor(anchor.source, anchor.viewport);
+  if (!scroller) return;
+  const bounds = scroller.getBoundingClientRect();
+  // Setting scrollTop avoids scrollIntoView, which also scrolls the page.
+  scroller.scrollTop = citationRevealOffset({
+    scroll: scroller.scrollTop,
+    rectTop: rect.top,
+    boundsTop: bounds.top,
+    clientHeight: scroller.clientHeight,
+    scrollHeight: scroller.scrollHeight,
+  });
+}
+
+function citationRevealOffset(input: {
+  scroll: number;
+  rectTop: number;
+  boundsTop: number;
+  clientHeight: number;
+  scrollHeight: number;
+}): number {
+  const inset = Math.min(CITATION_REVEAL_INSET, input.clientHeight / 3);
+  return Math.max(
+    0,
+    Math.min(
+      input.scrollHeight - input.clientHeight,
+      input.scroll + input.rectTop - input.boundsTop - inset,
+    ),
+  );
+}
+
+/** The outermost scrollable ancestor inside the citation viewport, the timeline list. */
+function findScrollableAncestor(element: HTMLElement, boundary: HTMLElement): HTMLElement | null {
+  let scroller: HTMLElement | null = null;
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node);
+    if ((overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight) {
+      scroller = node;
+    }
+    if (node === boundary) break;
+  }
+  return scroller;
+}
+
 export interface AssistantCitationRequest {
   citation: AssistantCitation;
   key: string;
@@ -172,13 +230,13 @@ function observeAssistantCitationSource({
     if (!activation.scrolled) {
       if (scrolling) return;
       const scrollRect = scrollNode.getBoundingClientRect();
-      const offset = Math.max(
-        0,
-        Math.min(
-          scrollNode.scrollHeight - scrollNode.clientHeight,
-          state.scroll + rect.top - scrollRect.top - Math.min(120, scrollNode.clientHeight / 3),
-        ),
-      );
+      const offset = citationRevealOffset({
+        scroll: state.scroll,
+        rectTop: rect.top,
+        boundsTop: scrollRect.top,
+        clientHeight: scrollNode.clientHeight,
+        scrollHeight: scrollNode.scrollHeight,
+      });
       if (Math.abs(offset - state.scroll) > 1) {
         scrolling = true;
         void list.scrollToOffset({ offset, animated: !reducedMotion }).then(

@@ -39,15 +39,19 @@ const citation = {
 };
 
 // The mocked source observer is shared, so every test starts by resetting it.
-function setup() {
+function setup(options?: { container?: HTMLElement; viewport?: HTMLElement; text?: string }) {
   mocks.observeSource.mockReset().mockReturnValue(mocks.dispose);
   mocks.dispose.mockClear();
   const source = document.createElement("p");
-  source.textContent = "hello";
-  document.body.append(source);
+  source.textContent = options?.text ?? "hello";
+  (options?.container ?? document.body).append(source);
   const range = document.createRange();
   range.selectNodeContents(source);
-  const sourceAnchor = { source, range, viewport: document.body } as AssistantCitationSourceAnchor;
+  const sourceAnchor = {
+    source,
+    range,
+    viewport: options?.viewport ?? options?.container ?? document.body,
+  } as AssistantCitationSourceAnchor;
   return { sourceAnchor, [Symbol.dispose]: () => source.remove() };
 }
 
@@ -217,5 +221,175 @@ describe("citation comment popup position", () => {
     const rect = popup()!.getBoundingClientRect();
     expect(rect.left).toBeGreaterThanOrEqual(0);
     expect(rect.right).toBeLessThanOrEqual(window.innerWidth);
+  });
+});
+
+describe("citation comment reveal", () => {
+  it("keeps the comment box on screen while the quote is off screen", async () => {
+    const wrapper = document.createElement("div");
+    wrapper.style.paddingTop = "80px";
+    const scroller = document.createElement("div");
+    scroller.style.height = "300px";
+    scroller.style.overflowY = "scroll";
+    const spacerAbove = document.createElement("div");
+    spacerAbove.style.height = `${window.innerHeight + 1000}px`;
+    scroller.append(spacerAbove);
+    wrapper.append(scroller);
+    document.body.append(wrapper);
+    using _wrapper = { [Symbol.dispose]: () => wrapper.remove() };
+    const sourceWrapper = document.createElement("div");
+    sourceWrapper.style.overflowY = "auto";
+    scroller.append(sourceWrapper);
+    using source = setup({ container: sourceWrapper, viewport: wrapper });
+    expect(source.sourceAnchor.source.getBoundingClientRect().top).toBeGreaterThan(
+      window.innerHeight,
+    );
+
+    await using _screen = await mount(
+      source.sourceAnchor,
+      vi.fn(() => true),
+    );
+    const popup = () => document.querySelector<HTMLElement>('[data-slot="popover-popup"]');
+    await vi.waitFor(() => expect(popup()?.getBoundingClientRect().width).toBeGreaterThan(0));
+    const clamped = popup()!.getBoundingClientRect();
+    expect(clamped.top).toBeGreaterThanOrEqual(0);
+    expect(clamped.bottom).toBeLessThanOrEqual(window.innerHeight);
+  });
+
+  it("scrolls the list to the quote without moving the page", async () => {
+    const wrapper = document.createElement("div");
+    wrapper.style.paddingTop = "80px";
+    const scroller = document.createElement("div");
+    scroller.style.height = "300px";
+    scroller.style.overflowY = "scroll";
+    const spacerAbove = document.createElement("div");
+    spacerAbove.style.height = `${window.innerHeight + 1000}px`;
+    scroller.append(spacerAbove);
+    wrapper.append(scroller);
+    document.body.append(wrapper);
+    using _wrapper = { [Symbol.dispose]: () => wrapper.remove() };
+    const sourceWrapper = document.createElement("div");
+    sourceWrapper.style.overflowY = "auto";
+    scroller.append(sourceWrapper);
+    using source = setup({ container: sourceWrapper, viewport: wrapper });
+    const spacerBelow = document.createElement("div");
+    spacerBelow.style.height = "500px";
+    scroller.append(spacerBelow);
+    const pageSpacer = document.createElement("div");
+    pageSpacer.style.height = `${window.innerHeight}px`;
+    document.body.append(pageSpacer);
+    using _pageSpacer = {
+      [Symbol.dispose]: () => {
+        pageSpacer.remove();
+        document.scrollingElement?.scrollTo(0, 0);
+      },
+    };
+    document.scrollingElement?.scrollTo(0, 100);
+    const pageScroll = document.scrollingElement?.scrollTop ?? 0;
+    expect(pageScroll).toBe(100);
+    expect(source.sourceAnchor.source.getBoundingClientRect().top).toBeGreaterThan(
+      window.innerHeight,
+    );
+
+    await using _screen = await mount(
+      source.sourceAnchor,
+      vi.fn(() => true),
+    );
+    const popup = () => document.querySelector<HTMLElement>('[data-slot="popover-popup"]');
+    await vi.waitFor(() => expect(popup()?.getBoundingClientRect().width).toBeGreaterThan(0));
+
+    await userEvent.keyboard("note");
+    expect(textarea()?.value).toBe("note");
+    expect(document.scrollingElement?.scrollTop ?? 0).toBe(pageScroll);
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    const scrollerRect = scroller.getBoundingClientRect();
+    const revealed = source.sourceAnchor.source.getBoundingClientRect();
+    expect(revealed.top).toBeGreaterThanOrEqual(scrollerRect.top);
+    expect(revealed.bottom).toBeLessThanOrEqual(scrollerRect.bottom);
+
+    // Scroll the quote above the list and type again.
+    scroller.scrollTop = scroller.scrollHeight;
+    const maxScroll = scroller.scrollTop;
+    expect(source.sourceAnchor.source.getBoundingClientRect().bottom).toBeLessThan(
+      scrollerRect.top,
+    );
+    await userEvent.keyboard("!");
+    expect(document.scrollingElement?.scrollTop ?? 0).toBe(pageScroll);
+    expect(scroller.scrollTop).toBeLessThan(maxScroll);
+    const back = source.sourceAnchor.source.getBoundingClientRect();
+    expect(back.top).toBeGreaterThanOrEqual(scrollerRect.top);
+    expect(back.bottom).toBeLessThanOrEqual(scrollerRect.bottom);
+  });
+
+  it("leaves the list alone when the quote is already visible", async () => {
+    const wrapper = document.createElement("div");
+    const scroller = document.createElement("div");
+    scroller.style.height = "300px";
+    scroller.style.overflowY = "auto";
+    const spacerAbove = document.createElement("div");
+    spacerAbove.style.height = "450px";
+    scroller.append(spacerAbove);
+    wrapper.append(scroller);
+    document.body.append(wrapper);
+    using _wrapper = { [Symbol.dispose]: () => wrapper.remove() };
+    using source = setup({ container: scroller, viewport: wrapper });
+    const spacerBelow = document.createElement("div");
+    spacerBelow.style.height = "1000px";
+    scroller.append(spacerBelow);
+    scroller.scrollTop = 300;
+
+    await using _screen = await mount(
+      source.sourceAnchor,
+      vi.fn(() => true),
+    );
+    const popup = () => document.querySelector<HTMLElement>('[data-slot="popover-popup"]');
+    await vi.waitFor(() => expect(popup()?.getBoundingClientRect().width).toBeGreaterThan(0));
+
+    await userEvent.keyboard("note");
+
+    expect(textarea()?.value).toBe("note");
+    expect(scroller.scrollTop).toBe(300);
+  });
+
+  it("reveals the last line of a quote taller than the list", async () => {
+    const wrapper = document.createElement("div");
+    const scroller = document.createElement("div");
+    scroller.style.height = "300px";
+    scroller.style.overflowY = "auto";
+    const spacerAbove = document.createElement("div");
+    spacerAbove.style.height = "450px";
+    scroller.append(spacerAbove);
+    wrapper.append(scroller);
+    document.body.append(wrapper);
+    using _wrapper = { [Symbol.dispose]: () => wrapper.remove() };
+    using source = setup({ container: scroller, viewport: wrapper, text: "word ".repeat(2000) });
+    const { range } = source.sourceAnchor;
+    const quote = source.sourceAnchor.source;
+    const spacerBelow = document.createElement("div");
+    spacerBelow.style.height = "1000px";
+    scroller.append(spacerBelow);
+    scroller.scrollTop = 350;
+    const scrollerRect = scroller.getBoundingClientRect();
+    const initialRects = range.getClientRects();
+    expect(quote.getBoundingClientRect().height).toBeGreaterThan(scroller.clientHeight);
+    expect(initialRects.item(initialRects.length - 1)!.bottom).toBeGreaterThan(scrollerRect.bottom);
+
+    await using _screen = await mount(
+      source.sourceAnchor,
+      vi.fn(() => true),
+    );
+    const popup = () => document.querySelector<HTMLElement>('[data-slot="popover-popup"]');
+    await vi.waitFor(() => expect(popup()?.getBoundingClientRect().width).toBeGreaterThan(0));
+
+    await userEvent.keyboard("note");
+
+    expect(textarea()?.value).toBe("note");
+    const rects = range.getClientRects();
+    const firstRect = rects.item(0)!;
+    const lastRect = rects.item(rects.length - 1)!;
+    expect(lastRect.top).toBeGreaterThanOrEqual(scrollerRect.top);
+    expect(lastRect.bottom).toBeLessThanOrEqual(scrollerRect.bottom);
+    // The reveal anchors the last line, so the start of a tall quote can stay above the list.
+    expect(firstRect.top).toBeLessThan(scrollerRect.top);
   });
 });

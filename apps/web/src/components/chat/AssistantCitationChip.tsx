@@ -30,7 +30,11 @@ import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popov
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
-import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
+import {
+  assistantCitationAnchorRect,
+  observeAssistantCitationCommentSource,
+  revealAssistantCitationSource,
+} from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { observeResize } from "~/lib/observeResize";
 import { textDirection } from "~/textDirection";
@@ -102,16 +106,16 @@ export function AssistantCitationChip({
     ? {
         contextElement: activeSourceAnchor.source,
         getBoundingClientRect: () => {
-          const rects = activeSourceAnchor.range.getClientRects();
-          const rect =
-            rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
+          const rect = assistantCitationAnchorRect(activeSourceAnchor.range);
           // Code blocks and tables scroll sideways inside the message, so the cited
-          // text can end in their hidden overflow. Base UI only shifts the popup while
-          // it still touches the anchor, so clamp the anchor to the message's width.
+          // text can end in their hidden overflow. Keep the popup anchor inside the
+          // window on both axes: Base UI only shifts the popup while it still touches
+          // the anchor, and an off-screen anchor scrolls the page on the first keystroke.
           const bounds = activeSourceAnchor.source.getBoundingClientRect();
           const left = Math.min(Math.max(rect.left, bounds.left), bounds.right);
           const right = Math.max(Math.min(rect.right, bounds.right), left);
-          return new DOMRect(left, rect.top, right - left, rect.height);
+          const top = Math.min(Math.max(rect.top, 0), window.innerHeight - rect.height - 8);
+          return new DOMRect(left, top, right - left, rect.height);
         },
       }
     : undefined;
@@ -230,6 +234,7 @@ export function AssistantCitationChip({
                 inputRef={commentInputRef}
                 onVoiceSetupOpenChange={setVoiceSetupOpen}
                 onDraftChange={(comment) => {
+                  if (activeSourceAnchor) revealAssistantCitationSource(activeSourceAnchor);
                   draftCommentRef.current = comment;
                   commentEditor.onDraftChange?.(comment);
                 }}
