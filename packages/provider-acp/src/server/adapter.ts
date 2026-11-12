@@ -6660,12 +6660,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 !offeredOptions.some((option) => option.decision === "acceptForSession")
                   ? "accept"
                   : answered;
-              if (
-                parsedPermission.kind !== "unknown" &&
-                (decision === "accept" || decision === "acceptForSession")
-              ) {
+              if (decision === "accept" || decision === "acceptForSession") {
                 clientPolicyGrants.recordApproval({
-                  kind: providerRequestKind(parsedPermission.kind),
+                  toolKind: parsedPermission.kind,
                   scope: decision === "acceptForSession" ? "session" : "turn",
                   turnKey: String(context.providerTurnId),
                 });
