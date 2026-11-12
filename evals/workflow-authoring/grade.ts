@@ -16,6 +16,7 @@ import Migration0100 from "../../apps/server/src/persistence/Migrations/100_Work
 import Migration0101 from "../../apps/server/src/persistence/Migrations/101_WorkflowStepEnvironment.ts";
 import Migration0102 from "../../apps/server/src/persistence/Migrations/102_WorkflowRunInput.ts";
 import Migration0103 from "../../apps/server/src/persistence/Migrations/103_WorkflowStore.ts";
+import Migration0104 from "../../apps/server/src/persistence/Migrations/104_WorkflowRunParent.ts";
 import type { WorkflowDefinition } from "../../apps/server/src/workflows/workflow.ts";
 import {
   type AgentResult,
@@ -72,9 +73,12 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflow-eval-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
   yield* Effect.provide(
-    Effect.all([Migration0099, Migration0100, Migration0101, Migration0102, Migration0103], {
-      discard: true,
-    }),
+    Effect.all(
+      [Migration0099, Migration0100, Migration0101, Migration0102, Migration0103, Migration0104],
+      {
+        discard: true,
+      },
+    ),
     database,
   );
   const turns: Array<AgentTurnInput> = [];

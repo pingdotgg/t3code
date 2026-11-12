@@ -23,6 +23,8 @@ export const WorkflowRun = Schema.Struct({
   pauses: Schema.Number,
   /** Its version is no longer registered, so it cannot go on until that version is back. */
   retired: Schema.Boolean,
+  /** The run that invoked this one and waits for it; null for a run started by itself. */
+  parentRunId: Schema.NullOr(Schema.String),
   startedAt: Schema.String,
   updatedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
