@@ -146,6 +146,7 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
           },
         };
       }),
+    rememberCheckedDescriptor: () => Effect.void,
     renewDpopBeforeExpiry: () => Effect.die("HTTP requests must not renew a socket's token."),
   });
   const signer = ManagedRelay.ManagedRelayDpopSigner.of({
@@ -222,7 +223,11 @@ const LOADERS: ReadonlyArray<{
     expected: SHELL,
     load: (input: HttpInput) =>
       fetchEnvironmentShellSnapshot(input).pipe(
-        Effect.map(({ loadPullRequests: _links, ...snapshot }) => snapshot),
+        Effect.map((answer) => {
+          if ("resumable" in answer) return answer;
+          const { loadPullRequests: _links, ...snapshot } = answer;
+          return snapshot;
+        }),
       ),
   },
   {
