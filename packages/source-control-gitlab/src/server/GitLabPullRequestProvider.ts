@@ -8,6 +8,7 @@ import type {
   PullRequestActor,
   PullRequestCapabilities,
   PullRequestReaction,
+  PullRequestThreadComment,
   PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 
@@ -423,6 +424,13 @@ export const make = Effect.gen(function* () {
               author !== null && botLogins.has(author.login.toLowerCase())
                 ? { ...author, isBot: true }
                 : author;
+            const withNoteDetails = (comment: PullRequestThreadComment) => ({
+              ...comment,
+              ...edited(comment.id),
+              author: withBotFlag(comment.author),
+              url: noteUrl(comment.id),
+              reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+            });
             return {
               reactions: awards.reactions,
               comments: notes.comments.map((comment) => ({
@@ -435,20 +443,25 @@ export const make = Effect.gen(function* () {
               })),
               commentCount: notes.comments.length,
               commentsTruncated: notes.truncated || discussions.truncated,
-              reviewThreads: discussions.threads.map((thread) => ({
-                ...thread,
-                isOutdated: isOutdated(
-                  discussions.diffRefsByThreadId.get(thread.id),
-                  detail?.diffRefs,
-                ),
-                comments: thread.comments.map((comment) => ({
-                  ...comment,
-                  ...edited(comment.id),
-                  author: withBotFlag(comment.author),
-                  url: noteUrl(comment.id),
-                  reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-                })),
-              })),
+              reviewThreads: discussions.threads.flatMap((thread) =>
+                thread.path === null
+                  ? []
+                  : [
+                      {
+                        ...thread,
+                        isOutdated: isOutdated(
+                          discussions.diffRefsByThreadId.get(thread.id),
+                          detail?.diffRefs,
+                        ),
+                        comments: thread.comments.map(withNoteDetails),
+                      },
+                    ],
+              ),
+              overviewThreads: discussions.threads.flatMap((thread) =>
+                thread.path === null
+                  ? [{ ...thread, comments: thread.comments.map(withNoteDetails) }]
+                  : [],
+              ),
               commits,
             };
           },
