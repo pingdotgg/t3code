@@ -66,7 +66,7 @@ export function remarkEnableOrderedListNumbers(this: object): undefined {
   enabledProcessors.add(this);
 }
 
-export function keepsOrderedListNumbers(processor: object): boolean {
+export function alwaysKeepsOrderedListNumbers(processor: object): boolean {
   return enabledProcessors.has(processor);
 }
 
