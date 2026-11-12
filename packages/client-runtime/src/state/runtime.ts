@@ -619,6 +619,13 @@ function environmentConnectionAtoms<R, ER>(
   return family;
 }
 
+export function environmentConnectionAtom<R, ER>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  environmentId: EnvironmentIdType,
+) {
+  return environmentConnectionAtoms(runtime)(environmentId);
+}
+
 const sessionGenerationAtomsByRuntime = new WeakMap<
   object,
   (environmentId: EnvironmentIdType) => Atom.Atom<number>

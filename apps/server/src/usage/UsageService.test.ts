@@ -577,9 +577,55 @@ describe("UsageService", () => {
         assert.strictEqual(totalOutputTokens(rewritten), 71);
         assert.deepStrictEqual((yield* service.readSummary(WINDOW)).buckets, rewritten.buckets);
         yield* service.awaitPersisted;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+        const originalPath = (yield* Effect.promise(() => NodeFSP.realpath(compressedPath))).slice(
+          0,
+          -4,
+        );
+        yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<
+              string,
+              { cs: Record<string, unknown>; r: unknown[]; t: unknown[]; mr: number }
+            >;
+          };
+          const archived = document.files[await NodeFSP.realpath(compressedPath)];
+          assert.ok(archived);
+          document.files[originalPath] = {
+            ...archived,
+            r: [],
+            t: [],
+            mr: 1,
+            cs: { ...archived.cs, malformedRecords: 1 },
+          };
+          await NodeFSP.writeFile(cachePath, encodeUnknownJsonString(document));
+        });
         const restarted = yield* UsageService.make;
-        assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, rewritten.buckets);
+        const restored = yield* restarted.readSummary(WINDOW);
+        assert.deepStrictEqual(restored.buckets, rewritten.buckets);
+        assert.strictEqual(
+          restored.sources.find((source) => source.fingerprint.provider === "codex")
+            ?.malformedRecords,
+          0,
+        );
         yield* restarted.awaitPersisted;
+        yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, unknown>;
+          };
+          assert.strictEqual(document.files[originalPath], undefined);
+          await NodeFSP.rm(compressedPath);
+        });
+        const removed = yield* UsageService.make;
+        const retained = yield* removed.readSummary(WINDOW);
+        assert.deepStrictEqual(retained.buckets, rewritten.buckets);
+        assert.strictEqual(
+          retained.sources.find((source) => source.fingerprint.provider === "codex")
+            ?.malformedRecords,
+          0,
+        );
+        yield* removed.awaitPersisted;
       }).pipe(
         Effect.scoped,
         Effect.provide(layerService({ prefix: "usage-compressed-codex", home, settings })),
@@ -2789,7 +2835,7 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.each([4, 5, 6, 7, 8, 10])(
+  it.live.each([4, 5, 6, 7, 8, 10, 11, 12, 13])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts, removes the old file",
     (version) =>
       Effect.gen(function* () {
@@ -2890,7 +2936,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v12.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v14.json");
           assert.deepStrictEqual(
             (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
               .filter((name) => name.startsWith("usage-scan-cache"))
