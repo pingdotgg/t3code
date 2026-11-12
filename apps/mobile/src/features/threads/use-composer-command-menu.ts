@@ -338,7 +338,10 @@ export function useComposerCommandMenu({
     cursor: selection.end,
     queryEnd: selection.end,
     enabled,
-    trigger: enabled ? detectComposerTrigger(draftMessage, selection.end) : null,
+    trigger:
+      enabled && selection.start === selection.end
+        ? detectComposerTrigger(draftMessage, selection.end)
+        : null,
   }));
   let trigger = previousSearch.trigger;
   if (
@@ -353,7 +356,7 @@ export function useComposerCommandMenu({
     // those edits from the predicted cursor until selection catches up.
     const cursor =
       previousSearch.ownerKey !== ownerKey
-        ? draftMessage.length
+        ? selection.end
         : previousSearch.localSelection === localSelection &&
             previousSearch.insertedSelection?.start === insertedSelection?.start &&
             previousSearch.insertedSelection?.end === insertedSelection?.end

@@ -1,9 +1,14 @@
+import { act, createElement, useLayoutEffect } from "react";
+import { createRoot } from "react-dom/client";
+import { useComposerDraftSelection } from "../../state/use-composer-drafts";
+
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
 vi.mock("../../state/queries", () => ({
+  useThreadSearch: vi.fn(),
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
 }));
@@ -26,6 +31,7 @@ import {
   buildComposerSlashCommandItems,
   resolveComposerCommandSelection,
   resolveComposerMenuSelection,
+  useComposerCommandMenu,
 } from "./use-composer-command-menu";
 
 describe("resolveComposerMenuSelection", () => {
@@ -173,4 +179,66 @@ describe("mobile model mentions", () => {
   ] as const)("does not suggest a preserved selection whose provider is %s", (_, providers) => {
     expect(buildComposerModelItems([option("traex:gpt-6.1")], "gpt", providers)).toEqual([]);
   });
+});
+
+async function mountMenu(draftMessage: string, selection: { start: number; end: number }) {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const root = createRoot(document.createElement("div"));
+  let menu: ReturnType<typeof useComposerCommandMenu> | undefined;
+  function Probe({ text, ownerKey }: { text: string; ownerKey: string }) {
+    const value = useComposerCommandMenu({
+      draftMessage: text,
+      ownerKey,
+      environmentId: null,
+      projectCwd: null,
+      selectedProviderStatus: null,
+      hasThread: false,
+      hasCompactableConversation: false,
+      onChangeDraftMessage: () => {},
+    });
+    useLayoutEffect(() => {
+      menu = value;
+    });
+    return null;
+  }
+  const dispose = async () => {
+    await act(() => root.unmount());
+    vi.unstubAllGlobals();
+    vi.mocked(useComposerDraftSelection).mockReset();
+  };
+  const renderDraft = async (
+    text: string,
+    caret: { start: number; end: number },
+    ownerKey = "draft-a",
+  ) => {
+    vi.mocked(useComposerDraftSelection).mockReturnValue(caret);
+    await act(() => root.render(createElement(Probe, { text, ownerKey })));
+    if (!menu) throw new Error("Composer menu did not mount");
+    return menu;
+  };
+  try {
+    await renderDraft(draftMessage, selection);
+    return {
+      renderDraft,
+      get menu() {
+        return menu!;
+      },
+      [Symbol.asyncDispose]: dispose,
+    };
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
+}
+
+it("keeps the picker closed when mounting with a selected mention", async () => {
+  await using state = await mountMenu("@foo", { start: 0, end: 4 });
+  expect(state.menu.trigger).toBeNull();
+  expect(state.menu.items).toEqual([]);
+});
+
+it("uses the restored caret when switching draft owners", async () => {
+  await using state = await mountMenu("@first", { start: 6, end: 6 });
+  const menu = await state.renderDraft("@foo suffix @last", { start: 4, end: 4 }, "draft-b");
+  expect(menu.trigger).toMatchObject({ query: "foo", rangeStart: 0, rangeEnd: 4 });
 });
