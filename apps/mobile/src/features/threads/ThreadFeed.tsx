@@ -2942,31 +2942,28 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             root,
             entries: result._tag === "Success" ? result.value.entries : [],
           }));
-        const threadProjectId = appAtomRegistry.get(
-          environmentThreadShells.threadShellAtom(
-            scopeThreadRef(props.environmentId, props.threadId),
-          ),
-        )?.projectId;
-        const otherRoots = appAtomRegistry
-          .get(environmentProjects.projectsAtom)
-          .flatMap((project) =>
-            project.environmentId === props.environmentId &&
-            project.id !== threadProjectId &&
-            project.workspaceRoot !== workspaceRoot
-              ? [project.workspaceRoot]
-              : [],
-          );
         void searchRoot(workspaceRoot)
-          .then(
-            async (own) =>
-              pickWorkspaceLinkMatch(relativePath, workspaceRoot, own.entries) ??
-              (otherRoots.length === 0
-                ? null
-                : pickProjectLinkMatch(
-                    relativePath,
-                    await Promise.all(otherRoots.map(searchRoot)),
-                  )),
-          )
+          .then(async (own) => {
+            const ownMatch = pickWorkspaceLinkMatch(relativePath, workspaceRoot, own.entries);
+            if (ownMatch !== null) return ownMatch;
+            const threadProjectId = appAtomRegistry.get(
+              environmentThreadShells.threadShellAtom(
+                scopeThreadRef(props.environmentId, props.threadId),
+              ),
+            )?.projectId;
+            const otherRoots = appAtomRegistry
+              .get(environmentProjects.projectsAtom)
+              .flatMap((project) =>
+                project.environmentId === props.environmentId &&
+                project.id !== threadProjectId &&
+                project.workspaceRoot !== workspaceRoot
+                  ? [project.workspaceRoot]
+                  : [],
+              );
+            return otherRoots.length === 0
+              ? null
+              : pickProjectLinkMatch(relativePath, await Promise.all(otherRoots.map(searchRoot)));
+          })
           .then(
             (match) => {
               if (!match || match === relativePath) {
