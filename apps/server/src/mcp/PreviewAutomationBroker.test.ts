@@ -20,6 +20,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { PreviewBrowserRootError } from "../preview/PreviewBrowserHost.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -368,6 +369,65 @@ it.effect("names the click target that matched nothing when the server browser t
       expect(error.message).toBe(
         'Preview automation click timed out after 15000ms. No element matches ".definitely-no-such-t3-target".',
       );
+    }),
+  ),
+);
+
+it.effect("keeps the server browser host for other threads when one request times out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const clientId = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
+      const otherScope = {
+        ...scope,
+        requestNamespace: "provider-session-2",
+        thread: {
+          threadId: ThreadId.make("thread-2"),
+          providerSessionId: "provider-session-2",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+      };
+      const openDelivered = yield* Deferred.make<RoutedRequest>();
+      const requests = requestsFrom(yield* broker.connect(makeHost({ clientId, preferred: true })));
+      yield* Stream.runForEach(requests, (request) => {
+        if (request.operation === "open") return Deferred.succeed(openDelivered, request);
+        if (request.operation === "snapshot") return Effect.void;
+        return broker.respond({
+          clientId,
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: { available: true },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const stalledSnapshot = yield* broker
+        .invoke<void>({ scope, operation: "snapshot", input: {} })
+        .pipe(Effect.flip, Effect.forkScoped);
+      const unrelatedOpen = yield* broker
+        .invoke<{ available: boolean }>({ scope: otherScope, operation: "open", input: {} })
+        .pipe(Effect.result, Effect.forkScoped);
+      const openRequest = yield* Deferred.await(openDelivered);
+
+      yield* TestClock.adjust("17 seconds");
+      expect((yield* Fiber.join(stalledSnapshot))._tag).toBe("PreviewAutomationTimeoutError");
+
+      yield* broker.respond({
+        clientId,
+        connectionId: openRequest.connectionId,
+        requestId: openRequest.requestId,
+        ok: true,
+        result: { available: true },
+      });
+      expect(yield* Fiber.join(unrelatedOpen)).toEqual(Result.succeed({ available: true }));
+      expect(
+        yield* broker.invoke<{ available: boolean }>({
+          scope: otherScope,
+          operation: "status",
+          input: {},
+        }),
+      ).toEqual({ available: true });
     }),
   ),
 );
