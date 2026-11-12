@@ -840,163 +840,193 @@ describe("AntigravityAdapterV2 html_render pages", () => {
   );
 });
 
+/** The agent reports one tool, answers end_turn, and the user optionally presses Stop after. */
+const endTurnAfterTool = (
+  tool: Extract<EffectAcpSchema.SessionNotification["update"], { sessionUpdate: "tool_call" }>,
+  options: { readonly stopAfterReply: boolean },
+) =>
+  Effect.gen(function* () {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+    const promptReturned = yield* Deferred.make<void>();
+    const instanceId = ProviderInstanceId.make("antigravity-running-command-test");
+    const threadId = ThreadId.make("thread-antigravity-running-command");
+    const adapter = yield* makeAntigravityAdapterV2({
+      instanceId,
+      selfInvocation: yield* resolveSelfInvocation(),
+      makeRuntime: (input) =>
+        makeAntigravityAcpRuntime({
+          ...input,
+          childProcessSpawner,
+          spawn: {
+            command: process.execPath,
+            args: [mockAgentPath],
+            cwd: input.cwd,
+            env: { T3_ACP_ANTIGRAVITY: "1" },
+          },
+        }).pipe(
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+          Effect.map((runtime): RuntimeService => ({
+            ...runtime,
+            handleSessionUpdate: (handler) =>
+              Effect.sync(() => {
+                sessionUpdate = handler;
+              }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            prompt: () =>
+              Effect.gen(function* () {
+                if (sessionUpdate === undefined) {
+                  return yield* Effect.die("the adapter must handle session updates");
+                }
+                yield* sessionUpdate(
+                  normalizeAntigravitySessionUpdate({
+                    sessionId: "mock-session-1",
+                    update: tool,
+                  }),
+                );
+                return { stopReason: "end_turn" as const };
+              }).pipe(Effect.ensuring(Deferred.succeed(promptReturned, undefined))),
+          })),
+        ),
+      withProcess: (_stop, task) => task,
+      defaultModel: Effect.undefined,
+    });
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+    const session = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-antigravity-running-command"),
+      modelSelection,
+      runtimePolicy,
+    });
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    yield* session.events.pipe(
+      Stream.runForEach((event) => Queue.offer(events, event)),
+      Effect.forkScoped,
+    );
+    const providerThread = yield* session.ensureThread({
+      threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const now = yield* DateTime.now;
+    yield* session.startTurn({
+      appThread: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project-antigravity-running-command"),
+        title: "Antigravity running command",
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+      threadId,
+      runId: RunId.make("run-antigravity-running-command"),
+      runOrdinal: 1,
+      providerTurnOrdinal: 1,
+      attemptId: RunAttemptId.make("attempt-antigravity-running-command"),
+      rootNodeId: NodeId.make("node-antigravity-running-command"),
+      providerThread,
+      message: {
+        createdBy: "user",
+        creationSource: "web",
+        messageId: MessageId.make("message-antigravity-running-command"),
+        text: "watch the log",
+        attachments: [],
+      },
+      modelSelection,
+      runtimePolicy,
+    });
+
+    let providerTurnId: ProviderAdapter.ProviderAdapterV2InterruptInput["providerTurnId"] | null =
+      null;
+    let itemStatus: string | null = null;
+    while (providerTurnId === null || itemStatus === null) {
+      const event = yield* Queue.take(events);
+      if (event.type === "provider_turn.updated") providerTurnId = event.providerTurn.id;
+      if (
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId === tool.toolCallId
+      ) {
+        itemStatus = event.turnItem.status;
+      }
+    }
+    yield* Deferred.await(promptReturned);
+    if (options.stopAfterReply) {
+      yield* session.interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true });
+    }
+
+    let terminalStatus: string | null = null;
+    while (terminalStatus === null) {
+      const event = yield* Queue.take(events);
+      if (
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId === tool.toolCallId
+      ) {
+        itemStatus = event.turnItem.status;
+      }
+      if (event.type === "turn.terminal") terminalStatus = event.status;
+    }
+    return { itemStatus, terminalStatus };
+  }).pipe(Effect.provide(layerSession), Effect.scoped);
+
 describe("AntigravityAdapterV2 running commands", () => {
   it.effect("does not mark a command completed while it is still running at end_turn", () =>
     Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Path.Path;
-      const crypto = yield* SecureRandom.SecureRandom;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
-      let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
-      const promptReturned = yield* Deferred.make<void>();
-      const instanceId = ProviderInstanceId.make("antigravity-running-command-test");
-      const threadId = ThreadId.make("thread-antigravity-running-command");
-      const adapter = yield* makeAntigravityAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input) =>
-          makeAntigravityAcpRuntime({
-            ...input,
-            childProcessSpawner,
-            spawn: {
-              command: process.execPath,
-              args: [mockAgentPath],
-              cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1" },
-            },
-          }).pipe(
-            Effect.provideService(SecureRandom.SecureRandom, crypto),
-            Effect.map((runtime): RuntimeService => ({
-              ...runtime,
-              handleSessionUpdate: (handler) =>
-                Effect.sync(() => {
-                  sessionUpdate = handler;
-                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
-              // The agent starts a watcher, answers, and ends its turn while it runs.
-              prompt: () =>
-                Effect.gen(function* () {
-                  if (sessionUpdate === undefined) {
-                    return yield* Effect.die("the adapter must handle session updates");
-                  }
-                  yield* sessionUpdate(
-                    normalizeAntigravitySessionUpdate({
-                      sessionId: "mock-session-1",
-                      update: {
-                        sessionUpdate: "tool_call",
-                        toolCallId: "watcher",
-                        title: "Running run_command",
-                        kind: "execute",
-                        status: "in_progress",
-                        rawInput: { CommandLine: "tail -f app.log" },
-                      },
-                    }),
-                  );
-                  return { stopReason: "end_turn" as const };
-                }).pipe(Effect.ensuring(Deferred.succeed(promptReturned, undefined))),
-            })),
-          ),
-        withProcess: (_stop, task) => task,
-        defaultModel: Effect.undefined,
-      });
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
-      const session = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-antigravity-running-command"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-      yield* session.events.pipe(
-        Stream.runForEach((event) => Queue.offer(events, event)),
-        Effect.forkScoped,
-      );
-      const providerThread = yield* session.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const now = yield* DateTime.now;
-      yield* session.startTurn({
-        appThread: {
-          createdBy: "user",
-          creationSource: "web",
-          id: threadId,
-          projectId: ProjectId.make("project-antigravity-running-command"),
-          title: "Antigravity running command",
-          providerInstanceId: instanceId,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: process.cwd(),
-          activeProviderThreadId: providerThread.id,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
+      const result = yield* endTurnAfterTool(
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "watcher",
+          title: "Running run_command",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { CommandLine: "tail -f app.log" },
         },
-        threadId,
-        runId: RunId.make("run-antigravity-running-command"),
-        runOrdinal: 1,
-        providerTurnOrdinal: 1,
-        attemptId: RunAttemptId.make("attempt-antigravity-running-command"),
-        rootNodeId: NodeId.make("node-antigravity-running-command"),
-        providerThread,
-        message: {
-          createdBy: "user",
-          creationSource: "web",
-          messageId: MessageId.make("message-antigravity-running-command"),
-          text: "watch the log",
-          attachments: [],
+        { stopAfterReply: true },
+      );
+      // It never reported finishing, so it must not be shown as completed.
+      assert.notEqual(result.itemStatus, "completed");
+    }),
+  );
+
+  it.effect("completes the turn at end_turn while a launched subagent batch runs", () =>
+    Effect.gen(function* () {
+      const result = yield* endTurnAfterTool(
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "batch",
+          title: "Running start_subagent",
+          kind: "other",
+          status: "completed",
+          rawOutput: "Started two agents.",
         },
-        modelSelection,
-        runtimePolicy,
-      });
-
-      let providerTurnId: ProviderAdapter.ProviderAdapterV2InterruptInput["providerTurnId"] | null =
-        null;
-      let commandStatus: string | null = null;
-      while (providerTurnId === null || commandStatus === null) {
-        const event = yield* Queue.take(events);
-        if (event.type === "provider_turn.updated") providerTurnId = event.providerTurn.id;
-        if (
-          event.type === "turn_item.updated" &&
-          event.turnItem.nativeItemRef?.nativeId === "watcher"
-        ) {
-          commandStatus = event.turnItem.status;
-        }
-      }
-      yield* Deferred.await(promptReturned);
-      yield* session.interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true });
-
-      // Whether the turn waits for the command or leaves it running past the reply,
-      // it never reported finishing, so it must not be shown as completed.
-      let terminalSeen = false;
-      while (!terminalSeen) {
-        const event = yield* Queue.take(events);
-        if (
-          event.type === "turn_item.updated" &&
-          event.turnItem.nativeItemRef?.nativeId === "watcher"
-        ) {
-          commandStatus = event.turnItem.status;
-        }
-        terminalSeen = event.type === "turn.terminal";
-      }
-      assert.notEqual(commandStatus, "completed");
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+        { stopAfterReply: false },
+      );
+      assert.equal(result.terminalStatus, "completed");
+    }),
   );
 });
 
