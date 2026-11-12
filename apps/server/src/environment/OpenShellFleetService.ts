@@ -92,9 +92,9 @@ export type OpenShellFleetError =
   | OpenShellFleetOperationFailed;
 
 /**
- * The OpenShell fleet on this managing instance (spec sections 5 and 6). The
- * drain data plane (spec section 7) is not injected yet, so removal refuses and
- * keeps the sandbox: nothing lost outranks cleanup.
+ * The OpenShell fleet on this managing instance (spec sections 5 and 6). Builds
+ * the drain executor and the post-drain importer per environment: nothing lost
+ * outranks cleanup.
  */
 export class OpenShellFleetService extends Context.Service<
   OpenShellFleetService,

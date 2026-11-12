@@ -679,7 +679,8 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
     startFromOrigin: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
-    /** A fleet worker sandbox is provisioned and the thread runs there (spec section 6.3). */
+    /** Reserved wire member: no launch path provisions a sandbox yet; launches
+     * refuse it and sandbox work runs through `delegate_task` (spec section 6.3). */
     type: Schema.Literal("sandbox"),
     /** Persistent workers stay after the thread settles; ephemeral ones drain and release. */
     workerClass: Schema.optional(OpenShellWorkerClass),
@@ -3728,9 +3729,9 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   reuseExistingThread: Schema.optional(Schema.Boolean),
   projectId: ProjectId,
   /**
-   * Linked environment to launch this thread in; absent launches here.
-   * Cross-environment delegation targeting: launch and delegate_task accept
-   * the same target shape, so a child thread can run in a linked environment.
+   * Launch target; only the local environment is accepted here. A foreign
+   * `environmentId` and `workspaceStrategy: "sandbox"` are refused with a hint
+   * to use `delegate_task`, which runs the child remotely.
    */
   environmentId: Schema.optional(EnvironmentId),
   title: TrimmedNonEmptyString,

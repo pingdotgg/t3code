@@ -177,6 +177,64 @@ export const fileDrainSink = Effect.fn("DrainSink.make")(function* (input: {
       },
       Effect.mapError((cause) => new FleetDrainStepError({ step: "read", message: String(cause) })),
     ),
+    copy: Effect.fn("DrainSink.copy")(
+      function* (input: {
+        readonly environmentId: EnvironmentId;
+        readonly fromDrainId: string;
+        readonly toDrainId: string;
+        readonly threadId: string;
+      }) {
+        const environment = segmentOf(input.environmentId);
+        const from = segmentOf(input.fromDrainId);
+        const to = segmentOf(input.toDrainId);
+        const thread = segmentOf(input.threadId);
+        const fromDir =
+          environment === null || from === null
+            ? null
+            : path.join(stateDir, "fleet-drain", environment, from);
+        const toDir =
+          environment === null || to === null
+            ? null
+            : path.join(stateDir, "fleet-drain", environment, to);
+        if (fromDir === null || toDir === null || thread === null)
+          return yield* new FleetDrainStepError({
+            step: "write",
+            message: `Refused a drain path segment for ${input.fromDrainId} / ${input.toDrainId}.`,
+          });
+        const name = `thread-${thread}.json`;
+        const raw = yield* fs
+          .readFileString(path.join(fromDir, name))
+          .pipe(Effect.orElseSucceed(() => null));
+        const record = raw === null ? null : decodeEnvelope(raw);
+        if (record === null || raw === null) return false;
+        yield* fs.makeDirectory(toDir, { recursive: true });
+        // Attachment files are keyed by the manifest hash, so they travel with it.
+        for (const entry of record.attachments ?? []) {
+          const attachment = `thread-${thread}-att-${entry.hash.slice(0, 16)}.bin`;
+          const bytes = yield* fs
+            .readFile(path.join(fromDir, attachment))
+            .pipe(Effect.orElseSucceed(() => null));
+          if (bytes !== null)
+            yield* fs
+              .writeFile(path.join(toDir, attachment), bytes)
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new FleetDrainStepError({
+                      step: "write",
+                      message: `Attachment copy failed: ${cause}`,
+                    }),
+                ),
+              );
+        }
+        yield* fs.writeFileString(`${path.join(toDir, name)}.partial`, raw);
+        yield* fs.rename(`${path.join(toDir, name)}.partial`, path.join(toDir, name));
+        return true;
+      },
+      Effect.mapError(
+        (cause) => new FleetDrainStepError({ step: "write", message: String(cause) }),
+      ),
+    ),
   } satisfies DrainSink;
 }, Effect.provide(Digest.layerWebCrypto));
 

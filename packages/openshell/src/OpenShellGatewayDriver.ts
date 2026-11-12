@@ -650,7 +650,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     };
     await this.index.setDrain(environmentId, progress);
     if (outcome.state === "acked") {
-      // The bundle is verified on disk, so an import problem is a warning on
+      // Required exports are verified on disk; an import problem is a warning on
       // the row, never a drain failure: the copies are already nothing-lost.
       const warnings = [...(outcome.warnings ?? [])];
       if (this.bundleImporter !== undefined) {

@@ -34,6 +34,7 @@ const deps = (input: {
   readonly fetched: Array<string>;
   readonly fetchedAttachments: Array<string>;
   readonly exported: Array<string>;
+  readonly promoted: Array<{ fromDrainId: string; toDrainId: string; threadId: string }>;
 } => {
   const manifest = [{ name: "a.bin", hash: "h0", size: 3 }];
   const envelope = (entry: {
@@ -54,11 +55,13 @@ const deps = (input: {
   const fetched: Array<string> = [];
   const fetchedAttachments: Array<string> = [];
   const exported: Array<string> = [];
+  const promoted: Array<{ fromDrainId: string; toDrainId: string; threadId: string }> = [];
   return {
     written,
     fetched,
     fetchedAttachments,
     exported,
+    promoted,
     now: Effect.succeed(input.now ?? 0),
     source: {
       shell: () =>
@@ -148,6 +151,14 @@ const deps = (input: {
             };
           },
         ),
+      copy: ({ fromDrainId, toDrainId, threadId }) =>
+        Effect.sync(() => {
+          const raw = files.get(`${fromDrainId}/${threadId}`);
+          if (raw === undefined) return false;
+          files.set(`${toDrainId}/${threadId}`, raw);
+          promoted.push({ fromDrainId, toDrainId, threadId });
+          return true;
+        }),
     },
     git: {
       bundle: ({ workspaceRoot }) =>
@@ -207,6 +218,14 @@ describe("fleet drain", () => {
       // thread:a is still current, so only the failed thread is fetched again.
       expect(retry.fetched).toEqual(["thread:b"]);
       expect(retry.written.map((entry) => entry.threadId)).toEqual(["thread:b"]);
+      // The current copy is promoted into the generation the importer reads.
+      expect(retry.promoted).toEqual([
+        {
+          fromDrainId: "drain:environment:worker:1",
+          toDrainId: "drain:environment:worker:2",
+          threadId: "thread:a",
+        },
+      ]);
     }),
   );
 

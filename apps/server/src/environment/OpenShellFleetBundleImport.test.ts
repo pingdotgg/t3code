@@ -208,9 +208,10 @@ const harness = Effect.gen(function* () {
       yield* fs.writeFileString(
         path.join(dir, `thread-${encodeURIComponent(input.threadId)}.json`),
         JSON.stringify({
+          // The file sink's envelope: the copied thread travels as a JSON body.
           threadId: input.threadId,
-          snapshot,
-          pages: [],
+          snapshotSequence: input.snapshotSequence,
+          body: JSON.stringify({ threadId: input.threadId, snapshot, pages: [] }),
           ...(manifest.length > 0 ? { attachments: manifest } : {}),
           ...(input.attachmentsSkipped === true ? { attachmentsSkipped: true } : {}),
         }),
@@ -264,6 +265,33 @@ describe("fleet bundle import", () => {
       expect(store.rows.get("thread:a")?.snapshotSequence).toBe(3);
       expect(store.rows.get("thread:a")?.drainId).toBe(DRAIN_ID);
       expect(importedThreadIds(written)).toHaveLength(1);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a checkout artifact is not imported as a thread", () =>
+    Effect.gen(function* () {
+      const { importer, writeBundle, stateDir, fs, path } = yield* harness;
+      yield* writeBundle({ threadId: "thread:a", snapshotSequence: 3 });
+      // A git bundle lands beside the thread copies under the worktree: key.
+      yield* fs.writeFileString(
+        path.join(
+          stateDir,
+          "fleet-drain",
+          encodeURIComponent(ENVIRONMENT),
+          encodeURIComponent(DRAIN_ID),
+          `thread-${encodeURIComponent("worktree:/work/a")}.json`,
+        ),
+        JSON.stringify({ threadId: "worktree:/work/a", snapshotSequence: null, body: "QlVORExF" }),
+      );
+
+      const result = yield* importer.importBundle({
+        environmentId: ENVIRONMENT,
+        drainId: DRAIN_ID,
+      });
+
+      expect(result.imported).toBe(1);
+      expect(result.skipped).toBe(0);
+      expect(result.warnings).toHaveLength(0);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

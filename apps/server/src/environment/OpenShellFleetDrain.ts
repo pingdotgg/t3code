@@ -8,7 +8,8 @@ import * as Schema from "effect/Schema";
 
 /**
  * Nothing is deleted until its data is here (spec section 7): per-thread copies
- * read back for verification, checkout pushes, per-item acks keyed by drain id.
+ * read back for verification, checkout bundle exports, per-item acks keyed by
+ * drain id.
  */
 export class FleetDrainStepError extends Schema.TaggedError<
   FleetDrainStepError,
@@ -71,9 +72,17 @@ export interface DrainSink {
     readonly drainId: string;
     readonly threadId: string;
   }) => Effect.Effect<DrainSinkRecord | null, FleetDrainStepError>;
+  /** Copies a previous generation's record into this one; false when it is gone. */
+  readonly copy: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly fromDrainId: string;
+    readonly toDrainId: string;
+    readonly threadId: string;
+  }) => Effect.Effect<boolean, FleetDrainStepError>;
 }
 
-/** Exports one checkout and its checkpoint refs as a base64 git bundle on exec stdout. */
+/** Exports one checkout and its checkpoint refs as base64 bundle bytes on exec
+ * stdout; empty stdout means origin already holds every selected commit. */
 export interface DrainGitBundle {
   readonly bundle: (input: {
     readonly environmentId: EnvironmentId;
@@ -206,7 +215,7 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
                 drainId: previous,
                 threadId: thread.threadId,
               });
-        if (prior !== null && prior.snapshotSequence !== null) {
+        if (prior !== null && previous !== null && prior.snapshotSequence !== null) {
           const current = yield* deps.source.threadSequence({
             environmentId: input.environmentId,
             threadId: thread.threadId,
@@ -216,8 +225,19 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
           if (
             current.snapshotSequence === prior.snapshotSequence &&
             prior.attachments !== undefined
-          )
-            return true;
+          ) {
+            // The importer reads this generation's directory only, so the
+            // verified copy is promoted instead of merely acknowledged.
+            const promoted = yield* deps.sink
+              .copy({
+                environmentId: input.environmentId,
+                fromDrainId: previous,
+                toDrainId: input.drainId,
+                threadId: thread.threadId,
+              })
+              .pipe(Effect.orElseSucceed(() => false));
+            if (promoted) return true;
+          }
         }
         const history = yield* deps.source.threadHistory({
           environmentId: input.environmentId,
@@ -276,6 +296,7 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
         worktrees.total += 1;
         // One bundle per checkout, keyed by its root, lands beside the thread
         // copies and is verified the same way: an ack means the bytes are here.
+        // An export of nothing (origin has every commit) has no bundle to store.
         const worktreeId = `worktree:${project.workspaceRoot}`;
         const copied = yield* Effect.gen(function* () {
           const exported = yield* deps.git.bundle({

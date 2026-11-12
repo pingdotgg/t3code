@@ -165,6 +165,52 @@ describe("fileDrainSink", () => {
   );
 });
 
+describe("fileDrainSink copy", () => {
+  it.effect("promotes a previous generation's record with its attachment files", () =>
+    withSink((sink) =>
+      Effect.gen(function* () {
+        const environmentId = EnvironmentId.make("environment:worker");
+        yield* sink.write({
+          environmentId,
+          drainId: "drain:environment:worker:1",
+          threadId: "thread:a",
+          body: '{"events":[1]}',
+          snapshotSequence: 2,
+          attachments: {
+            files: [{ name: "attach-1.png", bytes: base64Of("image-bytes") }],
+            oversizeSkipped: false,
+          },
+        });
+
+        const copied = yield* sink.copy({
+          environmentId,
+          fromDrainId: "drain:environment:worker:1",
+          toDrainId: "drain:environment:worker:2",
+          threadId: "thread:a",
+        });
+
+        expect(copied).toBe(true);
+        const record = yield* sink.read({
+          environmentId,
+          drainId: "drain:environment:worker:2",
+          threadId: "thread:a",
+        });
+        expect(record?.body).toBe('{"events":[1]}');
+        expect(record?.snapshotSequence).toBe(2);
+        expect(record?.attachments?.[0]?.name).toBe("attach-1.png");
+
+        const missing = yield* sink.copy({
+          environmentId,
+          fromDrainId: "drain:environment:worker:1",
+          toDrainId: "drain:environment:worker:2",
+          threadId: "thread:missing",
+        });
+        expect(missing).toBe(false);
+      }),
+    ),
+  );
+});
+
 describe("fileDrainSink attachments", () => {
   it.effect("stores attachment files beside the bundle and manifests them", () =>
     withSink((sink, stateDir) =>
@@ -439,6 +485,7 @@ describe("linkDrainSource", () => {
               return { bytes: input.body.length };
             }),
           read: ({ threadId }) => Effect.succeed(files.get(threadId) ?? null),
+          copy: () => Effect.succeed(false),
         },
         git: { bundle: () => Effect.succeed({ exitCode: 0, stdout: "", stderr: "" }) },
         now: Effect.succeed(0),

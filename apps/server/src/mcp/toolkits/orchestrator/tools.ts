@@ -381,7 +381,7 @@ const EnvironmentSpawnTool = Tool.make("t3_environment_spawn", {
 
 const EnvironmentRemoveTool = Tool.make("t3_environment_remove", {
   description:
-    "Drain a fleet worker to this instance (thread histories plus a git bundle of every checkout ref, committed and uncommitted), then delete its sandbox. Refused while the drain is incomplete; the sandbox is kept. `force` skips the checkout bundles after an explicit user ack: thread histories still export, but the checkouts are lost with the sandbox.",
+    "Drain a fleet worker to this instance (thread histories plus a git bundle of the checkout refs origin lacks, committed and uncommitted), then delete its sandbox. Refused while the drain is incomplete; the sandbox is kept. `force` skips the checkout bundles after an explicit user ack: thread histories still export, but the checkouts are lost with the sandbox.",
   parameters: OrchestratorMcpEnvironmentRemoveInput,
   success: OrchestratorMcpEnvironmentRemoveResult,
   failure: OrchestratorMcpFailure,
