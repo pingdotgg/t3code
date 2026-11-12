@@ -2028,6 +2028,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       `(${DEFERRED_WORK_ITEM_TYPES.map((type) => `'${type}'`).join(", ")})`,
     );
 
+    // The shell counts a thread's items from these rows, so it never reads the thread's items.
+    // Items without a run count under run_id ''. `counted` mirrors whether the run exists and was
+    // not rolled back; run events keep it current.
+    const bumpRunItemCount = (threadId: ThreadId, runId: RunId | null, delta: 1 | -1) => sql`
+      INSERT INTO orchestration_v2_projection_run_item_counts (thread_id, run_id, item_count, counted)
+      VALUES (
+        ${threadId}, ${runId ?? ""}, ${delta},
+        ${
+          runId === null
+            ? sql`1`
+            : sql`COALESCE(
+                (SELECT status <> 'rolled_back' FROM orchestration_v2_projection_runs
+                 WHERE run_id = ${runId}), 0)`
+        }
+      )
+      ON CONFLICT(thread_id, run_id) DO UPDATE SET item_count = item_count + excluded.item_count
+    `;
+
     // A todo list is never closed when its run ends, so a long thread holds an active one per
     // old run. Counting those as live work drags each run's nodes and subagents into every window.
     const todoListOfSettledRun = (row: Statement.Fragment) => sql`(
@@ -2230,6 +2248,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
                   "$.restartCancelledBackgroundWork",
                 )}
+            `;
+              yield* sql`
+              UPDATE orchestration_v2_projection_run_item_counts
+              SET counted = ${event.payload.status === "rolled_back" ? 0 : 1}
+              WHERE thread_id = ${event.payload.threadId} AND run_id = ${event.payload.id}
+                AND counted <> ${event.payload.status === "rolled_back" ? 0 : 1}
             `;
               break;
             }
@@ -2724,6 +2748,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "turn-item.updated": {
               const payloadJson = yield* encodeTurnItemPayload(event.payload);
               const updatedAt = yield* encodePayloadTimestamp(event.payload.updatedAt);
+              const [previous] = yield* sql<{
+                readonly thread_id: ThreadId;
+                readonly run_id: RunId | null;
+              }>`
+                SELECT thread_id, run_id FROM orchestration_v2_projection_turn_items
+                WHERE turn_item_id = ${event.payload.id}
+              `;
               yield* sql`
               INSERT INTO orchestration_v2_projection_turn_items (
                 turn_item_id,
@@ -2767,6 +2798,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 payload_json = excluded.payload_json
             `;
+              if (
+                previous?.thread_id !== event.payload.threadId ||
+                previous.run_id !== event.payload.runId
+              ) {
+                if (previous !== undefined) {
+                  yield* bumpRunItemCount(previous.thread_id, previous.run_id, -1);
+                }
+                yield* bumpRunItemCount(event.payload.threadId, event.payload.runId, 1);
+              }
               break;
             }
             case "checkpoint-scope.created": {
@@ -6719,28 +6759,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const selectShellRunItemCounts = (threadIds: ReadonlyArray<ThreadId>) =>
       sql<ShellRunItemCountRow>`
-        SELECT thread_id, run_id, COUNT(*) AS item_count
-        FROM orchestration_v2_projection_turn_items
-        WHERE run_id IS NOT NULL AND thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
-        GROUP BY thread_id, run_id
+        SELECT thread_id, run_id, item_count
+        FROM orchestration_v2_projection_run_item_counts
+        WHERE run_id <> '' AND item_count > 0
+          AND thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
       `;
 
-    // Count all selected threads in one index walk; fork sources still need per-run counts.
+    // Fork sources still need per-run counts.
     const selectShellItemCounts = (threadIds: ReadonlyArray<ThreadId>) =>
       sql<ShellItemCountRow>`
-        SELECT counts.thread_id,
-          SUM(CASE WHEN counts.run_id IS NULL OR r.status <> 'rolled_back'
-            THEN counts.item_count ELSE 0 END) AS item_count,
-          SUM(CASE WHEN counts.run_id IS NULL THEN counts.item_count ELSE 0 END)
-            AS runless_item_count
-        FROM (
-          SELECT thread_id, run_id, COUNT(*) AS item_count
-          FROM orchestration_v2_projection_turn_items
-          WHERE thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
-          GROUP BY thread_id, run_id
-        ) counts
-        LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = counts.run_id
-        GROUP BY counts.thread_id
+        SELECT thread_id,
+          SUM(CASE WHEN counted = 1 THEN item_count ELSE 0 END) AS item_count,
+          SUM(CASE WHEN run_id = '' THEN item_count ELSE 0 END) AS runless_item_count
+        FROM orchestration_v2_projection_run_item_counts
+        WHERE thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
+        GROUP BY thread_id
       `;
 
     const selectShellProviderThreadRows = (threadIds?: ReadonlyArray<ThreadId>) =>
