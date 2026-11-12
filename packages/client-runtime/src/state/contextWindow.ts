@@ -29,6 +29,21 @@ function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+// Auto-compaction below the window is where the context actually runs out, so progress counts toward it.
+function contextProgress(usedTokens: number, maxTokens: number | null, threshold: number | null) {
+  const limit =
+    maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
+      ? threshold
+      : maxTokens;
+  const usedPercentage =
+    limit !== null && limit > 0 ? Math.min(100, (usedTokens / limit) * 100) : null;
+  return {
+    remainingTokens: limit !== null ? Math.max(0, Math.round(limit - usedTokens)) : null,
+    usedPercentage,
+    remainingPercentage: usedPercentage !== null ? Math.max(0, 100 - usedPercentage) : null,
+  };
+}
+
 type NullableContextWindowUsage = {
   readonly [Key in keyof ThreadTokenUsageSnapshot]: undefined extends ThreadTokenUsageSnapshot[Key]
     ? Exclude<ThreadTokenUsageSnapshot[Key], undefined> | null
@@ -82,18 +97,11 @@ export function deriveLatestContextWindowSnapshot(
   if (liveUsage != null) {
     const usedTokens = Math.max(0, liveUsage.usedTokens);
     const maxTokens = liveUsage.maxTokens ?? null;
-    const usedPercentage =
-      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
-    const remainingTokens =
-      maxTokens !== null ? Math.max(0, Math.round(maxTokens - usedTokens)) : null;
-    const remainingPercentage = usedPercentage !== null ? Math.max(0, 100 - usedPercentage) : null;
     return {
       usedTokens,
       totalProcessedTokens: null,
       maxTokens,
-      remainingTokens,
-      usedPercentage,
-      remainingPercentage,
+      ...contextProgress(usedTokens, maxTokens, liveUsage.autoCompactThreshold ?? null),
       inputTokens: liveUsage.inputTokens ?? null,
       cachedInputTokens: liveUsage.cachedInputTokens ?? null,
       outputTokens: liveUsage.outputTokens ?? null,
@@ -120,15 +128,11 @@ export function deriveLatestContextWindowSnapshot(
   ) {
     const maxTokens = asFiniteNumber(providerUsage.maxTokens);
     const usedTokens = providerUsage.usedTokens;
-    const usedPercentage =
-      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
     return {
       usedTokens,
       totalProcessedTokens: asFiniteNumber(providerUsage.totalProcessedTokens),
       maxTokens,
-      remainingTokens: maxTokens === null ? null : Math.max(0, Math.round(maxTokens - usedTokens)),
-      usedPercentage,
-      remainingPercentage: usedPercentage === null ? null : Math.max(0, 100 - usedPercentage),
+      ...contextProgress(usedTokens, maxTokens, providerUsage.autoCompactThreshold ?? null),
       inputTokens: asFiniteNumber(providerUsage.inputTokens),
       cachedInputTokens: asFiniteNumber(providerUsage.cachedInputTokens),
       outputTokens: asFiniteNumber(providerUsage.outputTokens),
