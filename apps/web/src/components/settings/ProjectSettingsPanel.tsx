@@ -2,7 +2,13 @@ import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
-import { mapAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
+import {
+  mapAtomCommandResult,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
+import * as Cause from "effect/Cause";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { planProjectRemoval } from "@t3tools/client-runtime/state/projects";
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
@@ -293,7 +299,8 @@ function ProjectDetail({
   const updateAllMembers = (
     input: ProjectGroupUpdate | ((member: SidebarProjectGroupMember) => ProjectGroupUpdate),
     failureTitle: string,
-  ) => updateProjectGroup(group.memberProjects, input, failureTitle);
+    onFailure?: typeof reportProjectFailure,
+  ) => updateProjectGroup(group.memberProjects, input, failureTitle, onFailure);
   const canOrganize =
     allMembers.every((member) => editableIds.has(member.environmentId)) &&
     canOrganizeProjectGroup(allMembers);
@@ -326,13 +333,28 @@ function ProjectDetail({
   const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditGroup);
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);
   const savingFaviconRef = useRef(false);
-  const setProjectIcon = async (input: Parameters<typeof updateAllMembers>[0]) => {
-    if (savingFaviconRef.current) return;
+  const setProjectIcon = async (
+    input: Parameters<typeof updateAllMembers>[0],
+    onFailure?: typeof reportProjectFailure,
+  ) => {
+    if (savingFaviconRef.current) {
+      return AsyncResult.failure<void, Error>(
+        Cause.fail(new Error("A project icon update is already in progress.")),
+      );
+    }
     savingFaviconRef.current = true;
     setIsSavingFavicon(true);
-    await updateAllMembers(input, "Failed to update project icon");
+    let result;
+    try {
+      result = await updateAllMembers(input, "Failed to update project icon", onFailure);
+    } catch (error) {
+      savingFaviconRef.current = false;
+      setIsSavingFavicon(false);
+      throw error;
+    }
     savingFaviconRef.current = false;
     setIsSavingFavicon(false);
+    return result;
   };
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
@@ -706,7 +728,13 @@ function ProjectDetail({
             projectName={group.title}
             open
             onOpenChange={setIconPickerOpen}
-            onSelect={(icon) => void setProjectIcon({ faviconPath: null, projectIcon: icon })}
+            onSelect={async (icon) => {
+              const result = await setProjectIcon(
+                { faviconPath: null, projectIcon: icon },
+                () => undefined,
+              );
+              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+            }}
           />
         </Suspense>
       ) : null}

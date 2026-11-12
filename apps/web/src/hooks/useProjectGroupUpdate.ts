@@ -43,6 +43,7 @@ export function useProjectGroupUpdate() {
     members: ReadonlyArray<TMember>,
     input: ProjectGroupUpdate | ((member: TMember) => ProjectGroupUpdate),
     failureTitle: string,
+    onFailure = reportProjectFailure,
   ): Promise<AtomCommandResult<void, unknown>> => {
     const denied = checkProjectAccess(members, failureTitle);
     if (denied) return denied;
@@ -54,6 +55,7 @@ export function useProjectGroupUpdate() {
       return failWith(
         failureTitle,
         `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
+        onFailure,
       );
     }
     for (const member of members) {
@@ -71,7 +73,7 @@ export function useProjectGroupUpdate() {
         () => undefined,
       );
       if (result._tag === "Failure") {
-        reportProjectFailure(
+        onFailure(
           members.length > 1
             ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
             : failureTitle,
@@ -153,8 +155,12 @@ export function reportProjectFailure(title: string, result: AtomCommandResult<un
   );
 }
 
-function failWith(title: string, message: string): AtomCommandResult<void, unknown> {
+function failWith(
+  title: string,
+  message: string,
+  onFailure = reportProjectFailure,
+): AtomCommandResult<void, unknown> {
   const result = AsyncResult.failure<void, Error>(Cause.fail(new Error(message)));
-  reportProjectFailure(title, result);
+  onFailure(title, result);
   return result;
 }
