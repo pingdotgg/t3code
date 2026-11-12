@@ -112,6 +112,12 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
 // long tool call or background wait does not look lost.
 const ASSISTANT_IDLE_FLUSH_MS = 800;
 
+// Each passed snapshot is stored durably with the full text so far. Past this length, one that
+// only extends the delivered text waits until it is half again as long, so a long stream stores
+// a few times its final text rather than the square of its length.
+const SNAPSHOT_GROWTH_START_LENGTH = 4_000;
+const SNAPSHOT_GROWTH_FACTOR = 1.5;
+
 type StreamedMessage = {
   readonly id: string;
   readonly text: string;
@@ -206,6 +212,12 @@ export function makeAssistantStreamingFilter(
       // An idle delivery may already show more than the next boundary; never shrink it. A
       // provider rewrite or truncation is not a prefix and replaces it.
       if (delivered.startsWith(ready)) return hold(scan);
+      if (
+        delivered.length >= SNAPSHOT_GROWTH_START_LENGTH &&
+        ready.length < delivered.length * SNAPSHOT_GROWTH_FACTOR &&
+        ready.startsWith(delivered)
+      )
+        return hold(scan);
       track(key, {
         text: ready,
         at: now,
