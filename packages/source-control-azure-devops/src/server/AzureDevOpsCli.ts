@@ -1,11 +1,16 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - az's own extension path layout, joined for the host platform.
+import * as NodePath from "node:path";
 import {
   NonNegativeInt,
   TrimmedNonEmptyString,
@@ -14,6 +19,7 @@ import {
   type VcsProcessExitFailureKind,
 } from "@t3tools/contracts";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import {
   decodeAzureDevOpsPullRequestJson,
@@ -385,6 +391,30 @@ const classifyAzFailure = (stderr: string): VcsProcessExitFailureKind | null => 
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
   const credentials = yield* AzureDevOpsCredentials.AzureDevOpsCredentials;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const scope = yield* Scope.Scope;
+  const environment = yield* HostProcess.Environment;
+  const extensionDir =
+    environment.AZURE_EXTENSION_DIR ||
+    NodePath.join(
+      environment.AZURE_CONFIG_DIR || NodePath.join(yield* HostProcess.HomeDirectory, ".azure"),
+      "cliextensions",
+    );
+
+  // The extension tries every az login account before AZURE_DEVOPS_EXT_PAT, so a run with a
+  // saved token gets a config directory with no accounts. It keeps the user's extensions.
+  const configDirLock = yield* Semaphore.make(1);
+  let configDir: string | undefined;
+  const isolatedConfigDir = configDirLock.withPermits(1)(
+    Effect.suspend(() =>
+      configDir !== undefined
+        ? Effect.succeed(configDir)
+        : fileSystem.makeTempDirectoryScoped({ prefix: "t3code-az-" }).pipe(
+            Effect.provideService(Scope.Scope, scope),
+            Effect.tap((directory) => Effect.sync(() => (configDir = directory))),
+          ),
+    ),
+  );
 
   const execute: AzureDevOpsCli["Service"]["execute"] = (input) => {
     const context = {
@@ -397,16 +427,25 @@ export const make = Effect.gen(function* () {
       // Never fall back to another account when the organization's own token cannot be read.
       Effect.mapError((cause) => new AzureDevOpsSavedTokenUnreadableError({ ...context, cause })),
       Effect.flatMap((token) =>
+        Option.isNone(token)
+          ? Effect.undefined
+          : isolatedConfigDir.pipe(
+              Effect.mapError((cause) => new AzureDevOpsCommandFailedError({ ...context, cause })),
+              Effect.map((directory) => ({
+                AZURE_CONFIG_DIR: directory,
+                AZURE_EXTENSION_DIR: extensionDir,
+                AZURE_DEVOPS_EXT_PAT: Redacted.value(token.value.token),
+              })),
+            ),
+      ),
+      Effect.flatMap((env) =>
         process
           .run({
             operation: "AzureDevOpsCli.execute",
             command: "az",
             args: input.args,
             cwd: input.cwd,
-            // The extension reads a PAT from here for whichever organization it detects.
-            ...(Option.isSome(token)
-              ? { env: { AZURE_DEVOPS_EXT_PAT: Redacted.value(token.value.token) } }
-              : {}),
+            ...(env === undefined ? {} : { env }),
             classifyFailure: classifyAzFailure,
             notFoundDetail: "Pull request not found.",
             timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
