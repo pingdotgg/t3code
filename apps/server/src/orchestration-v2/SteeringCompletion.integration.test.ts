@@ -2236,7 +2236,8 @@ const claudeAdapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
   openSession: () => Effect.die("the Claude instance never starts a turn here"),
 };
 
-// Queues a scheduled delivery on the Codex thread, then switches the thread to Claude.
+// Queues a scheduled delivery behind the Codex turn, stops that turn (Stop holds the queue), then
+// switches the thread to Claude: a thread changes instance only while no run is active.
 const scheduledDeliveryAfterClaudeSwitch = (name: string, text: string) =>
   Effect.gen(function* () {
     const harness = yield* nextTurnSelectionHarness(
@@ -2268,6 +2269,21 @@ const scheduledDeliveryAfterClaudeSwitch = (name: string, text: string) =>
         (run) => run.status === "queued",
       )!;
       assert.equal(queuedRun.providerInstanceId, instanceId);
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const first = harness.started[0]!;
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("stop"),
+        threadId,
+        runId: first.runId,
+        holdQueue: true,
+      });
+      yield* worker.drain();
+      const stopped = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.equal(stopped.find((run) => run.id === first.runId)?.status, "interrupted");
+      const held = stopped.find((run) => run.id === queuedRun.id);
+      assert.equal(held?.status, "queued");
+      assert.isTrue(held?.queueHeld);
       yield* orchestrator.dispatch({
         type: "thread.model-selection.set",
         commandId: CommandId.make("select-claude"),
@@ -2278,39 +2294,6 @@ const scheduledDeliveryAfterClaudeSwitch = (name: string, text: string) =>
     });
     return { ...harness, queueAndSwitch };
   });
-
-it.effect("checks a promoted scheduled /goal against the thread's current provider", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { started, steered, layer, queueAndSwitch } = yield* scheduledDeliveryAfterClaudeSwitch(
-        "promote-scheduled-goal",
-        "/goal pause",
-      );
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const { threadId, queuedRun } = yield* queueAndSwitch;
-        const promoteError = yield* orchestrator
-          .dispatch({
-            type: "queued-message.promote-to-steer",
-            commandId: CommandId.make("promote"),
-            threadId,
-            queuedRunId: queuedRun.id,
-            targetRunId: started[0]!.runId,
-          })
-          .pipe(Effect.flip);
-
-        assert.match(String(promoteError.cause), /Claude goals cannot be paused or resumed/);
-        assert.deepEqual(steered, []);
-        assert.equal(
-          (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-            (run) => run.id === queuedRun.id,
-          )?.status,
-          "queued",
-        );
-      }).pipe(Effect.provide(layer));
-    }),
-  ),
-);
 
 it.effect("checks an edited scheduled /goal against the thread's current provider", () =>
   Effect.scoped(
@@ -2347,7 +2330,7 @@ it.effect("checks an edited scheduled /goal against the thread's current provide
 it.effect("checks a queued scheduled /goal against the thread's current provider at start", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { events, started, layer, queueAndSwitch } = yield* scheduledDeliveryAfterClaudeSwitch(
+      const { started, layer, queueAndSwitch } = yield* scheduledDeliveryAfterClaudeSwitch(
         "start-scheduled-goal",
         "/goal pause",
       );
@@ -2355,36 +2338,11 @@ it.effect("checks a queued scheduled /goal against the thread's current provider
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const { threadId, queuedRun } = yield* queueAndSwitch;
-        const first = started[0]!;
-        const settled = yield* orchestrator.streamDomainEvents.pipe(
-          Stream.filter(
-            (event) =>
-              event.type === "run.updated" &&
-              event.payload.id === first.runId &&
-              event.payload.status === "waiting",
-          ),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkScoped,
-        );
-        const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
-        yield* Queue.offer(events, {
-          type: "provider_turn.updated",
-          driver,
-          providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make("resume"),
+          threadId,
         });
-        yield* Queue.offer(events, {
-          type: "turn.terminal",
-          driver,
-          providerThreadId: turn.providerThreadId,
-          providerTurnId: turn.id,
-          runOrdinal: first.runOrdinal,
-          status: "completed",
-          failure: null,
-          threadDisposition: "reusable",
-        });
-        yield* Fiber.join(settled);
-        yield* worker.drain();
         yield* orchestrator.resumeQueuedRuns;
         yield* worker.drain();
 

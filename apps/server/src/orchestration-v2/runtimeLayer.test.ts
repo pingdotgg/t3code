@@ -8045,7 +8045,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     ({ newerSelection, freshContext }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const eventSink = yield* EventSink.EventSinkV2;
         const threadId = ThreadId.make(
           `runtime-layer-queued-scheduled-selection-${newerSelection.instanceId}-${newerSelection.model}-${freshContext}`,
         );
@@ -8096,29 +8095,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         )!;
         assert.equal(queued.status, "queued");
         assert.deepEqual(queued.modelSelection, modelSelection);
+        // Stop holds the queue; a thread changes instance only while no run is active.
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make(`${threadId}:stop`),
+          threadId,
+          runId: active.id,
+          holdQueue: true,
+        });
         yield* orchestrator.dispatch({
           type: "thread.model-selection.set",
           commandId: CommandId.make(`${threadId}:select-newer`),
           threadId,
           modelSelection: newerSelection,
         });
-        const waiting = yield* orchestrator.getThreadProjection(threadId);
-        const now = yield* DateTime.now;
-        yield* eventSink.write({
-          events: [
-            {
-              id: EventId.make(`${threadId}:completed`),
-              type: "run.updated",
-              threadId,
-              runId: active.id,
-              occurredAt: now,
-              payload: {
-                ...waiting.runs.find((run) => run.id === active.id)!,
-                status: "completed",
-                completedAt: now,
-              },
-            },
-          ],
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`${threadId}:resume`),
+          threadId,
         });
         yield* orchestrator.resumeQueuedRuns;
         const after = yield* orchestrator.getThreadProjection(threadId);
@@ -8141,7 +8135,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const eventSink = yield* EventSink.EventSinkV2;
         const threadId = ThreadId.make("runtime-layer-queued-scheduled-pinned-selection");
         const scheduledMessageId = MessageId.make(`${threadId}:scheduled`);
         const pinnedSelection = { instanceId: modelSelection.instanceId, model: "gpt-5.5" };
@@ -8191,7 +8184,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         )!;
         assert.equal(queued.status, "queued");
         assert.deepEqual(queued.modelSelection, pinnedSelection);
-        // The user moves the thread off the pinned model while the delivery waits.
+        // Stop holds the queue; a thread changes instance only while no run is active.
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make(`${threadId}:stop`),
+          threadId,
+          runId: active.id,
+          holdQueue: true,
+        });
+        // The user moves the thread off the pinned model while the delivery is held.
         const movedSelection = { instanceId: alternateInstanceId, model: "gpt-5.5" };
         yield* orchestrator.dispatch({
           type: "thread.model-selection.set",
@@ -8199,23 +8200,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           threadId,
           modelSelection: movedSelection,
         });
-        const waiting = yield* orchestrator.getThreadProjection(threadId);
-        const now = yield* DateTime.now;
-        yield* eventSink.write({
-          events: [
-            {
-              id: EventId.make(`${threadId}:completed`),
-              type: "run.updated",
-              threadId,
-              runId: active.id,
-              occurredAt: now,
-              payload: {
-                ...waiting.runs.find((run) => run.id === active.id)!,
-                status: "completed",
-                completedAt: now,
-              },
-            },
-          ],
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`${threadId}:resume`),
+          threadId,
         });
         yield* orchestrator.resumeQueuedRuns;
         const after = yield* orchestrator.getThreadProjection(threadId);
@@ -8243,7 +8231,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     (switchedSelection) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const eventSink = yield* EventSink.EventSinkV2;
         const threadId = ThreadId.make(
           `runtime-layer-fresh-scheduled-provider-thread-${switchedSelection.instanceId}`,
         );
@@ -8299,29 +8286,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         assert.equal(reserved.providerInstanceId, modelSelection.instanceId);
         assert.isNull(reserved.firstRunOrdinal);
         assert.isNull(reserved.nativeThreadRef);
+        // Stop holds the queue; a thread changes instance only while no run is active.
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make(`${threadId}:stop`),
+          threadId,
+          runId: active.id,
+          holdQueue: true,
+        });
         yield* orchestrator.dispatch({
           type: "thread.model-selection.set",
           commandId: CommandId.make(`${threadId}:select-switched`),
           threadId,
           modelSelection: switchedSelection,
         });
-        const waiting = yield* orchestrator.getThreadProjection(threadId);
-        const now = yield* DateTime.now;
-        yield* eventSink.write({
-          events: [
-            {
-              id: EventId.make(`${threadId}:completed`),
-              type: "run.updated",
-              threadId,
-              runId: active.id,
-              occurredAt: now,
-              payload: {
-                ...waiting.runs.find((run) => run.id === active.id)!,
-                status: "completed",
-                completedAt: now,
-              },
-            },
-          ],
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`${threadId}:resume`),
+          threadId,
         });
         yield* orchestrator.resumeQueuedRuns;
 
@@ -8423,14 +8405,28 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             ),
           );
 
-      // Both deliveries froze the original selection when they queued.
+      // Both deliveries froze the original selection when they queued. Stop holds the queue, since
+      // a thread changes instance only while no run is active; resuming starts the first delivery.
+      const active = yield* startedRunFor(MessageId.make(`${threadId}:active`));
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make(`${threadId}:stop`),
+        threadId,
+        runId: active!.id,
+        holdQueue: true,
+      });
       yield* orchestrator.dispatch({
         type: "thread.model-selection.set",
         commandId: CommandId.make(`${threadId}:select-switched`),
         threadId,
         modelSelection: switchedSelection,
       });
-      yield* completeRunFor(MessageId.make(`${threadId}:active`));
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make(`${threadId}:resume`),
+        threadId,
+      });
+      yield* orchestrator.resumeQueuedRuns;
       const first = yield* startedRunFor(deliveries[0]!);
       assert.equal(first?.status, "starting");
       assert.deepEqual(first?.modelSelection, switchedSelection);
