@@ -3839,6 +3839,156 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("shows a card-answer verdict before a Bash tool", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("card-answer-verdict-before-bash"),
+          text: 'Quiz answer: "High", right.\n\n(card card-1)',
+          attachments: [],
+          lesson: true,
+        }),
+      );
+      const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
+        claudeSdkFrame({
+          type: "assistant",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: { id: uuid, model: "claude-sonnet-5-5", content },
+        });
+      for (const frame of [
+        snapshot("card-answer-verdict-text", [
+          {
+            type: "text",
+            text: "Your answer holds up on the basics. Before I say what's missing, I'll check the code that runs, so I teach what it does and not what the notes say.",
+          },
+        ]),
+        snapshot("card-answer-verdict-tool", [
+          { type: "tool_use", id: "bash-1", name: "Bash", input: {} },
+        ]),
+        makeResultFrame({ uuid: "card-answer-verdict-result", result: "" }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(1);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        (event.turnItem.type === "reasoning" || event.turnItem.type === "assistant_message")
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        items.map((item) => [item.type, item.text]),
+        [
+          [
+            "assistant_message",
+            "Your answer holds up on the basics. Before I say what's missing, I'll check the code that runs, so I teach what it does and not what the notes say.",
+          ],
+        ],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    {
+      name: "out-and-back planning tail",
+      input:
+        "Net displacement only compares endpoints, so the 4 m out-and-back trip is missed; I need to find where v = 0 and add each leg's distance separately. Next I'll apply that to the cart on the rail with v(t) = 6 − 2t over 0 to 5 s.",
+      expected: "Net displacement only compares endpoints, so the 4 m out-and-back trip is missed.",
+    },
+    {
+      name: "grading tail",
+      input:
+        "That matches the posted student solution, though its quoted v₀ and c don't reproduce its t₂, so I'm grading against my own working since no official solution exists.",
+      expected:
+        "That matches the posted student solution, though its quoted v₀ and c don't reproduce its t₂.",
+    },
+    {
+      name: "target tail",
+      input:
+        "A green KiCad DRC doesn't prove the board is safe: the grader enforces the 5.5 mm figure, so I'm treating that as the target.",
+      expected:
+        "A green KiCad DRC doesn't prove the board is safe: the grader enforces the 5.5 mm figure.",
+    },
+    {
+      name: "teaching stays",
+      input: "Net displacement compares endpoints, while distance adds the length of each leg.",
+      expected: "Net displacement compares endpoints, while distance adds the length of each leg.",
+    },
+  ] as const)("strips planning voice from promoted thinking ($name)", ({ input, expected }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`strip-lesson-narration-${input.slice(0, 12)}`),
+          text: "Teach me",
+          attachments: [],
+          lesson: true,
+        }),
+      );
+      const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
+        claudeSdkFrame({
+          type: "assistant",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: { id: "strip-thinking-message", model: "claude-sonnet-5-5", content },
+        });
+      for (const frame of [
+        snapshot("strip-thinking-1", [
+          { type: "thinking", thinking: "Planning the check", signature: "sig" },
+        ]),
+        snapshot("strip-thinking-2", [{ type: "thinking", thinking: input, signature: "sig" }]),
+        snapshot("strip-thinking-card", [
+          {
+            type: "tool_use",
+            id: "strip-card",
+            name: "mcp__t3-code__question_card",
+            input: { reply: "Which idea is correct?" },
+          },
+        ]),
+        makeResultFrame({ uuid: "strip-thinking-result", result: "" }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(1);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem.text]
+          : [],
+      );
+      assert.deepEqual(items, [expected]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     {
       name: "separate frames",

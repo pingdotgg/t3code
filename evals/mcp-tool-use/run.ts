@@ -2334,17 +2334,33 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
     const stripLessonNarration = (value: string) =>
       value
         .split("\n")
-        .map((line) =>
-          line
+        .map((line) => {
+          const narration =
+            /^(?:I(?:['’](?:m|ll|ve|d)\b| (?!is\b)[a-z])|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u;
+          const firstPerson = /\b(?:I(?!\s*(?:=|[×*/+\-]))|I['’](?:m|ll|ve|d)|me|my)\b/iu;
+          return line
             .split(/(?<=[.!?])\s+/u)
-            .filter(
-              (sentence) =>
-                !/^(?:I(?:['’](?:m|ll|ve|d)\b| (?!is\b)[a-z])|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u.test(
-                  sentence.trimStart(),
-                ),
-            )
-            .join(" "),
-        )
+            .flatMap((sentence) => {
+              const tail = /,\s*(?:so|and)\s+I(?:['’](?:m|ll|ve|d)\b|\b)[\s\S]*$/iu.exec(sentence);
+              const withoutTail = tail === null ? sentence : `${sentence.slice(0, tail.index)}.`;
+              const clauses = withoutTail.split(";");
+              const kept = clauses.filter((clause) => {
+                const trimmed = clause.trimStart();
+                return !narration.test(trimmed) && !firstPerson.test(trimmed);
+              });
+              if (kept.length === 0) return [];
+              if (kept.length === clauses.length && tail === null) return [sentence];
+              return [
+                kept
+                  .map((clause) => {
+                    const trimmed = clause.trim();
+                    return /[.!?]$/u.test(trimmed) ? trimmed : `${trimmed}.`;
+                  })
+                  .join(" "),
+              ];
+            })
+            .join(" ");
+        })
         .join("\n")
         .replace(/\n{3,}/gu, "\n\n")
         .trim();
@@ -2398,9 +2414,11 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
           normalizeToolName(block.name) === "quiz_card" ||
           normalizeToolName(block.name) === "question_card";
         const isT3Mcp = block.name.startsWith("mcp__t3-code__");
+        const showCardAnswerVerdict = lesson && sample.verdictPending && texts.length === 0;
         // The adapter keeps short narration before a non-T3 tool as a Thought (APP-108).
         // After a card, short text before a drawing tool is working talk and stays a Thought too.
         if (
+          showCardAnswerVerdict ||
           (isT3Mcp && (!sample.lessonCardSeen || isCard)) ||
           held.reduce((total, text) => total + text.length, 0) > 300
         ) {
