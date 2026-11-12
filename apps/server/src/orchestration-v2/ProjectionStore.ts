@@ -6475,35 +6475,39 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               position,
               canonicalPosition: position,
             }));
-            const { olderPolicy, cursorPosition } = yield* Effect.try({
+            const { olderPolicy, cursorEnd } = yield* Effect.try({
               try: () => ({
                 olderPolicy: olderHistoryPagePolicy({ items: indexed, cursor, throughEntryId }),
-                // The cursor's own row, or the row its stale position falls back to.
-                cursorPosition: Math.min(
-                  findCursorEndIndex(indexed, decodeThreadHistoryCursor(cursor)),
-                  indexed.length - 1,
-                ),
+                // Past the cursor's own row, or at the row its stale position falls back to.
+                cursorEnd: findCursorEndIndex(indexed, decodeThreadHistoryCursor(cursor)),
               }),
               catch: (cause) => new ProjectionStoreReadError({ threadId, cause }),
             });
+            const cursorPosition = Math.min(cursorEnd, indexed.length - 1);
             const selectPage = (rows: typeof indexed) =>
               Effect.try({
-                try: () =>
-                  workMode === "work"
-                    ? selectDeferredWorkPage({
-                        items: rows,
-                        cursor,
-                        throughEntryId,
-                        snapshotSequence,
-                        rowEncodedBytes: () => 0,
-                      })
-                    : selectHistoryPageFromCursor({
-                        items: workMode === "deferred" ? deferWorkHistoryRows(rows) : rows,
-                        cursor,
-                        snapshotSequence,
-                        rowEncodedBytes: () => 0,
-                        policy: olderPolicy,
-                      }),
+                try: () => {
+                  if (workMode === "work")
+                    return selectDeferredWorkPage({
+                      items: rows,
+                      cursor,
+                      throughEntryId,
+                      snapshotSequence,
+                      rowEncodedBytes: () => 0,
+                    });
+                  const items = workMode === "deferred" ? deferWorkHistoryRows(rows) : rows;
+                  // Folding can hide the cursor's row: a snapshot folds no work in a thread with no
+                  // user turn. The page then ends at the first row kept from the cursor on.
+                  const end = items.findIndex((row) => row.canonicalPosition >= cursorEnd);
+                  return selectHistoryPageFromCursor({
+                    items,
+                    cursor,
+                    exclusiveEndIndex: end === -1 ? items.length : end,
+                    snapshotSequence,
+                    rowEncodedBytes: () => 0,
+                    policy: olderPolicy,
+                  });
+                },
                 catch: (cause) => new ProjectionStoreReadError({ threadId, cause }),
               });
             let page = yield* selectPage(indexed);

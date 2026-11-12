@@ -458,11 +458,13 @@ export function selectHistoryPageFromCursor<Row extends HistoryRow>(input: {
   readonly policy?: ThreadHistoryPagePolicy | undefined;
   readonly rowEncodedBytes?: ((row: Row) => number) | undefined;
   readonly throughEntryId?: string | undefined;
+  /** Where the page ends in `items`. Set when `items` can lack the cursor's row. */
+  readonly exclusiveEndIndex?: number | undefined;
 }): SelectTimelinePageResult<Row> {
   const decoded = decodeThreadHistoryCursor(input.cursor);
   return selectOlderTimelinePage({
     items: input.items,
-    exclusiveEndIndex: findCursorEndIndex(input.items, decoded),
+    exclusiveEndIndex: input.exclusiveEndIndex ?? findCursorEndIndex(input.items, decoded),
     snapshotSequence: input.snapshotSequence,
     ...(input.rowEncodedBytes === undefined ? {} : { rowEncodedBytes: input.rowEncodedBytes }),
     policy: olderHistoryPagePolicy(input),

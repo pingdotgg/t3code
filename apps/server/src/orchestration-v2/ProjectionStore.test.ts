@@ -54,6 +54,7 @@ import {
   encodeThreadHistoryCursor,
   selectHistoryPageFromCursor,
   THREAD_HISTORY_PAGE_POLICY,
+  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
 import { buildBoundedThreadStreamSnapshot } from "./ThreadStream.ts";
@@ -5555,6 +5556,79 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         )
       `;
       assert.strictEqual((yield* forkPage()).totalItems, forkTotal + 2);
+
+      // An agent started this thread, so the snapshot folds no work. Its cursor then names a
+      // command that an older page folds into the run's one work group.
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = CASE WHEN ordinal = 0 THEN type ELSE 'assistant_message' END,
+          payload_json = CASE
+            WHEN ordinal = 0 THEN json_set(payload_json, '$.createdBy', 'agent')
+            ELSE json_set(payload_json, '$.type', 'assistant_message',
+              '$.messageId', turn_item_id, '$.streaming', json('false'))
+          END
+        WHERE thread_id = ${threadId} AND type = 'user_message'
+      `;
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+        ) VALUES (
+          'event:paged-scrollback:agent-started', 'thread', ${threadId}, 2,
+          'turn-item.updated', ${nowIso}, 'user', '{}', '{}', 2
+        )
+      `;
+      const window = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+        userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+        deferWork: true,
+      });
+      const bounded = buildBoundedThreadProjection({
+        projection: window.projection,
+        snapshotSequence: window.snapshotSequence,
+      });
+      const loaded = [bounded.projection.visibleTurnItems];
+      let earlier = bounded.hasMoreHistory ? bounded.historyCursor : null;
+      while (earlier !== null) {
+        assert.isBelow(loaded.length, 20);
+        const page: OrchestrationV2ThreadHistoryPage = yield* projectionStore.getThreadHistoryPage(
+          threadId,
+          earlier,
+          undefined,
+          false,
+          "deferred",
+        );
+        loaded.unshift(page.items);
+        earlier = page.hasMoreHistory ? page.nextCursor : null;
+      }
+      const held = loaded.flat();
+      const heldOrdinals = held.map((row) => row.item.ordinal);
+      assert.deepEqual(
+        heldOrdinals,
+        [...new Set(heldOrdinals)].toSorted((left, right) => left - right),
+      );
+      const folded = held.find((row) => row.item.deferredWork !== undefined)?.item;
+      assert.isAbove(folded?.deferredWork?.itemCount ?? 0, 150);
+      const everyRow = yield* projectionStore.getTimelinePage(threadId, {
+        view: "activity",
+        limit: itemCount + 2,
+      });
+      // Every row is on the client, or is work that the folded row stands for.
+      assert.deepEqual(
+        everyRow.items
+          .filter(
+            ({ item }) =>
+              !heldOrdinals.includes(item.ordinal) &&
+              !(
+                item.type === "command_execution" &&
+                folded?.deferredWork !== undefined &&
+                item.ordinal > folded.ordinal &&
+                item.ordinal <= folded.deferredWork.lastOrdinal
+              ),
+          )
+          .map(({ item }) => item.ordinal),
+        [],
+      );
     }),
   );
 
