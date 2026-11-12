@@ -1555,13 +1555,13 @@ describe("VcsStatusBroadcaster", () => {
       yield* Effect.gen(function* () {
         const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
         const branches = yield* Stream.toPull(broadcaster.streamBranchStatus({ cwd: "/repo" }));
-        assert.deepEqual(yield* branches, [{ refName: "main" }]);
+        assert.deepEqual(yield* branches, [{ refName: "main", isRepo: true }]);
 
         // Every checkout removes HEAD.lock, which leaves the watch running.
         state.currentLocalStatus = { ...baseLocalStatus, refName: "other" };
         yield* Queue.offer(events, { _tag: "Remove", path: "HEAD.lock" });
         yield* Queue.offer(events, { _tag: "Update", path: "HEAD" });
-        assert.deepEqual(yield* branches, [{ refName: "other" }]);
+        assert.deepEqual(yield* branches, [{ refName: "other", isRepo: true }]);
 
         // `git worktree remove` deletes the watched directory; Windows keeps reporting it.
         gitDirExists = false;
