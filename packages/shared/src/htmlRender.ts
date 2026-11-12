@@ -80,7 +80,6 @@ export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: Html
     left.attachmentId === right.attachmentId &&
     left.title === right.title &&
     left.height === right.height &&
-    left.forCard === right.forCard &&
     (left.heights ?? []).length === (right.heights ?? []).length &&
     (left.heights ?? []).every(
       ([width, height], index) =>
