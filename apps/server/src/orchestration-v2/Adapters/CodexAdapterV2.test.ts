@@ -8702,6 +8702,120 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("keeps tracking an existing child resumed on a fresh adapter session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-existing-child-after-restart";
+        const childMessage = (
+          events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+          childThreadId: string | undefined,
+          text: string,
+        ) =>
+          events.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.threadId === childThreadId &&
+              event.message.text === text,
+          );
+        const rootEnd = resumeSubagentTranscript.entries.findIndex(
+          (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/root",
+        );
+        const earlier = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: resumeSubagentTranscript.entries.slice(0, rootEnd + 1),
+          }),
+        );
+        yield* earlier.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: earlier.threadId,
+            providerThread: earlier.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-before-restart"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* TestClock.adjust("100 millis");
+        yield* earlier.awaitTerminal(1);
+        const childThreadId = earlier.subagentUpdates().at(-1)?.subagent.childThreadId;
+        assert.isTrue(childMessage(earlier.events, childThreadId, "CODEX_FIRST_DONE"));
+
+        // A fresh harness stands in for the restarted server: the parent nudges the
+        // child it spawned in the earlier session, and the child runs a new turn.
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId: RESUME_NATIVE_THREAD,
+                nativeTurnId: RESUME_NATIVE_TURN,
+                prompt: RESUME_PROMPT,
+              }),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    item: {
+                      type: "subAgentActivity",
+                      id: "call-codex-followup-after-restart",
+                      kind: "interacted",
+                      agentThreadId: RESUME_CHILD_THREAD,
+                      agentPath: "/root/resume_agent",
+                    },
+                    threadId: RESUME_NATIVE_THREAD,
+                    turnId: RESUME_NATIVE_TURN,
+                    completedAtMs: 1782622460000,
+                  },
+                },
+              },
+              childTurnStarted(RESUME_CHILD_TURN_2),
+              childAgentMessage({
+                id: "child-answer-after-restart",
+                text: "CODEX_AFTER_RESTART",
+                turnId: RESUME_CHILD_TURN_2,
+                completedAtMs: 1782622480000,
+              }),
+              childTurnCompleted(RESUME_CHILD_TURN_2),
+              resumeSubagentTranscript.entries[rootEnd]!,
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-after-restart"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* TestClock.adjust("100 millis");
+        yield* harness.awaitTerminal(1);
+
+        assert.isTrue(childMessage(harness.events, childThreadId, "CODEX_AFTER_RESTART"));
+        assert.isTrue(
+          harness
+            .subagentUpdates()
+            .some(
+              (event) =>
+                event.subagent.childThreadId === childThreadId &&
+                event.subagent.status === "running",
+            ),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     ["shutdown", "cancelled"],
     ["activity-completed", "completed"],
