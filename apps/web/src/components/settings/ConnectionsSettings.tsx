@@ -202,11 +202,7 @@ function AccessSettings() {
           </SelectTrigger>
           <SelectPopup alignItemWithTrigger={false}>
             {candidates.map((environment) => (
-              <SelectItem
-                hideIndicator
-                key={environment.environmentId}
-                value={environment.environmentId}
-              >
+              <SelectItem key={environment.environmentId} value={environment.environmentId}>
                 <span className="flex min-w-0 items-center gap-2">
                   <EnvironmentMachineIcon
                     aria-hidden
@@ -962,16 +958,12 @@ function ConnectionsSettingsContent({
                 <SelectValue>{selectLabel}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value={BACKEND_VALUE_WSL_OFF}>
-                  Off
-                </SelectItem>
+                <SelectItem value={BACKEND_VALUE_WSL_OFF}>Off</SelectItem>
                 {desktopWslState.distros.length === 0 ? (
-                  <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
-                    Default distro
-                  </SelectItem>
+                  <SelectItem value={BACKEND_VALUE_DEFAULT_WSL}>Default distro</SelectItem>
                 ) : (
                   desktopWslState.distros.map((distro) => (
-                    <SelectItem hideIndicator key={distro.name} value={distro.name}>
+                    <SelectItem key={distro.name} value={distro.name}>
                       {distro.name}
                       {distro.isDefault ? " (default)" : ""}
                     </SelectItem>
