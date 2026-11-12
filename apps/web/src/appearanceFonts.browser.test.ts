@@ -57,9 +57,10 @@ describe("applyAppearanceFontVariables", () => {
   it("widens the numbered-list gutter only when the interface font's marker would clip", () => {
     const root = document.documentElement;
     const style = root.getAttribute("style");
-    const gutter = (sans: string) => {
+    const gutter = (sans: string, reply = "", assistant = false) => {
       applyAppearanceFontVariables(root, {
         sans,
+        reply,
         code: "",
         composer: "",
         sizeInterface: 16,
@@ -69,7 +70,7 @@ describe("applyAppearanceFontVariables", () => {
         separate: false,
       });
       const markdown = document.createElement("div");
-      markdown.className = "chat-markdown";
+      markdown.className = assistant ? "chat-markdown font-reply" : "chat-markdown";
       markdown.style.fontSize = "14px";
       const list = document.createElement("ol");
       markdown.append(list);
@@ -84,6 +85,9 @@ describe("applyAppearanceFontVariables", () => {
       // `0. ` in a 14px monospace font is about 25px, past the 20px default.
       expect(gutter("monospace")).toBeGreaterThan(24);
       expect(gutter("sans-serif")).toBe(20);
+      expect(gutter("sans-serif", "monospace", true)).toBeGreaterThan(24);
+      expect(gutter("monospace", "sans-serif", true)).toBe(20);
+      expect(gutter("sans-serif", "monospace")).toBe(20);
     } finally {
       if (style === null) root.removeAttribute("style");
       else root.setAttribute("style", style);

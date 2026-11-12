@@ -1946,6 +1946,10 @@ code {
   list-style-type: decimal;
 }
 
+.chat-markdown.font-reply ol {
+  --list-gutter: max(1.25rem, var(--list-marker-reply, 0px));
+}
+
 :is(.chat-markdown, .composer-tiptap) ol > li::marker {
   font-variant-numeric: tabular-nums;
 }
