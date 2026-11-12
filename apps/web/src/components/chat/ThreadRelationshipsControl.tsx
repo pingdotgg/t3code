@@ -344,6 +344,20 @@ function DelegatedFromRow(props: {
   const parentRef = scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const parent = useQuietThreadShell(parentRef);
+  // The shell leaves archived threads out, so only the environment can say the parent was deleted.
+  const lookup = useEnvironmentQuery(
+    parent === null && environment !== null
+      ? orchestrationEnvironment.threadLinkMetadata({
+          environmentId: delegatedFrom.environmentId,
+          input: { threadIds: [delegatedFrom.threadId] },
+        })
+      : null,
+  );
+  const parentGone =
+    parent === null &&
+    lookup.isSuccess &&
+    !lookup.isPending &&
+    lookup.data?.[delegatedFrom.threadId] === undefined;
   const label = environment?.label ?? props.fallbackLabel;
   const title = parent?.title ?? delegatedFrom.title;
   return (
@@ -356,9 +370,13 @@ function DelegatedFromRow(props: {
               size="sm"
               variant="ghost"
               part="row"
-              aria-disabled={environment === null || undefined}
+              aria-disabled={environment === null || parentGone || undefined}
               onClick={() => {
                 if (environment === null) return;
+                if (parentGone) {
+                  toastManager.add({ type: "info", title: "This thread is no longer available" });
+                  return;
+                }
                 void navigate({
                   to: "/$environmentId/$threadId",
                   params: buildThreadRouteParams(parentRef),
@@ -385,7 +403,9 @@ function DelegatedFromRow(props: {
             hint={
               environment === null
                 ? `Delegated from ${label ?? "a linked environment"}. Connect to it to open the parent thread.`
-                : `Open parent agent on ${environment.label}`
+                : parentGone
+                  ? `The parent thread is no longer available on ${environment.label}`
+                  : `Open parent agent on ${environment.label}`
             }
           />
         </TooltipPopup>
