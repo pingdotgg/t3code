@@ -15,6 +15,7 @@ import {
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
+  OwnedWorkClosureReason,
   OwnedWorkItem,
   OwnedWorkItemId,
   OrchestrationV2RuntimeRequest,
@@ -114,12 +115,24 @@ const QueueTool = Tool.make("t3_queue", {
   ]),
 }).annotate(Tool.Destructive, true);
 
+const OWNED_WORK_READ_ACTIONS = ["list", "read"] as const;
 const OwnedWorkTool = Tool.make("t3_owned_work", {
   ...commandTool,
   description:
     "Thread Details owned work: list/read; assign (`title`); claim/progress/hold/resume/attention/handoff/complete/cancel (`itemId`). `complete` needs `closureReason`; handed_off/escalation need `closureTarget`. Omit `threadId` for this thread.",
   parameters: Schema.Struct({
-    action: Schema.String,
+    action: Schema.Literals([
+      ...OWNED_WORK_READ_ACTIONS,
+      "assign",
+      "claim",
+      "progress",
+      "handoff",
+      "hold",
+      "resume",
+      "attention",
+      "complete",
+      "cancel",
+    ]),
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     itemId: Schema.optional(OwnedWorkItemId),
@@ -130,7 +143,7 @@ const OwnedWorkTool = Tool.make("t3_owned_work", {
     progress: Schema.optional(Schema.String),
     note: Schema.optional(Schema.String),
     reason: Schema.optional(Schema.String),
-    closureReason: Schema.optional(Schema.String),
+    closureReason: Schema.optional(OwnedWorkClosureReason),
     closureTarget: Schema.optional(TrimmedNonEmptyString),
     openOnly: Schema.optional(Schema.Boolean),
   }),
@@ -151,12 +164,13 @@ const WorkReviewSummary = Schema.Struct({
   deliverable: Schema.optional(WorkReviewDeliverable),
   createdAt: OrchestrationV2RuntimeRequest.fields.createdAt,
 });
+const WORK_REVIEW_READ_ACTIONS = ["list", "read"] as const;
 const WorkReviewTool = Tool.make("t3_work_review", {
   ...commandTool,
   description:
     "Human review card on unfinished work. list/read; request (`criteria`); accept/reject (`requestId`). Omit `threadId` for this thread.",
   parameters: Schema.Struct({
-    action: Schema.String,
+    action: Schema.Literals([...WORK_REVIEW_READ_ACTIONS, "request", "accept", "reject"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     requestId: Schema.optional(RuntimeRequestId),

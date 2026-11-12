@@ -35,7 +35,14 @@ import {
 import { secretRequestPageUrl } from "./secretRequest.ts";
 import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
-import { ThreadSpecialist, ThreadSpecialistKey } from "./threadSpecialist.ts";
+import {
+  ThreadSpecialist,
+  ThreadSpecialistInstructions,
+  ThreadSpecialistKey,
+  ThreadSpecialistLabel,
+  ThreadSpecialistMcpServers,
+  ThreadSpecialistSkillNames,
+} from "./threadSpecialist.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
@@ -363,16 +370,13 @@ export const OrchestratorMcpEnvironmentTarget = Schema.optional(
 );
 
 /** Resume or create a project-scoped durable specialist thread (OpenRig-style named role). */
-/** Slim JSON for MCP; validate with {@link ThreadSpecialistMcpServers} at execution. */
-const OrchestratorMcpSpecialistMcpServers = Schema.Record(Schema.String, Schema.Unknown);
-
 export const OrchestratorMcpFindOrOpenSpecialistInput = Schema.Struct({
   projectId: OrchestratorMcpProjectTarget,
-  key: TrimmedNonEmptyString,
-  label: Schema.optional(TrimmedNonEmptyString),
-  instructions: Schema.optional(Schema.String),
-  skills: Schema.optional(Schema.Array(Schema.String)),
-  mcpServers: Schema.optional(OrchestratorMcpSpecialistMcpServers),
+  key: ThreadSpecialistKey,
+  label: Schema.optional(ThreadSpecialistLabel),
+  instructions: Schema.optional(ThreadSpecialistInstructions),
+  skills: Schema.optional(ThreadSpecialistSkillNames),
+  mcpServers: Schema.optional(ThreadSpecialistMcpServers),
   title: Schema.optional(OrchestratorMcpTitle),
   prompt: Schema.optional(OrchestratorMcpPrompt),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
@@ -422,7 +426,7 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
     Schema.Array(OrchestratorMcpThreadStatus).check(Schema.isMaxLength(10)),
   ),
   titleContains: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
-  specialistKey: Schema.optional(Schema.String),
+  specialistKey: Schema.optional(ThreadSpecialistKey),
   settled: Schema.optional(Schema.Boolean),
   snoozed: Schema.optional(Schema.Boolean),
   includeSubagents: Schema.optional(Schema.Boolean),
