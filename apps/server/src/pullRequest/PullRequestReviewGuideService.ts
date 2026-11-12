@@ -305,7 +305,17 @@ const make = Effect.gen(function* () {
     yield* git.execute({
       operation: "PullRequestReviewGuideService.addWorktree",
       cwd: workspaceRoot,
-      args: ["worktree", "add", "--detach", "--quiet", path, resolvedHead.commitSha],
+      // Scratch checkout for reading the change: repository hooks (installs, LFS) only slow or fail it.
+      args: [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "worktree",
+        "add",
+        "--detach",
+        "--quiet",
+        path,
+        resolvedHead.commitSha,
+      ],
       timeoutMs: 5 * 60_000,
     });
     yield* Effect.addFinalizer(() =>
@@ -393,6 +403,7 @@ const make = Effect.gen(function* () {
               ...reviewGuideInputFromPullRequest(detail, activity, checkout.baseCommit),
               cwd: checkout.path,
               modelSelection,
+              projectId: input.projectId,
               instructions: projectSettings.reviewGuideInstructions,
               stack: checkout.stack,
             }),

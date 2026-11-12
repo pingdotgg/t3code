@@ -51,7 +51,7 @@ export const local = ({
       );
       if (!namespace) {
         return Effect.fail(
-          new ConfigError({
+          ConfigError.make({
             subtag: "DurableObjectNamespaceNotFound",
             message: `Durable object namespace ${className} not found`,
             hint: `Make sure the durable object namespace ${className} is defined in the worker config`,
@@ -66,7 +66,7 @@ export const local = ({
       }
       if (uniqueKey && namespace.uniqueKey !== uniqueKey) {
         return Effect.fail(
-          new ConfigError({
+          ConfigError.make({
             subtag: "DurableObjectNamespaceUniqueKeyMismatch",
             message: `Durable object namespace ${className} has unique key "${namespace.uniqueKey}" but "${uniqueKey}" was provided`,
           }),
@@ -83,8 +83,7 @@ export const local = ({
           kind: "durable-object",
           scriptName,
           className,
-          uniqueKey:
-            uniqueKey ?? defaultDurableObjectUniqueKey(scriptName, className),
+          uniqueKey: uniqueKey ?? defaultDurableObjectUniqueKey(scriptName, className),
         }),
       ),
       Effect.map((durableObjectNamespace): WorkerdConfig.Worker_Binding => ({

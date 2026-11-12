@@ -13,19 +13,14 @@ for (const mode of Playwright.SERVER_METHODS) {
     it("server-renders the home page", async ({ page, server }) => {
       const response = await page.goto(server.url.toString());
       expect(response?.status()).toBe(200);
-      await expect(page.getByTestId("page-marker")).toHaveText(
-        "OCTANE_FIXTURE",
-      );
+      await expect(page.getByTestId("page-marker")).toHaveText("OCTANE_FIXTURE");
     });
 
     it("hydrates the client-interactive counter", async ({ page, server }) => {
       await page.goto(server.url.toString());
       await expect(page.locator("#count")).toHaveText("count:0");
       // wait for hydration before interacting (useEffect flips the marker)
-      await expect(page.locator("#increment")).toHaveAttribute(
-        "data-hydrated",
-        "true",
-      );
+      await expect(page.locator("#increment")).toHaveAttribute("data-hydrated", "true");
       await page.click("#increment");
       await expect(page.locator("#count")).toHaveText("count:1");
       await page.click("#increment");

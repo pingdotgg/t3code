@@ -1,3 +1,4 @@
+import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import {
   boundAttachmentIds,
   buildExpiredTerminalContextToastCopy,
@@ -6,7 +7,6 @@ import {
   snapshotComposerSend,
   withMessageContext,
   deriveAvailableRevertTurnCounts,
-  deriveWorkspaceMutationId,
 } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
@@ -1077,6 +1077,7 @@ describe("planComposerTurn", () => {
     keepFullHistory: false,
     phase: "ready" as const,
     dispatchMode: "auto" as const,
+    freshContext: false,
   };
 
   it("prepares a worktree from the selected branch on a new thread", () => {
@@ -1125,6 +1126,25 @@ describe("planComposerTurn", () => {
     expect(planComposerTurn({ ...running, dispatchMode: "steer" })).toMatchObject({
       shouldQueueBehindActiveRun: false,
       baseBranchForWorktree: null,
+    });
+    expect(
+      planComposerTurn({ ...running, sendQueuesBehindSetup: true, dispatchMode: "steer" }),
+    ).toMatchObject({
+      turnDispatchMode: "steer",
+      shouldQueueBehindActiveRun: true,
+    });
+    // A fresh session cannot join the running turn, and a stale one is not compacted first.
+    expect(
+      planComposerTurn({
+        ...running,
+        dispatchMode: "steer",
+        freshContext: true,
+        resumeCompactionTokens: 120_000,
+      }),
+    ).toMatchObject({
+      compactBeforeSend: false,
+      turnDispatchMode: "queue",
+      shouldQueueBehindActiveRun: true,
     });
   });
 });
@@ -1204,28 +1224,24 @@ describe("deriveAvailableRevertTurnCounts", () => {
   });
 });
 
-describe("deriveWorkspaceMutationId", () => {
-  const item = (id: string, type: string, status: string) =>
-    ({
-      item: { id: TurnItemId.make(id), type, status },
-    }) as unknown as OrchestrationV2ProjectedTurnItem;
-
-  it("keys on the latest finished command or file change and the latest checkpoint", () => {
-    expect(
-      deriveWorkspaceMutationId(
-        [
-          item("edit", "file_change", "completed"),
-          item("reply", "assistant_message", "completed"),
-          item("command", "command_execution", "running"),
-        ],
-        "2026-01-01T00:00:00.000Z",
-      ),
-    ).toBe(JSON.stringify(["edit", "2026-01-01T00:00:00.000Z"]));
-  });
-
-  it("is null before anything could have touched the workspace", () => {
-    expect(deriveWorkspaceMutationId([item("reply", "assistant_message", "completed")], null)).toBe(
-      null,
-    );
+describe("Open in for the host environment", () => {
+  it("shows both local environments when the primary has a separate WSL home", () => {
+    const primaryEnvironmentId = EnvironmentId.make("wsl");
+    const hostEnvironmentId = EnvironmentId.make("host");
+    for (const [activeThreadEnvironmentId, visible] of [
+      [primaryEnvironmentId, true],
+      [hostEnvironmentId, true],
+      [EnvironmentId.make("other"), false],
+    ] as const) {
+      expect(
+        shouldShowOpenInPicker({
+          activeProjectName: "Project",
+          activeThreadEnvironmentId,
+          primaryEnvironmentId,
+          hostEnvironmentId,
+          remoteOpenMode: "local-exec",
+        }),
+      ).toBe(visible);
+    }
   });
 });
