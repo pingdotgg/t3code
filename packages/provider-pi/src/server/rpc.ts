@@ -189,7 +189,10 @@ const PI_STDERR_SECRET_FLAG = new RegExp(
   "giu",
 );
 
-function redactPiStderrLine(line: string): string {
+function redactPiStderrLine(fullLine: string): string {
+  // These patterns backtrack on long lines and run on the server's event loop. The output is
+  // capped anyway; the margin keeps a secret straddling that cap whole for its pattern.
+  const line = fullLine.slice(0, PI_STDERR_LINE_MAX_CHARS * 2);
   const redacted = line
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/gu, " ")
     .replace(/\b[a-z][a-z\d+.-]*:\/\/[\s\S]*/giu, (uri) =>
