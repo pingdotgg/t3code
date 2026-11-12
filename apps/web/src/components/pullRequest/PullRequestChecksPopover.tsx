@@ -175,7 +175,7 @@ export function PullRequestChecksPopover({
               role="button"
               tabIndex={0}
               className={cn(
-                "inline-flex shrink-0 cursor-pointer items-center",
+                "inline-flex shrink-0 cursor-pointer items-center rounded-kbd outline-none hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                 // A labelled trigger truncates before the row time beside it is cut off.
                 label !== undefined && "min-w-0 shrink gap-1.25",
                 className,
