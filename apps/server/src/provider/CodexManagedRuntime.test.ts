@@ -199,6 +199,8 @@ it.live.each(
           assert.include(args, "features.api_key_model_discovery=true");
           assert.include(args, "features.multi_agent=false");
           assert.include(args, "features.multi_agent_v2=false");
+          // Model catalogs with multi_agent_version still offer native agents unless this is off.
+          assert.include(args, "agents.enabled=false");
           assert.notInclude(effective.config.launchArgs, "model_catalog_json");
           assert.notInclude(effective.config.launchArgs, "x-openai-chatpass-test");
           assert.include(provider, "supports_websockets=false");
