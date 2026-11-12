@@ -5391,6 +5391,62 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("resets an existing PR branch onto a force-pushed head when preparing a worktree", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-rewritten"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "first\n");
+      yield* runGit(repoDir, ["add", "pr.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "PR head"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-rewritten"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const authorDir = yield* makeTempDir("t3code-git-manager-author-");
+      yield* runGit(authorDir, ["clone", "--branch", "feature/pr-rewritten", originDir, "."]);
+      yield* runGit(authorDir, ["config", "user.email", "author@example.com"]);
+      yield* runGit(authorDir, ["config", "user.name", "Author"]);
+      NodeFS.writeFileSync(NodePath.join(authorDir, "pr.txt"), "rewritten\n");
+      yield* runGit(authorDir, ["commit", "-am", "PR head", "--amend"]);
+      yield* runGit(authorDir, ["push", "--force", "origin", "feature/pr-rewritten"]);
+      const rewrittenSha = (yield* runGit(authorDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["fetch", "origin"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          pullRequest: {
+            number: 83,
+            title: "Rewritten PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/83",
+            baseRefName: "main",
+            headRefName: "feature/pr-rewritten",
+            state: "open",
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+            headRepositoryOwnerLogin: "pingdotgg",
+          },
+          repositoryCloneUrls: {
+            "pingdotgg/codething-mvp": { url: originDir, sshUrl: originDir },
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "83",
+        mode: "worktree",
+      });
+
+      expect((yield* runGit(repoDir, ["rev-parse", "feature/pr-rewritten"])).stdout.trim()).toBe(
+        rewrittenSha,
+      );
+      expect(result.isOnPullRequestHead).toBe(true);
+    }),
+  );
+
   it.effect("refreshes a reused PR worktree onto the updated pull request head", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

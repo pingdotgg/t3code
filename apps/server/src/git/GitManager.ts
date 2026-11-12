@@ -2964,6 +2964,7 @@ export const make = Effect.gen(function* () {
       // Advances only without dropping local commits, unlike materializing the head into the branch.
       const refreshPullRequestCheckout = Effect.fn("refreshPullRequestCheckout")(function* (
         worktreePath: string,
+        resetPublishedHead = false,
       ) {
         // Capture upstream before its forced fetch so rewritten heads remain distinguishable from local commits.
         const upstreamCommitBeforeFetch = yield* gitCore
@@ -2974,6 +2975,25 @@ export const make = Effect.gen(function* () {
           );
 
         yield* ensureExistingWorktreeUpstream(worktreePath);
+
+        // A branch left at a head the upstream once published holds no local work, even when a
+        // background fetch already took in the rewrite; reset it like materializing would.
+        const resetWhenHeadCommit = resetPublishedHead
+          ? yield* Effect.gen(function* () {
+              const { commitSha: headCommit } = yield* gitCore.resolveCommit({
+                cwd: worktreePath,
+                revision: "HEAD",
+              });
+              const upstreamReflog = yield* gitCore.execute({
+                operation: "GitManager.preparePullRequestThread.upstreamReflog",
+                cwd: worktreePath,
+                args: ["log", "--walk-reflogs", "--format=%H", "@{upstream}", "--"],
+              });
+              return upstreamReflog.stdout.split("\n").includes(headCommit)
+                ? headCommit
+                : upstreamCommitBeforeFetch;
+            }).pipe(Effect.orElseSucceed(() => upstreamCommitBeforeFetch))
+          : upstreamCommitBeforeFetch;
 
         // The pull request's own ref, because it is the only thing that certainly names its
         // head. The branch's upstream does not: configuring it is best-effort, so a branch cut
@@ -3007,7 +3027,7 @@ export const make = Effect.gen(function* () {
             gitCore.refreshCheckedOutBranch({
               cwd: worktreePath,
               targetCommit: target.commitSha,
-              resetWhenHeadCommit: upstreamCommitBeforeFetch,
+              resetWhenHeadCommit,
             }),
           ),
           Effect.catch((error) =>
@@ -3135,7 +3155,7 @@ export const make = Effect.gen(function* () {
         // Refresh before submodules initialize so they match the commit the checkout ends on.
         const worktree = yield* createPullRequestWorktree({
           onWorktreeClaimed: (worktreePath) =>
-            refreshPullRequestCheckout(worktreePath).pipe(
+            refreshPullRequestCheckout(worktreePath, true).pipe(
               Effect.map((result) => {
                 refreshed = result;
               }),
