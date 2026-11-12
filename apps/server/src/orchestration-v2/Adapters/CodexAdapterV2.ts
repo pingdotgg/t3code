@@ -3454,20 +3454,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             | ProviderAdapter.ProviderAdapterV2SteerInput,
             "message"
           >,
+          cwd: string | null,
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
           let messageText = turnInput.message.text;
           if (isAgentWrittenMessage(turnInput.message)) {
             // Without the catalog, break every mention rather than run one the user never asked for.
-            const skillNames = yield* client.request("skills/list", {}).pipe(
-              Effect.map(
-                (response) =>
-                  new Set(
-                    response.data.flatMap((entry) => entry.skills.map((skill) => skill.name)),
-                  ),
-              ),
-              Effect.orElseSucceed(() => undefined),
-            );
+            // The app-server's own directory is not the thread's, so ask for the thread's skills.
+            const skillNames = yield* client
+              .request("skills/list", cwd === null ? {} : { cwds: [cwd] })
+              .pipe(
+                Effect.map(
+                  (response) =>
+                    new Set(
+                      response.data.flatMap((entry) => entry.skills.map((skill) => skill.name)),
+                    ),
+                ),
+                Effect.orElseSucceed(() => undefined),
+              );
             messageText = neutralizeSkillMentions(
               messageText,
               (name) => skillNames === undefined || skillNames.has(name),
@@ -7332,13 +7336,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* startNativeTurn(
                 turnInput,
                 command.type === "set"
-                  ? yield* toCodexInput({
-                      ...turnInput,
-                      message: {
-                        ...turnInput.message,
-                        text: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${command.objective}`,
+                  ? yield* toCodexInput(
+                      {
+                        ...turnInput,
+                        message: {
+                          ...turnInput.message,
+                          text: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${command.objective}`,
+                        },
                       },
-                    })
+                      turnInput.runtimePolicy.cwd,
+                    )
                   : [],
               );
               if (activation.stopped) return;
@@ -7666,7 +7673,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* startNativeTurn(
                 turnInput,
                 turnInput.restartContinuationOfRunId === undefined
-                  ? yield* toCodexInput(turnInput)
+                  ? yield* toCodexInput(turnInput, turnInput.runtimePolicy.cwd)
                   : [],
               );
             }).pipe(
@@ -7707,7 +7714,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               }
 
-              const codexInput = yield* toCodexInput(turnInput);
+              const codexInput = yield* toCodexInput(turnInput, activeTurn.input.runtimePolicy.cwd);
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
                 input: codexInput,

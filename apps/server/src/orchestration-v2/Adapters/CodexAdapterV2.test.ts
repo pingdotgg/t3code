@@ -1402,7 +1402,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               type: "expect_outbound",
               label: "skills/list",
-              frame: { id: 3, method: "skills/list", params: {} },
+              // The app-server runs elsewhere; only the thread's directory has this repo skill.
+              frame: { id: 3, method: "skills/list", params: { cwds: ["/workspace"] } },
             },
             {
               type: "emit_inbound",
