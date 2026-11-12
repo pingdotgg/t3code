@@ -25,6 +25,7 @@ function shell(
     latestUserMessageAt: null,
     opens: null,
     archivedAt: null,
+    parentThreadId: null,
     lineage: { rootThreadId: ThreadId.make(id), parentThreadId: null, relationshipToParent: null },
     ...overrides,
   };

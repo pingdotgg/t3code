@@ -1,5 +1,4 @@
 import {
-  isListedThreadLineage,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type McpGatewayProfile,
@@ -9,13 +8,13 @@ import {
 import type { ComposerAgentProfile } from "@t3tools/shared/composerContextReferences";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 
-import type { EnvironmentThreadShell } from "./state/models.ts";
+import { isOpenListedThread, type EnvironmentThreadShell } from "./state/models.ts";
 import { threadSearchSubject, type ThreadSearchShell } from "./state/threadSearch.ts";
 
 const COMPOSER_THREAD_RESULT_LIMIT = 5;
 
 export type ComposerThreadCandidate = ThreadSearchShell &
-  Pick<EnvironmentThreadShell, "archivedAt" | "lineage">;
+  Pick<EnvironmentThreadShell, "archivedAt" | "lineage" | "parentThreadId" | "parentRelationship">;
 
 export interface ComposerThreadItem {
   readonly id: string;
@@ -48,8 +47,7 @@ export function matchComposerThreadItems(input: {
       (shell.environmentId === input.environmentId ||
         input.linkedEnvironments.has(shell.environmentId)) &&
       shell.id !== input.excludeThreadId &&
-      shell.archivedAt === null &&
-      isListedThreadLineage(shell.lineage),
+      isOpenListedThread(shell),
   );
   return rankSearchItems(candidates, (shell, options) =>
     scoreThreadSearch(query, threadSearchSubject(shell, null), input.now, {
