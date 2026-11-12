@@ -449,60 +449,52 @@ export function BranchToolbarBranchSelector({
     )
       return;
 
-    // A claim on this thread's own checkout can predate an outside checkout (an agent's
-    // `git switch`), so switch anyway: Git does nothing when the branch is already there.
-    if (
-      selectionTarget.reuseExistingWorktree &&
-      (selectionTarget.nextWorktreePath !== latest.worktreePath || !canWriteSourceControl)
-    ) {
+    if (selectionTarget.reuseExistingWorktree) {
       setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
       return;
     }
 
-    setIsBranchMenuOpen(false);
-    onComposerFocusRequest?.();
-    runBranchAction(() => checkoutRef(refName, selectionTarget));
-  };
-
-  const checkoutRef = async (
-    refName: VcsRef,
-    selectionTarget: ReturnType<typeof resolveBranchSelectionTarget>,
-  ) => {
     const selectedBranchName = refName.isRemote
       ? deriveLocalBranchNameFromRemoteRef(refName.name)
       : refName.name;
-    const previousBranch = resolvedActiveBranch;
-    setOptimisticBranch(selectedBranchName);
-    const checkoutResult = await switchRef({
-      environmentId,
-      input: {
-        cwd: selectionTarget.checkoutCwd,
-        refName: refName.name,
-      },
+
+    setIsBranchMenuOpen(false);
+    onComposerFocusRequest?.();
+
+    runBranchAction(async () => {
+      const previousBranch = resolvedActiveBranch;
+      setOptimisticBranch(selectedBranchName);
+      const checkoutResult = await switchRef({
+        environmentId,
+        input: {
+          cwd: selectionTarget.checkoutCwd,
+          refName: refName.name,
+        },
+      });
+      if (checkoutResult._tag === "Success") {
+        const nextBranchName = refName.isRemote
+          ? (checkoutResult.value.refName ?? selectedBranchName)
+          : selectedBranchName;
+        setOptimisticBranch(
+          setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath)
+            ? nextBranchName
+            : previousBranch,
+        );
+        return;
+      }
+      setOptimisticBranch(previousBranch);
+      if (!isAtomCommandInterrupted(checkoutResult)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to switch ref.",
+            description: toBranchActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
+          }),
+        );
+      }
     });
-    if (checkoutResult._tag === "Success") {
-      const nextBranchName = refName.isRemote
-        ? (checkoutResult.value.refName ?? selectedBranchName)
-        : selectedBranchName;
-      setOptimisticBranch(
-        setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath)
-          ? nextBranchName
-          : previousBranch,
-      );
-      return;
-    }
-    setOptimisticBranch(previousBranch);
-    if (!isAtomCommandInterrupted(checkoutResult)) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to switch ref.",
-          description: toBranchActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
-        }),
-      );
-    }
   };
 
   const createRef = (rawName: string) => {
