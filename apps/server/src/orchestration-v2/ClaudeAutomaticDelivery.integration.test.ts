@@ -134,7 +134,7 @@ const deliveries = [
 ] as const;
 
 it.effect.each(deliveries)(
-  "delivers %s with Claude's native pending-tool cancellation behavior",
+  "delivers %s after Claude's running tools finish instead of cancelling them",
   (delivery) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -144,6 +144,7 @@ it.effect.each(deliveries)(
         const nativeQueue: SDKUserMessage[] = [];
         // @effect-diagnostics-next-line abortControllerInEffect:off - The fake SDK interrupts its batch independently of the test fiber.
         const batchAbort = new AbortController();
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: modelSelection.instanceId,
           settings,
@@ -155,13 +156,15 @@ it.effect.each(deliveries)(
           idAllocator: yield* IdAllocator.IdAllocatorV2,
           queryRunner: {
             allocateSessionId: Effect.succeed(sessionId),
-            open: () =>
-              Effect.succeed({
+            open: (input) => {
+              openedOptions = input.options;
+              return Effect.succeed({
                 messages: Stream.fromQueue(sdkMessages),
-                offer: (message) =>
+                offer: (message: SDKUserMessage, _onQueued?: () => void, onWritten?: () => void) =>
                   Effect.sync(() => {
                     offers.push(message);
                     nativeQueue.push(message);
+                    onWritten?.();
                     // Claude Code 2.1.289 aborts on now-priority commands even while Bash blocks reads.
                     if (nativeQueue.some((command) => command.priority === "now")) {
                       batchAbort.abort({ kind: "interrupt" });
@@ -178,7 +181,8 @@ it.effect.each(deliveries)(
                 stopTask: () => Effect.void,
                 interrupt: Effect.die("automatic delivery must never interrupt"),
                 close: Effect.void,
-              }),
+              });
+            },
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
             subagentModel: () => Effect.succeed(null),
@@ -407,8 +411,7 @@ it.effect.each(deliveries)(
           yield* worker.drain();
           const explicitSteer =
             delivery === "user steering" || delivery === "promoted queued message";
-          assert.equal(batchAbort.signal.aborted, explicitSteer);
-          assert.equal(offers.length, explicitSteer ? 2 : 1);
+          assert.equal(offers.length, 1);
           const finished = yield* watch(
             (event) =>
               event.type === "run.updated" &&
@@ -418,7 +421,22 @@ it.effect.each(deliveries)(
           yield* Queue.offer(sdkMessages, toolResult("build", false));
           for (const id of statusIds)
             yield* Queue.offer(sdkMessages, toolResult(id, batchAbort.signal.aborted));
-          if (explicitSteer) yield* Queue.offer(sdkMessages, result("aborted", true));
+          const postToolBatch = openedOptions?.hooks?.PostToolBatch?.[0]?.hooks[0];
+          assert.isDefined(postToolBatch);
+          yield* Effect.promise(() =>
+            postToolBatch!(
+              {
+                hook_event_name: "PostToolBatch",
+                session_id: sessionId,
+                transcript_path: "",
+                cwd,
+                tool_calls: [],
+              },
+              undefined,
+              { signal: new AbortController().signal },
+            ),
+          );
+          assert.equal(offers.length, explicitSteer ? 2 : 1);
           yield* Queue.offer(sdkMessages, result("completed", false));
           yield* Fiber.join(finished);
           yield* worker.drain();
@@ -451,14 +469,15 @@ it.effect.each(deliveries)(
           );
           assert.equal(reads.length, 4);
           for (const read of reads) {
-            assert.equal(read.status, explicitSteer ? "cancelled" : "completed");
-            assert.equal(read.toolNonExecutionKind, explicitSteer ? "cancelled" : undefined);
-            assert.equal(read.type === "dynamic_tool" && read.output === refusal, explicitSteer);
+            assert.equal(read.status, "completed");
+            assert.equal(read.toolNonExecutionKind, undefined);
+            assert.notEqual(read.type === "dynamic_tool" ? read.output : undefined, refusal);
           }
+          assert.isFalse(batchAbort.signal.aborted);
           assert.equal(offers.length, 2);
-          assert.equal(
-            offers.filter((offer) => offer.priority === "now").length,
-            explicitSteer ? 1 : 0,
+          assert.deepEqual(
+            offers.map((offer) => offer.priority),
+            explicitSteer ? [undefined, "next"] : [undefined, undefined],
           );
           if (!explicitSteer) {
             assert.equal(after.runs.length, 2);

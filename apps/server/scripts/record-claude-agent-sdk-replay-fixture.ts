@@ -15,9 +15,7 @@ import type { RuntimePolicyV2Override } from "../src/orchestration-v2/RuntimePol
 import { makeCheckpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { CLAUDE_MODEL_SELECTION } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 import {
-  MESSAGE_STEERING_INITIAL_PROMPT,
   MULTI_TURN_FIRST_PROMPT,
-  MESSAGE_STEERING_STEER_PROMPT,
   READ_ONLY_NEVER_POLICY,
   READ_ONLY_ON_REQUEST_POLICY,
   RESTRICTED_GRANULAR_POLICY,
@@ -98,12 +96,6 @@ const CLAUDE_RECORDINGS = {
     prompts: [MULTI_TURN_FIRST_PROMPT, MULTI_TURN_SECOND_PROMPT],
     defaultTranscriptFile: "fixtures/queued_turn/claude_transcript.ndjson",
     queryMode: "streaming",
-    enableTools: true,
-  },
-  message_steering: {
-    prompts: [MESSAGE_STEERING_INITIAL_PROMPT, MESSAGE_STEERING_STEER_PROMPT],
-    defaultTranscriptFile: "fixtures/message_steering/claude_transcript.ndjson",
-    queryMode: "active_steering",
     enableTools: true,
   },
   command_output_streaming: {
