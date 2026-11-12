@@ -1501,7 +1501,11 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
-  it.effect("appends a resumed task child's turn after its earlier turns", () =>
+  // After a restart the adapter no longer holds the child, so its earlier turns come from OpenCode.
+  it.effect.each([
+    { case: "in memory", restarted: false },
+    { case: "after a restart", restarted: true },
+  ])("appends a resumed task child's turn after its earlier turns ($case)", ({ restarted }) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
       const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
@@ -1522,6 +1526,9 @@ describe("OpenCodeAdapterV2", () => {
           },
           abort: async () => ({ data: true }),
           children: async () => ({ data: [] }),
+          messages: async () => ({
+            data: [{ info: { id: "msg_child_first", role: "user" }, parts: [] }],
+          }),
         },
       });
       yield* harness.startTurn();
@@ -1532,7 +1539,7 @@ describe("OpenCodeAdapterV2", () => {
             event.providerTurn.status === "running" &&
             event.providerTurn.providerThreadId.includes(child),
         ),
-        Stream.take(2),
+        Stream.take(restarted ? 1 : 2),
         Stream.runCollect,
         Effect.forkScoped,
       );
@@ -1583,12 +1590,14 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* push(status(root, "busy"));
-      yield* push(taskPart("prt_task_first", "running"));
-      yield* push(childPrompt("msg_child_first", 3));
-      yield* push(status(child, "busy"));
-      yield* push(status(child, "idle"));
-      yield* push({ type: "session.idle", properties: { sessionID: child } });
-      yield* push(taskPart("prt_task_first", "completed"));
+      if (!restarted) {
+        yield* push(taskPart("prt_task_first", "running"));
+        yield* push(childPrompt("msg_child_first", 3));
+        yield* push(status(child, "busy"));
+        yield* push(status(child, "idle"));
+        yield* push({ type: "session.idle", properties: { sessionID: child } });
+        yield* push(taskPart("prt_task_first", "completed"));
+      }
       // The lead resumes the same child session by passing its task_id.
       yield* push(taskPart("prt_task_resume", "running", child));
       yield* push(childPrompt("msg_child_resume", 5));
@@ -1600,7 +1609,7 @@ describe("OpenCodeAdapterV2", () => {
       assert.equal(new Set(turns.map((turn) => turn.providerThreadId)).size, 1);
       assert.deepEqual(
         turns.map((turn) => turn.ordinal),
-        [1, 2],
+        restarted ? [2] : [1, 2],
       );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),

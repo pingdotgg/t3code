@@ -1308,6 +1308,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           });
         });
 
+        // Each earlier child turn began at a distinct user message, so their count bounds its ordinals.
+        const nextResumedChildTurnOrdinal = Effect.fnUntraced(function* (childSessionId: string) {
+          const response = yield* sdkCall("session.messages", { sessionID: childSessionId }, () =>
+            client.session.messages({ sessionID: childSessionId }),
+          );
+          const messages = unwrapData("session.messages", response);
+          return messages.filter((entry) => entry.info.role === "user").length + 1;
+        });
+
         const emitSubagent = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
@@ -1416,6 +1425,14 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   permission: childPermission,
                 }),
             );
+            // A Task call with task_id resumes the child, whose earlier turns already hold ordinals.
+            const knownChild = threads.get(childSessionId);
+            const resumedChild = knownChild?.parentSubagent == null ? undefined : knownChild;
+            const nextChildTurnOrdinal =
+              resumedChild?.nextChildTurnOrdinal ??
+              (recordString(input, "task_id") === childSessionId
+                ? yield* nextResumedChildTurnOrdinal(childSessionId)
+                : 1);
             threads.set(childSessionId, {
               nativeSessionId: childSessionId,
               providerThread: childProviderThread,
@@ -1423,10 +1440,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               activeTurn: null,
               providerTurns: new Map(),
               runtimeRequests: new Map(),
-              messageRoles: new Map(),
-              userMessageIds: [],
+              messageRoles: resumedChild?.messageRoles ?? new Map(),
+              userMessageIds: resumedChild?.userMessageIds ?? [],
               parentSubagent: context,
-              nextChildTurnOrdinal: 1,
+              nextChildTurnOrdinal,
               nextAdmissionGeneration: 1,
               permission: childPermission,
               inheritedPermission: openCodePermissionRules(turn.runtimePolicy),
