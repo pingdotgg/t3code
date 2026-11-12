@@ -1845,24 +1845,37 @@ const make = Effect.gen(function* () {
         const opened = await tab.page.context().newCDPSession(tab.page);
         session = opened;
         const framesInFlight = new Set<Promise<void>>();
+        // Chrome withholds frames while acks are outstanding, so ack on arrival and let a
+        // slow encoder skip to the newest frame instead of throttling the capture.
+        let pendingFrame: readonly [string, number] | null = null;
+        const deliverPending = async () => {
+          while (pendingFrame) {
+            const next = pendingFrame;
+            pendingFrame = null;
+            const accepted = await encoder
+              .evaluate(
+                ([data, width]) =>
+                  (globalThis as unknown as EncoderWindow).__t3Recorder.frame(data, width),
+                next,
+              )
+              .catch(() => true);
+            if (!accepted) {
+              pendingFrame = null;
+              await opened.send("Page.stopScreencast").catch(constVoid);
+            }
+          }
+        };
         opened.on("Page.screencastFrame", (frame) => {
+          void opened
+            .send("Page.screencastFrameAck", { sessionId: frame.sessionId })
+            .catch(constVoid);
           const cssWidth = tab.page.viewportSize()?.width ?? frame.metadata.deviceWidth;
-          const delivered: Promise<void> = encoder
-            .evaluate(
-              ([data, width]) =>
-                (globalThis as unknown as EncoderWindow).__t3Recorder.frame(data, width),
-              [frame.data, cssWidth] as const,
-            )
-            .then(async (accepted) => {
-              if (!accepted) await opened.send("Page.stopScreencast");
-            })
-            .catch(constVoid)
-            .finally(() => {
-              framesInFlight.delete(delivered);
-              void opened
-                .send("Page.screencastFrameAck", { sessionId: frame.sessionId })
-                .catch(constVoid);
-            });
+          const delivering = framesInFlight.size > 0;
+          pendingFrame = [frame.data, cssWidth];
+          if (delivering) return;
+          const delivered: Promise<void> = deliverPending().finally(() =>
+            framesInFlight.delete(delivered),
+          );
           framesInFlight.add(delivered);
         });
         await opened.send("Page.startScreencast", RECORDING_SCREENCAST);
