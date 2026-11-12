@@ -438,13 +438,12 @@ describe("DesktopBackendConfiguration", () => {
             "Ubuntu",
             "--exec",
             "env",
-            config.args[4],
+            // The login shell's order wins; system folders only fill gaps.
+            `PATH=${resolvedPath}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
             `${linuxAppRoot}/t3`,
             "--bootstrap-fd",
             "0",
           ]);
-          // The login shell's order wins; system folders only fill gaps.
-          assert.isTrue(config.args[4]?.startsWith(`PATH=${resolvedPath}`), config.args[4]);
           assert.notInclude(config.args, "/usr/bin/node");
           assert.equal(config.wslRuntimeId, `sha256-${archiveHash}`);
           assert.equal(legacyCleanupCount, 1);
@@ -655,7 +654,7 @@ describe("DesktopBackendConfiguration", () => {
           "Ubuntu",
           "--exec",
           "env",
-          "PATH=/home/test user's/.nvm/versions/node/v22.0.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin",
+          "PATH=/home/test user's/.nvm/versions/node/v22.0.0/bin:/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
           nodePath,
           linuxEntryPath,
           "--bootstrap-fd",
