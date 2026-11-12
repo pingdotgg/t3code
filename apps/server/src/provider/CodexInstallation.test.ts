@@ -132,6 +132,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     probeLog,
     failedRenames,
     downloads: () => downloads,
+    sha256,
   };
 });
 const terminalState = (installation: CodexInstallation.CodexInstallation["Service"]) =>
@@ -191,6 +192,11 @@ it.effect.each([
     expect(executable.source).toBe("managed");
     expect(installed.executablePath).toBe(executable.executablePath);
     expect(h.downloads()).toBe(1);
+    const auditFiles = yield* h.fs.readDirectory(`${h.baseDir}/audit`);
+    const audit = JSON.parse(
+      yield* h.fs.readFileString(`${h.baseDir}/audit/${auditFiles[0]!}`),
+    ) as { url: string; sha256: string };
+    expect(audit).toMatchObject({ url: asset.url, sha256: h.sha256 });
     expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

@@ -103,6 +103,11 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.deepEqual(commands, ["tar"]);
       assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
       assert.isFalse(yield* fs.exists(path.join(paths.versionDir, "t3-runtime-archive")));
+      const auditFiles = yield* fs.readDirectory(path.join(baseDir, "audit"));
+      const audit = JSON.parse(
+        yield* fs.readFileString(path.join(baseDir, "audit", auditFiles[0]!)),
+      ) as { url: string };
+      assert.equal(audit.url, `https://releases.example/download/v${version}/${archiveName}`);
     }),
   );
 

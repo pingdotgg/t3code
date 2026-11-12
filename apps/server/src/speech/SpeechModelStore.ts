@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
 import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -17,6 +18,7 @@ import * as Stream from "effect/Stream";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
+import { auditDownload } from "../course/downloadAudit.ts";
 import { expandHomePath } from "../os-jank.ts";
 import type { SpeechModel } from "./model.ts";
 
@@ -218,6 +220,17 @@ const make = Effect.gen(function* () {
       }),
       Stream.run(fs.sink(partialPath, { flag: resumed ? "a" : "w", mode: 0o600 })),
     );
+    yield* Effect.promise(() =>
+      auditDownload(
+        { stateDir: config.stateDir },
+        {
+          url,
+          status: response.status,
+          bytes: downloaded - start,
+          contentType: response.headers["content-type"] ?? null,
+        },
+      ),
+    );
     return downloaded;
   });
 
@@ -310,6 +323,14 @@ const make = Effect.gen(function* () {
             offset,
             progress.onProgress,
           ).pipe(
+            Effect.tapCause((cause) =>
+              Effect.promise(() =>
+                auditDownload(
+                  { stateDir: config.stateDir },
+                  { url, bytes: offset, error: Cause.pretty(cause) },
+                ),
+              ),
+            ),
             Effect.catchIf(
               (error) => attempt < DOWNLOAD_ATTEMPTS && error._tag !== "SpeechModelDownloadError",
               () => Effect.succeed(-1),

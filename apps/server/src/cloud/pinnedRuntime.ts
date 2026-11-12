@@ -25,6 +25,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { auditDownload } from "../course/downloadAudit.ts";
 import { isExactServiceVersion, parseServiceState, SERVICE_STATE_FILE } from "./serviceProtocol.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
@@ -104,6 +105,7 @@ export type PinnedRuntimeProgress =
 
 interface PinnedRuntimeInstallInput {
   readonly baseDir: string;
+  readonly stateDir?: string;
   readonly version: string;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
@@ -125,7 +127,11 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   url: string,
   step: string,
   onProgress?: (progress: PinnedRuntimeProgress) => void,
+  stateDir?: string,
 ) {
+  let responseStatus: number | undefined;
+  let responseContentType: string | null = null;
+  let received = 0;
   // Bound stalls while holding the install lock, but allow transfers that keep
   // receiving bytes to finish regardless of their total duration.
   return yield* httpClient.execute(HttpClientRequest.get(url)).pipe(
@@ -133,9 +139,10 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
     Effect.timeout(PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT),
     Effect.flatMap(
       Effect.fn(function* (response) {
+        responseStatus = response.status;
+        responseContentType = response.headers["content-type"] ?? null;
         const length = Number(response.headers["content-length"]);
         const total = Number.isFinite(length) && length > 0 ? length : undefined;
-        let received = 0;
         onProgress?.({ stage: "download", received, total });
         const chunks = yield* response.stream.pipe(
           Stream.timeoutOrElse({
@@ -159,6 +166,18 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
           bytes.set(chunk, offset);
           offset += chunk.byteLength;
         }
+        if (stateDir !== undefined)
+          yield* Effect.promise(() =>
+            auditDownload(
+              { stateDir },
+              {
+                url,
+                status: responseStatus ?? null,
+                bytes: received,
+                contentType: responseContentType,
+              },
+            ),
+          );
         return bytes;
       }),
     ),
@@ -176,6 +195,16 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
           cause,
         }),
     ),
+    (effect) =>
+      effect.pipe(
+        Effect.tapCause((cause) =>
+          Effect.promise(() =>
+            stateDir === undefined
+              ? Promise.resolve()
+              : auditDownload({ stateDir }, { url, bytes: received, error: Cause.pretty(cause) }),
+          ),
+        ),
+      ),
   );
 });
 
@@ -198,6 +227,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
     cliReleaseAssetUrl(input.version, fileName, input.releaseBaseUrl),
     "downloading the t3 release archive",
     input.onProgress,
+    input.stateDir,
   );
   input.onProgress?.({ stage: "verify" });
   const digest = yield* Effect.tryPromise({
@@ -400,7 +430,9 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
 });
 
 export const ensurePinnedRuntimeInstalled = (input: PinnedRuntimeInstallInput) =>
-  pinnedRuntimeInstallLock.withPermit(installPinnedRuntime(input));
+  pinnedRuntimeInstallLock.withPermit(
+    installPinnedRuntime({ ...input, stateDir: input.stateDir ?? input.baseDir }),
+  );
 
 const PINNED_RUNTIME_PRUNED_PREFIX = ".pruned-";
 /**

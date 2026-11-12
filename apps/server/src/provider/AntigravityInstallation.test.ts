@@ -259,15 +259,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
     Effect.gen(function* () {
       const enteredValidation = yield* Deferred.make<void>();
       const finishValidation = yield* Deferred.make<void>();
-      const { installation, fs, path, validations, requests, stagingReleased } = yield* makeHarness(
-        {
+      const { installation, fs, path, baseDir, validations, requests, stagingReleased } =
+        yield* makeHarness({
           previous: true,
           validate: () =>
             Deferred.succeed(enteredValidation, undefined).pipe(
               Effect.andThen(Deferred.await(finishValidation)),
             ),
-        },
-      );
+        });
       const initial = yield* installation.changes.pipe(
         Stream.runHead,
         Effect.map(Option.getOrThrow),
@@ -300,6 +299,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect.arrayContaining([previousReleaseId, (yield* releaseAsset()).sha256]),
       );
       expect(requests).toEqual([(yield* releaseAsset()).url]);
+      const auditFiles = yield* fs.readDirectory(`${baseDir}/audit`);
+      const audit = JSON.parse(yield* fs.readFileString(`${baseDir}/audit/${auditFiles[0]!}`)) as {
+        url: string;
+      };
+      expect(audit.url).toBe((yield* releaseAsset()).url);
     }),
   );
 
