@@ -8,6 +8,8 @@ export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
+  /** The environment's name as the user sees it, so the agent can tell its machine apart. */
+  readonly environmentLabel?: string;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;

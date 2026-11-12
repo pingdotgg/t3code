@@ -14,6 +14,19 @@ describe("buildRuntimeInstructions", () => {
     assert.notInclude(instructions, "<pull_request_linking>");
   });
 
+  it("names the environment the thread's T3 tools answer from", () => {
+    const instructions = buildRuntimeInstructions({
+      harness: "Codex",
+      environment: { environmentId: "environment-a", environmentLabel: "Desk\nbox" },
+    });
+
+    assert.include(
+      instructions,
+      `This thread runs in the T3 Code environment "Desk box" (environmentId environment-a); T3 tools act there unless given a linked environment's environmentId.`,
+    );
+    assert.notInclude(buildRuntimeInstructions({ harness: "Codex" }), "environmentId");
+  });
+
   it("links PRs the agent creates, takes over, or pushes to, and no others", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
 

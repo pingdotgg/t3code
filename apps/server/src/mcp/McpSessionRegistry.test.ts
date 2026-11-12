@@ -20,7 +20,13 @@ const makeFakeHttpServer = (hostname: string, port = 43123) =>
 const fakeHttpServer = makeFakeHttpServer("127.0.0.1");
 const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getEnvironmentId: Effect.succeed(environmentId),
-  getDescriptor: Effect.die("unused"),
+  getDescriptor: Effect.succeed({
+    environmentId,
+    label: "Test environment",
+    platform: { os: "linux", arch: "x64" },
+    serverVersion: "0.0.0-test",
+    capabilities: { repositoryIdentity: true },
+  }),
 });
 
 // Without `now`, the registry reads the Effect Clock (TestClock in these tests).

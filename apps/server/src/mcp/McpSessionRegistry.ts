@@ -94,6 +94,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const digest = yield* Digest.Digest;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const environmentId = yield* environment.getEnvironmentId;
+  const environmentLabel = (yield* environment.getDescriptor).label;
   const httpServer = yield* HttpServer.HttpServer;
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
   const { now } = options;
@@ -151,6 +152,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       return {
         config: {
           environmentId,
+          environmentLabel,
           threadId: scope.thread.threadId,
           providerSessionId,
           providerInstanceId: scope.thread.providerInstanceId,

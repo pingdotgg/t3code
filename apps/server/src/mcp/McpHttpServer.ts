@@ -1205,17 +1205,15 @@ const withAnsweringEnvironment = Effect.fn("McpHttpServer.withAnsweringEnvironme
               return options.handle(payload);
             const answeredBy =
               typeof requested === "string" ? (requested as EnvironmentId) : scope.environmentId;
+            const here = answeredBy === scope.environmentId;
             return options.handle(payload).pipe(
-              // A failure may come from here even when a link was asked, so it says where itself.
-              Effect.map((result) =>
-                isCallToolResult(result) && result.isError !== true
-                  ? stampAnsweringEnvironment(
-                      result,
-                      answeredBy,
-                      answeredBy === scope.environmentId,
-                    )
-                  : result,
-              ),
+              Effect.map((result) => {
+                if (!isCallToolResult(result)) return result;
+                // A failed call to a link may have failed here first, so only a local one is named.
+                return result.isError !== true || here
+                  ? stampAnsweringEnvironment(result, answeredBy, here)
+                  : result;
+              }),
             );
           }),
       });
@@ -1226,22 +1224,50 @@ const withAnsweringEnvironment = Effect.fn("McpHttpServer.withAnsweringEnvironme
 
 const isCallToolResult = Schema.is(McpSchema.CallToolResult);
 
+const parseJsonObject = (text: string): Record<string, unknown> | undefined => {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Predicate.isObject(parsed) && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Adds `answeredBy` to the result's JSON. Clients that read only the text
+ * parse it as one object, so a single JSON text gets the field too; a plain
+ * text failure gets a line instead.
+ */
 const stampAnsweringEnvironment = (
   result: McpSchema.CallToolResult,
   environmentId: EnvironmentId,
   thisEnvironment: boolean,
-) => {
+): McpSchema.CallToolResult => {
+  const answeredBy = { environmentId, thisEnvironment };
   const structured = result.structuredContent;
-  if (!Predicate.isObject(structured) || Array.isArray(structured)) return result;
-  const stamped = { ...structured, answeredBy: { environmentId, thisEnvironment } };
   const [only, ...rest] = result.content;
-  // Clients that read only the text parse it as this same JSON, so it stays one object.
-  const mirrorsStructured =
-    rest.length === 0 && only?.type === "text" && only.text === encodeJsonText(structured);
+  const textObject =
+    rest.length === 0 && only?.type === "text" ? parseJsonObject(only.text) : undefined;
+  const content =
+    textObject !== undefined
+      ? [{ type: "text" as const, text: encodeJsonText({ ...textObject, answeredBy }) }]
+      : result.isError === true
+        ? [
+            ...result.content,
+            {
+              type: "text" as const,
+              text: `Answered by this environment, ${environmentId}. Ids from a linked environment need its environmentId.`,
+            },
+          ]
+        : result.content;
   return new McpSchema.CallToolResult({
     ...result,
-    structuredContent: stamped,
-    content: mirrorsStructured ? [{ type: "text", text: encodeJsonText(stamped) }] : result.content,
+    ...(Predicate.isObject(structured) && !Array.isArray(structured)
+      ? { structuredContent: { ...structured, answeredBy } }
+      : {}),
+    content,
   });
 };
 

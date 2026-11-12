@@ -2652,10 +2652,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           hasT3Mcp: true,
+          t3Environment: { environmentId: EnvironmentId.make("test") },
         });
         assert.include(
           params.additionalContext?.t3_code_orchestration_01?.value ?? "",
           "delegate_task",
+        );
+        assert.include(
+          params.additionalContext?.t3_code_runtime?.value ?? "",
+          "This thread runs in the T3 Code environment environmentId test;",
         );
         const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
         const transcript = makeCodexReplayTranscript({

@@ -663,6 +663,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       cwd: "/workspace",
       allowedTools: overrides.allowedTools ?? [],
       mcpServers: overrides.mcpServers ?? {},
+      mcpSession: { ...mcpSession, environmentLabel: "Desk" },
       environment: {},
     });
     assert.isObject(options.systemPrompt);
@@ -675,6 +676,10 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.equal(systemPrompt.preset, "claude_code");
     assert.include(systemPrompt.append ?? "", "Use `delegate_task`");
     assert.include(systemPrompt.append ?? "", "call `t3_background_wait`");
+    assert.include(
+      systemPrompt.append ?? "",
+      'environment "Desk" (environmentId environment-claude-mcp)',
+    );
     assert.notInclude(systemPrompt.append ?? "", "## T3 Code devices");
     const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
     assert.equal(logged.hasMcpServers, true);

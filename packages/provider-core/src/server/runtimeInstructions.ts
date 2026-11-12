@@ -11,6 +11,10 @@ export function buildRuntimeInstructions(runtime: {
   readonly reasoningEffort?: string | undefined;
   /** False when the session's system prompt already carries the linking instructions. */
   readonly pullRequestLinking?: boolean;
+  /** The environment the thread's T3 tools answer from, when it has them. */
+  readonly environment?:
+    | { readonly environmentId: string; readonly environmentLabel?: string | undefined }
+    | undefined;
 }): string {
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
@@ -20,10 +24,21 @@ export function buildRuntimeInstructions(runtime: {
     modelName && modelName !== model ? `${modelName} (model slug: ${model})` : model;
   const modelInfo = model && model !== "auto" && model !== "default" ? `, as ${modelLabel}` : "";
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
-  const runtimeInfo = `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in T3 Code's files viewer.</runtime_info>`;
+  const environmentInfo = runtime.environment ? ` ${environmentSentence(runtime.environment)}` : "";
+  const runtimeInfo = `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}.${environmentInfo} No need to mention this otherwise. You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in T3 Code's files viewer.</runtime_info>`;
   return runtime.pullRequestLinking === false
     ? runtimeInfo
     : `${runtimeInfo}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
+}
+
+function environmentSentence(environment: {
+  readonly environmentId: string;
+  readonly environmentLabel?: string | undefined;
+}): string {
+  const id = toSingleLine(environment.environmentId);
+  const label = toSingleLine(environment.environmentLabel ?? "");
+  const named = label ? `"${label}" (environmentId ${id})` : `environmentId ${id}`;
+  return `This thread runs in the T3 Code environment ${named}; T3 tools act there unless given a linked environment's environmentId.`;
 }
 
 function toSingleLine(value: string): string {

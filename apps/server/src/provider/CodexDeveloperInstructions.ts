@@ -35,6 +35,7 @@ export interface CodexRuntimeInfo {
   readonly model: string;
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;
+  readonly environment?: Parameters<typeof buildRuntimeInstructions>[0]["environment"];
 }
 
 /** Keep this outside collaboration mode; model-catalog mode text overrides client developer_instructions. */

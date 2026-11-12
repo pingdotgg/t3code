@@ -741,6 +741,10 @@ it.effect(
       expect(denied.isError).toBe(true);
       expect(denied.content).toEqual([
         { type: "text", text: "MCP credential does not grant the pull-requests capability." },
+        {
+          type: "text",
+          text: `Answered by this environment, ${environmentId}. Ids from a linked environment need its environmentId.`,
+        },
       ]);
     }).pipe(Effect.provide(layerPullRequestsTest)),
 );
@@ -1154,6 +1158,13 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
     Layer.provideMerge(
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getEnvironmentId: Effect.succeed(environmentId),
+        getDescriptor: Effect.succeed({
+          environmentId,
+          label: "Test environment",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "0.0.0-test",
+          capabilities: { repositoryIdentity: true },
+        }),
       }),
     ),
     Layer.provideMerge(Sqlite.layerMemory),
