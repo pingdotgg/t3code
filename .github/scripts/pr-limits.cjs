@@ -8,6 +8,8 @@ const NOTICE_MS = 72 * HOUR_MS;
 // limit on how fast a token may comment.
 const MAX_REQUESTS_PER_RUN = 100;
 const MAX_CLOSES_PER_RUN = 50;
+// A last look that ends in "not today" closes nothing, so the looks need a cap of their own.
+const MAX_RECHECKS_PER_RUN = 200;
 const WRITE_PAUSE_MS = 1_000;
 // Measured here: about two and a half minutes until every open PR has an answer.
 const MERGEABLE_WAIT_MS = 150_000;
@@ -74,7 +76,8 @@ async function read(github, query, variables) {
     try {
       return await github.graphql(query, variables);
     } catch (error) {
-      if (attempt === READ_ATTEMPTS || !(error.status >= 500)) throw error;
+      const transient = typeof error.status === "number" && error.status >= 500;
+      if (attempt === READ_ATTEMPTS || !transient) throw error;
       await pause(attempt * READ_RETRY_MS);
     }
   }
@@ -184,6 +187,7 @@ async function sweep({ github, context, core, dryRun }) {
 
   const now = Date.now();
   const count = {};
+  let rechecks = 0;
   for (const pr of prs) {
     const { number } = pr;
     let action = decide(pr, exemptions, now);
@@ -197,6 +201,8 @@ async function sweep({ github, context, core, dryRun }) {
       if ((count["close-conflict"] ?? 0) + (count["close-notice"] ?? 0) >= MAX_CLOSES_PER_RUN) {
         continue;
       }
+      if (rechecks >= MAX_RECHECKS_PER_RUN) continue;
+      rechecks += 1;
       // The list is minutes old by now. Closing is the one step worth a second look.
       const fresh = (await read(github, RECHECK_QUERY, { ...repo, number })).repository.pullRequest;
       if (fresh.state !== "OPEN") continue;
