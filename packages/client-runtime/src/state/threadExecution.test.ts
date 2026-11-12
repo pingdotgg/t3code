@@ -548,6 +548,51 @@ describe("provider-reported model selection", () => {
 });
 
 describe("formatModelSelectionEffort", () => {
+  it.each([
+    { id: "reasoningEffort" },
+    { id: "effort" },
+    { id: "reasoning_effort" },
+    { id: "reasoning" },
+    { id: "variant" },
+    { id: "thinking_level" },
+    { id: "thinking" },
+    { id: "agent/thought-level", role: "reasoning" as const },
+  ])("labels a saved $id without loading thread details", (option) => {
+    const selection = createModelSelection(ProviderInstanceId.make("provider"), "model", [
+      { id: option.id, value: "medium" },
+    ]);
+    const models = [
+      {
+        slug: "model",
+        name: "Model",
+        isCustom: false,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            {
+              ...option,
+              label: "Reasoning",
+              type: "select",
+              options: [
+                { id: "medium", label: "Medium" },
+                { id: "high", label: "High", isDefault: true },
+              ],
+            },
+          ],
+        }),
+      },
+    ];
+
+    expect(formatModelSelectionEffort(selection, models)).toBe("Medium");
+    if (option.id !== "variant") {
+      expect(
+        formatModelSelectionEffort(
+          createModelSelection(selection.instanceId, selection.model),
+          models,
+        ),
+      ).toBeNull();
+    }
+  });
+
   it("labels an old Ultracode effort by the effort it runs at", () => {
     const models = [
       {

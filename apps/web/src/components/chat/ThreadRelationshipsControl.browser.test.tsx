@@ -205,8 +205,12 @@ it("opens an idle child from Lineage when its shell has not been loaded", async 
       showSideChats
     />,
   );
-  await screen.getByRole("button", { name: /Previous agents/ }).click();
-  const child = page.getByRole("menuitem", { name: /Idle child/ });
+  const previousAgents = screen.getByRole("button", { name: "Previous agents" });
+  await expect.element(previousAgents).toHaveAttribute("aria-expanded", "false");
+  await expect.element(screen.getByRole("button", { name: /Idle child/ })).not.toBeInTheDocument();
+  await previousAgents.click();
+  await expect.element(previousAgents).toHaveAttribute("aria-expanded", "true");
+  const child = screen.getByRole("button", { name: /Idle child/ });
   await expect.element(child).toBeEnabled();
   await child.click();
   await vi.waitFor(() =>
@@ -323,7 +327,7 @@ it("folds a finished remote subagent into previous agents with its full title in
     .element(page.getByRole("button", { name: new RegExp(longTitle) }))
     .not.toBeInTheDocument();
   await screen.getByRole("button", { name: "Previous agents" }).click();
-  const row = page.getByRole("menuitem", { name: new RegExp(longTitle) });
+  const row = screen.getByRole("button", { name: new RegExp(longTitle) });
   // A long environment label must not squeeze the title out of the row.
   expect(
     page.getByText(longTitle, { exact: true }).element().getBoundingClientRect().width,

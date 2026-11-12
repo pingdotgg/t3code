@@ -111,14 +111,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-control-gap: 0.5rem;
   --sidebar-icon-color: var(--contrast-sidebar-muted-foreground);
   --sidebar-row-content-inset: 0.625rem;
-  /* Align inset sidebar controls with the row's leading icon. The window
-     navigation uses its own edge inset (pen Pk2BE). */
-  --sidebar-icon-control-inset: calc(
-    var(--sidebar-row-content-inset) + 0.5rem - var(--workspace-titlebar-control-size) / 2
-  );
   --command-shell-inset: 0.5rem;
   --command-content-inset: 1rem;
-  --floating-content-inset: 0.75rem;
   /* App layer order: the bottom terminal drawer (45, above the timeline minimap),
      docked sheets, then the floating preview player (47–49, see
      previewMiniPlayerLayout.ts), then dialogs and popovers (50 and up). */
@@ -915,11 +909,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 @property --surface-shadow {
   syntax: "*";
   inherits: false;
-}
-
-/* Pads content clear of an optional floating pane header. */
-@utility pt-under-header {
-  padding-top: var(--surface-top-inset, 0px);
 }
 
 /* The overview pins its stage to the strip's box (pinOverviewFrame in
@@ -2496,7 +2485,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --message-surface: #fdfdfd;
   --message-foreground: var(--foreground);
   --message-action: var(--primary);
-  --message-action-foreground: var(--primary-foreground);
   --message-action-hover: #090909;
   --accent: rgb(0 0 0 / 3.5%);
   --accent-foreground: var(--strong-foreground);
@@ -2516,7 +2504,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --error: #f85149;
   --error-foreground: #c41008;
   --tool-error-icon: var(--error);
-  --error-surface: color-mix(in srgb, var(--error) 12%, transparent);
   --destructive: var(--error);
   --destructive-foreground: var(--error-foreground);
   /* Text and icons on a solid destructive fill. */
@@ -2617,7 +2604,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --inline-code-fill: #0000000a;
   --code-header-fill: #00000003;
   --table-header-fill: #00000004;
-  --table-row-rule: #00000005;
   --composer-icon: #525252;
   --pill-icon: var(--composer-icon);
   --selection-neutral: #00000006;
@@ -2754,7 +2740,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --inline-code-fill: #ffffff10;
   --code-header-fill: #ffffff05;
   --table-header-fill: #ffffff06;
-  --table-row-rule: #ffffff08;
   --composer-icon: #9e9e9e;
   --pill-icon: var(--composer-icon);
   --selection-neutral: #ffffff0a;
@@ -2803,10 +2788,7 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 [data-app-sidebar] {
   --sidebar-thread-title-foreground: var(--app-theme-text, #18181b);
   --sidebar-shelf-foreground: var(--app-theme-sidebar-muted-foreground, #71717a);
-  --sidebar-status-done: #047857;
   --sidebar-status-input: #4f46e5;
-  --sidebar-status-approval: #b45309;
-  --sidebar-status-working: #0284c7;
   --background: var(--app-chrome-background);
   --foreground: #1c1c1c;
   --muted-foreground: #5f5f5f;
@@ -2818,37 +2800,11 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   @variant dark {
     --sidebar-thread-title-foreground: var(--app-theme-text, #f1f3f7);
     --sidebar-shelf-foreground: var(--app-theme-sidebar-muted-foreground, #a3a3a3);
-    --sidebar-status-done: #6ee7b7;
     --sidebar-status-input: #a5b4fc;
-    --sidebar-status-approval: #fcd34d;
-    --sidebar-status-working: #38bdf8;
     --foreground: #d4d4d4;
     --muted-foreground: #8a8a8a;
     --dim-foreground: #666666;
     --strong-foreground: #f0f0f0;
-  }
-}
-
-/* Modified files get a muted blue so added and deleted files lead. Built from the info token,
-   which themes do not override, so it stays blue in every theme. */
-:root {
-  --diff-modified-icon: color-mix(in srgb, var(--info-foreground) 50%, var(--muted-foreground));
-
-  @variant dark {
-    /* On black a gray mix stays as bright as the blue, so dim with transparency instead. */
-    --diff-modified-icon: color-mix(in srgb, var(--info-foreground) 65%, transparent);
-    --diff-added-icon: var(--success-foreground);
-  }
-}
-
-/* Blue-orange already spends blue on additions. Same specificity as the dark block above and
-   later, so it wins there too. */
-:root[data-diff-color-scheme="blue-orange"] {
-  --diff-modified-icon: var(--muted-foreground);
-  --diff-added-icon: initial;
-
-  @variant dark {
-    --diff-modified-icon: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
   }
 }
 
@@ -2902,12 +2858,10 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --message-surface: var(--app-theme-message-surface);
   --message-foreground: var(--app-theme-message-foreground);
   --message-action: var(--app-theme-message-action);
-  --message-action-foreground: var(--app-theme-message-action-foreground);
   --message-action-hover: var(--app-theme-message-action-hover);
   --error: var(--app-theme-error);
   --error-foreground: var(--app-theme-error-foreground);
   --tool-error-icon: var(--error-foreground);
-  --error-surface: var(--app-theme-error-surface);
   --destructive: var(--error);
   --destructive-foreground: var(--error-foreground);
   --warning: var(--app-theme-warning);
@@ -3164,7 +3118,9 @@ html[data-theme-token-probe] *::after {
    roles explicit prevents the thread toolbar from falling back to the default
    dark-mode whites while preserving the same theme file across clients. */
 html[data-theme-id] [data-chat-header] {
-  background-color: var(--toolbar-background);
+  @media (width >= 48rem) {
+    background-color: var(--toolbar-background);
+  }
   color: var(--contrast-toolbar-foreground);
 }
 
@@ -3329,7 +3285,6 @@ html:root[data-theme-id="t3-code-classic"] {
      default style still reads as lit edges over lifted surfaces. */
   --hairline: var(--border);
   --divider: var(--border);
-  --table-row-rule: var(--border);
   --sidebar-row-selected-fill: linear-gradient(
     var(--sidebar-row-selected),
     var(--sidebar-row-selected)
@@ -3728,6 +3683,12 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --pill-icon: #525252;
   --pill-rim: var(--composer-pill-rim, linear-gradient(180deg, #00000022, #00000003));
   --pill-shadow: var(--composer-pill-shadow, 0 1px 3px #00000011);
+}
+
+:root[data-surface-style="flat"] [data-chat-composer-compact-send] [data-variant="pill"] {
+  --button-pill-fill: var(--composer-pill-fill);
+  --button-pill-rim: var(--composer-pill-rim);
+  --button-pill-shadow: var(--composer-pill-shadow);
 }
 
 /* Flat sliders use solid tracks and thumbs; only keyboard focus adds a ring. */
@@ -4432,7 +4393,6 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --button-pill-icon: var(--pill-icon);
   --style-code-fill: var(--well-fill);
   --style-panel-fill: var(--popover-fill);
-  --style-settings-background: var(--card-settings-fill) padding-box, var(--raised-rim) border-box;
   --style-overlay-background: var(--popover-fill) padding-box, var(--popover-rim) border-box;
   --style-border: transparent;
   --style-backdrop: none;
@@ -4938,9 +4898,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --icon-muted: var(--muted-foreground);
   --accent-foreground: var(--strong-foreground);
   --destructive-foreground: var(--error-foreground);
-  --error-surface: color-mix(in srgb, var(--error) 12%, transparent);
   --warning-surface: color-mix(in srgb, var(--warning) 12%, transparent);
-  --update-surface: color-mix(in srgb, var(--update) 12%, transparent);
   --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
   --sidebar: var(--app-chrome-background);
   --sidebar-foreground: var(--foreground);
@@ -5038,11 +4996,6 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     color-mix(in oklab, var(--icon-muted) var(--appearance-contrast-base), var(--background)),
     var(--appearance-contrast-target) var(--appearance-contrast-boost)
   );
-  --contrast-card-foreground: color-mix(
-    in oklab,
-    color-mix(in oklab, var(--card-foreground) var(--appearance-contrast-base), var(--card)),
-    var(--appearance-contrast-target) var(--appearance-contrast-boost)
-  );
   --contrast-popover-foreground: color-mix(
     in oklab,
     color-mix(in oklab, var(--popover-foreground) var(--appearance-contrast-base), var(--popover)),
@@ -5051,15 +5004,6 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --contrast-accent-foreground: color-mix(
     in oklab,
     color-mix(in oklab, var(--accent-foreground) var(--appearance-contrast-base), var(--accent)),
-    var(--appearance-contrast-target) var(--appearance-contrast-boost)
-  );
-  --contrast-secondary-foreground: color-mix(
-    in oklab,
-    color-mix(
-      in oklab,
-      var(--secondary-foreground) var(--appearance-contrast-base),
-      var(--secondary)
-    ),
     var(--appearance-contrast-target) var(--appearance-contrast-boost)
   );
   --contrast-message-foreground: color-mix(
@@ -5707,6 +5651,141 @@ body {
   }
 }
 
+.surface-bubble .user-message-markdown {
+  --bubble-well-top: color-mix(in srgb, var(--message-surface) 94%, var(--background));
+  --bubble-well-bottom: var(--message-surface);
+  --bubble-well-fill: linear-gradient(
+    180deg in srgb,
+    var(--bubble-well-top),
+    var(--bubble-well-bottom)
+  );
+  --bubble-table-header: var(--table-header-fill);
+  --bubble-inline-code: var(--inline-code-fill);
+  --bubble-well-rim: var(--well-rim);
+  --bubble-markdown-foreground: light-dark(
+    var(--foreground),
+    color-mix(in srgb, var(--foreground) 35%, var(--appearance-contrast-target))
+  );
+  --bubble-markdown-muted: light-dark(
+    var(--contrast-muted-foreground),
+    color-mix(in srgb, var(--contrast-muted-foreground) 90%, var(--appearance-contrast-target))
+  );
+}
+
+:root:is(:not([data-surface-style]), [data-surface-style="gradient-rim"])
+  .surface-bubble
+  .user-message-markdown {
+  --bubble-well-rim: light-dark(
+    var(--well-rim),
+    linear-gradient(
+      180deg,
+      oklch(from var(--bubble-well-top) max(calc(l - 0.052), 0) c h),
+      oklch(from var(--bubble-well-bottom) min(calc(l + 0.155), 1) c h)
+    )
+  );
+}
+
+:root[data-surface-style="flat"] .surface-bubble .user-message-markdown {
+  --bubble-well-rim: var(--flat-edge);
+  --bubble-well-top: light-dark(
+    oklch(from var(--flat-high) calc(l + 0.015) c h),
+    oklch(from var(--flat-high) calc(l + 0.026) c h)
+  );
+  --bubble-well-bottom: var(--bubble-well-top);
+  --bubble-table-header: light-dark(
+    oklch(from var(--flat-high) calc(l + 0.03) c h),
+    oklch(from var(--flat-high) calc(l + 0.073) c h)
+  );
+}
+
+:root[data-surface-style="soft-gradient"] .surface-bubble .user-message-markdown {
+  --bubble-markdown-foreground: light-dark(
+    var(--foreground),
+    color-mix(in srgb, var(--foreground) 10%, var(--appearance-contrast-target))
+  );
+  --bubble-well-top: light-dark(
+    oklch(from var(--ss-background) calc(l + 0.045) c h),
+    oklch(from var(--ss-background) calc(l + 0.1835) c h)
+  );
+  --bubble-well-bottom: light-dark(
+    oklch(from var(--ss-background) calc(l + 0.015) c h),
+    oklch(from var(--ss-background) calc(l + 0.1305) c h)
+  );
+  --bubble-table-header: var(--bubble-well-fill);
+  --bubble-inline-code: var(--bubble-well-fill);
+}
+
+:root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
+  .surface-bubble
+  .user-message-markdown {
+  --bubble-well-top: light-dark(
+    oklch(from var(--ss-background) min(calc(l + 0.045), 1) c h),
+    oklch(from var(--ss-background) calc(l + 0.1175) c h)
+  );
+  --bubble-well-bottom: light-dark(
+    oklch(from var(--ss-background) calc(l + 0.015) c h),
+    oklch(from var(--ss-background) calc(l + 0.0925) c h)
+  );
+  --bubble-table-header: var(--bubble-well-fill);
+  --bubble-inline-code: linear-gradient(
+    180deg in srgb,
+    light-dark(
+        oklch(from var(--ss-background) calc(l + 0.045) c h),
+        oklch(from var(--ss-background) calc(l + 0.2055) calc(c * 0.35) h)
+      )
+      0%,
+    light-dark(
+        oklch(from var(--ss-background) calc(l + 0.015) c h),
+        oklch(from var(--ss-background) calc(l + 0.1575) c h)
+      )
+      min(50%, 24px),
+    light-dark(
+        oklch(from var(--ss-background) calc(l - 0.027) c h),
+        oklch(from var(--ss-background) calc(l + 0.0835) c h)
+      )
+      min(50%, 24px),
+    light-dark(
+        oklch(from var(--ss-background) calc(l - 0.003) c h),
+        oklch(from var(--ss-background) calc(l + 0.1255) c h)
+      )
+      100%
+  );
+}
+
+:root[data-surface-style="gradient-rim-everywhere"] .surface-bubble .user-message-markdown {
+  --bubble-markdown-foreground: light-dark(
+    var(--foreground),
+    color-mix(in srgb, var(--foreground) 20%, var(--appearance-contrast-target))
+  );
+  --bubble-well-top: color-mix(in srgb, var(--popover) 88%, oklch(from var(--popover) 1 0 h));
+  --bubble-well-bottom: var(--bubble-well-top);
+  --bubble-table-header: var(--bubble-well-fill);
+  --bubble-inline-code: var(--bubble-well-fill);
+}
+
+:root
+  .surface-bubble
+  .user-message-markdown
+  :is(.chat-markdown-table-container, .chat-markdown-codeblock, pre) {
+  --well-fill: var(--bubble-well-fill);
+  --well-rim: var(--bubble-well-rim);
+  --style-code-fill: var(--bubble-well-fill);
+  --table-header-fill: var(--bubble-table-header);
+  --foreground: var(--bubble-markdown-foreground);
+  --contrast-foreground: var(--bubble-markdown-foreground);
+  --contrast-muted-foreground: var(--bubble-markdown-muted);
+}
+
+:root[data-surface-style="flat"] .surface-bubble .user-message-markdown .chat-markdown-codeblock {
+  --well-fill: linear-gradient(var(--bubble-table-header), var(--bubble-table-header));
+  --style-code-fill: var(--well-fill);
+}
+
+.surface-bubble .user-message-markdown :not(pre) > code {
+  --inline-code-fill: var(--bubble-inline-code);
+  --contrast-foreground: var(--bubble-markdown-foreground);
+}
+
 /* Formula cells keep their natural width and scroll with the table. */
 .chat-markdown-table-container :is(th, td):has([data-markdown-math]) {
   max-width: none;
@@ -6108,15 +6187,12 @@ body {
 :root {
   --badge-quiet: #00000006;
   --sidebar-settled-pr: #9e9e9e;
-  /* Open PR numbers on sidebar rows (the pen darkens them further than --success-foreground). */
-  --sidebar-pr-open: #1a7f37;
 }
 
 :root.dark,
 :root.black-chrome [data-chrome-scope] {
   --badge-quiet: #ffffff0a;
   --sidebar-settled-pr: #ffffff40;
-  --sidebar-pr-open: #3fb950;
 }
 
 /* redesign: timeline */
