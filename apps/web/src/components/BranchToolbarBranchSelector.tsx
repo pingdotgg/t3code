@@ -33,6 +33,7 @@ import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
 import { readThreadShell, useProject, useQuietThreadShell } from "../state/entities";
+import { useProjectClone } from "../state/projectClones";
 import { useEnvironmentQuery } from "../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "../state/threads";
@@ -265,6 +266,12 @@ export function BranchToolbarBranchSelector({
     query: sanitizeNewRefName(trimmedBranchQuery),
   });
   const refs = branchRefState.refs;
+  const isProjectCloneDone = useProjectClone(activeProjectRef)?.phase === "done";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refs listed while the project was cloning are empty; refetch them from the server once the clone lands
+  useEffect(() => {
+    if (!isProjectCloneDone || branchCwd === null) return;
+    void refreshStatus({ environmentId, input: { cwd: branchCwd, localOnly: true } });
+  }, [branchCwd, environmentId, isProjectCloneDone, refreshStatus]);
   const branchByName = new Map(refs.map((refName) => [refName.name, refName] as const));
   const normalizedBranchQuery = trimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
