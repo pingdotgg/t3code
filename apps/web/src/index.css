@@ -1464,9 +1464,36 @@ html[data-theme-token-probe] *::after {
 /* Workspace actions use a small, separate chrome hierarchy. Keeping these
    roles explicit prevents the thread toolbar from falling back to the default
    dark-mode whites while preserving the same theme file across clients. */
-html[data-theme-id] [data-chat-header] {
+html[data-theme-id] [data-chat-header],
+html[data-theme-id] [data-thread-tabs] {
   background-color: var(--toolbar-background);
   color: var(--contrast-toolbar-foreground);
+}
+
+/* Thread tabs sit on the header's surface. The selected fill leans slightly toward the
+   foreground so it still reads on themes whose control-hover token is near the surface. */
+[data-thread-tabs] {
+  mask-image: linear-gradient(to left, transparent 1rem, #000 5rem);
+}
+
+[data-thread-tab-add] {
+  --control-icon-color: var(--contrast-toolbar-foreground);
+}
+
+[data-thread-tab] {
+  --thread-tab-fill: color-mix(
+    in oklab,
+    var(--toolbar-control-hover),
+    var(--contrast-toolbar-foreground) 8%
+  );
+}
+
+[data-thread-tab][data-active] {
+  background-color: var(--thread-tab-fill);
+}
+
+[data-thread-tab]:not([data-active]):hover {
+  background-color: color-mix(in oklab, var(--contrast-toolbar-foreground) 4%, transparent);
 }
 
 html[data-theme-id] [data-chat-header] [data-slot="button"],
