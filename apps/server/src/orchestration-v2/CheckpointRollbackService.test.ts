@@ -174,7 +174,8 @@ it.effect.each([
   { order: "cleanup-first", restoreFiles: true },
   { order: "rollback-first", restoreFiles: true },
   { order: "cleanup-first", restoreFiles: false, unmanaged: true },
-])("locks rollback with %s", ({ order, restoreFiles, unmanaged = false }) =>
+  { order: "cleanup-first", restoreFiles: true, leavesFolder: true },
+])("locks rollback with %s", ({ order, restoreFiles, unmanaged = false, leavesFolder = false }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -185,7 +186,7 @@ it.effect.each([
     const worktreePath = unmanaged
       ? path.join(workspaceRoot, "elsewhere", "feature")
       : path.join(worktreesDir, "repo", "feature");
-    yield* fileSystem.makeDirectory(worktreePath, { recursive: true });
+    yield* fileSystem.makeDirectory(path.join(worktreePath, ".git"), { recursive: true });
     const threadId = ThreadId.make("rollback-worktree");
     const projectId = ProjectId.make("rollback-worktree-project");
     const providerThreadId = ProviderThreadId.make("rollback-worktree-provider-thread");
@@ -246,14 +247,18 @@ it.effect.each([
                   path: worktreePath,
                 });
                 calls.push("create");
-                yield* fileSystem.makeDirectory(worktreePath).pipe(Effect.orDie);
+                yield* fileSystem
+                  .makeDirectory(path.join(worktreePath, ".git"), { recursive: true })
+                  .pipe(Effect.orDie);
                 return {} as never;
               }),
           }),
           Layer.mock(CheckpointService.CheckpointServiceV2)({
             restore: () =>
               Effect.gen(function* () {
-                assert.isTrue(yield* fileSystem.exists(worktreePath).pipe(Effect.orDie));
+                assert.isTrue(
+                  yield* fileSystem.exists(path.join(worktreePath, ".git")).pipe(Effect.orDie),
+                );
                 calls.push("files");
               }),
           }),
@@ -306,6 +311,8 @@ it.effect.each([
           cleanupEntered = true;
           if (order === "cleanup-first") yield* Deferred.await(release);
           yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
+          // A failed `git worktree remove` can leave the folder without its checkout.
+          if (leavesFolder) yield* fileSystem.makeDirectory(worktreePath);
           calls.push("cleanup");
         }),
       );
