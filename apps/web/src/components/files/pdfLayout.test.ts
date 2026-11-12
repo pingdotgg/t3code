@@ -7,6 +7,7 @@ import {
   pdfPageScrollTop,
   pdfPageText,
   pdfPageWidth,
+  pdfRestoredScrollTop,
   stepPdfZoom,
   visiblePdfPages,
 } from "./pdfLayout";
@@ -71,6 +72,14 @@ describe("mixed-height page layout", () => {
 
   it("scales offsets with the page width when zoomed", () => {
     expect(pdfPageOffsets(ratios, width * 2)).toEqual([16, 312, 1912, 2540]);
+  });
+
+  it("restores a saved spot scaled to the new width and kept inside pages that remain", () => {
+    expect(pdfRestoredScrollTop(ratios, width, { page: 1, offset: 100 })).toBe(256);
+    expect(pdfRestoredScrollTop(ratios, width * 2, { page: 1, offset: 100 }, width)).toBe(496);
+    // A page that shrank keeps the reader on its last pixel; a removed page falls back to the last.
+    expect(pdfRestoredScrollTop(ratios, width, { page: 2, offset: 600 })).toBe(964 + 305);
+    expect(pdfRestoredScrollTop(ratios.slice(0, 2), width, { page: 2, offset: 0 })).toBe(156);
   });
 });
 

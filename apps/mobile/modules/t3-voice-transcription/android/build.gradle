@@ -16,9 +16,11 @@ android {
 
 dependencies {
   implementation project(':expo-modules-core')
+  implementation project(':expo-audio')
   implementation 'androidx.media3:media3-common:1.9.1'
   implementation 'com.google.mlkit:genai-speech-recognition:1.0.0-alpha2'
   testImplementation 'junit:junit:4.13.2'
+  testImplementation 'com.facebook.react:react-android'
   testImplementation 'org.robolectric:robolectric:4.16.1'
   testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2'
 }

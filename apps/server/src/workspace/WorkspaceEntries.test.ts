@@ -457,6 +457,20 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("matches square brackets in the query literally", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-brackets-" });
+        yield* writeTextFile(cwd, "src/app/game/[id]/index.tsx");
+
+        for (const query of ["game/[i", "game/[id]"]) {
+          const result = yield* searchWorkspaceEntries({ cwd, query, limit: 10 });
+          expect(result.entries.map((entry) => entry.path)).toContain(
+            "src/app/game/[id]/index.tsx",
+          );
+        }
+      }),
+    );
+
     it.effect("excludes gitignored paths for git repositories", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-gitignore-", git: true });
@@ -672,6 +686,32 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("searches an invalid regex literally without matching case", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-invalid-regex-" });
+        yield* writeTextFile(cwd, "src/calls.ts", "call(Foo(bar));\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "foo(",
+          limit: 100,
+          caseSensitive: false,
+          wholeWord: false,
+          useRegex: true,
+        });
+
+        expect(result.regexFallbackError).toBeDefined();
+        expect(result.matches).toEqual([
+          expect.objectContaining({
+            path: "src/calls.ts",
+            lineNumber: 1,
+            matchRanges: [{ start: 5, end: 9 }],
+          }),
+        ]);
+      }),
+    );
+
     it.effect("maps multi-byte lines to string-indexed ranges", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-multibyte-" });
@@ -786,6 +826,31 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(hiddenPrefixResult).toEqual({
           parentPath: cwd,
           entries: [{ name: ".config", fullPath: path.join(cwd, ".config") }],
+        });
+      }),
+    );
+
+    it.effect("marks only a missing directory as missing when browsing fails", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-missing-" });
+        yield* writeTextFile(cwd, "file.txt", "");
+
+        const missing = yield* workspaceEntries
+          .browse({ partialPath: `${path.join(cwd, "absent", "nested")}${path.sep}` })
+          .pipe(Effect.flip);
+        const underFile = yield* workspaceEntries
+          .browse({ partialPath: `${path.join(cwd, "file.txt")}${path.sep}` })
+          .pipe(Effect.flip);
+
+        expect(missing).toMatchObject({
+          _tag: "WorkspaceEntriesReadDirectoryError",
+          pathMissing: true,
+        });
+        expect(underFile).toMatchObject({
+          _tag: "WorkspaceEntriesReadDirectoryError",
+          pathMissing: false,
         });
       }),
     );

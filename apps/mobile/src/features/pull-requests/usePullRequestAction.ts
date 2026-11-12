@@ -19,7 +19,6 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
   const target = pullRequestTarget(params);
   const permissions = usePullRequestPermissions(params, pr);
   const run = useAtomCommand(composerPullRequests.runAction, { reportFailure: false });
-  const refreshDetail = useAtomRefresh(composerPullRequests.detail(target));
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(target));
   const pending = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -43,7 +42,6 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
       );
       return;
     }
-    refreshDetail();
     refreshActivity();
   };
   const confirm = (action: PullRequestAction, title: string, message: string) =>
