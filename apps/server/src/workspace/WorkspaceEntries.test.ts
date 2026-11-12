@@ -495,6 +495,24 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("leaves out symlinks the index's ignore rules hide outside git", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlink-ignore-" });
+        yield* writeTextFile(cwd, "target.ts", "export {};");
+        yield* writeTextFile(cwd, ".ignore", "hidden*\n");
+        yield* writeTextFile(cwd, ".gitignore", "gi-*\n");
+        for (const link of ["link.ts", "hidden-link.ts", "gi-link.ts", ".dot-link.ts"]) {
+          yield* fileSystem.symlink("target.ts", path.join(cwd, link));
+        }
+
+        const result = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+
+        expect(result.entries.map((entry) => entry.path)).toEqual(["link.ts"]);
+      }),
+    );
+
     it.effect("excludes gitignored paths for git repositories", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-gitignore-", git: true });

@@ -29,6 +29,7 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
+import ignore, { type Ignore } from "ignore";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 
@@ -326,6 +327,42 @@ async function scanSymlinkEntries(
   return entries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
 }
 
+// fff applies .ignore over .gitignore, deeper folders first, and hides dotfiles outside git; git check-ignore sees neither .ignore nor non-git folders.
+async function withoutIgnoredSymlinks(
+  cwd: string,
+  links: ReadonlyArray<ProjectEntry>,
+  insideGit: boolean,
+): Promise<ProjectEntry[]> {
+  const rulesByFile = new Map<string, Promise<Ignore | undefined>>();
+  const rulesFor = (file: string) => {
+    let rules = rulesByFile.get(file);
+    if (rules === undefined) {
+      rules = NodeFSP.readFile(NodePath.join(cwd, file), "utf8").then(
+        (contents) => ignore({ ignorecase: false }).add(contents),
+        () => undefined,
+      );
+      rulesByFile.set(file, rules);
+    }
+    return rules;
+  };
+  const isIgnored = async (link: ProjectEntry) => {
+    const segments = link.path.split("/");
+    if (!insideGit && segments.at(-1)?.startsWith(".")) return true;
+    for (let depth = segments.length - 1; depth >= 0; depth -= 1) {
+      const directory = segments.slice(0, depth).join("/");
+      const relative = `${segments.slice(depth).join("/")}${link.kind === "directory" ? "/" : ""}`;
+      for (const name of [".ignore", ".gitignore"]) {
+        const result = (await rulesFor(directory ? `${directory}/${name}` : name))?.test(relative);
+        if (result?.ignored) return true;
+        if (result?.unignored) return false;
+      }
+    }
+    return false;
+  };
+  const ignored = await Promise.all(links.map(isIgnored));
+  return links.filter((_, index) => !ignored[index]);
+}
+
 // fff's watcher reports no event when a symlink is deleted, so cached links are re-checked on each read.
 async function currentSymlinkEntries(
   cwd: string,
@@ -516,7 +553,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       ]),
     );
     if (links.length === 0) return links;
-    // The index leaves out ignored paths; outside a git repository this check fails and keeps every link.
+    // Covers global git excludes; outside a git repository this check fails.
     const result = yield* vcsProcess
       .run({
         operation: "WorkspaceSearchIndex.scanSymlinks",
@@ -529,9 +566,15 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         maxOutputBytes: 16 * 1024 * 1024,
       })
       .pipe(Effect.orElseSucceed(() => undefined));
-    if (result?.exitCode !== 0) return links;
-    const ignored = new Set(result.stdout.split("\0"));
-    return links.filter((link) => !ignored.has(link.path));
+    const insideGit = result?.exitCode === 0 || result?.exitCode === 1;
+    const gitIgnored = new Set(result?.exitCode === 0 ? result.stdout.split("\0") : []);
+    return yield* Effect.promise(() =>
+      withoutIgnoredSymlinks(
+        cwd,
+        links.filter((link) => !gitIgnored.has(link.path)),
+        insideGit,
+      ),
+    );
   });
 
   let symlinkEntriesCache:
