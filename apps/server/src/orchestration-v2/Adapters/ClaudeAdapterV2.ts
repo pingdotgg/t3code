@@ -366,7 +366,7 @@ const CLAUDE_STOP_CONFIRM_TIMEOUT_MS = 10_000;
 const CLAUDE_STDERR_TAIL_LENGTH = 2_048;
 // The process group is killed on exit, so its stderr closes promptly.
 const CLAUDE_STDERR_DRAIN_TIMEOUT = Duration.seconds(1);
-// How often the CLI's process tree is recorded when no agent scope will stop what it leaves.
+// How often the working CLI's process tree is recorded when no agent scope will stop what it leaves.
 const CLAUDE_DESCENDANT_POLL = "1 second";
 // Claude Code's refusal of bypassPermissions as root, which it explains only on stderr.
 const CLAUDE_ROOT_REFUSAL =
@@ -1286,14 +1286,36 @@ export const layerQueryRunner: Layer.Layer<
         for (const row of claudeDescendants(rows, roots)) tracked.set(identity(row), row);
         return running;
       });
-      const stop = refresh(false).pipe(
+      const refreshRunning = refresh(true).pipe(Effect.asVoid);
+      let exited = false;
+      let polling: Fiber.Fiber<unknown> | undefined;
+      // Jobs start only while the CLI works, so polling runs from launch or a prompt until a result.
+      const poll = () => {
+        if (exited || polling !== undefined) return;
+        polling = runFork(
+          refreshRunning.pipe(Effect.repeat(Schedule.spaced(CLAUDE_DESCENDANT_POLL))),
+        );
+      };
+      const pause = Effect.suspend(() => {
+        const fiber = polling;
+        polling = undefined;
+        return fiber === undefined ? Effect.void : Fiber.interrupt(fiber);
+      });
+      const settle = pause.pipe(
+        Effect.andThen(Effect.suspend(() => (exited ? Effect.void : refreshRunning))),
+      );
+      const stop = Effect.suspend(() => {
+        exited = true;
+        return pause;
+      }).pipe(
+        Effect.andThen(refresh(false)),
         Effect.map((running) => {
           for (const row of tracked.values()) {
             if (running.has(identity(row))) killClaudeDescendant(row);
           }
         }),
       );
-      return { refresh: refresh(true).pipe(Effect.asVoid), stop };
+      return { refresh: refreshRunning, poll, settle, stop };
     };
 
     return ClaudeAgentSdkQueryRunner.of({
@@ -1359,7 +1381,7 @@ export const layerQueryRunner: Layer.Layer<
             if (answered) return;
             stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
           };
-          let refreshDescendants: Effect.Effect<void> = Effect.void;
+          let descendants: ReturnType<typeof trackDescendants> | undefined;
           const spawnProcess =
             options.spawnClaudeCodeProcess ??
             ((spawnOptions: ClaudeSpawnOptions) => {
@@ -1375,13 +1397,9 @@ export const layerQueryRunner: Layer.Layer<
                 );
                 if (unit === undefined && child.pid !== undefined) {
                   const tracker = trackDescendants(child.pid);
-                  const polling = runFork(
-                    tracker.refresh.pipe(Effect.repeat(Schedule.spaced(CLAUDE_DESCENDANT_POLL))),
-                  );
-                  child.once("exit", () =>
-                    runFork(Fiber.interrupt(polling).pipe(Effect.andThen(tracker.stop))),
-                  );
-                  refreshDescendants = tracker.refresh;
+                  tracker.poll();
+                  child.once("exit", () => runFork(tracker.stop));
+                  descendants = tracker;
                 }
                 return child;
               }
@@ -1542,6 +1560,16 @@ export const layerQueryRunner: Layer.Layer<
                   answered = true;
                 }),
               ),
+              // The result waits for the turn's last tree read, so a session closed on it keeps that job.
+              Stream.tap((message) =>
+                descendants === undefined
+                  ? Effect.void
+                  : message.type === "result"
+                    ? descendants.settle
+                    : message.type === "assistant"
+                      ? Effect.sync(descendants.poll)
+                      : Effect.void,
+              ),
               Stream.tap((message) =>
                 logProtocolEvent({
                   direction: "incoming",
@@ -1553,7 +1581,12 @@ export const layerQueryRunner: Layer.Layer<
             offer: (message, onQueued) =>
               Effect.uninterruptibleMask((restore) =>
                 restore(Queue.offer(promptQueue, message)).pipe(
-                  Effect.tap(() => Effect.sync(() => onQueued?.())),
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      descendants?.poll();
+                      onQueued?.();
+                    }),
+                  ),
                 ),
               ).pipe(
                 Effect.asVoid,
@@ -1691,7 +1724,9 @@ export const layerQueryRunner: Layer.Layer<
               ),
             ),
             // A job started since the last poll is recorded before the CLI is told to exit.
-            close: Effect.suspend(() => (processExited ? Effect.void : refreshDescendants)).pipe(
+            close: Effect.suspend(() =>
+              processExited || descendants === undefined ? Effect.void : descendants.refresh,
+            ).pipe(
               Effect.andThen(Queue.shutdown(promptQueue)),
               Effect.andThen(closeClaudeQuery(queryRuntime)),
               Effect.tap(() =>
