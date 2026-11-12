@@ -907,7 +907,7 @@ it.effect("an agent turns a thread's auto-settle off and back on", () => {
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
