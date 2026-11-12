@@ -314,6 +314,52 @@ describe("readOpenCodeUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("keys OpenCode Go to opencode_go rates and keeps free gateway models at zero", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const base = {
+        sessionID: "session-1",
+        role: "assistant",
+        time: { created: 1780000000000 },
+        cost: 0,
+        tokens: { input: 100, output: 20 },
+      };
+      const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe("CREATE TABLE message (id TEXT, session_id TEXT, data TEXT)");
+      yield* db.unsafe("INSERT INTO message VALUES ('msg-top', 'session-1', ?)", [
+        JSON.stringify({ ...base, providerID: "opencode-go", modelID: "deepseek-v4.1-flash" }),
+      ]);
+      const legacy = path.join(dir, "storage", "message", "session-1");
+      yield* fileSystem.makeDirectory(legacy, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(legacy, "msg-nested.json"),
+        JSON.stringify({ ...base, model: { providerID: "opencode-go", id: "glm-5.3" } }),
+      );
+      yield* fileSystem.writeFileString(
+        path.join(legacy, "msg-free.json"),
+        JSON.stringify({ ...base, providerID: "opencode", modelID: "deepseek-v4.1-flash-free" }),
+      );
+      const result = yield* readOpenCodeUsage(dir, 0);
+      assert.deepStrictEqual(
+        result.files
+          .flatMap((file) => file.records)
+          .map(({ model, rateModel, reportedCostUsd }) => ({ model, rateModel, reportedCostUsd }))
+          .sort((a, b) => a.model.localeCompare(b.model)),
+        [
+          {
+            model: "deepseek-v4.1-flash",
+            rateModel: "opencode_go/deepseek-v4.1-flash",
+            reportedCostUsd: null,
+          },
+          { model: "deepseek-v4.1-flash-free", rateModel: undefined, reportedCostUsd: 0 },
+          { model: "glm-5.3", rateModel: "opencode_go/glm-5.3", reportedCostUsd: null },
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("never follows symlinks in the legacy OpenCode store", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
