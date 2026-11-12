@@ -244,6 +244,7 @@ function PreviewStreamDocumentView({
   const [control, setControl] = useState<PreviewStreamControl | null>(null);
   const dialogRef = useRef<PreviewStreamControl["dialog"]>(null);
   const [promptText, setPromptText] = useState("");
+  const [credentials, setCredentials] = useState({ username: "", password: "" });
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const answerFileChooser = (pick: boolean) => {
     const chooser = fileChooser;
@@ -372,6 +373,8 @@ function PreviewStreamDocumentView({
                 const previousDialog = dialogRef.current;
                 dialogRef.current = message.dialog;
                 setPromptText((draft) => previewPromptText(previousDialog, message.dialog, draft));
+                if (previousDialog?.message !== message.dialog?.message)
+                  setCredentials({ username: "", password: "" });
                 onControl?.(message);
                 return;
               }
@@ -458,6 +461,33 @@ function PreviewStreamDocumentView({
                   onChangeText={setPromptText}
                 />
               ) : null}
+              {control.dialog.type === "auth" ? (
+                <>
+                  <TextInput
+                    accessibilityLabel="Username"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    className="rounded-lg border border-input-border bg-input px-3 py-2 text-foreground"
+                    placeholder="Username"
+                    placeholderTextColorClassName="accent-placeholder"
+                    selectionColorClassName="accent-focus/32"
+                    value={credentials.username}
+                    onChangeText={(username) => setCredentials({ ...credentials, username })}
+                  />
+                  <TextInput
+                    accessibilityLabel="Password"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry
+                    className="rounded-lg border border-input-border bg-input px-3 py-2 text-foreground"
+                    placeholder="Password"
+                    placeholderTextColorClassName="accent-placeholder"
+                    selectionColorClassName="accent-focus/32"
+                    value={credentials.password}
+                    onChangeText={(password) => setCredentials({ ...credentials, password })}
+                  />
+                </>
+              ) : null}
               <View className="flex-row justify-end gap-3">
                 <Button
                   label="Dismiss"
@@ -472,6 +502,7 @@ function PreviewStreamDocumentView({
                       type: "dialog",
                       accept: true,
                       ...(control.dialog?.type === "prompt" ? { promptText } : {}),
+                      ...(control.dialog?.type === "auth" ? credentials : {}),
                     })
                   }
                 />

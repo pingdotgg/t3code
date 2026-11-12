@@ -11,7 +11,7 @@ function fixture(nativePdfViewer = false) {
     requestId: string;
     frameId: string;
     request: { url: string; method: string };
-    responseStatusCode: number;
+    responseStatusCode: number | undefined;
     responseHeaders: Array<{ name: string; value: string }>;
   }) => void = () => {
     throw new Error("Navigation handler was not installed");
@@ -41,14 +41,14 @@ function fixture(nativePdfViewer = false) {
       url = source,
       frameId = "main",
       method = "GET",
-      status = 200,
+      status: number | null = 200,
       contentType = "application/pdf",
     ) => {
       paused({
         requestId: "request-1",
         frameId,
         request: { url, method },
-        responseStatusCode: status,
+        responseStatusCode: status ?? undefined,
         responseHeaders: [{ name: "Content-Type", value: contentType }],
       });
       return completed.promise;
@@ -59,7 +59,7 @@ function fixture(nativePdfViewer = false) {
 describe("PDF document navigation", () => {
   it("escapes filenames in the browser document", async () => {
     const test = fixture();
-    await installPdfDocumentNavigation(test.cdp);
+    await installPdfDocumentNavigation(test.cdp, { handleAuthRequests: false });
     const result = await test.navigate(
       "https://environment.test/api/assets/token/%3Cscript%3E.pdf",
     );
@@ -68,9 +68,25 @@ describe("PDF document navigation", () => {
     );
   });
 
+  it("lets every document pause for auth and continues a PDF's request-stage pause", async () => {
+    const test = fixture();
+    await installPdfDocumentNavigation(test.cdp, { handleAuthRequests: true });
+    expect(test.send).toHaveBeenCalledWith("Fetch.enable", {
+      patterns: [
+        { urlPattern: "*/api/assets/*", resourceType: "Document", requestStage: "Response" },
+        { urlPattern: "*", resourceType: "Document", requestStage: "Request" },
+      ],
+      handleAuthRequests: true,
+    });
+    expect(await test.navigate(source, "main", "GET", null)).toEqual({
+      method: "Fetch.continueRequest",
+      params: { requestId: "request-1" },
+    });
+  });
+
   it("resumes navigation when committing the document fails", async () => {
     const test = fixture();
-    await installPdfDocumentNavigation(test.cdp);
+    await installPdfDocumentNavigation(test.cdp, { handleAuthRequests: false });
     test.send.mockRejectedValueOnce(new Error("Tab closed"));
     expect(await test.navigate()).toEqual({
       method: "Fetch.continueRequest",

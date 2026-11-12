@@ -179,6 +179,7 @@ export function ServerBrowserSurface(props: {
   const controlRef = useRef<PreviewStreamControl | null>(null);
   const [control, setControl] = useState<PreviewStreamControl | null>(null);
   const [promptText, setPromptText] = useState("");
+  const [credentials, setCredentials] = useState({ username: "", password: "" });
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const [agentCursor, setAgentCursor] = useState<AgentCursorPlacement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -412,8 +413,10 @@ export function ServerBrowserSurface(props: {
           if (
             next.dialog?.message !== previous?.dialog?.message ||
             next.dialog?.defaultValue !== previous?.dialog?.defaultValue
-          )
+          ) {
             setPromptText(next.dialog?.defaultValue ?? "");
+            setCredentials({ username: "", password: "" });
+          }
           if (next.controller !== "you") {
             clearInput();
           } else if (previous?.controller !== "you") {
@@ -869,6 +872,29 @@ export function ServerBrowserSurface(props: {
                     onChange={(event) => setPromptText(event.target.value)}
                   />
                 ) : null}
+                {control.dialog.type === "auth" ? (
+                  <>
+                    <Input
+                      aria-label="Username"
+                      placeholder="Username"
+                      autoComplete="off"
+                      value={credentials.username}
+                      onChange={(event) =>
+                        setCredentials({ ...credentials, username: event.target.value })
+                      }
+                    />
+                    <Input
+                      aria-label="Password"
+                      placeholder="Password"
+                      type="password"
+                      autoComplete="off"
+                      value={credentials.password}
+                      onChange={(event) =>
+                        setCredentials({ ...credentials, password: event.target.value })
+                      }
+                    />
+                  </>
+                ) : null}
                 <div className="flex justify-end gap-2">
                   <Button
                     variant="outline"
@@ -884,6 +910,7 @@ export function ServerBrowserSurface(props: {
                         type: "dialog",
                         accept: true,
                         ...(control.dialog?.type === "prompt" ? { promptText } : {}),
+                        ...(control.dialog?.type === "auth" ? credentials : {}),
                       })
                     }
                   >

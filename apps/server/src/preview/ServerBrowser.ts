@@ -67,7 +67,6 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type {
   BrowserContext,
   CDPSession,
-  Dialog,
   Download,
   FileChooser,
   Frame,
@@ -304,6 +303,15 @@ interface Recording {
   readonly framesInFlight: Set<Promise<void>>;
 }
 
+/** A page dialog or an HTTP auth challenge, answered through the same channel. */
+interface PendingDialog {
+  readonly type: string;
+  readonly message: string;
+  readonly defaultValue: string;
+  readonly accept: (input: PreviewAutomationDialogInput) => Promise<void>;
+  readonly dismiss: () => Promise<void>;
+}
+
 interface ServerTab {
   readonly threadId: ThreadId;
   readonly tabId: string;
@@ -339,7 +347,7 @@ interface ServerTab {
     readonly accept: string;
     readonly offeredTo: string | null;
   } | null;
-  dialog: Dialog | null;
+  dialog: PendingDialog | null;
   setting: PreviewViewportSetting;
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
@@ -560,9 +568,9 @@ const make = Effect.gen(function* () {
   const dialogStatus = (tab: ServerTab) =>
     tab.dialog
       ? {
-          type: tab.dialog.type(),
-          message: tab.dialog.message().slice(0, 4000),
-          defaultValue: tab.dialog.defaultValue().slice(0, 4000),
+          type: tab.dialog.type,
+          message: tab.dialog.message.slice(0, 4000),
+          defaultValue: tab.dialog.defaultValue.slice(0, 4000),
         }
       : null;
 
@@ -597,10 +605,49 @@ const make = Effect.gen(function* () {
   const resolveDialog = async (tab: ServerTab, input: PreviewAutomationDialogInput) => {
     const dialog = tab.dialog;
     if (!dialog) throw new Error("No dialog is pending.");
-    if (input.accept) await dialog.accept(input.promptText);
-    else await dialog.dismiss();
-    if (tab.dialog === dialog) tab.dialog = null;
-    ServerBrowserPage.invalidateRefs(tab.page);
+    let answered = false;
+    try {
+      if (input.accept) await dialog.accept(input);
+      else await dialog.dismiss();
+      answered = true;
+    } finally {
+      // Chromium drops a paused request when its frame goes away, so an unanswerable sign-in is over.
+      if (answered || dialog.type === "auth") {
+        if (tab.dialog === dialog) tab.dialog = null;
+        ServerBrowserPage.invalidateRefs(tab.page);
+        broadcastControl(tab);
+      }
+    }
+  };
+
+  /** Credentials go straight to Chromium; they are never stored or echoed in status. */
+  const requestAuth = (
+    tab: ServerTab,
+    requestId: string,
+    { origin, realm, source }: { origin: string; realm: string; source?: string },
+  ) => {
+    const respond = (
+      authChallengeResponse:
+        | { response: "CancelAuth" }
+        | { response: "ProvideCredentials"; username: string; password: string },
+    ) =>
+      tab.cdp.send("Fetch.continueWithAuth", { requestId, authChallengeResponse }).then(constVoid);
+    if (tab.closing || tab.dialog) {
+      void respond({ response: "CancelAuth" }).catch(constVoid);
+      return;
+    }
+    tab.dialog = {
+      type: "auth",
+      message: `${source === "Proxy" ? "The proxy " : ""}${origin} asks you to sign in.${realm ? ` It says: ${realm}` : ""}`,
+      defaultValue: "",
+      accept: (input) =>
+        respond({
+          response: "ProvideCredentials",
+          username: input.username ?? "",
+          password: input.password ?? "",
+        }),
+      dismiss: () => respond({ response: "CancelAuth" }),
+    };
     broadcastControl(tab);
   };
 
@@ -911,7 +958,8 @@ const make = Effect.gen(function* () {
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
-    await installPdfDocumentNavigation(cdp);
+    // Desktop webviews are left out: their challenges would need an Electron login handler instead.
+    await installPdfDocumentNavigation(cdp, { handleAuthRequests: !desktop });
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
     if (!desktop) await presentAsChrome(cdp, host);
@@ -995,6 +1043,13 @@ const make = Effect.gen(function* () {
       if (!isMainNavigation(request)) return;
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
+      // Navigating away abandons a sign-in prompt; release its paused request.
+      if (tab.dialog?.type === "auth") {
+        const abandoned = tab.dialog;
+        tab.dialog = null;
+        void abandoned.dismiss().catch(constVoid);
+        broadcastControl(tab);
+      }
       tab.loading = true;
       tab.loadError = undefined;
       report(tab, {
@@ -1078,9 +1133,21 @@ const make = Effect.gen(function* () {
         void dialog.accept().catch(constVoid);
         return;
       }
-      tab.dialog = dialog;
+      // Only one dialog can be answered; cancel a sign-in prompt rather than strand its request.
+      if (tab.dialog?.type === "auth") void tab.dialog.dismiss().catch(constVoid);
+      tab.dialog = {
+        type: dialog.type(),
+        message: dialog.message(),
+        defaultValue: dialog.defaultValue(),
+        accept: (input) => dialog.accept(input.promptText),
+        dismiss: () => dialog.dismiss(),
+      };
       broadcastControl(tab);
     });
+    if (!desktop)
+      cdp.on("Fetch.authRequired", (event) =>
+        requestAuth(tab, event.requestId, event.authChallenge),
+      );
     page.on("download", (download) => void saveDownload(tab, download));
     updateFileChooserInterception(tab);
     // Popups become tabs and keep `window.opener`, so sign-in popups can report back.
@@ -2866,6 +2933,8 @@ const make = Effect.gen(function* () {
                 ...(typeof message.promptText === "string"
                   ? { promptText: message.promptText }
                   : {}),
+                ...(typeof message.username === "string" ? { username: message.username } : {}),
+                ...(typeof message.password === "string" ? { password: message.password } : {}),
               });
             } else {
               const dispatch = async (input: Record<string, unknown>) => {

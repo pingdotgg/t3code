@@ -53,7 +53,14 @@ const isPreviewStreamDialog = (value: unknown): value is PreviewStreamControl["d
 export type PreviewStreamInput =
   | { readonly type: "takeControl" }
   | { readonly type: "releaseControl" }
-  | { readonly type: "dialog"; readonly accept: boolean; readonly promptText?: string }
+  | {
+      readonly type: "dialog";
+      readonly accept: boolean;
+      readonly promptText?: string;
+      /** An `auth` dialog's credentials; the server forwards them and keeps neither. */
+      readonly username?: string;
+      readonly password?: string;
+    }
   | { readonly type: "viewport"; readonly setting: PreviewViewportSetting }
   | {
       readonly type: "mouse";

@@ -145,6 +145,9 @@ export const PreviewAutomationDialogInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   accept: Schema.Boolean,
   promptText: Schema.optional(Schema.String),
+  /** Answers an `auth` dialog, an HTTP sign-in challenge. */
+  username: Schema.optional(Schema.String),
+  password: Schema.optional(Schema.String),
 });
 export type PreviewAutomationDialogInput = typeof PreviewAutomationDialogInput.Type;
 
