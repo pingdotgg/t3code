@@ -288,10 +288,10 @@ switch (args[1]) {
         );
         yield* fs.writeFileString(
           path.join(directory, "ps"),
-          '#!/bin/sh\nif [ "$T3_FIXTURE_ZOMBIE" = "1" ]; then printf Z; else exec /bin/ps "$@"; fi\n',
+          '#!/bin/sh\nfor arg do pid="$arg"; done\nif [ -n "$T3_FIXTURE_ZOMBIE_PID" ] && [ "$pid" = "$T3_FIXTURE_ZOMBIE_PID" ]; then printf Z; else exec /bin/ps "$@"; fi\n',
           { mode: 0o700 },
         );
-        let zombie = "0";
+        let zombiePid = "";
         let readyPort = "41773";
         const localSsh = ChildProcessSpawner.make((command) => {
           assert.strictEqual(command._tag, "StandardCommand");
@@ -302,7 +302,7 @@ switch (args[1]) {
               env: {
                 HOME: directory,
                 PATH: `${directory}:/usr/bin:/bin`,
-                T3_FIXTURE_ZOMBIE: zombie,
+                T3_FIXTURE_ZOMBIE_PID: zombiePid,
                 T3CODE_HOME: customHome,
                 T3_FIXTURE_READY_PORT: readyPort,
                 T3_FIXTURE_STATE_DIR: stateDir,
@@ -343,7 +343,7 @@ switch (args[1]) {
           yield* fs.readFileString(path.join(stateDir, "run-t3.sh")),
           "old runner stays intact",
         );
-        zombie = "1";
+        zombiePid = String(external.pid);
         readyPort = "41774";
         assert.deepEqual(yield* launch, { remotePort: 41774, remoteServerKind: "managed" });
         assert.strictEqual(
@@ -351,6 +351,29 @@ switch (args[1]) {
           customHome,
         );
         assert.isTrue(yield* external.isRunning);
+
+        // A rejected runtime PID must not hide a live sibling on the selected home.
+        const sibling = yield* realSpawner.spawn(
+          ChildProcess.make(process.execPath, [
+            "-e",
+            "process.stdin.resume()",
+            "--",
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "41775",
+          ]),
+        );
+        const siblingDir = path.join(directory, ".t3/ssh-launch", "sibling");
+        yield* fs.makeDirectory(siblingDir, { recursive: true });
+        yield* fs.writeFileString(path.join(siblingDir, "managed"), "managed");
+        yield* fs.writeFileString(path.join(siblingDir, "pid"), String(sibling.pid));
+        yield* fs.writeFileString(path.join(siblingDir, "port"), "41775");
+        yield* fs.writeFileString(path.join(siblingDir, "server-home"), customHome);
+        readyPort = "41775";
+        assert.deepEqual(yield* launch, { remotePort: 41775, remoteServerKind: "external" });
+        assert.isTrue(yield* sibling.isRunning);
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
