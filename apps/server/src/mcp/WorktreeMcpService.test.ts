@@ -69,8 +69,12 @@ interface ThreadFixture {
   readonly deletedAt?: string | null;
 }
 
-const makeProjection = (overrides: ThreadFixture = {}): OrchestrationV2ThreadProjection =>
+const makeProjection = (
+  overrides: ThreadFixture = {},
+  sourceRunId?: RunId,
+): OrchestrationV2ThreadProjection =>
   ({
+    runs: sourceRunId === undefined ? [] : [{ id: sourceRunId, status: "running" }],
     thread: {
       id: threadId,
       projectId,
@@ -81,7 +85,7 @@ const makeProjection = (overrides: ThreadFixture = {}): OrchestrationV2ThreadPro
       deletedAt: null,
       ...overrides,
     },
-  }) as OrchestrationV2ThreadProjection;
+  }) as unknown as OrchestrationV2ThreadProjection;
 
 const project: Project = {
   id: projectId,
@@ -95,6 +99,7 @@ const project: Project = {
 } as Project;
 
 interface HarnessOptions {
+  readonly sourceRunId?: RunId;
   readonly git?: Partial<GitWorkflowService.GitWorkflowService["Service"]>;
   readonly thread?: ThreadFixture | null;
   readonly threadReadError?: "projection" | "dispatch";
@@ -219,7 +224,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       return Effect.succeed(makeProjection({ ...thread, archivedAt: "2026-01-02T00:00:00.000Z" }));
     }
     return id === threadId && thread !== null
-      ? Effect.succeed(makeProjection(thread))
+      ? Effect.succeed(makeProjection(thread, options.sourceRunId))
       : Effect.fail(new OrchestratorProjectionError({ threadId: id }));
   });
   const sendToThread = vi.fn(() =>
@@ -429,7 +434,8 @@ const decodeHandoffInput = Schema.decodeUnknownEffect(WorktreeMcpHandoffInput);
 
 describe("t3_worktree_handoff", () => {
   it.effect("queues the continuation prompt as the thread's next message", () => {
-    const harness = makeHarness();
+    const sourceRunId = RunId.make("run:handoff-caller");
+    const harness = makeHarness({ sourceRunId });
     return Effect.gen(function* () {
       const result = yield* runHandoff(harness, {
         branch: "feature/continue",
@@ -446,6 +452,7 @@ describe("t3_worktree_handoff", () => {
           worktreeContinuation: {
             messageId: expect.stringContaining("worktree-continuation"),
             text: "Keep fixing the login bug in the new worktree.",
+            sourceRunId,
           },
         }),
       );

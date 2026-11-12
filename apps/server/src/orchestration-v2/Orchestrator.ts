@@ -3949,15 +3949,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (command.type === "thread.metadata.update" && command.worktreeContinuation !== undefined) {
+      const sourceRunId = command.worktreeContinuation.sourceRunId;
       const { runs } = yield* projectionStore
-        .getThreadRecords(command.threadId, ["runs"])
+        .getThreadRecords(
+          command.threadId,
+          ["runs"],
+          sourceRunId === undefined ? undefined : { runIds: [sourceRunId] },
+        )
         .pipe(mapDispatchError(command));
-      const latest = latestExecutedRun(runs);
-      if (latest !== null && (yield* stopReachedRun(command, command.threadId, latest.id))) {
+      const source =
+        sourceRunId === undefined
+          ? latestExecutedRun(runs)
+          : runs.find((run) => run.id === sourceRunId);
+      if (
+        (sourceRunId !== undefined && (source == null || !isActiveRun(source))) ||
+        (source != null && (yield* stopReachedRun(command, command.threadId, source.id)))
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: "The source run was stopped before the workspace handoff could be applied.",
+          cause:
+            "The source run was stopped or changed before the workspace handoff could be applied.",
         });
       }
       if (isProviderNativeSubagentThread(thread)) {
@@ -14490,8 +14502,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const sourceRun =
           command.worktreeContinuation === undefined
             ? undefined
-            : (yield* getProjectionWithPendingEvents(command.threadId, events)).runs.find(
-                isActiveRun,
+            : (yield* getProjectionWithPendingEvents(command.threadId, events)).runs.find((run) =>
+                command.worktreeContinuation?.sourceRunId === undefined
+                  ? isActiveRun(run)
+                  : run.id === command.worktreeContinuation.sourceRunId,
               );
         yield* dispatchThreadMutation(command, events, effects);
         if (command.worktreeContinuation !== undefined) {
@@ -14500,7 +14514,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               type: "message.dispatch",
               commandId: command.commandId,
               threadId: command.threadId,
-              ...command.worktreeContinuation,
+              messageId: command.worktreeContinuation.messageId,
+              text: command.worktreeContinuation.text,
               ...(sourceRun ? { restartContinuationOfRunId: sourceRun.id } : {}),
               attachments: [],
               createdBy: "agent",

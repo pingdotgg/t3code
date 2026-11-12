@@ -2,7 +2,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { vi } from "vitest";
+import { vi } from "vite-plus/test";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   EnvironmentId,
@@ -1765,7 +1765,7 @@ it.effect("ProviderSessionManagerV2 stops a session still opening when its layer
   }),
 );
 
-it.effect.each(["pending", "running"] as const)(
+it.effect.each(["pending", "running", "completed"] as const)(
   "orders detach after a selected %s turn and interrupts it before ending the subscription",
   (status) =>
     Effect.gen(function* () {
@@ -1811,7 +1811,7 @@ it.effect.each(["pending", "running"] as const)(
           runtimePolicy,
         });
         const subscription = yield* runtime.subscribeEvents!(threadId);
-        const event: ProviderAdapter.ProviderAdapterV2Event = {
+        const turnEvent: ProviderAdapter.ProviderAdapterV2Event = {
           type: "provider_turn.updated",
           driver: CODEX_DRIVER,
           providerTurn: {
@@ -1824,11 +1824,24 @@ it.effect.each(["pending", "running"] as const)(
             runAttemptId: null,
             nativeTurnRef: null,
             ordinal: 1,
-            status,
+            status: status === "completed" ? "running" : status,
             startedAt: now,
             completedAt: null,
           },
         };
+        const event: ProviderAdapter.ProviderAdapterV2Event =
+          status === "completed"
+            ? {
+                type: "turn.terminal",
+                driver: CODEX_DRIVER,
+                providerThreadId: providerThread.id,
+                providerTurnId: turnEvent.providerTurn.id,
+                runOrdinal: 1,
+                status: "completed",
+                failure: null,
+                threadDisposition: "reusable",
+              }
+            : turnEvent;
         const selected = yield* Deferred.make<void>();
         const releaseOffer = yield* Deferred.make<void>();
         const detaching = yield* Deferred.make<void>();
@@ -1860,6 +1873,7 @@ it.effect.each(["pending", "running"] as const)(
           Effect.forkScoped,
         );
         const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+        if (status === "completed") yield* Queue.offer(queue, turnEvent);
         yield* Queue.offer(queue, event);
         yield* Deferred.await(selected);
         const tracer = Tracer.make({
@@ -1877,8 +1891,11 @@ it.effect.each(["pending", "running"] as const)(
         yield* Fiber.join(detach);
         const exit = yield* Fiber.join(reading);
         assert.isTrue(Exit.isFailure(exit));
-        assert.deepEqual(received, [event]);
-        assert.deepEqual(milestones, ["interrupt", "detached"]);
+        assert.deepEqual(received, status === "completed" ? [turnEvent, event] : [event]);
+        assert.deepEqual(
+          milestones,
+          status === "completed" ? ["detached"] : ["interrupt", "detached"],
+        );
       }).pipe(
         Effect.provide(
           layerTest({

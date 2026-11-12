@@ -23,6 +23,7 @@ import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { isActiveRun } from "../orchestration-v2/CommandPolicy.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -96,21 +97,27 @@ const make = Effect.gen(function* () {
           failure("capability_denied", "This MCP credential does not grant worktree capabilities."),
         );
 
-  const loadThread = (scope: McpThreadInvocationScope) =>
-    threadManagement.getThreadRecords(scope.thread.threadId, []).pipe(
-      Effect.mapError((error) =>
-        error._tag === "OrchestratorProjectionError"
-          ? failure("thread_not_found", `Thread '${scope.thread.threadId}' was not found.`)
-          : failure(
-              "operation_failed",
-              `Unable to read thread ${scope.thread.threadId}: ${errorMessage(error)}`,
-            ),
-      ),
-      Effect.filterOrFail(
-        (projection) => projection.thread.deletedAt === null,
-        () => failure("thread_not_found", `Thread '${scope.thread.threadId}' was not found.`),
-      ),
-    );
+  const loadThread = (scope: McpThreadInvocationScope, includeRuns = false) =>
+    threadManagement
+      .getThreadRecords(
+        scope.thread.threadId,
+        includeRuns ? ["runs"] : [],
+        includeRuns ? { runStatuses: ["preparing", "starting", "running", "waiting"] } : undefined,
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          error._tag === "OrchestratorProjectionError"
+            ? failure("thread_not_found", `Thread '${scope.thread.threadId}' was not found.`)
+            : failure(
+                "operation_failed",
+                `Unable to read thread ${scope.thread.threadId}: ${errorMessage(error)}`,
+              ),
+        ),
+        Effect.filterOrFail(
+          (projection) => projection.thread.deletedAt === null,
+          () => failure("thread_not_found", `Thread '${scope.thread.threadId}' was not found.`),
+        ),
+      );
 
   const loadProject = (scope: McpThreadInvocationScope, projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -163,7 +170,8 @@ const make = Effect.gen(function* () {
         `Thread '${scope.thread.threadId}' is already attached to worktree '${worktreePath}'.`,
       );
 
-    const projection = yield* loadThread(scope);
+    const projection = yield* loadThread(scope, true);
+    const sourceRun = projection.runs.find(isActiveRun);
     if (projection.thread.worktreePath !== null) {
       return yield* alreadyInWorktree(projection.thread.worktreePath);
     }
@@ -306,6 +314,7 @@ const make = Effect.gen(function* () {
                     worktreeContinuation: {
                       messageId: ids.continuationMessageId,
                       text: input.continuationPrompt,
+                      ...(sourceRun === undefined ? {} : { sourceRunId: sourceRun.id }),
                     },
                   }),
             })

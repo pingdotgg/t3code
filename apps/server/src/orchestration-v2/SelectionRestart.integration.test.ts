@@ -726,6 +726,42 @@ it.live("Stop during a restart interrupts the turn the restart could not stop", 
         assert.equal(afterHandoff.thread.worktreePath, cwd);
         assert.deepEqual(afterHandoff.runs, beforeHandoff.runs);
         assert.deepEqual(afterHandoff.messages, beforeHandoff.messages);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:selection-restart-stop:new-run"),
+          threadId,
+          messageId: MessageId.make("message:selection-restart-stop:new-run"),
+          text: "new user request",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* worker.drain();
+        const newer = yield* orchestrator.getThreadProjection(threadId);
+        const staleHandoff = yield* orchestrator
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("command:selection-restart-stop:stale-handoff"),
+            threadId,
+            worktreePath: `${cwd}-handoff`,
+            expectedWorktreePath: cwd,
+            worktreeContinuation: {
+              messageId: MessageId.make("message:selection-restart-stop:stale-handoff"),
+              text: "handoff continuation",
+              sourceRunId: runId,
+            },
+          })
+          .pipe(Effect.exit);
+        assert.isTrue(
+          Exit.isFailure(staleHandoff),
+          "The stopped caller cannot hand off a newer run",
+        );
+        const afterStale = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(afterStale.thread.worktreePath, cwd);
+        assert.deepEqual(afterStale.runs, newer.runs);
+        assert.deepEqual(afterStale.messages, newer.messages);
         return {
           projection: yield* orchestrator.getThreadProjection(threadId),
           captured: yield* Ref.get(state),
@@ -739,13 +775,10 @@ it.live("Stop during a restart interrupts the turn the restart could not stop", 
         ),
       );
 
-      assert.isNull(result.captured.activeTurn);
-      assert.lengthOf(result.captured.started, 1);
+      assert.isNotNull(result.captured.activeTurn);
+      assert.lengthOf(result.captured.started, 2);
       assert.equal(result.projection.runs[0]?.status, "interrupted");
-      assert.deepEqual(
-        result.projection.providerTurns.map((turn) => turn.status),
-        ["interrupted"],
-      );
+      assert.equal(result.projection.providerTurns[0]?.status, "interrupted");
     }),
   ),
 );

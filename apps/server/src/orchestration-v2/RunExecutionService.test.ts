@@ -2933,7 +2933,9 @@ it.effect.each(["pending", "running"] as const)(
         interruptTurn: ({ providerTurnId }) =>
           Ref.update(interrupted, (current) => [...current, providerTurnId]),
         beforeTerminalWrite: () =>
-          Ref.update(interrupted, (current) => [...current, "terminal"]).pipe(Effect.as(true)),
+          Ref.update(interrupted, (current) => [...current, "terminal" as const]).pipe(
+            Effect.as(true),
+          ),
         events: (ids) =>
           Stream.concat(
             Stream.fromIterable([
@@ -3152,7 +3154,13 @@ it.effect("tells the user why /compact failed on a provider without compaction",
   }),
 );
 
-it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as const)(
+it.effect.each([
+  "failure",
+  "defect",
+  "interrupt-failure",
+  "ownership-lost",
+  "detach-interrupt-failure",
+] as const)(
   "stops the live provider and background work before settling an ingestion %s",
   (failureMode) =>
     Effect.gen(function* () {
@@ -3193,6 +3201,19 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
                 }),
               ),
             ),
+          ).pipe(
+            Stream.concat(
+              failureMode === "detach-interrupt-failure"
+                ? Stream.fail(
+                    new ProviderAdapter.ProviderAdapterSessionDetached({
+                      driver,
+                      providerSessionId: ProviderSessionId.make(`session:ingestion:${failureMode}`),
+                      threadId: ids.threadId,
+                      reason: "workspace_changed",
+                    }),
+                  )
+                : Stream.empty,
+            ),
           ),
         ingestNormalized: () => {
           const error = new ProviderEventIngestor.ProviderEventPublishError({
@@ -3206,18 +3227,24 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
               }),
             ),
           });
-          return failureMode === "defect" ? Effect.die(error) : Effect.fail(error);
+          return failureMode === "detach-interrupt-failure"
+            ? Effect.succeed([])
+            : failureMode === "defect"
+              ? Effect.die(error)
+              : Effect.fail(error);
         },
         interruptTurn: (input) =>
           Ref.update(interrupts, (current) => [...current, input]).pipe(
             Effect.andThen(
-              input.requestRuntimeRestart === true && failureMode !== "interrupt-failure"
+              input.requestRuntimeRestart === true &&
+                failureMode !== "interrupt-failure" &&
+                failureMode !== "detach-interrupt-failure"
                 ? Ref.set(backgroundWorkRunning, false)
                 : Effect.void,
             ),
             Effect.andThen(Deferred.succeed(stopped, undefined)),
             Effect.andThen(
-              failureMode === "interrupt-failure"
+              failureMode === "interrupt-failure" || failureMode === "detach-interrupt-failure"
                 ? Effect.fail(
                     new ProviderAdapter.ProviderAdapterInterruptError({
                       driver,
@@ -3231,10 +3258,6 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
           ),
         beforeTerminalWrite: () =>
           Effect.gen(function* () {
-            const calls = yield* Ref.get(interrupts);
-            assert.equal(calls.length, 1);
-            assert.equal(calls[0]?.providerTurnId, ids.rootProviderTurnId);
-            assert.equal(calls[0]?.providerThread.id, ids.providerThreadId);
             yield* Ref.set(backgroundWorkAtFinalization, yield* Ref.get(backgroundWorkRunning));
             return true;
           }),
@@ -3245,13 +3268,18 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
       } else {
         assert.equal(
           yield* Ref.get(backgroundWorkAtFinalization),
-          failureMode === "interrupt-failure",
+          failureMode === "interrupt-failure" || failureMode === "detach-interrupt-failure",
         );
         assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
         const error = written.find((item) => item.type === "error");
-        assert.include(error?.failure.message ?? "", "(SQLITE_CANTOPEN)");
+        if (failureMode !== "detach-interrupt-failure")
+          assert.include(error?.failure.message ?? "", "(SQLITE_CANTOPEN)");
+        const calls = yield* Ref.get(interrupts);
+        assert.equal(calls.length, failureMode === "detach-interrupt-failure" ? 2 : 1);
+        assert.equal(calls.at(-1)?.providerTurnId, ids.rootProviderTurnId);
+        assert.isTrue(calls.at(-1)?.requestRuntimeRestart);
         const repaired = finalEvents.find((event) => event.type === "provider-turn.updated");
-        if (failureMode === "interrupt-failure") {
+        if (failureMode === "interrupt-failure" || failureMode === "detach-interrupt-failure") {
           assert.isUndefined(repaired);
         } else {
           assert.equal(repaired?.payload.id, ids.rootProviderTurnId);

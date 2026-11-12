@@ -620,6 +620,8 @@ export const layerWithOptions = (
             if (isOrchestrationV2WorkActive(turn.status))
               entry.activeProviderTurns.set(turn.id, turn);
             else entry.activeProviderTurns.delete(turn.id);
+          } else if (signal.type === "event" && signal.event.type === "turn.terminal") {
+            entry.activeProviderTurns.delete(signal.event.providerTurnId);
           }
           const current = yield* Ref.get(entry.eventSubscribers);
           yield* Effect.forEach(current.values(), ({ queue }) => Queue.offer(queue, signal), {

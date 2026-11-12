@@ -1731,19 +1731,10 @@ export const layer: Layer.Layer<
             providerTurn !== null &&
             isOrchestrationV2WorkActive(providerTurn.status)
           ) {
-            yield* input.session
-              .interruptTurn({
-                providerThread: yield* Ref.get(latestProviderThread),
-                providerTurnId: providerTurn.id,
-              })
-              .pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logWarning(
-                    "orchestration V2 failed to interrupt a detached provider turn",
-                    { runId: input.run.id, cause },
-                  ),
-                ),
-              );
+            yield* input.session.interruptTurn({
+              providerThread: yield* Ref.get(latestProviderThread),
+              providerTurnId: providerTurn.id,
+            });
           }
           const completedAt = yield* DateTime.now;
           const terminal = {
