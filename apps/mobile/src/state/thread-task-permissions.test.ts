@@ -167,6 +167,7 @@ vi.mock("./use-composer-drafts", async () => {
     appendComposerDraftText: vi.fn(),
     mergeComposerDraftContent: vi.fn(),
     removeComposerDraftAttachment: vi.fn(),
+    rememberSentComposerPick: () => {},
     useComposerDraft: () => state.draft,
     useComposerDraftSettings: () => state.draft,
     questionAttachmentDraftsAtom: () => Atom.make({}),
