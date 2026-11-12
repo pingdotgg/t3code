@@ -135,6 +135,39 @@ describe("AcpRegistryRuntimeCoordinator", () => {
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
   );
 
+  it.effect("keeps command catalogs isolated by native ACP session", () =>
+    Effect.gen(function* () {
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+      const instanceId = ProviderInstanceId.make("acpRegistry_kimi");
+      const first = {
+        slashCommands: [],
+        skills: [{ name: "first-skill", path: "acp://skill/first-skill", enabled: true }],
+      };
+      const second = {
+        slashCommands: [],
+        skills: [{ name: "second-skill", path: "acp://skill/second-skill", enabled: true }],
+      };
+
+      yield* coordinator.publishAvailableCommands(instanceId, first, "session-a");
+      yield* coordinator.publishAvailableCommands(instanceId, second, "session-b");
+
+      expect(yield* coordinator.getAvailableCommands(instanceId, "session-a")).toEqual(
+        Option.some(first),
+      );
+      expect(yield* coordinator.getAvailableCommands(instanceId, "session-b")).toEqual(
+        Option.some(second),
+      );
+      expect(yield* coordinator.getAvailableCommands(instanceId)).toEqual(Option.some(second));
+      yield* coordinator.clearAvailableCommands(instanceId);
+      expect(Option.isNone(yield* coordinator.getAvailableCommands(instanceId, "session-a"))).toBe(
+        true,
+      );
+      expect(Option.isNone(yield* coordinator.getAvailableCommands(instanceId, "session-b"))).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+  );
+
   it.effect("requires matching user consent before accepting URL authentication", () =>
     Effect.gen(function* () {
       const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;

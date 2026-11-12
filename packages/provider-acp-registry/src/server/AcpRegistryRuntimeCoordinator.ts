@@ -58,9 +58,11 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
     readonly publishAvailableCommands: (
       instanceId: ProviderInstanceId,
       commands: AcpRegistryAvailableCommands,
+      sessionId?: string,
     ) => Effect.Effect<void>;
     readonly getAvailableCommands: (
       instanceId: ProviderInstanceId,
+      sessionId?: string,
     ) => Effect.Effect<Option.Option<AcpRegistryAvailableCommands>>;
     readonly watchAvailableCommands: (
       instanceId: ProviderInstanceId,
@@ -99,8 +101,15 @@ const make = Effect.gen(function* () {
   const foregroundStarts = yield* PubSub.unbounded<string>();
   const activeForegroundCounts = yield* Ref.make(new Map<string, number>());
   const availableCommandsUpdates = yield* PubSub.unbounded<AvailableCommandsUpdate>();
+  // `latest` feeds the picker; `bySession` lets each native session rewrite against its own catalog.
   const availableCommandsByInstance = yield* Ref.make(
-    new Map<ProviderInstanceId, AcpRegistryAvailableCommands>(),
+    new Map<
+      ProviderInstanceId,
+      {
+        readonly latest: AcpRegistryAvailableCommands;
+        readonly bySession: ReadonlyMap<string, AcpRegistryAvailableCommands>;
+      }
+    >(),
   );
   const liveConfigurationUpdates = yield* PubSub.unbounded<LiveConfigurationUpdate>();
   const liveConfigurationByInstance = yield* Ref.make(
@@ -167,10 +176,12 @@ const make = Effect.gen(function* () {
       });
 
   const publishAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["publishAvailableCommands"] =
-    (instanceId, commands) =>
+    (instanceId, commands, sessionId) =>
       Ref.update(availableCommandsByInstance, (current) => {
         const next = new Map(current);
-        next.set(instanceId, commands);
+        const bySession = new Map(current.get(instanceId)?.bySession);
+        if (sessionId !== undefined) bySession.set(sessionId, commands);
+        next.set(instanceId, { latest: commands, bySession });
         return next;
       }).pipe(
         Effect.andThen(
@@ -183,9 +194,14 @@ const make = Effect.gen(function* () {
       );
 
   const getAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["getAvailableCommands"] =
-    Effect.fn("AcpRegistryRuntimeCoordinator.getAvailableCommands")(function* (instanceId) {
-      return Option.fromNullishOr((yield* Ref.get(availableCommandsByInstance)).get(instanceId));
-    });
+    Effect.fn("AcpRegistryRuntimeCoordinator.getAvailableCommands")(
+      function* (instanceId, sessionId) {
+        const entry = (yield* Ref.get(availableCommandsByInstance)).get(instanceId);
+        return Option.fromNullishOr(
+          sessionId === undefined ? entry?.latest : entry?.bySession.get(sessionId),
+        );
+      },
+    );
 
   const watchAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["watchAvailableCommands"] =
     (instanceId, onUpdate) =>
