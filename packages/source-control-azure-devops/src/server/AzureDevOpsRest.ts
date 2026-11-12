@@ -63,8 +63,7 @@ function organizationKey(url: URL): string {
     : url.origin.toLowerCase();
 }
 
-/** @public */
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
   const httpClient = yield* HttpClient.HttpClient;
   const tokenLock = yield* Semaphore.make(1);
