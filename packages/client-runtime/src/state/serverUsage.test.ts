@@ -303,6 +303,15 @@ it.effect("keeps the cached usage summary when the awaited refresh fails", () =>
         { provisional: undefined, awaitRefresh: undefined },
         { provisional: undefined, awaitRefresh: true },
       ]);
+      // With figures on screen, a refresh reads them exactly instead of asking for saved ones.
+      yield* harness.updateSettings({
+        ...DEFAULT_SERVER_SETTINGS,
+        usagePriceOverrides: {
+          "custom-model": { inputCostPerMillionTokens: 5, outputCostPerMillionTokens: 10 },
+        },
+      });
+      yield* waitForCost(harness.registry, summary, 5);
+      expect(harness.inputs()[3]?.provisional).toBeUndefined();
       unmount();
     }),
   ),
