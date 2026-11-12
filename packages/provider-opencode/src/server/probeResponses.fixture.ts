@@ -8,8 +8,7 @@ interface RecordedResponse {
   readonly body: string;
 }
 
-// Both versions serve their web UI's index page for unknown paths. Bodies are cut after the
-// first lines; the classifier rejects them on content type alone.
+// Unknown paths serve SPA HTML; content type alone rejects these truncated bodies.
 const SPA_HTML =
   '<!doctype html>\n<html lang="en" style="background-color: var(--v2-background-bg-deep, #fafafa)">\n';
 
@@ -60,7 +59,7 @@ export function replayOpenCodeServer(
   requestedPaths: Array<string> = [],
 ) {
   const answers: Record<string, RecordedResponse | undefined> = responses;
-  // Both versions decode Basic credentials as UTF-8 (checked live with `pässwörd` and `pass€word`).
+  // Both versions decode Basic credentials as UTF-8.
   const expected = password
     ? `Basic ${Buffer.from(`opencode:${password}`, "utf8").toString("base64")}`
     : undefined;

@@ -2,63 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { resolveContextStripLabelsCompact } from "./BranchToolbar.logic";
 import {
-  resolveComposerTimelineInset,
   resolveRestingComposerControlsLayout,
   resolveRestingComposerControlsNaturalWidth,
 } from "./composerFooterLayout";
-
-describe("resolveComposerTimelineInset", () => {
-  it("keeps timeline padding stable when the model-only strip appears on collapse", () => {
-    const expanded = resolveComposerTimelineInset({
-      currentInset: 0,
-      overlayHeight: 172,
-      isResting: false,
-    });
-    const collapsed = resolveComposerTimelineInset({
-      currentInset: expanded,
-      overlayHeight: 110,
-      isResting: true,
-      restingOnlyHeight: 32,
-    });
-    expect(collapsed).toBe(expanded);
-    expect(
-      resolveComposerTimelineInset({
-        currentInset: collapsed,
-        overlayHeight: 172,
-        isResting: false,
-      }),
-    ).toBe(expanded);
-  });
-
-  it("keeps the timeline reservation stable through notice expansion and collapse", () => {
-    const collapsed = resolveComposerTimelineInset({
-      currentInset: 0,
-      overlayHeight: 172,
-      isResting: false,
-    });
-    const expanded = resolveComposerTimelineInset({
-      currentInset: collapsed,
-      overlayHeight: 532,
-      isResting: false,
-      expandedNoticesHeight: 360,
-    });
-    expect(expanded).toBe(collapsed);
-    const resting = resolveComposerTimelineInset({
-      currentInset: expanded,
-      overlayHeight: 470,
-      isResting: true,
-      expandedNoticesHeight: 360,
-    });
-    expect(resting).toBe(collapsed);
-    expect(
-      resolveComposerTimelineInset({
-        currentInset: resting,
-        overlayHeight: 110,
-        isResting: true,
-      }),
-    ).toBe(collapsed);
-  });
-});
 
 describe("context strip labels and resting composer controls", () => {
   const stripWidth = 724;
@@ -107,9 +53,6 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
   };
 
   it("settles when the measured picker width jitters below a pixel", () => {
-    // The composer re-measures on every render, so the picker's recovered
-    // natural width can land a fraction of a pixel apart between renders.
-    // Without hysteresis that flips hiddenCount forever.
     let layout = { hiddenCount: 0, visible: true };
     const settled: string[] = [];
     for (let index = 0; index < 10; index += 1) {

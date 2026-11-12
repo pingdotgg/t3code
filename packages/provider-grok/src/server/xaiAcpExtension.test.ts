@@ -30,9 +30,11 @@ import {
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   type AcpToolCallState,
+  extractMcpToolCallIdentity,
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
+import { compactDynamicToolOutput, htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
 
@@ -340,10 +342,82 @@ describe("XAiAcpExtension", () => {
     expect(extractXAiMonitorTaskId(normalized)).toBe("019f44a5-87d1-7640-8e35-6a4667ffc873");
   });
 
+  // regression: #23714 Recorded from Grok 1.0.77 calling stdio MCP tools through `use_tool`.
+  it("rewrites use_tool MCP calls and results into the generic ACP MCP shapes", () => {
+    const meta = { "x.ai/tool": { version: 1, name: "use_tool", kind: "use_tool" } };
+    const grokCall = (
+      toolCallId: string,
+      tool: string,
+      toolInput: Record<string, unknown>,
+      completion: Record<string, unknown>,
+    ) => {
+      const rawInput = { tool_name: tool, tool_input: toolInput };
+      const updates = [
+        { sessionUpdate: "tool_call", toolCallId, title: "use_tool", rawInput, _meta: meta },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          kind: "other",
+          title: tool,
+          rawInput: { variant: "UseTool", ...rawInput },
+          _meta: meta,
+        },
+        { sessionUpdate: "tool_call_update", toolCallId, ...completion },
+      ];
+      let state: AcpToolCallState | undefined;
+      for (const update of updates) {
+        state = normalizeXAiAcpToolCallState(
+          mergeToolCallState(state, parseRecordedToolCallUpdate(update)),
+        );
+      }
+      return state!;
+    };
+    const page = { attachmentId: "abc-html", title: "T", height: 300 };
+
+    const rendered = grokCall(
+      "call-85597c6c-6fb8-4c9c-a6a8-12c4a74ebc96-1",
+      "t3-code__html_render",
+      { path: "a.html" },
+      {
+        status: "completed",
+        rawOutput: {
+          type: "MCP",
+          tool_name: "html_render",
+          server_name: "t3-code",
+          output: { OkayOutput: JSON.stringify({ htmlRender: page, message: "Shown" }) },
+        },
+      },
+    );
+    expect(extractMcpToolCallIdentity(rendered)).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+    expect(rendered.data.rawInput).toMatchObject({ arguments: { path: "a.html" } });
+    expect(
+      htmlRenderFromToolItem({ toolName: "t3-code.html_render", output: rendered.data.rawOutput }),
+    ).toEqual(page);
+
+    const failed = grokCall(
+      "call-2baebdc5-2446-4ac2-9652-85f97a76a05b-2",
+      "pencil__browser",
+      { action: "load-page" },
+      {
+        status: "failed",
+        rawOutput: {
+          type: "MCP",
+          tool_name: "browser",
+          server_name: "pencil",
+          output: { Error: "Page not found" },
+          is_error: true,
+        },
+      },
+    );
+    expect(extractMcpToolCallIdentity(failed)).toEqual({ server: "pencil", tool: "browser" });
+    expect(compactDynamicToolOutput(failed.data.rawOutput)?.isError).toBe(true);
+  });
+
   it("keeps Monitor ticks running while Grok reports them in progress", () => {
-    // Recorded from Grok 1.0.41: every tick is an in_progress update whose
-    // Bash-shaped rawOutput already carries exit_code 0. The monitor ends only
-    // through `_x.ai/task_completed`, never through a completed status.
+    // Grok 1.0.41 ticks report in_progress with exit_code 0; only _x.ai/task_completed ends the monitor.
     const command = "for i in 1 2 3; do sleep 8; echo tick $i; done";
     const started = parseRecordedToolCallUpdate({
       sessionUpdate: "tool_call_update",
@@ -465,6 +539,18 @@ describe("XAiAcpExtension", () => {
         ...toolCall,
         data: {
           ...toolCall.data,
+          rawOutput: {
+            ...toolCall.data.rawOutput,
+            command: `git commit -m "${"x".repeat(61)}🎉 ship it"`,
+          },
+        },
+      }).title,
+    ).toBe(`git commit -m "${"x".repeat(61)}...`);
+    expect(
+      normalizeXAiAcpToolCallState({
+        ...toolCall,
+        data: {
+          ...toolCall.data,
           rawOutput: { ...toolCall.data.rawOutput, exit_code: 2 },
         },
       }).status,
@@ -552,11 +638,6 @@ describe("XAiAcpExtension", () => {
   });
 
   it("hydrates monitor completion from a standalone TaskOutput frame without rawInput", () => {
-    // Post-settle shape observed live (2026-07-12): the final
-    // get_command_or_subagent_output update carries only rawOutput; the frame
-    // is parsed in isolation (no in-turn merge), and this completion is the
-    // ONLY end signal when the agent consumed the output itself (no "Monitor
-    // ended" reminder follows).
     expect(
       extractXAiBackgroundTaskCompletion({
         toolCallId: "call-c29e64dd-ce5d-4eac-a6ca-c20513fefac3-1",
@@ -682,7 +763,7 @@ describe("XAiAcpExtension", () => {
     ]);
   });
 
-  // Oracle: #15888 reports KillTask replies with killed and already_exited outcomes.
+  // KillTask replies can report killed and already_exited outcomes.
   it.each([
     { rawInput: { task_id: "call-bg-1" }, rawOutput: { type: "KillTask" } },
     { rawInput: { task_id: "call-bg-1" }, rawOutput: { type: "KillTask", outcome: "killed" } },
@@ -1257,8 +1338,6 @@ describe("XAiAcpExtension", () => {
   );
 
   it("maps subagent_finished to a notice only for statuses Grok defines", () => {
-    // Recorded from Grok 1.0.41 (ids normalized); statuses per grok-build
-    // xai-grok-tools/.../task/types.rs `status()`.
     const finished = (update: Record<string, unknown>) =>
       xAiSubagentFinishedNotice({
         sessionId: "root-session",

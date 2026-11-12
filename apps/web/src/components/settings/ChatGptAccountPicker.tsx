@@ -9,6 +9,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "../ui/dialog";
+import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 
 export function ChatGptAccountPicker({
@@ -16,11 +17,19 @@ export function ChatGptAccountPicker({
   methods,
   onClose,
   onSelect,
+  onRemove,
+  disabled,
+  canRemove,
+  error,
 }: {
   open: boolean;
   methods: readonly ProviderAuthMethod[];
   onClose: () => void;
   onSelect: (methodId: string) => void;
+  onRemove: (methodId: string) => void;
+  disabled: boolean;
+  canRemove: boolean;
+  error: string | null;
 }) {
   const profiles = methods.filter((method) => method.id.startsWith("chatgpt-profile:"));
   const [selection, setSelection] = useState<string | null>(null);
@@ -47,6 +56,7 @@ export function ChatGptAccountPicker({
         <div className="px-6 pb-6">
           <RadioGroup
             aria-label="ChatGPT account to connect"
+            disabled={disabled}
             value={selectedMethodId}
             onValueChange={(value) => setSelection(value)}
           >
@@ -65,8 +75,22 @@ export function ChatGptAccountPicker({
             </label>
           </RadioGroup>
         </div>
+        {error ? (
+          <p role="alert" className="px-6 pb-3 text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
         <DialogFooter>
-          <ChatGptConnectionButton onClick={() => onSelect(selectedMethodId)} />
+          {profiles.find((profile) => profile.id === selectedMethodId)?.canRemove ? (
+            <Button
+              variant="ghost"
+              disabled={disabled || !canRemove}
+              onClick={() => onRemove(selectedMethodId)}
+            >
+              Remove connection
+            </Button>
+          ) : null}
+          <ChatGptConnectionButton disabled={disabled} onClick={() => onSelect(selectedMethodId)} />
         </DialogFooter>
       </DialogPopup>
     </Dialog>

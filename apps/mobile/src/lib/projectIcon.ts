@@ -7,15 +7,12 @@ export type ProjectIconGlyph =
   | { readonly kind: "emoji"; readonly emoji: string }
   | { readonly kind: "monogram"; readonly text: string; readonly color: ProjectIconColor };
 
-/**
- * Hermes has no Intl.Segmenter, so combining marks are folded into their base
- * character instead of full grapheme segmentation.
- */
+/** Hermes lacks Intl.Segmenter; fold combining marks into base characters instead. */
 export function countGlyphs(text: string): number {
   return Array.from(text.replace(/\p{M}/gu, "")).length;
 }
 
-export function projectMonogram(projectName: string): string {
+function projectMonogram(projectName: string): string {
   const words =
     projectName
       .normalize("NFKC")
@@ -33,7 +30,7 @@ export function projectMonogram(projectName: string): string {
   return Array.from(`${first}${second}`.toUpperCase()).slice(0, 2).join("");
 }
 
-export function projectMonogramColor(projectName: string): ProjectIconColor {
+function projectMonogramColor(projectName: string): ProjectIconColor {
   const seed = projectName.normalize("NFKC").trim().toLocaleLowerCase("en-US") || "project";
   let index = 0;
   for (const glyph of seed) {

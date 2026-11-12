@@ -16,14 +16,23 @@ client of a restarted server reconnects in the same second; with a short cap, a
 client that can never connect retries all day. Offline states and authentication
 failures wait for a wakeup instead of spending attempts on unchanged conditions.
 
-Foregrounding, an explicit retry, and an offline report probe the established
-session, and only a failed probe reconnects. Offline reports are often wrong, for
-example for a loopback server. A long mobile background suspension is the one
-exception: it replaces the session at once, because the OS can kill a socket
-without reporting closure, and a probe would hold a dead socket in "Resuming"
-until it times out. That fresh attempt runs even while the network reports
-offline. Foregrounding also wakes a pending retry immediately and
-leaves an ordinary in-flight attempt alone.
+Foregrounding, a network change, an explicit retry, and an offline report probe
+the established session, and only a failed probe reconnects. Offline reports are
+often wrong, for example for a loopback server. The OS can kill a suspended
+socket without a close event, so a probe still unanswered after 500 ms asks the
+host for its public descriptor over a fresh request, again each second until it
+answers. If the host answers while the socket delivers no frame, the socket is
+dead and is replaced, even while the network reports offline: at once on
+loopback and LAN, and 2.5 seconds after the check starts elsewhere, where one
+lost packet can stall a live socket. Without that evidence the probe deadline
+decides: 3 seconds on loopback and LAN routes and after a long mobile
+suspension, when the data on screen is stale; 15 seconds elsewhere, because a
+tailnet over DERP or a VPN can be slower than that on a live socket. A long
+suspension's probe that times out also replaces the socket regardless of the
+network report. The web and desktop foreground probe skips the fresh request,
+because a busy host can answer it before a queued probe. Foregrounding also
+wakes a pending retry immediately. A long suspension restarts an in-flight
+attempt; a short one leaves it alone.
 
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration
@@ -37,8 +46,15 @@ RPC sessions authenticate at socket upgrade, while HTTP requests need current
 credentials from the
 [authorization service](../../packages/client-runtime/src/authorization/service.ts).
 Replacing a healthy socket for HTTP renewal would interrupt conversations and
-change the transport generation without a transport failure. Credential expiry
-does not close the socket, and refresh failure belongs to the HTTP operation.
+change the transport generation without a transport failure. Refresh failure
+belongs to the HTTP operation.
+
+The server closes a socket when its session is revoked or expires. T3 Connect
+access tokens last one hour, so the driver renews a live socket's token in its
+last minute. The server then moves the socket to the newer session for the same
+DPoP key, subject, and scopes
+([`SessionStore.awaitInvalidation`](../../apps/server/src/auth/SessionStore.ts)).
+If renewal fails, the socket closes at expiry and the supervisor reconnects.
 
 Session listings must retain unrevoked connected sessions after credential expiry
 so an open connection does not disappear from connection management. This does
@@ -58,6 +74,65 @@ Cached projections remain readable offline. They must neither imply a live
 connection nor overwrite newer live data during a reconnect. Loading and
 resuming snapshots belongs to the shared state services, so every view agrees
 on which data is current.
+
+The shell snapshot loads over HTTP, which needs only the prepared connection, so
+the [shell state](../../packages/client-runtime/src/state/shell.ts) can ask for
+it before the socket and the config are ready. Two constraints follow. The live
+config stays the authority: rows loaded early for a build or with omissions that
+it does not confirm are replaced, never resumed. And an HTTP answer must never
+land on rows the socket has moved on: the subscription waits for the answer, and
+when held rows can resume, it ends the request 3 seconds after the socket is
+ready. A proxy that drops `/api` without an answer then does not hold the
+connect for the HTTP timeout.
+
+Each environment synchronizes at its own time, so a thread list that follows every
+snapshot moves once per environment on each cold start and resume. Mobile lists read
+[steady shells](../../packages/client-runtime/src/state/steadyShells.ts): an
+environment's rows stay as shown until its connection's server snapshot arrives,
+it is synchronized, or it disconnects, and environments that get there within two
+seconds of each other show together. Only an environment that is connected or on
+its first attempt, and still owes its snapshot, is waited for; a retry can take
+minutes. A move in a list is refused while its rows wait, because its plan would
+use order keys the server may have replaced. Every other row action looks up the
+live row before it reads thread state, so an undo plan or a guard never uses a held
+row. The hold stops only changes the user
+did not cause: a command that moves or removes a row (settle, snooze, pin, archive,
+delete, and their reverses) makes that environment's rows follow the live snapshot
+until it is live. Point reads (a
+thread's own shell, route checks) keep the live snapshot, where a row the server just
+sent must not look missing. The decision reads the snapshot's own sequence: a second
+atom derived from the same shell state can be one update behind the rows. The mobile
+splash screen also waits, for a bounded time, until every enabled environment has
+read its cached shell, so the first frame holds all cached rows.
+
+Shell snapshots can leave rows out when the client asks. Servers that advertise
+`shellThreadFamilies` leave out idle subagent children: a child stays while it
+has a live or queued run, a pending request or background work, or a subagent
+child of its own, so badge and working walks never meet a gap. Servers that also
+advertise `shellOlderSettled` keep only the 25 newest settled top-level threads
+(and any tied with the 25th, pinned, snoozed, live, or above a kept child); the
+snapshot's `olderSettled` names that cut and counts the rest per project. Left-out
+rows load on demand and merge behind shell rows
+([thread families](../../packages/client-runtime/src/state/threadFamilies.ts)):
+the family a thread view or a queued message mounts holds every active thread
+sharing the thread's root, so it also brings back an old settled thread opened by
+link; the Settled shelf reads pages below the cut; searches return the rows of
+older matches. A missing shell row therefore does not prove a thread is gone:
+code that deletes data or a worktree on absence must check the family or the
+server first.
+
+The Settled count is local Settled rows, minus local rows below the cut, plus the
+server's counts
+([older settled threads](../../packages/client-runtime/src/state/olderSettledThreads.ts)).
+The counts are re-read when a removal or an old row's arrival or change could
+move them, so archiving any thread costs one small read. A shelf lists an older
+row only above the highest page frontier of the environments that can still
+load, so the merged list stays a correct prefix while a page loads. An
+environment with no snapshot this session, or a failed page, holds no one back.
+On-demand reads wait for the session's first authoritative snapshot
+(`generation > 0`), and each is keyed by generation. A resume that skips that
+snapshot must still bump `generation` once verified, and may reuse a cached
+snapshot only when its omissions match what the session asks for.
 
 [Thread detail](../../packages/client-runtime/src/state/threads.ts) separates
 subscription lifetime from cache lifetime. Mounted consumers share one live
