@@ -432,21 +432,28 @@ export default function ProjectScriptsControl({
             </ThreadDetailsControl>
           )}
           {supportsStop && runningScriptServer?.pid != null ? (
-            <ThreadDetailsControl
-              part="icon"
-              aria-label={`Stop ${primaryScript?.name}`}
-              disabled={!canStopServer || stoppingServer}
-              onClick={async () => {
-                setStoppingServer(true);
-                await stopServer({
-                  environmentId,
-                  input: { pid: runningScriptServer.pid!, port: runningScriptServer.port },
-                });
-                setStoppingServer(false);
-              }}
-            >
-              <SquareIcon />
-            </ThreadDetailsControl>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <ThreadDetailsControl
+                    part="icon"
+                    aria-label={`Stop ${primaryScript?.name}`}
+                    disabled={!canStopServer || stoppingServer}
+                    onClick={async () => {
+                      setStoppingServer(true);
+                      await stopServer({
+                        environmentId,
+                        input: { pid: runningScriptServer.pid!, port: runningScriptServer.port },
+                      });
+                      setStoppingServer(false);
+                    }}
+                  />
+                }
+              >
+                <SquareIcon />
+              </TooltipTrigger>
+              <TooltipPopup>{`Stop ${primaryScript?.name}`}</TooltipPopup>
+            </Tooltip>
           ) : null}
           <Menu
             open={actionsMenuOpen.scripts}
@@ -454,9 +461,18 @@ export default function ProjectScriptsControl({
               setActionsMenuOpen({ presentation, scripts: open, imports: false })
             }
           >
-            <MenuTrigger render={<ThreadDetailsControl part="icon" aria-label="Project actions" />}>
-              <ChevronDownIcon />
-            </MenuTrigger>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <MenuTrigger
+                    render={<ThreadDetailsControl part="icon" aria-label="Project actions" />}
+                  />
+                }
+              >
+                <ChevronDownIcon />
+              </TooltipTrigger>
+              <TooltipPopup>Project actions</TooltipPopup>
+            </Tooltip>
             <MenuPopup side="bottom" align="end">
               {scriptItems}
             </MenuPopup>
