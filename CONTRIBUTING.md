@@ -141,14 +141,41 @@ supported event fetches current full PR state and assesses cumulative changes; u
 not wired and there is no periodic sweep. This guide does not announce a deployed automation or change
 existing review settings. Neither triage nor a Macroscope review authorizes merging.
 
+<a id="open-pr-limit"></a>
+
+## Open PR limit and conflict window
+
+Two rules run without triage, in [pr-limits.yml](.github/workflows/pr-limits.yml). Neither applies
+to vouched contributors, to maintainers in [TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td), or to
+a PR labeled `triage:keep-open`. They do not assess eligibility. They and the closure notice below are
+enforced only while the repository variable `PR_LIMITS_ENFORCE` is `true`; until then triage closes
+PRs directly.
+
+A contributor who is not vouched can have 3 open PRs. A further PR is closed when it is opened. Get
+one of the open PRs merged or closed, then open it again. A maintainer who reopens a PR overrides the
+limit for that PR.
+
+<a id="conflict-window"></a>
+
+A PR labeled `vouch:unvouched` that conflicts with its base branch gets a request to rebase and the
+`needs-rebase` label. The label comes off once the PR no longer conflicts. A PR that still conflicts
+after 7 days with no activity is closed. Any activity on the PR, such as a push, a comment, or a
+review from anyone, restarts the 7 days.
+
 <a id="closure-and-reconsideration"></a>
 
 ## Closure and reconsideration
 
 Automated triage leaves a PR open for maintainer decision if someone in the trusted
 [TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td) list has commented or submitted a review,
-including on an earlier head, or if `triage:keep-open` is present. This protection does not imply
-eligibility or review approval.
+including on an earlier head, or if `triage:keep-open` is present. Comments that triage itself
+posted, such as an earlier notice, do not count, even when they came from a maintainer's account.
+This protection does not imply eligibility or review approval.
+
+A policy-based closure starts with a notice. Triage posts the explanation and applies
+`triage:closing`, and the PR closes 72 hours later. Any activity on the PR within that time, such as
+a reply, a push, or a maintainer's comment, removes the label and sends the PR back to triage, which
+reassesses it with the new evidence.
 
 PRs that violate these requirements can be closed before deeper review. Multiple independent fixes
 require splitting. Missing approval requires maintainer discussion or issue triage, as applicable.
