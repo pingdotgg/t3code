@@ -275,7 +275,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     runtimePolicy,
   });
   yield* Effect.addFinalizer(() => Effect.sync(() => replayGate?.releaseAll()));
-  if (continuationEnabled) {
+  if (continuationEnabled && agentId === "claude-acp") {
     assert.isDefined(
       runtime.hasPendingBackgroundWork,
       "Claude ACP v2 must report background work after foreground idle",
@@ -2072,6 +2072,112 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal((yield* session.terminal).status, "completed");
       yield* session.throughMarker("follow-up answered");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect(
+    "asks for a v1 agent's out-of-turn command and cancels its turn before the next prompt",
+    () =>
+      Effect.gen(function* () {
+        const v1Open = claudeFrames.open.map((entry) =>
+          entry.frame.method === "initialize" && entry.type === "emit_inbound"
+            ? {
+                ...entry,
+                frame: {
+                  ...entry.frame,
+                  result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                },
+              }
+            : entry,
+        );
+        const session = yield* openClaudeReplaySession(
+          [
+            ...v1Open,
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "request",
+                method: "session/request_permission",
+                params: {
+                  sessionId: CLAUDE_ROOT_SESSION,
+                  toolCall: {
+                    toolCallId: "follow-up-execute",
+                    title: "Run tests",
+                    kind: "execute",
+                    status: "pending",
+                  },
+                  options: [
+                    { optionId: "allow", name: "Allow", kind: "allow_once" },
+                    { optionId: "reject", name: "Reject", kind: "reject_once" },
+                  ],
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "response",
+                method: "session/request_permission",
+                result: { outcome: { outcome: "selected", optionId: "allow" } },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "notification",
+                method: "session/cancel",
+                params: { sessionId: CLAUDE_ROOT_SESSION },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+            claudeFrames.closeRequest,
+            claudeFrames.closed,
+          ],
+          undefined,
+          true,
+          "fixture-agent",
+        );
+        yield* session.runtime.startTurn(session.turnInput(1));
+        assert.equal((yield* session.terminal).status, "completed");
+        yield* Queue.take(session.offered);
+        yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+        yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+        const seen = yield* session.until(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        );
+        const request = seen.at(-1)!;
+        if (request.type !== "runtime_request.updated") throw new Error("Missing request");
+        yield* session.runtime.respondToRuntimeRequest({
+          requestId: request.runtimeRequest.id,
+          decision: "accept",
+        });
+        assert.equal((yield* session.terminal).status, "completed");
+        yield* session.runtime.startTurn(session.turnInput(3));
+        assert.equal((yield* session.terminal).status, "completed");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("keeps stopped child tools interrupted when a late output chunk arrives", () =>

@@ -1919,6 +1919,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           { sessionUpdate: "state_update" }
         > | null = null;
         const agentRequests = new Set<object>();
+        // Without native work state, an agent that asks for permission after its
+        // prompt settled is running a turn T3 did not start: attach the request to
+        // a continuation turn and cancel the agent's turn before the next prompt.
+        const tracksOutOfTurnRequests = () =>
+          !followsAgentWorkState && continuationRequests !== undefined;
+        let requestContinuationOffered = false;
+        let requestContinuationTurn: ActiveAcpTurn | null = null;
+        let agentStartedTurnMayRun = false;
         const nativeChildren = new Map<string, AcpNativeChildSession>();
         const extractSubagentUpdate = (tool: AcpToolCallState) =>
           flavor.extractSubagentSessionEvent !== undefined && !followsAgentWorkState
@@ -1951,6 +1959,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             setup.initializeResult.protocolVersion === 2;
           agentWork = null;
           agentRequests.clear();
+          agentStartedTurnMayRun = false;
           nativeChildren.clear();
           yield* Ref.set(activeSessionSetup, setup);
         });
@@ -4954,8 +4963,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
-        const awaitRequestTurn = Effect.fnUntraced(function* (generation: number) {
-          if (!followsAgentWorkState) return true;
+        const awaitRequestTurn = Effect.fnUntraced(function* (
+          generation: number,
+          attachOutOfTurn = followsAgentWorkState,
+        ) {
+          if (!attachOutOfTurn) return true;
           while (true) {
             const waiting = yield* runRuntimeCallbackAtGeneration(
               generation,
@@ -4963,7 +4975,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 if (yield* Ref.get(stoppedRunQuarantine)) return false;
                 if ((yield* Ref.get(activeTurn)) !== null) return null;
                 const sessionId = yield* Ref.get(activeSessionId);
-                if (sessionId !== null) yield* offerContinuationRun(sessionId);
+                const offered = sessionId !== null && (yield* offerContinuationRun(sessionId));
+                if (offered && !followsAgentWorkState) requestContinuationOffered = true;
                 return turnAttached;
               }),
             );
@@ -4978,7 +4991,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           (generation: number) =>
           <A, E, R>(effect: Effect.Effect<A, E, R>) =>
             Effect.suspend(() =>
-              !followsAgentWorkState
+              !followsAgentWorkState && !tracksOutOfTurnRequests()
                 ? effect
                 : Effect.acquireUseRelease(
                     runRuntimeCallbackAtGeneration(
@@ -4997,6 +5010,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           if (Option.isSome(token)) agentRequests.delete(token.value);
                           const context = yield* Ref.get(activeTurn);
                           if (context !== null) yield* settleIdleWork(context);
+                          if (
+                            context !== null &&
+                            context === requestContinuationTurn &&
+                            agentRequests.size === 0
+                          ) {
+                            requestContinuationTurn = null;
+                            yield* finalizeTurn(context, "completed");
+                          }
                         }),
                       ).pipe(Effect.asVoid),
                   ),
@@ -6525,6 +6546,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* targetRuntime.handleRequestPermission((nativeParams, requestContext) =>
             Effect.gen(function* () {
               const trackedTurn = yield* Ref.get(activeTurn);
+              if (trackedTurn === null && !followsAgentWorkState) agentStartedTurnMayRun = true;
               const params =
                 trackedTurn !== null && nativeParams.sessionId === (yield* Ref.get(activeSessionId))
                   ? withTrackedPermissionToolCall(
@@ -6557,8 +6579,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
               ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
-              if (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") {
-                if (!(yield* awaitRequestTurn(handlerGeneration)))
+              if (
+                (followsAgentWorkState || tracksOutOfTurnRequests()) &&
+                dispositionFor(latestRuntimePolicy) === "ask"
+              ) {
+                if (!(yield* awaitRequestTurn(handlerGeneration, true)))
                   return { outcome: { outcome: "cancelled" } } as const;
               }
               const admitted = yield* runRuntimeCallbackAtGeneration(
@@ -8137,8 +8162,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
             // Continuations consume existing wake traffic without re-prompting ACP.
             const isContinuationTurn =
-              (postSettleContinuationEnabled || followsAgentWorkState) &&
+              (postSettleContinuationEnabled ||
+                followsAgentWorkState ||
+                requestContinuationOffered) &&
               acpIsProviderContinuationMessage(turnInput.message);
+            const isRequestContinuationTurn = isContinuationTurn && requestContinuationOffered;
+            requestContinuationOffered = false;
             const isAppOwnedWakeTurn = acpIsAppOwnedWakeTurn(turnInput.message);
             if (!isAppOwnedWakeTurn) {
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
@@ -8347,6 +8376,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               );
               context.promptSettled = true;
               context.promptSettledStatus = "completed";
+              const heldForRequest =
+                isRequestContinuationTurn &&
+                (yield* runtimeCallbackPermit.withPermit(
+                  Effect.sync(() => {
+                    if (agentRequests.size === 0) return false;
+                    requestContinuationTurn = context;
+                    return true;
+                  }),
+                ));
+              if (heldForRequest) return;
               if (drainedWakeCount === 0) {
                 if (continuationWasRequested && flavor.deferFinalizeForBackgroundWork === true) {
                   if (hasDeferredBackgroundWork(context)) {
@@ -8367,6 +8406,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }
               }
               return;
+            }
+            if (agentStartedTurnMayRun) {
+              agentStartedTurnMayRun = false;
+              yield* runtime.cancel;
             }
             const checkPromptOutcome =
               flavor.watchPromptOutcome === undefined
