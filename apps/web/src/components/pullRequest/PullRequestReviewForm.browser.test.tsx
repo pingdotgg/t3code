@@ -11,7 +11,11 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("~/speech/useTextFieldSpeech", () => ({
   TextFieldSpeechControls: () => null,
-  useTextFieldSpeech: () => ({ blocksSubmission: true, submitAfterDictation: mocks.queue }),
+  useTextFieldSpeech: () => ({
+    blocksSubmission: true,
+    displayText: "",
+    submitAfterDictation: mocks.queue,
+  }),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => mocks.submit }));
 vi.mock(import("~/state/pullRequests"), async (original) => ({

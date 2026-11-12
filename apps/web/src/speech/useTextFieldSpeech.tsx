@@ -1,15 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
+import { resolveTranscriptCommit } from "@t3tools/client-runtime/voice-input";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
-import {
-  ComposerSpeechButton,
-  ComposerSpeechRecordingPill,
-} from "~/components/chat/ComposerSpeechButton";
+import { ComposerSpeechButton } from "~/components/chat/ComposerSpeechButton";
+import { VoiceInputErrorPill } from "~/components/chat/VoiceInputErrorPill";
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useDictationShortcut } from "./useDictationShortcut";
-import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
+import { useEnvironmentSpeechInput, useSpeechUnavailableReason } from "./useEnvironmentSpeechInput";
+
+type DraftSelection = { readonly start: number; readonly end: number };
 
 /** Binds dictation to a plain textarea draft; the shortcut targets it only while it has focus. */
 export function useTextFieldSpeech(input: {
@@ -27,6 +28,8 @@ export function useTextFieldSpeech(input: {
     latest.current = input;
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  // Where the transcript will land; the field is read-only while dictating, so it holds still.
+  const [caret, setCaret] = useState<DraftSelection>({ start: 0, end: 0 });
   const speech = useEnvironmentSpeechInput({
     environmentId: input.environmentId,
     projectId: input.projectId,
@@ -37,10 +40,12 @@ export function useTextFieldSpeech(input: {
     readDraft: () => {
       const field = latest.current.textareaRef.current;
       const cursor = field?.selectionStart ?? latest.current.text.length;
-      return {
-        text: field?.value ?? latest.current.text,
-        selection: { start: cursor, end: field?.selectionEnd ?? cursor },
-      };
+      const selection = { start: cursor, end: field?.selectionEnd ?? cursor };
+      setCaret((previous) =>
+        previous.start === selection.start && previous.end === selection.end ? previous : selection,
+      );
+      // The field shows the live transcript, so the draft comes from props, not the DOM.
+      return { text: latest.current.text, selection };
     },
     commitDraft: (text, selection) => {
       latest.current.onTextChange(text);
@@ -60,7 +65,30 @@ export function useTextFieldSpeech(input: {
     modelPickerOpen: false,
     targetRef: input.textareaRef,
   });
-  return { ...speech, shortcutLabel };
+  const unavailableReason = useSpeechUnavailableReason(speech);
+  return {
+    ...speech,
+    shortcutLabel,
+    unavailableReason,
+    /** The draft with the live transcript streamed in at the caret, as the field should show it. */
+    displayText: withLiveTranscript(input.text, caret, speech.preview),
+  };
+}
+
+function withLiveTranscript(
+  text: string,
+  selection: DraftSelection,
+  preview: { readonly committed: string; readonly tentative: string } | null,
+) {
+  if (!preview) return text;
+  const snapshot = { ownerKey: "", text, selection, revision: 0 };
+  const result = resolveTranscriptCommit(
+    snapshot,
+    snapshot,
+    `${preview.committed}${preview.tentative}`,
+    "auto",
+  );
+  return result.kind === "commit" ? result.text : text;
 }
 
 export type TextFieldSpeech = ReturnType<typeof useTextFieldSpeech>;
@@ -72,36 +100,32 @@ export function TextFieldSpeechControls({
   speech: TextFieldSpeech;
   disabled?: boolean;
 }) {
+  const showsMic = speech.available || speech.unavailableReason !== null;
   return (
     <>
-      {speech.preview ? (
-        <p
-          role="status"
-          className="order-first max-h-24 w-full overflow-y-auto rounded-control surface-well px-2.5 py-1.5 text-body break-words whitespace-pre-wrap"
-        >
-          {speech.preview.committed}
-          <span className="text-muted-foreground">{speech.preview.tentative}</span>
-        </p>
-      ) : null}
-      <ComposerSpeechRecordingPill
-        size="compact"
-        state={speech.state}
-        progress={null}
-        level={speech.level}
-        finishShortcutLabel={speech.shortcutLabel}
-        cancelShortcutLabel="Esc"
-        disabled={disabled}
-        onStart={() => void speech.start()}
-        onStop={() => void speech.stop()}
-        onCancel={speech.cancel}
-        onSkipPostProcessing={speech.skipPostProcessing}
-      />
-      {speech.available ? (
+      {speech.state.phase === "error" ? (
+        <VoiceInputErrorPill
+          size="compact"
+          error={speech.state.error}
+          errorAction={speech.state.errorAction}
+          disabled={disabled}
+          cancelShortcutLabel="Esc"
+          onRetry={() => void speech.start()}
+          onDismiss={speech.cancel}
+        />
+      ) : showsMic ? (
         <ComposerSpeechButton
           state={speech.state}
           size="compact"
           shortcutLabel={speech.shortcutLabel}
           disabled={disabled}
+          unavailableReason={speech.unavailableReason}
+          dictation={{
+            level: speech.level,
+            onStop: () => void speech.stop(),
+            onCancel: speech.cancel,
+            onSkipPostProcessing: speech.skipPostProcessing,
+          }}
           onStart={() => void speech.start()}
         />
       ) : null}
