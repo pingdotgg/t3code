@@ -232,7 +232,12 @@ try {
   if (mode !== "wal") throw new Error("database uses journal_mode " + mode + ", not wal");
   db = next;
   // Guarded: nothing on this reader can write, so an ending cannot fail and need not be awaited.
-  parentPort.postMessage({ type: "ready", guarded: typeof next.setAuthorizer === "function" });
+  // Tracked: replies say whether a transaction is open, which folding a BEGIN relies on.
+  parentPort.postMessage({
+    type: "ready",
+    guarded: typeof next.setAuthorizer === "function",
+    tracked: typeof next.isTransaction === "boolean",
+  });
 } catch (error) {
   parentPort.postMessage({ type: "unavailable", message: String(error && error.message ? error.message : error) });
 }
@@ -303,7 +308,7 @@ interface ReaderRequest {
 }
 
 type ReaderStartup =
-  | { readonly type: "ready"; readonly guarded?: boolean }
+  | { readonly type: "ready"; readonly guarded?: boolean; readonly tracked?: boolean }
   | { readonly type: "unavailable"; readonly message: string };
 
 type ReaderReply =
@@ -401,6 +406,8 @@ const makeReader = Effect.fnUntraced(function* (
     });
     // Whether the worker's authorizer rules out every write, so that an ending cannot fail.
     let guarded = false;
+    // Whether replies carry the connection's transaction state; without it no BEGIN is folded.
+    let tracked = false;
     let stoppedMessage: string | undefined;
     const pending = new Map<number, (reply: ReaderReply) => void>();
     // A read transaction's BEGIN waits for its first statement and travels with it; once it has
@@ -453,6 +460,7 @@ const makeReader = Effect.fnUntraced(function* (
     worker.on("message", (reply: ReaderReply | ReaderStartup) => {
       if ("type" in reply) {
         guarded = reply.type === "ready" && reply.guarded === true;
+        tracked = reply.type === "ready" && reply.tracked === true;
         announce(reply);
         if (pending.size === 0) worker.unref();
         return;
@@ -478,9 +486,10 @@ const makeReader = Effect.fnUntraced(function* (
         // error to return, and a raw control has a run() result.
         const control = input.params.length === 0 && !input.raw;
         const begins = control && beginsTransaction(input.sql);
-        // Folding is a guess about the connection's state: only with nothing outstanding on it
-        // (an earlier statement could still open or end a transaction when it runs).
-        if (begins && !pendingBegin && !inTransaction && pending.size === 0) {
+        // Folding is a guess about the connection's state: only when replies report that state,
+        // and with nothing outstanding on it (an earlier statement could still open or end a
+        // transaction when it runs).
+        if (begins && tracked && !pendingBegin && !inTransaction && pending.size === 0) {
           pendingBegin = true;
           return Effect.succeed([]);
         }

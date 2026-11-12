@@ -47,8 +47,9 @@ const awaitedAtReply = vi.hoisted(() => new Map<number, boolean>());
 const unrefDuring = vi.hoisted(() => ({ emit: false }));
 // The worker's reference state at the moment each ending (ROLLBACK) was posted, by request id.
 const refdAtEnding = vi.hoisted(() => new Map<number, boolean>());
-// Makes every reader announce itself without a statement authorizer.
-const readyRewrite = vi.hoisted(() => ({ unguarded: false }));
+// Makes every reader announce itself without a statement authorizer, or (untracked) also answer
+// without the connection's transaction state, as on a Node without `isTransaction`.
+const readyRewrite = vi.hoisted(() => ({ unguarded: false, untracked: false }));
 // Resolves a waiter when a request whose SQL mentions its needle is posted to a worker.
 const postWaiters = vi.hoisted(() => [] as Array<{ needle: string; resolve: () => void }>);
 const silentWorkers = vi.hoisted(() => ({ on: false, readyOnTerminate: false }));
@@ -111,6 +112,17 @@ vi.mock("node:worker_threads", async (importOriginal) => {
       const reply = args[0];
       if (
         event === "message" &&
+        readyRewrite.untracked &&
+        typeof reply === "object" &&
+        reply !== null &&
+        "inTransaction" in reply
+      ) {
+        const untracked = { ...reply };
+        delete untracked.inTransaction;
+        return this.emit(event, untracked);
+      }
+      if (
+        event === "message" &&
         typeof reply === "object" &&
         reply !== null &&
         typeof reply.id === "number" &&
@@ -122,8 +134,16 @@ vi.mock("node:worker_threads", async (importOriginal) => {
         awaitedAtReply.set(reply.id, unrefDuring.emit);
         return delivered;
       }
-      if (event === "message" && readyRewrite.unguarded && reply?.type === "ready")
-        return super.emit(event, { ...reply, guarded: false });
+      if (
+        event === "message" &&
+        (readyRewrite.unguarded || readyRewrite.untracked) &&
+        reply?.type === "ready"
+      )
+        return super.emit(event, {
+          ...reply,
+          guarded: false,
+          ...(readyRewrite.untracked ? { tracked: false } : {}),
+        });
       if (
         event === "message" &&
         typeof reply === "object" &&
@@ -887,6 +907,38 @@ it.effect("keeps its transaction bookkeeping in step with controls the worker ra
       // And the reader is as usable as ever.
       assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
     }),
+  ),
+);
+
+it.effect("leaves transaction controls to SQLite on a reader that cannot report its state", () =>
+  Effect.gen(function* () {
+    readyRewrite.untracked = true;
+    yield* withReaderClient((sql) =>
+      Effect.gen(function* () {
+        const before = startedWorkers.length;
+        // A transaction opened raw survives managed ones that cannot start inside it, empty or not.
+        const manual = yield* Effect.gen(function* () {
+          yield* sql.unsafe("BEGIN").raw;
+          const empty = yield* failureOf(sql.withTransaction(Effect.void));
+          assert.include(String(empty.reason.cause), "within a transaction");
+          const managed = yield* failureOf(sql.withTransaction(countEntries(sql)));
+          assert.include(String(managed.reason.cause), "within a transaction");
+          return yield* sql.unsafe("COMMIT").raw;
+        }).pipe(SqliteClient.readOnly);
+        assert.deepEqual(manual, { changes: 0, lastInsertRowid: 0 });
+        // Without the connection's state a BEGIN cannot be folded, so it goes to SQLite alone.
+        const worker = startedWorkers[before]!;
+        const sent = workerMessages.get(worker)!.length;
+        assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
+        assert.deepEqual(messageShapes(worker).slice(sent), ["BEGIN", "SELECT", "COMMIT"]);
+      }),
+    );
+  }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        readyRewrite.untracked = false;
+      }),
+    ),
   ),
 );
 
