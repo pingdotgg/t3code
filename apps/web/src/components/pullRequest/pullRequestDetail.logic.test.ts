@@ -204,7 +204,6 @@ describe("pull request primary control", () => {
     ).toBe("merge");
   });
 
-  // regression: #25583 green checks offered Merge while branch rules blocked it
   it("offers auto-merge for a blocked merge, and otherwise says it is blocked", () => {
     const blocked = { ...open, mergeBlocked: true };
     expect(resolvePullRequestPrimaryControl(blocked)).toBe("enable-auto-merge");
