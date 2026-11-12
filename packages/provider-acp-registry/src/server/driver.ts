@@ -91,7 +91,10 @@ const makeUnsupportedTextGeneration = (): ProviderTextGeneration => {
 
 function modelsFromDiscovery(
   discovery:
-    | Pick<AcpRegistryLiveConfiguration, "models" | "currentModelId" | "configOptions">
+    | Pick<
+        AcpRegistryLiveConfiguration,
+        "models" | "currentModelId" | "configOptions" | "modelOptionIds"
+      >
     | undefined,
   customModels: ReadonlyArray<string>,
   previousModels: ReadonlyArray<ServerProviderModel> = [],
@@ -101,11 +104,23 @@ function modelsFromDiscovery(
     discovery === undefined || discovery.configOptions.length === 0
       ? EMPTY_CAPABILITIES
       : createModelCapabilities({ optionDescriptors: discovery.configOptions });
-  // ACP configOptions describe only the session's current model.
-  const capabilitiesFor = (slug: string) =>
-    slug === discovery?.currentModelId
-      ? capabilities
-      : (previousModels.find((model) => model.slug === slug)?.capabilities ?? EMPTY_CAPABILITIES);
+  // Model-specific options describe only the session's current model; other
+  // models keep the shared ones plus what an earlier session reported for them.
+  const modelOptionIds = new Set(discovery?.modelOptionIds ?? []);
+  const shared = (discovery?.configOptions ?? []).filter(
+    (descriptor) => !modelOptionIds.has(descriptor.id),
+  );
+  const sharedIds = new Set(shared.map((descriptor) => descriptor.id));
+  const capabilitiesFor = (slug: string) => {
+    if (slug === discovery?.currentModelId) return capabilities;
+    const own = (
+      previousModels.find((model) => model.slug === slug)?.capabilities?.optionDescriptors ?? []
+    ).filter((descriptor) => !sharedIds.has(descriptor.id));
+    const optionDescriptors = [...shared, ...own];
+    return optionDescriptors.length === 0
+      ? EMPTY_CAPABILITIES
+      : createModelCapabilities({ optionDescriptors });
+  };
   const builtInModels: ReadonlyArray<ServerProviderModel> =
     discovered.length === 0
       ? [

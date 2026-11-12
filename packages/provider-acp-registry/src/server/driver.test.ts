@@ -222,37 +222,50 @@ describe("acpRegistrySnapshotReadiness", () => {
     ]);
 
     // Session configOptions describe the current model only.
+    const sharedMode = {
+      id: "mode",
+      label: "Mode",
+      type: "select" as const,
+      options: [{ id: "ask", label: "Ask" }],
+      currentValue: "ask",
+    };
     const twoModelList = [
       { id: "glm", name: "GLM", description: null },
       { id: "opus", name: "Opus", description: null },
     ];
     const afterGlm = applyAcpRegistryLiveConfiguration(
       provider,
-      { models: twoModelList, currentModelId: "glm", configOptions: liveOptions },
+      {
+        models: twoModelList,
+        currentModelId: "glm",
+        configOptions: [...liveOptions, sharedMode],
+        modelOptionIds: ["effort"],
+      },
       [],
     );
     const twoModels = afterGlm.models;
     expect(twoModels.find((model) => model.slug === "glm")).toMatchObject({
-      capabilities: { optionDescriptors: [{ id: "effort" }] },
+      capabilities: { optionDescriptors: [{ id: "effort" }, { id: "mode" }] },
     });
     expect(
       twoModels.find((model) => model.slug === "opus")?.capabilities?.optionDescriptors ?? [],
-    ).toEqual([]);
+    ).toEqual([sharedMode]);
     // A later session on another model keeps the options learned for this one.
     const afterOpus = applyAcpRegistryLiveConfiguration(
       afterGlm,
       {
         models: twoModelList,
         currentModelId: "opus",
-        configOptions: [{ ...liveOptions[0]!, id: "thinking" }],
+        configOptions: [{ ...liveOptions[0]!, id: "thinking" }, sharedMode],
+        modelOptionIds: ["thinking"],
       },
       [],
     ).models;
     expect(afterOpus.find((model) => model.slug === "glm")).toMatchObject({
-      capabilities: { optionDescriptors: [{ id: "effort" }] },
+      capabilities: { optionDescriptors: [{ id: "mode" }, { id: "effort" }] },
     });
     expect(afterOpus.find((model) => model.slug === "opus")).toMatchObject({
-      capabilities: { optionDescriptors: [{ id: "thinking" }] },
+      capabilities: { optionDescriptors: [{ id: "thinking" }, { id: "mode" }] },
     });
   });
 
