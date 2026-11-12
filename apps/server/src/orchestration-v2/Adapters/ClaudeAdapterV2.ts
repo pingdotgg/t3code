@@ -12529,7 +12529,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
         );
 
-        // Move subagents to the background before priority "now" steers cancel foreground tools.
+        // Move subagents to the background so a steer reaches Claude without waiting for them to finish.
         const backgroundForegroundSubagents = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
           deadline: number,
@@ -12656,7 +12656,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ).promptEffort,
               ),
               attachments: turnInput.message.attachments,
-              priority: "now",
+              // "now" makes Claude Code cancel the tool calls in flight and report them as a user refusal.
+              priority: "next",
               uuid: steerUuid,
               attachmentsDir,
               fileSystem,
