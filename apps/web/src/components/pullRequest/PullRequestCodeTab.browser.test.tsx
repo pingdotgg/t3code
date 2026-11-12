@@ -439,6 +439,13 @@ it("folds a resolved conversation into avatars on its line until it is opened", 
   await expect.element(marker()).toHaveFocus();
   await expect.element(card("Resolved")).not.toBeInTheDocument();
 
+  // Reopened and resolved again by someone else, the returning marker leaves focus alone.
+  await screen.rerender(withThread(false));
+  await expect.element(card("Open")).toBeVisible();
+  await screen.rerender(withThread(true));
+  await expect.element(marker()).toBeVisible();
+  await expect.element(marker()).not.toHaveFocus();
+
   await marker().click();
   await expect.element(reply()).toHaveValue("Unsent");
 
