@@ -737,6 +737,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly adminOverride?: boolean;
+      readonly expectedHeadSha?: string;
       readonly updateMethod?: PullRequestUpdateMethod;
     }) => Effect.Effect<ProviderChangeRequestSummary | void, GitHubPullRequestApiError>;
 
@@ -781,6 +782,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly number: number;
       readonly verdict: PullRequestReviewVerdict;
       readonly pendingReviewId?: string;
+      readonly outdatedCommentIds?: ReadonlyArray<string>;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
@@ -1471,6 +1473,19 @@ export const make = Effect.gen(function* () {
         .map((comment) => comment.node_id),
     );
     const commentIndices = new Map(comments.map((comment, index) => [comment.node_id, index]));
+    const byRoot = new Map<string, string[]>();
+    const missingIds = [...needsPositions];
+    // GitHub replies point to the thread's first comment, even beyond its first page.
+    for (let offset = 0; offset < missingIds.length; offset += 25) {
+      const result = yield* client
+        .PendingReviewCommentRoots({ ids: missingIds.slice(offset, offset + 25) })
+        .pipe(graphql({ ...input, operation: "pendingReview" }), retryPendingReviewRead);
+      for (const node of result.nodes) {
+        if (node?.__typename !== "PullRequestReviewComment") continue;
+        const rootId = node.replyTo?.id ?? node.id;
+        byRoot.set(rootId, [...(byRoot.get(rootId) ?? []), node.id]);
+      }
+    }
     let cursor: string | null = null;
     for (let page = 0; needsPositions.size > 0 && page < REVIEW_THREAD_PAGES; page++) {
       const response: string = yield* client
@@ -1486,16 +1501,18 @@ export const make = Effect.gen(function* () {
       const threads = decoded.data.repository.pullRequest.reviewThreads;
       for (const thread of threads.nodes)
         for (const entry of thread.comments.nodes) {
-          const index = commentIndices.get(entry.id);
-          if (index === undefined || !needsPositions.has(entry.id)) continue;
-          comments[index] = {
-            ...comments[index]!,
-            line: thread.line,
-            side: thread.diffSide,
-            start_line: thread.startLine,
-            start_side: thread.startDiffSide,
-          };
-          needsPositions.delete(entry.id);
+          for (const commentId of byRoot.get(entry.id) ?? []) {
+            const index = commentIndices.get(commentId);
+            if (index === undefined || !needsPositions.has(commentId)) continue;
+            comments[index] = {
+              ...comments[index]!,
+              line: thread.line,
+              side: thread.diffSide,
+              start_line: thread.startLine,
+              start_side: thread.startDiffSide,
+            };
+            needsPositions.delete(commentId);
+          }
         }
       if (!threads.pageInfo.hasNextPage) break;
       cursor = threads.pageInfo.endCursor;
@@ -3156,8 +3173,26 @@ export const make = Effect.gen(function* () {
               graphql(target),
             );
         }
+        if (
+          action === "merge" &&
+          input.adminOverride === true &&
+          input.expectedHeadSha === undefined
+        ) {
+          return yield* readError(
+            input.cwd,
+            "runPullRequestAction",
+            new Error("Confirm the pull request head before overriding merge requirements."),
+          );
+        }
+        if (input.expectedHeadSha !== undefined && input.expectedHeadSha !== state.headRefOid) {
+          return yield* readError(
+            input.cwd,
+            "runPullRequestAction",
+            new Error("The pull request head changed. Refresh before merging."),
+          );
+        }
         let body: string | undefined;
-        let expectedHead: string | undefined;
+        let expectedHead = input.expectedHeadSha;
         if (input.removeAgentCreditsOnMerge === true && input.mergeMethod !== "rebase") {
           const message = yield* client
             .PullRequestMergeMessage({
@@ -3176,6 +3211,13 @@ export const make = Effect.gen(function* () {
             const cleaned = removeAgentCredits(message.viewerMergeBodyText);
             if (cleaned !== message.viewerMergeBodyText) {
               body = cleaned;
+              if (expectedHead !== undefined && expectedHead !== message.headRefOid) {
+                return yield* readError(
+                  input.cwd,
+                  "runPullRequestAction",
+                  new Error("The pull request head changed. Refresh before merging."),
+                );
+              }
               expectedHead = message.headRefOid;
             }
           }
@@ -3276,6 +3318,7 @@ export const make = Effect.gen(function* () {
     submitReview: Effect.fn("GitHubPullRequestApi.submitReview")(function* (input) {
       if (
         input.pendingReviewId !== undefined ||
+        (input.outdatedCommentIds?.length ?? 0) > 0 ||
         input.comments.some((comment) => comment.hostedComment !== undefined)
       ) {
         return yield* draftReviewGate.withPermit(
@@ -3321,14 +3364,38 @@ export const make = Effect.gen(function* () {
                 consumed.add(saved.node_id);
               }
             }
+            const newComments: PullRequestReviewCommentDraft[] = [];
             for (const comment of input.comments) {
               if (comment.hostedComment) continue;
               const saved = pending.comments.find(
                 (entry) => !consumed.has(entry.node_id) && sameDraftComment(entry, comment),
               );
               if (saved) consumed.add(saved.node_id);
-              else yield* addDraftThread(input, review.id, comment);
+              else newComments.push(comment);
             }
+            for (const id of input.outdatedCommentIds ?? []) {
+              const saved = pending.comments.find((comment) => comment.node_id === id);
+              if (!saved || saved.line !== null || consumed.has(id)) {
+                return yield* readError(
+                  input.cwd,
+                  "submitReview",
+                  new Error(
+                    "An outdated review comment changed on GitHub. Refresh before submitting.",
+                  ),
+                );
+              }
+              consumed.add(id);
+            }
+            if (pending.comments.some((comment) => !consumed.has(comment.node_id))) {
+              return yield* readError(
+                input.cwd,
+                "submitReview",
+                new Error(
+                  "The pending review contains comments not shown in this submission. Refresh before submitting.",
+                ),
+              );
+            }
+            for (const comment of newComments) yield* addDraftThread(input, review.id, comment);
             yield* client
               .SubmitDraftReview({
                 input: {
@@ -3364,7 +3431,7 @@ export const make = Effect.gen(function* () {
     }),
 
     replyToReviewThread: Effect.fn("GitHubPullRequestApi.replyToReviewThread")(function (input) {
-      return client
+      const reply = client
         .AddReviewThreadReply({
           threadId: input.threadId,
           body: input.body,
@@ -3384,6 +3451,7 @@ export const make = Effect.gen(function* () {
                 ),
           ),
         );
+      return input.pendingReviewId === undefined ? reply : draftReviewGate.withPermit(reply);
     }),
 
     getPullRequestFilesViewed: Effect.fn("GitHubPullRequestApi.getPullRequestFilesViewed")(

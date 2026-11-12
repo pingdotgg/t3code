@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 import {
   pendingReviewCommentsFromThreads,
+  pendingReviewIdentityFromThreads,
   groupPendingReviewComments,
 } from "@t3tools/client-runtime/review-editing";
 import { AppState } from "react-native";
@@ -41,6 +42,7 @@ export function useRetiredReviewDraftCommentIds(params: PullRequestParams) {
 export function retireReviewDraftComments(
   params: PullRequestParams,
   comments: ReadonlyArray<ReviewDraft["comments"][number]>,
+  outdatedCommentIds: ReadonlyArray<string> = [],
 ) {
   const key = pullRequestReviewKey(params);
   const previous = appAtomRegistry.get(removedHostComments);
@@ -49,6 +51,7 @@ export function retireReviewDraftComments(
     [key]: [
       ...new Set([
         ...(previous[key] ?? []),
+        ...outdatedCommentIds,
         ...comments.flatMap((comment) =>
           comment.hostedComment ? [comment.hostedComment.commentId] : [],
         ),
@@ -103,9 +106,10 @@ function load() {
 async function persist() {
   if (timer) clearTimeout(timer);
   timer = null;
-  await queue.run(async () => {
+  return await queue.run(async () => {
     const current = appAtomRegistry.get(state);
-    if (!current.ready || current.drafts === savedDrafts) return;
+    if (!current.ready) return false;
+    if (current.drafts === savedDrafts) return true;
     try {
       const drafts = Object.fromEntries(
         Object.entries(current.drafts).filter(
@@ -116,11 +120,13 @@ async function persist() {
       savedDrafts = current.drafts;
       if (appAtomRegistry.get(state).error)
         appAtomRegistry.set(state, { ...appAtomRegistry.get(state), error: null });
+      return true;
     } catch {
       appAtomRegistry.set(state, {
         ...appAtomRegistry.get(state),
         error: "Drafts are kept in this session, but could not be saved on this device.",
       });
+      return false;
     }
   });
 }
@@ -182,8 +188,10 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
     [activity.data?.reviewThreads, comments],
   );
   const threads = grouped.threads;
-  const pendingReviewId = comments.find((comment) => comment.hostedComment)?.hostedComment
-    ?.reviewId;
+  const identity = pendingReviewIdentityFromThreads(activity.data?.reviewThreads ?? [], retiredIds);
+  const pendingReviewId =
+    comments.find((comment) => comment.hostedComment)?.hostedComment?.reviewId ??
+    identity.pendingReviewId;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads review drafts from disk and persists them when AppState leaves active and on unmount
   useEffect(() => {
     void load();
@@ -206,6 +214,7 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
     activityError: activity.error,
     refreshActivity: activity.refresh,
     pendingReviewId,
+    outdatedCommentIds: identity.outdatedCommentIds,
     busy: busyOperations.has(key),
     ready: snapshot.ready,
     error: snapshot.error,

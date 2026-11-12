@@ -840,6 +840,7 @@ export const PullRequestActionInput = Schema.Struct({
   action: PullRequestAction,
   mergeMethod: Schema.optional(PullRequestMergeMethod),
   adminOverride: Schema.optional(Schema.Boolean),
+  expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
   /** Only read for `update-branch`, where absent means the host's own default. */
   updateMethod: Schema.optional(PullRequestUpdateMethod),
   /** Opt-in, because older clients decode the action's success as void and reject a summary. */
@@ -957,6 +958,8 @@ export const PullRequestSubmitReviewInput = Schema.Struct({
   ...PullRequestRef.fields,
   verdict: PullRequestReviewVerdict,
   pendingReviewId: Schema.optional(TrimmedNonEmptyString),
+  /** Existing private comments whose diff line is no longer available. */
+  outdatedCommentIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** The review's own words. May be empty, which is how an approval with no remarks is sent. */
   body: Schema.String.check(Schema.isMaxLength(65_536)),
   comments: Schema.Array(PullRequestReviewCommentDraft),

@@ -296,6 +296,17 @@ query PendingReview($owner: String!, $name: String!, $number: Int!) {
   }
 }
 
+query PendingReviewCommentRoots($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on PullRequestReviewComment {
+      id
+      replyTo {
+        id
+      }
+    }
+  }
+}
+
 query PendingReviewPositions($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -309,7 +320,7 @@ query PendingReviewPositions($owner: String!, $name: String!, $number: Int!, $cu
           diffSide
           startLine
           startDiffSide
-          comments(first: 100) {
+          comments(first: 1) {
             nodes {
               id
             }

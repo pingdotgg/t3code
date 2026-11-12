@@ -737,6 +737,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                       : undefined
                   }
                   canRevertLines={(file, range) =>
+                    !props.ignoreWhitespace &&
                     canRevert &&
                     !pending &&
                     Boolean(
@@ -749,7 +750,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                     )
                   }
                   onRevertLines={
-                    view === "git" && scope === "unstaged"
+                    view === "git" && scope === "unstaged" && !props.ignoreWhitespace
                       ? (file, range) => {
                           const path = resolveFileDiffPath(file);
                           const patch = reviewSelectedLinesPatch(
@@ -781,7 +782,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                                 <Button
                                   size="xs"
                                   variant="ghost-muted"
-                                  disabled={!canRevert || pending}
+                                  disabled={!canRevert || pending || props.ignoreWhitespace}
                                   aria-label={`Revert hunk ${index + 1} in ${path}`}
                                   onClick={() =>
                                     setReverting({

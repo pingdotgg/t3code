@@ -67,15 +67,17 @@ export function PullRequestCommentsPopover({
   const [selectedStatus, setSelectedStatus] = useState<"resolved" | "unresolved" | "pending">(
     "unresolved",
   );
-  const pending = usePendingReviewComments(reference, detail.reviewThreads);
+  const pending = usePendingReviewComments(environmentId, reference, detail.reviewThreads);
   const actions = useReviewThreadActions(environmentId, reference, detail, onRefresh);
   // Hosted drafts are represented by the merged pending list, so they get one checklist entry.
   const threads = detail.reviewThreads.flatMap((thread) => {
-    const comments = thread.comments.filter((comment) => !comment.pendingReviewId);
-    return comments.length ? [{ ...thread, comments }] : [];
+    const comments = thread.comments.filter(
+      (comment) => !comment.pendingReviewId || thread.line === null,
+    );
+    return comments.length ? [{ thread, displayed: { ...thread, comments } }] : [];
   });
-  const unresolved = threads.filter((thread) => !thread.isResolved);
-  const resolved = threads.filter((thread) => thread.isResolved);
+  const unresolved = threads.filter(({ thread }) => !thread.isResolved);
+  const resolved = threads.filter(({ thread }) => thread.isResolved);
   const openCount = unresolved.length + pending.length;
   const status =
     selectedStatus === "pending" && pending.length === 0 ? "unresolved" : selectedStatus;
@@ -112,20 +114,21 @@ export function PullRequestCommentsPopover({
         <div className="flex max-h-[min(75vh,48rem,var(--available-height))] w-[min(28rem,calc(100vw-2rem))] min-w-0 flex-col [--text-sm:0.8125rem]">
           <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
             <PopoverTitle>Comments</PopoverTitle>
-            <Button
-              size="icon-xs"
-              variant="ghost-muted"
-              className="ml-auto"
-              aria-label="Close comments"
-              onClick={() => setOpen(false)}
-            >
-              <XIcon className="size-3.5" />
-            </Button>
+            <span className="ml-auto">
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                aria-label="Close comments"
+                onClick={() => setOpen(false)}
+              >
+                <XIcon className="size-3.5" />
+              </Button>
+            </span>
           </div>
           <div className="border-b border-border/60 px-3 py-2">
             <ToggleGroup
               variant="segmented"
-              className="w-full"
+              className="w-full *:flex-1"
               aria-label="Comment status"
               value={[status]}
               onValueChange={(values) => {
@@ -134,20 +137,20 @@ export function PullRequestCommentsPopover({
                   setSelectedStatus(next);
               }}
             >
-              <Toggle value="unresolved" className="flex-1">
+              <Toggle value="unresolved">
                 Unresolved{" "}
                 <Badge variant="secondary" size="sm">
                   {unresolved.length}
                 </Badge>
               </Toggle>
-              <Toggle value="resolved" className="flex-1">
+              <Toggle value="resolved">
                 Resolved{" "}
                 <Badge variant="secondary" size="sm">
                   {resolved.length}
                 </Badge>
               </Toggle>
               {pending.length > 0 ? (
-                <Toggle value="pending" className="flex-1">
+                <Toggle value="pending">
                   Pending{" "}
                   <Badge variant="secondary" size="sm">
                     {pending.length}
@@ -159,13 +162,12 @@ export function PullRequestCommentsPopover({
           <div className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto py-2 [overflow-wrap:anywhere]">
             {open ? (
               <>
-                {visibleThreads.map((thread) => (
+                {visibleThreads.map(({ thread, displayed }) => (
                   <div key={thread.id}>
-                    <div className="mx-3 mt-2">
+                    <div className="mx-3 mt-2 [&>button]:max-w-full">
                       <Button
                         size="xs"
                         variant="ghost-muted"
-                        className="max-w-full"
                         onClick={() =>
                           jump({
                             path: thread.path,
@@ -184,7 +186,7 @@ export function PullRequestCommentsPopover({
                     </div>
                     <ReviewThreadCard
                       {...actions(thread)}
-                      thread={thread}
+                      thread={displayed}
                       workspaceRoot={detail.workspaceRoot}
                       canReact={detail.capabilities.reactions === true}
                       environmentId={environmentId}
@@ -200,11 +202,10 @@ export function PullRequestCommentsPopover({
                 ))}
                 {(status === "pending" ? pending : []).map((comment) => (
                   <div key={comment.id}>
-                    <div className="mx-3 mt-2">
+                    <div className="mx-3 mt-2 [&>button]:max-w-full">
                       <Button
                         size="xs"
                         variant="ghost-muted"
-                        className="max-w-full"
                         onClick={() =>
                           jump({
                             path: comment.path,

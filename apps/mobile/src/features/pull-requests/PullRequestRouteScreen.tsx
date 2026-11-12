@@ -506,7 +506,9 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
   }, [params.navigationUrl, params.navigationId]);
 
   const activityTargetIndex = activityContent.rows.findIndex(
-    (row) => row.key === activityContent.targetKey,
+    (row) =>
+      row.key === activityContent.targetKey ||
+      (activityContent.targetKey !== null && row.memberKeys?.includes(activityContent.targetKey)),
   );
   const openedDiscussion = useRef<string | null>(null);
   const positionedActivity = useRef<string | null>(null);
@@ -1049,7 +1051,8 @@ export function PullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
   const navigation =
     useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList, "PullRequestFile">>();
   const ready = usePullRequestDiffEntry(navigation);
-  if (ready) return <PullRequestFileRouteContent {...props} />;
+  if (ready)
+    return <PullRequestFileRouteContent key={props.route.params.commit ?? "all"} {...props} />;
   const title = props.route.params.commit ? "Commit changes" : "Changes";
   return (
     <View className="flex-1 bg-screen">
@@ -1143,9 +1146,20 @@ export function PullRequestDiffContent({
   const grouped = groupByType && !isGuideChapter;
   const rememberedPath =
     params.path || (onlyPaths === undefined ? (readPullRequestView(scopeKey).path ?? "") : "");
+  const [pickedPath, setJumpPath] = useState<string | null>(null);
   const [chapterId, setChapterId] = useState<ReviewFileGroup>(() =>
-    reviewFileGroup(rememberedPath),
+    reviewFileGroup(linkPath ?? rememberedPath),
   );
+  const chapterRequest = `${params.navigationUrl ?? ""}:${params.navigationId ?? ""}`;
+  const [chapterTarget, setChapterTarget] = useState({ request: chapterRequest, path: linkPath });
+  const newChapterTarget =
+    chapterTarget.request !== chapterRequest ||
+    (linkPath !== undefined && chapterTarget.path !== linkPath);
+  if (newChapterTarget) {
+    setChapterTarget({ request: chapterRequest, path: linkPath });
+    setChapterId(reviewFileGroup(linkPath ?? rememberedPath));
+    setJumpPath(null);
+  }
   const { isViewed } = viewed;
   const visibleParsed = useMemo(() => {
     const original = isGuideChapter ? result.parsed : filter.parsed;
@@ -1207,7 +1221,7 @@ export function PullRequestDiffContent({
         visiblePaths:
           visibleParsed.kind === "files" ? visibleParsed.files.map((file) => file.path) : [],
         hideTestFiles: filter.hideTestFiles,
-        includePath: params.focus ? params.path : undefined,
+        includePath: linkPath ?? (params.focus ? params.path : undefined),
       }),
     [
       commit,
@@ -1223,12 +1237,18 @@ export function PullRequestDiffContent({
       filter.parsed,
       filter.hideTestFiles,
       visibleParsed,
+      linkPath,
       params.focus,
       params.path,
     ],
   );
   const chapters = grouped ? chapterIndex.chapters : [];
-  const activeChapter = chapters.find((chapter) => chapter.id === chapterId) ?? chapters[0];
+  const requestedChapterId =
+    linkPath !== undefined && (pickedPath === null || newChapterTarget)
+      ? reviewFileGroup(linkPath)
+      : chapterId;
+  const activeChapter =
+    chapters.find((chapter) => chapter.id === requestedChapterId) ?? chapters[0];
   const chapterFiles = activeChapter?.files ?? EMPTY_IDS;
   const reviewedChapterFiles = chapterFiles.filter(viewed.isViewed).length;
   const parsed = useMemo(() => {
@@ -1312,8 +1332,8 @@ export function PullRequestDiffContent({
           : (row.content ?? ""),
     });
   };
-  const [pickedPath, setJumpPath] = useState<string | null>(null);
-  const jumpPath = pickedPath ?? linkPath ?? rememberedPath;
+  const effectivePickedPath = newChapterTarget ? null : pickedPath;
+  const jumpPath = effectivePickedPath ?? linkPath ?? rememberedPath;
   const requestedFile =
     result.parsed.kind === "files"
       ? result.parsed.files.find((file) => file.path === jumpPath)
@@ -1325,7 +1345,8 @@ export function PullRequestDiffContent({
       : !jumpPath || requestedFile
         ? data.files[0]
         : undefined);
-  const range = pickedPath === null && linkAnchor?.kind === "diff" ? linkAnchor.range : null;
+  const range =
+    effectivePickedPath === null && linkAnchor?.kind === "diff" ? linkAnchor.range : null;
   const focus =
     params.focus ??
     (range
@@ -1358,7 +1379,10 @@ export function PullRequestDiffContent({
   if (lastChapter !== activeChapterId) {
     setLastChapter(activeChapterId);
     if (activeChapter) {
-      if (!jumpPath || reviewFileGroup(jumpPath) !== activeChapter.id)
+      if (
+        !(linkAnchor?.kind === "diff" && !linkPath) &&
+        (!jumpPath || reviewFileGroup(jumpPath) !== activeChapter.id)
+      )
         setJumpPath(activeChapter.files[0] ?? "");
       setSelectedRowId(null);
       setRangeEndRowId(null);

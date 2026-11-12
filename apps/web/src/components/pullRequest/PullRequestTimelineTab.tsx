@@ -773,7 +773,7 @@ export function PullRequestTimelineTab({
     comment: PullRequestThreadComment,
   ) => void;
 }) {
-  const pending = usePendingReviewComments(reference, detail.reviewThreads);
+  const pending = usePendingReviewComments(environmentId, reference, detail.reviewThreads);
   const { threads: conversations, pendingComments } = groupPendingReviewComments(
     detail.reviewThreads,
     pending,

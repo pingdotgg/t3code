@@ -158,6 +158,7 @@ export function usePullRequestActionRunner({
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
     adminOverride = false,
+    expectedHeadSha?: string,
   ) => {
     if (actionKey === null || reference === null || pendingRef.current.has(actionKey)) return false;
     pendingRef.current.add(actionKey);
@@ -168,6 +169,7 @@ export function usePullRequestActionRunner({
         ...reference,
         action,
         ...(adminOverride ? { adminOverride: true } : {}),
+        ...(expectedHeadSha === undefined ? {} : { expectedHeadSha }),
         ...(method ? { mergeMethod: method } : resolveMergeMethod ? { resolveMergeMethod } : {}),
       },
     });

@@ -96,7 +96,8 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
       : null,
   );
   const detail = mergeDetail.data;
-  const canAdminOverride = canWrite && detail?.viewerPermissions.adminMerge === true;
+  const canAdminOverride =
+    canWrite && Boolean(detail?.headSha) && detail?.viewerPermissions.adminMerge === true;
   const confirmationKey = `${entry.environmentId}:${entry.projectId}:${entry.host ?? ""}:${entry.repository}:${entry.number}:${detail?.headSha ?? ""}:${canAdminOverride}`;
   if (adminChoice && adminChoice.key !== confirmationKey) setAdminChoice(null);
   const adminOverride = canAdminOverride && adminChoice?.checked === true;
@@ -106,6 +107,7 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
   };
   const canMerge =
     canWrite &&
+    mergeDetail.error === null &&
     detail !== null &&
     detail.state === "open" &&
     !detail.isDraft &&
@@ -204,7 +206,15 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
                 variant={adminOverride ? "destructive" : "default"}
                 disabled={busy || mergeDetail.isPending || !canMerge}
                 onClick={async () => {
-                  if (await perform("merge", undefined, adminOverride)) setMergeOpen(false);
+                  if (
+                    await perform(
+                      "merge",
+                      undefined,
+                      adminOverride,
+                      adminOverride ? (detail?.headSha ?? undefined) : undefined,
+                    )
+                  )
+                    setMergeOpen(false);
                 }}
               >
                 Merge

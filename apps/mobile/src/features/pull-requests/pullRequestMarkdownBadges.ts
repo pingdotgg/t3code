@@ -1,4 +1,8 @@
 import {
+  splitPullRequestBody,
+  type PullRequestBodySegment,
+} from "@t3tools/client-runtime/pull-request-markdown";
+import {
   markdownWithHtml,
   parseMarkdownSource,
   type MarkdownNode,
@@ -34,4 +38,21 @@ export function inlinePullRequestBadges(source: string): string {
     (text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end),
     markdown,
   );
+}
+
+function inlineSegmentBadges(segment: PullRequestBodySegment): PullRequestBodySegment {
+  if (segment.kind === "markdown")
+    return { ...segment, text: inlinePullRequestBadges(segment.text) };
+  if (segment.kind === "table")
+    return {
+      ...segment,
+      rows: segment.rows.map((row) =>
+        row.map((cell) => ({ ...cell, segments: cell.segments.map(inlineSegmentBadges) })),
+      ),
+    };
+  return segment;
+}
+
+export function pullRequestMarkdownSegments(source: string) {
+  return splitPullRequestBody(source).map(inlineSegmentBadges);
 }

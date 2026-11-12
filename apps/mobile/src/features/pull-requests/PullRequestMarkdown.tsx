@@ -1,8 +1,5 @@
-import { inlinePullRequestBadges } from "./pullRequestMarkdownBadges";
-import {
-  splitPullRequestBody,
-  type PullRequestBodySegment,
-} from "@t3tools/client-runtime/pull-request-markdown";
+import { pullRequestMarkdownSegments } from "./pullRequestMarkdownBadges";
+import type { PullRequestBodySegment } from "@t3tools/client-runtime/pull-request-markdown";
 import { markdownTaskMarkerOffset } from "@t3tools/shared/markdownTaskList";
 import type { ReactNode } from "react";
 import { View } from "react-native";
@@ -122,10 +119,7 @@ export function PullRequestMarkdown(props: {
 }) {
   const mediaContext = useContext(PullRequestMediaContext);
   const changeRequestUrl = useContext(ChangeRequestUrlContext);
-  const segments = useMemo(
-    () => splitPullRequestBody(inlinePullRequestBadges(props.markdown)),
-    [props.markdown],
-  );
+  const segments = useMemo(() => pullRequestMarkdownSegments(props.markdown), [props.markdown]);
   const [undoneTicks, setUndoneTicks] = useState(0);
   const gallery: FilePreviewItem[] = markdownImageSources(
     props.imageGroupMarkdown ?? props.markdown,

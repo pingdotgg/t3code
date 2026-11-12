@@ -51,6 +51,7 @@ const queryData = () => ({
   state: "open",
   isDraft: false,
   mergeability: "mergeable",
+  headSha: "confirmed-head",
   headBranch: "feature",
   baseBranch: "main",
   changedFiles: 1,
@@ -390,4 +391,31 @@ it.each([
   expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(
     `using ${expected}`,
   );
+});
+
+it("requires fresh confirmation when the project default merge method changes", async () => {
+  await using screen = await setup();
+  state.mergeMethods = ["merge", "squash"];
+  state.projectMergeMethods = { repository: "merge" };
+  const row = (label: string) => (
+    <ThreadDetailsPrRow
+      environmentId={EnvironmentId.make("environment")}
+      pr={null}
+      number={1}
+      status={null}
+      project={repositoryProject as never}
+      label={label}
+      openAriaLabel="Open PR"
+      onOpen={vi.fn()}
+    />
+  );
+  await screen.rerender(row("Before"));
+  await clickButton(screen.container, "Merge");
+  expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain("using merge");
+  state.projectMergeMethods = { repository: "squash" };
+  await screen.rerender(row("After"));
+  expect(document.querySelector('[role="alertdialog"]')?.getAttribute("data-ending-style")).toBe(
+    "",
+  );
+  expect(state.perform).not.toHaveBeenCalled();
 });

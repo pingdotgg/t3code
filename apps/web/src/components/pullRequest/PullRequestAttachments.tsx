@@ -62,10 +62,9 @@ export function PullRequestAttachments({
     const textarea = textareaRef.current;
     if (!textarea) return;
     let start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const before = textarea.value.slice(0, start);
-    const after = textarea.value.slice(end);
-    let inserted = "";
+    let end = textarea.selectionEnd;
+    let draft = textarea.value;
+    let observed = draft;
     lock.current = true;
     const session = { cancelled: false, abort: undefined as (() => void) | undefined };
     transfer.current = session;
@@ -106,11 +105,21 @@ export function PullRequestAttachments({
             }),
         });
         if (!session.cancelled) {
-          const prefix = inserted.length > 0 || (before && !before.endsWith("\n")) ? "\n\n" : "";
-          inserted += `${prefix}${markdown}`;
+          const current = textarea.value;
+          if (current !== observed && current !== draft) {
+            draft = current;
+            start = textarea.selectionStart;
+            end = textarea.selectionEnd;
+          }
+          const before = draft.slice(0, start);
+          const after = draft.slice(end);
+          const prefix = before && !before.endsWith("\n") ? "\n\n" : "";
           const suffix = after && !after.startsWith("\n") ? "\n\n" : "";
-          onTextChange(`${before}${inserted}${suffix}${after}`);
-          start = before.length + inserted.length;
+          draft = `${before}${prefix}${markdown}${suffix}${after}`;
+          observed = current;
+          onTextChange(draft);
+          start = before.length + prefix.length + markdown.length;
+          end = start;
         }
       }
     })()

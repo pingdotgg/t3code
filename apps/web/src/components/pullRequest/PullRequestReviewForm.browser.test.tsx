@@ -23,7 +23,10 @@ it("submits only the line comments still in the draft when dictation finishes", 
   mocks.submit.mockClear();
   mocks.queue.mockClear();
   const reference = { projectId: ProjectId.make("test"), repository: "test/repo", number: 1 };
-  const key = pullRequestReviewKey(reference);
+  const key = pullRequestReviewKey(reference, {
+    environmentId: EnvironmentId.make("test"),
+    viewer: undefined,
+  });
   const store = usePullRequestReviewStore.getState();
   store.clear(key);
   store.addComment(key, {

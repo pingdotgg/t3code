@@ -73,12 +73,21 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
         });
         if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       }
-      retireReviewDraftComments(params, [comment]);
       store.update((draft) => ({
         ...draft,
         comments: draft.comments.filter((entry) => entry.id !== comment.id),
       }));
-      await store.flush();
+      if (!(await store.flush())) {
+        store.update((draft) =>
+          draft.comments.some((entry) => entry.id === comment.id)
+            ? draft
+            : { ...draft, comments: [...draft.comments, comment] },
+        );
+        throw new Error(
+          "The comment was removed from the host, but this device could not save the draft. Retry to finish discarding it.",
+        );
+      }
+      retireReviewDraftComments(params, [comment]);
       detail.refresh();
       activity.refresh();
       return true;

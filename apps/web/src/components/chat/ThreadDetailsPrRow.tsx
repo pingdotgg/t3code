@@ -185,12 +185,21 @@ export function ThreadDetailsPrRow({
   const canWriteSourceControl = useAtomValue(
     pullRequestEnvironment.runAction.permissionAtom(environmentId),
   );
+  const selectedMergeMethod = resolvePullRequestMergeMethod(
+    allowedPullRequestMergeMethods(detail),
+    null,
+    resolveProjectDefaultMergeMethod(),
+    lastSelectedMergeMethod,
+  );
   const [mergeConfirmation, setMergeConfirmation] = useState<{
     key: string;
     adminOverride: boolean;
   } | null>(null);
-  const canAdminOverride = detail?.viewerPermissions.adminMerge === true && canWriteSourceControl;
-  const confirmationKey = `${refreshKey}:${detail?.headSha ?? ""}:${lastSelectedMergeMethod}:${canAdminOverride}`;
+  const canAdminOverride =
+    detail?.viewerPermissions.adminMerge === true &&
+    Boolean(detail.headSha) &&
+    canWriteSourceControl;
+  const confirmationKey = `${refreshKey}:${detail?.headSha ?? ""}:${selectedMergeMethod}:${canAdminOverride}`;
   const confirmingMerge = mergeConfirmation?.key === confirmationKey;
   const adminOverride = canAdminOverride && (mergeConfirmation?.adminOverride ?? false);
 
@@ -201,12 +210,6 @@ export function ThreadDetailsPrRow({
   const conflicting = isPullRequestConflicting(detail);
   const checksState = detail === null ? "none" : classifyPullRequestChecks(detail.checks);
   const checksRollup = detail === null ? null : pullRequestChecksState(detail.checks);
-  const selectedMergeMethod = resolvePullRequestMergeMethod(
-    allowedPullRequestMergeMethods(detail),
-    null,
-    resolveProjectDefaultMergeMethod(),
-    lastSelectedMergeMethod,
-  );
 
   const handOff = (kind: "conflicts" | "findings", task: PullRequestThreadTask) => {
     if (composerTarget === undefined) {
@@ -562,7 +565,12 @@ export function ThreadDetailsPrRow({
                 variant={adminOverride ? "destructive" : "default"}
                 onClick={async () => {
                   const merged = adminOverride
-                    ? await perform("merge", selectedMergeMethod, true)
+                    ? await perform(
+                        "merge",
+                        selectedMergeMethod,
+                        true,
+                        detail?.headSha ?? undefined,
+                      )
                     : await perform("merge", selectedMergeMethod);
                   if (merged) setMergeConfirmation(null);
                 }}

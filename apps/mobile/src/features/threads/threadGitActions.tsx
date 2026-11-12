@@ -30,6 +30,8 @@ import {
   workspaceThreadMemoryKey,
 } from "../layout/workspace/workspacePaneMemory";
 
+import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+
 export const THREAD_GIT_GLYPH = "arrow.triangle.branch";
 export const THREAD_WORKSPACE_GLYPH = "point.topleft.down.curvedto.point.bottomright.up";
 
@@ -320,6 +322,17 @@ export function threadGitMenuDefinition(
           void model.runMenuAction(item);
         },
       })),
+      ...(props.onMergeBack
+        ? [
+            {
+              id: "git-merge-back",
+              title: "Merge back to source",
+              subtitle: "Bring this thread's latest turn into its source",
+              icon: PullRequestGlyph.merged,
+              onPress: props.onMergeBack,
+            },
+          ]
+        : []),
       {
         id: "git-branches",
         title: "Branches & worktrees…",

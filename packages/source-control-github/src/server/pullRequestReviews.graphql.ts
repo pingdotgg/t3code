@@ -548,10 +548,10 @@ export const NodePullRequestReviewThread = Schema.Struct({
 export interface NodePullRequestReviewThread extends Schema.Struct.Type<typeof NodePullRequestReviewThread.fields> {}
 
 /** An object with an ID. */
-export const NodeOther = Schema.Struct({
+export const NodeNodeOther = Schema.Struct({
   __typename: GraphQL.otherTypename<Shared.Typename.Node>()(["PullRequestReviewThread"])
 })
-export interface NodeOther extends Schema.Struct.Type<typeof NodeOther.fields> {}
+export interface NodeNodeOther extends Schema.Struct.Type<typeof NodeNodeOther.fields> {}
 
 /** `query ReviewThreadComments` */
 export const ReviewThreadComments = GraphQL.query("ReviewThreadComments", {
@@ -588,7 +588,7 @@ export const ReviewThreadComments = GraphQL.query("ReviewThreadComments", {
     /** Fetches an object given its ID. */
     node: Schema.NullOr(Schema.Union([
       NodePullRequestReviewThread,
-      NodeOther
+      NodeNodeOther
     ]))
   })
 })
@@ -706,16 +706,59 @@ export declare namespace PendingReview {
 }
 
 /** A review comment associated with a given repository pull request. */
-export const NodesCommentsNodesPullRequestReviewComment = Schema.Struct({
+export const ReplyToPullRequestReviewComment = Schema.Struct({
   /** The Node ID of the PullRequestReviewComment object */
   id: Shared.ID
 })
-export interface NodesCommentsNodesPullRequestReviewComment extends Schema.Struct.Type<typeof NodesCommentsNodesPullRequestReviewComment.fields> {}
+export interface ReplyToPullRequestReviewComment extends Schema.Struct.Type<typeof ReplyToPullRequestReviewComment.fields> {}
+
+/** A review comment associated with a given repository pull request. */
+export const PendingReviewCommentRootsNodesPullRequestReviewComment = Schema.Struct({
+  __typename: Schema.Literal("PullRequestReviewComment"),
+  /** The Node ID of the PullRequestReviewComment object */
+  id: Shared.ID,
+  /** The comment this is a reply to. */
+  replyTo: Schema.NullOr(ReplyToPullRequestReviewComment)
+})
+export interface PendingReviewCommentRootsNodesPullRequestReviewComment extends Schema.Struct.Type<typeof PendingReviewCommentRootsNodesPullRequestReviewComment.fields> {}
+
+/** An object with an ID. */
+export const NodesNodeOther = Schema.Struct({
+  __typename: GraphQL.otherTypename<Shared.Typename.Node>()(["PullRequestReviewComment"])
+})
+export interface NodesNodeOther extends Schema.Struct.Type<typeof NodesNodeOther.fields> {}
+
+/** `query PendingReviewCommentRoots` */
+export const PendingReviewCommentRoots = GraphQL.query("PendingReviewCommentRoots", {
+  document: {
+    variables: [
+      { name: "ids", body: "[ID!]!" }
+    ],
+    selections: [
+      { name: "nodes", body: ["(ids:$", "ids", "){__typename...on PullRequestReviewComment{id replyTo{id}}}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    ids: Schema.Array(Shared.ID)
+  },
+  result: Schema.Struct({
+    /** Lookup nodes by a list of IDs. */
+    nodes: Schema.Array(Schema.NullOr(Schema.Union([
+      PendingReviewCommentRootsNodesPullRequestReviewComment,
+      NodesNodeOther
+    ])))
+  })
+})
+export declare namespace PendingReviewCommentRoots {
+  export type Variables = typeof PendingReviewCommentRoots.variables.Type
+  export type Result = typeof PendingReviewCommentRoots.result.Type
+}
 
 /** The connection type for PullRequestReviewComment. */
 export const ReviewThreadsNodesCommentsPullRequestReviewCommentConnection = Schema.Struct({
   /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(NodesCommentsNodesPullRequestReviewComment)))
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(ReplyToPullRequestReviewComment)))
 })
 export interface ReviewThreadsNodesCommentsPullRequestReviewCommentConnection extends Schema.Struct.Type<typeof ReviewThreadsNodesCommentsPullRequestReviewCommentConnection.fields> {}
 
@@ -767,7 +810,7 @@ export const PendingReviewPositions = GraphQL.query("PendingReviewPositions", {
       { name: "cursor", body: "String" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:100 after:$", "cursor", "){pageInfo{hasNextPage endCursor}nodes{line diffSide startLine startDiffSide comments(first:100){nodes{id}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:100 after:$", "cursor", "){pageInfo{hasNextPage endCursor}nodes{line diffSide startLine startDiffSide comments(first:1){nodes{id}}}}}}"] }
     ],
     fragments: []
   },
@@ -788,18 +831,18 @@ export declare namespace PendingReviewPositions {
 }
 
 /** A review comment associated with a given repository pull request. */
-export const ThreadCommentsNodesPullRequestReviewComment = Schema.Struct({
+export const CommentsNodesPullRequestReviewComment = Schema.Struct({
   /** The Node ID of the PullRequestReviewComment object */
   id: Shared.ID,
   /** The HTTP URL permalink for this review comment. */
   url: Shared.URI
 })
-export interface ThreadCommentsNodesPullRequestReviewComment extends Schema.Struct.Type<typeof ThreadCommentsNodesPullRequestReviewComment.fields> {}
+export interface CommentsNodesPullRequestReviewComment extends Schema.Struct.Type<typeof CommentsNodesPullRequestReviewComment.fields> {}
 
 /** The connection type for PullRequestReviewComment. */
 export const ThreadCommentsPullRequestReviewCommentConnection = Schema.Struct({
   /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(ThreadCommentsNodesPullRequestReviewComment)))
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(CommentsNodesPullRequestReviewComment)))
 })
 export interface ThreadCommentsPullRequestReviewCommentConnection extends Schema.Struct.Type<typeof ThreadCommentsPullRequestReviewCommentConnection.fields> {}
 
@@ -975,4 +1018,4 @@ export declare namespace SubmitDraftReview {
 }
 
 /** Every operation in pullRequestReviews.graphql. */
-export const PullRequestReviewsGraphQLGroup = GraphQLGroup.make(ReviewThreads, ReviewThreadPages, ReviewThreadComments, ReviewDismissals, PendingReview, PendingReviewPositions, SaveDraftComment, CreateDraftReview, DiscardDraftReview, DiscardDraftComment, SubmitDraftReview)
+export const PullRequestReviewsGraphQLGroup = GraphQLGroup.make(ReviewThreads, ReviewThreadPages, ReviewThreadComments, ReviewDismissals, PendingReview, PendingReviewCommentRoots, PendingReviewPositions, SaveDraftComment, CreateDraftReview, DiscardDraftReview, DiscardDraftComment, SubmitDraftReview)

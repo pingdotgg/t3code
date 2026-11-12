@@ -500,6 +500,7 @@ export interface PullRequestProviderApi {
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly adminOverride?: boolean;
+      readonly expectedHeadSha?: string;
       /** Only meaningful for `update-branch`; absent takes the host's own default. */
       readonly updateMethod?: PullRequestUpdateMethod;
     },
@@ -557,6 +558,7 @@ export interface PullRequestProviderApi {
       readonly number: number;
       readonly verdict: PullRequestReviewVerdict;
       readonly pendingReviewId?: string;
+      readonly outdatedCommentIds?: ReadonlyArray<string>;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
     },

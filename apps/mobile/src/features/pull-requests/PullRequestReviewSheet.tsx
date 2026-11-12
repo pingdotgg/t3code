@@ -135,6 +135,9 @@ export function PullRequestReviewSheet({
                   verdict: verdict.value,
                   body,
                   ...(store.pendingReviewId ? { pendingReviewId: store.pendingReviewId } : {}),
+                  ...(store.outdatedCommentIds.length
+                    ? { outdatedCommentIds: store.outdatedCommentIds }
+                    : {}),
                   comments: submitted.comments.map(
                     ({ id: _id, headSha: _sha, code: _code, ...comment }) => comment,
                   ),
@@ -142,7 +145,8 @@ export function PullRequestReviewSheet({
               })
             : await comment({ ...target, input: { ...target.input, body } });
         if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-        if (reviewing) retireReviewDraftComments(params, submitted.comments);
+        if (reviewing)
+          retireReviewDraftComments(params, submitted.comments, store.outdatedCommentIds);
         store.update((current) =>
           reviewing
             ? clearSubmittedReview(current, submitted)

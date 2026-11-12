@@ -598,7 +598,7 @@ function PullRequestCodeTab({
       input: { ...reference, ...(commit === null ? {} : { commit }) },
     }),
   );
-  const pendingComments = usePendingReviewComments(reference, detail.reviewThreads);
+  const pendingComments = usePendingReviewComments(environmentId, reference, detail.reviewThreads);
   const { add: addComment } = usePendingReviewCommentActions(environmentId, reference);
   const replyToThread = useAtomCommand(pullRequestEnvironment.replyToThread, {
     reportFailure: false,

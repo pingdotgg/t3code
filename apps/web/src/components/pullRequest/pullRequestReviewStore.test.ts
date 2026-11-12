@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
-import { ProjectId, type PullRequestReviewThread } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type PullRequestReviewThread } from "@t3tools/contracts";
 
 import {
   mergePendingReviewComments,
@@ -164,6 +164,13 @@ describe("pull request review drafts", () => {
     };
     const publicKey = pullRequestReviewKey({ ...reference, host: "github.com" });
     const enterpriseKey = pullRequestReviewKey({ ...reference, host: "github.example.com" });
+    const scope = { environmentId: EnvironmentId.make("one"), viewer: "Jake" };
+    const scopedKey = pullRequestReviewKey(reference, scope);
+    expect(pullRequestReviewKey(reference, { ...scope, viewer: "jake" })).toBe(scopedKey);
+    expect(
+      pullRequestReviewKey(reference, { ...scope, environmentId: EnvironmentId.make("two") }),
+    ).not.toBe(scopedKey);
+    expect(pullRequestReviewKey(reference, { ...scope, viewer: "Maria" })).not.toBe(scopedKey);
     const store = usePullRequestReviewStore.getState();
     store.addComment(publicKey, comment("public"));
     store.setSummary(publicKey, "Public review");

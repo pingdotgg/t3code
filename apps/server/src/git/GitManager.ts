@@ -2188,40 +2188,39 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const resolveTextGenerationSettings = (
-    input: { cwd: string; threadId?: ThreadId | undefined },
-    operation = "runStackedAction",
-  ) =>
-    projectSettingsFor(input).pipe(
-      Effect.flatMap(({ settings, projectId }) =>
-        settings.sourceControlWriterModelSelection === null
-          ? Effect.succeed({
-              modelSelection: settings.textGenerationModelSelection,
-              projectId,
-              style: settings.sourceControlWritingStyle,
-            })
-          : providerRegistry.getProviders.pipe(
-              Effect.map((providers) => ({
-                modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
-                  settings,
-                  providers,
-                  projectId,
-                ),
+  const resolveTextGenerationSettings = Effect.fn("GitManager.resolveTextGenerationSettings")(
+    (input: { cwd: string; threadId?: ThreadId | undefined }, operation = "runStackedAction") =>
+      projectSettingsFor(input).pipe(
+        Effect.flatMap(({ settings, projectId }) =>
+          settings.sourceControlWriterModelSelection === null
+            ? Effect.succeed({
+                modelSelection: settings.textGenerationModelSelection,
                 projectId,
                 style: settings.sourceControlWritingStyle,
-              })),
-            ),
+              })
+            : providerRegistry.getProviders.pipe(
+                Effect.map((providers) => ({
+                  modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
+                    settings,
+                    providers,
+                    projectId,
+                  ),
+                  projectId,
+                  style: settings.sourceControlWritingStyle,
+                })),
+              ),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation,
+              cwd: input.cwd,
+              detail: "Failed to get server settings.",
+              cause,
+            }),
+        ),
       ),
-      Effect.mapError(
-        (cause) =>
-          new GitManagerError({
-            operation,
-            cwd: input.cwd,
-            detail: "Failed to get server settings.",
-            cause,
-          }),
-      ),
-    );
+  );
 
   const generateStagedCommitMessage = Effect.fn("GitManager.generateStagedCommitMessage")(
     function* (input: { cwd: string }) {

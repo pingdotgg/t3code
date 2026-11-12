@@ -271,22 +271,25 @@ export function pullRequestTimelineRows(
   const events = groupReviewTimelineConversations(
     entries,
     (entry) => entry.remark !== undefined,
-  ).map((row): { key: string; date: string; content: ReactNode } => {
-    if (row.kind === "event")
-      return { key: row.event.key, date: row.event.date, content: row.event.content };
-    const remarks = row.events.flatMap((entry) => (entry.remark ? [entry.remark] : []));
-    const first = row.events[0];
-    return {
-      key: `conversation:${first?.key ?? ""}`,
-      date: first?.date ?? "",
-      content: (
-        <TimelineConversation
-          comments={newestFirst ? [...remarks].reverse() : remarks}
-          params={params}
-        />
-      ),
-    };
-  });
+  ).map(
+    (row): { key: string; memberKeys?: readonly string[]; date: string; content: ReactNode } => {
+      if (row.kind === "event")
+        return { key: row.event.key, date: row.event.date, content: row.event.content };
+      const remarks = row.events.flatMap((entry) => (entry.remark ? [entry.remark] : []));
+      const first = row.events[0];
+      return {
+        key: `conversation:${first?.key ?? ""}`,
+        memberKeys: row.events.map((entry) => entry.key),
+        date: first?.date ?? "",
+        content: (
+          <TimelineConversation
+            comments={newestFirst ? [...remarks].reverse() : remarks}
+            params={params}
+          />
+        ),
+      };
+    },
+  );
   if (activity.commentsTruncated || activity.reviewThreadsTruncated)
     events.push({
       key: "truncated",

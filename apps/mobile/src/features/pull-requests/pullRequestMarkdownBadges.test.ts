@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { parseMarkdownDocument } from "../../lib/markdownDocument";
-import { inlinePullRequestBadges } from "./pullRequestMarkdownBadges";
+import { inlinePullRequestBadges, pullRequestMarkdownSegments } from "./pullRequestMarkdownBadges";
 
 describe("pull request badge rendering", () => {
   it("keeps the priority and title visible without a leading block-image reservation", () => {
@@ -13,6 +13,27 @@ describe("pull request badge rendering", () => {
     expect(parseMarkdownDocument(result).children[0]).toMatchObject({
       type: "paragraph",
       children: [{ type: "strong", children: [{ type: "text" }] }],
+    });
+  });
+
+  it("keeps media comparisons grouped when another image triggers badge normalization", () => {
+    const segments = pullRequestMarkdownSegments(
+      "![P1 Badge](https://img.shields.io/badge/P1-orange)\n\n" +
+        "<table><tr><th>Before</th><th>After</th></tr><tr><td>\n\nhttps://drop.example.com/before.mp4\n\n</td><td>\n\nhttps://drop.example.com/after.mp4\n\n</td></tr></table>",
+    );
+    expect(segments[0]).toMatchObject({ kind: "markdown", text: "P1" });
+    expect(segments[1]).toMatchObject({
+      kind: "table",
+      rows: [
+        [
+          { segments: [{ kind: "markdown", text: "Before" }] },
+          { segments: [{ kind: "markdown", text: "After" }] },
+        ],
+        [
+          { segments: [{ kind: "attachment", url: "https://drop.example.com/before.mp4" }] },
+          { segments: [{ kind: "attachment", url: "https://drop.example.com/after.mp4" }] },
+        ],
+      ],
     });
   });
 

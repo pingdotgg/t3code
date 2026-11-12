@@ -670,6 +670,15 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             detail: cause instanceof Error ? cause.message : "Could not choose a merge method.",
           }),
       });
+      if (
+        actionInput.expectedHeadSha !== undefined &&
+        detail.headSha !== actionInput.expectedHeadSha
+      ) {
+        return yield* new PullRequestOperationError({
+          operation: "runAction",
+          detail: "The pull request head changed. Refresh before merging.",
+        });
+      }
       preparedInput = { ...actionInput, mergeMethod };
     }
     return yield* routedRequest(WS_METHODS.pullRequestsRunAction, {
