@@ -9132,6 +9132,61 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("says when Claude Code does not apply a requested Fast mode", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("claude-fast-mode-off-attempt"),
+          text: "Hello",
+          attachments: [],
+          modelSelection: {
+            ...CLAUDE_TEST_MODEL_SELECTION,
+            options: [{ id: "fastMode", value: true }],
+          },
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          fast_mode_state: "off",
+          fast_mode_disabled_reason: "extra_usage_disabled",
+          uuid: "00000000-0000-4000-8000-000000000830",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000831", result: "Hi" }),
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      const notices = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+          ? [event.turnItem.message ?? ""]
+          : [],
+      );
+      assert.isTrue(
+        notices.some((message) => /fast/i.test(message)),
+        `expected a Fast mode notice, got ${JSON.stringify(notices)}`,
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("shows a hook-dropped Claude prompt once and skips info-level lines", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
