@@ -6,7 +6,7 @@ import {
   ExecutionEnvironmentDescriptor,
   ServerSelfUpdateMethod,
 } from "./environment.ts";
-import { ServerAuthDescriptor } from "./auth.ts";
+import { AuthClientPresentationMetadata, ServerAuthDescriptor } from "./auth.ts";
 import {
   ForwardCompatibleArray,
   IsoDateTime,
@@ -23,11 +23,13 @@ import {
   ResolvedKeybindingsConfig,
 } from "./keybindings.ts";
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
+import { ManagedPolicySummary } from "./managedPolicy.ts";
 import { ModelCapabilities, ProviderOptionDescriptor } from "./model.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
+import { DesktopUpdateChannelSchema } from "./ipc.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -127,6 +129,9 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+  // Absent means the provider's machine `models`, which keeps most snapshots small.
+  models: Schema.optional(Schema.Array(ServerProviderModel)),
+  modelsPending: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
@@ -137,6 +142,13 @@ export function isProviderWorkspaceSnapshotCurrent(
   nowMs: number,
 ): boolean {
   return nowMs - Date.parse(snapshot.checkedAt) < PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS;
+}
+
+/** A pending snapshot keeps what it found before and is rescanned before its TTL. */
+export function isProviderWorkspaceSnapshotPending(
+  snapshot: Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "modelsPending">,
+): boolean {
+  return snapshot.slashCommandsPending === true || snapshot.modelsPending === true;
 }
 
 /** Unavailable snapshots must set installed and enabled false. */
@@ -215,7 +227,6 @@ export const ServerProvider = Schema.Struct({
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   reportsContextWindow: Schema.optional(Schema.Boolean),
   supportedRuntimeModes: Schema.optional(ForwardCompatibleArray(RuntimeMode)),
-  requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   supportsConversationRollback: Schema.optional(Schema.Boolean),
   supportsTextGeneration: Schema.optional(Schema.Boolean),
   setup: Schema.optional(
@@ -313,6 +324,33 @@ export const OtlpEndpointCheckResult = Schema.Union([
   Schema.TaggedStruct("Unreachable", { timedOut: Schema.Boolean }),
 ]);
 export type OtlpEndpointCheckResult = typeof OtlpEndpointCheckResult.Type;
+
+/** The client tells the server what it is, so the triage context can name it. */
+export const ServerPrepareTriageInput = Schema.Struct({
+  client: AuthClientPresentationMetadata,
+});
+export type ServerPrepareTriageInput = typeof ServerPrepareTriageInput.Type;
+
+export const ServerPrepareTriageResult = Schema.Struct({
+  /** Composer text that links the session's prompt file. */
+  prompt: Schema.String,
+});
+export type ServerPrepareTriageResult = typeof ServerPrepareTriageResult.Type;
+
+/**
+ * The prompt file links as a chip in the user's message; clients spot a triage
+ * draft by it.
+ */
+export const TRIAGE_PROMPT_FILE_NAME = "triage-playbook.md";
+
+export class ServerPrepareTriageError extends Schema.TaggedError<ServerPrepareTriageError>()(
+  "ServerPrepareTriageError",
+  { cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return "Could not write the triage session files.";
+  }
+}
 
 export const ServerTraceDiagnosticsErrorKind = Schema.Literals([
   "trace-file-not-found",
@@ -593,12 +631,15 @@ export const ServerConfig = Schema.Struct({
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
   observability: ServerObservability,
   settings: ServerSettings,
+  /** Present when an administrator's policy file manages this environment. */
+  managedPolicy: Schema.optionalKey(ManagedPolicySummary),
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
    * The shell can leave idle subagent children out of snapshots (`omitIdleSubagents`), and
    * `getThreadFamily` and `getWorktreeThreadIds` serve the rows it leaves out.
    */
   shellThreadFamilies: Schema.optionalKey(Schema.Boolean),
+  threadLinkMetadata: Schema.optionalKey(Schema.Boolean),
   /**
    * The shell can leave older settled threads out of snapshots (`omitOlderSettled`), and
    * `getOlderSettledThreads` serves them. Only servers that also advertise `shellThreadFamilies`.
@@ -609,9 +650,14 @@ export const ServerConfig = Schema.Struct({
   threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /** Send window fields only when advertised. */
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
-  reasoningMessages: Schema.optionalKey(Schema.Boolean),
   threadFind: Schema.optionalKey(Schema.Boolean),
   threadFindProgressive: Schema.optionalKey(Schema.Boolean),
+  /** Settings patches may carry `secretProviders`; older servers drop the key without an error. */
+  secretProviderSettings: Schema.optionalKey(Schema.Boolean),
+  /** Secret settings may point at a secret provider; older servers drop the reference. */
+  secretReferences: Schema.optionalKey(Schema.Boolean),
+  /** A secret request card may be answered with a secret provider reference. */
+  secretRequestReferences: Schema.optionalKey(Schema.Boolean),
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
@@ -851,10 +897,36 @@ export class ServerProviderUpdateError extends Schema.TaggedError<ServerProvider
   }
 }
 
+export const ServerNpmReleaseInput = Schema.Struct({
+  spec: Schema.String.check(
+    Schema.isMaxLength(64),
+    Schema.isPattern(/^(?:latest|nightly|\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/),
+  ),
+});
+export type ServerNpmReleaseInput = typeof ServerNpmReleaseInput.Type;
+
+export const ServerNpmRelease = Schema.Struct({
+  version: Schema.String,
+  databaseMigration: Schema.optionalKey(Schema.Int),
+});
+export type ServerNpmRelease = typeof ServerNpmRelease.Type;
+
+export class ServerNpmReleaseError extends Schema.TaggedError<ServerNpmReleaseError>()(
+  "ServerNpmReleaseError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return `Could not check the configured npm registry: ${this.reason}`;
+  }
+}
+
 export const ServerSelfUpdateInput = Schema.Struct({
   /** Exact npm version, never a dist-tag, so server and client agree on the request. */
   targetVersion: TrimmedNonEmptyString,
-  continueRunningThreads: Schema.optionalKey(Schema.Boolean),
+  /** Desktop-managed hosts move their app to this update track first. Sent only for a track switch. */
+  channel: Schema.optionalKey(DesktopUpdateChannelSchema),
+  /** The target release's highest migration; the host refuses to leave Nightly without it. */
+  targetDatabaseMigration: Schema.optionalKey(Schema.Int),
 });
 export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
 

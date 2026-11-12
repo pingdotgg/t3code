@@ -1,13 +1,17 @@
 import { makeProviderSettingsSchema, SourceControlProviderKind } from "@t3tools/contracts";
 import {
+  buildCommitUrl,
   changeRequestUrlBelow,
   defineSourceControl,
   hostCredentialSettingsFields,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  parseCommitPath,
+  repositoryUrlFromPagePath,
   projectChangeRequestHost,
   remoteWebOrigin,
+  type SourceControlAppSignIn,
 } from "@t3tools/source-control-core/shared/definition";
 
 import { gitHubMediaUrl } from "./gitHubMedia.ts";
@@ -16,20 +20,20 @@ import { gitHubReferenceAutolinks } from "./referenceAutolinks.ts";
 
 const CHECKOUT_COMMAND = /^gh\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
-  /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+)(?:[/?#].*)?$/i;
+  /^https?:\/\/[^/?#\s]+\/[^/\s]+\/[^/\s]+\/pull\/(\d+)(?:[/?#].*)?$/i;
 
 // GitHub Enterprise Server runs on any hostname, so the `<owner>/<repo>/pull/<n>` route alone
 // identifies a GitHub pull request.
 const CHANGE_REQUEST_PATH = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u;
+const COMMIT_PATH = /^\/([^/]+\/[^/]+)\/(?:commit|pull\/\d+\/commits)\/([0-9a-f]+)\/?$/iu;
 const ISSUE_PATH = /^\/([^/]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u;
+const REPOSITORY_PAGE_PATH = /^\/([^/]+\/[^/]+)\/(?:tree|blob)\/[^/]/u;
 
 const KIND = SourceControlProviderKind.make("github");
 
 function isGitHubHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
-  return (
-    host === "github.com" || host.endsWith(".github.com") || host.split(".").includes("github")
-  );
+  return host === "github.com" || host.endsWith(".ghe.com") || host.split(".").includes("github");
 }
 
 function isRepositoryPath(repository: string): boolean {
@@ -41,6 +45,14 @@ function isRepositoryPath(repository: string): boolean {
     segments.every((segment) => /^[\w.-]+$/u.test(segment) && segment !== "." && segment !== "..")
   );
 }
+
+/** Signing in through the T3 Code for GitHub app lifts the per-user API rate limit to the app's. */
+export const APP_SIGN_IN: SourceControlAppSignIn = {
+  appName: "T3 Code for GitHub",
+  hosts: ["github.com"],
+  installUrl: "https://github.com/apps/t3-code-for-github/installations/new",
+  revokeUrl: "https://github.com/settings/apps/authorizations",
+};
 
 export const settings = makeProviderSettingsSchema(hostCredentialSettingsFields);
 export type GitHubSettings = typeof settings.Type;
@@ -58,6 +70,7 @@ export const definition = defineSourceControl({
     tokenEnvVar: "GH_TOKEN",
     tokenAccess: "read and write access to pull requests and contents",
     newTokenUrl: (host) => `https://${host}/settings/personal-access-tokens/new`,
+    appSignIn: APP_SIGN_IN,
   },
   changeRequest: {
     shortLabel: "PR",
@@ -81,7 +94,14 @@ export const definition = defineSourceControl({
       return null;
     }
   },
+  commitUrl: (input) =>
+    isRepositoryPath(input.repository) ? buildCommitUrl(input, "commit") : null,
+  // A known project's host can be any GitHub Enterprise Server name.
+  parseCommitUrl: (url, known) =>
+    known || isGitHubHost(url.hostname) ? parseCommitPath(url, COMMIT_PATH) : null,
   parseChangeRequestUrl: (url) => parseChangeRequestPath(url, CHANGE_REQUEST_PATH),
+  repositoryUrlFromPage: (url) =>
+    isGitHubHost(url.hostname) ? repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH) : null,
   // GitHub writes every bare reference through `/issues/`, including pull requests.
   changeRequestUrlFromReferenceAutolink: (url) => {
     const match = isGitHubHost(url.hostname) ? ISSUE_PATH.exec(url.pathname) : null;
@@ -105,7 +125,8 @@ export const definition = defineSourceControl({
   ] as const),
   checkoutCommand: ({ number }) => `gh pr checkout ${number}`,
   changeRequestCloseCommand: /\bgh\s+(?:pr\s+(?:merge|close)|stack\s+merge)\b/u,
-  changeRequestCreateCommand: /\bgh\s+pr\s+create\b/u,
+  // `new` is gh's alias for `create`.
+  changeRequestCreateCommand: /\bgh\s+pr\s+(?:create|new)\b/u,
   authorProfileUrl: (login, repositoryUrl) =>
     login.endsWith("[bot]")
       ? null
@@ -116,6 +137,7 @@ export const definition = defineSourceControl({
   changeRequestActionsWhenUnreported: new Set(["close", "merge", "ready", "reopen"] as const),
   // One search reads every repository on the host.
   changeRequestListScope: "host",
+  hardLineBreaks: true,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
@@ -123,9 +145,7 @@ export const definition = defineSourceControl({
   changeRequestHeadRef: (number) => `refs/pull/${number}/head`,
   // `*.ghe.com` is GitHub Enterprise Cloud with data residency, one subdomain per enterprise.
   recognizeRemote: ({ host, hostname }) =>
-    hostname === "github.com" ||
-    hostname.endsWith(".ghe.com") ||
-    hostname.split(".").includes("github")
+    isGitHubHost(hostname)
       ? {
           kind: KIND,
           name: hostname === "github.com" ? "GitHub" : "GitHub Self-Hosted",

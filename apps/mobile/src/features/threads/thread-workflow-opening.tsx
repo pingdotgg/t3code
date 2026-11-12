@@ -2,11 +2,14 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   resolveWorkflowOpening,
+  workflowMemberModelSelection,
   workflowOpeningHeadline,
   workflowOpeningParentThreadId,
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
+import { Atom } from "effect/reactivity";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 
@@ -20,8 +23,10 @@ import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
 const FOLDED_SCRIPT_LINES = 10;
 
-export function useWorkflowOpening(environmentId: EnvironmentId, threadId: ThreadId) {
-  const threadAtom = environmentThreadDetails.threadAtom(scopeThreadRef(environmentId, threadId));
+const NO_THREAD_ATOM = Atom.make<EnvironmentThread | null>(null);
+
+export function useWorkflowOpening(ref: ScopedThreadRef | null) {
+  const threadAtom = ref === null ? NO_THREAD_ATOM : environmentThreadDetails.threadAtom(ref);
   // Selected as a primitive so an ordinary thread's updates never change the result.
   const parentId = useAtomValue(threadAtom, (thread) =>
     thread === null
@@ -35,7 +40,9 @@ export function useWorkflowOpening(environmentId: EnvironmentId, threadId: Threa
     parentId === null ? null : (thread?.projection ?? null),
   );
   const parentSubagents = useAtomValue(
-    environmentThreadDetails.threadAtom(scopeThreadRef(environmentId, parentId ?? threadId)),
+    ref === null || parentId === null
+      ? NO_THREAD_ATOM
+      : environmentThreadDetails.threadAtom(scopeThreadRef(ref.environmentId, parentId)),
     (parent) => (parentId === null ? null : (parent?.projection.subagents ?? null)),
   );
   return projection === null
@@ -57,6 +64,7 @@ function memberRowSubagent(
     threadId: coordinatorThreadId,
     childThreadId: member.childThreadId as ThreadId | null,
     model: member.model,
+    modelSelection: workflowMemberModelSelection(member, opening.providerInstanceId!),
     driver: opening.driver!,
     providerInstanceId: opening.providerInstanceId!,
     title: member.title,

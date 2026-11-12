@@ -1,16 +1,10 @@
-import {
-  configuredExportTypes,
-  mergeExportTypes,
-  renderExportWrappers,
-} from "../export-types.ts";
 import { describe, expect, test } from "vitest";
+import { configuredExportTypes, mergeExportTypes, renderExportWrappers } from "../export-types.ts";
 
 describe("configuredExportTypes", () => {
   test("is empty without a worker config", () => {
     expect(configuredExportTypes({})).toEqual({});
-    expect(
-      configuredExportTypes({ worker: { name: "worker", bindings: [] } }),
-    ).toEqual({});
+    expect(configuredExportTypes({ worker: { name: "worker", bindings: [] } })).toEqual({});
   });
 
   test("derives export types from declared namespaces and workflows", () => {
@@ -20,9 +14,7 @@ describe("configuredExportTypes", () => {
           name: "worker",
           bindings: [],
           durableObjectNamespaces: [{ className: "Counter", sql: true }],
-          workflows: [
-            { workflowName: "example", className: "ExampleWorkflow" },
-          ],
+          workflows: [{ workflowName: "example", className: "ExampleWorkflow" }],
         },
       }),
     ).toEqual({
@@ -34,26 +26,18 @@ describe("configuredExportTypes", () => {
 
 describe("mergeExportTypes", () => {
   test("adds detected exports that were not configured", () => {
-    expect(
-      mergeExportTypes(
-        { Counter: "DurableObject" },
-        { Api: "WorkerEntrypoint" },
-      ),
-    ).toEqual({
+    expect(mergeExportTypes({ Counter: "DurableObject" }, { Api: "WorkerEntrypoint" })).toEqual({
       Counter: "DurableObject",
       Api: "WorkerEntrypoint",
     });
   });
 
   test("keeps the configured type when detection disagrees", () => {
-    expect(
-      mergeExportTypes(
-        { Counter: "DurableObject" },
-        { Counter: "WorkerEntrypoint" },
-      ),
-    ).toEqual({
-      Counter: "DurableObject",
-    });
+    expect(mergeExportTypes({ Counter: "DurableObject" }, { Counter: "WorkerEntrypoint" })).toEqual(
+      {
+        Counter: "DurableObject",
+      },
+    );
   });
 });
 
@@ -89,8 +73,6 @@ describe("renderExportWrappers", () => {
         "1leading": "WorkerEntrypoint",
         $valid_name0: "WorkerEntrypoint",
       }),
-    ).toEqual([
-      'export const $valid_name0 = createWorkerEntrypointWrapper("$valid_name0");',
-    ]);
+    ).toEqual(['export const $valid_name0 = createWorkerEntrypointWrapper("$valid_name0");']);
   });
 });

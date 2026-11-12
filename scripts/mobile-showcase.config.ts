@@ -65,7 +65,7 @@ export interface ShowcaseConfig {
 
 const ANDROID_ABIS = ["arm64-v8a", "x86_64", "x86", "armeabi-v7a"] as const;
 
-export function resolveShowcaseAndroidAbi(
+function resolveShowcaseAndroidAbi(
   value: string | undefined,
 ): NonNullable<ShowcaseAndroidDevice["abi"]> {
   if (!value) return "arm64-v8a";

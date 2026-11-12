@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { observeResize } from "~/lib/observeResize";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -13,6 +14,7 @@ import {
   type CellAddr,
 } from "@betteroffice/xlsx/headless";
 import { FileSurfaceLoading, FileSurfaceNotice } from "../fileSurfaceChrome";
+import type { WorkbookView } from "../officePreviewProtocol";
 import { createWorkerClient, SupersededError } from "./worker-rpc";
 import type { SheetLayout, SheetMethods, SheetFrameRequest, SheetTab } from "./sheet-protocol";
 import {
@@ -33,6 +35,8 @@ import {
 } from "./sheet-paint";
 import { externalUrl } from "./links";
 
+const isSupersededError = Schema.is(SupersededError);
+
 type Client = ReturnType<typeof createWorkerClient<SheetMethods>>;
 type Opened = {
   engine: Client;
@@ -42,14 +46,15 @@ type Opened = {
 };
 export default function Spreadsheet(props: {
   bytes: ArrayBuffer;
+  view: WorkbookView;
   onDetails: (text: string) => void;
   onError: (cause: unknown) => void;
 }) {
-  const { onError, bytes: source, onDetails } = props;
+  const { onError, bytes: source, onDetails, view } = props;
   const [opened, setOpened] = useState<Opened>();
   const [error, setError] = useState("");
   const picking = useRef<AbortController | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Open the workbook worker and cancel workbook and sheet requests when the source changes or unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Open the workbook worker and cancel workbook and sheet requests when the source changes or unmounts.
   useEffect(() => {
     const controller = new AbortController();
     const worker = new Worker(new URL("./spreadsheet.worker.ts", import.meta.url), {
@@ -63,11 +68,11 @@ export default function Spreadsheet(props: {
     worker.addEventListener("messageerror", fail);
     const bytes = source.slice(0);
     void engine
-      .call("open", { bytes }, { transfer: [bytes], signal: controller.signal })
+      .call("open", { bytes, view }, { transfer: [bytes], signal: controller.signal })
       .then((value) => {
         if (!value) throw new Error("This workbook has no visible sheets.");
         setOpened({ ...value, engine });
-        onDetails(`${value.tabs.length} sheets`);
+        onDetails(`${value.tabs.length} sheet${value.tabs.length === 1 ? "" : "s"}`);
       })
       .catch(fail);
     return () => {
@@ -75,7 +80,7 @@ export default function Spreadsheet(props: {
       picking.current?.abort();
       engine.close();
     };
-  }, [source, onDetails, onError]);
+  }, [source, view, onDetails, onError]);
   const show = (sheet: number, target?: CellAddr) => {
     if (!opened) return;
     picking.current?.abort();
@@ -163,11 +168,11 @@ function SpreadsheetGrid(props: {
   const [reader, setReader] = useState<{ row: number; col: number; text: string }[]>([]);
   const [active, setActive] = useState({ row: 0, col: 0 });
   const navigate = useRef(onNavigate);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Keep the installed native pointer listener calling the latest navigation handler without restarting the canvas engine.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the installed native pointer listener calling the latest navigation handler without restarting the canvas engine.
   useEffect(() => {
     navigate.current = onNavigate;
   }, [onNavigate]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Own canvas painting, worker requests, resize observation, and native scroll, keyboard, and pointer listeners for this sheet.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own canvas painting, worker requests, resize observation, and native scroll, keyboard, and pointer listeners for this sheet.
   useEffect(() => {
     const root = scroller.current;
     const target = canvas.current;
@@ -264,7 +269,7 @@ function SpreadsheetGrid(props: {
             schedule();
           })
           .catch((cause: unknown) => {
-            if (!(cause instanceof SupersededError) && !controller.signal.aborted)
+            if (!isSupersededError(cause) && !controller.signal.aborted)
               setNotice("These cells could not be drawn.");
           });
       }

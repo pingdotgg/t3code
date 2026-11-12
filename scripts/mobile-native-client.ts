@@ -1,4 +1,5 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -6,7 +7,7 @@ import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -83,9 +84,9 @@ export const ensureClient = Effect.fn("ensureClient")(function* <E, R, E2, R2>(o
 });
 
 const digest = Effect.fn("nativeClient.digest")(function* (value: string | Uint8Array) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const bytes = yield* crypto.digest(
-    "SHA-256",
+    Digest.sha256,
     typeof value === "string" ? new TextEncoder().encode(value) : value,
   );
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -98,7 +99,7 @@ export const hashBundle = Effect.fn("hashBundle")(function* (root: string) {
   const entries: string[] = [];
   const visit = Effect.fn("mobile-native-client.visit")(function* (
     relative: string,
-  ): Effect.fn.Return<void, FileSystemError, FileSystem.FileSystem | Crypto.Crypto> {
+  ): Effect.fn.Return<void, FileSystemError, FileSystem.FileSystem | Digest.Digest> {
     const names = (yield* fs.readDirectory(path.join(root, relative))).sort((a, b) =>
       a.localeCompare(b, "en"),
     );
@@ -420,6 +421,11 @@ const decodeUpload = Schema.decodeUnknownEffect(
   ]),
 );
 const decodePart = Schema.decodeUnknownEffect(Schema.Struct({ etag: Schema.String }));
+const decodeEasBuilds = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Array(Schema.Struct({ artifacts: Schema.Struct({ buildUrl: Schema.String }) })),
+  ),
+);
 
 interface RemoteCache {
   readonly url: string;
@@ -449,6 +455,32 @@ const remoteCache = Effect.fn("nativeClient.remoteCache")(
       telemetry: `${base}/telemetry`,
       ...login,
     } satisfies RemoteCache;
+  },
+  Effect.orElseSucceed(() => null),
+);
+
+const ReaderLogin = Schema.fromJsonString(
+  Schema.Struct({ name: Schema.String, token: Schema.String }),
+);
+
+/**
+ * A URL another machine can download `key` from. The header goes to that machine, so only a
+ * read-only login (`ci-reader`) is ever handed out, never a developer's writer token.
+ */
+const sharedSource = Effect.fn("nativeClient.sharedSource")(
+  function* (home: string, key: string) {
+    const remote = yield* remoteCache(home);
+    if (!remote) return null;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const reader =
+      remote.name === "ci-reader"
+        ? remote
+        : yield* fs
+            .readFileString(path.join(home, ".config/t3-task-cache/ci-reader.json"))
+            .pipe(Effect.flatMap(Schema.decodeUnknownEffect(ReaderLogin)));
+    const basic = Buffer.from(`${reader.name}:${reader.token}`).toString("base64");
+    return { url: `${remote.url}/${key}`, header: `authorization:Basic ${basic}` };
   },
   Effect.orElseSucceed(() => null),
 );
@@ -595,6 +627,57 @@ const publish = Effect.fn("nativeClient.publish")(function* (staging: string, ta
   yield* fs.rename(staging, target);
 });
 
+const easCli = "eas-cli@25.3.0";
+
+/** Xcode builds iOS locally; without it (Linux, or a Mac with no Xcode) EAS builds in the cloud. */
+const hasXcode = Effect.gen(function* () {
+  if ((yield* HostProcess.Platform) !== "darwin") return false;
+  return yield* command("xcrun", ["--find", "xcodebuild"]).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+/** Without Xcode, EAS builds the same simulator client from this checkout. */
+const buildIosOnEas = Effect.fn("nativeClient.buildIosOnEas")(function* (staging: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Fail before any work when neither builder is available.
+  yield* command("npx", ["-y", easCli, "whoami"]).pipe(
+    Effect.mapError(
+      () =>
+        new NativeClientError({
+          message:
+            "iOS builds need Xcode on macOS, or an EAS login (`npx eas-cli login`, or EXPO_TOKEN) to build in the cloud.",
+        }),
+    ),
+  );
+  yield* Console.error("No Xcode here; building the iOS simulator client on EAS (10-30 min).");
+  const [build] = yield* decodeEasBuilds(
+    yield* command("npx", [
+      "-y",
+      easCli,
+      "build",
+      "--platform",
+      "ios",
+      "--profile",
+      "development-simulator",
+      "--non-interactive",
+      "--wait",
+      "--json",
+    ]),
+  );
+  if (!build) return yield* new NativeClientError({ message: "EAS returned no build." });
+  const archive = path.join(staging, "eas-build.tar.gz");
+  yield* command("curl", ["-fsSL", "--retry", "3", "-o", archive, build.artifacts.buildUrl]);
+  yield* command("tar", ["-xzf", archive, "-C", staging]);
+  yield* fs.remove(archive);
+  const app = (yield* fs.readDirectory(staging)).find((name) => name.endsWith(".app"));
+  if (!app) return yield* new NativeClientError({ message: "The EAS build archive has no .app." });
+  if (app !== artifactNames.ios)
+    yield* fs.rename(path.join(staging, app), path.join(staging, artifactNames.ios));
+});
+
 const build = Effect.fn("nativeClient.build")(function* (
   platform: NativePlatform,
   abi: string | null,
@@ -614,13 +697,17 @@ const build = Effect.fn("nativeClient.build")(function* (
     ["exec", "expo", "prebuild", "--clean", "--platform", platform, "--no-install"],
     true,
   ).pipe(Effect.asVoid);
-  yield* platform === "android" ? prebuildAndroid(mobile, prebuild) : prebuild;
+  const onEas = platform === "ios" && !(yield* hasXcode);
+  if (platform === "android") yield* prebuildAndroid(mobile, prebuild);
+  else if (!onEas) yield* prebuild;
   const staging = yield* fs.makeTempDirectory({
     directory: path.dirname(target),
     prefix: ".build-",
   });
   yield* Effect.gen(function* () {
-    if (platform === "ios") {
+    if (onEas) {
+      yield* buildIosOnEas(staging);
+    } else if (platform === "ios") {
       const output = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-client-" });
       yield* command("pod", ["install"], true, path.join(mobile, "ios"));
       // One device-independent arm64 simulator build installs on every iPhone and iPad simulator.
@@ -706,13 +793,166 @@ const prune = Effect.fn("nativeClient.prune")(
   (effect) => Effect.ignore(effect),
 );
 
-/** Local artifact, then the shared cache, then a build that is shared back when credentials allow. */
+const buildWorkflow = "mobile-dev-client.yml";
+const WorkflowRun = Schema.Struct({
+  displayTitle: Schema.String,
+  status: Schema.String,
+  conclusion: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+});
+const decodeWorkflowRuns = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Array(WorkflowRun)),
+);
+
+/** The workflow names each run after the client it builds, which is how a waiting machine finds it. */
+export const buildRunTitle = (platform: NativePlatform, abi: string | null, fingerprint: string) =>
+  `Dev client ${platform}${abi ? ` ${abi}` : ""} ${fingerprint}`;
+
+export type RemoteBuildState = "none" | "running" | "failed" | "succeeded";
+
+/** The newest run with this title that was created at or after `sinceMs`. */
+export const remoteBuildState = (
+  runs: ReadonlyArray<typeof WorkflowRun.Type>,
+  title: string,
+  sinceMs: number,
+): RemoteBuildState => {
+  const run = runs
+    .filter((run) => run.displayTitle === title && Date.parse(run.createdAt) >= sinceMs)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+  if (!run) return "none";
+  if (run.status !== "completed") return "running";
+  return run.conclusion === "success" ? "succeeded" : "failed";
+};
+
+const remoteBuildPollMs = 20_000;
+const remoteBuildTimeoutMs = 25 * 60_000;
+/** A run this recent for the same client is joined instead of dispatching a second one. */
+const remoteBuildJoinMs = 30 * 60_000;
+
+/**
+ * Build the client for HEAD in the `mobile-dev-client.yml` workflow (Blacksmith runners with warm
+ * Gradle and ccache state) and download it from the shared cache. False means "build here
+ * instead": no `gh`, no permission to dispatch, HEAD not on GitHub, native edits that HEAD does
+ * not have (the workflow rejects a fingerprint it does not compute), or a failed run.
+ */
+const buildOnBlacksmith = Effect.fn("nativeClient.buildOnBlacksmith")(
+  function* (
+    remote: RemoteCache,
+    platform: NativePlatform,
+    abi: string | null,
+    fingerprint: string,
+    key: string,
+    directory: string,
+  ) {
+    const environment = yield* HostProcess.Environment;
+    // The workflow itself runs this script: it must build, never dispatch.
+    if (environment.GITHUB_ACTIONS === "true" || environment.T3_NATIVE_CLIENT_BUILD === "local")
+      return false;
+    if (!(yield* isCommandAvailable("gh"))) return false;
+    const repository = environment.T3_NATIVE_CLIENT_REPOSITORY ?? "pingdotgg/t3code";
+    const { repo } = yield* roots;
+    const sha = yield* command("git", ["rev-parse", "HEAD"], false, repo);
+    const pushed = yield* command(
+      "gh",
+      ["api", `repos/${repository}/commits/${sha}`, "--jq", ".sha"],
+      false,
+      repo,
+    ).pipe(
+      Effect.map((found) => found === sha),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!pushed) {
+      yield* Console.error(`HEAD ${sha.slice(0, 10)} is not on GitHub yet; building here.`);
+      return false;
+    }
+    const title = buildRunTitle(platform, abi, fingerprint);
+    const state = (sinceMs: number) =>
+      command(
+        "gh",
+        [
+          "run",
+          "list",
+          "--repo",
+          repository,
+          "--workflow",
+          buildWorkflow,
+          "--event",
+          "workflow_dispatch",
+          "--limit",
+          "30",
+          "--json",
+          "displayTitle,status,conclusion,createdAt",
+        ],
+        false,
+        repo,
+      ).pipe(
+        Effect.flatMap(decodeWorkflowRuns),
+        Effect.map((runs) => remoteBuildState(runs, title, sinceMs)),
+        // A failed listing says nothing about the build; keep waiting on the cache.
+        Effect.orElseSucceed((): RemoteBuildState => "none"),
+      );
+    const started = yield* Clock.currentTimeMillis;
+    const joined = (yield* state(started - remoteBuildJoinMs)) === "running";
+    if (!joined) {
+      const dispatched = yield* command(
+        "gh",
+        [
+          "workflow",
+          "run",
+          buildWorkflow,
+          "--repo",
+          repository,
+          "--ref",
+          "main",
+          "-f",
+          `ref=${sha}`,
+          "-f",
+          `platform=${platform}`,
+          "-f",
+          `abi=${abi ?? "x86_64"}`,
+          "-f",
+          `fingerprint=${fingerprint}`,
+        ],
+        false,
+        repo,
+      ).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!dispatched) return false;
+    }
+    yield* Console.error(
+      `${joined ? "A Blacksmith build of" : "Building"} ${key} ${joined ? "is already running" : "on Blacksmith"}; waiting for it in the shared cache...`,
+    );
+    const since = joined ? started - remoteBuildJoinMs : started - 60_000;
+    const fetched = download(remote, platform, key, directory).pipe(
+      Effect.orElseSucceed(() => false),
+    );
+    while ((yield* Clock.currentTimeMillis) - started < remoteBuildTimeoutMs) {
+      yield* Effect.sleep(remoteBuildPollMs);
+      if (yield* fetched) return true;
+      const now = yield* state(since);
+      if (now === "failed" || (now === "succeeded" && !(yield* fetched))) {
+        yield* Console.error(
+          now === "failed"
+            ? "The Blacksmith build failed (or HEAD lacks this checkout's native edits); building here."
+            : "The Blacksmith run finished without sharing this client; building here.",
+        );
+        return false;
+      }
+    }
+    yield* Console.error("The Blacksmith build did not finish in time; building here.");
+    return false;
+  },
+  Effect.orElseSucceed(() => false),
+);
+
+/** Local artifact, then the shared cache, then a Blacksmith build when this user can start one, then a build here that is shared back when credentials allow. */
 export const resolveArtifact = Effect.fn("nativeClient.resolveArtifact")(function* (
   home: string,
   platform: NativePlatform,
   abi: string | null,
   fingerprint: string,
-  allowBuild = true,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -741,21 +981,31 @@ export const resolveArtifact = Effect.fn("nativeClient.resolveArtifact")(functio
       return { ...artifact, source: "remote" as const, buildMs: yield* readBuildMs(directory) };
     }
   }
-  if (!allowBuild)
-    return yield* new NativeClientError({
-      message: `No shared build of ${key} yet. Run \`vp run mobile:install ${platform}\` once on a machine with a local ${platform === "ios" ? "simulator" : "emulator"} of this checkout; it builds the client and shares it.`,
-    });
+  if (remote && (yield* buildOnBlacksmith(remote, platform, abi, fingerprint, key, directory))) {
+    yield* prune(path.dirname(directory), fingerprint);
+    return { ...artifact, source: "remote" as const, buildMs: yield* readBuildMs(directory) };
+  }
   const log = yield* BuildLog;
   yield* Console.error(
-    `No cached client for ${key}. Building it once for every machine (5-15 min)${log ? `. Log: ${log}` : ""}`,
+    `No cached client for ${key}. Building it here once for every machine (5-15 min)${log ? `. Log: ${log}` : ""}`,
   );
   const started = yield* Clock.currentTimeMillis;
   yield* build(platform, abi, directory, fingerprint);
   yield* writeBuildMs(directory, (yield* Clock.currentTimeMillis) - started);
   yield* prune(path.dirname(directory), fingerprint);
   if (remote && (yield* HostProcess.Environment).T3_NATIVE_CLIENT_CACHE !== "read") {
+    // The Blacksmith workflow exists to share the client: there a failed upload fails the run.
+    const required = (yield* HostProcess.Environment).T3_NATIVE_CLIENT_SHARE === "required";
     yield* upload(remote, platform, key, directory).pipe(
-      Effect.catch((error) => Console.error(`Native client was not shared (${describe(error)}).`)),
+      Effect.catch((error) =>
+        required
+          ? Effect.fail(
+              new NativeClientError({
+                message: `Native client was not shared (${describe(error)}).`,
+              }),
+            )
+          : Console.error(`Native client was not shared (${describe(error)}).`),
+      ),
     );
   }
   return { ...artifact, source: "build" as const, buildMs: 0 };
@@ -839,7 +1089,8 @@ const reportTelemetry = Effect.fn("nativeClient.reportTelemetry")(
 
 /**
  * Install into an agent-device session the caller already opened (a device pool, a cloud
- * provider, or a local device), using the shared cache only; such hosts cannot build.
+ * provider, or a local device). A cache miss builds here, as for a local device: the device
+ * only runs the client.
  */
 const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function* (
   home: string,
@@ -860,16 +1111,51 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   const deviceAbi = platform === "android" ? abi : null;
   const task = deviceAbi ? `native-client:android-${deviceAbi}` : `native-client:${platform}`;
   const current = yield* fingerprint(platform);
-  const artifact = yield* resolveArtifact(home, platform, deviceAbi, current, false).pipe(
-    Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
-  );
-  yield* Console.error(`Installing into agent-device session ${session}...`);
-  yield* command(
-    node,
-    [agentDevice, "install", bundleId, artifact.file, "--session", session],
-    true,
-    workspace,
-  );
+  const key = `${platform}/${deviceAbi ? `development-${deviceAbi}` : "development"}/${current}`;
+  const source = yield* sharedSource(home, key);
+  // The session's host downloads the client itself; uploading a 166 MB APK through a
+  // gateway from here takes minutes and can outlast the remote install timeout.
+  const downloadOnDevice = source
+    ? command(
+        node,
+        [
+          agentDevice,
+          "install-from-source",
+          source.url,
+          "--header",
+          source.header,
+          "--session",
+          session,
+        ],
+        true,
+        workspace,
+      ).pipe(
+        Effect.as(true),
+        Effect.catch((error) =>
+          Console.error(`The device could not download ${key} (${describe(error)}).`).pipe(
+            Effect.as(false),
+          ),
+        ),
+      )
+    : Effect.succeed(false);
+  const fetched = yield* downloadOnDevice;
+  const artifact = fetched
+    ? { source: "remote" as const, buildMs: 0 }
+    : yield* Effect.gen(function* () {
+        const local = yield* resolveArtifact(home, platform, deviceAbi, current).pipe(
+          Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
+        );
+        // A build just shared the client, so the device can fetch it now too.
+        if (local.source === "build" && (yield* downloadOnDevice)) return local;
+        yield* Console.error(`Installing into agent-device session ${session}...`);
+        yield* command(
+          node,
+          [agentDevice, "install", bundleId, local.file, "--session", session],
+          true,
+          workspace,
+        );
+        return local;
+      });
   if (metro) {
     const url = encodeURIComponent(metro);
     yield* command(
@@ -927,6 +1213,18 @@ const main = Command.make(
       Flag.withDescription("With --session, open the dev client against this Metro URL."),
       Flag.optional,
     ),
+    prepare: Flag.Boolean("prepare").pipe(
+      Flag.withDescription(
+        "Fetch or build the client for this checkout without a device (Android: for --abi). Run it before leasing a device: a build can outlast the lease.",
+      ),
+      Flag.withDefault(false),
+    ),
+    expectFingerprint: Flag.String("expect-fingerprint").pipe(
+      Flag.withDescription(
+        "With --prepare, fail before building unless the checkout's native fingerprint is this one.",
+      ),
+      Flag.optional,
+    ),
   },
   Effect.fn("nativeClient.main")(function* ({
     mode,
@@ -935,8 +1233,37 @@ const main = Command.make(
     session,
     abi: sessionAbi,
     metro,
+    prepare,
+    expectFingerprint,
   }) {
     const started = yield* Clock.currentTimeMillis;
+    if (prepare) {
+      if (mode !== "ensure" || Option.isSome(requested) || Option.isSome(session))
+        return yield* new NativeClientError({
+          message: "--prepare needs no device; use it with ensure and no device id or --session.",
+        });
+      const environment = yield* HostProcess.Environment;
+      const home = environment.HOME ?? environment.USERPROFILE;
+      if (!home)
+        return yield* new NativeClientError({ message: "HOME or USERPROFILE must be set." });
+      const current = yield* fingerprint(platform);
+      if (Option.isSome(expectFingerprint) && expectFingerprint.value !== current)
+        return yield* new NativeClientError({
+          message: `This checkout's ${platform} fingerprint is ${current}, not the expected ${expectFingerprint.value}: the caller has native changes this commit does not.`,
+        });
+      const artifact = yield* resolveArtifact(
+        home,
+        platform,
+        platform === "android" ? sessionAbi : null,
+        current,
+      );
+      yield* Console.error(
+        `Client ready for ${platform} (${artifact.source}); lease a device and install.`,
+      );
+      return yield* Console.log(
+        yield* encodeOutput({ status: "ready", source: artifact.source, fingerprint: current }),
+      );
+    }
     if (Option.isSome(session)) {
       if (mode !== "ensure" || Option.isSome(requested))
         return yield* new NativeClientError({
@@ -1060,7 +1387,7 @@ if (import.meta.main) {
         ),
     }),
     Effect.scoped,
-    Effect.provide([NodeServices.layer, FetchHttpClient.layer]),
+    Effect.provide([NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer]),
     NodeRuntime.runMain,
   );
 }

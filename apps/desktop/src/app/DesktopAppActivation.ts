@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Local socket ownership checks need lstat, an atomic rename, and a directory watch at the Node adapter boundary.
+import { pipe } from "effect/Function";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -151,8 +152,10 @@ export async function startDesktopAppControlServer(input: {
       }
 
       if (!isDesktopAppActivationRequest(parsed)) {
-        finish(
-          invalidResponse(requestIdFromUnknown(parsed), "The desktop app request is invalid."),
+        pipe(
+          requestIdFromUnknown(parsed),
+          (requestId) => invalidResponse(requestId, "The desktop app request is invalid."),
+          finish,
         );
         return;
       }
@@ -382,7 +385,10 @@ export const make = Effect.gen(function* () {
         webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
       });
     }),
-    complete: (response) => Effect.sync(() => broker.complete(response)),
+    // The IPC handler owns the activation-completion span.
+    complete: Effect.fnUntraced(function* (response) {
+      return yield* Effect.sync(() => broker.complete(response));
+    }),
   });
 });
 

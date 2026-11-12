@@ -1,8 +1,11 @@
+import type { ListRunsOptions } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
 import { vi } from "vite-plus/test";
 
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -13,7 +16,8 @@ const cursorSdkMock = vi.hoisted(() => {
   const closeExecutionOrder: Array<string> = [];
   const runOperations: Array<string> = [];
   let agentCloseFailure: unknown;
-  let staleRunActive = false;
+  // The local store lists runs oldest first, like the real SDK.
+  let storedRuns: Array<{ readonly id: string; readonly status: string }> = [];
   const runWait = vi.fn(async () => ({
     id: "run-cursor-agent-sdk-test",
     requestId: "request-cursor-agent-sdk-test",
@@ -23,6 +27,7 @@ const cursorSdkMock = vi.hoisted(() => {
     durationMs: 1,
   }));
   const runCancel = vi.fn(async () => {});
+  const runSteer = vi.fn(async () => "complete_delivered" as const);
   const agentClose = vi.fn(() => {
     closeExecutionOrder.push("sdk:agent.close");
     if (agentCloseFailure !== undefined) {
@@ -35,7 +40,7 @@ const cursorSdkMock = vi.hoisted(() => {
       options: { readonly onDelta?: (input: { readonly update: unknown }) => Promise<void> },
     ) => {
       runOperations.push("run.start");
-      if (staleRunActive) {
+      if (storedRuns.some((run) => run.status === "running")) {
         throw new Error("Agent agent-cursor-agent-sdk-test already has active run");
       }
       await options.onDelta?.({
@@ -49,6 +54,7 @@ const cursorSdkMock = vi.hoisted(() => {
         agentId: "agent-cursor-agent-sdk-test",
         wait: runWait,
         cancel: runCancel,
+        steer: runSteer as typeof runSteer | undefined,
       };
     },
   );
@@ -62,15 +68,21 @@ const cursorSdkMock = vi.hoisted(() => {
     send,
     close: agentClose,
   }));
-  const listRuns = vi.fn(async () => {
+  const listRuns = vi.fn(async (_agentId: string, options?: ListRunsOptions) => {
     runOperations.push("agent.listRuns");
+    // Mirrors the SDK's opaque cursor pagination with its default page size of 50.
+    const offset = options?.cursor === undefined ? 0 : Number(options.cursor);
+    const end = offset + (options?.limit ?? 50);
     return {
-      items: staleRunActive ? [{ id: "run-stale", status: "running" }] : [],
+      items: storedRuns.slice(offset, end),
+      ...(end < storedRuns.length ? { nextCursor: String(end) } : {}),
     };
   });
-  const cancelRun = vi.fn(async () => {
+  const cancelRun = vi.fn(async (runId: string) => {
     runOperations.push("agent.cancelRun");
-    staleRunActive = false;
+    storedRuns = storedRuns.map((run) =>
+      run.id === runId ? { ...run, status: "cancelled" } : run,
+    );
   });
 
   return {
@@ -82,29 +94,32 @@ const cursorSdkMock = vi.hoisted(() => {
     resume,
     runOperations,
     runCancel,
+    runSteer,
     runWait,
     send,
     setAgentCloseFailure: (failure: unknown) => {
       agentCloseFailure = failure;
     },
-    setStaleRunActive: (active: boolean) => {
-      staleRunActive = active;
+    setStoredRuns: (runs: Array<{ readonly id: string; readonly status: string }>) => {
+      storedRuns = runs;
     },
   };
 });
 
 vi.mock("./sdk.ts", () => ({
-  Agent: {
-    create: cursorSdkMock.create,
-    resume: cursorSdkMock.resume,
-    listRuns: cursorSdkMock.listRuns,
-    cancelRun: cursorSdkMock.cancelRun,
-    messages: {
-      list: vi.fn(async () => []),
+  loadCursorSdk: () => ({
+    Agent: {
+      create: cursorSdkMock.create,
+      resume: cursorSdkMock.resume,
+      listRuns: cursorSdkMock.listRuns,
+      cancelRun: cursorSdkMock.cancelRun,
+      messages: {
+        list: vi.fn(async () => []),
+      },
     },
-  },
-  createAgentPlatform: vi.fn(),
-  SqliteLocalAgentStore: { open: vi.fn() },
+    createAgentPlatform: vi.fn(),
+  }),
+  loadCursorSqlite: () => ({ SqliteLocalAgentStore: { open: vi.fn() } }),
 }));
 
 const layerTest = CursorAgentSdk.layer.pipe(
@@ -132,12 +147,53 @@ const layerTest = CursorAgentSdk.layer.pipe(
 );
 
 describe("CursorAgentSdkRunner", () => {
+  it.effect("constructs without loading and reports first-use load failures as runner errors", () =>
+    Effect.gen(function* () {
+      const failure = new Error("missing SDK chunk");
+      const load = vi.fn(() => {
+        throw failure;
+      });
+      const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined).pipe(
+        Effect.provideService(CursorSdk.CursorSdk, {
+          load,
+          loadSqlite: () => {
+            throw new Error("unused SQLite");
+          },
+        }),
+      );
+      assert.strictEqual(load.mock.calls.length, 0);
+      const result = yield* runner
+        .open({
+          operation: "create",
+          options: {},
+          threadId: ThreadId.make("lazy-load"),
+          providerSessionId: ProviderSessionId.make("lazy-load"),
+        })
+        .pipe(Effect.exit);
+      assert(Exit.isFailure(result));
+      assert.deepStrictEqual(
+        Cause.squash(result.cause),
+        new CursorAgentSdk.CursorAgentSdkRunnerError({
+          method: "agent.create",
+          cause: failure,
+        }),
+      );
+      assert.strictEqual(load.mock.calls.length, 1);
+    }),
+  );
+
   it.effect("retries a resumed send after cancelling its abandoned local run", () =>
     Effect.gen(function* () {
       cursorSdkMock.runOperations.length = 0;
       cursorSdkMock.listRuns.mockClear();
       cursorSdkMock.cancelRun.mockClear();
-      cursorSdkMock.setStaleRunActive(true);
+      cursorSdkMock.setStoredRuns([
+        ...Array.from({ length: 50 }, (_, index) => ({
+          id: `run-terminal-${index}`,
+          status: index === 0 ? "cancelled" : "finished",
+        })),
+        { id: "run-stale", status: "running" },
+      ]);
 
       const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const session = yield* runner.open({
@@ -156,12 +212,18 @@ describe("CursorAgentSdkRunner", () => {
       assert.deepStrictEqual(cursorSdkMock.runOperations, [
         "run.start",
         "agent.listRuns",
+        "agent.listRuns",
         "agent.cancelRun",
         "run.start",
       ]);
       assert.deepStrictEqual(cursorSdkMock.listRuns.mock.calls[0], [
         "agent-cursor-agent-sdk-test",
-        { runtime: "local", cwd: process.cwd(), limit: 1 },
+        { runtime: "local", cwd: process.cwd() },
+      ]);
+      assert.strictEqual(cursorSdkMock.listRuns.mock.calls.length, 2);
+      assert.deepStrictEqual(cursorSdkMock.listRuns.mock.calls[1], [
+        "agent-cursor-agent-sdk-test",
+        { runtime: "local", cwd: process.cwd(), cursor: "50" },
       ]);
       assert.deepStrictEqual(cursorSdkMock.cancelRun.mock.calls[0], [
         "run-stale",
@@ -170,6 +232,38 @@ describe("CursorAgentSdkRunner", () => {
           cwd: process.cwd(),
         },
       ]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("forwards Run.steer and reports a missing method as a follow-up", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.runSteer.mockClear();
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: {},
+        threadId: ThreadId.make("thread-cursor-agent-sdk-steer"),
+        providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-steer"),
+      });
+      const run = yield* session.send({ message: "continue" });
+      assert.equal(yield* run.steer!("keep going"), "complete_delivered");
+      assert.deepStrictEqual(cursorSdkMock.runSteer.mock.calls, [["keep going"]]);
+
+      cursorSdkMock.runSteer.mockImplementationOnce(async () => {
+        throw new Error("steer transport failed");
+      });
+      const failed = yield* run.steer!("again").pipe(Effect.exit);
+      assert(Exit.isFailure(failed));
+
+      cursorSdkMock.send.mockImplementationOnce(async () => ({
+        id: "run-without-steer",
+        agentId: "agent-cursor-agent-sdk-test",
+        wait: cursorSdkMock.runWait,
+        cancel: cursorSdkMock.runCancel,
+        steer: undefined,
+      }));
+      const plain = yield* session.send({ message: "plain" });
+      assert.equal(yield* plain.steer!("later"), "revert_to_followup");
     }).pipe(Effect.provide(layerTest)),
   );
 });

@@ -3,18 +3,15 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { resolveEnvironmentIconPickerLock } from "./EnvironmentIconPicker";
 
-const config = (environmentIcon: boolean | undefined) =>
-  ({
-    environment: { capabilities: environmentIcon === undefined ? {} : { environmentIcon } },
-  }) as unknown as ServerConfig;
+const config = { environment: { capabilities: {} } } as unknown as ServerConfig;
 
 describe("resolveEnvironmentIconPickerLock", () => {
   it("waits for a settings grant before allowing changes", () => {
     expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "pending" }),
+      resolveEnvironmentIconPickerLock({ serverConfig: config, operateAccess: "pending" }),
     ).toMatch(/cannot change/);
     expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "granted" }),
+      resolveEnvironmentIconPickerLock({ serverConfig: config, operateAccess: "granted" }),
     ).toBeNull();
   });
 });

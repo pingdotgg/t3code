@@ -85,7 +85,7 @@ function ExtendedOfficeViewer(props: {
   const [page, setPage] = useState(0);
   const workerRef = useRef<Worker | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Own the Office fetch, preparation worker, and timeout for this source and release them on cleanup.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the Office fetch, preparation worker, and timeout for this source and release them on cleanup.
   useEffect(() => {
     const controller = new AbortController();
     if ((props.sizeBytes ?? 0) > OFFICE_PREVIEW_MAX_BYTES) {
@@ -250,8 +250,9 @@ function ExtendedOfficeViewer(props: {
           className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
           role="status"
         >
-          Sheet {page + 1} of {count} · {sheet.rowCount.toLocaleString()} rows ·{" "}
-          {sheet.columns.toLocaleString()} columns
+          Sheet {page + 1} of {count} · {sheet.rowCount.toLocaleString()} row
+          {sheet.rowCount === 1 ? "" : "s"} · {sheet.columns.toLocaleString()} column
+          {sheet.columns === 1 ? "" : "s"}
           {fileSize !== undefined
             ? ` · ${fileSize === 0 ? "0 bytes" : formatAttachmentSize(fileSize)}`
             : ""}

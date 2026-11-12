@@ -15,7 +15,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -64,8 +63,10 @@ import * as HookInbox from "../hooks/HookInbox.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
+import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
 import * as AgentActivityPublisher from "../agentActivity/AgentActivityPublisher.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
+import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 
 vi.mock("@clerk/backend", () => ({
   createClerkClient: vi.fn(),
@@ -128,6 +129,8 @@ describe("managed endpoint provisioning errors", () => {
           Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
           Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
           Layer.mock(Devices.Devices, {}),
+          Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
+          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
         ),
       ),
       Layer.provideMerge(
@@ -238,6 +241,8 @@ describe("device listing compatibility", () => {
               return Effect.succeed([iphone, android]);
             },
           }),
+          Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
+          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
         ),
       ),
       Layer.provideMerge(
@@ -318,6 +323,8 @@ describe("Cloudflare rate-limit retry hint", () => {
           Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
           Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
           Layer.mock(Devices.Devices, {}),
+          Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
+          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
         ),
       ),
       Layer.provideMerge(
@@ -629,7 +636,10 @@ describe("relay managed tunnel recovery", () => {
         }),
       );
       expect(wrongAction).toMatchObject({ _tag: "Unauthorized" });
-    }).pipe(Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings)),
+    }).pipe(
+      Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings),
+      Effect.provide(NodeCryptoLayer.layerSignature),
+    ),
   );
 
   it.effect("rejects a signed registration proof for a different origin", () =>
@@ -671,7 +681,10 @@ describe("relay managed tunnel recovery", () => {
       );
 
       expect(error).toMatchObject({ _tag: "Unauthorized" });
-    }).pipe(Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings)),
+    }).pipe(
+      Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings),
+      Effect.provide(NodeCryptoLayer.layerSignature),
+    ),
   );
 
   it.effect("registers recovery for an existing tunnel without provisioning it", () => {
@@ -1450,14 +1463,14 @@ describe("relay routing fallback", () => {
         })),
       );
       expect(verified.map((input) => input.threadId)).toEqual(threadIds);
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.scoped, Effect.provide(NodeCryptoLayer.layerSignature)),
   );
 });
 
 describe("relay CORS", () => {
   const origin = "https://app.t3.codes";
 
-  class HandlerFailed extends Data.TaggedError("HandlerFailed") {}
+  class HandlerFailed extends Schema.TaggedError<HandlerFailed>()("HandlerFailed", {}) {}
 
   it.effect("adds CORS headers to handler failures and defects", () =>
     Effect.gen(function* () {

@@ -9,12 +9,11 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import { ChevronsDownUp, ChevronsUpDown } from "lucide";
-import { useEffect, useRef, useState } from "react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
+import { type Ref, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
-import { MorphIcon } from "~/components/MorphIcon";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -34,6 +33,8 @@ import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
+import { isMacPlatform } from "~/lib/utils";
+import { type PreviewAction, subscribePreviewAction } from "../preview/previewActionBus";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -47,6 +48,7 @@ interface FileBrowserPanelProps {
   hostFolder?: boolean;
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
+  answersPanelFind?: boolean;
 }
 
 function treePath(entry: ProjectEntry): string {
@@ -74,22 +76,28 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
   );
 }
 
-function FileSearchField(props: {
+function FileSearchField({
+  ref,
+  ...props
+}: {
   ariaLabel: string;
   name: string;
   onClose: () => void;
   onValueChange: (value: string) => void;
+  ref: Ref<HTMLInputElement>;
   value: string;
 }) {
   return (
     <InputGroup variant="ghost" className="h-7 min-w-0 flex-1">
       <InputGroupInput
+        ref={ref}
         type="search"
         name={props.name}
         size="sm"
         value={props.value}
         aria-label={props.ariaLabel}
         placeholder="Search files"
+        data-workspace-focus-default
         spellCheck={false}
         onChange={(event) => props.onValueChange(event.target.value)}
         onKeyDown={(event) => {
@@ -142,6 +150,7 @@ export default function FileBrowserPanel({
   onRefreshSelectedFile,
   workspaceMutationId,
   hostFolder = false,
+  answersPanelFind = false,
 }: FileBrowserPanelProps) {
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
@@ -173,13 +182,6 @@ export default function FileBrowserPanel({
 
   // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
   const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
-  useEffect(() => {
-    const capturePointer = (event: MouseEvent) => {
-      contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
-    };
-    document.addEventListener("contextmenu", capturePointer, true);
-    return () => document.removeEventListener("contextmenu", capturePointer, true);
-  }, []);
 
   const showEntryContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
@@ -198,6 +200,8 @@ export default function FileBrowserPanel({
         : { x: anchorRect.left, y: anchorRect.bottom };
       const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+      // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
+      context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
         const clicked = await api.contextMenu.show(
           [
@@ -252,7 +256,6 @@ export default function FileBrowserPanel({
           }
         }
       }).then((result) => {
-        context.close();
         if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
       });
     },
@@ -301,6 +304,7 @@ export default function FileBrowserPanel({
     onSearchChange: (value) => setQuery(value ?? ""),
     unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- makes the Pierre tree model re-render row decorations when loading directories change
   useEffect(() => {
     if (loadingDirectoriesRef.current === loadingDirectories) return;
     loadingDirectoriesRef.current = loadingDirectories;
@@ -325,7 +329,22 @@ export default function FileBrowserPanel({
     setQuery("");
     search.close();
   };
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const focusSearch = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+  const onPanelAction = useEffectEvent((action: PreviewAction) => {
+    // Hidden panel tabs stay mounted; only the visible Files tab answers.
+    if (action === "find" && searchInputRef.current?.getClientRects().length) focusSearch();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the panel find command, which fires while focus is anywhere in the right panel
+  useEffect(() => {
+    if (!answersPanelFind) return;
+    return subscribePreviewAction(onPanelAction);
+  }, [answersPanelFind]);
   const expandedPathsRef = useRef(new Set<string>());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Pierre tree model to load directories as they are expanded
   useEffect(() => {
     const currentPaths = new Set(directoryPaths);
     for (const path of expandedPathsRef.current) {
@@ -349,6 +368,7 @@ export default function FileBrowserPanel({
     loadExpanded();
     return model.subscribe(loadExpanded);
   }, [directoryPaths, load, model]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes ignored-file status into the imperative Pierre tree model
   useEffect(() => {
     model.setGitStatus(
       entries
@@ -359,6 +379,7 @@ export default function FileBrowserPanel({
         })),
     );
   }, [entries, model]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the selected file's ancestor directories and aborts on cleanup
   useEffect(() => {
     if (!selectedPath) return;
     const controller = new AbortController();
@@ -389,6 +410,7 @@ export default function FileBrowserPanel({
     resourceKey: `files:${environmentId}:${cwd}`,
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies tree path changes to the imperative Pierre tree model as a reset or batch update
   useEffect(() => {
     if (!ready) return;
     if (previousTreePathsRef.current === treePaths) return;
@@ -403,11 +425,13 @@ export default function FileBrowserPanel({
     if (updates.length > 0) model.batch(updates);
   }, [ready, entryKinds, model, treePaths]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands every directory in the Pierre tree model while expand-all is on and no search is active
   useEffect(() => {
     if (expandAll && !query.trim())
       setAllDirectoriesExpanded(model, expandableDirectoryPaths, true);
   }, [expandableDirectoryPaths, expandAll, model, query]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals an externally selected path in the Pierre tree model by expanding, selecting and scrolling
   useEffect(() => {
     if (!selectedPath) {
       handledRevealRef.current = null;
@@ -470,29 +494,24 @@ export default function FileBrowserPanel({
     });
   }, [entryKinds, model, selectedPath, selectedPathRevealId]);
 
-  // Capture dragstart before the tree selects the row so selection sees the drag flag.
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const panel = panelRef.current;
-    if (panel === null) {
-      return;
-    }
-    const handleDragStart = (event: DragEvent) => dragMention.handleDragStart(event);
-    const handleDragEnd = () =>
-      dragMention.handleDragEnd((path) => model.getItem(path)?.deselect());
-    panel.addEventListener("dragstart", handleDragStart, true);
-    panel.addEventListener("dragend", handleDragEnd);
-    return () => {
-      panel.removeEventListener("dragstart", handleDragStart, true);
-      panel.removeEventListener("dragend", handleDragEnd);
-    };
-  }, [dragMention, model]);
-
   return (
     <div
-      ref={panelRef}
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
+      // Capture runs before the tree's shadow-internal row handler opens the menu.
+      onContextMenuCapture={(event) => {
+        contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
+      }}
+      // Capture dragstart before the tree selects the row so selection sees the drag flag.
+      onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
+      onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
+      onKeyDown={(event) => {
+        const isModPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+        if (!isModPressed || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f")
+          return;
+        event.preventDefault();
+        focusSearch();
+      }}
     >
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"
@@ -500,6 +519,7 @@ export default function FileBrowserPanel({
       >
         <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
         <FileSearchField
+          ref={searchInputRef}
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
           value={search.value}
@@ -523,10 +543,11 @@ export default function FileBrowserPanel({
                 />
               }
             >
-              <MorphIcon
-                className="size-3.5"
-                icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
-              />
+              {allDirectoriesExpanded ? (
+                <ChevronsDownUpIcon className="size-3.5" />
+              ) : (
+                <ChevronsUpDownIcon className="size-3.5" />
+              )}
             </TooltipTrigger>
             <TooltipPopup>
               {expandAll || allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}

@@ -1,5 +1,7 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useAtomValue } from "@effect/atom-react";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import type { DesktopPreviewAnnotationVoiceConfig } from "@t3tools/contracts";
 import { previewStreamDownloadUrl } from "@t3tools/client-runtime/preview/server-browser-stream";
 import {
   isAtomCommandInterrupted,
@@ -10,7 +12,6 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
-  type PreviewViewportSetting,
   type ScopedThreadRef,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   PREVIEW_ZOOM_LEVELS,
@@ -18,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import {
   normalizePreviewUrl,
+  isPreviewUrlNormalizationError,
   resolveAddressBarInput,
   previewPdfAssetUrl,
   resolveSearchUrlTemplate,
@@ -28,7 +30,6 @@ import {
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
   recordVisitForThread,
   removeUrlForThread,
-  setTitleForThreadUrl,
   useThreadRecentHistory,
 } from "~/browserHistoryStore";
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
@@ -58,6 +59,10 @@ import {
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useRightPanelStore } from "~/rightPanelStore";
 
+import { effectiveShortcutsForCommand, shortcutLabelForCommand } from "~/keybindings";
+import { randomUUID } from "~/lib/utils";
+import { primaryServerKeybindingsAtom } from "~/state/server";
+import { PreviewAnnotationSpeech } from "./PreviewAnnotationSpeech";
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { closePreviewSession } from "./closePreviewSession";
@@ -66,16 +71,13 @@ import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu, type PreviewMoreMenuActions } from "./PreviewMoreMenu";
-import {
-  commitBrowserViewportChange,
-  subscribeBrowserViewportChange,
-} from "~/browser/browserViewportActions";
+import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
 import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
 import { BROWSER_DEVICE_TOOLBAR_HEIGHT } from "~/browser/browserViewportLayout";
 import { useBrowserLayoutZoomFactor } from "~/browser/useBrowserLayoutZoomFactor";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
-import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
+import { isBrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
@@ -88,6 +90,7 @@ import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
 import { AgentBrowserCursor } from "./AgentBrowserCursor";
+import { PreviewFindBar } from "./PreviewFindBar";
 import {
   findActiveBrowserRecordingRuntimeTabId,
   isBrowserRecordingStartCancelledError,
@@ -143,6 +146,14 @@ function ServerTabFileNotShown(props: {
   );
 }
 
+function focusPreviewPage(runtimeTabId: string) {
+  const active = document.activeElement;
+  if (active && active !== document.body && !active.closest("[data-preview-panel-mode]")) return;
+  document
+    .querySelector<HTMLElement>(`[data-preview-viewport="${CSS.escape(runtimeTabId)}"] webview`)
+    ?.focus();
+}
+
 export function PreviewView({
   threadRef,
   tabId: requestedTabId,
@@ -150,14 +161,17 @@ export function PreviewView({
   visible,
   onSendAnnotation,
 }: Props) {
-  const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
+  const urlInputRef = useRef<HTMLInputElement | null>(null);
+  const [find, setFind] = useState<{ tabId: string; requestId: number } | null>(null);
   const [pickActive, setPickActive] = useState(false);
   const canSendAnnotation =
     useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) &&
     Boolean(onSendAnnotation);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef<{ cancelled: boolean } | null>(null);
-  const isMountedRef = useRef(true);
+  const [annotationVoice, setAnnotationVoice] =
+    useState<DesktopPreviewAnnotationVoiceConfig | null>(null);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const previewState = useThreadPreviewState(threadRef);
   const recentHistoryEntries = useThreadRecentHistory(
     threadRef,
@@ -169,30 +183,20 @@ export function PreviewView({
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
-  const environmentHostname = environmentHttpBaseUrl
-    ? new URL(environmentHttpBaseUrl).hostname
-    : null;
   const open = useAtomCommand(previewEnvironment.open);
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? "the environment";
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
-  const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
 
   usePreviewSession(threadRef);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
 
   const tabId = requestedTabId ?? previewState.activeTabId;
   const runtimeTabId = tabId
     ? previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId)
     : null;
+  if (find !== null && find.tabId !== runtimeTabId) setFind(null);
   const recordingRuntimeTabId =
     tabId && runtimeTabId
       ? activeRecordingTabIds.has(runtimeTabId)
@@ -205,10 +209,11 @@ export function PreviewView({
   const serverOwnsRendering = snapshot?.runtime === "server";
   const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
   const [serverAspectRatioLocked, setServerAspectRatioLocked] = useState(false);
-  const serverBodyRef = useRef<HTMLDivElement | null>(null);
   const [serverToolbarWidth, setServerToolbarWidth] = useState(0);
   const serverToolbarShown =
     snapshot?.runtime === "server" && (snapshot.viewport ?? FILL_PREVIEW_VIEWPORT)._tag !== "fill";
+  const serverBodyRef = useRef<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ResizeObserver on the server preview body sizes the viewport toolbar
   useEffect(() => {
     const element = serverBodyRef.current;
     if (!element || !serverToolbarShown) return;
@@ -219,7 +224,9 @@ export function PreviewView({
   const [serverControlledTabId, setServerControlledTabId] = useState<string | null>(null);
   const serverInputDisabled = isServerTab && serverControlledTabId !== runtimeTabId;
   const [serverFrameTabId, setServerFrameTabId] = useState<string | null>(null);
-  const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
+  // A desktop page that mounted before its tab went headless leaves its stale state here.
+  const desktopOverlay =
+    tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
@@ -241,20 +248,6 @@ export function PreviewView({
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
 
-  const navUrl = navStatus._tag === "Success" ? navStatus.url : null;
-  const navTitle = navStatus._tag === "Success" ? navStatus.title : null;
-  const latestHistoryUrl = recentHistoryEntries[0]?.url;
-  const { environmentId: threadEnvironmentId, threadId } = threadRef;
-  useEffect(() => {
-    if (!navUrl || !navTitle || !latestHistoryUrl) return;
-    setTitleForThreadUrl(
-      scopeThreadRef(threadEnvironmentId, threadId),
-      navUrl,
-      navTitle,
-      environmentHostname,
-    );
-  }, [environmentHostname, latestHistoryUrl, navTitle, navUrl, threadEnvironmentId, threadId]);
-
   const navigateToResolvedUrl = async (resolvedUrl: string) => {
     if (isServerTab && serverSurfaceRef.current) {
       if (serverInputDisabled) return false;
@@ -265,12 +258,13 @@ export function PreviewView({
     if (runtimeTabId && previewBridge) {
       await previewBridge.navigate(runtimeTabId, resolvedUrl);
       rememberPreviewUrl(threadRef, resolvedUrl);
+      focusPreviewPage(runtimeTabId);
       return true;
     }
     const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      if (error instanceof BrowserSettingsReadError) {
+      if (isBrowserSettingsReadError(error)) {
         toastManager.add({
           type: "error",
           title: "Unable to open browser",
@@ -287,7 +281,17 @@ export function PreviewView({
       if (await navigateToResolvedUrl(resolved)) {
         recordVisitForThread(threadRef, resolved);
       }
-    } catch {}
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Could not open this address",
+        description: isPreviewUrlNormalizationError(error)
+          ? "Enter an http or https URL."
+          : error instanceof Error
+            ? error.message
+            : "An error occurred.",
+      });
+    }
   };
 
   const handleOpenServerUrl = async (next: string) => {
@@ -299,7 +303,17 @@ export function PreviewView({
       if (await navigateToResolvedUrl(resolved)) {
         recordVisitForThread(threadRef, next);
       }
-    } catch {}
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Could not open this address",
+        description: isPreviewUrlNormalizationError(error)
+          ? "Enter an http or https URL."
+          : error instanceof Error
+            ? error.message
+            : "An error occurred.",
+      });
+    }
   };
 
   const handleRefresh = () => {
@@ -340,6 +354,27 @@ export function PreviewView({
     if (next !== serverZoomFactor) void adjustServerTab({ zoomFactor: next });
   };
 
+  const canFindInPage =
+    previewBridge !== null &&
+    runtimeTabId !== null &&
+    desktopOverlay !== null &&
+    !isServerTab &&
+    !showEmptyState &&
+    !isUnreachable;
+  const handleFind = () => {
+    if (!canFindInPage) {
+      toastManager.add({ type: "info", title: "Find on page isn't available for this page" });
+      return;
+    }
+    setFind((previous) => ({ tabId: runtimeTabId, requestId: (previous?.requestId ?? 0) + 1 }));
+  };
+
+  // Otherwise focus falls to the body and the next find shortcut misses the preview.
+  const closeFind = () => {
+    setFind(null);
+    if (runtimeTabId) focusPreviewPage(runtimeTabId);
+  };
+
   const handleZoomIn = () => {
     if (serverOwnsRendering) stepServerZoom(1);
     else if (previewBridge && runtimeTabId) void previewBridge.zoomIn(runtimeTabId);
@@ -355,37 +390,16 @@ export function PreviewView({
     else if (previewBridge && runtimeTabId) void previewBridge.resetZoom(runtimeTabId);
   };
 
-  const handleViewportChange = async (nextViewport: PreviewViewportSetting) => {
-    if (!tabId) return;
-    const result = await resize({
-      environmentId: threadRef.environmentId,
-      input: {
-        threadId: threadRef.threadId,
-        tabId,
-        viewport: nextViewport,
-      },
-    });
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "error",
-        title: "Unable to resize browser viewport",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
-      throw error;
-    }
-    updatePreviewServerSnapshot(threadRef, result.value);
-  };
-
   const handleToggleDeviceToolbar = () => {
-    if (!runtimeTabId) return;
+    if (!runtimeTabId || !tabId) return;
+    const target = { threadRef, tabId, runtimeTabId };
     if (viewport._tag !== "fill") {
-      void commitBrowserViewportChange(runtimeTabId, FILL_PREVIEW_VIEWPORT).catch(() => undefined);
+      void commitBrowserViewportChange(target, FILL_PREVIEW_VIEWPORT).catch(() => undefined);
       return;
     }
 
     void commitBrowserViewportChange(
-      runtimeTabId,
+      target,
       browserResponsiveViewportForToggle({
         defaults: browserDefaults,
         panelRect,
@@ -393,14 +407,6 @@ export function PreviewView({
       }),
     ).catch(() => undefined);
   };
-
-  const onViewportChange = useEffectEvent(handleViewportChange);
-  useEffect(() => {
-    if (!runtimeTabId) return;
-    return subscribeBrowserViewportChange(runtimeTabId, (nextViewport) =>
-      onViewportChange(nextViewport),
-    );
-  }, [runtimeTabId]);
 
   const handleBack = () => {
     if (isServerTab) serverSurfaceRef.current?.history(-1);
@@ -482,6 +488,7 @@ export function PreviewView({
           ? {
               openDevTools: desktopCall(previewBridge.openDevTools),
               toggleNativePictureInPicture: () => handleNativePictureInPicture(),
+              ...(canFindInPage ? { find: handleFind } : {}),
             }
           : {}),
       }
@@ -505,6 +512,7 @@ export function PreviewView({
               .catch(() => undefined),
           openDevTools: desktopCall(previewBridge.openDevTools),
           toggleNativePictureInPicture: () => handleNativePictureInPicture(),
+          ...(canFindInPage ? { find: handleFind } : {}),
         }
       : null;
 
@@ -774,11 +782,20 @@ export function PreviewView({
     let submitted = false;
     pickActiveRef.current = pickRequest;
     setPickActive(true);
+    // The guest learns only the dictation chords, never the whole keybinding config.
+    const voice: DesktopPreviewAnnotationVoiceConfig = {
+      sessionId: randomUUID(),
+      shortcuts: effectiveShortcutsForCommand(keybindings, "composer.dictation", {
+        context: { previewFocus: true, previewOpen: true, editableFocus: true },
+      }),
+    };
+    setAnnotationVoice(voice);
     const finishPick = () => {
       const isCurrentPick = pickActiveRef.current === pickRequest;
       if (isCurrentPick) {
         pickActiveRef.current = null;
-        if (isMountedRef.current) setPickActive(false);
+        setPickActive(false);
+        setAnnotationVoice(null);
       }
       if (
         (isCurrentPick || submitted) &&
@@ -793,18 +810,19 @@ export function PreviewView({
     };
     const bridge = previewBridge;
     void settlePromise(async () => {
-      await bridge.setAnnotationSendEnabled?.(
+      await bridge.setAnnotationSendEnabled(
         runtimeTabId,
         Boolean(onSendAnnotation) &&
           readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
       );
       if (pickRequest.cancelled) return;
-      const result = await bridge.pickElement(runtimeTabId);
+      const result = await bridge.pickElement(runtimeTabId, voice);
       if (!result || pickRequest.cancelled) return;
       // The accepted pick must survive further clicks, tab changes, and unmount; stop cancellation here.
       if (pickActiveRef.current === pickRequest) {
         pickActiveRef.current = null;
-        if (isMountedRef.current) setPickActive(false);
+        setPickActive(false);
+        setAnnotationVoice(null);
         submitted = true;
       }
       const { annotation: picked, submission, screenshotFailed = false } = result;
@@ -848,13 +866,15 @@ export function PreviewView({
     }).then(finishPick);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the preview bridge whether an element pick may send annotations
   useEffect(() => {
     if (!pickActive || !previewBridge || !runtimeTabId) return;
     void previewBridge
-      .setAnnotationSendEnabled?.(runtimeTabId, canSendAnnotation)
+      .setAnnotationSendEnabled(runtimeTabId, canSendAnnotation)
       .catch(() => undefined);
   }, [canSendAnnotation, pickActive, runtimeTabId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels an in-progress element pick on the preview bridge when the tab changes or on unmount
   useEffect(() => {
     return () => {
       if (!pickActiveRef.current) return;
@@ -863,7 +883,8 @@ export function PreviewView({
       if (previewBridge && runtimeTabId) {
         void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       }
-      if (isMountedRef.current) setPickActive(false);
+      setPickActive(false);
+      setAnnotationVoice(null);
     };
   }, [runtimeTabId]);
 
@@ -874,8 +895,14 @@ export function PreviewView({
         case "refresh":
           handleRefresh();
           return;
+        case "back":
+          handleBack();
+          return;
+        case "forward":
+          handleForward();
+          return;
         case "focus-url":
-          setFocusUrlNonce((value) => (value ?? 0) + 1);
+          urlInputRef.current?.focus();
           return;
         case "zoom-in":
           handleZoomIn();
@@ -886,14 +913,28 @@ export function PreviewView({
         case "reset-zoom":
           handleResetZoom();
           return;
+        case "find":
+          handleFind();
+          return;
         case "toggle-panel":
           return;
       }
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview and desktop menu actions while the view is visible
   useEffect(() => {
     if (!visible) return;
-    return subscribePreviewAction((action) => onPreviewAction(action));
+    const unsubscribeAction = subscribePreviewAction((action) => onPreviewAction(action));
+    // A focused page swallows its own keydowns, so the desktop forwards these
+    // shortcuts from the guest as menu actions instead.
+    const unsubscribeMenu = window.desktopBridge?.onMenuAction((action) => {
+      if (action === "preview.focusUrl") onPreviewAction("focus-url");
+      if (action === "preview.find") onPreviewAction("find");
+    });
+    return () => {
+      unsubscribeAction();
+      unsubscribeMenu?.();
+    };
   }, [visible]);
 
   return (
@@ -901,6 +942,15 @@ export function PreviewView({
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
     >
+      {pickActive && runtimeTabId && annotationVoice ? (
+        <PreviewAnnotationSpeech
+          key={annotationVoice.sessionId}
+          threadRef={threadRef}
+          tabId={runtimeTabId}
+          config={annotationVoice}
+          keybindings={keybindings}
+        />
+      ) : null}
       <PreviewChromeRow
         url={url}
         loading={loading || serverStreamPending}
@@ -908,7 +958,7 @@ export function PreviewView({
         canGoForward={canGoForward && !serverInputDisabled}
         refreshDisabled={refreshDisabled || serverInputDisabled}
         inputDisabled={serverInputDisabled}
-        focusUrlNonce={focusUrlNonce}
+        urlInputRef={urlInputRef}
         onBack={handleBack}
         onForward={handleForward}
         onRefresh={handleRefresh}
@@ -952,6 +1002,9 @@ export function PreviewView({
                 ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
                 : {})}
               profileName={activeProfileName}
+              findShortcutLabel={shortcutLabelForCommand(keybindings, "preview.find", {
+                context: { previewFocus: true },
+              })}
               zoomFactor={
                 serverOwnsRendering ? serverZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
               }
@@ -978,12 +1031,20 @@ export function PreviewView({
                   width={serverToolbarWidth}
                   aspectRatio={serverAspectRatioLocked ? viewport.width / viewport.height : null}
                   onAspectRatioChange={(ratio) => setServerAspectRatioLocked(ratio !== null)}
-                  onChange={(setting) => commitBrowserViewportChange(runtimeTabId, setting)}
+                  onChange={(setting) =>
+                    commitBrowserViewportChange(
+                      { threadRef, tabId: snapshot.tabId, runtimeTabId },
+                      setting,
+                    )
+                  }
                 />
               </div>
             ) : null}
             <div
-              className="absolute inset-x-0 bottom-0"
+              className={cn(
+                "absolute inset-x-0 bottom-0",
+                (showEmptyState || isUnreachable) && "invisible",
+              )}
               style={{ top: viewport._tag !== "fill" ? BROWSER_DEVICE_TOOLBAR_HEIGHT : 0 }}
             >
               <ServerBrowserSurface
@@ -1004,10 +1065,7 @@ export function PreviewView({
                 }
                 onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "panel")}
                 // Stays connected under the empty state so a URL picked there reaches the page.
-                className={cn(
-                  "absolute inset-0 h-full w-full",
-                  (showEmptyState || isUnreachable) && "invisible",
-                )}
+                className="absolute inset-0 h-full w-full"
               />
             </div>
           </>
@@ -1049,6 +1107,14 @@ export function PreviewView({
             tabId={runtimeTabId}
             zoomFactor={layoutZoomFactor}
             controller={controller}
+          />
+        ) : null}
+        {find && canFindInPage && find.tabId === runtimeTabId ? (
+          <PreviewFindBar
+            key={find.tabId}
+            tabId={find.tabId}
+            focusRequestId={find.requestId}
+            onClose={closeFind}
           />
         ) : null}
         {navStatus._tag === "LoadFailed" && navStatus.download ? (

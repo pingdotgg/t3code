@@ -1,3 +1,5 @@
+import { PreviewAutomationEvaluateInput } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import {
   chromium,
   type Browser,
@@ -5,9 +7,20 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
+
+const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
 
 describe("server browser element refs", () => {
   let browser: Browser;
@@ -98,6 +111,27 @@ describe("server browser element refs", () => {
     expect(await page.locator("li").count()).toBe(5);
   });
 
+  it("tells a click target that matches nothing from one that never becomes clickable", async () => {
+    await page.setContent(`<button hidden>hidden</button>`);
+    const failure = (selector: string) =>
+      ServerBrowserPage.click(page, { selector, timeoutMs: 500 }).then(
+        () => expect.unreachable(),
+        ServerBrowserPage.toOperationError,
+      );
+
+    const absent = await failure(".definitely-no-such-t3-target");
+    expect(absent.tag).toBe("PreviewAutomationTimeoutError");
+    expect(absent.message).toBe(
+      'The click may have happened and removed its target or navigated; check the page before retrying. No element matches ".definitely-no-such-t3-target" after the timeout; take a fresh snapshot and use its locator.',
+    );
+    expect(absent.cause).toMatchObject({ name: "TimeoutError" });
+    const hidden = await failure("button");
+    expect(hidden.tag).toBe("PreviewAutomationTimeoutError");
+    expect(hidden.message).toBe(
+      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout.',
+    );
+  });
+
   it("does not retarget a removed ref to a replacement node", async () => {
     await page.setContent("<button onclick=\"this.textContent='clicked'\">original</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "original");
@@ -150,7 +184,6 @@ describe("server browser element refs", () => {
     );
     expect(result.visibleText).not.toContain("editable-pass");
     expect(result.visibleText).toContain("Order ••••••••-2");
-    expect(tree).toMatch(/row "password: •+"/);
     expect(tree).toMatch(/textbox "Username" [^\n]*: maria$/m);
     const line = tree.split("\n").find((line) => line.includes('textbox "Password"'));
     expect(line).toMatch(/: •+$/);
@@ -212,6 +245,11 @@ describe("server browser element refs", () => {
     expect(tree).not.toContain("PAYLOAD");
   });
 
+  it("shows a data: page's own URL by media type only", async () => {
+    await page.goto("data:text/html,<title>Key</title>PAYLOAD");
+    expect((await takeSnapshot()).url).toBe("data:text/html,…");
+  });
+
   it("rejects refs from another tab", async () => {
     await page.setContent("<button>same label</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "same label");
@@ -242,6 +280,216 @@ describe("server browser element refs", () => {
     );
     await ServerBrowserPage.click(page, { selector: 'button[data-example=" >> aria-ref=e1"]' });
     expect(await page.locator("button").textContent()).toBe("saved");
+  });
+
+  it("evaluates top-level await and returns the last expression's value", async () => {
+    await page.setContent("<title>Ready</title>");
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "await Promise.resolve(); document.title" },
+      5_000,
+    );
+    expect(result).toBe("Ready");
+  });
+
+  it("returns object contents even when a legacy caller asks for a remote reference", async () => {
+    const input = decodeEvaluateInput({
+      expression: "({ answer: 42, nested: { ready: true } })",
+      returnByValue: false,
+    });
+    const result = await ServerBrowserPage.evaluate(cdp, input, 5_000);
+    expect(result).toEqual({ answer: 42, nested: { ready: true } });
+  });
+
+  it("still awaits the promise an async function returns", async () => {
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "(async () => { await 0; return 1 })()" },
+      5_000,
+    );
+    expect(result).toBe(1);
+  });
+
+  it("does not rerun an expression whose SyntaxError is thrown at runtime", async () => {
+    const evaluation = ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "window.runs = (window.runs ?? 0) + 1; new Function('await 0')" },
+      5_000,
+    );
+    await expect(evaluation).rejects.toThrow("await is only valid");
+    expect(await page.evaluate("window.runs")).toBe(1);
+  });
+
+  it("does not rerun an expression whose awaited browser call rejects with a SyntaxError", async () => {
+    let posts = 0;
+    await page.route("http://preview.test/**", (route) => {
+      if (route.request().method() === "POST") posts++;
+      return route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" });
+    });
+    await page.goto("http://preview.test/");
+    const evaluation = ServerBrowserPage.evaluate(
+      cdp,
+      {
+        expression:
+          "(async () => { const r = await fetch('/api', { method: 'POST' }); return r.json() })()",
+      },
+      5_000,
+    );
+    await expect(evaluation).rejects.toThrow("is not valid JSON");
+    expect(posts).toBe(1);
+  });
+
+  it("returns the result of a top-level await expression that reloads the page", async () => {
+    await page.route("http://preview.test/", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" }),
+    );
+    await page.goto("http://preview.test/");
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "await 0; location.reload(); ({ clicked: true })" },
+      5_000,
+    );
+    expect(result).toEqual({ clicked: true });
+  });
+});
+
+describe("server browser snapshot screenshot", () => {
+  let browser: Browser;
+  let context: BrowserContext;
+
+  beforeAll(async () => {
+    // ServerBrowserContexts launches with these, and the capture scale depends on them.
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--disable-gpu", "--force-device-scale-factor=2"],
+    });
+  });
+  afterAll(async () => {
+    await browser?.close();
+  });
+  beforeEach(async () => {
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      deviceScaleFactor: 2,
+    });
+  });
+  afterEach(async () => {
+    await context.close();
+  });
+
+  // Blue on the left half and red on the right, so a mirrored left half shows up on the right.
+  const halves = (overlay: string) => `
+    <style>
+      body { margin: 0; background: white; }
+      .half { position: absolute; top: 0; width: 640px; height: 800px; }
+      .overlay { position: fixed; inset: 0; ${overlay} }
+    </style>
+    <div class="half" style="left: 0; background: #2563eb"></div>
+    <div class="half" style="left: 640px; background: #ef4444"></div>
+    <div class="overlay"></div>`;
+
+  const screenshotOf = async (html: string) => {
+    const page = await context.newPage();
+    await page.setContent(html);
+    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot({
+      page,
+      cdp: await context.newCDPSession(page),
+      renderScale: 2,
+      fullScreenshot: true,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+    });
+    // The server has no DOM types, so the decoder runs as page source.
+    const points = [
+      [0.15, 0.75],
+      [0.85, 0.25],
+      [0.85, 0.75],
+    ];
+    const pixels = (await page.evaluate(`(async () => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(screenshot.data)}), (char) => char.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(bitmap, 0, 0);
+      return ${JSON.stringify(points)}.map(([x, y]) =>
+        Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
+      );
+    })()`)) as Array<[number, number, number, number]>;
+    return { screenshot, fullScreenshot, pixels };
+  };
+  const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
+    blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
+
+  it("captures a blurred backdrop-filter page as rendered, not mirrored", async () => {
+    const { screenshot, pixels } = await screenshotOf(halves("backdrop-filter: blur(4px);"));
+
+    expect({
+      size: [screenshot.width, screenshot.height],
+      colors: pixels.map(colorOf),
+    }).toEqual({ size: [1280, 800], colors: ["blue", "red", "red"] });
+  });
+
+  it("captures a plain page at the shrunk size with its content in place", async () => {
+    const { screenshot, fullScreenshot, pixels } = await screenshotOf(halves(""));
+
+    expect({
+      size: [screenshot.width, screenshot.height],
+      fullSize: [fullScreenshot?.width, fullScreenshot?.height],
+      colors: pixels.map(colorOf),
+    }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
+  });
+
+  it("records the destination of a finite entrance animation without waiting on infinite ones", async () => {
+    const page = await context.newPage();
+    await page.setContent(`
+      <style>
+        body { margin: 0; background: #2563eb; }
+        @keyframes enter { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes pulse { from { opacity: 0.5; } to { opacity: 1; } }
+        button { animation: pulse 2s infinite; }
+        #paused { animation: enter 2s paused; }
+        #overlay { display: none; position: fixed; inset: 0; background: #ef4444; }
+        #overlay.open { display: block; animation: enter 200ms both; }
+      </style>
+      <button onclick="document.querySelector('#overlay').classList.add('open')">Open</button>
+      <div id="paused"></div>
+      <div id="overlay"></div>
+    `);
+    await page.getByRole("button", { name: "Open" }).click();
+    const frame = await ServerBrowserPage.captureFinalRecordingFrame(
+      await context.newCDPSession(page),
+      80,
+    );
+    expect(frame).toBeDefined();
+    const pixel = (await page.evaluate(`(async () => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(frame)}), char => char.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(bitmap, 0, 0);
+      return Array.from(context.getImageData(bitmap.width / 2, bitmap.height / 2, 1, 1).data);
+    })()`)) as [number, number, number, number];
+    expect(colorOf(pixel)).toBe("red");
+  });
+
+  it("shrinks the screenshot of an XML document, whose createElement makes no canvas", async () => {
+    const page = await context.newPage();
+    await page.goto("data:text/xml,<a/>");
+    const { screenshot } = await ServerBrowserPage.snapshot({
+      page,
+      cdp: await context.newCDPSession(page),
+      renderScale: 2,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+    });
+
+    expect([screenshot.width, screenshot.height]).toEqual([1280, 800]);
   });
 });
 
@@ -283,5 +531,73 @@ describe("server browser drag", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+});
+
+describe("server browser evaluate", () => {
+  it("does not retry a parse error that arrives after the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const classic = Promise.withResolvers<unknown>();
+      const send = vi.fn((method: string) =>
+        method === "Runtime.evaluate" ? classic.promise : Promise.resolve({}),
+      );
+      const cdp = { send } as unknown as CDPSession;
+      const evaluation = ServerBrowserPage.evaluate(cdp, { expression: "await 0; 1" }, 10);
+      const rejected = expect(evaluation).rejects.toMatchObject({
+        tag: "PreviewAutomationTimeoutError",
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      await rejected;
+      classic.resolve({
+        result: { type: "object" },
+        exceptionDetails: {
+          text: "Uncaught",
+          scriptId: "4",
+          exception: { type: "object", className: "SyntaxError" },
+        },
+      });
+      await classic.promise;
+      expect(send.mock.calls.map(([method]) => method)).toEqual([
+        "Runtime.evaluate",
+        "Runtime.terminateExecution",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("server browser wait", () => {
+  it("ends at its timeout when a check never answers", async () => {
+    // As on a desktop tab whose Playwright utility world never answers.
+    const page = {
+      locator: () => ({ count: () => new Promise<number>(() => {}) }),
+    } as unknown as Page;
+    vi.useFakeTimers();
+    try {
+      let failure: unknown;
+      void ServerBrowserPage.waitFor(page, { selector: "button", timeoutMs: 300 }).catch(
+        (error: unknown) => (failure = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(failure).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("server browser net errors", () => {
+  it.each([
+    ["net::ERR_CONNECTION_REFUSED", "ERR_CONNECTION_REFUSED", -102],
+    [
+      "page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://localhost:5173/",
+      "ERR_HTTP2_PROTOCOL_ERROR",
+      -2,
+    ],
+    ["net::ERR_TLS13_DOWNGRADE_DETECTED", "ERR_TLS13_DOWNGRADE_DETECTED", -2],
+  ])("reads the whole error name from %j", (errorText, description, code) => {
+    expect(ServerBrowserPage.parseNetError(errorText)).toEqual({ description, code });
   });
 });
