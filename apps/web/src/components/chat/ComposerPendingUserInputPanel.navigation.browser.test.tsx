@@ -179,6 +179,10 @@ it("tells the user when an option click moves their typed answer into the hidden
     customAnswer: "second try",
   });
   expect(toast).toHaveBeenCalledTimes(1);
+
+  // regression: #35205 undo puts the set-aside text back, so the draft must not keep a copy to resend
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "first try"));
+  expect(draftPrompt() ?? "").toBe("");
 });
 
 function QuestionPositionProbe(props: ProbeProps) {

@@ -9,6 +9,7 @@ import {
   derivePendingUserInputProgress,
   projectPendingUserInputAnswer,
   threadContextsReferencedByAnswer,
+  withdrawDisplacedCustomAnswerFromPrompt,
 } from "./pendingUserInput";
 
 describe("projectPendingUserInputAnswer", () => {
@@ -159,5 +160,33 @@ describe("carryDisplacedCustomAnswerIntoPrompt", () => {
     expect(carryDisplacedCustomAnswerIntoPrompt("first half\n", "second half")).toBe(
       "first half\n\nsecond half",
     );
+  });
+});
+
+describe("withdrawDisplacedCustomAnswerFromPrompt", () => {
+  // regression: #35205 an answer restored with undo stayed in the thread draft and was sent twice
+  it("takes set-aside text back out of the thread draft and leaves the rest", () => {
+    const setAside = carryDisplacedCustomAnswerIntoPrompt("", "first answer ");
+    expect(withdrawDisplacedCustomAnswerFromPrompt(setAside, "first answer ")).toBe("");
+
+    const afterDraft = carryDisplacedCustomAnswerIntoPrompt("draft", "first answer");
+    expect(withdrawDisplacedCustomAnswerFromPrompt(afterDraft, "first answer")).toBe("draft");
+
+    const beforeSecond = carryDisplacedCustomAnswerIntoPrompt(setAside, "second answer");
+    expect(withdrawDisplacedCustomAnswerFromPrompt(beforeSecond, "first answer")).toBe(
+      "second answer",
+    );
+
+    const between = carryDisplacedCustomAnswerIntoPrompt(afterDraft, "second answer");
+    expect(withdrawDisplacedCustomAnswerFromPrompt(between, "first answer")).toBe(
+      "draft\n\nsecond answer",
+    );
+  });
+
+  it("leaves a thread draft that no longer holds the set-aside text", () => {
+    expect(withdrawDisplacedCustomAnswerFromPrompt("first answer, edited", "first answer")).toBe(
+      "first answer, edited",
+    );
+    expect(withdrawDisplacedCustomAnswerFromPrompt("draft", "  ")).toBe("draft");
   });
 });

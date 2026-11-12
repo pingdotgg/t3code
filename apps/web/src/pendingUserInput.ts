@@ -72,6 +72,19 @@ export function carryDisplacedCustomAnswerIntoPrompt(
   return `${prompt.trimEnd()}${DISPLACED_ANSWER_SEPARATOR}${displaced}`;
 }
 
+/** Takes set-aside answer text back out of the thread draft once it is the answer again. */
+export function withdrawDisplacedCustomAnswerFromPrompt(prompt: string, displaced: string): string {
+  const text = displaced.trim();
+  if (text.length === 0) return prompt;
+  if (prompt === text) return "";
+  const tail = `${DISPLACED_ANSWER_SEPARATOR}${text}`;
+  if (prompt.endsWith(tail)) return prompt.slice(0, -tail.length);
+  const head = `${text}${DISPLACED_ANSWER_SEPARATOR}`;
+  if (prompt.startsWith(head)) return prompt.slice(head.length);
+  const middle = prompt.indexOf(`${tail}${DISPLACED_ANSWER_SEPARATOR}`);
+  return middle === -1 ? prompt : prompt.slice(0, middle) + prompt.slice(middle + tail.length);
+}
+
 function countAnsweredPendingUserInputQuestions(
   questions: ReadonlyArray<UserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
