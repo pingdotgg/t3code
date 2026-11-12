@@ -19,6 +19,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as NodeCrypto from "node:crypto";
 
 import * as ServerConfig from "../config.ts";
+import { auditDownload } from "../course/downloadAudit.ts";
 import { openZipArchive } from "../zipArchive.ts";
 
 // Update the version, sizes and hashes from each chrome-headless-shell zip listed at
@@ -137,6 +138,7 @@ export class PreviewBrowser extends Context.Service<
 
 export interface PreviewBrowserOptions {
   readonly baseDir: string;
+  readonly stateDir: string;
   readonly release?: PreviewBrowserRelease | null;
   /** How long a caller waits on an install in progress. Provider tool calls time out near 60s. */
   readonly wait?: Duration.Input;
@@ -196,45 +198,70 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
 
   const download = Effect.fn("PreviewBrowser.download")(
     function* (release: PreviewBrowserRelease, archivePath: string) {
-      const response = yield* http
-        .execute(HttpClientRequest.get(release.url))
-        .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
-      const contentLength = response.headers["content-length"];
-      const contentEncoding = response.headers["content-encoding"]?.trim().toLowerCase();
-      if (
-        (contentEncoding === undefined || contentEncoding === "identity") &&
-        contentLength !== undefined &&
-        Number(contentLength) !== release.bytes
-      ) {
-        return yield* new PreviewBrowserInstallError({
-          detail: "The download size did not match the pinned release.",
-        });
-      }
+      let response: HttpClientResponse.HttpClientResponse | undefined;
+      let downloadedBytes = 0;
       const hash = NodeCrypto.createHash("sha256");
-      yield* response.stream.pipe(
-        Stream.tap((chunk) =>
-          Effect.suspend(() => {
-            progress.downloadedBytes += chunk.byteLength;
-            if (progress.downloadedBytes > release.bytes) {
-              return Effect.fail(
-                new PreviewBrowserInstallError({
-                  detail: "The download was larger than the pinned release.",
-                }),
-              );
-            }
-            hash.update(chunk);
-            return Effect.void;
-          }),
-        ),
-        Stream.run(fs.sink(archivePath, { flag: "wx", mode: 0o600 })),
+      let sha256: string | null = null;
+      const result = yield* Effect.exit(
+        Effect.gen(function* () {
+          response = yield* http.execute(HttpClientRequest.get(release.url));
+          response = yield* HttpClientResponse.filterStatusOk(response);
+          const contentLength = response.headers["content-length"];
+          const contentEncoding = response.headers["content-encoding"]?.trim().toLowerCase();
+          if (
+            (contentEncoding === undefined || contentEncoding === "identity") &&
+            contentLength !== undefined &&
+            Number(contentLength) !== release.bytes
+          ) {
+            return yield* new PreviewBrowserInstallError({
+              detail: "The download size did not match the pinned release.",
+            });
+          }
+          yield* response.stream.pipe(
+            Stream.tap((chunk) =>
+              Effect.suspend(() => {
+                downloadedBytes += chunk.byteLength;
+                progress.downloadedBytes += chunk.byteLength;
+                if (progress.downloadedBytes > release.bytes) {
+                  return Effect.fail(
+                    new PreviewBrowserInstallError({
+                      detail: "The download was larger than the pinned release.",
+                    }),
+                  );
+                }
+                hash.update(chunk);
+                return Effect.void;
+              }),
+            ),
+            Stream.run(fs.sink(archivePath, { flag: "wx", mode: 0o600 })),
+          );
+          sha256 = hash.digest("hex");
+          if (downloadedBytes !== release.bytes || sha256 !== release.sha256) {
+            return yield* new PreviewBrowserInstallError({
+              detail: "The download failed its size or SHA-256 check. Nothing was installed.",
+            });
+          }
+        }).pipe(Effect.timeout(DOWNLOAD_TIMEOUT)),
       );
-      if (progress.downloadedBytes !== release.bytes || hash.digest("hex") !== release.sha256) {
-        return yield* new PreviewBrowserInstallError({
-          detail: "The download failed its size or SHA-256 check. Nothing was installed.",
-        });
+      if (sha256 === null && downloadedBytes > 0) sha256 = hash.digest("hex");
+      yield* Effect.promise(() =>
+        auditDownload(
+          { stateDir: options.stateDir },
+          {
+            url: release.url,
+            status: response?.status ?? null,
+            bytes: downloadedBytes,
+            contentType: response?.headers["content-type"] ?? null,
+            sha256,
+            ...(Exit.isFailure(result) ? { error: Cause.pretty(result.cause) } : {}),
+          },
+        ),
+      );
+      if (Exit.isFailure(result)) {
+        return yield* Effect.failCause(result.cause);
       }
+      return yield* Effect.void;
     },
-    Effect.timeout(DOWNLOAD_TIMEOUT),
     Effect.mapError(
       wrapFailure(
         "The download from storage.googleapis.com failed. Check this machine's network access.",
@@ -442,6 +469,6 @@ export const layer = Layer.effect(
   PreviewBrowser,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return yield* makePreviewBrowser({ baseDir: config.baseDir });
+    return yield* makePreviewBrowser({ baseDir: config.baseDir, stateDir: config.stateDir });
   }),
 );
