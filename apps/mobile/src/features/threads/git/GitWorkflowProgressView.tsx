@@ -17,7 +17,11 @@ export function GitWorkflowProgressView({ progress }: { readonly progress: GitWo
     group.push(step);
     groups.set(step.group, group);
   }
-  const finished = progress.steps.filter(
+  const stages =
+    progress.kind === "logical_commits"
+      ? progress.steps.filter((step) => !step.id.startsWith("commit:"))
+      : progress.steps;
+  const finished = stages.filter(
     (step) => step.state === "completed" || step.state === "skipped",
   ).length;
   return (
@@ -31,7 +35,7 @@ export function GitWorkflowProgressView({ progress }: { readonly progress: GitWo
             : progress.label}
         </Text>
         <Text className="text-xs text-foreground-secondary">
-          {finished}/{progress.steps.length} steps
+          {finished}/{stages.length} {progress.kind === "logical_commits" ? "stages" : "steps"}
         </Text>
       </View>
       {progress.kind === "stack" ? (
@@ -40,35 +44,54 @@ export function GitWorkflowProgressView({ progress }: { readonly progress: GitWo
           {progress.steps.some((step) => step.id.endsWith(":review")) ? " · Review" : ""}
         </Text>
       ) : null}
-      {[...groups].map(([group, steps]) => (
-        <View key={group} className="gap-1">
-          {progress.kind === "stack" ? (
-            <Text numberOfLines={1} className="text-xs text-foreground-secondary">
-              {group}
-            </Text>
-          ) : null}
+      {[...groups].map(([group, steps]) => {
+        const nested =
+          progress.kind === "logical_commits" &&
+          steps.every((step) => step.id.startsWith("commit:"));
+        const completed = steps.filter((step) => step.state === "completed").length;
+        return (
           <View
-            accessible
-            accessibilityRole="progressbar"
-            accessibilityLabel={group}
-            accessibilityValue={{
-              min: 0,
-              max: steps.length,
-              now: steps.filter((step) => step.state === "completed" || step.state === "skipped")
-                .length,
-              text: steps.map((step) => `${step.label}: ${step.state}`).join(", "),
-            }}
-            className="flex-row gap-1"
+            key={group}
+            className={cn("gap-1", nested && "ml-1 border-l border-subtle-strong pl-3")}
           >
-            {steps.map((step) => (
-              <View
-                key={step.id}
-                className={cn("h-1.5 min-w-0 flex-1 rounded-sm", stepColors[step.state])}
-              />
-            ))}
+            {nested ? (
+              <View className="flex-row items-center justify-between gap-2">
+                <Text className="text-xs text-foreground-secondary">Create commits</Text>
+                <Text className="text-xs text-foreground-secondary">
+                  {completed}/{steps.length} commits
+                </Text>
+              </View>
+            ) : null}
+            {progress.kind === "stack" ? (
+              <Text numberOfLines={1} className="text-xs text-foreground-secondary">
+                {group}
+              </Text>
+            ) : null}
+            <View
+              accessible
+              accessibilityRole="progressbar"
+              accessibilityLabel={group}
+              accessibilityValue={{
+                min: 0,
+                max: steps.length,
+                now: nested
+                  ? completed
+                  : steps.filter((step) => step.state === "completed" || step.state === "skipped")
+                      .length,
+                text: steps.map((step) => `${step.label}: ${step.state}`).join(", "),
+              }}
+              className="flex-row gap-1"
+            >
+              {steps.map((step) => (
+                <View
+                  key={step.id}
+                  className={cn("h-1.5 min-w-0 flex-1 rounded-sm", stepColors[step.state])}
+                />
+              ))}
+            </View>
           </View>
-        </View>
-      ))}
+        );
+      })}
     </View>
   );
 }

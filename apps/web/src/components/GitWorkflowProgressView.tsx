@@ -16,7 +16,11 @@ export function GitWorkflowProgressView({ progress }: { readonly progress: GitWo
     group.push(step);
     groups.set(step.group, group);
   }
-  const finished = progress.steps.filter(
+  const stages =
+    progress.kind === "logical_commits"
+      ? progress.steps.filter((step) => !step.id.startsWith("commit:"))
+      : progress.steps;
+  const finished = stages.filter(
     (step) => step.state === "completed" || step.state === "skipped",
   ).length;
   const heading =
@@ -38,9 +42,9 @@ export function GitWorkflowProgressView({ progress }: { readonly progress: GitWo
           </TooltipTrigger>
           <TooltipPopup>{progress.label}</TooltipPopup>
         </Tooltip>
-        {progress.steps.length > 0 ? (
+        {stages.length > 0 ? (
           <span className="shrink-0 tabular-nums">
-            {finished}/{progress.steps.length} steps
+            {finished}/{stages.length} {progress.kind === "logical_commits" ? "stages" : "steps"}
           </span>
         ) : null}
       </div>
@@ -51,46 +55,65 @@ export function GitWorkflowProgressView({ progress }: { readonly progress: GitWo
         </p>
       ) : null}
       <div className="max-h-40 space-y-2 overflow-y-auto">
-        {[...groups].map(([group, steps]) => (
-          <div key={group} className="space-y-1">
-            {progress.kind === "stack" ? (
-              <Tooltip>
-                <TooltipTrigger render={<p className="truncate text-xs text-muted-foreground" />}>
-                  {group}
-                </TooltipTrigger>
-                <TooltipPopup>{group}</TooltipPopup>
-              </Tooltip>
-            ) : null}
+        {[...groups].map(([group, steps]) => {
+          const nested =
+            progress.kind === "logical_commits" &&
+            steps.every((step) => step.id.startsWith("commit:"));
+          const completed = steps.filter((step) => step.state === "completed").length;
+          return (
             <div
-              role="progressbar"
-              aria-label={group}
-              aria-valuemin={0}
-              aria-valuemax={steps.length}
-              aria-valuenow={
-                steps.filter((step) => step.state === "completed" || step.state === "skipped")
-                  .length
-              }
-              aria-valuetext={steps.map((step) => `${step.label}: ${step.state}`).join(", ")}
-              className="flex gap-1"
+              key={group}
+              className={cn("space-y-1", nested && "ml-1 border-l border-border pl-3")}
             >
-              {steps.map((step) => (
-                <Tooltip key={step.id}>
-                  <TooltipTrigger
-                    render={
-                      <span
-                        aria-hidden="true"
-                        className={cn("h-1.5 min-w-0 flex-1 rounded-sm", stepColors[step.state])}
-                      />
-                    }
-                  />
-                  <TooltipPopup>
-                    {step.label}: {step.state}
-                  </TooltipPopup>
+              {nested ? (
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>Create commits</span>
+                  <span className="shrink-0 tabular-nums">
+                    {completed}/{steps.length} commits
+                  </span>
+                </div>
+              ) : null}
+              {progress.kind === "stack" ? (
+                <Tooltip>
+                  <TooltipTrigger render={<p className="truncate text-xs text-muted-foreground" />}>
+                    {group}
+                  </TooltipTrigger>
+                  <TooltipPopup>{group}</TooltipPopup>
                 </Tooltip>
-              ))}
+              ) : null}
+              <div
+                role="progressbar"
+                aria-label={group}
+                aria-valuemin={0}
+                aria-valuemax={steps.length}
+                aria-valuenow={
+                  nested
+                    ? completed
+                    : steps.filter((step) => step.state === "completed" || step.state === "skipped")
+                        .length
+                }
+                aria-valuetext={steps.map((step) => `${step.label}: ${step.state}`).join(", ")}
+                className="flex gap-1"
+              >
+                {steps.map((step) => (
+                  <Tooltip key={step.id}>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          aria-hidden="true"
+                          className={cn("h-1.5 min-w-0 flex-1 rounded-sm", stepColors[step.state])}
+                        />
+                      }
+                    />
+                    <TooltipPopup>
+                      {step.label}: {step.state}
+                    </TooltipPopup>
+                  </Tooltip>
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
