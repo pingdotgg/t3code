@@ -602,6 +602,36 @@ describe("project settings scope", () => {
     await expect.element(remoteOption()).not.toBeInTheDocument();
   });
 
+  it("reaches each checkout on one environment and returns to all of them", async () => {
+    setup();
+    const [first] = state.projects;
+    state.projects = [
+      { ...first!, id: ProjectId.make("clone-a"), workspaceRoot: "/work/clone-a" },
+      { ...first!, id: ProjectId.make("clone-b"), workspaceRoot: "/work/clone-b" },
+    ];
+    const key = projectKey();
+    await using screen = await mountSettings({ project: key, machine: primaryId });
+
+    await userEvent.click(page.getByRole("button", { name: "Checkout scope: All checkouts" }));
+    await userEvent.click(page.getByRole("menuitemradio", { name: /clone-b/ }));
+
+    await expect
+      .element(page.getByRole("button", { name: "Checkout scope: clone-b" }))
+      .toBeVisible();
+    expect(screen.router.state.location.search).toMatchObject({
+      project: key,
+      machine: primaryId,
+      checkout: expect.stringContaining("clone-b"),
+    });
+
+    await userEvent.click(page.getByRole("button", { name: "Checkout scope: clone-b" }));
+    await userEvent.click(page.getByRole("menuitemradio", { name: "All checkouts" }));
+
+    await vi.waitFor(() =>
+      expect(screen.router.state.location.search).toEqual({ project: key, machine: primaryId }),
+    );
+  });
+
   it("keeps an unknown project recoverable from any environment", async () => {
     setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
