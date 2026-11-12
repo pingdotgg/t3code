@@ -525,7 +525,7 @@ function FontFamilySettingsRow({
         <SelectPopup align="end" alignItemWithTrigger={false}>
           {Array.from({ length: size.max - size.min + 1 }, (_, index) => size.min + index).map(
             (px) => (
-              <SelectItem hideIndicator key={px} value={String(px)}>
+              <SelectItem key={px} value={String(px)}>
                 {px} px
               </SelectItem>
             ),
