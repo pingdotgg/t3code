@@ -339,24 +339,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("rejects a missing identity instead of using a display name", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            JSON.stringify({
-              authenticatedUser: { providerDisplayName: "Anonymous" },
-            }),
-          ),
-        ),
-      );
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-      const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
-      assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
-    }),
-  );
-
   it.effect("fails when no sign-in can read pull requests", () =>
     Effect.gen(function* () {
       const signedOut = new AzureDevOpsCli.AzureDevOpsCliAuthenticationError({

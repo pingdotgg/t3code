@@ -43,6 +43,30 @@ it("reads the signed-in Azure account and says when az is signed out", () => {
     "unauthenticated",
   );
   assert.strictEqual(parseAuth(processOutput("\n")).status, "unknown");
+  assert.strictEqual(
+    parseAuth(
+      processOutput(
+        JSON.stringify({
+          authenticatedUser: {
+            id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            descriptor: "System:PublicAccess;aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            isActive: true,
+            properties: { Account: { $value: "Anonymous" } },
+          },
+        }),
+      ),
+    ).status,
+    "unauthenticated",
+  );
+  for (const stderr of [
+    "HTTPSConnectionPool(host='dev.azure.com', port=443): Max retries exceeded\n",
+    "--organization must be specified.\n",
+  ]) {
+    assert.strictEqual(
+      parseAuth(processOutput("", { stderr, exitCode: ChildProcessSpawner.ExitCode(1) })).status,
+      "unknown",
+    );
+  }
 });
 
 it.effect("names the remote's repository when reading the default branch", () => {

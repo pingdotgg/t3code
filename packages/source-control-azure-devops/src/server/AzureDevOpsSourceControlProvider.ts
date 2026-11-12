@@ -1,10 +1,10 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
-import { decodeViewerJson } from "./azureDevOpsPullRequestJson.ts";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import { decodeViewerJson } from "./azureDevOpsPullRequestJson.ts";
 import type { NormalizedAzureDevOpsPullRequestRecord } from "./azureDevOpsPullRequests.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
@@ -64,7 +64,6 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: AzureDevOpsCli.connectionDataArgs,
   // `az --version` starts Python and takes ~6s on Windows, exceeding the default probe timeout.
-
   probeTimeoutMs: 20_000,
   parseAuth: parseAzureAuth,
   installHint:
