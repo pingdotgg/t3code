@@ -575,7 +575,11 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         const fiber = yield* loadOverHttp(prepared, identity).pipe(Effect.forkIn(stateScope));
         const next: EarlyShellLoad = { prepared, identity, fiber, claimed: claim };
         return [next, next] as const;
-      }, Effect.uninterruptible),
+      }),
+    ).pipe(
+      // Covers the store too. A cancel that lands during the wait above would otherwise take
+      // effect before the store, and the load just started would run on with no record.
+      Effect.uninterruptible,
     );
   /**
    * The subscription waits for the early load, so its answer is applied before the socket
@@ -652,12 +656,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 
         // Rows from a recent server snapshot with the same omissions and server build resume
         // from their cursor, in memory or from the cache. Anything else reloads the HTTP
-        // snapshot so a valid cursor cannot preserve stale or incomplete data.
+        // snapshot so a valid cursor cannot preserve stale or incomplete data. A `resumable`
+        // answer is checked again too: the rows can pass their age limit while the socket opens.
         const resumingHeldRows =
-          loaded?.kind === "resumable" ||
-          (loaded?.kind !== "snapshot" &&
-            Option.isSome((yield* SubscriptionRef.get(state)).snapshot) &&
-            canResumeFrom(yield* Ref.get(origin), identity, yield* Clock.currentTimeMillis));
+          loaded?.kind !== "snapshot" &&
+          Option.isSome((yield* SubscriptionRef.get(state)).snapshot) &&
+          canResumeFrom(yield* Ref.get(origin), identity, yield* Clock.currentTimeMillis);
         if (!resumingHeldRows && loaded === null) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(

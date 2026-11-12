@@ -1167,7 +1167,12 @@ describe("environment shell cold start", () => {
   const makeColdStart = Effect.fn("test.makeColdStartShell")(function* (
     origin: Persistence.ShellCacheOrigin | undefined,
     // Set for a connection that is prepared but has no session yet.
-    early?: { readonly serverResumes: boolean; readonly holdLoads?: boolean },
+    // Each held load waits for one `releaseLoads`. An "uninterruptible" hold stands for a load
+    // that applies its answer, which an interrupt has to wait for.
+    early?: {
+      readonly serverResumes: boolean;
+      readonly holdLoads?: boolean | "uninterruptible";
+    },
   ) {
     yield* TestClock.setTime(NOW);
     const subscriptions = yield* Queue.unbounded<{
@@ -1180,8 +1185,17 @@ describe("environment shell cold start", () => {
     }>();
     const httpLoads = yield* Ref.make(0);
     const loadOptions = yield* Queue.unbounded<ShellSnapshotLoader.ShellSnapshotOptions>();
-    const loadsReleased = yield* Deferred.make<void>();
-    if (early?.holdLoads !== true) yield* Deferred.succeed(loadsReleased, undefined);
+    const releases = yield* Queue.unbounded<void>();
+    const scope = yield* Effect.scope;
+    const holdLoad =
+      early?.holdLoads === "uninterruptible"
+        ? // Registered after the load's fiber, so the end of a failed test does not wait for it.
+          Scope.addFinalizer(scope, Queue.shutdown(releases)).pipe(
+            Effect.andThen(Effect.uninterruptible(Queue.take(releases))),
+          )
+        : early?.holdLoads === true
+          ? Queue.take(releases)
+          : Effect.void;
     const client = {
       [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input: unknown) =>
         Stream.unwrap(
@@ -1230,7 +1244,7 @@ describe("environment shell cold start", () => {
     const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
       load: (_prepared, options = {}) =>
         Queue.offer(loadOptions, options).pipe(
-          Effect.andThen(Deferred.await(loadsReleased)),
+          Effect.andThen(holdLoad),
           Effect.andThen(Ref.updateAndGet(httpLoads, (count) => count + 1)),
           Effect.map((count) =>
             Option.some<ShellSnapshotLoader.ShellHttpAnswer>(
@@ -1250,21 +1264,23 @@ describe("environment shell cold start", () => {
       Effect.provideService(Persistence.EnvironmentCacheStore, cache),
       Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
     );
+    const nextConnection = Effect.suspend(() =>
+      SubscriptionRef.set(
+        prepared,
+        Option.some({ ...PREPARED, descriptor: { ...FAMILY_DESCRIPTOR } }),
+      ),
+    );
     return {
       shellState,
       subscriptions,
       saved,
       httpLoads,
       loadOptions,
-      releaseLoads: Deferred.succeed(loadsReleased, undefined),
+      releaseLoads: Queue.offer(releases, undefined),
+      nextConnection,
       // A connection attempt that ended, then the next one.
       prepareAgain: SubscriptionRef.set(prepared, Option.none()).pipe(
-        Effect.andThen(
-          SubscriptionRef.set(
-            prepared,
-            Option.some({ ...PREPARED, descriptor: { ...FAMILY_DESCRIPTOR } }),
-          ),
-        ),
+        Effect.andThen(nextConnection),
       ),
       // Resolves `configRead` when the subscription reads the config, just before it claims the load.
       connect: (config: object, configRead?: Deferred.Deferred<void>) =>
@@ -1375,6 +1391,16 @@ describe("environment shell cold start", () => {
       subscribes: { afterSequence: HTTP_SEQUENCE, knownProjectIdentities: "identities-1" },
     },
     {
+      // The server answered that it can replay, then the rows passed their age limit.
+      label: "rows that expire before the socket is ready",
+      origin: { ...RECENT_ORIGIN, ...FAMILY_FLAGS, snapshotAt: NOW - 12 * HOUR + 1 },
+      serverResumes: true,
+      config: FAMILY_CONFIG,
+      loads: [{ ...FAMILY_FLAGS, resumeFrom: CACHED_SEQUENCE }],
+      subscribes: {},
+      expires: true,
+    },
+    {
       // The rows loaded with the descriptor's omissions are replaced, never kept.
       label: "a live config with other omissions",
       origin: undefined,
@@ -1385,7 +1411,7 @@ describe("environment shell cold start", () => {
     },
   ])(
     "asks for the shell once the connection is prepared, with $label",
-    ({ origin, serverResumes, config, loads, subscribes }) =>
+    ({ origin, serverResumes, config, loads, subscribes, expires }) =>
       Effect.gen(function* () {
         const h = yield* makeColdStart(origin, { serverResumes });
         expect(yield* Queue.take(h.loadOptions)).toEqual(loads[0]);
@@ -1406,14 +1432,21 @@ describe("environment shell cold start", () => {
         }
         expect(yield* Queue.size(h.subscriptions)).toBe(0);
 
+        if (expires) yield* TestClock.adjust("1 millis");
         yield* h.connect(config);
         const first = yield* Queue.take(h.subscriptions);
         expect(first.input).toMatchObject(subscribes);
-        for (const key of ["httpSnapshotFallback", "knownProjectIdentities"] as const) {
+        for (const key of [
+          "afterSequence",
+          "httpSnapshotFallback",
+          "knownProjectIdentities",
+        ] as const) {
           if (!(key in subscribes)) expect(first.input).not.toHaveProperty(key);
         }
         expect(yield* Queue.clear(h.loadOptions)).toEqual(loads.slice(1));
         expect(yield* Ref.get(h.httpLoads)).toBe(loads.length);
+        // The socket sends the full snapshot these rows asked for; the rest needs a cursor.
+        if (!("afterSequence" in subscribes)) return;
 
         yield* Queue.offer(first.events, { kind: "synchronized" });
         yield* h.liveAt(subscribes.afterSequence);
@@ -1441,7 +1474,10 @@ describe("environment shell cold start", () => {
 
   it.effect("a replaced session waits for the load its connection already started", () =>
     Effect.gen(function* () {
-      const h = yield* makeColdStart(undefined, { serverResumes: false, holdLoads: true });
+      const h = yield* makeColdStart(undefined, {
+        serverResumes: false,
+        holdLoads: "uninterruptible",
+      });
       expect(yield* Queue.take(h.loadOptions)).toEqual(FAMILY_FLAGS);
       const claimed = yield* Deferred.make<void>();
       yield* h.connect(FAMILY_CONFIG, claimed);
@@ -1452,6 +1488,27 @@ describe("environment shell cold start", () => {
       // the older answer would then replace its rows under a cursor the socket has passed.
       yield* h.connect(FAMILY_CONFIG);
       yield* TestClock.adjust("1 millis");
+      expect(yield* Queue.size(h.loadOptions)).toBe(0);
+
+      // The connection changes twice while the first load ends. The next session reads the
+      // last connection before its load exists, so it replaces the load of the one between.
+      yield* h.nextConnection;
+      yield* TestClock.adjust("1 millis");
+      yield* h.nextConnection;
+      yield* h.connect(FAMILY_CONFIG);
+      yield* TestClock.adjust("1 millis");
+      yield* h.releaseLoads;
+      expect(yield* Queue.take(h.loadOptions)).toEqual(FAMILY_FLAGS);
+      yield* TestClock.adjust("1 millis");
+      // That session is replaced while it waits for the load between to end. The load it then
+      // starts must stay the one load of the last connection.
+      yield* h.connect(FAMILY_CONFIG);
+      yield* TestClock.adjust("1 millis");
+      yield* h.releaseLoads;
+      expect(yield* Queue.take(h.loadOptions)).toEqual(FAMILY_FLAGS);
+      yield* TestClock.adjust("1 millis");
+      expect(yield* Queue.size(h.loadOptions)).toBe(0);
+
       yield* h.releaseLoads;
       const subscribed = yield* Queue.take(h.subscriptions);
       expect(subscribed.input).toMatchObject({ afterSequence: HTTP_SEQUENCE });
