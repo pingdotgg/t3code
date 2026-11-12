@@ -19,6 +19,18 @@ import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 
 import type { CommandId, ThreadId } from "@t3tools/contracts";
 import type { EventIdAllocator } from "../orchestrationEmitters.ts";
+
+type AnyOrchestratorError =
+  | OrchestratorDispatchError
+  | OrchestratorThreadAlreadyExistsError
+  | OrchestratorCommandRejectedError
+  | OrchestratorProjectionError
+  | OrchestratorDomainEventStreamError
+  | OrchestratorProviderAdapterError
+  | OrchestratorSubagentThreadReadOnlyError
+  | OrchestratorThreadAboveModeLimitError;
+import type { ProviderAdapterV2Error } from "@t3tools/provider-core/server/ProviderAdapter";
+import type { IdAllocatorV2Error } from "@t3tools/provider-core/server/IdAllocator";
 import { isCheckpointRestoreIsolated } from "../CheckpointRestoreSafety.ts";
 import type {
   ProjectionRecordField,
@@ -29,12 +41,16 @@ import type { PendingOrchestrationEffectV2 } from "../EffectOutbox.ts";
 import type { ProjectionStoreV2Shape } from "../ProjectionStore.ts";
 import { mapDispatchError } from "../orchestrationEmitters.ts";
 import {
+  OrchestratorCommandRejectedError,
   OrchestratorDispatchError,
+  OrchestratorDomainEventStreamError,
   OrchestratorProjectionError,
   OrchestratorProviderAdapterError,
+  OrchestratorSubagentThreadReadOnlyError,
+  OrchestratorThreadAboveModeLimitError,
+  OrchestratorThreadAlreadyExistsError,
 } from "../orchestrationErrors.ts";
 
-import { OrchestratorThreadAlreadyExistsError } from "../orchestrationErrors.ts";
 import * as Result from "effect/Result";
 import { decideGuestShareCommand } from "../GuestShareDecider.ts";
 import { isAutomaticCompletionRun } from "../QueuedRunOrder.ts";
@@ -76,11 +92,7 @@ export interface MakeLifecycleHandlersDeps {
     after: OrchestrationV2AppThread["guestShare"],
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) => Effect.Effect<void, never, never>;
-  readonly dispatchRuntimeRequestRespond: (
-    command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-  ) => Effect.Effect<any, OrchestratorDispatchError | OrchestratorProjectionError | OrchestratorProviderAdapterError>;
+  readonly dispatchRuntimeRequestRespond: (...args: any[]) => Effect.Effect<any, AnyOrchestratorError, never>;
 }
 
 export const makeLifecycleHandlers = (deps: MakeLifecycleHandlersDeps) => {
