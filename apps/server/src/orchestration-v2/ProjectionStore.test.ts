@@ -3806,8 +3806,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ],
         );
       }
+      // Until its run is scanned, a cursor on inline output is hidden inside a work group.
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
+        payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', 't3-code.delegate_task')
+        WHERE thread_id = ${threadId} AND ordinal = 4`;
+      const beforeInlineOutput = yield* historyPage(
+        threadId,
+        encodeThreadHistoryCursor({
+          snapshotSequence: 0,
+          sourceThreadId: threadId,
+          sourceItemId: "turn-item:bounded-sql-history:4",
+          position: 0,
+        }),
+        undefined,
+        false,
+        "deferred",
+      );
+      assert.deepEqual(
+        beforeInlineOutput.items.map((row) => row.item.ordinal),
+        [1, 2, 3],
+      );
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'command_execution',
-        payload_json = json_set(payload_json, '$.type', 'command_execution') WHERE thread_id = ${threadId} AND ordinal = 2`;
+        payload_json = json_set(payload_json, '$.type', 'command_execution') WHERE thread_id = ${threadId} AND ordinal IN (2, 4)`;
       const sharedRunId = "run:bounded-sql-history:1";
       for (const [ordinal, status] of [
         [0, "completed"],

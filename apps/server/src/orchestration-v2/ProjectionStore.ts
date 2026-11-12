@@ -6429,16 +6429,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             // seconds. Scan only the runs the page spans, then select again with what they hold.
             const scannedRuns = new Set<string>();
             const persistentOutputs = new Set<string>();
-            while (workMode !== undefined && page.items.length > 0) {
+            while (workMode !== undefined) {
+              // A cursor row hidden in a work group leaves the page empty, so its run counts too.
+              const from = page.items[0]?.canonicalPosition ?? cursorPosition;
+              if (from < 0) break;
               const runs = new Map(
                 indexed
                   .slice(
-                    page.items[0]!.canonicalPosition,
-                    Math.max(page.items.at(-1)!.canonicalPosition, cursorPosition) + 1,
+                    from,
+                    Math.max(page.items.at(-1)?.canonicalPosition ?? from, cursorPosition) + 1,
                   )
                   .flatMap(({ sourceThreadId, item }) =>
                     item.runId !== null &&
-                    (item.runStatus === "completed" || item.attemptStatus === "superseded") &&
+                    (workMode === "work" ||
+                      item.runStatus === "completed" ||
+                      item.attemptStatus === "superseded") &&
                     !scannedRuns.has(`${sourceThreadId}:${item.runId}`)
                       ? [
                           [
