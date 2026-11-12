@@ -57,6 +57,7 @@ const steadyShells = createSteadyShellAtoms({
  * The threads that lists arrange. Rows wait while their environment synchronizes, so a list
  * changes once when environments connect, not once per environment.
  */
+export const steadyShellsHoldingAtom = steadyShells.holdingAtom;
 export const steadyNavigationThreadShellsAtom = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: steadyShells.snapshotAtom,

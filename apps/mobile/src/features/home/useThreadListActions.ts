@@ -20,6 +20,7 @@ import { readEnvironmentScope } from "../../state/session";
 import {
   environmentThreadShells,
   steadyNavigationThreadShellsAtom,
+  steadyShellsHoldingAtom,
   threadEnvironment,
 } from "../../state/threads";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
@@ -576,6 +577,9 @@ export function useThreadListActions(): {
   const moveThread = async (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
     if (!checkThreadOperationPermission(thread, "Could not move thread")) return false;
     if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
+    // The rows on screen can be older than the server's while they wait to show. A move
+    // planned from them could act on a pin or an order key that the server has replaced.
+    if (appAtomRegistry.get(steadyShellsHoldingAtom)) return false;
     const shells = appAtomRegistry.get(steadyNavigationThreadShellsAtom);
     const current = shells.find(
       (row) => row.id === thread.id && row.environmentId === thread.environmentId,

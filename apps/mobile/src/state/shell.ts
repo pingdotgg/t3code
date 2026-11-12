@@ -39,10 +39,12 @@ const shellCacheReadAtom = Atom.family((environmentId: EnvironmentId) =>
 export const shellCachesReadAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   if (!catalog.isReady) return false;
+  // Reads every environment, so each one loads its cache now and not after the one before it.
+  let allRead = true;
   for (const environmentId of enabledEnvironmentIds(catalog)) {
-    if (!get(shellCacheReadAtom(environmentId))) return false;
+    if (!get(shellCacheReadAtom(environmentId))) allRead = false;
   }
-  return true;
+  return allRead;
 }).pipe(Atom.withLabel("mobile-shell-caches-read"));
 
 export function useEnvironmentShellReadiness(environmentId: EnvironmentId | null) {

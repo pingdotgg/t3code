@@ -30,7 +30,7 @@ const snapshot = (snapshotSequence: number): OrchestrationV2ShellSnapshot => ({
 const shell = (
   environmentId: EnvironmentId,
   value: OrchestrationV2ShellSnapshot | null,
-  phase: "connecting" | "retrying" | "live",
+  phase: "connecting" | "disconnected" | "live",
   generation = 0,
 ): SteadyShellInput => ({
   environmentId,
@@ -38,7 +38,7 @@ const shell = (
   serverSequence: value?.snapshotSequence ?? null,
   status: phase === "live" ? "live" : phase === "connecting" ? "synchronizing" : "cached",
   generation,
-  connecting: phase !== "retrying",
+  connecting: phase !== "disconnected",
 });
 const shown = (state: SteadyShellsState, environmentId: EnvironmentId) =>
   state.shells.get(environmentId)?.shown;
@@ -63,15 +63,71 @@ describe("stepSteadyShells", () => {
     expect(state.releaseAt).toBeNull();
   });
 
-  it("shows a connection's server snapshot when it arrives, before the socket confirms it", () => {
+  it("shows a connection's server snapshot when it arrives, and the events after it when live", () => {
     const [cached, fromServer, withEvents] = [snapshot(7), snapshot(9), snapshot(10)];
     let state = stepSteadyShells(EMPTY_STEADY_SHELLS_STATE, [shell(A, cached, "connecting")], 0);
     state = stepSteadyShells(state, [shell(A, fromServer, "connecting", 1)], 10);
     expect(shown(state, A)).toBe(fromServer);
     state = stepSteadyShells(state, [shell(A, withEvents, "connecting", 1)], 20);
-    expect(shown(state, A)).toBe(withEvents);
+    expect(shown(state, A)).toBe(fromServer);
     state = stepSteadyShells(state, [shell(A, withEvents, "live", 1)], 30);
     expect(shown(state, A)).toBe(withEvents);
+  });
+
+  it("does not wait for an environment that already shows its server snapshot", () => {
+    const [cachedA, cachedB, serverA, serverB] = [
+      snapshot(1),
+      snapshot(2),
+      snapshot(3),
+      snapshot(4),
+    ];
+    let state = stepSteadyShells(
+      EMPTY_STEADY_SHELLS_STATE,
+      [shell(A, cachedA, "connecting"), shell(B, cachedB, "connecting")],
+      0,
+    );
+    state = stepSteadyShells(
+      state,
+      [shell(A, cachedA, "connecting"), shell(B, serverB, "connecting", 1)],
+      10,
+    );
+    expect(shown(state, B)).toBe(cachedB);
+    state = stepSteadyShells(
+      state,
+      [shell(A, serverA, "connecting", 2), shell(B, serverB, "connecting", 1)],
+      20,
+    );
+    expect(shown(state, A)).toBe(serverA);
+    expect(shown(state, B)).toBe(serverB);
+    // B is not live yet, and A's next rows do not wait for it.
+    const liveA = snapshot(5);
+    state = stepSteadyShells(
+      state,
+      [shell(A, liveA, "live", 2), shell(B, serverB, "connecting", 1)],
+      30,
+    );
+    expect(shown(state, A)).toBe(liveA);
+  });
+
+  it("shows rows that wait when their environment disconnects", () => {
+    const [cachedA, cachedB, serverA] = [snapshot(7), snapshot(2), snapshot(9)];
+    let state = stepSteadyShells(
+      EMPTY_STEADY_SHELLS_STATE,
+      [shell(A, cachedA, "connecting"), shell(B, cachedB, "connecting")],
+      0,
+    );
+    state = stepSteadyShells(
+      state,
+      [shell(A, serverA, "connecting", 1), shell(B, cachedB, "connecting")],
+      10,
+    );
+    expect(shown(state, A)).toBe(cachedA);
+    const disconnected = [shell(A, serverA, "disconnected", 1), shell(B, cachedB, "connecting")];
+    state = stepSteadyShells(state, disconnected, 20);
+    expect(shown(state, A)).toBe(cachedA);
+    expect(state.releaseAt).toBe(10 + WINDOW);
+    state = stepSteadyShells(state, disconnected, 10 + WINDOW);
+    expect(shown(state, A)).toBe(serverA);
   });
 
   it("holds replayed events after a reconnect until the environment is live again", () => {
@@ -136,10 +192,14 @@ describe("stepSteadyShells", () => {
     const [cachedA, cachedB, liveA] = [snapshot(1), snapshot(2), snapshot(3)];
     let state = stepSteadyShells(
       EMPTY_STEADY_SHELLS_STATE,
-      [shell(A, cachedA, "connecting"), shell(B, cachedB, "retrying")],
+      [shell(A, cachedA, "connecting"), shell(B, cachedB, "disconnected")],
       0,
     );
-    state = stepSteadyShells(state, [shell(A, liveA, "live"), shell(B, cachedB, "retrying")], 500);
+    state = stepSteadyShells(
+      state,
+      [shell(A, liveA, "live"), shell(B, cachedB, "disconnected")],
+      500,
+    );
     expect(shown(state, A)).toBe(liveA);
   });
 

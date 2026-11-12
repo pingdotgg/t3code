@@ -25,18 +25,18 @@ export interface SteadyShellInput {
   readonly status: EnvironmentShellStatus;
   /** The shell state's generation: it grows with each server snapshot. */
   readonly generation: number;
-  /** A first connection attempt, or the connection it made, is up: fresh rows can come soon. */
+  /** The connection is up or on its first attempt, so fresh rows can come soon. */
   readonly connecting: boolean;
 }
 
 interface SteadyShell {
   readonly shown: OrchestrationV2ShellSnapshot | null;
   readonly shownSequence: number | null;
-  /** False while `shown` holds back newer server data. */
+  readonly shownGeneration: number;
+  /** The rows were shown while live, so each live change shows at once. */
   readonly following: boolean;
-  readonly wasLive: boolean;
-  /** The generation when the environment last lost its connection or its live state. */
-  readonly baseGeneration: number;
+  /** The rows hold a server snapshot of the connection that is synchronizing. */
+  readonly caughtUp: boolean;
 }
 
 export interface SteadyShellsState {
@@ -48,9 +48,9 @@ export interface SteadyShellsState {
 export const EMPTY_STEADY_SHELLS_STATE: SteadyShellsState = { shells: new Map(), releaseAt: null };
 
 /**
- * Decides which snapshot of each environment a thread list shows. Rows stay as shown until
- * the environment has fresh server data, then show with every environment that has it: at
- * once when no other can have it soon, else when the window the first one opened ends.
+ * Decides which snapshot of each environment a thread list shows. New server rows wait for
+ * a complete state (a server snapshot, live, or disconnected), then show with every other
+ * environment that has one: at once when no other owes its rows, else when the window ends.
  * Returns `previous` itself when nothing changes.
  */
 export function stepSteadyShells(
@@ -60,70 +60,57 @@ export function stepSteadyShells(
   windowMs = STEADY_SHELL_RELEASE_WINDOW_MS,
 ): SteadyShellsState {
   const shells = new Map<EnvironmentId, SteadyShell>();
-  const waiting: Array<readonly [SteadyShellInput, number]> = [];
-  let othersInFlight = false;
-  const show = (
-    input: SteadyShellInput,
-    following: boolean,
-    baseGeneration: number,
-  ): SteadyShell => ({
+  const waiting: Array<SteadyShellInput> = [];
+  let othersOweRows = false;
+  const show = (input: SteadyShellInput, caughtUp: boolean): SteadyShell => ({
     shown: input.snapshot,
     shownSequence: input.serverSequence,
-    following,
-    wasLive: input.status === "live",
-    baseGeneration,
+    shownGeneration: input.generation,
+    following: input.status === "live",
+    caughtUp,
   });
-  const keep = (environmentId: EnvironmentId, next: SteadyShell, current: SteadyShell) =>
-    shells.set(
-      environmentId,
+  const keep = (input: SteadyShellInput, next: SteadyShell, current: SteadyShell | undefined) => {
+    othersOweRows ||= input.status === "synchronizing" && input.connecting && !next.caughtUp;
+    const same =
+      current !== undefined &&
       current.shown === next.shown &&
-        current.shownSequence === next.shownSequence &&
-        current.following === next.following &&
-        current.wasLive === next.wasLive &&
-        current.baseGeneration === next.baseGeneration
-        ? current
-        : next,
-    );
+      current.shownSequence === next.shownSequence &&
+      current.shownGeneration === next.shownGeneration &&
+      current.following === next.following &&
+      current.caughtUp === next.caughtUp;
+    shells.set(input.environmentId, same ? current : next);
+  };
   for (const input of inputs) {
-    const live = input.status === "live";
     const current = previous.shells.get(input.environmentId);
+    const synchronizing = input.status === "synchronizing";
     if (current === undefined) {
-      othersInFlight ||= !live && input.connecting;
-      shells.set(input.environmentId, show(input, live, input.generation));
+      keep(input, show(input, false), current);
       continue;
     }
-    // A connection's first server snapshot is fresh before the socket confirms it. A replay
-    // of events (no new generation) is fresh only when the environment is live.
-    const base =
-      live || (input.status === "synchronizing" && !current.wasLive)
-        ? current.baseGeneration
-        : input.generation;
-    if (!live && input.generation <= base) {
-      othersInFlight ||= input.connecting;
-      // Without new server data the change is local (cached links, rows loaded on demand), and
-      // an environment that shows nothing (its cache is not read yet) has nothing to hold back.
-      const local = current.shown === null || input.serverSequence === current.shownSequence;
-      keep(
-        input.environmentId,
-        local
-          ? show(input, false, base)
-          : { ...current, following: false, wasLive: false, baseGeneration: base },
-        current,
-      );
-    } else if (current.following) {
-      keep(input.environmentId, show(input, true, base), current);
+    const newSnapshot = input.generation > current.shownGeneration;
+    // Without new server data the change is local (cached links, rows loaded on demand), and
+    // an environment that shows nothing (its cache is not read yet) has nothing to hold back.
+    const local =
+      current.shown === null || (input.serverSequence === current.shownSequence && !newSnapshot);
+    if (local || (input.status === "live" && current.following)) {
+      keep(input, show(input, synchronizing && (current.caughtUp || newSnapshot)), current);
+    } else if (!synchronizing || newSnapshot) {
+      waiting.push(input);
+      shells.set(input.environmentId, current);
     } else {
-      waiting.push([input, base]);
-      keep(input.environmentId, { ...current, wasLive: live, baseGeneration: base }, current);
+      // Events that a synchronizing environment replays are complete only when it is live.
+      keep(input, { ...current, following: false }, current);
     }
   }
 
   let releaseAt: number | null = null;
   if (waiting.length > 0) {
     releaseAt = previous.releaseAt ?? now + windowMs;
-    if (!othersInFlight || now >= releaseAt) {
+    if (!othersOweRows || now >= releaseAt) {
       releaseAt = null;
-      for (const [input, base] of waiting) shells.set(input.environmentId, show(input, true, base));
+      for (const input of waiting) {
+        shells.set(input.environmentId, show(input, input.status === "synchronizing"));
+      }
     }
   }
 
@@ -175,7 +162,7 @@ export function createSteadyShellAtoms<E>(input: {
         serverSequence: snapshot?.snapshotSequence ?? null,
         status: shell.status,
         generation: shell.generation,
-        // A retry after a failure can take minutes, so only a first attempt is waited for.
+        // A retry after a failure can take minutes, so it is not waited for until it connects.
         connecting: phase === "connecting" || phase === "connected",
       });
     }
@@ -194,6 +181,19 @@ export function createSteadyShellAtoms<E>(input: {
     ).pipe(Atom.withLabel(`steady-shell-snapshot:${environmentId}`)),
   );
 
-  /** The snapshot a thread list shows for an environment. */
-  return { snapshotAtom };
+  // Reads the live snapshots too, so it is current when a handler reads it once.
+  const holdingAtom = Atom.make((get) => {
+    const { shells } = get(stateAtom);
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
+      if (shells.get(environmentId)?.shown !== get(input.snapshotAtom(environmentId))) return true;
+    }
+    return false;
+  }).pipe(Atom.withLabel("steady-shells-holding"));
+
+  return {
+    /** The snapshot a thread list shows for an environment. */
+    snapshotAtom,
+    /** True while a list shows rows older than the server data the client holds. */
+    holdingAtom,
+  };
 }

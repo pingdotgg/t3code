@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   connectedEnvironmentIds: [] as EnvironmentId[],
   pendingOrder: null as object | null,
   dropBusy: false,
+  holdingRows: false,
   failedAction: null as string | null,
   archivedRefreshes: [] as string[],
   scopes: new Map<string, Set<string>>(),
@@ -78,26 +79,28 @@ vi.mock("../../state/atom-registry", () => ({
         ? state.connectedEnvironmentIds
         : atom === "thread-drop-busy"
           ? state.dropBusy
-          : atom === "thread-shells"
-            ? state.shells
-            : atom === "queued-thread-keys"
-              ? new Set<string>()
-              : new Map(
-                  [...state.scopes.keys()].map((environmentId) => [
-                    environmentId,
-                    {
-                      environment: {
-                        capabilities: {
-                          threadSettlement: true,
-                          threadSnooze: true,
-                          threadPinning: true,
-                          threadPinReorder: true,
-                          threadTitleRegeneration: true,
+          : atom === "steady-shells-holding"
+            ? state.holdingRows
+            : atom === "thread-shells"
+              ? state.shells
+              : atom === "queued-thread-keys"
+                ? new Set<string>()
+                : new Map(
+                    [...state.scopes.keys()].map((environmentId) => [
+                      environmentId,
+                      {
+                        environment: {
+                          capabilities: {
+                            threadSettlement: true,
+                            threadSnooze: true,
+                            threadPinning: true,
+                            threadPinReorder: true,
+                            threadTitleRegeneration: true,
+                          },
                         },
                       },
-                    },
-                  ]),
-                ),
+                    ]),
+                  ),
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -123,6 +126,7 @@ vi.mock("../../state/thread-order", () => ({
 vi.mock("../../state/threads", () => ({
   environmentThreadShells: { threadShellsAtom: "thread-shells" },
   steadyNavigationThreadShellsAtom: "thread-shells",
+  steadyShellsHoldingAtom: "steady-shells-holding",
   threadEnvironment: Object.fromEntries(
     [
       "archive",
@@ -191,6 +195,7 @@ beforeEach(() => {
   state.archivedRefreshes = [];
   state.pendingOrder = null;
   state.dropBusy = false;
+  state.holdingRows = false;
   state.scopes = new Map([
     [primaryEnvironmentId, new Set([AuthOrchestrationOperateScope])],
     [otherEnvironmentId, new Set<string>()],
@@ -271,6 +276,12 @@ describe("pinned thread operation permissions", () => {
         pinOrderKey: "g",
       }),
     ];
+
+    // Rows that wait to show can hold order keys the server has replaced.
+    state.holdingRows = true;
+    expect(await useThreadListActions().moveThread(moved, "up")).toBe(false);
+    expect(state.requests).toEqual([]);
+    state.holdingRows = false;
 
     expect(await useThreadListActions().moveThread(moved, "up")).toBe(true);
     expect(state.requests).toEqual([
