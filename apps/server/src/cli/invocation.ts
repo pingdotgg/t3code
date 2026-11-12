@@ -155,16 +155,27 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
     [prefix, ...args.map((arg) => hostShellWord(platform, arg))].join(" ");
   const command = yield* resolveCliCommand(subcommand);
   if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
-  const launcher = yield* resolveInstallLauncher;
-  if (Option.isNone(launcher)) return { command: withArgs(command), launcher: false };
   const onPath = yield* resolveCommandPath("t3");
   if (onPath !== null) {
+    const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
     const fs = yield* FileSystem.FileSystem;
     const real = (file: string) => fs.realPath(file).pipe(Effect.orElseSucceed(() => null));
-    if ((yield* real(onPath)) === ((yield* real(launcher.value)) ?? launcher.value)) {
+    // Windows `t3.cmd` shims are text files that never realpath to the executable they run.
+    const own = shim
+      ? yield* real(shim)
+      : platform !== "win32" && (yield* HostProcess.IsExecutable)
+        ? yield* resolveEntryPath.pipe(
+            Effect.flatMap((entry) =>
+              real(entry).pipe(Effect.map((resolved) => resolved ?? entry)),
+            ),
+          )
+        : null;
+    if (own === null || own === (yield* real(onPath))) {
       return { command: withArgs(command), launcher: false };
     }
   }
+  const launcher = yield* resolveInstallLauncher;
+  if (Option.isNone(launcher)) return { command: withArgs(command), launcher: false };
   // PowerShell runs a quoted path only through the call operator.
   const quoted = hostShellWord(platform, launcher.value);
   const call = platform === "win32" ? `& ${quoted}` : quoted;
