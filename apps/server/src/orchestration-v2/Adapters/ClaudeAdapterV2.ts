@@ -97,6 +97,7 @@ import {
   TrimmedNonEmptyString,
   defaultInstanceIdForDriver,
   isCompactionCommandMessage,
+  parseGoalCommand,
   type MessageId,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
@@ -1841,20 +1842,29 @@ function claudeLiveSelectionFlagSettings(
 
 // A delegated child is its own SDK session, so Claude Code gives it the main-conversation cache
 // TTL. When the user sets Claude's subagentPromptCacheTtl, the child follows it like a native
-// subagent would. An explicit CLAUDE_CODE_PROMPT_CACHE_TTL on the instance still wins.
+// subagent would. A resumed session's first request otherwise goes out before its MCP servers
+// connect, and Claude Code tells the agent they disconnected. Explicit instance values still win.
 export function claudeQueryEnvironment(
   environment: NodeJS.ProcessEnv,
   appThread: Pick<OrchestrationV2AppThread, "lineage">,
   subagentPromptCacheTtl: "5m" | "1h" | undefined,
+  resume = false,
 ): NodeJS.ProcessEnv {
-  if (
-    appThread.lineage.relationshipToParent !== "subagent" ||
-    subagentPromptCacheTtl === undefined ||
-    environment.CLAUDE_CODE_PROMPT_CACHE_TTL !== undefined
-  ) {
+  const promptCacheTtl =
+    appThread.lineage.relationshipToParent === "subagent" &&
+    subagentPromptCacheTtl !== undefined &&
+    environment.CLAUDE_CODE_PROMPT_CACHE_TTL === undefined
+      ? subagentPromptCacheTtl
+      : undefined;
+  const blockingMcpConnect = resume && environment.MCP_CONNECTION_NONBLOCKING === undefined;
+  if (promptCacheTtl === undefined && !blockingMcpConnect) {
     return environment;
   }
-  return { ...environment, CLAUDE_CODE_PROMPT_CACHE_TTL: subagentPromptCacheTtl };
+  return {
+    ...environment,
+    ...(promptCacheTtl === undefined ? {} : { CLAUDE_CODE_PROMPT_CACHE_TTL: promptCacheTtl }),
+    ...(blockingMcpConnect ? { MCP_CONNECTION_NONBLOCKING: "0" } : {}),
+  };
 }
 
 // Claude Code's auto tool search sends every MCP schema in full while they fit under a share of the
@@ -2551,18 +2561,22 @@ export function makeClaudeUserMessage(input: {
   // Keep the whole request before that block; see ClaudeSkillDispatch.
   const dispatch =
     input.skills === undefined ? undefined : planClaudeSkillDispatch(input.text, input.skills);
+  // Claude runs `/goal` only when it opens the prompt, so a goal stays one block.
+  const isGoalCommand = parseGoalCommand({ text: input.text }) !== null;
   return {
     type: "user",
     message: {
       role: "user",
-      content: dispatch
-        ? [
-            ...(dispatch.leadingText === undefined
-              ? []
-              : [{ type: "text" as const, text: dispatch.leadingText }]),
-            { type: "text" as const, text: dispatch.commandText },
-          ]
-        : input.text,
+      content: isGoalCommand
+        ? (dispatch?.leadingText ?? input.text)
+        : dispatch
+          ? [
+              ...(dispatch.leadingText === undefined
+                ? []
+                : [{ type: "text" as const, text: dispatch.leadingText }]),
+              { type: "text" as const, text: dispatch.commandText },
+            ]
+          : input.text,
     },
     parent_tool_use_id: null,
     ...(input.priority === undefined ? {} : { priority: input.priority }),
@@ -3579,7 +3593,15 @@ function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   return claudeNativeToolOutputText(output);
 }
 
+// Claude Code prefixes foreground Agent results with a note for the parent model, not the report.
+const CLAUDE_TOOLS_USED_NOTE =
+  /^\s*<tools-used-before-summary>[^<]*<\/tools-used-before-summary>\s*/;
+
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
+  return claudeSubagentRawResultText(output).replace(CLAUDE_TOOLS_USED_NOTE, "");
+}
+
+function claudeSubagentRawResultText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   const content = Array.isArray(value)
     ? value
@@ -6378,7 +6400,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             driver: CLAUDE_PROVIDER,
             nativeItemId: `task:${taskId}:thread-root`,
           }),
-          childThreadId: idAllocator.derive.threadFromProviderThread({
+          childThreadId: idAllocator.derive.subagentThread({
             driver: CLAUDE_PROVIDER,
             nativeThreadId: `${context.input.providerThread.id}:${taskId}`,
           }),
@@ -6716,7 +6738,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ...workflow,
           agents: workflow.agents.map((member) => ({
             ...member,
-            childThreadId: idAllocator.derive.threadFromProviderThread({
+            childThreadId: idAllocator.derive.subagentThread({
               driver: CLAUDE_PROVIDER,
               nativeThreadId: `${coordinatorChildThreadId}:agent:${member.index}`,
             }),
@@ -11786,6 +11808,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               turnInput.appThread.lineage.relationshipToParent === "subagent"
                 ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
                 : undefined,
+              shouldResume,
             ),
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...(mcpOverrides.allowedTools === undefined

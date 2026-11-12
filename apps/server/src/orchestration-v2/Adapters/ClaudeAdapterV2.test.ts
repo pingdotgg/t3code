@@ -344,6 +344,22 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     );
   });
 
+  it("makes a resumed Claude session wait for its MCP servers before the first request", () => {
+    const appThread = {
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: ThreadId.make("t"),
+      },
+    };
+    const nonblocking = (environment: NodeJS.ProcessEnv, resume: boolean) =>
+      ClaudeAdapterV2.claudeQueryEnvironment(environment, appThread, undefined, resume)
+        .MCP_CONNECTION_NONBLOCKING;
+    assert.equal(nonblocking({}, true), "0");
+    assert.isUndefined(nonblocking({}, false));
+    assert.equal(nonblocking({ MCP_CONNECTION_NONBLOCKING: "1" }, true), "1");
+  });
+
   it("pins Claude's auto tool search on through flag settings", () => {
     const override = ClaudeAdapterV2.claudeToolSearchOverride;
     for (const value of ["auto", "auto:10", "auto:99.5", "auto:x", "auto:Infinity"]) {
@@ -5057,6 +5073,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
   );
+
+  // regression: #29750 Claude sets a goal only from a prompt that opens with /goal
+  it("keeps a /goal that mentions a skill as one native goal command", () => {
+    const message = ClaudeAdapterV2.makeClaudeUserMessage({
+      text: "/goal fix all the gaps.\ndecompile target.ipa into ./target/\n$review",
+      skills: new Map([["review", { path: "/home/me/.claude/skills/review/SKILL.md" }]]),
+    });
+    const content = message.message.content;
+    assert.isString(content);
+    assert.match(
+      content as string,
+      /^\/goal fix all the gaps\.\ndecompile target\.ipa into \.\/target\/\n/,
+    );
+  });
 
   // regression: #15708 Stop must not silently drop a steer Claude queued behind a foreground task
   it.effect.each([
@@ -17351,6 +17381,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         const routing = subagentRouting(harness.events, ["toolu-early-bash"]);
         assert.isDefined(routing.childThreadId);
+        // Agents quote this id back to t3_thread_send/t3_thread_read.
+        const childThreadId = routing.childThreadId ?? "";
+        assert.notInclude(childThreadId, "%");
+        assert.isAtMost(childThreadId.length, 64);
         assert.deepEqual(
           [...(routing.toolThreadIds.get("toolu-early-bash") ?? [])],
           [routing.childThreadId],
@@ -18130,7 +18164,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("extracts text from direct content-block subagent results", () =>
+  it.effect.each([
+    {
+      label: "extracts text from direct content-block subagent results",
+      content: [
+        { type: "text", text: "First line." },
+        { type: "text", text: "Second line." },
+      ],
+      expected: "First line.\nSecond line.",
+    },
+    {
+      label: "drops Claude Code's tools-used note from a subagent result",
+      content: [
+        {
+          type: "text",
+          text: "<tools-used-before-summary>Read</tools-used-before-summary>\n\nadd (line 1)\nmean (line 6)",
+        },
+      ],
+      expected: "add (line 1)\nmean (line 6)",
+    },
+  ])("$label", ({ content, expected }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const SUBAGENT_TASK_ID = "task-direct-content-blocks";
@@ -18184,10 +18237,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 {
                   type: "tool_result",
                   tool_use_id: SUBAGENT_TOOL_USE_ID,
-                  content: [
-                    { type: "text", text: "First line." },
-                    { type: "text", text: "Second line." },
-                  ],
+                  content,
                 },
               ],
             },
@@ -18198,7 +18248,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* harness.until(() => subagentEvents().at(-1)?.subagent.status === "completed");
 
-        assert.equal(subagentEvents().at(-1)?.subagent.result, "First line.\nSecond line.");
+        assert.equal(subagentEvents().at(-1)?.subagent.result, expected);
 
         yield* Queue.offer(
           harness.sdkMessages,

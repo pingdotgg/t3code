@@ -3194,7 +3194,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const nodeId = existing?.task.id ?? providerNodeId(nativeTaskId);
           const childThreadId =
             existing?.childThreadId ??
-            idAllocator.derive.threadFromProviderThread({
+            idAllocator.derive.subagentThread({
               driver,
               providerInstanceId: context.input.modelSelection.instanceId,
               nativeThreadId: `${context.nativeThreadId}:task:${nativeTaskId}`,
@@ -7391,11 +7391,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* runtime.setConfigOption(selection.id, selection.value).pipe(
               Effect.catchTags({
                 AcpRequestError: (error) =>
-                  Effect.logWarning("ACP session rejected a configuration option value", {
-                    optionId: selection.id,
-                    value: selection.value,
-                    detail: error.message,
-                  }),
+                  error.code === -32602
+                    ? Effect.logWarning("ACP session rejected a configuration option value", {
+                        optionId: selection.id,
+                        value: selection.value,
+                        detail: error.message,
+                      })
+                    : Effect.fail(error),
               }),
             );
           }

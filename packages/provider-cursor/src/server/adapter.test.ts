@@ -193,6 +193,7 @@ describe("CursorAdapterV2", () => {
           modelSelection,
           runtimePolicy,
         });
+        assert.equal(providerThread.nativeMetadata?.cursorStoreCwd, workspace);
         const now = yield* DateTime.now;
         yield* runtime.startTurn({
           threadId,
@@ -1218,6 +1219,20 @@ describe("CursorAdapterV2", () => {
             result: { status: "error", error: "lint failed" },
           },
         },
+        ...["slow-shell", "fast-shell"].map((callId) => ({
+          type: "tool-call-started" as const,
+          modelCallId: "native-model-call",
+          callId,
+          toolCall: { type: "shell" as const, args: { command: callId } },
+        })),
+        {
+          type: "shell-output-delta",
+          event: { case: "stdout", value: { data: "tick 1\n" }, toolCallId: "slow-shell" },
+        },
+        {
+          type: "shell-output-delta",
+          event: { case: "exit", value: { code: 0 }, toolCallId: "slow-shell" },
+        },
       ];
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
@@ -1331,6 +1346,21 @@ describe("CursorAdapterV2", () => {
         });
         assert.deepEqual(item.input, { city: "Berlin" });
       }
+      const shellItemIds = new Map(
+        events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [[event.turnItem.id, event.turnItem.input] as const]
+            : [],
+        ),
+      );
+      assert.deepEqual(
+        events.flatMap((event) =>
+          event.type === "command_output.delta"
+            ? [{ command: shellItemIds.get(event.itemId), chunk: event.chunk }]
+            : [],
+        ),
+        [{ command: "slow-shell", chunk: "tick 1\n" }],
+      );
       assert.deepEqual(toolOutputImages(mcpItems.at(-1)?.output), [
         { mimeType: "image/png", data: "iVBORw0KGgo=" },
       ]);
