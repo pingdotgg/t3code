@@ -142,7 +142,11 @@ export function parseGitRemoteRepository(
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
       const url = new URL(normalized);
-      const repositorySegments = url.pathname.split("/").filter((segment) => segment.length > 0);
+      const repositorySegments = url.pathname
+        .replace(/\/+$/, "")
+        .replace(/\.git$/, "")
+        .split("/")
+        .filter((segment) => segment.length > 0);
       if (url.hostname && repositorySegments.length > 1) {
         return { host: url.hostname, path: repositorySegments.join("/") };
       }
