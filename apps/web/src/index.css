@@ -1865,6 +1865,10 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
+[data-scrollbar-thumb-hover]::-webkit-scrollbar-thumb {
+  background: var(--app-scrollbar-thumb-hover);
+}
+
 /* Chat markdown rendering */
 
 .chat-markdown > :first-child {
