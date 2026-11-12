@@ -1098,7 +1098,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("filters runner recipes that the environment cannot prepare", () => {
+  it.effect("lists runner recipes the environment cannot prepare yet", () => {
     const runnerAgent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     const binaryAgent = {
       ...makeAgent({
@@ -1121,7 +1121,8 @@ describe("AcpRegistrySupport", () => {
       });
       const result = yield* resolver.search({ query: "" });
 
-      expect(result.agents.map((agent) => agent.id)).toEqual(["binary-agent"]);
+      // Hiding them leaves no way to learn the agent needs npm; prepare reports that instead.
+      expect(result.agents.map((agent) => agent.id)).toEqual(["binary-agent", "example-agent"]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
