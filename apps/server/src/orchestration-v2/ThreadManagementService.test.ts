@@ -270,6 +270,70 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
   }),
 );
 
+it.effect("waitForThread yields to caller input without ending the child's run", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:responsive-wait");
+    const threadId = ThreadId.make("thread:responsive-wait-child");
+    const callerThreadId = ThreadId.make("thread:responsive-wait-parent");
+    const callerRunId = RunId.make("run:responsive-wait-parent");
+    const messageId = MessageId.make("message:responsive-wait");
+    const subscribed = yield* Deferred.make<void>();
+    const inputs = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    const run = { id: RunId.make("run:responsive-wait-child"), status: "running" as const };
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          streamStoredEventsFrom: (input) =>
+            input?.threadId === callerThreadId
+              ? Stream.fromQueue(inputs)
+              : Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.never),
+                ),
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { id: threadId, projectId, deletedAt: null },
+              runs: [run],
+            } as unknown as OrchestrationV2ThreadProjection),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const waiting = yield* service
+      .waitForThread({
+        projectId,
+        threadId,
+        timeoutMs: 1000,
+        caller: { threadId: callerThreadId, runId: callerRunId },
+      })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(subscribed);
+    for (const inputIntent of ["queued_turn", "steer"] as const) {
+      yield* Queue.offer(inputs, {
+        sequence: 1,
+        event: {
+          type: "turn-item.updated",
+          threadId: callerThreadId,
+          payload: { type: "user_message", runId: callerRunId, messageId, inputIntent },
+        },
+      } as unknown as OrchestrationV2StoredEvent);
+    }
+    yield* TestClock.adjust("1 second");
+    expect(yield* Fiber.join(waiting)).toMatchObject({
+      timedOut: false,
+      interruptedByMessageId: messageId,
+      run: { status: "running" },
+    });
+    expect(run.status).toBe("running");
+  }),
+);
+
 it.effect("waitForThread can wait past an ended run for the thread's delegated work", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-delegated");

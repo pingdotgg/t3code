@@ -112,6 +112,7 @@ const operationOf = (
     if (method === "POST" && rest === "/command") return { type: "session.command", input };
     if (method === "POST" && rest === "/compact") return { type: "session.compact", input };
     if (method === "POST" && rest === "/interrupt") return { type: "session.interrupt", input };
+    if (method === "POST" && rest === "/background") return { type: "session.background", input };
     if (method === "POST" && rest === "/model") return { type: "session.switchModel", input };
     if (method === "POST" && rest === "/agent") return { type: "session.switchAgent", input };
     if (method === "POST" && rest === "/move") return { type: "session.move", input };
@@ -152,6 +153,7 @@ const replayHttpClient = (
   controller: OpenCodeReplayController,
   replayGate: ProviderReplayGate | undefined,
   onPrompt: ((input: unknown) => void) | undefined,
+  onRequest: ((operation: string) => void) | undefined,
 ) =>
   HttpClient.make((request, url) =>
     Effect.tryPromise({
@@ -170,6 +172,7 @@ const replayHttpClient = (
           query,
           raw === undefined ? undefined : decodeJson(raw),
         );
+        onRequest?.(operation.type);
         // HTTP streams and requests use separate connections; deliver prior recorded inbound data before matching requests.
         if (operation.type !== "event.subscribe") await controller.untilInboundDelivered();
         if (operation.type === "session.prompt") onPrompt?.(operation.input);
@@ -177,9 +180,16 @@ const replayHttpClient = (
         if (operation.type === "event.subscribe") {
           controller.exited = false;
           const encoder = new TextEncoder();
-          const events = controller.events(undefined, replayGate?.beforeEmit);
+          const abort = new AbortController();
+          const events = controller.events(
+            abort.signal,
+            (label) => replayGate?.beforeEmit(label, abort.signal) ?? Promise.resolve(),
+          );
           const frames = events[Symbol.asyncIterator]();
           const body = new ReadableStream<Uint8Array>({
+            cancel() {
+              abort.abort();
+            },
             async pull(stream) {
               const next = await frames.next();
               if (next.done === true) stream.close();
@@ -218,6 +228,7 @@ export const replayServer = (
   options?: {
     readonly external?: boolean;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onRequest?: (operation: string) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
   },
@@ -233,7 +244,7 @@ export const replayServer = (
     const opencode = yield* OpenCode2Client.make.pipe(
       Effect.provideService(
         HttpClient.HttpClient,
-        replayHttpClient(controller, options?.replayGate, options?.onPrompt),
+        replayHttpClient(controller, options?.replayGate, options?.onPrompt, options?.onRequest),
       ),
     );
     const connection = {
@@ -266,6 +277,7 @@ const makeReplayAdapter = (
   options?: {
     readonly external?: boolean;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onRequest?: (operation: string) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
   },
@@ -320,6 +332,7 @@ export const openCode2ReplayRuntime = (
     readonly external?: boolean;
     readonly version?: string;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onRequest?: (operation: string) => void;
     readonly borrowers?: { current: number };
     readonly replayGate?: ProviderReplayGate;
     readonly attachmentsDir?: string;
