@@ -48,13 +48,16 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly remoteRefinementArgs?: (
     context: SourceControlProvider.SourceControlProviderContext,
   ) => ReadonlyArray<string>;
-  readonly remoteRefinementEnv?: NodeJS.ProcessEnv;
   readonly probeTimeoutMs?: number;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
   /** `null` when the CLI holds nothing for the remote; `undefined` when its output cannot say. */
   readonly refineUnknownRemote?: (
     input: SourceControlUnknownRemoteRefinementInput,
   ) => SourceControlProviderInfo | null | undefined;
+  /** The verdict when the refinement probe times out, for a CLI that goes online only for its logins. */
+  readonly refineTimedOutRemote?: (
+    context: SourceControlProvider.SourceControlProviderContext,
+  ) => SourceControlProviderInfo;
 };
 
 export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
@@ -404,12 +407,12 @@ function refineWithSpec(input: {
     return spec.refineUnknownRemote({ cwd: input.cwd, context });
   }
   if (!isCliRemoteRefinementSpec(spec)) return Effect.succeed(null);
+  const { refineTimedOutRemote } = spec;
   return input.process
     .run({
       operation: "source-control.discovery.refine-unknown-remote",
       command: spec.executable,
       args: spec.remoteRefinementArgs?.(context) ?? spec.authArgs,
-      ...(spec.remoteRefinementEnv !== undefined ? { env: spec.remoteRefinementEnv } : {}),
       cwd: input.cwd,
       allowNonZeroExit: true,
       timeoutMs: probeTimeoutMs(spec),
@@ -425,6 +428,9 @@ function refineWithSpec(input: {
           ? Effect.fail(new UnknownRemoteUnanswered())
           : Effect.succeed(provider);
       }),
+      Effect.catchIf(isVcsProcessTimeoutError, (cause) =>
+        refineTimedOutRemote ? Effect.succeed(refineTimedOutRemote(context)) : Effect.fail(cause),
+      ),
     );
 }
 

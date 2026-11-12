@@ -113,11 +113,24 @@ it.effect.each([
     name: "without relying on host naming",
     remoteUrl: "https://self-hosted.example.test/group/project.git",
     host: "self-hosted.example.test",
+    stdout: `gitlab.com
+  x gitlab.com: API call failed: 401 Unauthorized
+  ! No token found
+self-hosted.example.test
+  ✓ Logged in to self-hosted.example.test as gitlab-user
+  ✓ Token found: ******
+`,
+    exitCode: 1,
   },
   {
     name: "on a non-standard port",
     remoteUrl: "https://self-hosted.example.test:8443/group/project.git",
     host: "self-hosted.example.test:8443",
+    stdout: `self-hosted.example.test:8443
+  ✓ Logged in to self-hosted.example.test:8443 as gitlab-user
+  ✓ Token found: ******
+`,
+    exitCode: 0,
   },
 ] as const)("claims a self-hosted remote glab is signed in to $name", (scenario) =>
   Effect.gen(function* () {
@@ -135,11 +148,15 @@ it.effect.each([
       process: {
         run: ({ command, args }) => {
           asked.push([command, ...args]);
-          return Effect.succeed(processOutput("gitlab-user\n"));
+          return Effect.succeed(
+            processOutput(scenario.stdout, {
+              exitCode: ChildProcessSpawner.ExitCode(scenario.exitCode),
+            }),
+          );
         },
       },
     });
-    assert.deepStrictEqual(asked, [["glab", "config", "get", "user", "--host", scenario.host]]);
+    assert.deepStrictEqual(asked, [["glab", "auth", "status", "--hostname", scenario.host]]);
     assert.strictEqual(verdict.provider?.kind, "gitlab");
     assert.strictEqual(verdict.settled, true);
   }),
@@ -170,28 +187,6 @@ it.effect("claims a self-hosted remote glab is signed in to while the host is of
       },
     });
     assert.strictEqual(verdict.provider?.kind, "gitlab");
-    assert.strictEqual(verdict.settled, true);
-  }),
-);
-
-// Older glab (1.90.0 among them) answers `config get user` from $USER, even for a host it has no login for.
-it.effect("leaves a host glab has no login for unknown when glab reads $USER", () =>
-  Effect.gen(function* () {
-    const remoteUrl = "https://nowhere.example.test/team/repo.git";
-    const remote = parseGitRemoteHost(remoteUrl);
-    assert.ok(remote);
-    const verdict = yield* refineUnknownRemoteProvider({
-      specs: [GitLabSourceControlProvider.discovery],
-      cwd: "/repo",
-      context: { provider: unknownRemoteProvider(remote), remoteName: "origin", remoteUrl },
-      process: {
-        run: ({ env }) => {
-          const user = env && "USER" in env ? env.USER : "review-user";
-          return Effect.succeed(processOutput(user ? `${user}\n` : "\n"));
-        },
-      },
-    });
-    assert.strictEqual(verdict.provider, null);
     assert.strictEqual(verdict.settled, true);
   }),
 );

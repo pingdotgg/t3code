@@ -87,15 +87,29 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
-// glab's config records the login's user per host, so this needs no network.
-function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
-  if (input.auth.exitCode !== 0) return undefined;
-  if (input.auth.stdout.trim() === "") return null;
+const GITLAB_HOST_NOT_LOGGED_IN_PATTERN =
+  /\bnot (?:been )?authenticated with glab\b|\bno gitlab instances? ha(?:s|ve) been authenticated\b/iu;
+
+function gitLabSelfHosted(context: SourceControlUnknownRemoteRefinementInput["context"]) {
   return {
     kind: SourceControlProviderKind.make("gitlab"),
     name: "GitLab Self-Hosted",
-    baseUrl: input.context.provider.baseUrl,
+    baseUrl: context.provider.baseUrl,
   } as const;
+}
+
+function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
+  const host = input.context.provider.name.toLowerCase();
+  const output = combinedAuthOutput(input.auth);
+  const authenticated = parseGitLabAuthStatusHosts(output).some(
+    (entry) => entry.account !== null && entry.host === host,
+  );
+
+  if (!authenticated) {
+    return GITLAB_HOST_NOT_LOGGED_IN_PATTERN.test(output) ? null : undefined;
+  }
+
+  return gitLabSelfHosted(input.context);
 }
 
 /** The caller refines only an identity no host recognised, so its remote is on an unknown host. */
@@ -148,12 +162,12 @@ export const discovery = {
     const host = remoteHost.toLowerCase().startsWith(provider.name.toLowerCase())
       ? remoteHost.slice(0, provider.name.length)
       : provider.name;
-    return ["config", "get", "user", "--host", host];
+    return ["auth", "status", "--hostname", host];
   },
-  // Older glab answers `config get user` from $USER, even for a host it has no login for.
-  remoteRefinementEnv: { USER: "" },
   parseAuth: parseGitLabAuth,
   refineUnknownRemote: refineUnknownGitLabRemote,
+  // glab answers offline for a host it has no login for, so a probe that hangs is one it is signed in to.
+  refineTimedOutRemote: gitLabSelfHosted,
   installHint:
     "Install the GitLab command-line tool (`glab`) from https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`).",
 } satisfies SourceControlCliDiscoverySpec;
