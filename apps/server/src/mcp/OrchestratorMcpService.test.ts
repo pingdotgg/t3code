@@ -30,13 +30,17 @@ import {
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -1273,6 +1277,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     "child run completion",
     "child question",
     "child approval",
+    "Node fetch's 300 s idle timeout",
   ] as const)("a task wait still returns on %s", (wake) =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
@@ -1378,6 +1383,24 @@ describe("OrchestratorMcpService provider resolution", () => {
           .delegateTask(scope, { task: "Review the change.", mode: "wait" })
           .pipe(Effect.forkChild);
         yield* Deferred.await(subscribed);
+        if (wake === "Node fetch's 300 s idle timeout") {
+          // Nothing is written during the wait, so undici drops the call at 300 s, before any handle.
+          const beforeClientTimeout = yield* Fiber.join(waiting).pipe(
+            Effect.timeoutOption(Duration.seconds(299)),
+            Effect.forkChild,
+          );
+          yield* TestClock.adjust(Duration.seconds(299));
+          const result = yield* Fiber.join(beforeClientTimeout);
+          assert.isTrue(
+            Option.isSome(result),
+            "a wait without timeoutMs was still silent at 299 s, so a Node MCP client loses the taskId",
+          );
+          if (Option.isSome(result)) {
+            assert.equal(result.value.taskId, taskId);
+            assert.isTrue(result.value.waitTimedOut);
+          }
+          return;
+        }
         ready = true;
         if (wake === "parent completion") {
           yield* Queue.offer(events, {
@@ -3812,6 +3835,55 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
+  it.effect("records the linked environment's thread that sent a message", () =>
+    Effect.gen(function* () {
+      const target = liveThreadShell(ThreadId.make("thread:target"));
+      const sender = {
+        environmentId: EnvironmentId.make("environment:a"),
+        threadId: ThreadId.make("thread:orc"),
+        title: "orc lead",
+      };
+      const linked = (senderThread?: typeof sender): McpInvocationScope => ({
+        ...client,
+        client: {
+          sessionId: "link-a",
+          label: "A",
+          access: "full-access",
+          linked: true,
+          ...(senderThread === undefined ? {} : { senderThread }),
+        },
+      });
+      const sendAs = (scope: McpInvocationScope) =>
+        Effect.gen(function* () {
+          const inputs: Array<ThreadManagementService.ThreadManagementSendInput> = [];
+          const sent = yield* Ref.make(0);
+          yield* Effect.gen(function* () {
+            const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+            yield* mcp.sendToThread(scope, { threadId: target.id, message: "hello" });
+          }).pipe(
+            Effect.provide(
+              service([target], sent, {
+                getProjectThreadRecords: () => Effect.succeed(idleThreadProjection(target)),
+                sendToThread: (input) => {
+                  inputs.push(input);
+                  return Effect.succeed({
+                    run: { id: RunId.make("run:sent"), status: "running" },
+                    delivery: "started",
+                  } as never);
+                },
+              }),
+            ),
+          );
+          return inputs[0];
+        });
+
+      const fromLink = yield* sendAs(linked(sender));
+      assert.deepStrictEqual(fromLink?.linkedSender, sender);
+      assert.isUndefined(fromLink?.senderThreadId);
+      assert.isUndefined((yield* sendAs(linked()))?.linkedSender);
+    }),
+  );
+
   it.effect("refuses waiting without orchestration capability before reading the target", () =>
     Effect.gen(function* () {
       const sent = yield* Ref.make(0);
@@ -3876,16 +3948,37 @@ describe("OrchestratorMcpService thread list", () => {
     capabilities: new Set(["orchestration"]),
     issuedAt: 1,
   };
-  const shell = (id: string, projectId: string, snoozed: boolean) => ({
+  const shell = (id: string, projectId: string, snoozed: boolean, waiting = false) => ({
     ...liveThreadShell(ThreadId.make(id)),
     projectId: ProjectId.make(projectId),
     status: "completed" as const,
     snoozedUntil: snoozed ? DateTime.makeUnsafe("2099-01-01T00:00:00Z") : null,
+    blockedOnThreadWait: waiting,
+    pendingBackgroundTasks: waiting
+      ? [
+          {
+            taskId: "task-subagent",
+            kind: "subagent" as const,
+            description: "Review the diff",
+            parentTaskId: "task-parent",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            childThreadId: ThreadId.make("thread:b-child"),
+          },
+          { taskId: "task-tests", kind: "command" as const, awaited: true as const },
+        ]
+      : [],
   });
   const shells = [
     shell("thread:a-snoozed", "project:a", true),
     shell("thread:a-awake", "project:a", false),
-    shell("thread:b-snoozed", "project:b", true),
+    shell("thread:b-snoozed", "project:b", true, true),
+    {
+      ...shell("thread:a-awaiting-command", "project:a", false),
+      activityRunStatus: null,
+      pendingBackgroundTasks: [
+        { taskId: "sleep-600", kind: "command" as const, awaited: true as const },
+      ],
+    },
   ];
   const service = layerOrchestratorService.pipe(
     Layer.provide(
@@ -3905,7 +3998,21 @@ describe("OrchestratorMcpService thread list", () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) =>
+            shells.some((thread) => thread.projectId === id)
+              ? Effect.succeedSome({
+                  id,
+                  title: id,
+                  workspaceRoot: `/projects/${id}`,
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-10-18T00:00:00.000Z",
+                  updatedAt: "2026-10-18T00:00:00.000Z",
+                  deletedAt: null,
+                })
+              : Effect.succeedNone,
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -3928,6 +4035,52 @@ describe("OrchestratorMcpService thread list", () => {
           ["thread:a-snoozed", "project:a"],
           ["thread:b-snoozed", "project:b"],
         ],
+      );
+      assert.deepStrictEqual(
+        listed.threads.map((thread) => [thread.blockedOnThreadWait, thread.pendingBackgroundTasks]),
+        [
+          [false, []],
+          [
+            true,
+            [
+              {
+                taskId: "task-subagent",
+                kind: "subagent",
+                description: "Review the diff",
+                childThreadId: ThreadId.make("thread:b-child"),
+              },
+              { taskId: "task-tests", kind: "command", awaited: true },
+            ],
+          ],
+        ],
+      );
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("refuses a projectId that names no project", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const listed = yield* mcp
+        .listThreads(client, { projectId: ProjectId.make("project:missing") })
+        .pipe(Effect.result);
+      if (Result.isSuccess(listed)) {
+        assert.fail(`listed threads for a missing project: ${JSON.stringify(listed.success)}`);
+      }
+      assert.equal(listed.failure.code, "invalid_request");
+      assert.include(listed.failure.message, "not found");
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("counts a thread holding awaited background work as live in the status filter", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const listed = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:a"),
+        statuses: ["preparing", "queued", "starting", "running", "waiting"],
+      });
+      assert.deepStrictEqual(
+        listed.threads.map((thread) => thread.threadId),
+        ["thread:a-awaiting-command"],
       );
     }).pipe(Effect.provide(service)),
   );

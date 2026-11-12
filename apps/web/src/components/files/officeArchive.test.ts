@@ -91,6 +91,21 @@ describe("Word preview limits", () => {
     expect(await result.part("word/document.xml")).toContain("Item 5999");
   });
 
+  it("keeps the lists of a document with picture bullets, with their text bullets", async () => {
+    const picture = `<w:numPicBullet w:numPicBulletId="0"><w:pict><v:shape style="width:9pt;height:9pt"><v:imagedata r:id="rId1"/></v:shape></w:pict></w:numPicBullet>`;
+    const pictured = `<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val="\uf0b7"/><w:lvlPicBulletId w:val="0"/></w:lvl></w:abstractNum>`;
+    const numbered = `<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>`;
+    const lists = `<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>`;
+    const result = await prepared(
+      await wordFile(paragraph("Item", `<w:pPr><w:numPr><w:numId w:val="2"/></w:numPr></w:pPr>`), {
+        numbering: `<w:numbering ${W} ${V} ${R}>${picture}${pictured}${numbered}${lists}</w:numbering>`,
+      }),
+    );
+    expect(await result.part("word/numbering.xml")).toBe(
+      `<w:numbering ${W} ${V} ${R}>${pictured.replace('<w:lvlPicBulletId w:val="0"/>', "")}${numbered}${lists}</w:numbering>`,
+    );
+  });
+
   const text = "x".repeat(140_000);
   it.each([
     ["on its own", `<w:p><w:r><w:t>${text}</w:t></w:r></w:p>`],
