@@ -41,6 +41,7 @@ import {
   combinePullRequestWatchWakes,
   evaluatePullRequestWatch,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
+  PULL_REQUEST_WATCH_RELEASE_STALL_MS,
   pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
@@ -171,20 +172,28 @@ function planRead(
       watch.checksAwaitedSince != null &&
       now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS,
   );
+  const stalledDue = group.targets.some(
+    ({ watch }) =>
+      watch.passed &&
+      watch.releaseStallNotifiedAt === undefined &&
+      now - Date.parse(watch.lastProgressAt ?? watch.startedAt) >=
+        PULL_REQUEST_WATCH_RELEASE_STALL_MS,
+  );
   if (fingerprint === null) {
     const read =
       last.inFlight ||
       !last.remarksComplete ||
       last.fingerprint !== group.fingerprint ||
       now - last.at >= QUIET_REREAD_MS;
-    return { detail: read || checksDue, activity: read };
+    return { detail: read || checksDue || stalledDue, activity: read };
   }
   const activity =
     last.remarks !== fingerprint.remarks ||
     !last.remarksComplete ||
     now - last.at >= FINGERPRINT_REREAD_MS;
   return {
-    detail: activity || checksDue || last.status !== fingerprint.status || last.inFlight,
+    detail:
+      activity || checksDue || stalledDue || last.status !== fingerprint.status || last.inFlight,
     activity,
   };
 }
@@ -203,7 +212,9 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
     left.wakes === right.wakes &&
-    left.checksAwaitedSince === right.checksAwaitedSince
+    left.checksAwaitedSince === right.checksAwaitedSince &&
+    left.lastProgressAt === right.lastProgressAt &&
+    left.releaseStallNotifiedAt === right.releaseStallNotifiedAt
   );
 }
 
