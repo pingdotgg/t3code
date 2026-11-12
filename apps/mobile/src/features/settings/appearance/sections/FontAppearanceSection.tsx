@@ -81,7 +81,14 @@ export function FontAppearanceSection() {
           }}
         >
           A reply in your selected font.{" "}
-          <Text style={{ fontFamily: replyEmphasisFontFamily }}>Emphasized text.</Text>
+          <Text
+            style={{
+              fontFamily: replyEmphasisFontFamily,
+              fontWeight: replyEmphasisFontFamily === fonts.reply.regular ? "bold" : "normal",
+            }}
+          >
+            Emphasized text.
+          </Text>
         </Text>
         <Text className="text-xs text-foreground-muted">
           Defaults follow the interface. These choices stay on this device.
