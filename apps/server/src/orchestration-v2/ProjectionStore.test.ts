@@ -6791,6 +6791,30 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         lookupPlans.push(plan);
       }
 
+      // A retry handoff reads its missed runs' history; that must not walk every item of the thread.
+      const history = traceSqlStatements();
+      const missedItems = yield* projectionStore
+        .getTurnStartHistory(threadId, [selectedRunId])
+        .pipe(Effect.withTracer(history.tracer));
+      assert.deepEqual(
+        missedItems.map((item) => item.id),
+        selectedIds,
+      );
+      const historyLookup = history.statements.find((statement) =>
+        statement.includes("FROM orchestration_v2_projection_turn_items"),
+      );
+      assert.isDefined(historyLookup);
+      const historyPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${historyLookup}`,
+        [threadId, selectedRunId],
+      ))
+        .map((row) => row.detail)
+        .join("\n");
+      assert.match(
+        historyPlan,
+        /^SEARCH .*\((?:thread_id=\? AND )?run_id=\?(?: AND thread_id=\?)?\)/m,
+      );
+
       assert.deepEqual((yield* readItems(threadId, emptyRunId)).ids, []);
       assert.deepEqual(
         (yield* readItems(threadId, RunId.make("run:turn-start-items:missing"))).ids,
