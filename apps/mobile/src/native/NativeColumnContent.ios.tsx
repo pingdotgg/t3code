@@ -31,12 +31,7 @@ export function NativeColumnContent(props: {
   const metrics =
     measured ?? (props.column === undefined ? null : (shared?.byColumn.get(props.column) ?? null));
   return (
-    <View
-      className={props.primary ? "flex-1 bg-drawer" : "flex-1 bg-screen"}
-      style={
-        props.backgroundColor === undefined ? undefined : { backgroundColor: props.backgroundColor }
-      }
-    >
+    <View className={props.primary ? "flex-1 bg-drawer" : "flex-1 bg-header"}>
       <SafeAreaProvider style={{ flex: 1 }}>
         <SafeAreaView
           edges={{
@@ -46,7 +41,14 @@ export function NativeColumnContent(props: {
           }}
           style={{ flex: 1 }}
         >
-          <View className="flex-1 overflow-hidden">
+          <View
+            className={`flex-1 overflow-hidden ${props.primary ? "bg-drawer" : "bg-screen"} ${props.insetTop === false ? "" : "rounded-t-[28px]"}`}
+            style={
+              props.backgroundColor === undefined
+                ? undefined
+                : { backgroundColor: props.backgroundColor }
+            }
+          >
             {/* Descendants measure the inset body so they don't reserve the native bar twice. */}
             <SafeAreaProvider style={{ flex: 1 }}>
               <NativeLayoutObserver onChange={onMetrics} />
