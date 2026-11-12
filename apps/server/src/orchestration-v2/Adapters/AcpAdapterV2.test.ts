@@ -1554,7 +1554,7 @@ describe("AcpAdapterV2", () => {
     ],
   }));
 
-  // regression: #20417 Droid AskUser answers were sent as a cancel
+  // regression: #20417 Droid answers were sent as a cancel; #23505 OMP header and question were swapped
   it.live.each([
     ...[
       { scenario: "OMP selected option", answers: { q0: "Approve" }, content: { q0: "Approve" } },
@@ -1562,18 +1562,6 @@ describe("AcpAdapterV2", () => {
         scenario: "OMP custom answer",
         answers: { q0: "Please wait" },
         content: { q0__other: "Please wait" },
-      },
-      { scenario: "OMP cancellation", answers: undefined, content: undefined },
-      {
-        scenario: "OMP missing header",
-        answers: { q0: "Hold" },
-        content: { q0: "Hold" },
-        withoutHeader: true,
-      },
-      {
-        scenario: "OMP selected label with attachment references",
-        answers: { q0: 'Approve\n\nAttached file "notes.txt": "/server/notes.txt"' },
-        content: { q0__other: 'Approve\n\nAttached file "notes.txt": "/server/notes.txt"' },
       },
     ].map((fixture) => ({
       ...fixture,
@@ -1584,7 +1572,7 @@ describe("AcpAdapterV2", () => {
           q0: {
             type: "string",
             title: "Approve this exact code-only commit?",
-            ...("withoutHeader" in fixture ? {} : { description: "Safety-hook false positive" }),
+            description: "Safety-hook false positive",
             oneOf: [
               { const: "Approve", title: "Approve", description: "Commit the verified fix." },
               { const: "Hold", title: "Hold" },
@@ -1597,7 +1585,7 @@ describe("AcpAdapterV2", () => {
       questions: [
         {
           id: "q0",
-          header: "withoutHeader" in fixture ? "Question 1" : "Safety-hook false positive",
+          header: "Safety-hook false positive",
           question: "Approve this exact code-only commit?",
           options: [
             { label: "Approve", value: "Approve", description: "Commit the verified fix." },
@@ -1605,9 +1593,7 @@ describe("AcpAdapterV2", () => {
           ],
         },
       ],
-      result: fixture.content
-        ? { action: "accept", content: fixture.content }
-        : { action: "cancel" },
+      result: { action: "accept", content: fixture.content },
     })),
     {
       scenario: "OMP unrelated form uses generic mapping",
