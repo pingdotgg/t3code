@@ -728,24 +728,6 @@ export function orchestrationV2RunWorkStartedAt(
   return run.workStartedAt ?? run.startedAt ?? run.requestedAt;
 }
 
-/**
- * Work started now would run in the project checkout, not the worktree the thread asked for. A
- * failed or interrupted setup leaves the request standing until a worktree exists.
- */
-export function orchestrationV2WorktreePending(
-  worktreePath: string | null,
-  runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "workspacePreparation">>,
-): boolean {
-  return (
-    worktreePath === null &&
-    runs.some(
-      (run) =>
-        (run.status === "preparing" || run.status === "failed" || run.status === "interrupted") &&
-        run.workspacePreparation?.type === "worktree",
-    )
-  );
-}
-
 export const OrchestrationV2RunAttempt = Schema.Struct({
   id: RunAttemptId,
   // Provider-thread rows can be reused after recovery; retain the native input destination.
@@ -1724,6 +1706,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     exitCode: Schema.optional(Schema.Int),
     /** Set when the command is a monitor, so background work lists it as a monitor. */
     monitor: Schema.optional(Schema.Boolean),
+    /** The provider wakes the agent when this command finishes after its turn. */
+    completionWake: Schema.optional(Schema.Literal("always")),
     /** Failing tests named by a test runner summary, derived when output is stripped for the wire. */
     failedTestCount: Schema.optional(NonNegativeInt),
   }),
@@ -2571,6 +2555,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     exitCode: Schema.optional(Schema.Int),
     /** Set when the command is a monitor, so background work lists it as a monitor. */
     monitor: Schema.optional(Schema.Boolean),
+    /** The provider wakes the agent when this command finishes after its turn. */
+    completionWake: Schema.optional(Schema.Literal("always")),
     /** Failing tests named by a test runner summary, derived when output is stripped for the wire. */
     failedTestCount: Schema.optional(NonNegativeInt),
   }),
