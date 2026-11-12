@@ -2411,6 +2411,8 @@ export default function ChatView(props: ChatViewProps) {
     serverConfig,
     runtimeMode,
     isWorking,
+    // A waiting run is checkpoint drain; Stop there reaches its background work.
+    runIsLive: (isWorking && activeRuntime?.status !== "waiting") || phase === "connecting",
     pendingBackgroundTasks,
     turnItems: serverProjection?.turnItems ?? EMPTY_TURN_ITEMS,
     activePendingApproval,
@@ -2462,8 +2464,10 @@ export default function ChatView(props: ChatViewProps) {
     pendingApprovals.length > 0 ||
     pendingUserInputs.length > 0;
   const compactDisabled = compactThreadUnavailable;
+  // The context window is the current conversation's, so a handoff destination never inherits it.
   const resumeCompactionTokens =
     activeContextWindow &&
+    pendingHandoff === null &&
     resolveIdleCompaction(
       settings,
       activeProviderInstanceId ?? ProviderInstanceId.make("claudeAgent"),
