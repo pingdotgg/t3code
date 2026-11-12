@@ -1,11 +1,15 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest } from "effect/http";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - az's own config path layout, joined for the host platform.
+import * as NodePath from "node:path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
@@ -70,6 +74,28 @@ const make = Effect.gen(function* () {
   let held: HeldToken | null = null;
   let tokenRetryAt = 0;
   const refusedUntil = new Map<string, number>();
+  const fileSystem = yield* FileSystem.FileSystem;
+  const environment = yield* HostProcess.Environment;
+  const profilePath = NodePath.join(
+    environment.AZURE_CONFIG_DIR || NodePath.join(yield* HostProcess.HomeDirectory, ".azure"),
+    "azureProfile.json",
+  );
+  let profileVersion: number | null | undefined;
+
+  // `az login` and `az account set` rewrite the profile. Whatever the old account was given or
+  // refused no longer applies, so the next read asks az again.
+  const followAccount = Effect.suspend(() => fileSystem.stat(profilePath)).pipe(
+    Effect.map((info) => Option.getOrNull(Option.map(info.mtime, (date) => date.getTime()))),
+    Effect.orElseSucceed(() => null),
+    Effect.map((version) => {
+      if (profileVersion !== undefined && version !== profileVersion) {
+        held = null;
+        tokenRetryAt = 0;
+        refusedUntil.clear();
+      }
+      profileVersion = version;
+    }),
+  );
 
   const issueToken = Effect.fn("AzureDevOpsRest.issueToken")(function* (cwd: string) {
     return yield* process
@@ -121,6 +147,7 @@ const make = Effect.gen(function* () {
       const url = URL.parse(input.url);
       if (url === null || !isAzureDevOpsServicesUrl(url)) return Option.none();
       const organization = organizationKey(url);
+      yield* tokenLock.withPermit(followAccount);
       const now = yield* Clock.currentTimeMillis;
       if ((refusedUntil.get(organization) ?? 0) > now) return Option.none();
 
