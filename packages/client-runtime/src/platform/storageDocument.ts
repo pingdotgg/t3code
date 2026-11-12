@@ -134,7 +134,35 @@ export function registerConnectionInCatalog(
   switch (registration._tag) {
     case "RelayConnectionRegistration":
       return next;
-    case "BearerConnectionRegistration":
+    case "BearerConnectionRegistration": {
+      // Pairing again replaces the environment's login: every direct route holding its own
+      // token takes the new one, so none keeps sending a revoked or expired session.
+      const connectionIds = new Set([registration.target.connectionId]);
+      for (const route of routes) {
+        if (
+          route._tag === "BearerConnectionTarget" &&
+          route.environmentId === registration.target.environmentId &&
+          next.credentials.some((value) => value.connectionId === route.connectionId)
+        ) {
+          connectionIds.add(route.connectionId);
+        }
+      }
+      return {
+        ...next,
+        profiles: replaceCatalogValue(
+          next.profiles,
+          (value) => value.connectionId,
+          registration.profile,
+        ),
+        credentials: [
+          ...next.credentials.filter((value) => !connectionIds.has(value.connectionId)),
+          ...[...connectionIds].map((connectionId) => ({
+            connectionId,
+            credential: registration.credential,
+          })),
+        ],
+      };
+    }
     case "SshConnectionRegistration":
       return {
         ...next,
