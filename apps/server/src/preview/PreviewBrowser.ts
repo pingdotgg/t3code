@@ -17,6 +17,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 
 import * as ServerConfig from "../config.ts";
 import { openZipArchive } from "../zipArchive.ts";
@@ -89,6 +90,40 @@ const previewBrowserRelease = (
         ...ARCHIVES[chrome],
       };
 };
+
+const internalBrowserDirectory = (input: {
+  readonly platform: NodeJS.Platform;
+  readonly home: string;
+  readonly homeDevice: bigint;
+  readonly baseDirDevice: bigint;
+}) =>
+  input.platform === "darwin" && input.baseDirDevice !== input.homeDevice
+    ? Option.some(
+        NodePath.posix.join(
+          input.home,
+          "Library",
+          "Application Support",
+          "T3 Code",
+          "preview-browser",
+        ),
+      )
+    : Option.none<string>();
+
+// macOS prompts per ad-hoc signed browser build before it can touch a removable volume.
+export const resolveInternalBrowserDirectory = Effect.fn("PreviewBrowser.internalDirectory")(
+  function* (baseDir: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* HostProcess.HomeDirectory;
+    const [baseDirInfo, homeInfo] = yield* Effect.all([fs.stat(baseDir), fs.stat(home)]);
+    return internalBrowserDirectory({
+      platform: yield* HostProcess.Platform,
+      home,
+      homeDevice: homeInfo.dev,
+      baseDirDevice: baseDirInfo.dev,
+    });
+  },
+  Effect.orElseSucceed(() => Option.none<string>()),
+);
 
 const megabytes = (bytes: number) => Math.round(bytes / 1_000_000);
 
@@ -442,6 +477,9 @@ export const layer = Layer.effect(
   PreviewBrowser,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return yield* makePreviewBrowser({ baseDir: config.baseDir });
+    const internal = yield* resolveInternalBrowserDirectory(config.baseDir);
+    return yield* makePreviewBrowser({
+      baseDir: Option.getOrElse(internal, () => config.baseDir),
+    });
   }),
 );

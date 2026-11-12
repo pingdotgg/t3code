@@ -432,6 +432,35 @@ const DOWNLOAD_MAX_BYTES = 1024 * 1024 * 1024;
 
 const tabKey = (threadId: string, tabId: string) => `${threadId}\u0000${tabId}`;
 
+// Chrome opens upload files itself, so it gets copies outside a removable home.
+export const stageUploadFiles = async (stagingDir: string, sources: ReadonlyArray<string>) => {
+  await NodeFSP.mkdir(stagingDir, { recursive: true });
+  const dir = await NodeFSP.mkdtemp(NodePath.join(stagingDir, "upload-"));
+  return Promise.all(
+    sources.map(async (source, index) => {
+      const target = NodePath.join(dir, `${index}`, NodePath.basename(source));
+      await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
+      await NodeFSP.cp(source, target, { recursive: true, dereference: true });
+      return target;
+    }),
+  );
+};
+
+// Copies outlive their tab only if the server stopped before closing it.
+const UPLOAD_RETENTION_MS = 24 * 60 * 60_000;
+export const removeStaleUploads = async (uploadsDir: string) => {
+  const cutoff = Date.now() - UPLOAD_RETENTION_MS;
+  const entries = await NodeFSP.readdir(uploadsDir).catch(() => []);
+  await Promise.all(
+    entries.map(async (entry) => {
+      const target = NodePath.join(uploadsDir, entry);
+      const info = await NodeFSP.stat(target).catch(() => null);
+      if (info !== null && info.mtimeMs < cutoff)
+        await NodeFSP.rm(target, { recursive: true, force: true });
+    }),
+  );
+};
+
 const pushBounded = <A>(
   buffer: Array<A>,
   entry: A,
@@ -583,7 +612,22 @@ const make = Effect.gen(function* () {
     config.baseDir,
   ]);
   const agentScope = yield* AgentScope;
-  const launchersDir = NodePath.join(config.stateDir, "server-browser", "launchers");
+  const internalDirectory = yield* PreviewBrowser.resolveInternalBrowserDirectory(config.baseDir);
+  // Servers can share the internal directory, so each state directory keeps its own profiles.
+  const browserStateDir = Option.match(internalDirectory, {
+    onNone: () => NodePath.join(config.stateDir, "server-browser"),
+    onSome: (directory) =>
+      NodePath.join(
+        directory,
+        "server-browser",
+        NodeCrypto.createHash("sha256").update(config.stateDir).digest("hex").slice(0, 16),
+      ),
+  });
+  const uploadsDir = Option.isSome(internalDirectory)
+    ? NodePath.join(browserStateDir, "uploads")
+    : null;
+  if (uploadsDir !== null) yield* Effect.promise(() => removeStaleUploads(uploadsDir));
+  const launchersDir = NodePath.join(browserStateDir, "launchers");
 
   const tabs = new Map<string, ServerTab>();
   const pendingTabs = new Map<
@@ -598,7 +642,7 @@ const make = Effect.gen(function* () {
   let viewerResizeOrder = 0;
 
   const contexts = new ServerBrowserContexts({
-    profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
+    profilesDir: NodePath.join(browserStateDir, "profiles"),
     idleBrowserMs: 5 * 60_000,
     executable: () => runPromise(previewBrowser.executable),
     // An agent scope keeps Chrome out of the server's memory protection and OOM score.
@@ -1003,6 +1047,12 @@ const make = Effect.gen(function* () {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
+    // A detached desktop page can still submit its staged files after a reconnect.
+    if (uploadsDir !== null && (closeSession || !tab.desktop))
+      void NodeFSP.rm(NodePath.join(uploadsDir, encodeURIComponent(key)), {
+        recursive: true,
+        force: true,
+      }).catch(constVoid);
     tab.closing = true;
     tab.viewerAttached?.resolve();
     clearAbortedNavigation(tab);
@@ -1578,7 +1628,14 @@ const make = Effect.gen(function* () {
         tag: "PreviewAutomationExecutionError",
         message: `Upload paths must be absolute: ${relative}`,
       });
-    if (await ServerBrowserPage.setInputFiles(tab.page, input)) return undefined;
+    const paths =
+      uploadsDir === null
+        ? input.paths
+        : await stageUploadFiles(
+            NodePath.join(uploadsDir, encodeURIComponent(tabKey(tab.threadId, tab.tabId))),
+            input.paths,
+          );
+    if (await ServerBrowserPage.setInputFiles(tab.page, { ...input, paths })) return undefined;
     const open = tab.fileChooser;
     if (!open)
       throw new ServerBrowserPage.ServerBrowserOperationError({
@@ -1591,8 +1648,8 @@ const make = Effect.gen(function* () {
         tag: "PreviewAutomationExecutionError",
         message: "This file picker accepts one file.",
       });
-    if (input.paths.length > 0)
-      await open.chooser.setFiles([...input.paths], {
+    if (paths.length > 0)
+      await open.chooser.setFiles([...paths], {
         timeout: input.timeoutMs ?? NAVIGATION_TIMEOUT_MS,
       });
     if (tab.fileChooser === open) closeFileChooser(tab);

@@ -18,6 +18,7 @@ import {
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -4213,4 +4214,46 @@ it.live("a page's title change without navigation reaches its session", () =>
       });
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.scoped),
+);
+
+it.effect("upload sources are copied where the browser can open them", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-upload-stage-test-" });
+    const photo = path.join(root, "source", "photo.png");
+    const folder = path.join(root, "source", "folder");
+    yield* fs.makeDirectory(folder, { recursive: true });
+    yield* fs.writeFileString(photo, "image");
+    yield* fs.writeFileString(path.join(folder, "notes.txt"), "notes");
+    const link = path.join(root, "source", "link.png");
+    yield* Effect.promise(() => NodeFSP.symlink(photo, link));
+    const staged = yield* Effect.promise(() =>
+      ServerBrowser.stageUploadFiles(path.join(root, "staging"), [photo, folder, link]),
+    );
+    const [stagedPhoto, stagedFolder, stagedLink] = staged as [string, string, string];
+    expect(stagedPhoto.startsWith(path.join(root, "staging") + path.sep)).toBe(true);
+    expect(yield* fs.readFileString(stagedPhoto)).toBe("image");
+    expect(yield* fs.readFileString(path.join(stagedFolder, "notes.txt"))).toBe("notes");
+    const linkStat = yield* Effect.promise(() => NodeFSP.lstat(stagedLink));
+    expect(linkStat.isSymbolicLink()).toBe(false);
+    expect(yield* fs.readFileString(stagedLink)).toBe("image");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("startup sweeps only upload copies older than a day", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const uploads = yield* fs.makeTempDirectoryScoped({ prefix: "t3-upload-sweep-test-" });
+    const stale = path.join(uploads, "stale");
+    const fresh = path.join(uploads, "fresh");
+    yield* fs.makeDirectory(stale);
+    yield* fs.makeDirectory(fresh);
+    const old = DateTime.toDateUtc(DateTime.makeUnsafe("2020-01-01T00:00:00.000Z"));
+    yield* fs.utimes(stale, old, old);
+    yield* Effect.promise(() => ServerBrowser.removeStaleUploads(uploads));
+    expect(yield* fs.exists(stale)).toBe(false);
+    expect(yield* fs.exists(fresh)).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -202,3 +202,40 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PreviewBrowser",
     }),
   );
 });
+
+it.layer(NodeServices.layer)("PreviewBrowser internal directory", (it) => {
+  it.effect.each([
+    {
+      platform: "darwin",
+      baseDirDevice: 2n,
+      expected: Option.some("/Users/me/Library/Application Support/T3 Code/preview-browser"),
+    },
+    { platform: "darwin", baseDirDevice: 1n, expected: Option.none() },
+    { platform: "linux", baseDirDevice: 2n, expected: Option.none() },
+    { platform: "win32", baseDirDevice: 2n, expected: Option.none() },
+  ] as const)(
+    "resolves the browser's internal directory: $platform, base dir device $baseDirDevice",
+    ({ platform, baseDirDevice, expected }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-preview-home-test-" });
+        // Only the device numbers are stubbed; the production stat calls run.
+        const devices = {
+          ...fs,
+          stat: (target: string) =>
+            fs
+              .stat(baseDir)
+              .pipe(
+                Effect.map((info) => ({ ...info, dev: target === baseDir ? baseDirDevice : 1n })),
+              ),
+        };
+        expect(
+          yield* PreviewBrowser.resolveInternalBrowserDirectory(baseDir).pipe(
+            Effect.provideService(FileSystem.FileSystem, devices),
+            Effect.provideService(HostProcess.Platform, platform),
+            Effect.provideService(HostProcess.HomeDirectory, "/Users/me"),
+          ),
+        ).toEqual(expected);
+      }),
+  );
+});
