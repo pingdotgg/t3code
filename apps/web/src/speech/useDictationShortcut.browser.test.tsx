@@ -2,16 +2,20 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { createRef, type RefObject } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { render } from "../../test/render";
-import { useDictationShortcut } from "./useDictationShortcut";
+import { useDictationShortcut, type DictationKeyHandlers } from "./useDictationShortcut";
 
 vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => "hold" }));
+
+type ShortcutInput = Parameters<typeof useDictationShortcut>[0];
 
 function Probe({
   speech,
   targetRef,
+  subscribeKeys,
 }: {
-  speech: Parameters<typeof useDictationShortcut>[0]["speech"];
+  speech: ShortcutInput["speech"];
   targetRef?: RefObject<HTMLElement | null>;
+  subscribeKeys?: ShortcutInput["subscribeKeys"];
 }) {
   useDictationShortcut({
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
@@ -20,6 +24,7 @@ function Probe({
     terminalOpen: false,
     modelPickerOpen: false,
     ...(targetRef ? { targetRef } : {}),
+    ...(subscribeKeys ? { subscribeKeys, ownsFocus: () => true } : {}),
   });
   return null;
 }
@@ -178,3 +183,30 @@ it("cancels the recording on Escape outside other shown dictation editors", asyn
   }
   expect(speech.cancel).toHaveBeenCalledTimes(2);
 });
+
+it.each([
+  ["another editor is recording", false],
+  ["the preview itself is recording", true],
+])(
+  "routes Escape relayed from the preview guest to the preview when %s",
+  async (_name, previewRecords) => {
+    const composer = previewRecords ? actions(true) : recording();
+    const preview = previewRecords ? recording() : actions(true);
+    let relayed: DictationKeyHandlers | undefined;
+    await using _screen = await render(
+      <>
+        <Probe speech={composer} />
+        <Probe
+          speech={preview}
+          subscribeKeys={(handlers) => {
+            relayed = handlers;
+            return () => {};
+          }}
+        />
+      </>,
+    );
+    relayed?.keydown(escape());
+    expect(composer.cancel).not.toHaveBeenCalled();
+    expect(preview.cancel).toHaveBeenCalledTimes(previewRecords ? 1 : 0);
+  },
+);

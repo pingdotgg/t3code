@@ -63,9 +63,15 @@ function ownsShortcut(id: symbol) {
 const targetScope = (field: HTMLElement | null | undefined) =>
   field?.closest('[role="dialog"]') ?? field;
 
+// Keys an outside editor (the preview guest) relays arrive on window, so remember their editor.
+const relayedFrom = new WeakMap<Event, symbol>();
+
 // Escape inside another shown dictation editor, or the dialog hosting it, belongs to that editor.
 // The editor itself is checked before dialogs, since one dialog can host several editors.
-function inOtherShortcutTarget(id: symbol, target: EventTarget | null) {
+function inOtherShortcutTarget(id: symbol, event: Event) {
+  const source = relayedFrom.get(event);
+  if (source) return source !== id;
+  const target = event.target;
   if (!(target instanceof Node)) return false;
   const own = shortcutTargets.get(id)?.().targetRef?.current;
   const others = [...shortcutTargets]
@@ -123,7 +129,7 @@ export function useDictationShortcut(input: ShortcutInput) {
         event.key === "Escape" &&
         (pressed.current !== null ||
           (speech.state.phase !== "idle" && speech.state.phase !== "error")) &&
-        !inOtherShortcutTarget(id.current, event.target)
+        !inOtherShortcutTarget(id.current, event)
       ) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -166,9 +172,13 @@ export function useDictationShortcut(input: ShortcutInput) {
       };
     };
     const onBlur = () => finish(null);
+    const relay = (event: KeyboardEvent) => {
+      relayedFrom.set(event, id.current);
+      window.dispatchEvent(event);
+    };
     const unsubscribe = subscribeKeys?.({
-      keydown: (event) => window.dispatchEvent(event),
-      keyup: (event) => window.dispatchEvent(event),
+      keydown: relay,
+      keyup: relay,
       blur: onBlur,
     });
     window.addEventListener("keydown", onKeyDown, true);
