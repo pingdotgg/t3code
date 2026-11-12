@@ -40,6 +40,7 @@ import {
 } from "./session-logic";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./test-fixtures";
 import type { ChatMessage } from "./types";
+import { courseOutlineMessageId } from "@t3tools/shared/toolOutput";
 
 describe("V2 session presentation", () => {
   it("uses run status as the settlement boundary", () => {
@@ -1305,6 +1306,32 @@ describe("HTML renders in the timeline", () => {
       mcpApp,
     });
     expect(rowsFor(entries, false)).toEqual(["message", "turn-fold", "mcp-app", "message"]);
+  });
+
+  it("shows a completed course outline as an assistant message", () => {
+    const item: OrchestrationV2TurnItem = {
+      ...base("course", 2),
+      type: "dynamic_tool",
+      toolName: "course_add",
+      input: {},
+      // Wire shape: the server sends only the formatted outline (WireProjection).
+      output: { courseOutline: "**Circuits**: 2 units\n\n- Foundations: units 0–1" },
+    };
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [visible(item)],
+      optimisticMessages: [],
+    });
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        kind: "message",
+        id: courseOutlineMessageId(item.id),
+        message: expect.objectContaining({
+          role: "assistant",
+          text: "**Circuits**: 2 units\n\n- Foundations: units 0–1",
+        }),
+      }),
+    );
+    expect(entries.some((entry) => entry.kind === "work" && entry.id === item.id)).toBe(false);
   });
 
   it("hosts an MCP app whose call failed, as a form-deferring write does", () => {

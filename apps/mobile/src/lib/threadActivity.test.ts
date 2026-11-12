@@ -87,19 +87,40 @@ it("keeps a completed quiz card as its own feed entry", () => {
     output: { questionCard: { question: "Why?" } },
   };
 
+  const course: OrchestrationV2TurnItem = {
+    ...base("course-item", "2026-08-29T00:00:00.000Z", 1),
+    type: "dynamic_tool",
+    toolName: "course_add",
+    input: {},
+    // Wire shape: the server sends only the formatted outline (WireProjection).
+    output: { courseOutline: "**Circuits**: 2 units\n\n- Foundations: units 0–1" },
+  };
+
   const feed = buildThreadFeed([
     projected(userMessage(), 0),
     projected(item, 1),
-    projected(assistantMessage(), 2),
-    projected(question, 3),
+    projected(course, 2),
+    projected(assistantMessage(), 3),
+    projected(question, 4),
   ]);
   expect(feed.filter((entry) => entry.type === "quiz-card")).toMatchObject([
     { type: "quiz-card", id: item.id, quizCard: { answer: "A" } },
     { type: "quiz-card", id: question.id, quizCard: { question: "Why?" } },
   ]);
+  expect(feed).toContainEqual(
+    expect.objectContaining({
+      type: "message",
+      id: "course-item:outline",
+      message: expect.objectContaining({
+        role: "assistant",
+        text: "**Circuits**: 2 units\n\n- Foundations: units 0–1",
+      }),
+    }),
+  );
   expect(deriveThreadFeedPresentation(feed, null, new Set()).map((entry) => entry.type)).toEqual([
     "message",
     "quiz-card",
+    "run-fold",
     "message",
     "quiz-card",
   ]);

@@ -27,7 +27,12 @@ import * as SqlError from "effect/sql/SqlError";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import { lessonCardFromToolItem, lessonCardReplyMessageId } from "@t3tools/shared/toolOutput";
+import {
+  courseOutlineFromToolItem,
+  courseOutlineMessageId,
+  lessonCardFromToolItem,
+  lessonCardReplyMessageId,
+} from "@t3tools/shared/toolOutput";
 import {
   ProviderTurnAnalytics,
   type ProviderTurnAnalyticsContext,
@@ -579,11 +584,11 @@ export const layer: Layer.Layer<
                 runId: item.runId,
                 nodeId: item.nodeId,
               });
-              const reply =
-                item.type === "dynamic_tool" && item.status === "completed"
-                  ? lessonCardFromToolItem(item)?.reply
-                  : undefined;
-              if (!reply) return [updated];
+              const completedTool = item.type === "dynamic_tool" && item.status === "completed";
+              const reply = completedTool ? lessonCardFromToolItem(item)?.reply : undefined;
+              const outline = completedTool ? courseOutlineFromToolItem(item) : undefined;
+              const text = reply ?? outline;
+              if (!text) return [updated];
               const createdAt = item.startedAt ?? item.updatedAt;
               return [
                 updated,
@@ -593,12 +598,12 @@ export const layer: Layer.Layer<
                   payload: {
                     createdBy: "agent",
                     creationSource: "provider",
-                    id: lessonCardReplyMessageId(item.id),
+                    id: reply ? lessonCardReplyMessageId(item.id) : courseOutlineMessageId(item.id),
                     threadId: item.threadId,
                     runId: item.runId,
                     nodeId: item.nodeId,
                     role: "assistant",
-                    text: reply,
+                    text,
                     attachments: [],
                     streaming: false,
                     createdAt,

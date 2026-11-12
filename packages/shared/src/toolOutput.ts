@@ -29,6 +29,8 @@ import {
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 const MAX_PARSED_BYTES = 16_384;
+// Server-side read of our own course_add result; large OCW courses run to hundreds of units.
+const MAX_COURSE_PARSED_BYTES = 512 * 1024;
 const MAX_METADATA_BYTES = 8_192;
 const MAX_ID_LENGTH = 256;
 const MAX_THREADS = 100;
@@ -46,6 +48,12 @@ interface ResultReadBudget {
 interface ResultEnvelope {
   data?: Record<PropertyKey, unknown>;
   failed: boolean;
+}
+
+interface CourseOutlineData {
+  readonly title: string;
+  readonly attribution?: string;
+  readonly units: ReadonlyArray<{ readonly title: string; readonly section?: string }>;
 }
 
 interface CompactToolOutput {
@@ -126,6 +134,33 @@ function boundedId(value: unknown): string | undefined {
     return undefined;
   }
   return Array.from(value).join("");
+}
+
+function readCourse(value: unknown): CourseOutlineData | undefined {
+  const budget: ResultReadBudget = {
+    remainingBytes: MAX_COURSE_PARSED_BYTES,
+    remainingNodes: MAX_ENVELOPE_NODES,
+    exceeded: false,
+  };
+  const result = readResult(value, budget);
+  if (result.failed || budget.exceeded || result.data === undefined) return undefined;
+  const title = result.data.title;
+  const units = result.data.units;
+  if (typeof title !== "string" || title.trim() === "" || !Array.isArray(units)) return undefined;
+  const parsedUnits: Array<{ title: string; section?: string }> = [];
+  for (const unit of units) {
+    if (!Predicate.isObject(unit) || typeof unit.title !== "string" || unit.title.trim() === "")
+      return undefined;
+    const section = unit.section;
+    if (section !== undefined && typeof section !== "string") return undefined;
+    parsedUnits.push({ title: unit.title, ...(section === undefined ? {} : { section }) });
+  }
+  const attribution = result.data.attribution;
+  return {
+    title,
+    units: parsedUnits,
+    ...(typeof attribution === "string" && attribution.trim() !== "" ? { attribution } : {}),
+  };
 }
 
 export function compactDynamicToolOutput(value: unknown): CompactToolOutput | undefined {
@@ -218,6 +253,53 @@ export function lessonCardFromToolItem(item: {
 /** A card's `reply` is also stored as this assistant message, so side chats can anchor on it. */
 export function lessonCardReplyMessageId(cardItemId: string) {
   return MessageId.make(`${cardItemId}:reply`);
+}
+
+export function courseOutlineFromToolItem(item: {
+  readonly toolName: string | null | undefined;
+  readonly output?: unknown;
+}): string | undefined {
+  if (resolveT3McpToolId(item.toolName) !== "course_add") return undefined;
+  if (Predicate.isObject(item.output) && typeof item.output.courseOutline === "string")
+    return item.output.courseOutline;
+  const course = readCourse(item.output);
+  if (course === undefined) return undefined;
+
+  const entries: Array<{ readonly text: string; readonly start: number }> = [];
+  for (let index = 0; index < course.units.length;) {
+    const unit = course.units[index]!;
+    if (unit.section === undefined) {
+      entries.push({ text: `- ${index}. ${unit.title}`, start: index });
+      index += 1;
+      continue;
+    }
+    const section = unit.section;
+    const start = index;
+    while (index + 1 < course.units.length && course.units[index + 1]?.section === section)
+      index += 1;
+    entries.push({
+      text: `- ${section}: ${start === index ? `unit ${start}` : `units ${start}\u2013${index}`}`,
+      start,
+    });
+    index += 1;
+  }
+  const visibleEntries =
+    entries.length > 40
+      ? [
+          ...entries.slice(0, 39).map(({ text }) => text),
+          `- …and ${course.units.length - entries[39]!.start} more`,
+        ]
+      : entries.map(({ text }) => text);
+  return [
+    `**${course.title}**: ${course.units.length} units`,
+    "",
+    ...visibleEntries,
+    ...(course.attribution === undefined ? [] : ["", course.attribution]),
+  ].join("\n");
+}
+
+export function courseOutlineMessageId(courseItemId: string) {
+  return MessageId.make(`${courseItemId}:outline`);
 }
 
 export function htmlRenderFromToolItem(item: {

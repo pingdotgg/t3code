@@ -18,6 +18,7 @@ import {
 } from "@t3tools/shared/orchestrationV2DedupedBodies";
 import {
   compactDynamicToolOutput,
+  courseOutlineFromToolItem,
   omitToolOutputImageData,
   toolOutputImages,
   toolOutputIndicatesFailure,
@@ -192,7 +193,10 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       };
     case "dynamic_tool": {
       const { output: rawOutput, ...projected } = item;
-      const output = compactDynamicToolOutput(rawOutput);
+      // Clients draw a course_add outline from the turn item, but never receive the full course.
+      const courseOutline =
+        item.status === "completed" ? courseOutlineFromToolItem(item) : undefined;
+      const output = courseOutline ? { courseOutline } : compactDynamicToolOutput(rawOutput);
       return {
         ...projected,
         input: summarizeDynamicValue(item.input),

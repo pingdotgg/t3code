@@ -37,7 +37,11 @@ import {
   projectStoredEventForWire,
 } from "./WireProjection.ts";
 import { threadShellFromProjection } from "./ProjectionStore.ts";
-import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOutput";
+import {
+  courseOutlineFromToolItem,
+  MAX_TOOL_OUTPUT_IMAGES,
+  toolOutputImages,
+} from "@t3tools/shared/toolOutput";
 
 const decodeTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const encodeTurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
@@ -194,6 +198,29 @@ describe("orchestration V2 wire projection", () => {
     const item = { ...base, output: { ok: true } } satisfies OrchestrationV2TurnItem;
     expect(projectTurnItemForWire(item)).toEqual({ ...base, outputOmitted: true });
     expect(item.output).toEqual({ ok: true });
+  });
+
+  it("sends a course_add outline instead of the full course", () => {
+    const item = {
+      ...base,
+      toolName: "mcp__t3-code__course_add",
+      output: {
+        structuredContent: {
+          title: "Course",
+          attribution: "MIT OpenCourseWare",
+          units: Array.from({ length: 300 }, (_, index) => ({
+            title: `Unit ${index} ${"x".repeat(200)}`,
+            section: `Week ${Math.floor(index / 30)}`,
+          })),
+        },
+      },
+    };
+    const projected = projectTurnItemForWire(item);
+    if (projected.type !== "dynamic_tool") throw new Error("expected dynamic_tool");
+    const outline = courseOutlineFromToolItem(projected);
+    expect(outline).toBe(courseOutlineFromToolItem(item));
+    expect(outline).toContain("- Week 9: units 270–299");
+    expect(projected.output).toEqual({ courseOutline: outline });
   });
 
   it("uses encoded JSON bytes for strings near the dynamic-value limit", () => {

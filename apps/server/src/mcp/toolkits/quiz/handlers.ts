@@ -43,7 +43,10 @@ export const shownTutorText = (
   return ordered
     .slice(lastUser + 1)
     .filter(
-      (message) => message.role === "assistant" && !/(?::|%3A)thinking(?::|%3A)/iu.test(message.id),
+      (message) =>
+        message.role === "assistant" &&
+        !/(?::|%3A)thinking(?::|%3A)/iu.test(message.id) &&
+        !message.id.endsWith(":outline"),
     )
     .reduce((total, message) => {
       if (!verdictPending || /:reply$/u.test(message.id)) return total + message.text.length;
