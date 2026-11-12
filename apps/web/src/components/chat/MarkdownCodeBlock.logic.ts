@@ -7,9 +7,12 @@ const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
 
 export function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
-  const raw = match?.[1] ?? "text";
+  return highlighterLanguageOf(match?.[1] ?? "text");
+}
+
+export function highlighterLanguageOf(language: string): string {
   // Shiki doesn't bundle a gitignore grammar; ini is a close match.
-  return raw === "gitignore" ? "ini" : raw;
+  return language === "gitignore" ? "ini" : language;
 }
 
 const FENCE_TITLE_ATTR_REGEX = /(?:^|\s)(?:title|file(?:name)?)=(?:"([^"]+)"|'([^']+)'|(\S+))/i;
