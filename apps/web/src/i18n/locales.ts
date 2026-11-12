@@ -10,6 +10,7 @@ const NATIVE_LANGUAGE_NAMES: Readonly<Record<string, string>> = {
   de: "Deutsch",
   es: "Español",
   fr: "Français",
+  ja: "日本語",
   "pt-BR": "Português (Brasil)",
   zh: "中文（简体）",
 };
