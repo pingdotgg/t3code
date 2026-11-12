@@ -11,17 +11,22 @@ import * as Semaphore from "effect/Semaphore";
 
 interface AccountRedemptionState {
   readonly lock: Semaphore.Semaphore;
-  readonly pendingKey: Ref.Ref<string | null>;
+  /** Unanswered claims' idempotency keys, by the action each one performs. */
+  readonly pendingKeys: Ref.Ref<ReadonlyMap<string, string>>;
 }
 
 export class ResetCreditCoordinator extends Context.Service<
   ResetCreditCoordinator,
   {
-    /** Reuse the idempotency key until an outcome or settled failure; timeouts keep it for retry. */
+    /**
+     * Reuse an action's idempotency key until an outcome, or a settled failure of its first attempt;
+     * timeouts keep it for retry. Another action on the account never gets that key.
+     */
     readonly redeem: <E, R>(
       accountKey: string,
       consume: (idempotencyKey: string) => Effect.Effect<ProviderConsumeResetCreditOutcome, E, R>,
       isSettled?: (error: E) => boolean,
+      action?: string,
     ) => Effect.Effect<ProviderConsumeResetCreditOutcome, E | PlatformError.PlatformError, R>;
   }
 >()("t3/provider/resetCreditCoordinator") {}
@@ -37,7 +42,7 @@ export const make = Effect.gen(function* () {
     if (existing) return existing;
     const candidate = {
       lock: yield* Semaphore.make(1),
-      pendingKey: yield* Ref.make<string | null>(null),
+      pendingKeys: yield* Ref.make<ReadonlyMap<string, string>>(new Map()),
     };
     return yield* Ref.modify(statesRef, (states) => {
       const current = states.get(accountKey);
@@ -50,19 +55,25 @@ export const make = Effect.gen(function* () {
 
   const redeem: ResetCreditCoordinator["Service"]["redeem"] = Effect.fn(
     "resetCreditCoordinator.redeem",
-  )(function* (accountKey, consume, isSettled) {
+  )(function* (accountKey, consume, isSettled, action = "") {
     const state = yield* stateFor(accountKey);
+    const forget = Ref.update(state.pendingKeys, (keys) => {
+      const next = new Map(keys);
+      next.delete(action);
+      return next;
+    });
     return yield* state.lock.withPermits(1)(
       Effect.gen(function* () {
-        const existing = yield* Ref.get(state.pendingKey);
-        const idempotencyKey = existing ?? (yield* random.uuidV4());
-        yield* Ref.set(state.pendingKey, idempotencyKey);
+        const retried = (yield* Ref.get(state.pendingKeys)).get(action);
+        const idempotencyKey = retried ?? (yield* random.uuidV4());
+        yield* Ref.update(state.pendingKeys, (keys) => new Map(keys).set(action, idempotencyKey));
         const outcome = yield* consume(idempotencyKey).pipe(
+          // A retry's refusal says nothing about the earlier attempt it repeats, which may have applied.
           Effect.tapError((error) =>
-            isSettled?.(error) ? Ref.set(state.pendingKey, null) : Effect.void,
+            retried === undefined && isSettled?.(error) ? forget : Effect.void,
           ),
         );
-        yield* Ref.set(state.pendingKey, null);
+        yield* forget;
         return outcome;
       }),
     );

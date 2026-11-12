@@ -320,6 +320,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               : undefined;
         if (!grantId || !current.version) return "noCredit" as const;
         const version = current.version;
+        const organization = yield* ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath);
         return yield* resetCreditCoordinator.redeem(
           configDir,
           (requestId) =>
@@ -331,6 +332,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               requestId,
             }),
           ClaudeResetCredits.isSettledClaudeResetCreditFailure,
+          `${organization ?? ""}\n${grantId}`,
         );
       },
       Effect.provideService(HttpClient.HttpClient, httpClient),

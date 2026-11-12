@@ -302,6 +302,11 @@ const CODEX_HUB: HubProvider = {
 };
 
 const CLAUDE_API = "https://api.anthropic.com";
+const readClaudeOrganization = (call: HubCall) =>
+  call(`${CLAUDE_API}/api/oauth/profile`).pipe(
+    Effect.flatMap(decodeClaudeProfile),
+    Effect.map((profile) => profile.organization.uuid),
+  );
 const CLAUDE_HUB: HubProvider = {
   driver: ProviderDriverKind.make("claudeAgent"),
   header: () => ({
@@ -338,10 +343,16 @@ const CLAUDE_HUB: HubProvider = {
       response: { rate_limits_available: true, rate_limits: rateLimits },
     }).limits;
     const resetCredits = claudeResetCreditsToContract(usage.cedar_ember, Date.parse(checkedAt));
+    // Grants are spent in the token's organization; offer them only under that verified workspace.
+    const organization = resetCredits
+      ? yield* readClaudeOrganization(call).pipe(Effect.option)
+      : Option.none();
     return {
       ...listedIdentity(account),
+      ...(Option.isSome(organization) ? { workspaceId: organization.value } : {}),
       plan: "Claude Subscription",
-      usageLimits: resetCredits ? { ...limits, resetCredits } : limits,
+      usageLimits:
+        resetCredits && Option.isSome(organization) ? { ...limits, resetCredits } : limits,
     };
   }),
 };
@@ -565,22 +576,17 @@ export const makeCliproxyApi = Effect.gen(function* () {
     grantId: string,
   ) {
     const header = CLAUDE_HUB.header(account, platform, architecture);
+    const organization = yield* readClaudeOrganization((url) => apiCall(hub, account, header, url));
     return yield* coordinator.redeem(
       `${hub.url}#${account.id}`,
       (requestId) =>
         Effect.gen(function* () {
-          const profile = yield* decodeClaudeProfile(
-            yield* apiCall(hub, account, header, `${CLAUDE_API}/api/oauth/profile`),
-          );
-          const claim = yield* claudeResetClaim({
-            organization: profile.organization.uuid,
-            grantId,
-            requestId,
-          });
+          const claim = yield* claudeResetClaim({ organization, grantId, requestId });
           const response = yield* upstreamCall(hub, account, header, claim.url, claim.body);
           return yield* claudeResetClaimOutcome(response.status_code, response.body);
         }),
       isSettledClaudeResetCreditFailure,
+      `${organization}\n${grantId}`,
     );
   });
 

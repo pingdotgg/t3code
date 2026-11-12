@@ -379,7 +379,7 @@ describe("CLIProxyAPI built-in management API", () => {
   );
 
   it.effect(
-    "reads Claude reset grants per account and keeps windows beside a malformed block",
+    "offers Claude reset grants only under the verified organization, keeping windows without them",
     () =>
       Effect.gen(function* () {
         // Shaped like a hub answer of 12 Nov 2026: a weekly and a Fable grant, plus one not usable yet.
@@ -409,19 +409,28 @@ describe("CLIProxyAPI built-in management API", () => {
           ],
         };
         const test = fixture({
-          accounts: [
-            { ...accounts[0]!, provider: "claude" },
-            { ...accounts[1]!, provider: "claude" },
-          ],
-          upstream: (request) => ({
-            status: 200,
-            body: {
-              seven_day: { utilization: 90, resets_at: null },
-              cedar_ember: request.auth_index === "a" ? grants : { eligible: true, grants: "?" },
-            },
-          }),
+          accounts: ["a", "b", "c"].map((auth_index) => ({
+            id: `${auth_index}.json`,
+            auth_index,
+            provider: "claude",
+            email: `${auth_index}@example.com`,
+          })),
+          upstream: (request) =>
+            request.url?.endsWith("/api/oauth/profile")
+              ? request.auth_index === "a"
+                ? { status: 200, body: { organization: { uuid: "org-a" } } }
+                : { status: 500, body: {} }
+              : {
+                  status: 200,
+                  body: {
+                    seven_day: { utilization: 90, resets_at: null },
+                    cedar_ember:
+                      request.auth_index === "c" ? { eligible: true, grants: "?" } : grants,
+                  },
+                },
         });
-        const [first, second] = yield* (yield* test.api).readAccounts(config);
+        const [first, unverified, malformed] = yield* (yield* test.api).readAccounts(config);
+        expect(first?.workspaceId).toBe("org-a");
         expect(first?.usageLimits.resetCredits).toMatchObject({
           availableCount: 2,
           nextCreditId: "full-reset-2611",
@@ -436,8 +445,11 @@ describe("CLIProxyAPI built-in management API", () => {
           ["full-reset-2611", "Weekly reset", 1],
           ["launch-2610-fable", "Fable reset", 1],
         ]);
-        expect(second?.usageLimits.resetCredits).toBeUndefined();
-        expect(second?.usageLimits.windows.map((window) => window.usedPercent)).toEqual([90]);
+        for (const account of [unverified, malformed]) {
+          expect(account?.workspaceId).toBeUndefined();
+          expect(account?.usageLimits.resetCredits).toBeUndefined();
+          expect(account?.usageLimits.windows.map((window) => window.usedPercent)).toEqual([90]);
+        }
         expect(test.requests[1]?.body?.url).toBe(
           "https://api.anthropic.com/api/oauth/usage?cedar_ember=1",
         );
@@ -448,7 +460,9 @@ describe("CLIProxyAPI built-in management API", () => {
     "claims the chosen Claude grant for that account's organization, one request id per claim",
     () =>
       Effect.gen(function* () {
-        let claims = 0;
+        // The first claim may have applied though its answer was lost, and refusing its retry
+        // doesn't settle it: only an answer frees the account for its next use.
+        const statuses = [503, 429, 200, 200];
         const test = fixture({
           accounts: [
             { ...accounts[0]!, provider: "claude" },
@@ -457,30 +471,59 @@ describe("CLIProxyAPI built-in management API", () => {
           upstream: (request) =>
             request.url?.endsWith("/api/oauth/profile")
               ? { status: 200, body: { organization: { uuid: `org-${request.auth_index}` } } }
-              : // The first claim goes unanswered, so its retry must address the same claim.
-                { status: ++claims === 1 ? 503 : 200, body: { result: "reset" } },
+              : { status: statuses.shift() ?? 200, body: { result: "reset" } },
         });
         const api = yield* test.api;
         const claim = api.consume(config, "second.json", "launch-2610-fable");
+        expect((yield* claim.pipe(Effect.result))._tag).toBe("Failure");
         expect((yield* claim.pipe(Effect.result))._tag).toBe("Failure");
         expect(yield* claim).toEqual({ outcome: "reset" });
         expect(yield* claim).toEqual({ outcome: "reset" });
         const sent = test.requests.filter((request) => request.body?.url?.includes("/reset_rate"));
         expect(sent.map((request) => request.body?.url)).toEqual(
-          Array(3).fill("https://api.anthropic.com/api/organizations/org-b/reset_rate_limits"),
+          Array(4).fill("https://api.anthropic.com/api/organizations/org-b/reset_rate_limits"),
         );
         const bodies = sent.map((request) => decodeClaim(request.body?.data));
         expect(bodies.map(({ program, grant_id }) => [program, grant_id])).toEqual(
-          Array(3).fill(["cedar_ember", "launch-2610-fable"]),
+          Array(4).fill(["cedar_ember", "launch-2610-fable"]),
         );
-        expect(bodies[1]?.request_id).toBe(bodies[0]?.request_id);
-        expect(bodies[2]?.request_id).not.toBe(bodies[1]?.request_id);
+        const [lost, refused, answered, next] = bodies.map((body) => body.request_id);
+        expect([refused, answered]).toEqual([lost, lost]);
+        expect(next).not.toBe(lost);
         expect(
           test.requests
             .filter((request) => request.path.endsWith("/reset-quota"))
             .map((request) => request.body?.auth_index),
         ).toEqual(["b", "b"]);
       }),
+  );
+
+  it.effect("never reuses an unanswered Claude claim's id for another grant or organization", () =>
+    Effect.gen(function* () {
+      let organization = "org-1";
+      const statuses = [503];
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) =>
+          request.url?.endsWith("/api/oauth/profile")
+            ? { status: 200, body: { organization: { uuid: organization } } }
+            : { status: statuses.shift() ?? 200, body: { result: "reset" } },
+      });
+      const api = yield* test.api;
+      const claim = (grant: string) => api.consume(config, "first.json", grant);
+      expect((yield* claim("full-reset-2611").pipe(Effect.result))._tag).toBe("Failure");
+      yield* claim("launch-2610-fable");
+      organization = "org-2";
+      yield* claim("full-reset-2611");
+      organization = "org-1";
+      yield* claim("full-reset-2611");
+      const [weekly, fable, otherOrganization, weeklyRetry] = test.requests
+        .filter((request) => request.body?.url?.includes("/reset_rate"))
+        .map((request) => decodeClaim(request.body?.data).request_id);
+      expect(fable).not.toBe(weekly);
+      expect(otherOrganization).not.toBe(weekly);
+      expect(weeklyRetry).toBe(weekly);
+    }),
   );
 
   it.effect.each([
