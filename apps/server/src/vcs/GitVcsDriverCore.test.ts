@@ -6140,6 +6140,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect(
+      "leaves no untracked branch behind when the config stays locked during a switch",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const remote = yield* makeTmpDir("git-remote-");
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "upstream", remote]);
+          yield* git(cwd, ["push", "upstream", `${initialBranch}:refs/heads/feature`]);
+          yield* git(cwd, ["fetch", "upstream"]);
+          const fileSystem = yield* FileSystem.FileSystem;
+          const lockPath = (yield* Path.Path).join(cwd, ".git", "config.lock");
+          yield* fileSystem.writeFileString(lockPath, "");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          // The upstream retry waits on the real clock before giving up.
+          yield* TestClock.withLive(driver.switchRef({ cwd, refName: "upstream/feature" })).pipe(
+            Effect.flip,
+          );
+          assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+          assert.equal(yield* git(cwd, ["branch", "--list", "feature"]), "");
+
+          yield* fileSystem.remove(lockPath);
+          const switched = yield* driver.switchRef({ cwd, refName: "upstream/feature" });
+          assert.equal(switched.refName, "feature");
+          assert.equal(
+            yield* git(cwd, ["rev-parse", "--abbrev-ref", "feature@{upstream}"]),
+            "upstream/feature",
+          );
+        }),
+    );
+
     it.effect("fetches a remote branch into a tracking branch past another process's lock", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
