@@ -1614,3 +1614,282 @@ it.effect("a native fork that fails before its last attempt still forks natively
     assert.equal(projection.contextTransfers[0]?.resolution?.strategy, "native_fork");
   }),
 );
+
+it.effect("a native fork from before a resume fallback forks the session holding that turn", () => {
+  const driver = ProviderDriverKind.make("claudeAgent");
+  const instanceId = ProviderInstanceId.make(driver);
+  const modelSelection = { instanceId, model: "test-model" };
+  // Resume fallback moved the provider thread from session A to B; run 1's message is only in A.
+  const messageSessions = new Map([["native-message-a", "native-session-a"]]);
+  const forkedSessions: Array<string | undefined> = [];
+  const started = Deferred.makeUnsafe<ProviderAdapter.ProviderAdapterV2TurnInput>();
+  const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+    instanceId,
+    driver,
+    getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
+    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+    openSession: (input) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        return {
+          instanceId,
+          driver,
+          providerSessionId: input.providerSessionId,
+          providerSession: {
+            id: input.providerSessionId,
+            driver,
+            providerInstanceId: instanceId,
+            status: "ready",
+            cwd: "/tmp/fork-before-resume-fallback",
+            model: modelSelection.model,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+          events: Stream.never,
+          ensureThread: ({ threadId, existingProviderThread }) =>
+            Effect.succeed({
+              ...existingProviderThread!,
+              appThreadId: threadId,
+              nativeThreadRef: { driver, nativeId: "native-fresh-fork", strength: "strong" },
+              status: "idle",
+              updatedAt: now,
+            }),
+          resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+          startTurn: (turn) => Deferred.succeed(started, turn).pipe(Effect.asVoid),
+          steerTurn: () => Effect.void,
+          interruptTurn: () => Effect.void,
+          respondToRuntimeRequest: () => Effect.void,
+          readThreadSnapshot: () => Effect.die("unused"),
+          rollbackThread: () => Effect.die("unused"),
+          // Like the Claude SDK: forking up to a message fails unless the session holds it.
+          forkThread: ({
+            sourceProviderThread,
+            sourceProviderTurns,
+            providerTurnId,
+            targetThreadId,
+          }) => {
+            const session = sourceProviderThread.nativeThreadRef?.nativeId;
+            forkedSessions.push(session);
+            const anchor = sourceProviderTurns?.find((turn) => turn.id === providerTurnId)
+              ?.nativeTurnRef?.nativeId;
+            return anchor !== undefined && messageSessions.get(anchor) !== session
+              ? Effect.fail(
+                  new ProviderAdapter.ProviderAdapterForkThreadError({
+                    driver,
+                    providerThreadId: sourceProviderThread.id,
+                    cause: `Message ${anchor} not found in session ${session}`,
+                  }),
+                )
+              : Effect.succeed({
+                  ...sourceProviderThread,
+                  appThreadId: targetThreadId,
+                  nativeThreadRef: { driver, nativeId: "native-forked", strength: "strong" },
+                  updatedAt: now,
+                });
+          },
+        } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
+      }),
+  };
+  return Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    const now = yield* DateTime.now;
+    const sourceThreadId = ThreadId.make("fork-fallback-source");
+    const targetThreadId = ThreadId.make("fork-fallback-target");
+    const providerThreadId = ProviderThreadId.make("fork-fallback-provider-thread");
+
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("fork-fallback-create-source"),
+      threadId: sourceThreadId,
+      projectId: ProjectId.make("fork-fallback-project"),
+      title: "Fork before resume fallback",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("fork-fallback-provider-thread"),
+          type: "provider-thread.updated",
+          threadId: sourceThreadId,
+          occurredAt: now,
+          payload: {
+            id: providerThreadId,
+            driver,
+            providerInstanceId: instanceId,
+            providerSessionId: null,
+            appThreadId: sourceThreadId,
+            ownerNodeId: null,
+            nativeThreadRef: { driver, nativeId: "native-session-b", strength: "strong" },
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 2,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      ],
+    });
+    for (const [ordinal, session] of [
+      [1, "a"],
+      [2, "b"],
+    ] as const) {
+      const runId = RunId.make(`fork-fallback-run-${ordinal}`);
+      const attemptId = RunAttemptId.make(`fork-fallback-attempt-${ordinal}`);
+      const providerTurnId = ProviderTurnId.make(`fork-fallback-turn-${ordinal}`);
+      const rootNodeId = NodeId.make(`fork-fallback-root-${ordinal}`);
+      const messageId = MessageId.make(`fork-fallback-message-${ordinal}`);
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`fork-fallback-run-${ordinal}`),
+            type: "run.created",
+            threadId: sourceThreadId,
+            runId,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId: sourceThreadId,
+              ordinal,
+              providerInstanceId: instanceId,
+              modelSelection,
+              providerThreadId,
+              userMessageId: messageId,
+              rootNodeId,
+              activeAttemptId: attemptId,
+              status: "completed",
+              queuePosition: null,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+          {
+            id: EventId.make(`fork-fallback-attempt-${ordinal}`),
+            type: "run-attempt.created",
+            threadId: sourceThreadId,
+            runId,
+            occurredAt: now,
+            payload: {
+              id: attemptId,
+              nativeThreadId: `native-session-${session}`,
+              runId,
+              attemptOrdinal: 1,
+              rootNodeId,
+              providerInstanceId: instanceId,
+              providerThreadId,
+              providerTurnId,
+              reason: "initial",
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          },
+          {
+            id: EventId.make(`fork-fallback-provider-turn-${ordinal}`),
+            type: "provider-turn.updated",
+            threadId: sourceThreadId,
+            occurredAt: now,
+            payload: {
+              id: providerTurnId,
+              providerThreadId,
+              nodeId: rootNodeId,
+              runAttemptId: attemptId,
+              nativeTurnRef: { driver, nativeId: `native-message-${session}`, strength: "strong" },
+              ordinal,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          },
+          {
+            id: EventId.make(`fork-fallback-user-item-${ordinal}`),
+            type: "turn-item.updated",
+            threadId: sourceThreadId,
+            runId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`fork-fallback-user-item-${ordinal}`),
+              threadId: sourceThreadId,
+              runId,
+              nodeId: null,
+              providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "user_message",
+              createdBy: "user",
+              creationSource: "web",
+              inputIntent: "turn_start",
+              messageId,
+              text: `FORK_FALLBACK_MARKER_${ordinal}`,
+              attachments: [],
+            },
+          },
+        ],
+      });
+    }
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork-fallback-fork"),
+      sourceThreadId,
+      targetThreadId,
+      sourcePoint: { type: "run", runId: RunId.make("fork-fallback-run-1") },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("fork-fallback-continue"),
+      threadId: targetThreadId,
+      messageId: MessageId.make("fork-fallback-continue"),
+      text: "Continue the fork",
+      attachments: [],
+      modelSelection,
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      yield* worker.drain();
+      yield* TestClock.adjust("1 second");
+    }
+    yield* Deferred.await(started);
+
+    const projection = yield* orchestrator.getThreadProjection(targetThreadId);
+    assert.deepEqual(
+      projection.turnItems.flatMap((item) => (item.type === "system_notice" ? [item.message] : [])),
+      [],
+    );
+    assert.equal(projection.contextTransfers[0]?.status, "consumed");
+    assert.equal(projection.contextTransfers[0]?.resolution?.strategy, "native_fork");
+    assert.deepEqual(forkedSessions, ["native-session-a"]);
+  }).pipe(
+    Effect.provide(
+      ProviderReplayHarness.layerWithRegistry(
+        { name: "fork-before-resume-fallback" },
+        ProviderAdapterRegistry.layerFromAdapters([adapter]),
+      ),
+    ),
+  );
+});
