@@ -18,7 +18,9 @@ import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
+  dispatchedCommands,
   installFakeEnvironment,
+  rejectPendingCommand,
   threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
@@ -190,4 +192,40 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
   await vi.waitFor(() => expect(editor.element().textContent).toContain("Check"));
   expect(editor.element().textContent).not.toContain("[package.json](package.json)");
   await expect.element(chip).toBeVisible();
+});
+
+it("a rejected send leaves the timeline when a new draft was typed meanwhile", async () => {
+  const thread = threadWithHistory("rejected-send", 1);
+  using _environment = installFakeEnvironment([thread], {
+    acceptCommands: true,
+    holdCommand: (command) => command.type === "message.dispatch",
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  await userEvent.keyboard("Failed prompt{Enter}");
+  await vi.waitFor(() =>
+    expect(dispatchedCommands().map((command) => command.type)).toContain("message.dispatch"),
+  );
+  await expect.element(page.getByText("Failed prompt")).toBeVisible();
+  await userEvent.keyboard("Next draft");
+
+  await rejectPendingCommand("Attachment 'sample.png' cannot be sent.");
+
+  await expect.element(page.getByText("Attachment 'sample.png' cannot be sent.")).toBeVisible();
+  await expect.element(page.getByText("Failed prompt")).not.toBeInTheDocument();
+  expect(editor.element().textContent).toContain("Next draft");
 });
