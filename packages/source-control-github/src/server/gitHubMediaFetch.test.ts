@@ -7,6 +7,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubMediaFetch from "./gitHubMediaFetch.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 
 const PR_REPOSITORY = "enterprise/private";
@@ -238,5 +239,159 @@ describe("GitHubMediaFetch", () => {
       expect(fixture.rendered).toHaveLength(4);
       expect(fixture.requests.at(-1)?.url).toBe(fixture.signedUrls.at(-1));
     }).pipe(Effect.provide(fixture.layer), Effect.scoped);
+  });
+
+  describe("release downloads", () => {
+    const url = "https://github.com/owner/private/releases/download/v1%2Btest/shot%20%231%25.png";
+    const credential = {
+      token: Redacted.make("release-test-token"),
+      source: "app" as const,
+      fingerprint: "release-test",
+    };
+    const objectUrl = "https://release-assets.githubusercontent.com/shot.png?signature=test";
+
+    it.effect(
+      "downloads the exact release asset for a tag with a slash through the API without leaking auth on redirect",
+      () => {
+        const tag = "release%2Fv1";
+        const requests: Array<{ url: string; authorization: string | undefined }> = [];
+        const lookups: Array<GitHubRest.GitHubRestInput & { pinned: string | undefined }> = [];
+        const downloadUrl = "https://api.github.com/repos/owner/private/releases/assets/42";
+        return Effect.gen(function* () {
+          const fetchMedia = yield* GitHubMediaFetch.make;
+          const response = yield* fetchMedia({ url: url.replace("v1%2Btest", tag), headers: {} });
+          expect(response?.status).toBe(200);
+          expect(response && (yield* response.text)).toBe("release-image-bytes");
+          expect(lookups).toMatchObject([
+            {
+              host: "github.com",
+              operation: "getReleaseByTag",
+              path: `repos/owner/private/releases/tags/${tag}`,
+              pinned: "release-test-token",
+            },
+          ]);
+          expect(requests).toEqual([
+            { url: downloadUrl, authorization: "Bearer release-test-token" },
+            { url: objectUrl, authorization: undefined },
+          ]);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              // Signed in only through the app, which `GitHubCredentials` does not hold.
+              Layer.mock(GitHubCredentials.GitHubCredentials)({
+                get: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+              }),
+              Layer.mock(GitHubRest.GitHubRest)({
+                credential: () => Effect.succeed(credential),
+                rest: (input) =>
+                  Effect.gen(function* () {
+                    const pinned = yield* GitHubRequestPolicy.PinnedGitHubCredential;
+                    lookups.push({
+                      ...input,
+                      pinned: pinned ? Redacted.value(pinned.token) : undefined,
+                    });
+                    return {
+                      status: 200,
+                      headers: {},
+                      truncated: false,
+                      invalidUtf8: false,
+                      body: JSON.stringify({
+                        assets: [
+                          { id: 41, name: "shot #1%.png.bak" },
+                          {
+                            id: 42,
+                            name: "shot #1%.png",
+                            url: "https://untrusted.invalid/ignored",
+                          },
+                        ],
+                      }),
+                    };
+                  }),
+              }),
+            ),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              requests.push({ url: request.url, authorization: request.headers.authorization });
+              if (request.url === downloadUrl) {
+                expect(request.headers.accept).toBe("application/octet-stream");
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    new Response(null, { status: 302, headers: { location: objectUrl } }),
+                  ),
+                );
+              }
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response("release-image-bytes", {
+                    status: request.url === objectUrl ? 200 : 404,
+                  }),
+                ),
+              );
+            }),
+          ),
+          Effect.scoped,
+        );
+      },
+    );
+
+    it.effect.each(["no credential", "lookup fails"])(
+      "loads public release bytes anonymously when %s",
+      (mode) => {
+        const requests: Array<{ url: string; authorization: string | undefined }> = [];
+        const lookups: Array<string | undefined> = [];
+        return Effect.gen(function* () {
+          const fetchMedia = yield* GitHubMediaFetch.make;
+          expect((yield* fetchMedia({ url, headers: {} }))?.status).toBe(200);
+          expect(requests).toEqual([
+            { url, authorization: undefined },
+            { url: objectUrl, authorization: undefined },
+          ]);
+          // An app credential that cannot see the release hands on to the user's own.
+          expect(lookups).toEqual(mode === "no credential" ? [] : ["app", "gh"]);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(GitHubCredentials.GitHubCredentials)({}),
+              Layer.mock(GitHubRest.GitHubRest)({
+                credential: (host, options) =>
+                  mode === "no credential"
+                    ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
+                    : Effect.succeed({
+                        ...credential,
+                        source: options?.personal ? ("gh" as const) : ("app" as const),
+                      }),
+                rest: () =>
+                  Effect.gen(function* () {
+                    lookups.push((yield* GitHubRequestPolicy.PinnedGitHubCredential)?.source);
+                    return yield* new GitHubRequestPolicy.GitHubApiAuthenticationError({
+                      host: "github.com",
+                      operation: "getReleaseByTag",
+                    });
+                  }),
+              }),
+            ),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              requests.push({ url: request.url, authorization: request.headers.authorization });
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  request.url === url
+                    ? new Response(null, { status: 302, headers: { location: objectUrl } })
+                    : new Response(null, { status: request.url === objectUrl ? 200 : 404 }),
+                ),
+              );
+            }),
+          ),
+          Effect.scoped,
+        );
+      },
+    );
   });
 });
