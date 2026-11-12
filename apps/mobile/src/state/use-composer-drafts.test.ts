@@ -2161,9 +2161,11 @@ describe("mobile composer drafts", () => {
       expect(composerDraftFileMocks.getDocument()).toContain("Ship the release notes");
 
       clearComposerDraftContent(draftKey);
+      const writeCommitted = new Promise<void>((resolve) => {
+        composerDraftFileMocks.setOnWrite(() => resolve());
+      });
       appStateMocks.listeners.forEach((listener) => listener(state));
-      // One macrotask lets a started flush land; the 200 ms debounce stays pending.
-      await vi.advanceTimersByTimeAsync(0);
+      await writeCommitted;
 
       expect(composerDraftFileMocks.getDocument()).not.toContain("Ship the release notes");
     },
