@@ -1295,10 +1295,28 @@ describe("MessagesTimeline agent messages", () => {
     await click(row);
     expect(screen.text()).toContain("The migration drops the index before backfilling it.");
     await click(screen.button("Open thread"));
-    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
+    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID, ENVIRONMENT_ID);
 
     await click(screen.button(/^Agent/));
     expect(screen.text()).not.toContain("drops the index");
+  });
+
+  it("names a sender in a linked environment it cannot reach by the title it sent", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message(AGENT_MESSAGE, {
+        createdBy: "agent",
+        linkedSender: {
+          environmentId: EnvironmentId.make("environment-linked"),
+          threadId: SENDER_THREAD_ID,
+          title: "Release lead",
+        },
+      }),
+    ]);
+    await click(screen.button(/^Release lead/));
+    expect(screen.text()).toContain("drops the index");
+    // This client cannot open a thread in an environment it does not reach.
+    expect(screen.buttons("Open thread")).toHaveLength(0);
   });
 
   it("leaves messages sent by T3 Code as full bubbles", async () => {

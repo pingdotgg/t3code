@@ -18,8 +18,12 @@ vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importO
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useThreadProjection: (() => state.projection) as never,
-  useQuietThreadShell: ((target: unknown) =>
-    target === null ? null : { title: "Release lead" }) as never,
+  useQuietThreadShell: ((target: { readonly environmentId: string } | null) =>
+    target === null
+      ? null
+      : {
+          title: target.environmentId === "environment:linked" ? "Linked lead" : "Release lead",
+        }) as never,
 }));
 
 vi.mock(import("../../state/query"), async (importOriginal) => ({
@@ -168,10 +172,45 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
 
   await expect.element(page.getByRole("button", { name: /Release lead/ })).toBeVisible();
   await page.getByRole("button", { name: "Open thread" }).click({ force: true });
-  expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("thread:lead");
+  expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("thread:lead", "environment:test");
 
   await expect.element(page.getByText("Sent by T3 Code")).toBeVisible();
   await expect.element(page.getByText("Continue where you left off.")).toBeVisible();
+});
+
+it("names a queued message's sender in a linked environment and opens its thread there", async () => {
+  setup();
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    queuedRuns: [
+      {
+        run: { id: "run:linked", userMessageId: "run:linked:message" },
+        text: "Review finished.",
+        attachments: [],
+        message: {
+          id: "run:linked:message",
+          role: "user",
+          createdAt: DateTime.makeUnsafe("2026-10-27T12:00:00.000Z"),
+          text: "Review finished.",
+          createdBy: "agent",
+          creationSource: "mcp",
+          linkedSender: {
+            environmentId: "environment:linked",
+            threadId: "thread:lead",
+            title: "Title when sent",
+          },
+        },
+      },
+    ],
+  };
+  const onOpenThread = vi.fn();
+  await using _screen = await renderQueue({ onOpenThread });
+
+  await expect.element(page.getByRole("button", { name: /Linked lead/ })).toBeVisible();
+  await page.getByRole("button", { name: "Open thread" }).click({ force: true });
+  expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("thread:lead", "environment:linked");
 });
 
 it("stays inside the timeline scroller instead of growing the chat column", async () => {
