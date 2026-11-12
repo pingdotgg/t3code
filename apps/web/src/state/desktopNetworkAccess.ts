@@ -86,6 +86,8 @@ function createDesktopNetworkAccessStateAtom(
       staleTime: DESKTOP_NETWORK_ACCESS_STALE_TIME_MS,
       revalidateOnMount: true,
     }),
+    // Addresses come and go while Settings stays open; only mounted readers re-read.
+    Atom.withRefresh(DESKTOP_NETWORK_ACCESS_STALE_TIME_MS),
     Atom.withLabel("desktop:network-access"),
   );
 }

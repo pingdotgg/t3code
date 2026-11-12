@@ -216,7 +216,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   disableTailscaleServe,
-  ensureTailscaleServe,
+  ensureTailscaleServeEventually,
   readTailscaleServeRoutesTo,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
@@ -904,95 +904,92 @@ const layerMakeServer = Layer.unwrap(
           );
       }),
     );
-    const layerTailscaleServe = config.tailscaleServeEnabled
-      ? Layer.effectDiscard(
-          Effect.acquireRelease(
-            Effect.gen(function* () {
-              yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
-              yield* awaitActivation;
-              const server = yield* HttpServer.HttpServer;
-              const address = server.address;
-              if (typeof address === "string" || !("port" in address)) {
-                return null;
-              }
-
-              const localPort = address.port;
-              const localHost = loopbackUrlHostForAddress(address);
-              return yield* ensureTailscaleServe({
-                localPort,
-                servePort: config.tailscaleServePort,
-                localHost,
-              }).pipe(
-                Effect.as({
-                  localPort,
-                  localHost: localHost.replace(/^\[|\]$/gu, ""),
-                  servePort: config.tailscaleServePort,
-                }),
+    const releaseTailscaleServe = (configured: {
+      readonly localHost: string;
+      readonly localPort: number;
+      readonly servePort: number;
+    }) =>
+      Effect.all(
+        [
+          readTailscaleServeRoutesTo({
+            host: configured.localHost,
+            port: configured.localPort,
+          }),
+          readTailscaleStatus,
+        ],
+        { concurrency: 2 },
+      ).pipe(
+        // Another service may hold the root route by now, or it may sit under a
+        // former name, where `off` would act on the current one; only ours goes.
+        Effect.map(([routes, status]) =>
+          routes.some(
+            (route) =>
+              route.servePort === configured.servePort &&
+              route.mount === "/" &&
+              route.owner === undefined &&
+              route.ambiguous === undefined &&
+              route.host?.toLowerCase() === status.magicDnsName?.toLowerCase(),
+          ),
+        ),
+        Effect.orElseSucceed(() => false),
+        Effect.flatMap((ours) =>
+          ours
+            ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
                 Effect.tap(() =>
-                  Effect.logInfo("Tailscale Serve configured", {
-                    localPort,
-                    servePort: config.tailscaleServePort,
+                  Effect.logInfo("Tailscale Serve disabled", {
+                    servePort: configured.servePort,
                   }),
                 ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to configure Tailscale Serve", {
-                    cause,
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }).pipe(Effect.as(null)),
+              )
+            : Effect.logInfo("Tailscale Serve left on; its root route is not known to be ours", {
+                servePort: configured.servePort,
+              }),
+        ),
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to disable Tailscale Serve", {
+            cause,
+            servePort: configured.servePort,
+          }),
+        ),
+      );
+    const layerTailscaleServe = config.tailscaleServeEnabled
+      ? Layer.effectDiscard(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
+            yield* awaitActivation;
+            const server = yield* HttpServer.HttpServer;
+            const address = server.address;
+            if (typeof address === "string" || !("port" in address)) {
+              return;
+            }
+
+            const localHost = loopbackUrlHostForAddress(address);
+            const configured = {
+              localPort: address.port,
+              localHost: localHost.replace(/^\[|\]$/gu, ""),
+              servePort: config.tailscaleServePort,
+            };
+            // Tailscale can come up after the server; the route is only ours to remove once set.
+            yield* Effect.forkScoped(
+              Effect.uninterruptibleMask((restore) =>
+                restore(
+                  ensureTailscaleServeEventually({
+                    localPort: configured.localPort,
+                    servePort: configured.servePort,
+                    localHost,
+                  }),
+                ).pipe(
+                  Effect.andThen(
+                    Effect.logInfo("Tailscale Serve configured", {
+                      localPort: configured.localPort,
+                      servePort: configured.servePort,
+                    }),
+                  ),
+                  Effect.andThen(Effect.addFinalizer(() => releaseTailscaleServe(configured))),
                 ),
-              );
-            }),
-            (configured) =>
-              configured
-                ? Effect.all(
-                    [
-                      readTailscaleServeRoutesTo({
-                        host: configured.localHost,
-                        port: configured.localPort,
-                      }),
-                      readTailscaleStatus,
-                    ],
-                    { concurrency: 2 },
-                  ).pipe(
-                    // Another service may hold the root route by now, or it may sit under a
-                    // former name, where `off` would act on the current one; only ours goes.
-                    Effect.map(([routes, status]) =>
-                      routes.some(
-                        (route) =>
-                          route.servePort === configured.servePort &&
-                          route.mount === "/" &&
-                          route.owner === undefined &&
-                          route.ambiguous === undefined &&
-                          route.host?.toLowerCase() === status.magicDnsName?.toLowerCase(),
-                      ),
-                    ),
-                    Effect.orElseSucceed(() => false),
-                    Effect.flatMap((ours) =>
-                      ours
-                        ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
-                            Effect.tap(() =>
-                              Effect.logInfo("Tailscale Serve disabled", {
-                                servePort: configured.servePort,
-                              }),
-                            ),
-                          )
-                        : Effect.logInfo(
-                            "Tailscale Serve left on; its root route is not known to be ours",
-                            {
-                              servePort: configured.servePort,
-                            },
-                          ),
-                    ),
-                    Effect.catch((cause) =>
-                      Effect.logWarning("Failed to disable Tailscale Serve", {
-                        cause,
-                        servePort: configured.servePort,
-                      }),
-                    ),
-                  )
-                : Effect.void,
-          ),
+              ),
+            );
+          }),
         )
       : Layer.empty;
     const layerCloudDesiredLinkReconcile = Layer.effectDiscard(

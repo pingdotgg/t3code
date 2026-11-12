@@ -14,6 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   ensureTailscaleServe,
+  ensureTailscaleServeEventually,
   parseTailscaleExitNode,
   parseTailscaleServeRoutesTo,
   parseTailscaleSshEnabled,
@@ -316,6 +317,30 @@ describe("tailscale", () => {
         Effect.provide(layer),
       );
       assert.equal(degraded, null);
+    });
+  });
+
+  it.effect("keeps retrying Serve until Tailscale comes up", () => {
+    let tailscaleUp = false;
+    let serveCalls = 0;
+    const layer = layerMockSpawner((_command, args) => {
+      if (args[0] === "serve") serveCalls += 1;
+      return tailscaleUp ? {} : { code: 1, stderr: "failed to connect to local tailscaled" };
+    });
+    return Effect.gen(function* () {
+      const fiber = yield* ensureTailscaleServeEventually({ localPort: 3773, servePort: 445 }).pipe(
+        Effect.provide(layer),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust(Duration.minutes(1));
+      assert.isUndefined(fiber.pollUnsafe());
+      const failedCalls = serveCalls;
+      assert.isAbove(failedCalls, 1);
+
+      tailscaleUp = true;
+      yield* TestClock.adjust(Duration.minutes(5));
+      yield* Fiber.join(fiber);
+      assert.equal(serveCalls, failedCalls + 1);
     });
   });
 
