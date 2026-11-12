@@ -27,12 +27,10 @@ const SSH_URL_HOST = /^(ssh:\/\/(?:[^@/]*@)?)([^:/?#]+)/iu;
 const SCP_HOST = /^((?:[^@:/\\\s]+@)?)([^@:/\\\s]+)(?=:)/u;
 const SSH_CONFIG_HOST = /^[a-z0-9_][a-z0-9._-]*$/u;
 const SSH_ALIAS_TTL_MS = 5 * 60_000;
+// SSH-only endpoints for getting through firewalls; the forge's API and web host is the other name.
+const SSH_ENDPOINT_HOSTS: Readonly<Record<string, string>> = { "ssh.github.com": "github.com" };
 
-/**
- * An SSH remote's host with `ssh_config` aliases resolved to the forge host they name, as git
- * and gh connect to it. Public forge hosts are kept: `Host github.com` often points at
- * `ssh.github.com:443` to get through firewalls.
- */
+/** An SSH remote on a host no forge claims, read on the forge its `ssh_config` alias leads to. */
 export function withSshHostAliases(
   registry: SourceControlDefinitionRegistry,
   resolveHostName: (host: string) => string | null,
@@ -44,11 +42,17 @@ export function withSshHostAliases(
     const match = pattern.exec(trimmed);
     const host = match?.[2]?.toLowerCase();
     if (match === null || host === undefined || !SSH_CONFIG_HOST.test(host)) return remoteUrl;
-    if (NodeNet.isIP(host) !== 0 || registry.findByPublicHost(host) !== undefined) return remoteUrl;
-    const hostName = resolveHostName(host)?.toLowerCase();
-    // An address names no forge, so it would only lose what the alias said.
-    if (!hostName || hostName === host || NodeNet.isIP(hostName) !== 0) return remoteUrl;
-    return `${match[1]}${hostName}${trimmed.slice(match[0].length)}`;
+    // A host a forge already claims keeps its name; its SSH endpoint may be named differently.
+    if (NodeNet.isIP(host) !== 0 || registry.recognizeRemote(trimmed)?.kind !== "unknown") {
+      return remoteUrl;
+    }
+    const resolved = resolveHostName(host)?.toLowerCase();
+    const hostName =
+      resolved === undefined ? undefined : (SSH_ENDPOINT_HOSTS[resolved] ?? resolved);
+    if (!hostName || hostName === host) return remoteUrl;
+    const aliased = `${match[1]}${hostName}${trimmed.slice(match[0].length)}`;
+    // Only a forge the alias leads to is worth the rename; anything else keeps what the alias said.
+    return registry.recognizeRemote(aliased)?.kind === "unknown" ? remoteUrl : aliased;
   };
   return {
     ...registry,

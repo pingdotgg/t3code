@@ -33,8 +33,11 @@ import {
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { cloneUrlForProtocol, cloneUrlProtocol } from "@t3tools/shared/cloneUrl";
+import { parseGitRemoteRepository } from "@t3tools/shared/git";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 const isGitCommandError = Schema.is(GitCommandError);
@@ -227,9 +230,22 @@ export const make = Effect.gen(function* () {
         provider: input.provider,
       });
       const provider = yield* providers.get(providerKind);
+      const repository = input.repository.trim();
+      // An SSH URL is looked up on the host its alias leads to, and cloned as written.
+      if (isSshRemoteUrl(repository) && parseGitRemoteRepository(repository) !== null) {
+        const [host = "", ...path] = sourceControlDefinitions
+          .repositoryKeyFromRemote(repository)
+          .split("/");
+        const urls = yield* provider.getRepositoryCloneUrls({
+          cwd: input.cwd ?? config.cwd,
+          repository: path.join("/"),
+          host,
+        });
+        return toRepositoryInfo(providerKind, { ...urls, sshUrl: repository });
+      }
       const urls = yield* provider.getRepositoryCloneUrls({
         cwd: input.cwd ?? config.cwd,
-        repository: input.repository.trim(),
+        repository,
       });
       return toRepositoryInfo(providerKind, urls);
     },

@@ -150,6 +150,31 @@ it.effect("keeps a host's raw response text out of a failed repository lookup", 
   }),
 );
 
+it.effect("looks up an SSH URL by its host and path and keeps the URL to clone over SSH", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ readonly repository: string; readonly host: string | undefined }> = [];
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService.pipe(
+      Effect.provide(
+        layer({
+          provider: makeProvider({
+            getRepositoryCloneUrls: (input) => {
+              requests.push({ repository: input.repository, host: input.host });
+              return Effect.succeed(CLONE_URLS);
+            },
+          }),
+        }),
+      ),
+    );
+    const repository = yield* service.lookupRepository({
+      provider: SourceControlProviderKind.make("github"),
+      repository: " ssh://git@github.com/Octocat/T3code.git ",
+    });
+    assert.deepStrictEqual(requests, [{ repository: "octocat/t3code", host: "github.com" }]);
+    assert.strictEqual(repository.sshUrl, "ssh://git@github.com/Octocat/T3code.git");
+    assert.strictEqual(repository.url, CLONE_URLS.url);
+  }),
+);
+
 it.effect("clones a looked-up repository after creating missing parent directories", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
