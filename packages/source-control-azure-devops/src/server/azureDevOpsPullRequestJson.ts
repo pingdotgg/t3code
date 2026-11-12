@@ -116,7 +116,6 @@ const RawPolicyEvaluationSchema = Schema.Struct({
     ),
   ),
   configuration: Schema.Struct({
-    id: Schema.optional(Schema.NullOr(Schema.Int)),
     url: Schema.optional(Schema.NullOr(Schema.String)),
     isBlocking: Schema.optional(Schema.NullOr(Schema.Boolean)),
     isEnabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
@@ -435,13 +434,8 @@ function toPolicyCheck(raw: RawPolicyEvaluation, isDraft: boolean): PullRequestC
   };
 }
 
-export interface AzureDevOpsPolicyCheck {
-  readonly check: PullRequestCheck;
-  readonly policyId: number | null;
-}
-
 export interface AzureDevOpsPolicyCheckPage {
-  readonly checks: ReadonlyArray<AzureDevOpsPolicyCheck>;
+  readonly checks: ReadonlyArray<PullRequestCheck>;
   /** Evaluations of every policy type, so filtered rows cannot hide a next page. */
   readonly rawCount: number;
 }
@@ -456,23 +450,10 @@ export function decodePolicyChecksJson(
   return Result.succeed({
     checks: decoded.success.flatMap((evaluation) => {
       const check = toPolicyCheck(evaluation, input.isDraft);
-      return check === null ? [] : [{ check, policyId: evaluation.configuration.id ?? null }];
+      return check === null ? [] : [check];
     }),
     rawCount: decoded.success.length,
   });
-}
-
-/** Watches and client rows tell checks apart by name, which path-filtered copies of one pipeline share. */
-export function namePolicyChecksApart(
-  entries: ReadonlyArray<AzureDevOpsPolicyCheck>,
-): ReadonlyArray<PullRequestCheck> {
-  const counts = new Map<string, number>();
-  for (const { check } of entries) counts.set(check.name, (counts.get(check.name) ?? 0) + 1);
-  return entries.map(({ check, policyId }) =>
-    policyId === null || counts.get(check.name) === 1
-      ? check
-      : { ...check, name: `${check.name} (#${policyId})` },
-  );
 }
 
 const RawIterationSchema = Schema.Struct({

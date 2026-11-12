@@ -6,7 +6,6 @@ import {
   decodeIterationChangesJson,
   decodeIterationsJson,
   decodePolicyChecksJson,
-  namePolicyChecksApart,
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
@@ -543,7 +542,7 @@ describe("decodePolicyChecksJson", () => {
   });
 
   const decodeOne = (value: unknown, isDraft = false) =>
-    expectSuccess(decodePolicyChecksJson(asJson([value]), { isDraft })).checks[0]?.check;
+    expectSuccess(decodePolicyChecksJson(asJson([value]), { isDraft })).checks[0];
 
   it.each([
     ["approved", "success"],
@@ -644,23 +643,6 @@ describe("decodePolicyChecksJson", () => {
       checks: [],
       rawCount: 1,
     });
-  });
-
-  // Watches and client rows tell checks apart by name, and path-filtered copies of one pipeline share it.
-  it("names policies that share a name apart by their policy id", () => {
-    const named = (id: number, displayName: string) =>
-      evaluation("approved", null, { displayName }, { id });
-    const { checks } = expectSuccess(
-      decodePolicyChecksJson(
-        asJson([named(54, "PR validation"), named(61, "PR validation"), named(70, "Lint")]),
-        { isDraft: false },
-      ),
-    );
-    expect(namePolicyChecksApart(checks).map((check) => check.name)).toEqual([
-      "PR validation (#54)",
-      "PR validation (#61)",
-      "Lint",
-    ]);
   });
 
   it("fails the page on a row it cannot read, which could be a required check", () => {

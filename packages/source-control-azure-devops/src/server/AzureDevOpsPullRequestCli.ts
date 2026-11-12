@@ -24,10 +24,8 @@ import {
   decodePullRequestListJson,
   decodeThreadsJson,
   decodeViewerJson,
-  namePolicyChecksApart,
   type AzureDevOpsChangeEntry,
   type AzureDevOpsItemContent,
-  type AzureDevOpsPolicyCheck,
   type AzureDevOpsIteration,
   type AzureDevOpsPullRequest,
   type AzureDevOpsRepositoryLocation,
@@ -569,7 +567,7 @@ export const make = Effect.gen(function* () {
           operation: "listPolicyChecks",
           cause,
         });
-      const checks: AzureDevOpsPolicyCheck[] = [];
+      const checks: PullRequestCheck[] = [];
       for (let skip = 0; skip < MAX_POLICY_EVALUATIONS; skip += POLICY_EVALUATIONS_PER_PAGE) {
         const result = yield* executeJson({
           cwd: input.cwd,
@@ -591,9 +589,7 @@ export const make = Effect.gen(function* () {
         const page = decodePolicyChecksJson(result.stdout.trim(), { isDraft: input.isDraft });
         if (!Result.isSuccess(page)) return yield* unreadable(page.failure);
         checks.push(...page.success.checks);
-        if (page.success.rawCount < POLICY_EVALUATIONS_PER_PAGE) {
-          return sortChecks(namePolicyChecksApart(checks));
-        }
+        if (page.success.rawCount < POLICY_EVALUATIONS_PER_PAGE) return sortChecks(checks);
       }
       return yield* unreadable("Policy evaluations exceeded the read limit");
     }),
