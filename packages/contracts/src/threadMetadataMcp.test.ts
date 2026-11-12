@@ -19,4 +19,18 @@ describe("ThreadMetadataMcpUpdateInput", () => {
       decodeUpdate({ action: "regenerate_title", clientRequestId: "metadata-\udc00" }),
     );
   });
+
+  it("advertises its parameter descriptions in the encoded JSON schema", () => {
+    const { properties } = Schema.toJsonSchemaDocument(ThreadMetadataMcpUpdateInput).schema as {
+      properties: Record<string, { description?: string }>;
+    };
+    assert.equal(
+      properties.title?.description,
+      "New concise display title. Required only when action is rename.",
+    );
+    assert.equal(
+      properties.clientRequestId?.description,
+      "Stable idempotency key to reuse when retrying this mutation.",
+    );
+  });
 });

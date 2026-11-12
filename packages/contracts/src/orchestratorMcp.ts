@@ -46,15 +46,19 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
-export const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(256))
-  .check(
-    Schema.makeFilter((value) =>
-      hasOnlyPairedSurrogates(value)
-        ? true
-        : "clientRequestId must contain valid paired Unicode surrogates.",
-    ),
-  )
-  .annotate({ description: "Reuse it to retry the same call. A new call gets a new key." });
+export const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(256),
+).check(
+  Schema.makeFilter((value) =>
+    hasOnlyPairedSurrogates(value)
+      ? true
+      : "clientRequestId must contain valid paired Unicode surrogates.",
+  ),
+);
+// Described on the optional field: a description on a trimmed string misses its encoded JSON schema.
+export const OrchestratorMcpOptionalClientRequestId = Schema.optional(
+  OrchestratorMcpClientRequestId,
+).annotate({ description: "Reuse it to retry the same call. A new call gets a new key." });
 
 // OpenCode 1.15 serializes nested MCP union objects as JSON strings; decode that form at the boundary.
 const OrchestratorMcpScheduleFromJsonString = Schema.fromJsonString(
@@ -186,7 +190,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   timeoutMs: Schema.optional(Schema.Finite).annotate({
     description: "Mode 'wait' only. Default 4 min. A timeout does not cancel the child.",
   }),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  clientRequestId: OrchestratorMcpOptionalClientRequestId,
   runtimeMode: Schema.optional(
     OrchestratorMcpRuntimeMode.annotate({
       description:
@@ -256,7 +260,7 @@ export type OrchestratorMcpTaskStatusInput = typeof OrchestratorMcpTaskStatusInp
 export const OrchestratorMcpTaskCancelInput = Schema.Struct({
   taskId: NodeId,
   reason: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  clientRequestId: OrchestratorMcpOptionalClientRequestId,
 });
 export type OrchestratorMcpTaskCancelInput = typeof OrchestratorMcpTaskCancelInput.Type;
 
@@ -280,7 +284,7 @@ export const OrchestratorMcpCreateThreadsInput = Schema.Struct({
     Schema.isMinLength(1),
     Schema.isMaxLength(20),
   ),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  clientRequestId: OrchestratorMcpOptionalClientRequestId,
 });
 export type OrchestratorMcpCreateThreadsInput = typeof OrchestratorMcpCreateThreadsInput.Type;
 
@@ -524,7 +528,7 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
         "Start a new provider session without the thread's earlier context, like /clear. Never steers.",
     }),
   ),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  clientRequestId: OrchestratorMcpOptionalClientRequestId,
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
 
@@ -575,7 +579,7 @@ export const OrchestratorMcpThreadInterruptInput = Schema.Struct({
    * watches and stop every task it delegated. `runId` is then not used.
    */
   stop: Schema.optional(Schema.Boolean),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  clientRequestId: OrchestratorMcpOptionalClientRequestId,
 });
 export type OrchestratorMcpThreadInterruptInput = typeof OrchestratorMcpThreadInterruptInput.Type;
 
@@ -688,7 +692,7 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
         "Runs share one thread but each starts a fresh session without earlier runs' context. Unbound: the first run makes the thread.",
     }),
   ),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  clientRequestId: OrchestratorMcpOptionalClientRequestId,
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
 
@@ -837,7 +841,7 @@ export const OrchestratorMcpEnvironmentLinkInput = Schema.Struct({
   requestedAccess: Schema.optional(AuthMcpClientAccess).annotate({
     description: "Suggested access. The user picks; default approval-required.",
   }),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  clientRequestId: OrchestratorMcpOptionalClientRequestId,
 });
 export type OrchestratorMcpEnvironmentLinkInput = typeof OrchestratorMcpEnvironmentLinkInput.Type;
 
