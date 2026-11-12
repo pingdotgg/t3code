@@ -186,6 +186,10 @@ async function sweep({ github, context, core, dryRun }) {
   }
 
   const now = Date.now();
+  // Start further down the list each day. The step is no larger than a run's cap, so a cap that
+  // is reached cannot leave the same PRs waiting behind the same others every day.
+  const start = (Math.floor(now / (24 * HOUR_MS)) * MAX_RECHECKS_PER_RUN) % (prs.length || 1);
+  prs = [...prs.slice(start), ...prs.slice(0, start)];
   const count = {};
   let rechecks = 0;
   for (const pr of prs) {
