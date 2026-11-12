@@ -26,7 +26,7 @@ export const ExtensionsToolkit = Toolkit.make(
   Tool.make("extensions_settings", {
     ...shared,
     description:
-      "Patch named extension settings. Unspecified fields stay unchanged. Read names, types, and current values with extensions_list first.",
+      "Patch settings; omitted keys stay. Get keys, types and values from extensions_list first.",
     parameters: Schema.Struct({
       ...ExtensionSettingsInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -36,7 +36,7 @@ export const ExtensionsToolkit = Toolkit.make(
   Tool.make("extensions_development", {
     ...shared,
     description:
-      "Use when creating, modifying, debugging, packaging, or testing a T3 Code extension, its custom UI, tools, commands, hooks, or settings. Loads the bundled t3-extension-development SKILL.md and its server-local path.",
+      "For developing, debugging, packaging or testing T3 extensions: load the skill and its guide paths.",
     parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
     success: Schema.Struct({
       path: Schema.String,
@@ -46,15 +46,14 @@ export const ExtensionsToolkit = Toolkit.make(
   }).annotate(Tool.Readonly, true),
   Tool.make("extensions_list", {
     ...shared,
-    description:
-      "List host extensions and their command/tool input schemas. Use before invoking an extension tool; only running extensions can be invoked.",
+    description: "List extensions and command/tool schemas; invoke only running entries.",
     parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
     success: Schema.Array(ExtensionInfo),
   }).annotate(Tool.Readonly, true),
   Tool.make("extensions_invoke", {
     ...shared,
     description:
-      "Run a trusted host extension command or agent tool using its id, kind, name, and input from extensions_list. Runs on the owning server, including for mobile and remote clients.",
+      "Run a command/tool on its server; use id, kind, name and input from extensions_list.",
     parameters: Schema.Struct({
       ...ExtensionInvokeInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -64,7 +63,7 @@ export const ExtensionsToolkit = Toolkit.make(
   Tool.make("extensions_install", {
     ...shared,
     description:
-      "Install a trusted extension from an absolute local folder on the server or an npm package. This executes code with full host access. Use only when the user asked to install it.",
+      "Install a user-requested trusted server folder (absolute path) or npm package, with full host access.",
     parameters: Schema.Struct({
       ...ExtensionInstallInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -74,7 +73,7 @@ export const ExtensionsToolkit = Toolkit.make(
   Tool.make("extensions_manage", {
     ...shared,
     description:
-      "Enable, disable, reload, update, or uninstall a host extension. Uninstall preserves local source and extension data.",
+      "Enable, disable, reload, update or uninstall. Uninstall keeps local source and stored data.",
     parameters: Schema.Struct({
       ...ExtensionManageInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,

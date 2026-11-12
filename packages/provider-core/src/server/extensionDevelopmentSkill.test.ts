@@ -29,6 +29,6 @@ it("ships the discoverable skill and advertises when agents must load it", () =>
     /^---\nname: t3-extension-development\ndescription: Use when /,
   );
   expect(T3_CODE_ORCHESTRATION_INSTRUCTIONS).toContain(
-    "Call extensions_development to load its SKILL.md before working on extensions.",
+    "Before building or modifying a T3 extension, load t3-extension-development via extensions_development.",
   );
 });
