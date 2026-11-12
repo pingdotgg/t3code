@@ -230,6 +230,47 @@ describe("ssh tunnel scripts", () => {
     },
   );
 
+  it.each([
+    { installed: ARCHIVE.archiveVersion, reuses: true },
+    { installed: "9.9.9", reuses: false },
+  ])(
+    "reuses a host t3 only at exactly the requested version: installed $installed",
+    ({ installed, reuses }) => {
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
+      try {
+        const bin = NodePath.join(root, "bin");
+        NodeFS.mkdirSync(bin);
+        NodeFS.mkdirSync(NodePath.join(root, "home"));
+        // A host the release archive cannot run on, so only reuse can succeed.
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "uname"),
+          `#!/bin/sh\ncase "$1" in -s) echo Darwin ;; -m) echo x86_64 ;; esac\n`,
+          { mode: 0o755 },
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "t3"),
+          `#!/bin/sh\ncase "$1" in --version) echo "t3 v${installed}" ;; *) echo "host t3 $*" ;; esac\n`,
+          { mode: 0o755 },
+        );
+        const runner = NodePath.join(root, "run-t3.sh");
+        NodeFS.writeFileSync(runner, SshTunnel.buildRemoteT3RunnerScript(ARCHIVE));
+        const result = NodeChildProcess.spawnSync("sh", [runner, "serve"], {
+          encoding: "utf8",
+          env: { HOME: NodePath.join(root, "home"), PATH: `${bin}:${process.env.PATH ?? ""}` },
+        });
+        if (reuses) {
+          assert.equal(result.status, 0);
+          assert.equal(result.stdout, "host t3 serve\n");
+        } else {
+          assert.notEqual(result.status, 0);
+          assert.include(result.stderr, "has no t3 release archive.");
+        }
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
       alias: "devbox",

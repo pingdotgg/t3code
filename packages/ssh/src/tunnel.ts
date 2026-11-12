@@ -457,6 +457,12 @@ if [ -z "$T3_ARCHIVE_VERSION" ]; then
   printf 'No t3 release version was provided for the remote runtime.\\n' >&2
   exit 1
 fi
+T3_SYSTEM_EXECUTABLE="$(command -v t3 2>/dev/null || true)"
+if [ -n "$T3_SYSTEM_EXECUTABLE" ] && [ "$("$T3_SYSTEM_EXECUTABLE" --version 2>/dev/null || true)" = "t3 v$T3_ARCHIVE_VERSION" ]; then
+  # A matching host-provided runtime supports platforms such as musl Linux,
+  # where the portable release archive cannot run.
+  exec "$T3_SYSTEM_EXECUTABLE" "$@"
+fi
 # Self-contained release archive: no Node, npm, or compiler on the remote.
 # Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
 T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
