@@ -242,7 +242,8 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
     if (!known) return key;
-    return known.size === 1 ? `${key}:${[...known][0]}` : null;
+    // Claude spends grants in an organization, so an unverified one never borrows a known one.
+    return known.size === 1 && report.driver !== "claudeAgent" ? `${key}:${[...known][0]}` : null;
   };
 }
 
@@ -391,6 +392,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
                   sourceId: source.id,
                   accountId: account.id,
                   creditId: account.usageLimits.resetCredits.nextCreditId,
+                  ...(account.workspaceId ? { workspaceId: account.workspaceId } : {}),
                 },
               }
             : null,
@@ -929,6 +931,9 @@ export function collectProviderUsageLimits(
               sourceId: hubCredits.source.id,
               accountId: hubCredits.account.id,
               creditId: hubCreditId,
+              ...(hubCredits.account.workspaceId
+                ? { workspaceId: hubCredits.account.workspaceId }
+                : {}),
             }
           : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
@@ -953,6 +958,7 @@ export function collectProviderUsageLimits(
                 sourceId: source.id,
                 accountId: account.id,
                 creditId: account.usageLimits.resetCredits.nextCreditId,
+                ...(account.workspaceId ? { workspaceId: account.workspaceId } : {}),
               },
             }
           : {}),

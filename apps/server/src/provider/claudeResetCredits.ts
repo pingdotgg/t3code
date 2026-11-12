@@ -66,6 +66,7 @@ const RESET_CREDIT_FAILURES = {
   loginUnreadable: "Claude could not read its login.",
   accountUnreadable: "Claude could not read its account.",
   signedOut: "Sign in to Claude again to redeem resets.",
+  accountChanged: "The Claude login changed since this reset was shown. Refresh Limits and try again.",
   rateLimited: "Claude is rate limiting resets. Try again soon.",
   coolingDown: "Claude resets are cooling down. Try again later.",
   unconfirmed:
@@ -259,7 +260,9 @@ const CLAIM_OUTCOMES = {
 
 /** Claude Code's claim of one grant for an organization; requestId is its idempotency key. */
 export const claudeResetClaim = Effect.fn("claudeResetClaim")(function* (input: {
+  /** The login's organization, read under the account's claim lock. */
   readonly organization: string | undefined;
+  readonly expectedOrganization: string | undefined;
   readonly grantId: string;
   readonly requestId: string;
 }) {
@@ -268,6 +271,9 @@ export const claudeResetClaim = Effect.fn("claudeResetClaim")(function* (input: 
   }
   const organization = input.organization?.trim();
   if (!organization) return yield* new ClaudeResetCreditError({ reason: "signedOut" });
+  if (organization !== input.expectedOrganization) {
+    return yield* new ClaudeResetCreditError({ reason: "accountChanged" });
+  }
   return {
     url: new URL(
       `/api/organizations/${encodeURIComponent(organization)}/reset_rate_limits`,
@@ -307,6 +313,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   readonly configDir: string;
   readonly accountConfigPath: string;
   readonly version: string;
+  readonly expectedOrganization: string | undefined;
   readonly grantId: string;
   readonly requestId: string;
 }) {
@@ -318,6 +325,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   );
   const claim = yield* claudeResetClaim({
     organization: config.oauthAccount?.organizationUuid,
+    expectedOrganization: input.expectedOrganization,
     grantId: input.grantId,
     requestId: input.requestId,
   });

@@ -184,6 +184,7 @@ const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requ
     return yield* ClaudeResetCredits.consumeClaudeResetCredit({
       ...login,
       version: "2.1.0",
+      expectedOrganization: "org-1",
       ...ids,
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),

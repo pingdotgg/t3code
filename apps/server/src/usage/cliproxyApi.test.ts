@@ -1,7 +1,9 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
@@ -52,6 +54,8 @@ const decodeClaim = Schema.decodeUnknownSync(
   ),
 );
 
+type Upstream = { status: number; body: unknown };
+
 function fixture(
   options: {
     accounts?: Array<{
@@ -63,13 +67,15 @@ function fixture(
       project_id?: string;
       id_token?: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
     }>;
-    upstream?: (request: RequestBody) => { status: number; body: unknown };
+    upstream?: (
+      request: RequestBody,
+    ) => Upstream | Effect.Effect<Upstream, never, never>;
     cooldownStatus?: number;
   } = {},
 ) {
   const requests: Array<{ path: string; body?: RequestBody }> = [];
   const http = HttpClient.make((request) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       expect(request.headers.authorization).toBe("Bearer management-secret");
       const path = new URL(request.url).pathname;
       const body =
@@ -89,7 +95,8 @@ function fixture(
         );
       expect(path).toMatch(/\/v0\/management\/api-call$/);
       expect(body?.header?.Authorization).toBe("Bearer $TOKEN$");
-      const upstream = options.upstream?.(body!) ?? {
+      const answer = options.upstream?.(body!);
+      const upstream = (Effect.isEffect(answer) ? yield* answer : answer) ?? {
         status: 200,
         body: body?.url?.endsWith("/consume")
           ? { code: "reset" }
@@ -379,7 +386,7 @@ describe("CLIProxyAPI built-in management API", () => {
   );
 
   it.effect(
-    "offers Claude reset grants only under the verified organization, keeping windows without them",
+    "names every Claude account's verified organization, offering grants only under it, keeping windows",
     () =>
       Effect.gen(function* () {
         // Shaped like a hub answer of 12 Nov 2026: a weekly and a Fable grant, plus one not usable yet.
@@ -409,7 +416,7 @@ describe("CLIProxyAPI built-in management API", () => {
           ],
         };
         const test = fixture({
-          accounts: ["a", "b", "c"].map((auth_index) => ({
+          accounts: ["a", "b", "c", "d"].map((auth_index) => ({
             id: `${auth_index}.json`,
             auth_index,
             provider: "claude",
@@ -417,19 +424,28 @@ describe("CLIProxyAPI built-in management API", () => {
           })),
           upstream: (request) =>
             request.url?.endsWith("/api/oauth/profile")
-              ? request.auth_index === "a"
-                ? { status: 200, body: { organization: { uuid: "org-a" } } }
+              ? request.auth_index === "a" || request.auth_index === "d"
+                ? { status: 200, body: { organization: { uuid: `org-${request.auth_index}` } } }
                 : { status: 500, body: {} }
               : {
                   status: 200,
                   body: {
                     seven_day: { utilization: 90, resets_at: null },
-                    cedar_ember:
-                      request.auth_index === "c" ? { eligible: true, grants: "?" } : grants,
+                    ...(request.auth_index === "d"
+                      ? {}
+                      : {
+                          cedar_ember:
+                            request.auth_index === "c" ? { eligible: true, grants: "?" } : grants,
+                        }),
                   },
                 },
         });
-        const [first, unverified, malformed] = yield* (yield* test.api).readAccounts(config);
+        const [first, unverified, malformed, withoutGrants] = yield* (yield* test.api).readAccounts(
+          config,
+        );
+        // Its organization is what joins an account to the same login elsewhere, grants or not.
+        expect(withoutGrants?.workspaceId).toBe("org-d");
+        expect(withoutGrants?.usageLimits.resetCredits).toBeUndefined();
         expect(first?.workspaceId).toBe("org-a");
         expect(first?.usageLimits.resetCredits).toMatchObject({
           availableCount: 2,
@@ -474,7 +490,7 @@ describe("CLIProxyAPI built-in management API", () => {
               : { status: statuses.shift() ?? 200, body: { result: "reset" } },
         });
         const api = yield* test.api;
-        const claim = api.consume(config, "second.json", "launch-2610-fable");
+        const claim = api.consume(config, "second.json", "launch-2610-fable", "org-b");
         expect((yield* claim.pipe(Effect.result))._tag).toBe("Failure");
         expect((yield* claim.pipe(Effect.result))._tag).toBe("Failure");
         expect(yield* claim).toEqual({ outcome: "reset" });
@@ -510,7 +526,7 @@ describe("CLIProxyAPI built-in management API", () => {
             : { status: statuses.shift() ?? 200, body: { result: "reset" } },
       });
       const api = yield* test.api;
-      const claim = (grant: string) => api.consume(config, "first.json", grant);
+      const claim = (grant: string) => api.consume(config, "first.json", grant, organization);
       expect((yield* claim("full-reset-2611").pipe(Effect.result))._tag).toBe("Failure");
       yield* claim("launch-2610-fable");
       organization = "org-2";
@@ -523,6 +539,49 @@ describe("CLIProxyAPI built-in management API", () => {
       expect(fable).not.toBe(weekly);
       expect(otherOrganization).not.toBe(weekly);
       expect(weeklyRetry).toBe(weekly);
+    }),
+  );
+
+  it.effect("claims a Claude grant only in the organization it was shown under, even queued", () =>
+    Effect.gen(function* () {
+      let organization = "org-a";
+      const posted = yield* Deferred.make<void>();
+      const answer = yield* Deferred.make<Upstream>();
+      const claims: Array<{ signedIn: string; url?: string; requestId: string }> = [];
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) => {
+          if (request.url?.endsWith("/api/oauth/profile")) {
+            return { status: 200, body: { organization: { uuid: organization } } };
+          }
+          const { request_id } = decodeClaim(request.data);
+          claims.push({ signedIn: organization, url: request.url, requestId: request_id });
+          return claims.length === 1
+            ? Deferred.succeed(posted, undefined).pipe(Effect.andThen(Deferred.await(answer)))
+            : { status: 200, body: { result: "reset" } };
+        },
+      });
+      const api = yield* test.api;
+      const claim = (workspaceId?: string) =>
+        api.consume(config, "first.json", "full-reset-2611", workspaceId).pipe(Effect.result);
+      const unanswered = yield* claim("org-a").pipe(Effect.forkChild);
+      yield* Deferred.await(posted);
+      // The hub's login moves to another organization while the shown grant's claim waits.
+      organization = "org-b";
+      const queued = yield* claim("org-a").pipe(Effect.forkChild);
+      yield* Deferred.succeed(answer, { status: 503, body: {} });
+      const results = [yield* Fiber.join(unanswered), yield* Fiber.join(queued), yield* claim()];
+      organization = "org-a";
+      const retry = yield* claim("org-a");
+
+      const sentTo = "https://api.anthropic.com/api/organizations/org-a/reset_rate_limits";
+      const first = { signedIn: "org-a", url: sentTo, requestId: claims[0]?.requestId };
+      expect(claims).toEqual([first, first]);
+      expect(results.map((result) => result._tag)).toEqual(["Failure", "Failure", "Failure"]);
+      expect(results[1]).toMatchObject({
+        failure: { detail: expect.stringContaining("Claude login changed") },
+      });
+      expect(retry).toMatchObject({ _tag: "Success", success: { outcome: "reset" } });
     }),
   );
 

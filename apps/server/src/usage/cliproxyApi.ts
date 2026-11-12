@@ -342,17 +342,17 @@ const CLAUDE_HUB: HubProvider = {
       checkedAt,
       response: { rate_limits_available: true, rate_limits: rateLimits },
     }).limits;
-    const resetCredits = claudeResetCreditsToContract(usage.cedar_ember, Date.parse(checkedAt));
-    // Grants are spent in the token's organization; offer them only under that verified workspace.
-    const organization = resetCredits
-      ? yield* readClaudeOrganization(call).pipe(Effect.option)
-      : Option.none();
+    // The token's organization is the account's identity and where its grants are spent, so an
+    // account without a verified one gets no workspace and no grants.
+    const organization = yield* readClaudeOrganization(call).pipe(Effect.option);
+    const resetCredits = Option.isSome(organization)
+      ? claudeResetCreditsToContract(usage.cedar_ember, Date.parse(checkedAt))
+      : undefined;
     return {
       ...listedIdentity(account),
       ...(Option.isSome(organization) ? { workspaceId: organization.value } : {}),
       plan: "Claude Subscription",
-      usageLimits:
-        resetCredits && Option.isSome(organization) ? { ...limits, resetCredits } : limits,
+      usageLimits: resetCredits ? { ...limits, resetCredits } : limits,
     };
   }),
 };
@@ -574,19 +574,28 @@ export const makeCliproxyApi = Effect.gen(function* () {
     hub: CliproxyHub,
     account: AuthFile,
     grantId: string,
+    expectedOrganization: string | undefined,
   ) {
     const header = CLAUDE_HUB.header(account, platform, architecture);
-    const organization = yield* readClaudeOrganization((url) => apiCall(hub, account, header, url));
     return yield* coordinator.redeem(
       `${hub.url}#${account.id}`,
       (requestId) =>
         Effect.gen(function* () {
-          const claim = yield* claudeResetClaim({ organization, grantId, requestId });
+          // Read under the account's lock, right before the claim the same token sends.
+          const organization = yield* readClaudeOrganization((url) =>
+            apiCall(hub, account, header, url),
+          );
+          const claim = yield* claudeResetClaim({
+            organization,
+            expectedOrganization,
+            grantId,
+            requestId,
+          });
           const response = yield* upstreamCall(hub, account, header, claim.url, claim.body);
           return yield* claudeResetClaimOutcome(response.status_code, response.body);
         }),
       isSettledClaudeResetCreditFailure,
-      `${organization}\n${grantId}`,
+      `${expectedOrganization ?? ""}\n${grantId}`,
     );
   });
 
@@ -594,6 +603,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     hub: CliproxyHub,
     accountId: string,
     creditId: string,
+    workspaceId?: string,
   ): Effect.fn.Return<ProviderConsumeResetCreditResult, UsageLimitSourceError> {
     const operation = Effect.gen(function* () {
       const account = (yield* authFiles(hub)).find((account) => account.id === accountId);
@@ -608,7 +618,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       }
       const outcome =
         account.provider === "claude"
-          ? yield* claimClaudeGrant(hub, account, creditId)
+          ? yield* claimClaudeGrant(hub, account, creditId, workspaceId)
           : yield* redeemCodexCredit(hub, account, creditId);
       if (outcome !== "reset" && outcome !== "alreadyRedeemed") return { outcome };
       const cleared = yield* management(hub, "reset-quota", {
