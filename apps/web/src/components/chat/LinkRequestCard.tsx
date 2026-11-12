@@ -1,6 +1,7 @@
 import { pipe } from "effect/Function";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  ANOTHER_ADDRESS,
   type LinkableMachine,
   linkRequestAnswerInput,
   linkRequestDefaultAccess,
@@ -8,6 +9,7 @@ import {
   linkRequestFailureMessage,
   linkRequestInitialMachine,
   type LinkRequestItem,
+  linkRequestTarget,
   linkRequestTargetName,
   rankMachinesByHint,
 } from "@t3tools/client-runtime/link-request";
@@ -33,7 +35,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { LinkAccessPicker } from "../settings/LinkAccessPicker";
-import { ANOTHER_ADDRESS, LinkMachineBadge } from "../settings/LinkMachineSelect";
+import { LinkAddressWarning, LinkMachineBadge } from "../settings/LinkMachineSelect";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
@@ -122,9 +124,6 @@ function PendingLinkRequest(props: {
             : `Link ${target} to this environment`}
         </p>
         {item.reason.trim() ? <p className="text-sm text-muted-foreground">{item.reason}</p> : null}
-        {item.label !== undefined && item.url !== undefined ? (
-          <p className="truncate text-xs text-muted-foreground/80">{item.url}</p>
-        ) : null}
       </div>
       {error !== null ? (
         <p role="alert" className="text-xs text-destructive">
@@ -161,41 +160,6 @@ function PendingLinkRequest(props: {
   );
 }
 
-/**
- * What the dialog links: a machine from the client's catalog, or an address.
- * `urls` is empty when the client knows no direct address for the machine,
- * so the user types one.
- */
-type DialogTarget =
-  | { readonly kind: "none" }
-  | {
-      readonly kind: "machine";
-      readonly environmentId: EnvironmentId;
-      readonly label: string;
-      readonly urls: ReadonlyArray<string>;
-      readonly linked: boolean;
-    }
-  | { readonly kind: "address" };
-
-function resolveTarget(
-  item: LinkRequestItem,
-  machines: ReadonlyArray<LinkableMachine>,
-  choice: string | null,
-): DialogTarget {
-  if (item.environmentId === undefined && item.url !== undefined) return { kind: "address" };
-  const chosen = item.environmentId ?? choice;
-  if (chosen === null) return { kind: "none" };
-  if (chosen === ANOTHER_ADDRESS) return { kind: "address" };
-  const machine = machines.find((candidate) => candidate.environmentId === chosen);
-  return {
-    kind: "machine",
-    environmentId: machine?.environmentId ?? (chosen as EnvironmentId),
-    label: machine?.label ?? linkRequestTargetName(item),
-    urls: [...new Set([...(machine?.urls ?? []), ...(item.url === undefined ? [] : [item.url])])],
-    linked: machine?.linked ?? false,
-  };
-}
-
 /** The dialog's steps: where to link, then what agents may do there. */
 type LinkStep = "machine" | "access";
 
@@ -229,19 +193,24 @@ function LinkRequestDialog(props: {
     reportDefect: false,
   });
   const selected = choice ?? linkRequestInitialMachine(item, machines);
-  const target = resolveTarget(item, machines, selected);
+  const target = linkRequestTarget(item, machines, selected);
   const targetName = target.kind === "machine" ? target.label : linkRequestTargetName(item);
-  // This client can mint a code there when it is connected to that
-  // environment with a session that may create pairing links.
   const targetId = target.kind === "machine" ? target.environmentId : null;
   const connected = usePreparedConnection(targetId);
   const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
-  const canMint =
-    targetId !== null && Option.isSome(connected) && mayMint && !mintFailed.has(targetId);
   const needsAddress =
     target.kind === "address" || (target.kind === "machine" && target.urls.length === 0);
+  // This client mints a code there when it is connected with a session that may
+  // create pairing links, and only for its own addresses: anything can answer
+  // as that machine at one typed in, so that one gets a code the user fetched.
+  const canMint =
+    targetId !== null &&
+    !needsAddress &&
+    Option.isSome(connected) &&
+    mayMint &&
+    !mintFailed.has(targetId);
   // An address the agent gave is already filled in; only one the user must type is asked for.
-  const asksAddress = needsAddress && !(item.url !== undefined && item.environmentId === undefined);
+  const asksAddress = needsAddress && item.url === undefined;
   const useExisting = target.kind === "machine" && target.linked;
   // A named machine with an address it answers at has nothing to choose before access.
   const steps: ReadonlyArray<LinkStep> =
@@ -287,10 +256,7 @@ function LinkRequestDialog(props: {
     }
     return linkRequestAnswerInput(item, {
       type: "link",
-      target:
-        target.kind === "address"
-          ? { url: address }
-          : { ...target, urls: needsAddress ? [address.trim()] : target.urls },
+      target: target.kind === "machine" && target.urls.length > 0 ? target : { url: address },
       access,
       pairingCode: code,
     });
@@ -393,11 +359,12 @@ function LinkRequestDialog(props: {
               </>
             ) : (
               <>
-                {item.url !== undefined && !pickMachine ? (
+                {item.url !== undefined && target.kind === "machine" ? (
                   <p className="truncate text-xs text-muted-foreground">{item.url}</p>
                 ) : null}
                 {useExisting ? null : (
                   <>
+                    {needsAddress ? <LinkAddressWarning address={address} /> : null}
                     {canMint ? null : (
                       <label className="block space-y-1.5">
                         <span className="block text-xs font-medium text-foreground">
