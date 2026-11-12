@@ -24,6 +24,7 @@ import {
   isPathSuggestionCurrent,
   replaceTextRange,
 } from "./composer-logic";
+import { slashCommandItemsForPromptPosition } from "./components/chat/composerSlashCommandSearch";
 import { carryDisplacedCustomAnswerIntoPrompt } from "./pendingUserInput";
 import { formatTerminalContextReference } from "./lib/terminalContext";
 
@@ -120,6 +121,25 @@ describe("composerSubmissionIntentForKey", () => {
       }),
     ).toBe(expected);
   });
+
+  it.each([
+    ["mod-enter", "one line"],
+    ["mod-enter-multiline", "two\nlines"],
+  ] as const)(
+    "starts a new thread in the foreground on Mod+Enter with %s",
+    (sendShortcut, prompt) => {
+      const draft = { ...input, isDraftThread: true, sendShortcut, prompt };
+      expect(composerSubmissionIntentForKey({ ...draft, event: { ...enter, ctrlKey: true } })).toBe(
+        "foreground",
+      );
+      expect(
+        composerSubmissionIntentForKey({
+          ...draft,
+          event: { ...enter, ctrlKey: true, altKey: true },
+        }),
+      ).toBe("background");
+    },
+  );
 
   it("honors the send preference with an existing install's saved alternate binding", () => {
     const keybindings = mergeWithDefaultKeybindings(
@@ -546,5 +566,20 @@ describe("extendReplacementRangeForTrailingSpace", () => {
     expect(extendReplacementRangeForTrailingSpace("@firest", 3, "@file ")).toBe(3);
     expect(extendReplacementRangeForTrailingSpace("@fi rest", 3, "@file")).toBe(3);
     expect(extendReplacementRangeForTrailingSpace("@fi", 3, "@file ")).toBe(3);
+  });
+});
+
+describe("side chat slash commands", () => {
+  it("are not offered after the start of a message", () => {
+    const items = (["side", "btw", "clear", "model"] as const).map((command) => ({
+      id: `slash:${command}`,
+      type: "slash-command" as const,
+      command,
+      label: `/${command}`,
+      description: "",
+    }));
+    expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
+      "slash:model",
+    ]);
   });
 });

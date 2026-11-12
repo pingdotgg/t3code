@@ -226,6 +226,13 @@ export const SourceControlAppAccess = Schema.Struct({
 });
 export type SourceControlAppAccess = typeof SourceControlAppAccess.Type;
 
+export const SourceControlStarredInput = Schema.Struct({
+  provider: SourceControlProviderKind,
+  host: TrimmedNonEmptyString,
+  repository: TrimmedNonEmptyString,
+});
+export type SourceControlStarredInput = typeof SourceControlStarredInput.Type;
+
 export class SourceControlSignInError extends Schema.TaggedError<SourceControlSignInError>()(
   "SourceControlSignInError",
   {
