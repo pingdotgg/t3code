@@ -375,11 +375,8 @@ function AboutVersionSection() {
                 <SelectValue>{channelSwitchLabel(selectedUpdateChannel)}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="latest">
-                  Stable
-                </SelectItem>
+                <SelectItem value="latest">Stable</SelectItem>
                 <SelectItem
-                  hideIndicator
                   value="nightly"
                   disabled={nightlyDeniedBy !== undefined && selectedUpdateChannel !== "nightly"}
                 >
@@ -412,12 +409,8 @@ function AboutVersionSection() {
                 <SelectValue>{HOSTED_APP_CHANNEL_LABEL}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="latest">
-                  Latest
-                </SelectItem>
-                <SelectItem hideIndicator value="nightly">
-                  Nightly
-                </SelectItem>
+                <SelectItem value="latest">Latest</SelectItem>
+                <SelectItem value="nightly">Nightly</SelectItem>
               </SelectPopup>
             </Select>
           }
@@ -915,7 +908,7 @@ export function GeneralSettingsPanel() {
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {SidebarProjectSortOrder.literals.map((sortOrder) => (
-                  <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
+                  <SelectItem key={sortOrder} value={sortOrder}>
                     {m(SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder])}
                   </SelectItem>
                 ))}
@@ -1067,7 +1060,7 @@ export function GeneralSettingsPanel() {
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   {Object.entries(QUIT_CONFIRMATION_MODE_LABELS).map(([value, label]) => (
-                    <SelectItem hideIndicator key={value} value={value}>
+                    <SelectItem key={value} value={value}>
                       {m(label)}
                     </SelectItem>
                   ))}
@@ -1156,13 +1149,13 @@ export function GeneralSettingsPanel() {
                 <SelectValue>{m(TIMESTAMP_FORMAT_LABELS[settings.timestampFormat])}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="locale">
+                <SelectItem value="locale">
                   {m(TIMESTAMP_FORMAT_LABELS.locale)}
                 </SelectItem>
-                <SelectItem hideIndicator value="12-hour">
+                <SelectItem value="12-hour">
                   {m(TIMESTAMP_FORMAT_LABELS["12-hour"])}
                 </SelectItem>
-                <SelectItem hideIndicator value="24-hour">
+                <SelectItem value="24-hour">
                   {m(TIMESTAMP_FORMAT_LABELS["24-hour"])}
                 </SelectItem>
               </SelectPopup>
@@ -1582,12 +1575,8 @@ export function DiffsSettingsPanel() {
                 <SelectValue>{DIFF_LAYOUT_LABELS[settings.diffLayout]}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="stacked">
-                  {DIFF_LAYOUT_LABELS.stacked}
-                </SelectItem>
-                <SelectItem hideIndicator value="split">
-                  {DIFF_LAYOUT_LABELS.split}
-                </SelectItem>
+                <SelectItem value="stacked">{DIFF_LAYOUT_LABELS.stacked}</SelectItem>
+                <SelectItem value="split">{DIFF_LAYOUT_LABELS.split}</SelectItem>
               </SelectPopup>
             </Select>
           }
@@ -1650,12 +1639,8 @@ export function DiffsSettingsPanel() {
                 <SelectValue>{settings.diffFilesCollapsed ? "Collapsed" : "Expanded"}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="expanded">
-                  Expanded
-                </SelectItem>
-                <SelectItem hideIndicator value="collapsed">
-                  Collapsed
-                </SelectItem>
+                <SelectItem value="expanded">Expanded</SelectItem>
+                <SelectItem value="collapsed">Collapsed</SelectItem>
               </SelectPopup>
             </Select>
           }
@@ -1748,7 +1733,6 @@ function ScopedCompactIdleThreadsRow() {
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {IDLE_COMPACTION_MODES.map((mode) => (
               <SelectItem
-                hideIndicator
                 key={mode.value}
                 value={mode.value}
                 // A server from before modes has only the on/off switch, so it cannot store "Never".
@@ -2173,10 +2157,8 @@ export function ThreadsSettingsPanel() {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value="turn">
-                    {RESPONSE_STREAMING_MODE_LABELS.turn}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="paragraph">
+                  <SelectItem value="turn">{RESPONSE_STREAMING_MODE_LABELS.turn}</SelectItem>
+                  <SelectItem value="paragraph">
                     {RESPONSE_STREAMING_MODE_LABELS.paragraph}
                   </SelectItem>
                 </SelectPopup>

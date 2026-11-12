@@ -74,7 +74,7 @@ export function NotificationSettings() {
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {Object.entries(NOTIFICATION_MODE_LABELS).map(([value, label]) => (
-              <SelectItem key={value} hideIndicator value={value}>
+              <SelectItem key={value} value={value}>
                 {label}
               </SelectItem>
             ))}
