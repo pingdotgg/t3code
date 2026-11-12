@@ -27,6 +27,7 @@ it("drops strict MCP mode, and only that, next to an administrator's managed-mcp
     environment: { HOME: "/home/user" },
     cwd: undefined,
     managedMcpConfig: true,
+    disableHooks: true,
   });
 
   // Claude exits before initializing when handed --strict-mcp-config here.
@@ -93,7 +94,8 @@ it.effect("lists commands that Claude Code mods register in a session.start hook
   Effect.gen(function* () {
     // Claude Code registers a mod's commands only when its session.start hook runs.
     const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
-      const hooksRun = options?.settings?.disableAllHooks !== true;
+      const settings = options?.settings;
+      const hooksRun = typeof settings !== "object" || settings.disableAllHooks !== true;
       return {
         initializationResult: async () => ({
           account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
