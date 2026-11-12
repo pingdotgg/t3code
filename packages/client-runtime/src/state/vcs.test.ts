@@ -140,7 +140,7 @@ describe("branch subscriptions", () => {
                 return Stream.concat(
                   Stream.make(
                     branchSupported
-                      ? { refName }
+                      ? { refName, isRepo: true }
                       : { _tag: "snapshot", local: status({ refName }), remote: null },
                   ),
                   Stream.never,
@@ -183,19 +183,19 @@ describe("branch subscriptions", () => {
         const first = yield* Stream.toPull(
           AtomRegistry.toStreamResult(registry, atoms.branch(target)),
         );
-        expect(yield* first).toEqual([{ refName: "main" }]);
+        expect(yield* first).toEqual([{ refName: "main", isRepo: true }]);
         const second = yield* Stream.toPull(
           AtomRegistry.toStreamResult(registry, atoms.branch(target)),
         );
-        expect(yield* second).toEqual([{ refName: "main" }]);
+        expect(yield* second).toEqual([{ refName: "main", isRepo: true }]);
         expect(subscriptions).toBe(1);
         yield* SubscriptionRef.set(
           activeSession,
           Option.some(branchSession("external", !supported)),
         );
         expect(yield* Queue.take(released)).toBe("main");
-        expect(yield* first).toEqual([{ refName: "external" }]);
-        expect(yield* second).toEqual([{ refName: "external" }]);
+        expect(yield* first).toEqual([{ refName: "external", isRepo: true }]);
+        expect(yield* second).toEqual([{ refName: "external", isRepo: true }]);
         registry.dispose();
         expect(yield* Queue.take(released)).toBe("external");
       }).pipe(Effect.scoped),
