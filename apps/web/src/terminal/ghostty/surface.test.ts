@@ -507,6 +507,21 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(surface.getSelectionPosition()).toBeNull();
   });
 
+  it("replays history at the PTY's grid so a narrower surface clears the redrawn prompt", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    // 20 columns here; the PTY is still 40 wide, as when a split narrows the terminal.
+    surface.setSharedGrid({ cols: 40, rows: 4 });
+    const prompt = "\x1b]133;A;redraw=1\x07~/a-rather-long-folder $ \x1b]133;I\x07";
+    surface.resetAndWrite(`done\r\n${prompt}`);
+    // The shell redraws its prompt once the PTY takes the new width.
+    surface.write(`\r\x1b[J${prompt}`);
+    harness.flushFrame();
+    const text = harness.renderedSnapshot.rowData.map((row) => row.text.trimEnd()).join("\n");
+    expect(text.match(/~\/a-rather/g)).toHaveLength(1);
+    expect(text).toContain("done");
+  });
+
   it("reports where a selection sits after output scrolls it", async () => {
     const harness = createHarness();
     const surface = await harness.create();
