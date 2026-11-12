@@ -1,5 +1,6 @@
+import { MOBILE_APP_NAME } from "../../lib/mobileBranding";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { AgentsBoard, WorkspaceBoardTabs } from "../home/AgentsBoard";
+import { AgentsBoard, WorkspaceBoardToggle } from "../home/AgentsBoard";
 import { agentsBoardSelectionAtom } from "../home/agents-board-state";
 import { useNavigation } from "@react-navigation/native";
 import { useActiveNewTask } from "../../state/active-new-task";
@@ -568,7 +569,7 @@ function ThreadNavigationSidebarPane(
   };
   const header = (
     <WorkspaceListHeader
-      accessibilityLabel="T3 Code, Threads"
+      accessibilityLabel={`${MOBILE_APP_NAME}, Threads`}
       onOpenEnvironments={props.onOpenEnvironmentSettings}
       onOpenSettings={props.onOpenSettings}
       search={{
@@ -618,6 +619,12 @@ function ThreadNavigationSidebarPane(
   );
 
   if (Platform.OS === "ios") {
+    // The sidebar's bar is too narrow for the toggle and stacks search below it.
+    const boardToggle = (
+      <View className="px-4 py-2">
+        <WorkspaceBoardToggle fill />
+      </View>
+    );
     return (
       <>
         {header}
@@ -630,6 +637,7 @@ function ThreadNavigationSidebarPane(
               searchQuery={props.searchQuery}
               environmentId={options.selectedEnvironmentId}
               projectRefs={selectedProjectScope?.projectRefs}
+              listHeader={boardToggle}
             />
           ) : (
             <SwipeableScrollGateProvider enabled={swipeEnabled}>
@@ -662,7 +670,7 @@ function ThreadNavigationSidebarPane(
                   scrollEventThrottle={16}
                   showsVerticalScrollIndicator={false}
                   style={styles.threadList}
-                  ListHeaderComponent={<WorkspaceBoardTabs />}
+                  ListHeaderComponent={boardToggle}
                   ListEmptyComponent={listEmpty}
                 />
               </GestureDetector>
@@ -690,7 +698,6 @@ function ThreadNavigationSidebarPane(
       >
         {listItems.length === 0 && boardSelection.tab === "threads" ? (
           <View className="flex-1">
-            <WorkspaceBoardTabs />
             <View className="flex-1 items-center justify-center">{listEmpty}</View>
           </View>
         ) : boardSelection.tab === "agents" ? (
@@ -730,7 +737,6 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
-                ListHeaderComponent={<WorkspaceBoardTabs />}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>

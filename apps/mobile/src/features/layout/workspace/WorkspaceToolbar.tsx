@@ -20,6 +20,7 @@ import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { shouldRestoreNativeSearch } from "./workspace-tabs-state";
 import { useFloatingWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
+import { WorkspaceBoardToggle } from "../../home/AgentsBoard";
 
 const SEARCH_LABELS = {
   threads: "Search threads",
@@ -129,6 +130,13 @@ export function WorkspaceToolbar(props: {
       separateBackground
     />
   ) : null;
+  // Home draws no list of its own beside a split view's sidebar, which has its own toggle.
+  const boardToggle =
+    selectedTab === "threads" && !(layout.usesSplitView && primaryColumn === null) ? (
+      <Toolbar.Custom>
+        <WorkspaceBoardToggle />
+      </Toolbar.Custom>
+    ) : null;
   const searchButton = foldedSearch ? (
     <Toolbar.Button
       identifier="workspace-search"
@@ -212,6 +220,7 @@ export function WorkspaceToolbar(props: {
               onPress={focusSearch}
             />
           )}
+          {boardToggle}
         </Toolbar>
       )}
       <Toolbar placement="bottom">

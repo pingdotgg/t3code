@@ -13,6 +13,7 @@ import {
   type DeviceNetworkGroup,
   type DeviceNetworkMachine,
   deviceNetworkView,
+  type HostControls,
   hostControls,
   hostsListing,
   type MachineEntry,
@@ -43,9 +44,12 @@ import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
+import { cn } from "../../lib/cn";
 import { useNowMinuteMs } from "../../lib/clock";
 import { useEnvironments } from "../../state/environments";
 import { networkMembers } from "../../state/networkMembers";
@@ -56,7 +60,7 @@ import { deviceNetwork, deviceNetworkHosts, tailnetDevices } from "../../state/t
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ACCESS_CHOICES } from "../threads/thread-settings-options";
 import { SettingsSection } from "../settings/components/SettingsSection";
-import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
+import { ConnectionStatusDot, type ConnectionStatusDotState } from "./ConnectionStatusDot";
 
 const accessLabel = (access: TailnetDeviceAccess) =>
   access === "revoked"
@@ -72,6 +76,14 @@ const STATUS_LABEL: Record<TailnetDeviceStatus, string> = {
   offline: "Offline",
   revoked: "Revoked",
 };
+const STATUS_DOT: Record<TailnetDeviceStatus, ConnectionStatusDotState> = {
+  online: "connected",
+  offline: "available",
+  revoked: "error",
+};
+const NEEDS_READD = "Needs re-adding after the update";
+const LEFT = "Left the network";
+const RECONNECTING = "Reconnecting after the update";
 const timeFormat = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
 const formatTime = (time: DateTime.Utc) => timeFormat.format(DateTime.toDate(time));
 
@@ -90,6 +102,9 @@ const keptInApp = (until: DateTime.Utc | null, now: DateTime.Utc) =>
 const hostLabel = (group: DeviceNetworkGroup, environmentId: EnvironmentId) =>
   group.hosts.find((host) => host.environmentId === environmentId)?.label ?? environmentId;
 
+const joinParts = (parts: ReadonlyArray<string | null>) =>
+  parts.filter((part): part is string => part !== null && part.length > 0).join(" · ");
+
 type Settled = AtomCommandResult<unknown, unknown>;
 /** Alerts with the machine's own reason on a failed write; refreshes every host after one that worked. */
 const settle = (result: Settled, failureTitle: string, onChanged: () => void) => {
@@ -102,11 +117,11 @@ const settle = (result: Settled, failureTitle: string, onChanged: () => void) =>
 };
 
 /** Where the joining switch lives in this app. */
-const ALLOW_JOINING_PATH = "Settings → Environments, under Taking part";
+const ALLOW_JOINING_PATH = "Settings → Environments → Device network";
 
 /**
- * The one Device network view: every connected environment's roster merged, grouped by network,
- * with each machine's own switch under "Taking part".
+ * The one Device network view: every connected environment's roster merged, grouped by network.
+ * A connected machine's own switch sits on its row in the list.
  */
 export function NetworkSection() {
   const { environments, presentationById } = useEnvironments();
@@ -159,17 +174,19 @@ function DeviceNetworkContent(props: {
   });
   const onChanged = () => refreshDeviceNetwork(registry, peerLinkEnvironment.list, states);
   return (
-    <View className="mt-5 gap-3">
+    <View className="mt-5 gap-5">
       {groups.map((group, index) => (
         <GroupSection
           key={group.key}
           group={group}
           title={
-            index === 0
+            groups.length === 1
               ? "Device network"
               : group.inNetwork
-                ? "Another network"
-                : `${group.hosts[0]?.label ?? "Machine"} · not in a network`
+                ? index === 0
+                  ? "Your network"
+                  : "Another network"
+                : `${group.hosts[0]?.label ?? "Machine"}: not in a network`
           }
           hostStates={group.hosts.flatMap(
             (host) => states.find((state) => state.environmentId === host.environmentId) ?? [],
@@ -185,17 +202,13 @@ function DeviceNetworkContent(props: {
 }
 
 function groupFooter(group: DeviceNetworkGroup): string {
-  const prefix =
-    "Each machine has its own switch. While it is off, its agents start nothing over a link; running tasks finish.";
   if (!group.inNetwork && !group.addsToNetwork) {
-    return `${prefix} Not in your network. To add it, choose Allow joining here, then add it from a full-access machine in your network.`;
+    return "Not in your network. Allow joining here, then add it from a full-access machine.";
   }
-  if (!group.inNetwork) {
-    return `${prefix} Not in a network yet. Being on the same Tailscale account is not permission: you add each machine.`;
-  }
+  if (!group.inNetwork) return "Not in a network yet: you add each machine.";
   return group.authority === null
-    ? `${prefix} Only a full-access machine can change the network, and none this app may change it through is connected.`
-    : `${prefix} Changes go to every machine in the network.`;
+    ? "Only a full-access machine can change the network; none is connected here."
+    : "Changes go to every machine in the network.";
 }
 
 function GroupSection(props: {
@@ -207,10 +220,22 @@ function GroupSection(props: {
 }) {
   const { group } = props;
   const takingPart = props.hostStates.some((host) => host.enabled);
+  const hostById = new Map(props.hostStates.map((host) => [host.environmentId, host] as const));
+  // A connected machine the list already shows carries its switch on that row instead.
+  const listedHosts = new Set(
+    takingPart
+      ? group.machines.flatMap((machine) =>
+          machine.entry.isHost && hostById.has(machine.entry.environmentId)
+            ? [machine.entry.environmentId]
+            : [],
+        )
+      : [],
+  );
   return (
-    <>
-      <SettingsSection title={`${props.title} · Taking part`} footer={groupFooter(group)}>
-        {props.hostStates.map((host) => (
+    <SettingsSection title={props.title} footer={groupFooter(group)}>
+      {props.hostStates
+        .filter((host) => !listedHosts.has(host.environmentId))
+        .map((host) => (
           <TakingPartRow
             key={host.environmentId}
             host={host}
@@ -218,23 +243,32 @@ function GroupSection(props: {
             onChanged={props.onChanged}
           />
         ))}
-      </SettingsSection>
-      {takingPart && group.machines.length + group.apps.length > 0 ? (
-        <SettingsSection>
-          {group.machines.map((machine) => (
-            <MachineRow
-              key={machine.key}
-              group={group}
-              machine={machine}
-              onChanged={props.onChanged}
-            />
-          ))}
-          {group.apps.map((app) => (
+      {takingPart
+        ? group.machines.map((machine) => {
+            const host = listedHosts.has(machine.entry.environmentId)
+              ? hostById.get(machine.entry.environmentId)
+              : undefined;
+            return (
+              <MachineRow
+                key={machine.key}
+                group={group}
+                machine={machine}
+                host={
+                  host === undefined
+                    ? null
+                    : { state: host, managedBy: props.managedBy(host.environmentId) }
+                }
+                onChanged={props.onChanged}
+              />
+            );
+          })
+        : null}
+      {takingPart
+        ? group.apps.map((app) => (
             <AppRow key={app.appId} group={group} app={app} onChanged={props.onChanged} />
-          ))}
-        </SettingsSection>
-      ) : null}
-    </>
+          ))
+        : null}
+    </SettingsSection>
   );
 }
 
@@ -247,10 +281,25 @@ function selfState(host: DeviceNetworkHostState): string {
   return `In your network, ${accessLabel(access)}`;
 }
 
-function TakingPartRow(props: {
+/** The one line a connected machine's row shows while closed. */
+const hostSummary = (
+  host: DeviceNetworkHostState,
+  controls: HostControls,
+  managedBy: string | null,
+) =>
+  joinParts([
+    selfState(host),
+    host.enabled ? null : "Not taking part",
+    controls.joinOpenUntil === null
+      ? null
+      : `Joining allowed until ${formatTime(controls.joinOpenUntil)}`,
+    managedBy === null ? null : `Managed by ${managedBy}`,
+  ]);
+
+/** Whether this machine takes part in the network; managed or unwritable switches are locked. */
+function TakingPartSwitch(props: {
   readonly host: DeviceNetworkHostState;
   readonly managedBy: string | null;
-  readonly onChanged: () => void;
 }) {
   const { host } = props;
   const canWrite = useEnvironmentScope(host.environmentId, AuthSettingsWriteScope);
@@ -258,11 +307,31 @@ function TakingPartRow(props: {
     label: "network setting update",
     reportFailure: true,
   });
+  return (
+    <ThemedSwitch
+      accessibilityLabel={`${host.label} takes part in your network`}
+      disabled={props.managedBy !== null || !canWrite}
+      value={host.enabled}
+      onValueChange={(value) =>
+        void update({
+          environmentId: host.environmentId,
+          input: { patch: { linkedEnvironmentsEnabled: value } },
+        })
+      }
+    />
+  );
+}
+
+/** A connected machine's own choices: joining, leaving, and what its switch does. */
+function HostActions(props: {
+  readonly host: DeviceNetworkHostState;
+  readonly controls: HostControls;
+  readonly onChanged: () => void;
+}) {
+  const { host, controls } = props;
   const leave = useAtomCommand(deviceNetwork.leave, { reportFailure: false });
   const allowJoin = useAtomCommand(deviceNetwork.allowJoin, { reportFailure: false });
-  const now = DateTime.makeUnsafe(useNowMinuteMs());
   const [busy, setBusy] = useState(false);
-  const controls = hostControls(host, now);
   const leaveNetwork = () =>
     Dialog.confirm({
       title: `Leave your network on ${host.label}?`,
@@ -286,98 +355,148 @@ function TakingPartRow(props: {
       settle(result, `Could not allow joining on ${host.label}`, props.onChanged);
     });
   };
-  const subtitle = [
-    selfState(host),
-    controls.joinOpenUntil === null
-      ? null
-      : `Joining allowed until ${formatTime(controls.joinOpenUntil)}`,
-    props.managedBy === null ? null : `Managed by ${props.managedBy}`,
-    controls.leaveBlocked
-      ? "Only full-access machine: it cannot leave while others remain. Give another machine full access first."
-      : null,
-  ]
-    .filter((part): part is string => part !== null)
-    .join(" · ");
   return (
     <>
-      <SettingsSwitchRow
-        icon="link"
-        label={host.label}
-        subtitle={subtitle}
-        value={host.enabled}
-        disabled={props.managedBy !== null || !canWrite}
-        onValueChange={(value) =>
-          void update({
-            environmentId: host.environmentId,
-            input: { patch: { linkedEnvironmentsEnabled: value } },
-          })
-        }
+      <RowNote
+        text={joinParts([
+          "While its switch is off, its agents start nothing over a link; running tasks finish",
+          controls.leaveBlocked
+            ? "Only full-access machine: it cannot leave while others remain. Give another machine full access first"
+            : null,
+        ])}
       />
       {controls.allowJoin && controls.joinOpenUntil === null && host.enabled ? (
         <ListActionRow
           label="Allow joining"
-          description="For 10 minutes, another machine can add this one to its network or link to it."
+          description="For 10 minutes, another machine can add or link this one."
           loading={busy}
           onPress={openJoin}
         />
       ) : null}
       {controls.leave ? (
-        <ListActionRow
-          label={`Leave network on ${host.label}`}
-          tone="danger"
-          loading={busy}
-          onPress={leaveNetwork}
-        />
+        <ListActionRow label="Leave network" tone="danger" loading={busy} onPress={leaveNetwork} />
       ) : null}
     </>
   );
 }
 
-/** A row that opens its choices below it. */
-function ExpandableRow(props: {
+/** A connected machine the list does not show as a machine: not in a network, or switched off. */
+function TakingPartRow(props: {
+  readonly host: DeviceNetworkHostState;
+  readonly managedBy: string | null;
+  readonly onChanged: () => void;
+}) {
+  const now = DateTime.makeUnsafe(useNowMinuteMs());
+  const [expanded, setExpanded] = useState(false);
+  const controls = hostControls(props.host, now);
+  return (
+    <NetworkRow
+      label={props.host.label}
+      detail={hostSummary(props.host, controls, props.managedBy)}
+      dot={null}
+      danger={false}
+      trailing={<TakingPartSwitch host={props.host} managedBy={props.managedBy} />}
+      canExpand
+      expanded={expanded}
+      onToggle={() => setExpanded((open) => !open)}
+    >
+      <HostActions host={props.host} controls={controls} onChanged={props.onChanged} />
+    </NetworkRow>
+  );
+}
+
+/** Secondary detail shown once a row is open. */
+function RowNote(props: { readonly text: string }) {
+  if (props.text.length === 0) return null;
+  return (
+    <Text className="px-4 pb-3 text-xs text-foreground-muted" selectable>
+      {props.text}
+    </Text>
+  );
+}
+
+/**
+ * One row of the network list: a name, a one-line status, one trailing control, and a tap that
+ * opens the rest below it.
+ */
+function NetworkRow(props: {
   readonly label: string;
   readonly detail: string;
+  readonly dot: ConnectionStatusDotState | null;
   readonly danger: boolean;
-  readonly value: string;
+  readonly trailing: ReactNode;
   readonly canExpand: boolean;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly children: ReactNode;
 }) {
+  const toggleLabel = `${props.expanded ? "Hide" : "Show"} details for ${props.label}`;
   return (
     <View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${props.label} actions`}
-        accessibilityState={{ expanded: props.expanded, disabled: !props.canExpand }}
-        disabled={!props.canExpand}
-        className="flex-row items-center gap-3 p-4"
-        onPress={props.onToggle}
+      <View
+        className={cn(
+          "min-h-14 flex-row items-center gap-3 py-2 pl-4",
+          props.canExpand ? "pr-1" : "pr-4",
+        )}
       >
-        <View className="min-w-0 flex-1 gap-0.5">
-          <Text className="text-base font-t3-bold text-foreground">{props.label}</Text>
-          <Text
-            className={
-              props.danger ? "text-xs text-danger-foreground" : "text-xs text-foreground-muted"
-            }
-            numberOfLines={3}
-          >
-            {props.detail}
-          </Text>
-        </View>
-        <Text className="text-sm text-foreground-muted">{props.value}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={toggleLabel}
+          accessibilityState={{ expanded: props.expanded, disabled: !props.canExpand }}
+          disabled={!props.canExpand}
+          className="min-h-11 min-w-0 flex-1 justify-center gap-0.5 active:opacity-70"
+          onPress={props.onToggle}
+        >
+          <View className="flex-row items-center gap-1.5">
+            {props.dot === null ? null : (
+              <ConnectionStatusDot state={props.dot} pulse={false} size={8} />
+            )}
+            <Text
+              className="min-w-0 flex-shrink text-base font-t3-bold text-foreground"
+              numberOfLines={1}
+            >
+              {props.label}
+            </Text>
+          </View>
+          {props.detail.length > 0 ? (
+            <Text
+              className={cn(
+                "text-xs",
+                props.danger ? "text-danger-foreground" : "text-foreground-muted",
+              )}
+              numberOfLines={1}
+            >
+              {props.detail}
+            </Text>
+          ) : null}
+        </Pressable>
+        {props.trailing}
         {props.canExpand ? (
-          <SymbolView
-            name={props.expanded ? "chevron.up" : "chevron.down"}
-            size={12}
-            tintColorClassName="accent-icon-muted"
-          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={toggleLabel}
+            accessibilityState={{ expanded: props.expanded }}
+            className="size-11 items-center justify-center active:opacity-70"
+            onPress={props.onToggle}
+          >
+            <SymbolView
+              name={props.expanded ? "chevron.up" : "chevron.down"}
+              size={12}
+              tintColorClassName="accent-icon-muted"
+            />
+          </Pressable>
         ) : null}
-      </Pressable>
+      </View>
       {props.expanded ? props.children : null}
     </View>
   );
 }
+
+const RowValue = (props: { readonly text: string }) => (
+  <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+    {props.text}
+  </Text>
+);
 
 type Panel =
   | { readonly kind: "menu" }
@@ -392,7 +511,7 @@ function machineDetail(
 ) {
   const { entry } = machine;
   const live = entry.member !== null && entry.member.access !== "revoked";
-  return [
+  return joinParts([
     STATUS_LABEL[entry.status],
     machine.kind === "found" ? "Not in your network" : null,
     ...entry.views.flatMap(({ host, device }) =>
@@ -423,24 +542,23 @@ function machineDetail(
       ? "Opens read-only"
       : null,
     ...machine.others.map((other) => `Also seen as ${other.label} from an earlier install`),
-  ]
-    .filter((part): part is string => part !== null)
-    .join(" · ");
+  ]);
 }
 
 function MachineRow(props: {
   readonly group: DeviceNetworkGroup;
   readonly machine: DeviceNetworkMachine;
+  /** Set when this machine is one this app is connected to: its switch sits on this row. */
+  readonly host: {
+    readonly state: DeviceNetworkHostState;
+    readonly managedBy: string | null;
+  } | null;
   readonly onChanged: () => void;
 }) {
-  const { group, machine } = props;
+  const { group, machine, host } = props;
   const { entry } = machine;
   const controls = machineControls(machine, group);
-  const readdState = controls.needsReadd
-    ? "Needs re-adding after the update"
-    : controls.left
-      ? "Left the network"
-      : null;
+  const readdState = controls.needsReadd ? NEEDS_READD : controls.left ? LEFT : null;
   const setAccess = useAtomCommand(tailnetDevices.setAccess, { reportFailure: false });
   const admit = useAtomCommand(tailnetDevices.admit, { reportFailure: false });
   const allowJoin = useAtomCommand(deviceNetwork.allowJoin, { reportFailure: false });
@@ -456,6 +574,7 @@ function MachineRow(props: {
   const [saving, setSaving] = useState(false);
   const access = entry.member?.access ?? "revoked";
   const authority = group.authority;
+  const hostState = host === null ? null : hostControls(host.state, now);
   const run = (work: Promise<Settled>, failureTitle: string) => {
     setSaving(true);
     void work.then((result) => {
@@ -536,54 +655,95 @@ function MachineRow(props: {
   };
   const open = () => run(openMember(entry.environmentId), `Could not open ${entry.label}`);
   const refused = entry.inApp?.kind === "refused";
-  const canExpand =
-    controls.open ||
-    refused ||
-    controls.changeAccess ||
-    controls.restore ||
-    controls.add ||
-    controls.promote ||
-    controls.readd ||
-    controls.forgetHosts.length > 0 ||
-    controls.limitHosts.length > 0 ||
-    machine.others.some((other) => canForgetOther(group, other));
+  const addLabel = machine.inOtherNetwork
+    ? "Merge networks"
+    : controls.forgotten
+      ? "Restore"
+      : "Add to network";
+  const readdLabel = machine.inOtherNetwork ? "Merge networks" : "Add again";
+  // The row's one main action, matching the web row; a connected machine's switch takes its place.
+  const primary = controls.readd
+    ? {
+        kind: "readd",
+        label: readdLabel,
+        onPress: () => setPanel({ kind: "add", scope: "network", readd: true }),
+      }
+    : controls.add || controls.promote
+      ? {
+          kind: "add",
+          label: addLabel,
+          onPress: () => setPanel({ kind: "add", scope: "network" }),
+        }
+      : controls.open
+        ? { kind: "open", label: "Open", onPress: open }
+        : controls.restore
+          ? { kind: "restore", label: "Restore", onPress: () => setPanel({ kind: "menu" }) }
+          : null;
+  const inline = host === null ? primary : null;
+  const fullDetail =
+    readdState !== null
+      ? controls.left && entry.inApp?.kind === "left"
+        ? `${readdState}. ${keptInApp(entry.inApp.until, now)}`
+        : entry.inApp?.kind === "refused"
+          ? `${readdState}. ${refusedInApp(entry.inApp.left)}`
+          : `${readdState}: allow joining on it, then add it again`
+      : joinParts([
+          controls.reconnecting ? RECONNECTING : null,
+          machineDetail(group, machine, now, entry.inApp?.kind === "open" && !operatesHere),
+        ]);
+  const detail =
+    host !== null && hostState !== null
+      ? joinParts([
+          readdState,
+          controls.reconnecting ? RECONNECTING : null,
+          hostSummary(host.state, hostState, host.managedBy),
+        ])
+      : joinParts([
+          readdState ?? STATUS_LABEL[entry.status],
+          controls.reconnecting ? RECONNECTING : null,
+          machine.kind === "found" ? "Not in your network" : null,
+          entry.inApp?.kind === "open"
+            ? operatesHere
+              ? "In this app"
+              : "Read-only in this app"
+            : null,
+        ]);
   const authorityLabel = authority === null ? "" : hostLabel(group, authority);
   return (
-    <ExpandableRow
+    <NetworkRow
       label={entry.label}
-      detail={
-        readdState !== null
-          ? controls.left && entry.inApp?.kind === "left"
-            ? `${readdState}. ${keptInApp(entry.inApp.until, now)}`
-            : entry.inApp?.kind === "refused"
-              ? `${readdState}. ${refusedInApp(entry.inApp.left)}`
-              : `${readdState}: allow joining on it, then add it again`
-          : [
-              controls.reconnecting ? "Reconnecting after the update" : null,
-              machineDetail(group, machine, now, entry.inApp?.kind === "open" && !operatesHere),
-            ]
-              .filter((part) => part !== null && part.length > 0)
-              .join(" · ")
-      }
+      detail={detail}
+      dot={readdState !== null ? "reconnecting" : STATUS_DOT[entry.status]}
       danger={entry.status === "revoked" || readdState !== null}
-      value={
-        readdState !== null
-          ? "Add again"
-          : machine.kind === "member"
-            ? accessLabel(access)
-            : machine.kind === "found"
-              ? controls.forgotten
-                ? "Restore"
-                : "Add"
-              : "Linked"
+      trailing={
+        host !== null ? (
+          <TakingPartSwitch host={host.state} managedBy={host.managedBy} />
+        ) : inline !== null ? (
+          <Button
+            label={inline.label}
+            accessibilityLabel={`${inline.label}: ${entry.label}`}
+            loading={inline.kind === "open" && saving}
+            disabled={saving}
+            onPress={inline.onPress}
+          />
+        ) : machine.kind === "member" ? (
+          <RowValue text={accessLabel(access)} />
+        ) : machine.kind === "linked" ? (
+          <RowValue text="Linked" />
+        ) : null
       }
-      canExpand={canExpand}
+      // Every row opens: its full status and remaining choices live below it.
+      canExpand
       expanded={panel !== null}
       onToggle={() => setPanel((current) => (current === null ? { kind: "menu" } : null))}
     >
       {panel?.kind === "menu" ? (
         <>
-          {controls.open ? (
+          {host !== null && hostState !== null ? (
+            <HostActions host={host.state} controls={hostState} onChanged={props.onChanged} />
+          ) : null}
+          <RowNote text={fullDetail} />
+          {controls.open && inline?.kind !== "open" ? (
             <ListActionRow label="Open in this app" loading={saving} onPress={open} />
           ) : null}
           {refused ? (
@@ -613,31 +773,15 @@ function MachineRow(props: {
               onPress={() => changeAccess("revoked")}
             />
           ) : null}
-          {controls.readd ? (
+          {controls.readd && inline?.kind !== "readd" ? (
             <ListActionRow
-              label={machine.inOtherNetwork ? "Merge networks" : "Add again"}
-              description={
-                machine.inOtherNetwork
-                  ? `${entry.label} is in another of your networks; adding it makes them one. ${consentNote}`
-                  : consentNote
-              }
+              label={readdLabel}
               onPress={() => setPanel({ kind: "add", scope: "network", readd: true })}
             />
           ) : null}
-          {controls.add || controls.promote ? (
+          {(controls.add || controls.promote) && inline?.kind !== "add" ? (
             <ListActionRow
-              label={
-                machine.inOtherNetwork
-                  ? "Merge networks"
-                  : controls.forgotten
-                    ? "Restore"
-                    : "Add to network"
-              }
-              description={
-                machine.inOtherNetwork
-                  ? `${entry.label} is in another of your networks; adding it makes them one, each machine and app keeping the access it has now. ${consentNote}`
-                  : `No machine in the network gives it more than the access you pick. A machine's own limit for it stays until you clear it. ${consentNote}`
-              }
+              label={addLabel}
               onPress={() => setPanel({ kind: "add", scope: "network" })}
             />
           ) : null}
@@ -687,8 +831,20 @@ function MachineRow(props: {
             ))}
         </>
       ) : null}
-      {panel?.kind === "add"
-        ? ACCESS_CHOICES.map((choice) => (
+      {panel?.kind === "add" ? (
+        <>
+          <RowNote
+            text={
+              panel.scope === "local"
+                ? consentNote
+                : machine.inOtherNetwork
+                  ? `${entry.label} is in another of your networks; adding it makes them one, each machine and app keeping the access it has now. ${consentNote}`
+                  : panel.readd === true
+                    ? consentNote
+                    : `No machine in the network gives it more than the access you pick. A machine's own limit for it stays until you clear it. ${consentNote}`
+            }
+          />
+          {ACCESS_CHOICES.map((choice) => (
             <ListChoiceRow
               key={choice.access}
               label={
@@ -701,8 +857,9 @@ function MachineRow(props: {
               disabled={saving}
               onPress={() => add(panel.scope, choice.access, panel.readd === true)}
             />
-          ))
-        : null}
+          ))}
+        </>
+      ) : null}
       {panel?.kind === "limit" ? (
         <>
           <ListChoiceRow
@@ -745,7 +902,7 @@ function MachineRow(props: {
           ))}
         </>
       ) : null}
-    </ExpandableRow>
+    </NetworkRow>
   );
 }
 
@@ -809,19 +966,19 @@ function AppRow(props: {
     });
   };
   return (
-    <ExpandableRow
+    <NetworkRow
       label={app.label}
-      detail={
-        level === "revoked"
-          ? "Signed out: revoked, or paired again as a new entry"
-          : "App paired with your network"
-      }
+      detail={level === "revoked" ? "Signed out" : "App paired with your network"}
+      dot={null}
       danger={level === "revoked"}
-      value={APP_ACCESS_LABEL[level]}
+      trailing={<RowValue text={APP_ACCESS_LABEL[level]} />}
       canExpand={authority !== null}
       expanded={expanded}
       onToggle={() => setExpanded((open) => !open)}
     >
+      {level === "revoked" ? (
+        <RowNote text="Signed out: revoked, or paired again as a new entry" />
+      ) : null}
       {controls.narrowTo.map((next) => (
         <ListActionRow
           key={next}
@@ -841,6 +998,6 @@ function AppRow(props: {
       {controls.forget ? (
         <ListActionRow label="Forget" tone="danger" loading={saving} onPress={forget} />
       ) : null}
-    </ExpandableRow>
+    </NetworkRow>
   );
 }

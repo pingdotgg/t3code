@@ -1,3 +1,4 @@
+import { MOBILE_APP_NAME } from "../../lib/mobileBranding";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -1969,7 +1970,7 @@ function renderFeedEntry(
         >
           {presentation.attribution === "t3code" ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
-              Sent by T3 Code
+              Sent by {MOBILE_APP_NAME}
             </Text>
           ) : null}
           {presentation.guestName !== undefined ? (

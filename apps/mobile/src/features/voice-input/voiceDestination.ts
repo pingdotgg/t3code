@@ -1,3 +1,4 @@
+import { MOBILE_APP_NAME } from "../../lib/mobileBranding";
 import {
   AuthOrchestrationOperateScope,
   type CloudSpeechModelId,
@@ -172,7 +173,7 @@ function environmentTranscriber(
       if (!native?.decodeRecording)
         throw new VoiceTranscriptionError({
           code: "unavailable",
-          message: "Update T3 Code to transcribe on an environment.",
+          message: `Update ${MOBILE_APP_NAME} to transcribe on an environment.`,
         });
       return native.decodeRecording(uri);
     },

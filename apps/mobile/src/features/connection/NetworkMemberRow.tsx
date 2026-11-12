@@ -43,12 +43,13 @@ export function NetworkMemberRow(props: {
           </Text>
         </View>
         <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-          {props.viaLabel === null ? "In your network" : `In your network · via ${props.viaLabel}`}
+          {props.viaLabel === null
+            ? "In your network, not open in this app"
+            : `In your network · via ${props.viaLabel}`}
         </Text>
       </View>
       <Button
         label="Open"
-        size="compact"
         accessibilityLabel={`Open ${props.member.label}`}
         loading={busy}
         onPress={() => void handleOpen()}

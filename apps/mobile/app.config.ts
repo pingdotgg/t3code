@@ -112,7 +112,7 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
       {
         name: "SubscriptionUsage",
         displayName: "Subscription usage",
-        description: "Subscription quotas from your connected T3 Code environments.",
+        description: "Subscription quotas from your connected environments.",
         ios: {
           configuration: {
             title: "Subscription usage",
@@ -228,7 +228,7 @@ const config: ExpoConfig = {
         NSAllowsArbitraryLoads: true,
       },
       NSLocalNetworkUsageDescription:
-        "Allow T3 Agents to connect to T3 Code servers on your local network or tailnet.",
+        "Allow T3 Agents to connect to your environments on your local network or tailnet.",
       NSPhotoLibraryAddUsageDescription: "Allow T3 Agents to save images to your photo library.",
       // System picture in picture needs background audio outside the app.
       UIBackgroundModes: ["audio"],

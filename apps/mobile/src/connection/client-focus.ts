@@ -1,3 +1,4 @@
+import { MOBILE_APP_NAME } from "../lib/mobileBranding";
 import {
   makeClientFocusDispatcher,
   makeClientFocusLayer,
@@ -17,7 +18,7 @@ export const mobileClientFocusLayer = makeClientFocusLayer({
   host: Effect.map(mobileClientId, (clientId) => ({
     clientId,
     clientKind: "mobile" as const,
-    label: Device.deviceName?.trim() || Device.modelName?.trim() || "T3 Code Mobile",
+    label: Device.deviceName?.trim() || Device.modelName?.trim() || `${MOBILE_APP_NAME} Mobile`,
     ...(Platform.OS === "ios" ? { platform: "iOS" } : { platform: "Android" }),
   })),
   onRequest: dispatcher.onRequest,

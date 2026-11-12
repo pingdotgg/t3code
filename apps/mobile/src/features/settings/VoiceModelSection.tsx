@@ -1,3 +1,4 @@
+import { MOBILE_APP_NAME } from "../../lib/mobileBranding";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -316,7 +317,7 @@ export function LocalModelChoice(props: {
             ? `Local model · ${formatBytes(active.size)}`
             : voice.canManage
               ? "No model installed · Choose one to download"
-              : `No model installed · Add one using T3 Code on ${props.label}`
+              : `No model installed · Add one using ${MOBILE_APP_NAME} on ${props.label}`
       }
       selected={props.selected}
       onPress={() => {
