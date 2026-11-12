@@ -185,7 +185,6 @@ export function BranchRestoreConfirmHost(props: {
 interface PendingRevert {
   readonly turnCount: number;
   readonly messageId: MessageId;
-  readonly hasFileChanges: boolean;
 }
 
 const revertConfirmAtom = makeThreadOverlayAtom<PendingRevert>("revert-confirm");
@@ -202,10 +201,9 @@ export function RevertConfirmHost(props: {
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
-  const offersFileRestore = props.hasWorktree && pending?.hasFileChanges !== false;
   const canRestoreFiles =
     pending !== null &&
-    offersFileRestore &&
+    props.hasWorktree &&
     findRevertCheckpoint(props.checkpoints ?? [], pending.turnCount)?.status === "ready";
   const confirm = (restoreFiles: boolean) => {
     if (pending === null || (restoreFiles && !canRestoreFiles)) return;
@@ -224,16 +222,14 @@ export function RevertConfirmHost(props: {
           <AlertDialogTitle>Edit from here?</AlertDialogTitle>
           <AlertDialogDescription>
             Rewind chat to before this message. Your prompt and attachments return to the composer.{" "}
-            {!props.hasWorktree
-              ? "Files stay as they are because this thread shares the project directory."
-              : offersFileRestore
-                ? "“Revert files too” also undoes your own edits."
-                : "The agent hasn’t changed any files since then."}
+            {props.hasWorktree
+              ? "“Revert files too” also undoes your own edits."
+              : "Files stay as they are because this thread shares the project directory."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          {offersFileRestore ? (
+          {props.hasWorktree ? (
             <Button
               variant="destructive-outline"
               disabled={!canRestoreFiles}

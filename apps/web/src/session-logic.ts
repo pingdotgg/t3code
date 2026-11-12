@@ -6,7 +6,6 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
-  type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   type RunId,
@@ -1070,36 +1069,6 @@ export function findRevertCheckpoint(
         ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
         : checkpoint.appRunOrdinal === turnCount),
   );
-}
-
-/**
- * The turn count to diff against when asking whether files changed after `turnCount`, or null
- * when the latest later run's edits are in no ready checkpoint and so must be assumed changed.
- */
-export function revertFileDiffTarget(
-  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>,
-  checkpoints: ReadonlyArray<Pick<OrchestrationV2Checkpoint, "runId" | "status">>,
-  turnCount: number,
-): number | null {
-  const latestRun = runs
-    .filter(
-      (run) => run.ordinal > turnCount && run.status !== "rolled_back" && run.status !== "queued",
-    )
-    .reduce<Pick<OrchestrationV2Run, "id" | "ordinal" | "status"> | null>(
-      (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
-      null,
-    );
-  // The turn diff query only resolves ready checkpoints of completed runs.
-  if (
-    latestRun === null ||
-    latestRun.status !== "completed" ||
-    !checkpoints.some(
-      (checkpoint) => checkpoint.runId === latestRun.id && checkpoint.status === "ready",
-    )
-  ) {
-    return null;
-  }
-  return latestRun.ordinal;
 }
 
 export function derivePhase(runtime: ThreadStructureRuntime | null): SessionPhase {
