@@ -68,15 +68,15 @@ enum AgentWidgetStorage {
     }
   }
 
-  static func prepareRelay(url: String, in defaults: UserDefaults, storeRevocation: (URLRequest) -> Bool = AgentWidgetCredential.preserveRevocation) -> Bool {
+  static func prepareRelay(url: String, in defaults: UserDefaults, readCredential: () -> AgentWidgetCredential.Lookup = { AgentWidgetCredential.lookup() }, storeRevocation: (URLRequest) -> Bool = AgentWidgetCredential.preserveRevocation) -> Bool {
     guard let previous = defaults.string(forKey: "t3_agent_widget_url"), previous != url else { return true }
-    clearStoredState(in: defaults, storeRevocation: storeRevocation)
-    return defaults.string(forKey: "t3_agent_widget_url") == nil && AgentWidgetCredential.read() == nil
+    clearStoredState(in: defaults, readCredential: readCredential, storeRevocation: storeRevocation)
+    return canCreateCredential(in: defaults, credential: readCredential())
   }
 
-  static func prepareRevocations(in defaults: UserDefaults, storeRevocation: (URLRequest) -> Bool = AgentWidgetCredential.preserveRevocation) {
+  static func prepareRevocations(in defaults: UserDefaults, readCredential: () -> AgentWidgetCredential.Lookup = { AgentWidgetCredential.lookup() }, storeRevocation: (URLRequest) -> Bool = AgentWidgetCredential.preserveRevocation) {
     if defaults.string(forKey: "t3_agent_widget_identity") == nil, defaults.string(forKey: "t3_agent_widget_url") != nil {
-      clearStoredState(in: defaults, storeRevocation: storeRevocation)
+      clearCredential(in: defaults, readCredential: readCredential, storeRevocation: storeRevocation)
     }
   }
 
@@ -95,6 +95,37 @@ enum AgentWidgetStorage {
     defaults.set(claims, forKey: "t3_agent_widget_revocation_claims")
   }
 
+  static func canCreateCredential(in defaults: UserDefaults, credential: AgentWidgetCredential.Lookup) -> Bool {
+    credential == .missing && defaults.string(forKey: "t3_agent_widget_url") == nil && defaults.string(forKey: "t3_agent_widget_token") == nil
+  }
+
+  static func observe(_ props: String, entries: [[String: Any]], in defaults: UserDefaults) -> Bool {
+    let previous = defaults.string(forKey: "t3_agent_widget_local_observation")
+    defaults.set(props, forKey: "t3_agent_widget_local_observation")
+    let stored = (defaults.array(forKey: timelineKey) as? [[String: Any]])?.first?["props"] as? [String: Any]
+    if let previous, let old = presentation(previous), let current = presentation(props), old.isEqual(current),
+       let stored, let next = entries.first?["props"] as? [String: Any], presentation(stored).isEqual(presentation(next)) {
+      return false
+    }
+    return commit(entries, generation: generation(in: defaults), in: defaults)
+  }
+
+  private static func presentation(_ props: String) -> NSDictionary? {
+    guard let data = props.data(using: .utf8),
+          let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    return presentation(value)
+  }
+
+  private static func presentation(_ props: [String: Any]) -> NSDictionary {
+    var value = props.filter { !($0.value is NSNull) }
+    for key in ["observedActivities", "updatedAt", generationKey] { value.removeValue(forKey: key) }
+    if let deadline = value["expiresAt"] as? NSNumber { value["expiresAt"] = floor(deadline.doubleValue / 60_000) }
+    if let rows = value["activities"] as? [[String: Any]] {
+      value["activities"] = rows.map { $0.filter { $0.key != "updatedAt" } }
+    }
+    return value as NSDictionary
+  }
+
   static func beginRefresh(in defaults: UserDefaults) -> String {
     let requestId = UUID().uuidString
     defaults.set(requestId, forKey: "t3_agent_widget_request")
@@ -102,16 +133,26 @@ enum AgentWidgetStorage {
   }
 
   @discardableResult
-  static func clearStoredState(in defaults: UserDefaults, storeRevocation: (URLRequest) -> Bool = AgentWidgetCredential.preserveRevocation) -> URLRequest? {
-    let url = defaults.string(forKey: "t3_agent_widget_url").flatMap(URL.init(string:))
-    // Revoke the pre-Keychain development credential when upgrading this branch.
-    let token = AgentWidgetCredential.read() ?? defaults.string(forKey: "t3_agent_widget_token")
+  static func clearStoredState(in defaults: UserDefaults, readCredential: () -> AgentWidgetCredential.Lookup = { AgentWidgetCredential.lookup() }, storeRevocation: (URLRequest) -> Bool = AgentWidgetCredential.preserveRevocation) -> URLRequest? {
     defaults.set(UUID().uuidString, forKey: AgentWidgetStorage.generationKey)
     for key in ["t3_agent_widget_identity", "t3_agent_widget_local_observation", AgentWidgetStorage.timelineKey] {
       defaults.removeObject(forKey: key)
     }
+    return clearCredential(in: defaults, readCredential: readCredential, storeRevocation: storeRevocation)
+  }
+
+  @discardableResult
+  private static func clearCredential(in defaults: UserDefaults, readCredential: () -> AgentWidgetCredential.Lookup, storeRevocation: (URLRequest) -> Bool) -> URLRequest? {
+    let url = defaults.string(forKey: "t3_agent_widget_url").flatMap(URL.init(string:))
+    // Revoke the pre-Keychain development credential when upgrading this branch.
+    let credential = readCredential()
+    var tokens = Set<String>()
+    if case let .available(token) = credential { tokens.insert(token) }
+    if let legacy = defaults.string(forKey: "t3_agent_widget_token") { tokens.insert(legacy) }
+    guard credential != .unavailable else { return nil }
     var request: URLRequest?
-    if let url, let token {
+    for token in tokens {
+      guard let url else { continue }
       var revoke = URLRequest(url: url, timeoutInterval: 10)
       revoke.httpMethod = "DELETE"
       revoke.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

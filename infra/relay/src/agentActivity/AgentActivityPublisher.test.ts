@@ -164,6 +164,7 @@ describe("AgentActivityPublisher", () => {
     let changed = true;
     let failWidget = true;
     let failFcm = true;
+    let configuredFcm = false;
     return Effect.gen(function* () {
       const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
       const publish = publisher.publish({
@@ -179,14 +180,17 @@ describe("AgentActivityPublisher", () => {
       expect(changed).toBe(true);
       failFcm = false;
       yield* publish;
-      expect(widgetUsers).toEqual(["dev:julius", "dev:julius"]);
-      changed = false;
-      yield* publish;
-      expect(widgetUsers).toEqual(["dev:julius", "dev:julius"]);
-      changed = true;
+      expect(changed).toBe(true);
+      configuredFcm = true;
       yield* publish;
       expect(widgetUsers).toEqual(["dev:julius", "dev:julius", "dev:julius"]);
-      expect(replays).toEqual([true, true, true]);
+      changed = false;
+      yield* publish;
+      expect(widgetUsers).toEqual(["dev:julius", "dev:julius", "dev:julius"]);
+      changed = true;
+      yield* publish;
+      expect(widgetUsers).toEqual(["dev:julius", "dev:julius", "dev:julius", "dev:julius"]);
+      expect(replays).toEqual([true, true, true, true]);
     }).pipe(
       Effect.provide(
         AgentActivityPublisher.layer.pipe(
@@ -223,7 +227,18 @@ describe("AgentActivityPublisher", () => {
                           cause: "queue unavailable",
                         }),
                       )
-                    : Effect.succeed(null);
+                    : Effect.succeed(
+                        configuredFcm
+                          ? null
+                          : {
+                              deviceId: "android",
+                              kind: "push_notification" as const,
+                              ok: false,
+                              apnsStatus: null,
+                              apnsReason: null,
+                              apnsId: null,
+                            },
+                      );
                 }),
               process: () => Effect.void,
             }),

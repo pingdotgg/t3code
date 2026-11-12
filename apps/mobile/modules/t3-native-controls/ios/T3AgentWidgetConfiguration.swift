@@ -14,8 +14,7 @@ enum T3AgentWidgetConfiguration {
         return token
       }
       _ = AgentWidgetStorage.clearStoredState(in: defaults)
-      // If Keychain cannot preserve revocation, keep the disabled credential for retry.
-      guard AgentWidgetCredential.read() == nil else { return nil }
+      guard AgentWidgetStorage.canCreateCredential(in: defaults, credential: AgentWidgetCredential.lookup()) else { return nil }
       var bytes = [UInt8](repeating: 0, count: 32)
       guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return nil }
       let token = bytes.map { String(format: "%02x", $0) }.joined()
@@ -43,12 +42,11 @@ enum T3AgentWidgetConfiguration {
     guard let data = timeline.data(using: .utf8),
           let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return false }
     let stored = AgentWidgetStorage.withLock { defaults in
-      defaults.set(props, forKey: "t3_agent_widget_local_observation")
-      return AgentWidgetStorage.commit(entries, generation: AgentWidgetStorage.generation(in: defaults), in: defaults)
-    } ?? false
+      AgentWidgetStorage.observe(props, entries: entries, in: defaults)
+    }
     AgentWidgetStorage.retryRevocations()
-    if stored { WidgetCenter.shared.reloadTimelines(ofKind: "AgentActivity") }
-    return stored
+    if stored == true { WidgetCenter.shared.reloadTimelines(ofKind: "AgentActivity") }
+    return stored != nil
   }
 
   static func clear() {

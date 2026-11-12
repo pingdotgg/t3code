@@ -161,6 +161,7 @@ export const makeAgentAwarenessPublishWorker = Effect.fnUntraced(function* <R>(
 function agentAwarenessPublishIdentity(
   state: RelayAgentActivityState | null,
   subagentRequest: SubagentRequestAwareness | null = null,
+  completedAt?: number,
 ): string {
   if (state === null) {
     return "null";
@@ -169,7 +170,11 @@ function agentAwarenessPublishIdentity(
   // A child's next request reads the same as its last one, but it is a new
   // wait and must reach the phone.
   return JSON.stringify(
-    subagentRequest === null ? meaningfulState : [meaningfulState, subagentRequest.requestId],
+    subagentRequest !== null
+      ? [meaningfulState, subagentRequest.requestId]
+      : state.phase === "completed" || state.phase === "failed"
+        ? [meaningfulState, completedAt]
+        : meaningfulState,
   );
 }
 
@@ -615,9 +620,13 @@ export const make = Effect.gen(function* () {
       now: (yield* DateTime.now).epochMilliseconds,
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
-    const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     const completedAt = threadShell?.latestRunCompletedAt?.epochMilliseconds;
+    const publishIdentity = agentAwarenessPublishIdentity(
+      snapshot.state,
+      snapshot.subagentWait,
+      completedAt,
+    );
+    const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     const previousTerminal = publishedTerminalWork.get(threadId);
     const snoozedUntil = threadShell?.snoozedUntil?.epochMilliseconds;
     const snoozeExpired =
@@ -719,7 +728,10 @@ export const make = Effect.gen(function* () {
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-          new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion)),
+          new Map(publishedStates).set(
+            threadId,
+            agentAwarenessPublishIdentity(completion, null, completedAt),
+          ),
         );
         yield* schedulePublishConfirm(threadId);
         return;

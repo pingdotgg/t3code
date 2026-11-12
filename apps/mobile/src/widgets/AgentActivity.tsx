@@ -57,6 +57,7 @@ export interface AgentActivityProps {
   readonly observedActivities?: Readonly<
     Record<string, ReadonlyArray<Pick<AgentActivityRowProps, "threadId" | "phase" | "updatedAt">>>
   >;
+  readonly isSignedOut?: boolean;
   readonly isStale?: boolean;
   readonly isExpired?: boolean;
   readonly expiresAt?: number;
@@ -196,12 +197,20 @@ export function AgentActivity(
   // Derive terminal outcomes from all rows so a failure dominates a newer success in every presentation.
   const allDone = activeCount === 0;
   const hasRows = activities.length > 0;
-  const doneLabel = failedRow ? "Failed" : hasRows ? "Done" : "Idle";
-  const outcomeLabel = failedRow
-    ? "Agent work failed"
-    : hasRows
-      ? "Agent work completed"
-      : "No active agents";
+  const doneLabel = props.isSignedOut
+    ? "Signed out"
+    : failedRow
+      ? "Failed"
+      : hasRows
+        ? "Done"
+        : "Idle";
+  const outcomeLabel = props.isSignedOut
+    ? "Sign in to see agent activity"
+    : failedRow
+      ? "Agent work failed"
+      : hasRows
+        ? "Agent work completed"
+        : "No active agents";
 
   const countLabel = allDone
     ? outcomeLabel

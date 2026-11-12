@@ -262,12 +262,12 @@ const make = Effect.gen(function* () {
           }),
         { concurrency: 4 },
       );
-      if (input.state)
+      const deliveries = [...deliveriesByUser.flat(), ...widgetDeliveries.flat()];
+      if (input.state && deliveries.every((delivery) => delivery === null || delivery.ok))
         yield* rows.acknowledgeDelivery({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,
         });
-      const deliveries = [...deliveriesByUser.flat(), ...widgetDeliveries.flat()];
       return {
         ok: true,
         deliveries: deliveries.filter(

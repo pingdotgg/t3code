@@ -59,7 +59,7 @@ defaults.set(entries, forKey: "__expo_widgets_AgentActivity_timeline")
 defaults.set("install-push-token", forKey: "t3_agent_widget_push_token")
 var pendingRevocations = [URLRequest]()
 defaults.set("previous-generation", forKey: "t3_agent_widget_generation")
-let revocation = AgentWidgetStorage.clearStoredState(in: defaults) { request in
+let revocation = AgentWidgetStorage.clearStoredState(in: defaults, readCredential: { .missing }) { request in
   // Persist before active authority is removed, so interruption cannot lose it.
   assert(defaults.string(forKey: "t3_agent_widget_url") != nil)
   pendingRevocations.append(request)
@@ -76,7 +76,7 @@ for key in ["t3_agent_widget_identity", "t3_agent_widget_token", "t3_agent_widge
   assert(defaults.object(forKey: key) == nil)
 }
 assert(defaults.string(forKey: "t3_agent_widget_push_token") == "install-push-token")
-assert(AgentWidgetStorage.clearStoredState(in: defaults) == nil)
+assert(AgentWidgetStorage.clearStoredState(in: defaults, readCredential: { .missing }) == nil)
 print("Agent widget sign-out: cached rows removed and previous capability revocation prepared")
 
 let saved = AgentWidgetCredential.Revocation(request: pendingRevocations[0])!
@@ -89,12 +89,13 @@ assert(!restored.account.contains("test-capability"))
 defaults.set("next-account", forKey: "t3_agent_widget_identity")
 defaults.set("test-capability", forKey: "t3_agent_widget_token")
 defaults.set("https://relay.test/v1/widget/agent-activity", forKey: "t3_agent_widget_url")
-assert(AgentWidgetStorage.clearStoredState(in: defaults, storeRevocation: { _ in false }) == nil)
+assert(AgentWidgetStorage.clearStoredState(in: defaults, readCredential: { .missing }, storeRevocation: { _ in false }) == nil)
 assert(defaults.string(forKey: "t3_agent_widget_identity") == nil)
 assert(defaults.string(forKey: "t3_agent_widget_url") != nil)
 assert(defaults.string(forKey: "t3_agent_widget_token") == "test-capability")
+assert(!AgentWidgetStorage.canCreateCredential(in: defaults, credential: .missing))
 var retriedPreparation = false
-AgentWidgetStorage.prepareRevocations(in: defaults) { _ in retriedPreparation = true; return true }
+AgentWidgetStorage.prepareRevocations(in: defaults, readCredential: { .missing }) { _ in retriedPreparation = true; return true }
 assert(retriedPreparation)
 assert(defaults.string(forKey: "t3_agent_widget_url") == nil)
 print("Agent widget revocation: secure-write failure retained for retry; durable record round-trip passed")
@@ -115,7 +116,7 @@ let transitioned = AgentWidgetStorage.withLock(at: lock, defaults: defaults) { d
   child.arguments = ["--stale-refresh", suite, lock.path, generation]
   try! child.run()
   assert(try! ready.fileHandleForReading.read(upToCount: 6) == Data("ready\n".utf8))
-  AgentWidgetStorage.clearStoredState(in: defaults)
+  AgentWidgetStorage.clearStoredState(in: defaults, readCredential: { .missing })
   defaults.set("new-account", forKey: "t3_agent_widget_identity")
   return true
 }
@@ -227,10 +228,10 @@ defaults.set("same-owner", forKey: "t3_agent_widget_identity")
 defaults.set("old-capability", forKey: "t3_agent_widget_token")
 defaults.set("https://old-relay.test/v1/widget/agent-activity", forKey: "t3_agent_widget_url")
 var rotationRevocations = [URLRequest]()
-assert(!AgentWidgetStorage.prepareRelay(url: "https://new-relay.test/v1/widget/agent-activity", in: defaults, storeRevocation: { _ in false }))
+assert(!AgentWidgetStorage.prepareRelay(url: "https://new-relay.test/v1/widget/agent-activity", in: defaults, readCredential: { .missing }, storeRevocation: { _ in false }))
 assert(defaults.string(forKey: "t3_agent_widget_url") == "https://old-relay.test/v1/widget/agent-activity")
 assert(defaults.string(forKey: "t3_agent_widget_token") == "old-capability")
-assert(AgentWidgetStorage.prepareRelay(url: "https://new-relay.test/v1/widget/agent-activity", in: defaults, storeRevocation: { request in
+assert(AgentWidgetStorage.prepareRelay(url: "https://new-relay.test/v1/widget/agent-activity", in: defaults, readCredential: { .missing }, storeRevocation: { request in
   rotationRevocations.append(request)
   return true
 }))
@@ -282,3 +283,64 @@ assert(props(hiddenEntries[0])["activeCount"] as? Int == 2)
 assert(hiddenEntries[1]["timestamp"] as? Int == 1_600_000)
 assert(props(hiddenEntries[1])["activeCount"] as? Int == -1)
 print("Per-environment reconciliation releases confirmed scopes, preserves exact hidden counts, and expires hidden work")
+
+defaults.set("https://locked-relay.test/v1/widget/agent-activity", forKey: "t3_agent_widget_url")
+_ = AgentWidgetStorage.clearStoredState(in: defaults, readCredential: { .unavailable })
+assert(defaults.string(forKey: "t3_agent_widget_url") != nil, "Failed Keychain lookup must retain revocation destination")
+
+assert(!AgentWidgetStorage.canCreateCredential(in: defaults, credential: .unavailable))
+assert(!AgentWidgetStorage.prepareRelay(url: "https://new-relay.test", in: defaults, readCredential: { .unavailable }))
+var recovered = [URLRequest]()
+_ = AgentWidgetStorage.clearStoredState(in: defaults, readCredential: { .available("recovered-token") }) { request in
+  recovered.append(request)
+  return true
+}
+assert(recovered.first?.url?.host == "locked-relay.test")
+assert(recovered.first?.value(forHTTPHeaderField: "Authorization") == "Bearer recovered-token")
+assert(AgentWidgetStorage.canCreateCredential(in: defaults, credential: .missing))
+print("Unavailable secure reads retain old revocation routing; legacy cleanup blocks replacement")
+
+var staleLocal = local
+staleLocal["isStale"] = true
+assert(props(AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: staleLocal, now: now)[0])["isStale"] as? Bool == true)
+staleLocal["activities"] = [row("relay", "running")]
+staleLocal["totalCount"] = 1
+staleLocal["activeCount"] = 1
+assert(props(AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: staleLocal, now: now)[0])["isStale"] as? Bool == false)
+print("Last observed label survives until the relay confirms retained direct work")
+
+func json(_ value: [String: Any]) -> String { String(data: try! JSONSerialization.data(withJSONObject: value, options: .sortedKeys), encoding: .utf8)! }
+var observation: [String: Any] = ["activities": [observedRow], "observedActivities": ["relay": [observedRow]], "activeCount": 1, "expiresAt": 1_600_000]
+var observationEntries: [[String: Any]] = [["timestamp": 0, "props": observation]]
+assert(AgentWidgetStorage.observe(json(observation), entries: observationEntries, in: defaults))
+let unchangedTimeline = defaults.array(forKey: AgentWidgetStorage.timelineKey)! as NSArray
+observedRow["updatedAt"] = "2026-01-03T00:00:00Z"
+observation["observedActivities"] = ["relay": [observedRow]]
+observationEntries = [["timestamp": 0, "props": observation]]
+assert(!AgentWidgetStorage.observe(json(observation), entries: observationEntries, in: defaults))
+assert(defaults.string(forKey: "t3_agent_widget_local_observation") == json(observation))
+assert(unchangedTimeline.isEqual(defaults.array(forKey: AgentWidgetStorage.timelineKey)!))
+let newestObservation = try! JSONSerialization.jsonObject(with: Data(defaults.string(forKey: "t3_agent_widget_local_observation")!.utf8)) as! [String: Any]
+let intermediateCompletion: [String: Any] = ["activeCount": 0, "totalCount": 1, "activities": [completedRow]]
+let afterNewObservation = props(AgentWidgetState.timeline(aggregate: intermediateCompletion, environmentIds: ["relay"], localObservation: newestObservation, now: now)[0])
+assert(afterNewObservation["activeCount"] as? Int == 1)
+assert((afterNewObservation["activities"] as! [[String: Any]])[0]["phase"] as? String == "running")
+print("Newer source observations survive intermediate relay completions without repainting unchanged timelines")
+
+assert(AgentWidgetStorage.commit([["timestamp": 0, "props": ["activeCount": 0, "activities": [completedRow]]]], generation: AgentWidgetStorage.generation(in: defaults), in: defaults))
+assert(AgentWidgetStorage.observe(json(observation), entries: observationEntries, in: defaults))
+print("Foreground observations repair a changed native background timeline")
+
+defaults.set("https://retry-relay.test/v1/widget/agent-activity", forKey: "t3_agent_widget_url")
+_ = AgentWidgetStorage.clearStoredState(in: defaults, readCredential: { .unavailable })
+let signedOutGeneration = AgentWidgetStorage.generation(in: defaults)
+let signedOut: [[String: Any]] = [["timestamp": 0, "props": ["isSignedOut": true, "activeCount": 0, "activities": [[String: Any]]()]]]
+assert(AgentWidgetStorage.commit(signedOut, generation: signedOutGeneration, in: defaults))
+AgentWidgetStorage.prepareRevocations(in: defaults, readCredential: { .unavailable })
+assert(defaults.string(forKey: AgentWidgetStorage.generationKey) == signedOutGeneration)
+assert(props((defaults.array(forKey: AgentWidgetStorage.timelineKey) as! [[String: Any]])[0])["isSignedOut"] as? Bool == true)
+AgentWidgetStorage.prepareRevocations(in: defaults, readCredential: { .available("recovered-token") }, storeRevocation: { _ in true })
+assert(defaults.string(forKey: "t3_agent_widget_url") == nil)
+assert(defaults.string(forKey: AgentWidgetStorage.generationKey) == signedOutGeneration)
+assert(props((defaults.array(forKey: AgentWidgetStorage.timelineKey) as! [[String: Any]])[0])["isSignedOut"] as? Bool == true)
+print("Revocation retries preserve signed-out timeline ownership during secure failure and recovery")

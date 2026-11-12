@@ -15,14 +15,27 @@ enum AgentWidgetCredential {
     ]
   }
 
+  enum Lookup: Equatable {
+    case available(String)
+    case missing
+    case unavailable
+  }
+
   static func read(account: String = "read-capability") -> String? {
-    guard var query = query(account: account) else { return nil }
+    guard case let .available(token) = lookup(account: account) else { return nil }
+    return token
+  }
+
+  static func lookup(account: String = "read-capability") -> Lookup {
+    guard var query = query(account: account) else { return .unavailable }
     query[kSecReturnData as String] = true
     query[kSecMatchLimit as String] = kSecMatchLimitOne
     var result: CFTypeRef?
-    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-      let data = result as? Data else { return nil }
-    return String(data: data, encoding: .utf8)
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    if status == errSecItemNotFound { return .missing }
+    guard status == errSecSuccess, let data = result as? Data,
+          let token = String(data: data, encoding: .utf8) else { return .unavailable }
+    return .available(token)
   }
 
   static func store(_ token: String, account: String = "read-capability") -> Bool {

@@ -354,8 +354,8 @@ const liveProjectId = ProjectId.make("project-1");
 function setLiveShell(
   phase: "starting" | "running" | "ready" | null,
   status: EnvironmentShellState["status"] = "live",
+  now = liveShellUpdatedAt,
 ): void {
-  const now = liveShellUpdatedAt;
   const project: OrchestrationProjectShell = {
     id: liveProjectId,
     title: "Live project",
@@ -1050,7 +1050,8 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     expect(publishAgentActivityWidget).toHaveBeenCalledWith(
       expect.objectContaining({
         title: "T3 Code",
-        subtitle: "No active agents",
+        subtitle: "Sign in to see agent activity",
+        isSignedOut: true,
         activeCount: 0,
         activities: [],
       }),
@@ -1804,7 +1805,8 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       expect(widgetMocks.start).not.toHaveBeenCalled();
       expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          subtitle: "No active agents",
+          subtitle: "Sign in to see agent activity",
+          isSignedOut: true,
           activeCount: 0,
           activities: [],
         }),
@@ -2378,6 +2380,16 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         Effect.provide(snapshotRelayLayer(() => Effect.succeed({ aggregate: null }))),
       );
       setLiveShell("running");
+      setLiveShell("running", "live", "2026-10-02T12:00:00.500Z");
+      expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          observedActivities: {
+            [liveEnvironmentId]: [
+              expect.objectContaining({ updatedAt: "2026-10-02T12:00:00.500Z" }),
+            ],
+          },
+        }),
+      );
       const count = vi.mocked(publishAgentActivityWidget).mock.calls.length;
       setLiveShell("running", "cached");
       expect(publishAgentActivityWidget).toHaveBeenCalledTimes(count + 1);
@@ -2842,7 +2854,8 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       expect(publishAgentActivityWidget).toHaveBeenCalledTimes(2);
       expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          subtitle: "No active agents",
+          subtitle: "Sign in to see agent activity",
+          isSignedOut: true,
           activeCount: 0,
           activities: [],
         }),

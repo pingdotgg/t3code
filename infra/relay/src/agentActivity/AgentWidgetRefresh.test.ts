@@ -372,6 +372,10 @@ describe("AgentWidgetRefresh", () => {
       expect((yield* Effect.flip(widgets.revoke({ token })))._tag).toBe(
         "WidgetRefreshPersistenceError",
       );
+      yield* widgets.notify({ userId: device.userId });
+      yield* widgets.process(job);
+      expect(test.queued).toEqual([]);
+      expect(test.pushes).toEqual([]);
       test.allowRevocations(false);
       yield* widgets.revoke({ token });
       yield* widgets.notify({ userId: device.userId });

@@ -243,7 +243,11 @@ export function setAgentAwarenessRelayTokenProvider(
     }
     // Signed-out activities would be orphaned because the relay can no longer update or end them.
     endLocalLiveActivities("live activity cleanup after cloud sign-out failed");
-    publishRegularWidget(idleWidgetProps());
+    publishRegularWidget({
+      ...idleWidgetProps(),
+      isSignedOut: true,
+      subtitle: "Sign in to see agent activity",
+    });
     setRegistrationStatus("unknown");
     void clearAgentAwarenessRegistrationRecord().catch((error: unknown) => {
       logRegistrationError("clear registration record on sign-out failed", error);
@@ -561,14 +565,8 @@ function publishRegularWidget(props: AgentActivityProps): void {
     workingCount: props.workingCount,
     attentionCount: props.attentionCount,
     totalCount: props.totalCount,
-    observedActivities: props.observedActivities
-      ? Object.fromEntries(
-          Object.entries(props.observedActivities).map(([id, rows]) => [
-            id,
-            rows.map(({ updatedAt: _updatedAt, ...row }) => row),
-          ]),
-        )
-      : undefined,
+    isSignedOut: props.isSignedOut,
+    observedActivities: props.observedActivities,
     observedEnvironmentIds: props.observedEnvironmentIds
       ? [...props.observedEnvironmentIds].sort()
       : undefined,
