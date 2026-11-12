@@ -421,7 +421,7 @@ export function selectRecentTimelineWindow(input: {
   });
 }
 
-function findCursorEndIndex(
+export function findCursorEndIndex(
   items: ReadonlyArray<HistoryRow>,
   cursor: ThreadHistoryCursorPayload,
 ): number {
