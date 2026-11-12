@@ -110,24 +110,67 @@ describe("AzureDevOpsCredentials", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("fails when the secret store cannot be read, rather than finding no token", () => {
+  const withUnreadableSecrets = Effect.gen(function* () {
+    const host = yield* SourceControlHost.SourceControlHost;
+    return yield* AzureDevOpsCredentials.make.pipe(
+      Effect.provideService(SourceControlHost.SourceControlHost, {
+        ...host,
+        settings: {
+          ...host.settings,
+          getWithSecrets: () =>
+            Effect.fail(new ServerSettingsError({ settingsPath: "/s", operation: "read-secret" })),
+        },
+      }),
+    );
+  });
+
+  it.effect(
+    "fails when a saved token's secret store cannot be read, rather than finding none",
+    () => {
+      const { layer, save } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
+      return Effect.gen(function* () {
+        yield* save(savedTokens);
+        const credentials = yield* withUnreadableSecrets;
+        const error = yield* Effect.flip(credentials.savedTokenForCheckout("/w"));
+        assert.strictEqual(error._tag, "SettingsSecretUnresolvedError");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("ignores an unreadable secret store when no Azure DevOps token is saved", () => {
     const { layer } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
     return Effect.gen(function* () {
-      const host = yield* SourceControlHost.SourceControlHost;
-      const credentials = yield* AzureDevOpsCredentials.make.pipe(
-        Effect.provideService(SourceControlHost.SourceControlHost, {
-          ...host,
-          settings: {
-            ...host.settings,
-            getWithSecrets: () =>
-              Effect.fail(
-                new ServerSettingsError({ settingsPath: "/s", operation: "read-secret" }),
-              ),
-          },
-        }),
+      const credentials = yield* withUnreadableSecrets;
+      assert.isTrue(Option.isNone(yield* credentials.savedTokenForCheckout("/w")));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps the other organizations' tokens when one saved entry is malformed", () => {
+    const { layer, save } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
+    return Effect.gen(function* () {
+      yield* save({
+        "dev.azure.com/acme": "acme-pat",
+        "dev.azure.com/globex": 42 as unknown as SettingsSecretValue,
+      });
+      assert.strictEqual(yield* savedTokenOrganization, "dev.azure.com/acme");
+      const credentials = yield* AzureDevOpsCredentials.AzureDevOpsCredentials;
+      const error = yield* Effect.flip(
+        credentials.savedToken("https://dev.azure.com/globex/p1/_git/r1"),
       );
-      const error = yield* Effect.flip(credentials.savedTokenForCheckout("/w"));
       assert.strictEqual(error._tag, "SettingsSecretUnresolvedError");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("skips a GitHub SSH origin as az does, for the Azure DevOps remote after it", () => {
+    const { layer, save } = setup({
+      remotes: [
+        ["origin", "ssh://github.com/someone/web.git"],
+        ["upstream", "https://dev.azure.com/acme/p1/_git/r1"],
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* save(savedTokens);
+      assert.strictEqual(yield* savedTokenOrganization, "dev.azure.com/acme");
     }).pipe(Effect.provide(layer));
   });
 });

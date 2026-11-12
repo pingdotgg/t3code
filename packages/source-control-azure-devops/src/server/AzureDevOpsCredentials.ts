@@ -1,4 +1,9 @@
-import { requireSettingsSecretLiteral, SettingsSecretUnresolvedError } from "@t3tools/contracts";
+import {
+  requireSettingsSecretLiteral,
+  SettingsSecretUnresolvedError,
+  type ServerSettings,
+  type SettingsSecretValue,
+} from "@t3tools/contracts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
 import * as Context from "effect/Context";
@@ -36,6 +41,15 @@ export class AzureDevOpsCredentials extends Context.Service<
   }
 >()("@t3tools/source-control-azure-devops/server/AzureDevOpsCredentials") {}
 
+interface SavedTokens {
+  readonly tokens: Readonly<Record<string, SettingsSecretValue>>;
+  /** Organizations whose saved entry does not decode; they fail closed. */
+  readonly malformed: ReadonlySet<string>;
+  readonly secretProviders: ServerSettings["secretProviders"];
+}
+
+const NO_SAVED_TOKENS: SavedTokens = { tokens: {}, malformed: new Set(), secretProviders: {} };
+
 /**
  * The push URL `az --detect` reads from `git remote -v`: origin's when it looks like Azure DevOps,
  * otherwise the first other remote's that does. Mirrors the extension's `get_remote_url`.
@@ -56,60 +70,84 @@ const azDetectedRemote = (remoteList: string): string | null => {
 
 // The extension's `is_vsts_url_candidate`, with Python's `urlparse` reduced to what it checks.
 const isAzCandidate = (url: string): boolean => {
-  const lower = url.toLowerCase();
+  let lower = url.toLowerCase();
+  // `uri_parse` gives the newer SSH remotes, which lack a scheme, one.
   if (
     !lower.startsWith("ssh:") &&
     (lower.includes("vs-ssh.visualstudio.com") || lower.includes("ssh.dev.azure.com"))
   ) {
-    return true;
+    lower = `ssh://${lower}`;
   }
   const scheme = /^([a-z][a-z0-9+.-]*):/.exec(lower)?.[1] ?? "";
-  if (scheme === "ssh") return true;
-  const rest = lower.slice(scheme.length === 0 ? 0 : scheme.length + 1);
-  const authority = rest.startsWith("//") ? (/^\/\/([^/?#]*)/.exec(rest)?.[1] ?? "") : "";
+  const rest = scheme.length === 0 ? lower : lower.slice(scheme.length + 1);
+  const authority = rest.startsWith("//") ? (/^\/\/([^/?#]*)/.exec(rest)?.[1] ?? "") : null;
   if (authority === "github.com") return false;
-  const path = rest.slice(rest.startsWith("//") ? authority.length + 2 : 0).split(/[?#]/)[0] ?? "";
-  return path.includes("/_git/") || path.includes("/_ssh/");
+  const path =
+    (authority === null ? rest : rest.slice(authority.length + 2)).split(/[?#]/)[0] ?? "";
+  return path.includes("/_git/") || path.includes("/_ssh/") || scheme === "ssh";
 };
 
 /** @public */
 export const make = Effect.gen(function* () {
   const host = yield* SourceControlHost.SourceControlHost;
 
-  const savedTokens = host.settings.getWithSecrets(AzureDevOpsClient.definition.kind).pipe(
-    Effect.map((settings) => ({
-      tokens: readSourceControlHostSettings(
-        AzureDevOpsClient.settings,
-        settings.sourceControlHosts[AzureDevOpsClient.definition.kind],
-      ).tokens,
-      secretProviders: settings.secretProviders,
-    })),
-    Effect.catch((error) =>
-      // A token that exists but cannot be read must not pass for no token.
-      error.operation === "read-secret"
-        ? Effect.fail(
-            new SettingsSecretUnresolvedError({
-              provider: error.providerInstanceId ?? "secret store",
-            }),
-          )
-        : // No cause: a settings decode error can quote a hand-edited token.
-          Effect.logWarning("failed to read Azure DevOps tokens from settings", {
-            operation: error.operation,
-          }).pipe(
-            Effect.as({
-              tokens: readSourceControlHostSettings(AzureDevOpsClient.settings, {}).tokens,
-              secretProviders: {},
-            }),
-          ),
-    ),
-  );
+  const kind = AzureDevOpsClient.definition.kind;
+  const savedEntries = (settings: ServerSettings): Record<string, unknown> => {
+    const tokens: unknown = (settings.sourceControlHosts[kind] as { tokens?: unknown } | undefined)
+      ?.tokens;
+    return tokens !== null && typeof tokens === "object" && !Array.isArray(tokens)
+      ? (tokens as Record<string, unknown>)
+      : {};
+  };
+
+  // Each organization's entry decodes alone, so one malformed entry cannot hide the others.
+  const decodeEntries = (settings: ServerSettings): SavedTokens => {
+    const tokens: Record<string, SettingsSecretValue> = {};
+    const malformed = new Set<string>();
+    for (const [organization, value] of Object.entries(savedEntries(settings))) {
+      const decoded = readSourceControlHostSettings(AzureDevOpsClient.settings, {
+        tokens: { [organization]: value },
+      }).tokens[organization];
+      if (decoded === undefined) malformed.add(organization);
+      else tokens[organization] = decoded;
+    }
+    return { tokens, malformed, secretProviders: settings.secretProviders };
+  };
+
+  // Settings are read without secrets first: only a saved Azure DevOps token makes a secret store
+  // failure this provider's. Once one is saved, any failure to read it fails closed.
+  const savedTokens: Effect.Effect<SavedTokens, SettingsSecretUnresolvedError> =
+    host.settings.getStored.pipe(
+      Effect.map((settings) => Object.keys(savedEntries(settings)).length > 0),
+      Effect.catch((error) =>
+        // No cause: a settings decode error can quote a hand-edited token.
+        Effect.logWarning("failed to read Azure DevOps tokens from settings", {
+          operation: error.operation,
+        }).pipe(Effect.as(false)),
+      ),
+      Effect.flatMap((saved) =>
+        saved
+          ? host.settings.getWithSecrets(kind).pipe(
+              Effect.map(decodeEntries),
+              Effect.mapError(
+                (error) =>
+                  new SettingsSecretUnresolvedError({
+                    provider: error.providerInstanceId ?? "secret store",
+                  }),
+              ),
+            )
+          : Effect.succeed(NO_SAVED_TOKENS),
+      ),
+    );
 
   const tokenFor = (organization: string | null) =>
     organization === null
       ? Effect.succeedNone
       : savedTokens.pipe(
-          Effect.flatMap(({ tokens, secretProviders }) =>
-            requireSettingsSecretLiteral(tokens[organization], secretProviders),
+          Effect.flatMap(({ tokens, malformed, secretProviders }) =>
+            malformed.has(organization)
+              ? Effect.fail(new SettingsSecretUnresolvedError({ provider: "settings" }))
+              : requireSettingsSecretLiteral(tokens[organization], secretProviders),
           ),
           Effect.map((token) => (token ? Option.some(Redacted.make(token)) : Option.none())),
         );
@@ -128,9 +166,9 @@ export const make = Effect.gen(function* () {
     }),
     savedTokenForCheckout: Effect.fn("AzureDevOpsCredentials.savedTokenForCheckout")(
       function* (cwd) {
-        const { tokens } = yield* savedTokens;
+        const { tokens, malformed } = yield* savedTokens;
         // Most setups save no token; they should not pay for a git lookup on every az run.
-        if (Object.keys(tokens).length === 0) return Option.none();
+        if (Object.keys(tokens).length === 0 && malformed.size === 0) return Option.none();
         const remote = yield* detectedRemote(cwd);
         const organization = remote === null ? null : azureDevOpsOrganizationKey(remote);
         if (organization === null) return Option.none();

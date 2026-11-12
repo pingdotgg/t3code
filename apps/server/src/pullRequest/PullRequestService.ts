@@ -3690,7 +3690,8 @@ export const make = Effect.gen(function* () {
             discard: true,
           }),
         ),
-        Effect.ignore,
+        // Forget these hosts so the next settings change clears the persisted reads again.
+        Effect.catch(() => Effect.sync(() => (heldHosts = null))),
         Effect.andThen(
           Effect.sync(() => {
             credentialsEpoch = ++epochCounter;

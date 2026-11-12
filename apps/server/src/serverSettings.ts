@@ -262,6 +262,12 @@ export class ServerSettingsService extends Context.Service<
 
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /**
+     * The settings as saved, with each stored secret still a placeholder. It reads no secret, so
+     * it answers whether a credential is saved even when the secret store cannot be read.
+     */
+    readonly getStoredSettings?: Effect.Effect<ServerSettings, ServerSettingsError>;
+
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
@@ -1367,6 +1373,7 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
+    getStoredSettings: getSettingsFromCache.pipe(Effect.map(toEffective)),
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
         ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(

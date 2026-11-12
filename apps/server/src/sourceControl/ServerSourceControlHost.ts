@@ -21,6 +21,7 @@ export const layer = Layer.effect(
     return SourceControlHost.SourceControlHost.of({
       settings: {
         get: serverSettings.getSettings,
+        getStored: serverSettings.getStoredSettings ?? serverSettings.getSettings,
         getWithSecrets: (kind) =>
           serverSettings.getSettings.pipe(
             Effect.flatMap((settings) =>

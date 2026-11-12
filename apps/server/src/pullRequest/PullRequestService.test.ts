@@ -328,6 +328,7 @@ function makeService(input: {
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
   readonly onProjectRead?: () => void;
+  readonly failProjectList?: () => boolean;
 }) {
   // Build in the test scope; per-call Effect.provide would close the marks database on service acquisition.
   return Effect.flatMap(
@@ -352,12 +353,19 @@ function makeService(input: {
         }),
         Layer.mock(ProjectService.ProjectService)({
           listShells: (options) =>
-            Effect.sync(() => {
-              input.onProjectRead?.();
-              return input.projects.filter(
-                (project) => options?.projectIds?.includes(project.id) ?? true,
-              );
-            }),
+            input.failProjectList?.()
+              ? Effect.fail(
+                  new ProjectService.ProjectOperationError({
+                    operation: "list-projects",
+                    cause: "unavailable",
+                  }),
+                )
+              : Effect.sync(() => {
+                  input.onProjectRead?.();
+                  return input.projects.filter(
+                    (project) => options?.projectIds?.includes(project.id) ?? true,
+                  );
+                }),
           getShell: (projectId) =>
             Effect.sync(() => {
               input.onProjectRead?.();
@@ -2094,6 +2102,38 @@ it.effect("reads a stored summary again after a saved token changes", () =>
     yield* service.summary({ ...ref, allowStale: false });
     yield* service.summary({ ...ref, allowStale: false });
     assert.strictEqual(reads, 1);
+    yield* feed.change(withToken("new-token"));
+    yield* service.summary({ ...ref, allowStale: false });
+    assert.strictEqual(reads, 2);
+  }),
+);
+
+it.effect("clears stored reads on the next settings change when a token change could not", () =>
+  Effect.gen(function* () {
+    const feed = yield* settingsFeed;
+    let reads = 0;
+    let projectListDown = false;
+    const service = yield* makeService({
+      settingsChanges: feed.stream,
+      failProjectList: () => projectListDown,
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return hostedChangeRequest(`read ${reads}`);
+            }),
+        }),
+      ],
+    });
+    yield* feed.ready;
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    yield* service.summary({ ...ref, allowStale: false });
+    projectListDown = true;
+    yield* feed.change(withToken("new-token"));
+    projectListDown = false;
     yield* feed.change(withToken("new-token"));
     yield* service.summary({ ...ref, allowStale: false });
     assert.strictEqual(reads, 2);
