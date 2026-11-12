@@ -46,6 +46,23 @@ it("offers distinct source choices within a block and maps recursive folds witho
   );
   expect(leadingSpace?.start).toBe(2);
   expect(leadingSpace?.occurrence).toEqual({ index: 0, count: 1 });
+  for (const { source, path } of [
+    { source: "![before](image.png)\n\nquote quote\n\n![after](image.png)", path: "0:0" },
+    {
+      source:
+        "![before](image.png)\n\n<details><summary>More</summary>\n\nquote quote\n\n</details>\n\n![after](image.png)",
+      path: "1/0:0",
+    },
+  ]) {
+    const selectors = collectMobileAssistantTextSelectors(source, path, "quote");
+    expect(selectors).toHaveLength(2);
+    for (const [index, selector] of selectors.entries()) {
+      expect(findAssistantCitationText("quote quote", selector)).toEqual({
+        start: index * 6,
+        end: index * 6 + 5,
+      });
+    }
+  }
 });
 
 it("rejects unmappable or blank selections instead of inventing a source", () => {

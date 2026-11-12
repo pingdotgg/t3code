@@ -26,7 +26,10 @@ function renderedText(node: MarkdownNode, restoreMath: (value: string) => string
       node.type === "strong" ||
       node.type === "delete" ||
       node.type === "tableCell";
-    return node.children.map((child) => renderedText(child, restoreMath)).join(inline ? "" : "\n");
+    return node.children
+      .map((child) => renderedText(child, restoreMath))
+      .filter((text) => text.length > 0)
+      .join(inline ? "" : "\n");
   }
   return node.type === "break" ? "\n" : "";
 }
@@ -79,7 +82,7 @@ export function collectMobileAssistantTextSelectors(markdown: string, path: stri
   if (!text.trim()) return [];
   const normalize = (value: string) => value.replace(/\s+/g, " ");
   const quote = normalize(text);
-  const segments = citationSegments(markdown);
+  const segments = citationSegments(markdown).filter((segment) => segment.text.trim().length > 0);
   const segmentIndex = segments.findIndex((segment) => segment.path === path);
   const segment = segments[segmentIndex];
   if (!segment) return [];
