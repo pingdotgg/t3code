@@ -4945,6 +4945,39 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  // regression: #24916 a running OpenCode thread showed no context window until its turn ended
+  it.effect("reports the context window after each step, before the turn ends", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.step.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+          finish: "tool-calls",
+          cost: 0,
+          tokens: { input: 1200, output: 40, reasoning: 0, cache: { read: 300, write: 0 } },
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const updates = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "provider_turn.updated"),
+        Stream.takeUntil((event) => event.providerTurn.completedAt !== null),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const running = Array.from(yield* Fiber.join(updates)).filter(
+        (event) => event.providerTurn.completedAt === null,
+      );
+      assert.equal(
+        running.findLast((event) => event.providerTurn.tokenUsage !== undefined)?.providerTurn
+          .tokenUsage?.usedTokens,
+        1540,
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("rejects unreadable rollback history before cutting the native session", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
