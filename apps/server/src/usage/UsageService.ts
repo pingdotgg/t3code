@@ -168,11 +168,15 @@ export const make = Effect.gen(function* () {
   const correctedBatch = (records: readonly UsageRecord[]) =>
     records.some((record) => resolvedRecords.has(record)) ? records.map(correctedRecord) : records;
   const sourceCache = new Map<string, typeof CachedSource.Type>();
-  // Earliest window start a full scan read each transcript directory from. A window inside it
-  // has all its files in fileCache except what changed since, so it can be answered from memory.
+  // Earliest window start a complete scan read each transcript directory from.
   const coveredSince = new Map<string, number>();
   const coverageKey = (source: TranscriptSource) => `${source.provider}\0${source.dir}`;
   let cacheDirty = false;
+  const cover = (source: TranscriptSource, windowStartMs: number) => {
+    if ((coveredSince.get(coverageKey(source)) ?? Infinity) <= windowStartMs) return;
+    coveredSince.set(coverageKey(source), windowStartMs);
+    cacheDirty = true;
+  };
   const isWithinDirectory = (filePath: string, dir: string) => {
     const relative = path.relative(dir, filePath);
     return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
@@ -242,32 +246,26 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.succeed(null)),
     );
 
-  const loadRates = Effect.fn("UsageService.loadRates")(function* (
-    force: boolean,
-    savedOnly = false,
-  ) {
+  // Outside ratesLock, which a slow fetch holds: a provisional answer prices with these.
+  const loadSavedRates = yield* Effect.cached(
+    fileSystem.readFileString(ratesCachePath).pipe(
+      Effect.flatMap((raw) => decodeRatesCache(raw)),
+      Effect.map((saved) => {
+        const parsed = parseRateTable(saved.document);
+        if (parsed.size === 0) return;
+        rates = parsed;
+        ratesFetchedAtMs = saved.fetchedAtMs;
+        ratesStatus = "cached";
+      }),
+      Effect.ignoreCause,
+    ),
+  );
+
+  const loadRates = Effect.fn("UsageService.loadRates")(function* (force: boolean) {
     const now = yield* Clock.currentTimeMillis;
     const maxAgeMs = force ? RATES_REFRESH_FLOOR_MS : RATES_TTL_MS;
+    yield* loadSavedRates;
     if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < maxAgeMs) return;
-
-    if (ratesFetchedAtMs === null) {
-      const fromDisk = yield* fileSystem.readFileString(ratesCachePath).pipe(
-        Effect.flatMap((raw) => decodeRatesCache(raw)),
-        Effect.catchCause(() => Effect.succeed(null)),
-      );
-      if (fromDisk !== null) {
-        const parsed = parseRateTable(fromDisk.document);
-        if (parsed.size > 0) {
-          rates = parsed;
-          ratesFetchedAtMs = fromDisk.fetchedAtMs;
-          ratesStatus = "cached";
-          if (now - fromDisk.fetchedAtMs < maxAgeMs) return;
-        }
-      }
-    }
-
-    // Saved rates of any age price a provisional answer; only an exact read waits on the network.
-    if (savedOnly && rates.size > 0) return;
     if (ratesLastFailedAtMs !== null && now - ratesLastFailedAtMs < RATES_REFRESH_FLOOR_MS) return;
 
     let fetched = yield* fetchRates(LITELLM_RATES_URL);
@@ -291,8 +289,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const ensureRates = (force: boolean, savedOnly = false) =>
-    ratesLock.withPermit(loadRates(force, savedOnly));
+  const ensureRates = (force: boolean) => ratesLock.withPermit(loadRates(force));
 
   const refreshRates = ensureRates(true).pipe(
     Effect.map(pricing),
@@ -628,8 +625,11 @@ export const make = Effect.gen(function* () {
     const exists = yield* fileSystem
       .exists(dir)
       .pipe(Effect.catchCause(() => Effect.succeed(false)));
-    if (!exists) return { provider, dir, volumeId, files: null } satisfies ScannedDir;
-    // No walk: scanSummary aggregates this directory's saved files, as it does for deleted ones.
+    if (!exists) {
+      cover(source, windowStartMs);
+      return { provider, dir, volumeId, files: null } satisfies ScannedDir;
+    }
+    // scanSummary aggregates the saved files, as it does for a deleted directory.
     if (fromMemory) return { provider, dir, volumeId, files: [] } satisfies ScannedDir;
     const { files, failedPaths } = yield* Effect.promise(() =>
       listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
@@ -663,12 +663,7 @@ export const make = Effect.gen(function* () {
       return { path, records, malformedRecords };
     });
     const unread = failedPaths + read.filter((file) => file.failed).length;
-    const covered = coveredSince.get(coverageKey(source));
-    // A read that missed paths covers nothing: memory would answer for files it never held.
-    if (unread === 0 && (covered === undefined || covered > windowStartMs)) {
-      coveredSince.set(coverageKey(source), windowStartMs);
-      cacheDirty = true;
-    }
+    if (unread === 0) cover(source, windowStartMs);
     yield* Effect.annotateCurrentSpan({
       "usage.files": files.length,
       "usage.files_parsed": read.filter((file) => file.update !== undefined).length,
@@ -688,34 +683,13 @@ export const make = Effect.gen(function* () {
   });
 
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
+    { dirs, pending }: Effect.Success<ReturnType<typeof resolveTranscriptDirs>>,
     windowStartMs: number,
     settings: ServerSettingsValue,
     retentionCutoffMs: number,
     awaitRefresh: boolean,
-    provisional: boolean,
+    fromMemory: boolean,
   ) {
-    const { dirs, pending } = yield* resolveTranscriptDirs(
-      settings,
-      retentionCutoffMs,
-      awaitRefresh,
-    ).pipe(Effect.provideContext(readerContext));
-    // A window no full scan has read would show partial totals, so every directory must cover it.
-    const coverage = provisional
-      ? yield* Effect.forEach(dirs, (source) =>
-          fileSystem.exists(source.dir).pipe(
-            Effect.catchCause(() => Effect.succeed(false)),
-            Effect.map((exists) =>
-              !exists
-                ? "missing"
-                : (coveredSince.get(coverageKey(source)) ?? Infinity) <= windowStartMs
-                  ? "covered"
-                  : "uncovered",
-            ),
-          ),
-        )
-      : [];
-    const fromMemory = coverage.includes("covered") && !coverage.includes("uncovered");
-
     const scans = Effect.forEach(
       scanReaders,
       ({ driver, reader }) =>
@@ -749,35 +723,8 @@ export const make = Effect.gen(function* () {
       { concurrency: "unbounded" },
     );
     const scanned: readonly ScannedDir[] = [...transcripts, ...pending, ...scanDirs.flat()];
-    return { scanned, fromMemory, unread: transcripts.some((dir) => "status" in dir) };
+    return scanned;
   });
-
-  /**
-   * A saved answer misses whatever changed since its scan, so it is never final: its transcript
-   * sources with usage are marked refreshing, which tells the client to ask again with
-   * awaitRefresh. Null when none has usage: there is nothing to show early, and marking an
-   * empty source would only flash a loading row.
-   */
-  const asSaved = (summary: UsageSummary): UsageSummary | null => {
-    const marked = new Set(
-      summary.sources.filter(
-        ({ fingerprint }) =>
-          transcriptFormats.has(fingerprint.provider) &&
-          summary.buckets.some(
-            (bucket) =>
-              bucket.provider === fingerprint.provider &&
-              bucket.sourcePath === fingerprint.resolvedHomePath,
-          ),
-      ),
-    );
-    if (marked.size === 0) return null;
-    return {
-      ...summary,
-      sources: summary.sources.map((source) =>
-        marked.has(source) ? { ...source, refreshing: true } : source,
-      ),
-    };
-  };
 
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
@@ -830,21 +777,23 @@ export const make = Effect.gen(function* () {
 
     const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
-    const [, { scanned: scannedDirs, fromMemory, unread }] = yield* Effect.all(
+    const awaitRefresh = input.awaitRefresh === true;
+    const resolved = yield* resolveTranscriptDirs(settings, retentionCutoffMs, awaitRefresh).pipe(
+      Effect.provideContext(readerContext),
+    );
+    // A window no complete scan has read would show partial totals, so every directory must cover it.
+    const fromMemory =
+      provisional &&
+      resolved.dirs.every(
+        (source) => (coveredSince.get(coverageKey(source)) ?? Infinity) <= windowStartMs,
+      );
+    const [, scannedDirs] = yield* Effect.all(
       [
-        // Loaded rates skip the lock, which an exact read holds through a slow fetch.
-        provisional && rates.size > 0 ? Effect.void : ensureRates(false, provisional),
-        collectDirs(
-          windowStartMs,
-          settings,
-          retentionCutoffMs,
-          input.awaitRefresh === true,
-          provisional,
-        ),
+        fromMemory ? loadSavedRates : ensureRates(false),
+        collectDirs(resolved, windowStartMs, settings, retentionCutoffMs, awaitRefresh, fromMemory),
       ],
       { concurrency: 2 },
     );
-    if (provisional && !fromMemory) yield* ensureRates(false);
 
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
@@ -897,25 +846,16 @@ export const make = Effect.gen(function* () {
     });
     // Usage two transcripts share counts in the first one, so saved files keep the order of the last walk.
     for (const files of fromMemory ? [] : filesByDir) {
-      const saved = files.flatMap((file) => (fileCache.has(file.path) ? [file.path] : []));
-      if (saved.length < 2) continue;
-      const members = new Set(saved);
-      const expected = saved.values();
-      if (
-        fileCache
-          .keys()
-          .filter((filePath) => members.has(filePath))
-          .every((filePath) => filePath === expected.next().value)
-      )
-        continue;
-      // Reorder within the slots these files hold, so files this walk did not list keep their place.
+      const walked = files.flatMap((file) => (fileCache.has(file.path) ? [file.path] : []));
+      const members = new Set(walked);
+      const saved = [...fileCache.keys()];
+      let next = 0;
+      // Only the slots these files hold change, so files this walk did not list keep their place.
+      const ordered = saved.map((filePath) => (members.has(filePath) ? walked[next++]! : filePath));
+      if (ordered.every((filePath, index) => filePath === saved[index])) continue;
       const entries = new Map(fileCache);
-      const walked = saved.values();
       fileCache.clear();
-      for (const filePath of entries.keys()) {
-        const slot = members.has(filePath) ? walked.next().value! : filePath;
-        fileCache.set(slot, entries.get(slot)!);
-      }
+      for (const filePath of ordered) fileCache.set(filePath, entries.get(filePath)!);
       cacheDirty = true;
     }
     const windowEndMs =
@@ -973,6 +913,7 @@ export const make = Effect.gen(function* () {
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
+      let counted = false;
 
       for (const file of filesByDir[index] ?? []) {
         malformedRecords += file.malformedRecords;
@@ -1001,8 +942,9 @@ export const make = Effect.gen(function* () {
             eventOccurrences.set(key, occurrence);
             usageRecord = { ...record, dedupeKey: key + ":" + occurrence };
           }
-          if (aggregator.add(usageRecord, dir) && record.sessionId.length > 0) {
-            sessionIds.add(record.sessionId);
+          if (aggregator.add(usageRecord, dir)) {
+            counted = true;
+            if (record.sessionId.length > 0) sessionIds.add(record.sessionId);
           }
         }
       }
@@ -1029,14 +971,18 @@ export const make = Effect.gen(function* () {
                 .filter(Boolean)
                 .join(" ")
             : sourceMessage,
-        ...(refreshing ? { refreshing } : {}),
+        // A saved answer misses what changed since its scan, so the client must ask again. An
+        // empty source stays unmarked: it would only flash a loading row.
+        ...(refreshing || (fromMemory && counted && transcriptFormats.has(provider))
+          ? { refreshing: true }
+          : {}),
       });
     }
 
     const pruned = pruneScanCache(fileCache, retentionCutoffMs);
     if (pruned > 0) {
       cacheDirty = true;
-      // Pruned files are gone from memory, so nothing before the cutoff is covered any more.
+      // Pruned files are no longer saved, so nothing before the cutoff stays covered.
       for (const [key, since] of coveredSince) {
         if (since < retentionCutoffMs) coveredSince.set(key, retentionCutoffMs);
       }
@@ -1046,7 +992,7 @@ export const make = Effect.gen(function* () {
     const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
-    const summary: UsageSummary = {
+    const summary = {
       contractVersion: USAGE_CONTRACT_VERSION,
       readAt: DateTime.formatIso(readAt),
       timeZone: input.timeZone,
@@ -1057,8 +1003,8 @@ export const make = Effect.gen(function* () {
       pricing: pricing(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
-    };
-    return { summary, fromMemory, unread };
+    } satisfies UsageSummary;
+    return { summary, fromMemory };
   });
 
   const readWindow = Effect.fn("UsageService.readWindow")(function* (
@@ -1066,21 +1012,20 @@ export const make = Effect.gen(function* () {
     settings: ServerSettingsValue,
     provisional: boolean,
   ) {
-    const scan = yield* scanSummary(input, settings, provisional);
-    if (!scan.fromMemory) return scan;
-    const saved = asSaved(scan.summary);
-    return saved === null
-      ? yield* scanSummary(input, settings, false)
-      : { ...scan, summary: saved };
+    const { summary, fromMemory } = yield* scanSummary(input, settings, provisional);
+    // With nothing marked refreshing the client would keep a saved answer as final.
+    return fromMemory && !summary.sources.some((source) => source.refreshing === true)
+      ? (yield* scanSummary(input, settings, false)).summary
+      : summary;
   });
 
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
 
-  // The last exact answer per window and settings; a provisional read returns it without aggregating.
-  const answered = new Map<string, UsageSummary>();
-  const ANSWERED_WINDOWS = 32;
-
-  const windowKey = (input: UsageSummaryInput, settings: ServerSettingsValue): string =>
+  const scanKey = (
+    input: UsageSummaryInput,
+    settings: ServerSettingsValue,
+    provisional: boolean,
+  ): string =>
     JSON.stringify([
       input.timeZone,
       input.sinceDay,
@@ -1089,6 +1034,8 @@ export const make = Effect.gen(function* () {
       input.sinceTime ?? null,
       input.untilTime ?? null,
       settings,
+      input.awaitRefresh === true,
+      provisional,
       input.modelFilter ?? null,
     ]);
 
@@ -1099,12 +1046,8 @@ export const make = Effect.gen(function* () {
     const modelFilter = canonicalModelFilter(requestedFilter);
     const input = modelFilter === undefined ? unfiltered : { ...unfiltered, modelFilter };
     const settings = yield* readSettings;
-    const window = windowKey(input, settings);
     const provisional = input.provisional === true && input.awaitRefresh !== true;
-    const last = provisional ? answered.get(window) : undefined;
-    const saved = last === undefined ? null : asSaved(last);
-    if (saved !== null) return saved;
-    const key = `${window}\0${input.awaitRefresh === true}\0${provisional}`;
+    const key = scanKey(input, settings, provisional);
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const existing = inflightScans.get(key);
@@ -1116,22 +1059,6 @@ export const make = Effect.gen(function* () {
         // Detach so caller departure cannot cancel shared scans; finished scans warm the cache.
         // Register writes before releasing waiters, but start writing after delivering their summary.
         yield* readWindow(input, settings, provisional).pipe(
-          Effect.map(({ summary, unread }) => {
-            // An hourly window moves every minute, so its key never repeats. A scan that
-            // could not read every path is not kept: its answer may miss files.
-            if (
-              input.resolution === "hour" ||
-              unread ||
-              summary.sources.some((source) => source.refreshing === true)
-            )
-              return summary;
-            answered.delete(window);
-            answered.set(window, summary);
-            if (answered.size > ANSWERED_WINDOWS) {
-              answered.delete(answered.keys().next().value!);
-            }
-            return summary;
-          }),
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
               Effect.andThen(Exit.isSuccess(exit) ? schedulePersist : Effect.void),
