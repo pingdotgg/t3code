@@ -4,7 +4,7 @@ import {
   BearerConnectionTarget,
   type ConnectionRoute,
   entryWithRoutes,
-  presentEnvironmentConnection,
+  presentConnectionState,
   RelayConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { projectEnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
@@ -83,7 +83,7 @@ function savedEnvironment(
   );
   return projectEnvironmentConnectionSummary(MINI, {
     entry,
-    connection: presentEnvironmentConnection(AVAILABLE_CONNECTION_STATE),
+    connection: presentConnectionState(AVAILABLE_CONNECTION_STATE),
     serverConfig: null,
   });
 }

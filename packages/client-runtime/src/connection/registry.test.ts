@@ -414,22 +414,17 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       const session = yield* Effect.acquireRelease(
         Effect.succeed({
           client: {} as RpcSession.RpcSession["client"],
-          initialConfig:
-            options?.directEndpoints === undefined && options?.serverLabel === undefined
-              ? Effect.die(new Error("Config is not used by registry tests."))
-              : Effect.succeed({
-                  ...(options.directEndpoints === undefined
-                    ? {}
-                    : { directEndpoints: options.directEndpoints }),
-                  environment: { label: options.serverLabel ?? "Registry test server" },
-                } as ServerConfig),
+          initialConfig: Effect.die(new Error("Config is not used by registry tests.")),
           subscribeServerConfig: () =>
             options?.directEndpoints === undefined
               ? Stream.never
               : Stream.make({
                   version: 1 as const,
                   type: "snapshot" as const,
-                  config: { directEndpoints: options.directEndpoints } as ServerConfig,
+                  config: {
+                    directEndpoints: options.directEndpoints,
+                    environment: { label: options.serverLabel ?? "Registry test server" },
+                  } as ServerConfig,
                 }),
           ready: Effect.void,
           probe: Effect.void,
