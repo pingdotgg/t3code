@@ -2257,12 +2257,25 @@ describe("CursorAdapterV2", () => {
         assert.deepEqual(openedWith?.mcpServers, { ...expectedServers, ...t3Servers });
         yield* sendTurn(1);
         assert.equal(opens, 1, "an unchanged mcp.json keeps the open agent");
+        // The SDK loads the servers that are not inline from the files, so editing those reopens it.
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "mcp.json"),
+          JSON.stringify({ mcpServers: { docs: { url: "https://docs.example/v2" } } }),
+        );
+        yield* sendTurn(2);
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+          JSON.stringify(["off", "plain"]),
+        );
+        yield* sendTurn(3);
+        assert.deepEqual(openedWith?.mcpServers, { ...expectedServers, ...t3Servers });
+        assert.equal(opens, 3, "edits to servers the files define reopen the agent");
         // A server switched off between turns stays off on the next one.
         yield* fileSystem.writeFileString(
           path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
           JSON.stringify(["off", "repro"]),
         );
-        yield* sendTurn(2);
+        yield* sendTurn(4);
         const { repro: _disabled, ...stillEnabled } = expectedServers;
         assert.deepEqual(openedWith?.mcpServers, { ...stillEnabled, ...t3Servers });
         // Unreadable disabled state starts none of the overrides, and the turn still goes out.
@@ -2270,16 +2283,16 @@ describe("CursorAdapterV2", () => {
           path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
           "[",
         );
-        yield* sendTurn(3);
+        yield* sendTurn(5);
         assert.deepEqual(openedWith?.mcpServers, t3Servers);
-        assert.equal(opens, 3, "each change to the servers reopens the agent once");
-        assert.deepEqual(sentWith, [undefined, undefined, undefined]);
+        assert.equal(opens, 5, "each change to the servers or files reopens the agent once");
+        assert.deepEqual(sentWith, [undefined, undefined, undefined, undefined, undefined]);
         yield* fileSystem.writeFileString(
           path.join(workspace, ".cursor", "mcp.json"),
           JSON.stringify({ mcpServers: { plain: { command: "node", args: ["server.mjs"] } } }),
         );
         yield* fileSystem.remove(path.join(home, ".cursor", "mcp.json"));
-        assert.deepEqual(yield* loadServers(), {});
+        assert.deepEqual((yield* loadServers()).servers, {});
       }).pipe(
         Effect.scoped,
         Effect.provide(

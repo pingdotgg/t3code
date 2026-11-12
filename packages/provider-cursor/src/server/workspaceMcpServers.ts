@@ -80,6 +80,13 @@ function cursorProjectSlug(projectRoot: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/** The servers T3 Code passes inline, and the Cursor MCP files read to find them. */
+export interface CursorWorkspaceMcp {
+  readonly servers: Record<string, McpServerConfig>;
+  /** `mcp-disabled.json` as text, then the project and user `mcp.json` as parsed. */
+  readonly configFiles: ReadonlyArray<unknown>;
+}
+
 export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(function* (
   cwd: string,
   environment: NodeJS.ProcessEnv,
@@ -107,7 +114,7 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
   const projectRoot = Option.isSome(root) && root.value.code === 0 ? root.value.stdout.trim() : cwd;
   const userHome = yield* HostProcess.HomeDirectory;
   const cursorDataDirectory = hostEnvironment.CURSOR_DATA_DIR || path.join(userHome, ".cursor");
-  const loadDisabled = fileSystem
+  const disabledFile = yield* fileSystem
     .readFileString(
       path.join(
         cursorDataDirectory,
@@ -119,11 +126,12 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
     .pipe(
       Effect.catchIf(
         (error) => error.reason._tag === "NotFound",
-        () => Effect.succeed("[]"),
+        () => Effect.undefined,
       ),
-      Effect.flatMap(decodeDisabledServers),
-      Effect.map((names) => new Set(names)),
     );
+  const loadDisabled = decodeDisabledServers(disabledFile ?? "[]").pipe(
+    Effect.map((names) => new Set(names)),
+  );
   let disabled: Set<string> | undefined;
   const variables = new Map([
     ["workspaceFolder", projectRoot],
@@ -143,11 +151,13 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
 
   const seen = new Set<string>();
   const servers: Record<string, McpServerConfig> = {};
+  const configFiles: Array<unknown> = [disabledFile];
   for (const file of [
     path.join(projectRoot, ".cursor", "mcp.json"),
     path.join(userHome, ".cursor", "mcp.json"),
   ]) {
     const contents = yield* readJsonc(file);
+    configFiles.push(contents);
     // Like the SDK, expand before validating, so `"type": "${env:TYPE}"` is valid.
     const config = decodeCursorMcpFile(expand(contents, resolve));
     if (Option.isNone(config)) continue;
@@ -171,5 +181,5 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
       }
     }
   }
-  return servers;
+  return { servers, configFiles } satisfies CursorWorkspaceMcp;
 });

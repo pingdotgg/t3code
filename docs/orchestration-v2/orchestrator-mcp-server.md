@@ -103,10 +103,12 @@ Cursor receives the same authenticated HTTP MCP endpoint through the SDK's
 `mcpServers` on `Agent.create` / `Agent.resume`, alongside `mcp.json` servers
 whose `${workspaceFolder}` paths the SDK cannot start as written. Ambient servers
 from `settingSources` (`project`, `user`, `team`, `mdm`, `plugins`) load with them.
-Sends never carry `mcpServers`: a send that does makes the SDK reconnect every
-server, ambient ones included, which respawns stdio servers and delays the run.
-The adapter resolves the set on every turn and reopens the agent when it changes,
-such as a new endpoint or token, or an edit to `mcp.json` or `mcp-disabled.json`.
+Sends never carry `mcpServers`: a send that does makes the SDK reread the Cursor
+MCP files and reconnect every server, ambient ones included, which respawns stdio
+servers and delays the run. A live agent keeps the files it opened with, so the
+adapter reads them and resolves the set on every turn, and reopens the agent when
+either changes, such as a new endpoint or token, or an edit to `mcp.json` or
+`mcp-disabled.json`.
 The adapter passes the authorization header to the SDK but projects only redacted
 option metadata into protocol diagnostics.
 

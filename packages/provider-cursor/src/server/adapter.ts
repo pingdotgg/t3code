@@ -57,7 +57,7 @@ import {
   hasCursorSkillMention,
   rewriteCursorSkillMentions,
 } from "./skills.ts";
-import { cursorWorkspaceMcpServers } from "./workspaceMcpServers.ts";
+import { cursorWorkspaceMcpServers, type CursorWorkspaceMcp } from "./workspaceMcpServers.ts";
 import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -304,6 +304,8 @@ const CURSOR_AGENT_SETTING_SOURCES = [
   "mdm",
   "plugins",
 ] as const satisfies ReadonlyArray<SettingSource>;
+
+const NO_WORKSPACE_MCP: CursorWorkspaceMcp = { servers: {}, configFiles: [] };
 
 export function makeCursorAgentOptions(input: {
   readonly apiKey?: string;
@@ -972,6 +974,7 @@ interface CursorLiveAgent {
   readonly storeCwd: string;
   readonly session: CursorAgentSdk.CursorAgentSdkSession;
   readonly mcpServers: Record<string, McpServerConfig> | undefined;
+  readonly mcpConfigFiles: CursorWorkspaceMcp["configFiles"];
 }
 
 export interface CursorAdapterV2Options {
@@ -2251,9 +2254,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
         };
 
-        const resolveWorkspaceMcpServers = (cwd: string | null) =>
+        const resolveWorkspaceMcp = (cwd: string | null) =>
           cwd === null
-            ? Effect.succeed({})
+            ? Effect.succeed(NO_WORKSPACE_MCP)
             : cursorWorkspaceMcpServers(cwd, adapterOptions.environment).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
@@ -2263,7 +2266,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   Effect.logWarning("orchestration-v2.cursor-workspace-mcp-unresolved", {
                     cwd,
                     cause,
-                  }).pipe(Effect.as({})),
+                  }).pipe(Effect.as(NO_WORKSPACE_MCP)),
                 ),
               );
 
@@ -2285,6 +2288,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 : input.resumeFromSession?.cwd
               : undefined) ??
             cwd;
+          const workspaceMcp = yield* resolveWorkspaceMcp(openInput.runtimePolicy.cwd);
           const options = makeCursorAgentOptions({
             ...(apiKey === undefined ? {} : { apiKey }),
             modelSelection: openInput.modelSelection,
@@ -2292,16 +2296,18 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             platform,
             threadId: openInput.threadId,
             mcpSession: yield* mcpSessions.read(openInput.threadId),
-            workspaceMcpServers: yield* resolveWorkspaceMcpServers(openInput.runtimePolicy.cwd),
+            workspaceMcpServers: workspaceMcp.servers,
           });
-          // A send that carries mcpServers makes the SDK reconnect every MCP server, ambient ones
-          // included. The agent is reopened instead when its servers change: a reissued T3 token, or
-          // an edit to mcp.json or mcp-disabled.json, which are read again on every open.
+          // A send that carries mcpServers makes the SDK reread the Cursor MCP files and reconnect
+          // every server, ambient ones included. A live agent keeps the files it opened with, so it
+          // is reopened instead when its servers or those files change: a reissued T3 token, or an
+          // edit to mcp.json or mcp-disabled.json, which are read again on every open.
           if (
             existing !== null &&
             openInput.operation === "resume" &&
             existing.nativeThreadId === openInput.agentId &&
-            Equal.equals(existing.mcpServers, options.mcpServers)
+            Equal.equals(existing.mcpServers, options.mcpServers) &&
+            Equal.equals(existing.mcpConfigFiles, workspaceMcp.configFiles)
           ) {
             return existing;
           }
@@ -2335,6 +2341,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             storeCwd,
             session: sdkSession,
             mcpServers: options.mcpServers,
+            mcpConfigFiles: workspaceMcp.configFiles,
           } satisfies CursorLiveAgent;
           yield* Ref.set(liveAgent, next);
           return next;
