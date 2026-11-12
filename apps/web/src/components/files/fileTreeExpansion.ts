@@ -58,6 +58,27 @@ export function setAllDirectoriesExpanded(
   }
 }
 
+/** Calls made while `run` is running rerun it once it returns, instead of nesting. */
+export function coalesceReentrantCalls(run: () => void): () => void {
+  let running = false;
+  let calledAgain = false;
+  return () => {
+    if (running) {
+      calledAgain = true;
+      return;
+    }
+    running = true;
+    try {
+      do {
+        calledAgain = false;
+        run();
+      } while (calledAgain);
+    } finally {
+      running = false;
+    }
+  };
+}
+
 const EXPANDED_DIRECTORIES_STORAGE_KEY = "t3code.fileTreeExpandedDirectories";
 // Roots are kept most recent first and capped so worktrees that come and go do not grow storage.
 const MAX_STORED_ROOTS = 20;

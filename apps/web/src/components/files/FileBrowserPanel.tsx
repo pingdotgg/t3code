@@ -30,6 +30,7 @@ import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import {
   areAllDirectoriesExpanded,
+  coalesceReentrantCalls,
   readExpandedDirectories,
   setAllDirectoriesExpanded,
   writeExpandedDirectories,
@@ -358,7 +359,8 @@ export default function FileBrowserPanel({
     for (const path of expandedPathsRef.current) {
       if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
     }
-    const loadExpanded = () => {
+    // Restoring calls item.expand(), which notifies subscribers synchronously.
+    const loadExpanded = coalesceReentrantCalls(() => {
       if (model.isSearchOpen()) return;
       let changed = false;
       for (const path of directoryPaths) {
@@ -383,7 +385,7 @@ export default function FileBrowserPanel({
           ...pendingExpandedPaths,
         ]);
       }
-    };
+    });
     loadExpanded();
     return model.subscribe(loadExpanded);
   }, [directoryPaths, expansionRoot, load, model, pendingExpandedPaths]);
