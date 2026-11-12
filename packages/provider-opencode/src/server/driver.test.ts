@@ -593,6 +593,50 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect("keeps workspace skills and commands when the agent endpoint stalls", () =>
+    Effect.gen(function* () {
+      const answers: Record<string, string> = {
+        "/api/info": OPENCODE_2_RESPONSES["/api/info"].body,
+        "/api/debug/location": "[]",
+        "/api/model": '{"location":{"directory":"/work"},"data":[]}',
+        "/api/provider": '{"location":{"directory":"/work"},"data":[]}',
+        "/api/command": OPENCODE_2_WORKSPACE_RESPONSES["/api/command"].body,
+        "/api/skill": OPENCODE_2_WORKSPACE_RESPONSES["/api/skill"].body,
+      };
+      const http = HttpClient.make((request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/api/agent") return Effect.never;
+        if (path === "/api/event")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(new ReadableStream(), {
+                headers: { "content-type": "text/event-stream" },
+              }),
+            ),
+          );
+        const body = answers[path];
+        return body === undefined
+          ? Effect.die(`Unexpected request: ${path}`)
+          : Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(JSON.parse(body))));
+      });
+      const instance = yield* create({ serverUrl: "http://127.0.0.1:4096" }, http);
+
+      const snapshot = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+      const { skills, slashCommands, optionDescriptors } = yield* Fiber.join(snapshot);
+      assert.include(
+        skills.map((skill) => skill.name),
+        "plum",
+      );
+      assert.include(
+        slashCommands.map((command) => command.name),
+        "review",
+      );
+      assert.isUndefined(optionDescriptors?.find((option) => option.id === "agent"));
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect.each(["probe", "error", "empty"] as const)(
     "recovers discovery without a manual refresh after %s",
     (initialCatalog) =>

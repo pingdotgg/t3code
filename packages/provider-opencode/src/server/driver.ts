@@ -427,7 +427,7 @@ export const OpenCodeDriver: ProviderDriver<
               {
                 agents: client.agent.list({ location }).pipe(
                   Effect.map((list) => list.data),
-                  Effect.timeout("10 seconds"),
+                  Effect.timeout("3 seconds"),
                   Effect.catchCause(() => Effect.undefined),
                 ),
                 skills: client.skill.list({ location }).pipe(Effect.map((list) => list.data)),
@@ -520,6 +520,7 @@ export const OpenCodeDriver: ProviderDriver<
       Effect.all(
         {
           agents: OpenCodeRuntime.loadOpenCodeAgents(client).pipe(
+            Effect.timeout("3 seconds"),
             Effect.catchCause(() => Effect.undefined),
           ),
           skills: openCodeRuntime.loadOpenCodeSkills(client),
