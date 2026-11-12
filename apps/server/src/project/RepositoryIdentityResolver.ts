@@ -12,7 +12,7 @@ import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
-import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
+import { explicitBareRepositoryEnv, unsetInheritedRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
@@ -50,11 +50,10 @@ function isLocalRemoteUrl(url: string): boolean {
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>();
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
+  for (const line of stdout.split(/\r?\n/)) {
+    // Git uses a tab before the URL and one space before the direction; both can occur in URLs.
     // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(trimmed);
+    const match = /^(\S+)\t(.+) \((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(line);
     if (!match) continue;
     const [, remoteName = "", remoteUrl = "", direction = ""] = match;
     if (
@@ -70,10 +69,21 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   return remotes;
 }
 
+// `gh repo set-default` marks the chosen remote with `remote.<name>.gh-resolved base`.
+function parseGhDefaultRemoteName(stdout: string): string | null {
+  const marked = stdout
+    .split("\n")
+    .map((line) => /^remote\.(.+)\.gh-resolved\s+base$/.exec(line.trim())?.[1])
+    .filter((name): name is string => name !== undefined);
+  return marked.length === 1 ? marked[0]! : null;
+}
+
 function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
+  ghDefaultRemoteName: string | null,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
-  for (const preferredRemoteName of ["upstream", "origin"] as const) {
+  for (const preferredRemoteName of [ghDefaultRemoteName, "upstream", "origin"]) {
+    if (preferredRemoteName === null) continue;
     const remoteUrl = remotes.get(preferredRemoteName);
     if (remoteUrl) {
       return { remoteName: preferredRemoteName, remoteUrl };
@@ -137,12 +147,17 @@ class RepositoryIdentityCacheKey extends Data.Class<{
   readonly isBare: boolean;
 }> {}
 
+const gitEnv = (platform: NodeJS.Platform): NodeJS.ProcessEnv => ({
+  ...unsetInheritedRepositoryEnv(process.env, platform),
+  ...explicitBareRepositoryEnv(process.env, platform),
+});
+
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const env = explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform);
+    const env = gitEnv(yield* HostProcess.Platform);
 
     // `git -C` cannot enter a missing folder or a file, so every probe below would fail.
     const isFolder = yield* fileSystem.stat(cwd).pipe(
@@ -231,7 +246,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     .run({
       command: "git",
       args: ["-C", cacheKey.rootPath, ...(cacheKey.isBare ? ["--git-dir=."] : []), "remote", "-v"],
-      env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
+      env: gitEnv(yield* HostProcess.Platform),
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);
@@ -239,8 +254,28 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     return null;
   }
 
+  const ghResolvedResult = yield* processRunner
+    .run({
+      command: "git",
+      args: [
+        "-C",
+        cacheKey.rootPath,
+        ...(cacheKey.isBare ? ["--git-dir=."] : []),
+        "config",
+        "--get-regexp",
+        "^remote\\..*\\.gh-resolved$",
+      ],
+      env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
+      timeoutBehavior: "timedOutResult",
+    })
+    .pipe(Effect.option);
+  const ghDefaultRemoteName =
+    ghResolvedResult._tag === "Some" && ghResolvedResult.value.code === 0
+      ? parseGhDefaultRemoteName(ghResolvedResult.value.stdout)
+      : null;
+
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
-  const remote = pickPrimaryRemote(remotes);
+  const remote = pickPrimaryRemote(remotes, ghDefaultRemoteName);
   return remote
     ? buildRepositoryIdentity({
         ...remote,
