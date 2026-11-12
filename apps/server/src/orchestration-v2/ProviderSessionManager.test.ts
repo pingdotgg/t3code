@@ -186,6 +186,7 @@ interface TestProviderRuntimeState {
   readonly closeCount: number;
   readonly interruptCount: number;
   readonly resumeCount: number;
+  readonly forkCount: number;
   readonly unloadedNativeThreadIds: ReadonlyArray<string>;
   readonly eventQueues: ReadonlyMap<
     string,
@@ -198,6 +199,7 @@ const emptyState: TestProviderRuntimeState = {
   closeCount: 0,
   interruptCount: 0,
   resumeCount: 0,
+  forkCount: 0,
   unloadedNativeThreadIds: [],
   eventQueues: new Map(),
 };
@@ -596,7 +598,16 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
           rollbackThread: () => unimplemented("rollbackThread unused in test"),
-          forkThread: () => unimplemented("forkThread unused in test"),
+          forkThread: (threadInput) =>
+            Ref.update(state, (current) => ({
+              ...current,
+              forkCount: current.forkCount + 1,
+            })).pipe(
+              Effect.as({
+                ...threadInput.sourceProviderThread,
+                appThreadId: threadInput.targetThreadId,
+              }),
+            ),
         } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
       }),
   });
@@ -1485,7 +1496,7 @@ it.effect(
     }),
 );
 
-it.effect.each(["ensure", "resume", "resume without app thread"] as const)(
+it.effect.each(["ensure", "resume", "resume without app thread", "fork"] as const)(
   "ProviderSessionManagerV2 rejects a retired runtime's thread load: %s",
   (operation) =>
     Effect.gen(function* () {
@@ -1522,12 +1533,18 @@ it.effect.each(["ensure", "resume", "resume without app thread"] as const)(
         const load =
           operation === "ensure"
             ? runtime.ensureThread({ threadId, modelSelection, runtimePolicy })
-            : runtime.resumeThread({
-                providerThread:
-                  operation === "resume without app thread"
-                    ? { ...providerThread, appThreadId: null }
-                    : providerThread,
-              });
+            : operation === "fork"
+              ? runtime.forkThread({
+                  sourceProviderThread: providerThread,
+                  sourceProviderTurns: [],
+                  targetThreadId: threadId,
+                })
+              : runtime.resumeThread({
+                  providerThread:
+                    operation === "resume without app thread"
+                      ? { ...providerThread, appThreadId: null }
+                      : providerThread,
+                });
         const closing = yield* manager
           .close(providerSessionId)
           .pipe(Effect.forkScoped({ startImmediately: true }));
@@ -1547,6 +1564,7 @@ it.effect.each(["ensure", "resume", "resume without app thread"] as const)(
           ["ProviderAdapterSessionStoppedError", "ProviderAdapterSessionStoppedError"],
         );
         assert.equal((yield* Ref.get(state)).resumeCount, 0);
+        assert.equal((yield* Ref.get(state)).forkCount, 0);
       }).pipe(
         Effect.provide(
           layerTest({

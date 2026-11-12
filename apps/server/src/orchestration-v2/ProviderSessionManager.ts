@@ -2276,9 +2276,10 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId: input.targetThreadId,
                 providerInstanceId: runtime.instanceId,
+                runtime,
               }),
             ).pipe(
-              Effect.andThen(loadNatively(runtime.forkThread(input))),
+              Effect.andThen(loadNatively(runtime.forkThread(input), runtime)),
               Effect.tap(({ loaded: providerThread, linkedEnvironments }) =>
                 markProviderThreadLoaded({
                   runtime,
