@@ -493,6 +493,10 @@ export const make = Effect.gen(function* () {
         .getPullRequestWatchFingerprint(input)
         .pipe(Effect.mapError(fail("getChangeRequestWatchFingerprint"))),
 
+    listChangeRequestNotifications: (input) =>
+      cli
+        .listPullRequestNotifications(input)
+        .pipe(Effect.mapError(fail("listChangeRequestNotifications"))),
     changeRequestEvents: (input) => cli.pullRequestEvents(input),
 
     getChangeRequestPreview: (input) =>

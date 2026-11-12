@@ -93,6 +93,7 @@ import {
   type ProviderFilterOptionPage,
   type ProviderListCursor,
   type ProviderChangeRequestSummary,
+  type ProviderChangeRequestNotifications,
   type ProviderChangeRequestWatchFingerprint,
   type PullRequestProviderApi,
   PullRequestProviderError,
@@ -236,6 +237,9 @@ export class PullRequestService extends Context.Service<
     readonly watchFingerprint: (
       input: PullRequestRef,
     ) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, PullRequestError>;
+    readonly notifications: (
+      input: PullRequestRef & { readonly since: number },
+    ) => Effect.Effect<ProviderChangeRequestNotifications | null, PullRequestError>;
     readonly activity: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestActivity, PullRequestError>;
@@ -579,6 +583,14 @@ function withRateLimitBackoff(
           getChangeRequestWatchFingerprint: wrap(
             "getChangeRequestWatchFingerprint",
             api.getChangeRequestWatchFingerprint,
+          ),
+        }),
+    ...(api.listChangeRequestNotifications === undefined
+      ? {}
+      : {
+          listChangeRequestNotifications: wrap(
+            "listChangeRequestNotifications",
+            api.listChangeRequestNotifications,
           ),
         }),
     // A long-lived feed, not a read: the quota guard would hold its lease for hours.
@@ -1971,6 +1983,22 @@ export const make = Effect.gen(function* () {
               ...(activity.reactions === undefined ? {} : { reactions: activity.reactions }),
             })),
           ),
+      ),
+    );
+
+  const notifications: PullRequestService["Service"]["notifications"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project) =>
+        project.api.listChangeRequestNotifications === undefined
+          ? Effect.succeed(null)
+          : project.api
+              .listChangeRequestNotifications({
+                cwd: project.project.workspaceRoot,
+                repository: project.repository,
+                host: project.host,
+                since: input.since,
+              })
+              .pipe(Effect.mapError(toPullRequestError("notifications"))),
       ),
     );
 
@@ -3867,6 +3895,7 @@ export const make = Effect.gen(function* () {
     watchFingerprint: credentialCached((input) =>
       Cache.get(watchFingerprintCache, refCacheKey(input)),
     ),
+    notifications,
     activity: credentialCached(activity),
     changes,
     preview: credentialCached(preview),

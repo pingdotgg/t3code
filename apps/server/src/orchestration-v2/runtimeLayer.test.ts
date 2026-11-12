@@ -37,6 +37,7 @@ import {
   ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -10881,3 +10882,227 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
     );
   },
 );
+
+const watchCostScenarios = [
+  { name: "quiet PR", saves: 48 },
+  { name: "review comment edited", reviewCommentEdit: 40, saves: 31 },
+  {
+    name: "review comment edit missing from the inbox",
+    reviewCommentEdit: 40,
+    inboxMissesEdit: true,
+    ceilingWake: 120,
+    saves: 47,
+  },
+  { name: "noisy inbox", inboxEveryMinute: true, saves: 45 },
+  {
+    name: "checks swap while the pull request keeps moving",
+    pullRequestInboxEveryMinute: true,
+    checksSwapAt: 10,
+    ceilingWake: 120,
+    saves: 0,
+  },
+  { name: "notifications readable again", notificationsReadableFrom: 60, saves: 31 },
+  { name: "unsubscribed author", viewerSubscription: "UNSUBSCRIBED", saves: 0 },
+  { name: "On GitHub notifications off", reviewCommentEdit: 40, inboxOff: true, saves: 0 },
+];
+
+it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
+  const MINUTE = 60_000;
+  const number = 41;
+  const runWatch = (
+    scenario: (typeof watchCostScenarios)[number],
+    notificationsReadable: boolean,
+    run: string,
+  ) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make(`pr-watch-cost-${scenario.name}-${run}`);
+      const threadId = ThreadId.make(`${projectId}-thread`);
+      yield* seedProject({
+        projectId,
+        title: "Watch cost",
+        workspaceRoot: "/workspace/watch",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      const startedAt = yield* Clock.currentTimeMillis;
+      const at = (minutes: number) => startedAt + minutes * MINUTE;
+      const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}-create`),
+        threadId,
+        projectId,
+        title: "Watch cost",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const watch = (watching: boolean) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`${threadId}-watch-${watching}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number,
+          watching,
+          link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
+        });
+      yield* watch(true);
+
+      const cost = { graphql: 0, core: 0, refused: 0, fingerprints: 0 };
+      const editAt =
+        scenario.reviewCommentEdit === undefined ? null : at(scenario.reviewCommentEdit);
+      const notificationTimes = (now: number) => {
+        const times = new Map<number, number>();
+        const bump = (thread: number, time: number) => {
+          if (time <= now) times.set(thread, Math.max(times.get(thread) ?? 0, time));
+        };
+        if (scenario.inboxOff) return times;
+        if (editAt !== null) bump(number, at(-60) + 3_000);
+        if (editAt !== null && !scenario.inboxMissesEdit) bump(number, editAt + 3_000);
+        if (scenario.inboxEveryMinute) {
+          for (let minute = 0; at(minute) <= now; minute += 1) bump(900, at(minute) + 3_000);
+        }
+        if (scenario.pullRequestInboxEveryMinute) {
+          for (let minute = 0; at(minute) <= now; minute += 1) bump(number, at(minute) + 3_000);
+        }
+        return times;
+      };
+
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              invalidate: () => Effect.void,
+              watchFingerprint: () =>
+                Effect.sync(() => {
+                  cost.fingerprints += 1;
+                  return {
+                    status: "abc1234def passed",
+                    remarks: "0",
+                    viewerSubscription: scenario.viewerSubscription ?? "SUBSCRIBED",
+                  };
+                }),
+              detail: () =>
+                Effect.map(Clock.currentTimeMillis, (now) => {
+                  cost.graphql += 1;
+                  const check = (name: string, failed: boolean) => ({
+                    name,
+                    status: failed ? ("failure" as const) : ("success" as const),
+                    description: null,
+                    url: null,
+                  });
+                  const swapped =
+                    scenario.checksSwapAt !== undefined && now >= at(scenario.checksSwapAt);
+                  return {
+                    ...watchedPullRequestDetail({ projectId, number, at: iso(startedAt) }),
+                    headSha: "abc1234def",
+                    checks:
+                      scenario.checksSwapAt === undefined
+                        ? [check("ci", false)]
+                        : [check("lint", !swapped), check("test", swapped)],
+                  };
+                }),
+              activity: () =>
+                Effect.map(Clock.currentTimeMillis, (now) => {
+                  cost.graphql += 15;
+                  const comments: Array<PullRequestComment> =
+                    editAt === null
+                      ? []
+                      : [
+                          {
+                            id: "review-comment",
+                            kind: "review-comment",
+                            author: { login: "maintainer", name: null, avatarUrl: null },
+                            body: "Nit.",
+                            createdAt: iso(at(-60)),
+                            url: null,
+                            path: "src/index.ts",
+                            reviewState: null,
+                            ...(editAt <= now ? { editedAt: iso(editAt) } : {}),
+                          },
+                        ];
+                  return {
+                    comments,
+                    commentCount: comments.length,
+                    commentsTruncated: false,
+                    reviewThreadsTruncated: false,
+                    reviewThreads: [],
+                    commits: [],
+                  };
+                }),
+              notifications: ({ since }) =>
+                Effect.map(Clock.currentTimeMillis, (now) => {
+                  if (!notificationsReadable) return null;
+                  if (now < at(scenario.notificationsReadableFrom ?? 0)) {
+                    cost.core += 1;
+                    cost.refused += 1;
+                    return null;
+                  }
+                  const threads = [...notificationTimes(now)]
+                    .filter(([, updatedAt]) => updatedAt > since)
+                    .map(([thread, updatedAt]) => ({ number: thread, updatedAt }));
+                  if (threads.length > 0) cost.core += 1;
+                  return { threads, truncated: false };
+                }),
+            }),
+          ),
+        ),
+      );
+
+      const totals: Array<number> = [];
+      const graphql: Array<number> = [];
+      const refused: Array<number> = [];
+      const seen = new Set<string>();
+      const wakes: Array<readonly [number, string]> = [];
+      for (let minute = 0; minute <= 120; minute += 2) {
+        if (minute > 0) yield* TestClock.adjust("2 minutes");
+        cost.fingerprints = 0;
+        yield* reactor.sweep;
+        cost.graphql += Math.ceil(cost.fingerprints / 25);
+        totals.push(cost.graphql + cost.core);
+        graphql.push(cost.graphql);
+        refused.push(cost.refused);
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        for (const message of messages) {
+          const summary = message.notification?.summary;
+          if (summary === undefined || seen.has(message.id)) continue;
+          seen.add(message.id);
+          wakes.push([minute, summary]);
+        }
+      }
+      yield* watch(false);
+      return { totals, graphql, refused, wakes };
+    });
+
+  it.effect.each(watchCostScenarios)(
+    "notifications never cost more than the reads they replace: $name",
+    (scenario) =>
+      Effect.gen(function* () {
+        const baseline = yield* runWatch(scenario, false, "baseline");
+        const branch = yield* runWatch(scenario, true, "notifications");
+        branch.totals.forEach((total, index) => {
+          assert.isAtMost(branch.graphql[index]!, baseline.graphql[index]!);
+          assert.isAtMost(total - branch.refused[index]!, baseline.totals[index]!);
+          if (index * 2 < (scenario.notificationsReadableFrom ?? 0)) {
+            assert.equal(branch.graphql[index], baseline.graphql[index]);
+          }
+        });
+        assert.equal(baseline.totals.at(-1)! - branch.totals.at(-1)!, scenario.saves);
+        assert.deepEqual(
+          branch.wakes,
+          scenario.ceilingWake === undefined
+            ? baseline.wakes
+            : [...baseline.wakes.slice(0, -1), [scenario.ceilingWake, baseline.wakes.at(-1)![1]]],
+        );
+      }),
+  );
+});
