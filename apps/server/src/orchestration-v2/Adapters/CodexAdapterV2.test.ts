@@ -31,6 +31,7 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as CodexClient from "effect-codex-app-server/client";
@@ -227,6 +228,34 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.equal(fullAccess.approvalPolicy, "never");
       assert.equal(fullAccess.approvalsReviewer, "user");
       assert.equal(fullAccess.sandboxPolicy?.type, "dangerFullAccess");
+    }),
+  );
+
+  it.effect("sends the chosen cyber access program, else the model's default", () =>
+    Effect.gen(function* () {
+      const build = (value?: string, cyberAccess?: { defaultProgram: string | undefined }) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-cyber",
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+            ...(value === undefined ? {} : { options: [{ id: "cyberAccessProgram", value }] }),
+          },
+          cyberAccess,
+        });
+
+      // Custom models offer no Cyber Access, so even an explicit choice is dropped.
+      assert.notProperty(yield* build(), "cyberAccessProgram");
+      assert.notProperty(yield* build("daybreakBlue"), "cyberAccessProgram");
+      const daybreak = { defaultProgram: "daybreakBlue" };
+      assert.equal((yield* build(undefined, daybreak)).cyberAccessProgram, "daybreakBlue");
+      assert.equal((yield* build("standard", daybreak)).cyberAccessProgram, "standard");
+      // An unread config leaves no default, but an explicit Standard still goes.
+      const unknown = { defaultProgram: undefined };
+      assert.notProperty(yield* build(undefined, unknown), "cyberAccessProgram");
+      assert.equal((yield* build("standard", unknown)).cyberAccessProgram, "standard");
     }),
   );
 
@@ -1302,6 +1331,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"],
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
+    models?: CodexAdapterV2.CodexAdapterV2Options["models"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1364,6 +1394,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         environment: {},
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
+        ...(models ? { models } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -2705,12 +2736,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const nativeThreadId = "context-thread";
         const nativeTurnId = "context-turn";
+        // An explicit Standard must reach Codex, or Codex falls back to Daybreak.
+        const modelSelection = {
+          ...CODEX_TEST_MODEL_SELECTION,
+          options: [{ id: "cyberAccessProgram", value: "standard" }],
+        };
         const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId,
           codexInput: [{ type: "text", text: "work" }],
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          modelSelection,
           hasT3Mcp: true,
+          cyberAccess: { defaultProgram: "daybreakBlue" },
         });
         assert.include(
           params.additionalContext?.t3_code_orchestration_01?.value ?? "",
@@ -2790,6 +2827,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               if (method === "item/completed" || method === "turn/completed")
                 wireOrder.push(method);
             }),
+          Effect.succeed<ReadonlyArray<ServerProviderModel>>([
+            {
+              slug: modelSelection.model,
+              name: modelSelection.model,
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "cyberAccessProgram",
+                    label: "Cyber Access",
+                    type: "select",
+                    options: [
+                      { id: "standard", label: "Standard" },
+                      { id: "daybreakBlue", label: "Daybreak Blue", isDefault: true },
+                    ],
+                    currentValue: "daybreakBlue",
+                  },
+                ],
+              },
+            },
+          ]),
         );
         yield* (yield* McpProviderSessions.McpProviderSessions).set({
           environmentId: EnvironmentId.make("test"),
@@ -2800,15 +2858,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           authorizationHeader: "Bearer test",
           browserToolsAvailable: true,
         });
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
             threadId: harness.threadId,
             providerThread: harness.providerThread,
             now: yield* DateTime.now,
             attemptId: RunAttemptId.make("context-attempt"),
             text: "work",
           }),
-        );
+          modelSelection,
+        });
         yield* harness.firstTerminal;
         yield* Deferred.await(restoreRequested);
         assert.equal(harness.terminalEvents()[0]?.status, "completed");

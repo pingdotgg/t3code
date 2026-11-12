@@ -51,6 +51,8 @@ const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_READY_TIMEOUT_MS = 20_000;
 const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
+// Probes through the forward pay several link round trips, about 4s at a 1s RTT.
+const SSH_TUNNEL_READY_PROBE_TIMEOUT_MS = 5_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const TUNNEL_STDERR_TAIL_CHARS = 16_384;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
@@ -526,7 +528,13 @@ if ! t3_runtime_ready; then
   if [ -z "$T3_EXPECTED" ] || [ "$T3_ACTUAL" != "$T3_EXPECTED" ]; then
     printf 'Checksum mismatch for %s.\\n' "$T3_ARCHIVE" >&2; exit 1
   fi
-  tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1
+  if ! T3_TAR_ERROR="$(tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1 2>&1)"; then
+    # Some tars (BusyBox) gunzip internally, so gzip is only blamed once extraction fails.
+    if command -v gzip >/dev/null 2>&1; then printf '%s\\n' "$T3_TAR_ERROR" >&2
+    else printf 'Remote host needs gzip to unpack %s. Install gzip on it and try again.\\n' "$T3_ARCHIVE" >&2
+    fi
+    exit 1
+  fi
   rm -f "$T3_STAGING/$T3_ARCHIVE" "$T3_STAGING/SHA256SUMS"
   # Prove the binary runs here (libc, arch) before marking it ready, or every
   # later launch would exec a broken install instead of retrying.
@@ -1153,7 +1161,7 @@ const waitForHttpReady = (input: {
     ...(input.path === undefined ? {} : { path: input.path }),
     ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
     ...(input.intervalMs === undefined ? {} : { intervalMs: input.intervalMs }),
-    probeTimeoutMs: input.probeTimeoutMs ?? SSH_READY_PROBE_TIMEOUT_MS,
+    probeTimeoutMs: input.probeTimeoutMs ?? SSH_TUNNEL_READY_PROBE_TIMEOUT_MS,
     makeError: ({ requestUrl, probeTimeoutMs, cause }) => {
       if (typeof cause === "object" && cause !== null && "kind" in cause) {
         const kind = (cause as { readonly kind?: unknown }).kind;
