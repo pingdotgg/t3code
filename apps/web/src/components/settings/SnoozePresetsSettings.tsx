@@ -380,7 +380,7 @@ function SnoozePresetFields(props: {
         </SelectTrigger>
         <SelectPopup>
           {WHEN_VALUES.map((value) => (
-            <SelectItem hideIndicator key={value} value={value}>
+            <SelectItem key={value} value={value}>
               {WHEN_LABELS[value]}
             </SelectItem>
           ))}
@@ -478,7 +478,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
         </SelectTrigger>
         <SelectPopup>
           {(Object.keys(UNIT_LABELS) as DurationUnit[]).map((value) => (
-            <SelectItem hideIndicator key={value} value={value}>
+            <SelectItem key={value} value={value}>
               {(amount === 1 ? SINGULAR_UNIT_LABELS : UNIT_LABELS)[value]}
             </SelectItem>
           ))}

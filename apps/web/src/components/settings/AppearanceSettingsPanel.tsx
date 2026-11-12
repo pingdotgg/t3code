@@ -380,7 +380,7 @@ export function AppearanceSettingsPanel() {
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {environmentIdentificationOptionList.map(([value, label]) => (
-                  <SelectItem hideIndicator key={value} value={value}>
+                  <SelectItem key={value} value={value}>
                     {label}
                   </SelectItem>
                 ))}

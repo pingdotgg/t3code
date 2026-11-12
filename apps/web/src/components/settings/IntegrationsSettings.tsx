@@ -491,7 +491,7 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {PREVIEW_ZOOM_LEVELS.map((level) => (
-              <SelectItem hideIndicator key={level} value={String(level)}>
+              <SelectItem key={level} value={String(level)}>
                 {zoomLabel(level)}
               </SelectItem>
             ))}
@@ -667,7 +667,7 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {(Object.keys(LINK_TARGET_LABELS) as ReadonlyArray<BrowserLinkTarget>).map((target) => (
-              <SelectItem hideIndicator key={target} value={target}>
+              <SelectItem key={target} value={target}>
                 {LINK_TARGET_LABELS[target]}
               </SelectItem>
             ))}
@@ -731,7 +731,7 @@ function BrowserSearchEngineSetting() {
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {BrowserSearchEngine.literals.map((literal) => (
-                <SelectItem hideIndicator key={literal} value={literal}>
+                <SelectItem key={literal} value={literal}>
                   {SEARCH_ENGINE_LABELS[literal]}
                 </SelectItem>
               ))}
