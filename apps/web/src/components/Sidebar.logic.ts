@@ -163,6 +163,13 @@ export function useSnoozeWakeClock(
   return clockMs;
 }
 
+// Live status that says the cwd is not a repository means the checkout was removed.
+export function withoutRemovedCheckout<
+  T extends { readonly branch: string | null; readonly worktreePath: string | null },
+>(thread: T, gitStatus: { readonly isRepo?: boolean | undefined } | null): T {
+  return gitStatus?.isRepo === false ? { ...thread, branch: null, worktreePath: null } : thread;
+}
+
 export function useRetainedValue<T>(key: string | null, value: T | null): T | null {
   const [retained, setRetained] = React.useState<{
     readonly key: string;
