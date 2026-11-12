@@ -124,7 +124,7 @@ describe("HTML in native Markdown", () => {
       (node.content ?? "") +
       (node.children ?? []).map((child) => text(child as typeof node)).join("");
     expect(native.children).toHaveLength(1);
-    expect(native.children[0]?.children?.[1]?.children?.[0]?.children?.map(text)).toEqual([
+    expect(native.children?.[0]?.children?.[1]?.children?.[0]?.children?.map(text)).toEqual([
       expect.stringMatching(/one\s*two/),
       "x",
     ]);
