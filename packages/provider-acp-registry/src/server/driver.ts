@@ -825,6 +825,38 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
       },
+      // Agents advertise project-scoped commands for the session/new cwd.
+      snapshotForCwd: (cwd) =>
+        !effectiveConfig.enabled
+          ? snapshot.getSnapshot
+          : Effect.all([
+              snapshot.getSnapshot,
+              provideAcpManagementServices(
+                probeAcpRegistryConfiguration({
+                  instanceId,
+                  settings: effectiveConfig,
+                  cwd,
+                  environment: providerProbeEnvironment(processEnvironment),
+                }),
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderDriverError({
+                      driver: DRIVER_KIND,
+                      instanceId,
+                      detail: `Failed to discover ACP Registry commands for '${cwd}'.`,
+                      cause,
+                    }),
+                ),
+              ),
+            ]).pipe(
+              Effect.map(([machineSnapshot, { slashCommands, skills }]) => ({
+                ...machineSnapshot,
+                slashCommands,
+                skills,
+                slashCommandsPending: false,
+              })),
+            ),
       invalidateCaches: (Option.isSome(runtimeCoordinator)
         ? runtimeCoordinator.value.clearLiveConfiguration(instanceId)
         : Effect.void

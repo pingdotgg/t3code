@@ -501,7 +501,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         sessionId: "probe-session",
         update: {
           sessionUpdate: "available_commands_update",
-          availableCommands: [{ name: "review" }, ...names.map((name) => ({ name }))],
+          availableCommands: [
+            { name: "review", description: "" },
+            ...names.map((name) => ({ name, description: "" })),
+          ],
         },
       },
     });
