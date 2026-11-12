@@ -31,6 +31,8 @@ const backgroundThreadId = ThreadId.make("thread:background");
 const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
 const archivedThreadId = ThreadId.make("thread:archived-background");
 const unknownOwnerThreadId = ThreadId.make("thread:unknown-background-owner");
+const autoParentThreadId = ThreadId.make("thread:auto-parent");
+const fullAccessChildThreadId = ThreadId.make("thread:full-access-child");
 
 const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => ({
   ...liveThreadShell(threadId, { activeRunId: null }),
@@ -46,6 +48,18 @@ const shells = new Map([
     liveThreadShell(planThreadId, { runtimeMode: "approval-required", interactionMode: "plan" }),
   ],
   [fullAccessThreadId, liveThreadShell(fullAccessThreadId)],
+  [autoParentThreadId, liveThreadShell(autoParentThreadId, { runtimeMode: "auto" })],
+  [
+    fullAccessChildThreadId,
+    {
+      ...liveThreadShell(fullAccessChildThreadId, { activeRunId: null }),
+      lineage: {
+        rootThreadId: autoParentThreadId,
+        parentThreadId: autoParentThreadId,
+        relationshipToParent: "subagent" as const,
+      },
+    },
+  ],
   [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
   [backgroundThreadId, backgroundShell(backgroundThreadId, ProviderInstanceId.make("codex"))],
   [oldProviderThreadId, backgroundShell(oldProviderThreadId, ProviderInstanceId.make("claude"))],
@@ -220,6 +234,7 @@ const call = (
 const supervised = threadCaller(supervisedThreadId);
 const plan = threadCaller(planThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
+const autoParent = threadCaller(autoParentThreadId);
 const ended = threadCaller(endedThreadId);
 const background = threadCaller(backgroundThreadId);
 const oldProviderBackground = threadCaller(oldProviderThreadId);
@@ -299,6 +314,8 @@ it.effect.each([
     "runtime_mode_escalation_denied",
   ],
   ["writes_threads", supervised, { threadId: "thread:missing" }, "ran"],
+  // A parent moves or resumes its own subagent at the child's existing mode.
+  ["writes_threads", autoParent, { threadId: fullAccessChildThreadId }, "ran"],
 
   ["starts_threads", supervised, {}, "approval-required/default"],
   ["starts_threads", supervised, { runtimeMode: "full-access" }, "runtime_mode_escalation_denied"],
