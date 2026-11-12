@@ -6,11 +6,10 @@ command's output updates live, and long output shows only its most recent part. 
 a file change to review its contents.
 
 To hide command wrappers in activity labels and previews, add their prefixes under **Settings >
-General > Top-level commands to ignore** on web and desktop, or **Settings > General > Top-level
-commands to ignore** on mobile. Enter one prefix per line. Prefixes can include subcommands, and
-the longest matching prefix takes priority. This preference is saved separately in each browser or app. Remove
-a prefix or reset the list to show it again. Expanded details and copied commands keep the full
-command.
+General > Top-level commands to ignore** on web, desktop, or mobile. Enter one prefix per line.
+Prefixes can include subcommands, and the longest matching prefix takes priority. Each browser or
+app saves this preference separately. Remove a prefix or reset the list to show it again. Expanded
+details and copied commands keep the full command.
 
 T3 Orchestrator summaries describe the actions taken, such as **Ran 2 commands and sent messages
 to 3 threads**. Repeated messages to the same destinations show both counts: **Sent 5 messages to
