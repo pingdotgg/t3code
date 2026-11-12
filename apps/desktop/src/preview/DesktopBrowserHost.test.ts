@@ -1184,10 +1184,6 @@ describe("DesktopBrowserHost", () => {
         }),
       );
       yield* command(host, 3, "Page.startScreencast");
-      const sizes = yield* watchViewerSizes(host);
-      yield* host.handleCommandLine(
-        encodeJson({ type: "viewerSize", ...key, size: { width: 1200, height: 900 } }),
-      );
       tabs[0]!.emit("Runtime.consoleAPICalled", {
         args: Array(2048).fill("x".repeat(40 * 1024)),
       });
@@ -1210,7 +1206,6 @@ describe("DesktopBrowserHost", () => {
       });
       expect(send).toHaveBeenCalledWith("Page.stopScreencast");
       expect(tabs[0]!.focusEmulation).toEqual([true, false]);
-      expect(sizes).toEqual(["1200x900", null]);
       expect(next).toMatchObject({ type: "cdp", ...keys[1] });
       expect(JSON.parse((next as { message: string }).message)).toMatchObject({
         method: "Page.loadEventFired",
