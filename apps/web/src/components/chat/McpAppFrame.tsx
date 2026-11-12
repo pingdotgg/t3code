@@ -51,6 +51,8 @@ const fullscreenSupported =
   typeof HTMLElement !== "undefined" && "popover" in HTMLElement.prototype;
 
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
+// Shows an app that never finishes `ui/initialize` instead of hiding it for good.
+const REVEAL_FALLBACK_MS = 3_000;
 // Exclude activation left by input elsewhere in T3.
 const PAGE_ACTIVATION_MS = 5_000;
 
@@ -98,6 +100,8 @@ export function McpAppFrame(props: {
   const [displayMode, setDisplayMode] = useState<McpAppDisplayMode>("inline");
   const [closed, setClosed] = useState(false);
   const [documentGeneration, setDocumentGeneration] = useState(0);
+  // Apps can paint their own light default until they apply the host theme.
+  const [revealed, setRevealed] = useState(false);
   // Closing and reopening replaces the box, which re-attaches this.
   const attachBox = (box: HTMLDivElement) => {
     boxRef.current = box;
@@ -218,6 +222,7 @@ export function McpAppFrame(props: {
       loads.current = { generation: documentGeneration, count: 0 };
     }
     loads.current.count += 1;
+    if (loads.current.count === 1) setTimeout(() => setRevealed(true), REVEAL_FALLBACK_MS);
     if (loads.current.count > 1) {
       hostRef.current?.dispose();
       setNavigatedAway(true);
@@ -387,6 +392,7 @@ export function McpAppFrame(props: {
         if (readLive().displayMode === "fullscreen") return;
         if (size.height !== undefined) setHeight(clampMcpAppHeight(size.height));
       },
+      onInitialized: () => setRevealed(true),
     });
     hostRef.current = host;
     const receive = (event: MessageEvent) => {
@@ -423,6 +429,7 @@ export function McpAppFrame(props: {
           onClick={() => {
             setSrc(null);
             setDocumentGeneration((value) => value + 1);
+            setRevealed(false);
             setClosed(false);
           }}
         >
@@ -480,7 +487,11 @@ export function McpAppFrame(props: {
             sandbox="allow-scripts allow-forms"
             allow={mcpAppAllowAttribute(app.permissions)}
             onLoad={onFrameLoad}
-            className={cn("block w-full border-0", fullscreen ? "min-h-0 flex-1" : "h-full")}
+            className={cn(
+              "block w-full border-0",
+              fullscreen ? "min-h-0 flex-1" : "h-full",
+              !revealed && "opacity-0",
+            )}
             style={{ colorScheme: theme.appearance }}
           />
         ) : asset._tag === "Failure" ? (

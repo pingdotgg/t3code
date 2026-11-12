@@ -101,6 +101,8 @@ export interface McpAppHostOptions {
   readonly downloadFile: (files: ReadonlyArray<McpAppDownload>) => Promise<void>;
   readonly onRequestTeardown: () => void;
   readonly onSizeChanged: (size: { readonly width?: number; readonly height?: number }) => void;
+  /** The app has applied the host context from `ui/initialize`, theme included. */
+  readonly onInitialized?: () => void;
 }
 
 export interface McpAppHost {
@@ -365,6 +367,7 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         initialized = true;
         sendToolCall();
         hostHandle.updateHostContext();
+        options.onInitialized?.();
         return;
       }
       case "ui/notifications/size-changed": {
