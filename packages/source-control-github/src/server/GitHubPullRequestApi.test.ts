@@ -4,6 +4,7 @@ import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -12,6 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Redacted from "effect/Redacted";
 
 import { HttpClient, HttpClientResponse } from "effect/http";
+import { buildSchema, parse, validate } from "graphql";
 
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -140,54 +142,75 @@ const mockApi = Layer.succeed(
   }),
 );
 
-const mockHttp = Layer.succeed(
+// What GitHub would refuse: each request is checked against the schema of its host.
+const refused: Array<string> = [];
+
+const mockHttp = Layer.effect(
   HttpClient.HttpClient,
-  HttpClient.make((request) =>
-    Effect.gen(function* () {
-      const host = new URL(request.url).hostname.replace(/^api\./, "");
-      const sent =
-        request.body._tag === "Uint8Array"
-          ? (JSON.parse(new TextDecoder().decode(request.body.body)) as {
-              readonly query: string;
-              readonly operationName: string;
-              readonly variables: Readonly<Record<string, unknown>>;
-            })
-          : { query: "", operationName: "", variables: {} };
-      const call: ApiCall = {
-        kind: "graphql",
-        authorization: request.headers["authorization"],
-        host,
-        operation: "batch",
-        operationName: sent.operationName,
-        query: sent.query,
-        variables: sent.variables,
-        partial: true,
-      };
-      const answer = yield* (
-        sent.query.startsWith("query PullRequestStackMembership(")
-          ? mockedStackMemberships
-          : mockedExecute
-      )(call).pipe(
-        Effect.catchTags({
-          GitHubApiResponseError: (error) =>
-            Effect.succeed(output('{"message":"Bad gateway"}', false, false, {}, error.status)),
-        }),
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const read = (name: string) =>
+      fs.readFileString(`${import.meta.dirname}/../../schema/${name}.graphql`).pipe(
+        Effect.map((sdl) => buildSchema(sdl)),
         Effect.orDie,
       );
-      // Empty mutation mocks still need the selected GraphQL root field.
-      const body =
-        answer.body === "{}" && sent.query.startsWith("mutation ")
-          ? encodeJson(mutationAnswer(sent.query))
-          : answer.body;
-      return HttpClientResponse.fromWeb(
-        request,
-        new Response(body, {
-          status: answer.status,
-          headers: { "content-type": "application/json", ...answer.headers },
-        }),
-      );
-    }),
-  ),
+    const gitHub = yield* read("github");
+    // From https://docs.github.com/public/ghes-3.19/schema.docs-enterprise.graphql, the oldest
+    // Enterprise Server that GitHub publishes a schema for.
+    const enterpriseServer = yield* read("github-enterprise-3.19");
+    return HttpClient.make((request) =>
+      Effect.gen(function* () {
+        const host = new URL(request.url).hostname.replace(/^api\./, "");
+        const sent =
+          request.body._tag === "Uint8Array"
+            ? (JSON.parse(new TextDecoder().decode(request.body.body)) as {
+                readonly query: string;
+                readonly operationName: string;
+                readonly variables: Readonly<Record<string, unknown>>;
+              })
+            : { query: "", operationName: "", variables: {} };
+        if (sent.query !== "") {
+          const schema = host === "github.com" ? gitHub : enterpriseServer;
+          for (const error of validate(schema, parse(sent.query))) {
+            refused.push(`${host} refuses ${sent.operationName}: ${error.message}`);
+          }
+        }
+        const call: ApiCall = {
+          kind: "graphql",
+          authorization: request.headers["authorization"],
+          host,
+          operation: "batch",
+          operationName: sent.operationName,
+          query: sent.query,
+          variables: sent.variables,
+          partial: true,
+        };
+        const answer = yield* (
+          sent.query.startsWith("query PullRequestStackMembership(")
+            ? mockedStackMemberships
+            : mockedExecute
+        )(call).pipe(
+          Effect.catchTags({
+            GitHubApiResponseError: (error) =>
+              Effect.succeed(output('{"message":"Bad gateway"}', false, false, {}, error.status)),
+          }),
+          Effect.orDie,
+        );
+        // Empty mutation mocks still need the selected GraphQL root field.
+        const body =
+          answer.body === "{}" && sent.query.startsWith("mutation ")
+            ? encodeJson(mutationAnswer(sent.query))
+            : answer.body;
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(body, {
+            status: answer.status,
+            headers: { "content-type": "application/json", ...answer.headers },
+          }),
+        );
+      }),
+    );
+  }),
 );
 
 const layer = it.layer(
@@ -642,6 +665,7 @@ const NODE_ID_QUERY = "PullRequestNodeId";
 const nodeIdAnswer = (id: string) => ({ data: { repository: { pullRequest: { id } } } });
 
 afterEach(() => {
+  expect(refused.splice(0)).toEqual([]);
   mockedExecute.mockReset();
   mockedStackMemberships.mockReset();
   mockedCredential.mockReset();
@@ -1139,19 +1163,26 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("names no stack field in any pull request read sent to Enterprise Server", () =>
+  it.effect.each(["github.com", "ghe.example.com"])("reads pull requests from %s", (host) =>
     Effect.gen(function* () {
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          call.kind === "graphql" && call.query.includes("_0_repository:")
-            ? output(encodeJson({ data: { _0_repository: { pullRequest: null } } }))
-            : call.kind === "graphql" && call.query.includes("pullRequests(")
-              ? output(listedPullRequests(1, 7))
-              : emptySearch(),
-        ),
-      );
+      const summarized = coreResponse({
+        latestReviews: { nodes: [] },
+        stack: null,
+        stackEntry: null,
+      }).data.repository;
+      mockedExecute
+        // An empty first search sends the listing on to the repository's own list.
+        .mockReturnValueOnce(Effect.succeed(emptySearch()))
+        .mockImplementation((call) =>
+          Effect.succeed(
+            matches(call, "_0_repository:")
+              ? output(encodeJson({ data: { _0_repository: summarized } }))
+              : matches(call, "pullRequests(")
+                ? output(listedPullRequests(1, 7))
+                : searchPage([searchItem(7, "acme/web", "2026-07-03T00:00:00Z")]),
+          ),
+        );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const host = "ghe.example.com";
       const listing = {
         cwd: "/w",
         host,
@@ -1160,22 +1191,21 @@ layer("GitHubPullRequestApi.layer", (it) => {
         viewer: "bilal",
       } as const;
 
-      yield* cli.listPullRequests({ ...listing, repository: "acme/web", limit: 10 });
-      yield* cli.searchPullRequests({ ...listing, repositories: ["acme/web"], limit: 10 });
+      const listed = yield* cli.listPullRequests({ ...listing, repository: "acme/web", limit: 10 });
+      const searched = yield* cli.searchPullRequests({
+        ...listing,
+        repositories: ["acme/web"],
+        limit: 10,
+      });
       const summary = yield* cli
         .getPullRequestSummary({ cwd: "/w", repository: "acme/web", host, number: 7 })
         .pipe(Effect.forkChild);
       yield* TestClock.adjust("10 millis");
-      yield* Fiber.await(summary);
 
-      const queries = mockedExecute.mock.calls.flatMap(([call]) =>
-        call.kind === "graphql" ? [call.query] : [],
+      assert.deepStrictEqual(
+        [listed.items[0]?.number, searched.items[0]?.number, (yield* Fiber.join(summary)).number],
+        [7, 7, 7],
       );
-      expect(queries.map((query) => /PullRequest(Search|List|Summary)\b/.exec(query)?.[0])).toEqual(
-        ["PullRequestSearch", "PullRequestList", "PullRequestSearch", "PullRequestSummary"],
-      );
-      for (const query of queries) expect(query).not.toMatch(/\bstack(Entry)?\b/);
-      expect(mockedStackMemberships).not.toHaveBeenCalled();
     }),
   );
 
