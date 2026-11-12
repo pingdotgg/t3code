@@ -49,6 +49,17 @@ const spawnHook = vi.hoisted(() => ({
   current: undefined as ((child: NodeChildProcess.ChildProcess) => void) | undefined,
 }));
 
+const failRm = vi.hoisted(() => ({ path: undefined as string | undefined }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFSP>();
+  const rm: typeof actual.rm = (path, options) =>
+    path === failRm.path
+      ? Promise.reject(Object.assign(new Error("EACCES"), { code: "EACCES" }))
+      : actual.rm(path, options);
+  return { ...actual, rm };
+});
+
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeChildProcess>();
   const spawn = (...args: Parameters<typeof actual.spawn>) => {
@@ -732,10 +743,6 @@ process.exit(0);
         assert.strictEqual(idle.update?.status, "pending");
         assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", "update-1")));
 
-        // A pre-owner backup left behind by a failed discard must not be restored.
-        const backupDir = path.join(root, "runtime", "db-backup", "update-1");
-        yield* fs.makeDirectory(backupDir, { recursive: true });
-        yield* fs.writeFileString(path.join(backupDir, "database"), "before update");
         yield* fs.writeFileString(databasePath, "written by the other owner");
         otherOwner.close();
         yield* Effect.promise(() => active.promise);
@@ -748,6 +755,66 @@ process.exit(0);
         assert.strictEqual(yield* fs.readFileString(startsPath), "1.1.0\n1.0.0\n");
         assert.strictEqual(yield* fs.readFileString(databasePath), "written by the other owner");
       }),
+  );
+
+  it.effect("fails a pending update when its backup cannot be dropped while owned", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-stale-backup-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const ownerPath = path.join(root, "userdata", "server-owner.sqlite");
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      yield* fs.makeDirectory(path.dirname(ownerPath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "before update");
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.1.0"),
+        `process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED});\n`,
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+          update: {
+            id: "update-1",
+            fromVersion: "1.0.0",
+            targetVersion: "1.1.0",
+            dbPath: databasePath,
+            status: "pending",
+          },
+        }),
+      );
+      const refused = Promise.withResolvers<void>();
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+            if (String(chunk).includes("owns this T3 home")) refused.resolve();
+            return true;
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          failRm.path = path.join(root, "runtime", "db-backup", "update-1");
+        }),
+        () =>
+          Effect.sync(() => {
+            failRm.path = undefined;
+          }),
+      );
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const running = launcher.run();
+      yield* Effect.promise(() => refused.promise);
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+
+      const state = yield* Effect.promise(() => readServiceState(statePath));
+      assert.strictEqual(state.activeVersion, "1.0.0");
+      assert.strictEqual(state.update?.status, "failed");
+    }),
   );
 
   it.effect("treats the T3 home as owned while the lock or a pre-lock server holds it", () =>

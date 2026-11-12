@@ -1288,14 +1288,26 @@ export class Launcher {
   }
 
   // Stay idle until the lock frees to avoid supervisor restart loops. A pending update resumes its
-  // trial, since the other owner may have migrated the database past fromVersion. Its backup is
-  // dropped so a failed trial never restores it over the other owner's writes; exit 78 comes before
-  // the child opens the database, and the resumed trial backs up again.
+  // trial, since the other owner may have migrated the database past fromVersion. It stays pending
+  // only once its backup is gone, so no later trial, even after a launcher restart, restores it over
+  // the other owner's writes; exit 78 comes before the child opens the database.
   async #idleWhileStateDirOwned(): Promise<void> {
     this.#clearTimer();
     const pending = this.#state.update;
     if (pending?.status === "pending") {
-      await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
+      const discarded = await discardDatabaseBackup(this.#baseDir, pending.id).then(
+        () => true,
+        () => false,
+      );
+      if (!discarded) {
+        const next: ServiceState = {
+          ...this.#state,
+          activeVersion: pending.fromVersion,
+          update: terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" }),
+        };
+        await this.#selectState(next);
+        await this.#repointServiceUnit(next.activeVersion);
+      }
     }
     this.#log(
       "[service-launcher] Another T3 Code server owns this T3 home. This service starts again once it stops.\n",
@@ -1318,11 +1330,8 @@ export class Launcher {
     this.#clearTimer();
     this.#log("[service-launcher] The T3 home is free again. Starting the server.\n");
     const update = this.#state.update;
-    if (update?.status === "pending") {
-      // The idle discard swallows errors; a stale backup would roll back over the other owner's writes.
-      await discardDatabaseBackup(this.#baseDir, update.id);
-      await this.#startTrial(update);
-    } else await this.#startChild(this.#state.activeVersion, "active", update);
+    if (update?.status === "pending") await this.#startTrial(update);
+    else await this.#startChild(this.#state.activeVersion, "active", update);
   }
 
   async #returnToPrevious(
