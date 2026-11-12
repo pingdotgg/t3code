@@ -164,6 +164,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { environmentSession } from "./session";
 import { dispatchingQueuedMessageIdAtom, editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import { createThreadOutboxDelivery } from "./threadOutboxDelivery";
+import { releaseDeliveredComposerModelPick } from "./use-composer-drafts";
 
 const message = (overrides: Partial<QueuedThreadMessage> = {}): QueuedThreadMessage => ({
   environmentId: EnvironmentId.make("secondary"),
@@ -359,6 +360,10 @@ describe("queued follow-up model", () => {
 
     expect(state.start).toHaveBeenCalledOnce();
     expect(state.start.mock.calls[0]?.[0].input.modelSelection).toEqual(picked);
+    expect(releaseDeliveredComposerModelPick).toHaveBeenCalledExactlyOnceWith(
+      "secondary:thread",
+      picked,
+    );
   });
 });
 

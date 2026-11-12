@@ -7039,21 +7039,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.createdBy === "user" &&
       (command.creationSource === "web" || command.creationSource === "mobile") &&
       command.scheduledTaskId === undefined;
-    // A queued pick reaches the thread only when its run starts; unpicked messages behind it follow it.
-    // Monitor updates follow whatever runs before them; goal commands stay on the provider validated above.
-    const newestQueuedPick =
-      shouldQueue &&
-      sentByUserFromClient &&
-      command.modelSelection === undefined &&
-      parsedGoalCommand === null
-        ? queuedRunsInDeliveryOrder(projection).findLast(
-            (run) =>
-              !followsCurrentConversation(
-                projection.messages.find((message) => message.id === run.userMessageId),
-              ),
-          )
-        : undefined;
-    if (newestQueuedPick) modelSelection = newestQueuedPick.modelSelection;
     const heldRunsToRelease =
       sentByUserFromClient && startsOrQueuesRun && !worktreeSetupUnresolved
         ? projection.runs.filter((run) => run.status === "queued" && run.queueHeld === true)

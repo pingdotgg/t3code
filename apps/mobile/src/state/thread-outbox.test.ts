@@ -112,9 +112,10 @@ function queuedMessage(input: {
 }
 
 describe("thread outbox", () => {
-  it("retains structured context through a persisted offline queue round trip", () => {
+  it("retains structured context and a model pick through a persisted offline queue round trip", () => {
     const message: QueuedThreadMessage = {
       ...queuedMessage({ messageId: "context-message", createdAt: "2026-09-06T12:00:00.000Z" }),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
       text: "[Build](t3-context://v1/terminal/build-output)",
       context: {
         version: 1,
@@ -133,16 +134,6 @@ describe("thread outbox", () => {
         ],
       },
     };
-    expect(
-      decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message)))),
-    ).toEqual(message);
-  });
-  it("keeps a picked follow-up model through a persisted round trip", () => {
-    const message: QueuedThreadMessage = {
-      ...queuedMessage({ messageId: "picked-model", createdAt: "2026-10-23T23:00:00.000Z" }),
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
-    };
-
     expect(
       decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message)))),
     ).toEqual(message);

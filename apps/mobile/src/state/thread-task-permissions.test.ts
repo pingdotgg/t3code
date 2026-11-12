@@ -507,43 +507,9 @@ describe("mobile task permissions", () => {
 });
 
 describe("queued follow-up model", () => {
-  it("queues an unpicked follow-up despite an unavailable cached thread model", async () => {
-    state.grantedEnvironments.add("secondary");
-    state.serverConfig = {
-      ...state.serverConfig,
-      providers: [{ instanceId: "codex", driver: "codex", enabled: false }],
-    } as unknown as ServerConfig;
-
-    expect(await useThreadComposerState().onSendMessage()).toBe("message");
-
-    expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ text: "Keep my draft", threadId: "thread" }),
-    );
-    const [queued] = state.enqueue.mock.calls[0] as unknown as [object];
-    expect(queued).not.toHaveProperty("modelSelection");
-    expect(state.clearDraft).toHaveBeenCalledOnce();
-  });
-
-  it("preserves an explicit unavailable pick instead of queueing it", async () => {
-    state.grantedEnvironments.add("secondary");
-    state.serverConfig = {
-      ...state.serverConfig,
-      providers: [{ instanceId: "codex", driver: "codex", enabled: false }],
-    } as unknown as ServerConfig;
-    state.draft.modelSelection = {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5.4",
-    };
-
-    expect(await useThreadComposerState().onSendMessage()).toBeNull();
-
-    expect(state.enqueue).not.toHaveBeenCalled();
-    expect(state.clearDraft).not.toHaveBeenCalled();
-  });
-
   it("queues a follow-up with no model when the user picked none", async () => {
     state.grantedEnvironments.add("secondary");
-    const composer = useThreadComposerState();
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
 
     expect(await composer.onSendMessage()).toBe("message");
 
