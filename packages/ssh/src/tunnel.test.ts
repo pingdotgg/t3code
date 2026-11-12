@@ -205,7 +205,7 @@ describe("ssh tunnel scripts", () => {
         );
         NodeFS.writeFileSync(
           NodePath.join(bin, "curl"),
-          "#!/bin/sh\necho 'download attempt' >&2\nexit 22\n",
+          "#!/bin/sh\necho 'download attempt' >&2\necho 'curl: (6) Could not resolve host: github.com' >&2\nexit 6\n",
           { mode: 0o755 },
         );
         const runner = NodePath.join(root, "run-t3.sh");
@@ -217,6 +217,9 @@ describe("ssh tunnel scripts", () => {
         assert.notEqual(result.status, 0);
         if (downloads) {
           assert.include(result.stderr, "download attempt");
+          // A bare curl error does not tell the user that t3 itself could not be downloaded.
+          assert.include(result.stderr, ARCHIVE.archiveVersion);
+          assert.include(result.stderr, "https://github.com/pingdotgg/t3code/releases/download");
         } else {
           assert.notInclude(result.stderr, "download attempt");
           assert.include(result.stderr, "has no t3 release archive.");
