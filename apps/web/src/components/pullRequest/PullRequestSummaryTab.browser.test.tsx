@@ -4,6 +4,7 @@ import {
   type ClientSettings,
 } from "@t3tools/contracts";
 import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
+import { createRef } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -54,6 +55,7 @@ function setup() {
 }
 
 import { act, render as renderUi } from "../../../test/render";
+import { PullRequestCommentForm, type PullRequestQuoteRequest } from "./PullRequestCommentForm";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 
 const detail: PullRequestDetailView = {
@@ -315,4 +317,27 @@ it("shows a comment's exact time in the chosen 24-hour clock", async () => {
   await vi.waitFor(() =>
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(expected),
   );
+});
+
+it("adds a quote that arrives as posting settles along with the ones queued before it", async () => {
+  setup();
+  const form = (actionPending: boolean, quoteRequest: PullRequestQuoteRequest) => (
+    <PullRequestCommentForm
+      environmentId={EnvironmentId.make("environment")}
+      active
+      reference={detail}
+      detail={detail}
+      actionPending={actionPending}
+      textareaRef={createRef()}
+      quoteRequest={quoteRequest}
+      onCommentAction={vi.fn()}
+      onCommented={vi.fn()}
+      onClose={vi.fn()}
+      onQuoted={vi.fn()}
+    />
+  );
+  await using screen = await renderUi(form(true, { text: "> first" }));
+  await screen.rerender(form(true, { text: "> second" }));
+  await screen.rerender(form(false, { text: "> third" }));
+  await expect.element(screen.getByRole("textbox")).toHaveValue("> second\n\n> third");
 });
