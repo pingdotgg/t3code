@@ -1861,20 +1861,40 @@ export const layerWsRpc = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
-      const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
-        const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
-          sql,
-          readThreads: threadManagement.readShellSnapshot({ location: "archive" }),
-          listProjects: projectStore.listShells(),
-          latestSequence: applicationEvents.latestApplicationSequence,
-        });
-        return {
-          schemaVersion: threads.schemaVersion,
-          snapshotSequence,
-          projects,
-          threads: threads.archivedThreads,
-        } as const;
-      }).pipe(
+      const archivedMillis = (thread: { readonly archivedAt: DateTime.Utc | null }) =>
+        thread.archivedAt === null ? 0 : DateTime.toEpochMillis(thread.archivedAt);
+      const getOrchestrationV2ArchivedShellSnapshot = Effect.fn(
+        "ws.orchestrationV2.getArchivedShellSnapshot",
+      )(
+        function* (input: { readonly limit?: number }) {
+          const { limit } = input;
+          const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
+            sql,
+            readThreads: threadManagement.readShellSnapshot({
+              location: "archive",
+              // One extra row tells whether older archived threads remain.
+              ...(limit === undefined ? {} : { newestArchivedLimit: limit + 1 }),
+            }),
+            listProjects: projectStore.listShells(),
+            latestSequence: applicationEvents.latestApplicationSequence,
+          });
+          const hasMore = limit !== undefined && threads.archivedThreads.length > limit;
+          return {
+            schemaVersion: threads.schemaVersion,
+            snapshotSequence,
+            projects,
+            threads: hasMore
+              ? threads.archivedThreads
+                  .toSorted(
+                    (left, right) =>
+                      archivedMillis(right) - archivedMillis(left) ||
+                      (right.id < left.id ? -1 : right.id > left.id ? 1 : 0),
+                  )
+                  .slice(0, limit)
+              : threads.archivedThreads,
+            ...(limit === undefined ? {} : { hasMore }),
+          } as const;
+        },
         Effect.flatMap((snapshot) =>
           enrichProjectShells(snapshot.projects).pipe(
             Effect.map(({ projects }) => ({ ...snapshot, projects })),
@@ -2028,8 +2048,8 @@ export const layerWsRpc = (
                 }),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
-          getOrchestrationV2ArchivedShellSnapshot,
+        [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (input) =>
+          getOrchestrationV2ArchivedShellSnapshot(input),
         [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input) =>
           readOmittableShellRows({ familyOf: input.threadId }, "Failed to load the thread family"),
         [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input) =>

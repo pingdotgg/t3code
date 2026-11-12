@@ -3708,8 +3708,15 @@ export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationV2ThreadShell),
+  /** True when a `limit` left older archived threads out. */
+  hasMore: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2ArchivedShellSnapshot = typeof OrchestrationV2ArchivedShellSnapshot.Type;
+
+export const OrchestrationV2GetArchivedShellSnapshotInput = Schema.Struct({
+  /** Only the most recently archived threads. Without it, every archived thread. */
+  limit: Schema.optionalKey(PositiveInt),
+});
 
 export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   commandId: CommandId,
@@ -4319,7 +4326,7 @@ export const OrchestrationV2RpcSchemas = {
     output: OrchestrationGetFullThreadDiffResult,
   },
   getArchivedShellSnapshot: {
-    input: Schema.Struct({}),
+    input: OrchestrationV2GetArchivedShellSnapshotInput,
     output: OrchestrationV2ArchivedShellSnapshot,
   },
   getThreadFamily: {

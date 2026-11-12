@@ -5,6 +5,7 @@ import {
   makeArchivedThreadsEnvironmentKey,
 } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { orchestrationEnvironment } from "../state/orchestration";
 import { serverEnvironment } from "../state/server";
@@ -27,8 +28,72 @@ const archivedSnapshotsAtom = createArchivedThreadSnapshotsAtomFamily({
   labelPrefix: "web:archived-thread-snapshots",
 });
 
+const ARCHIVED_THREADS_PAGE_SIZE = 100;
+
+const archivedPageLimitAtom = Atom.family((_environmentId: EnvironmentId) =>
+  Atom.make(ARCHIVED_THREADS_PAGE_SIZE).pipe(Atom.keepAlive),
+);
+
+function archivedPageQueryAtom(environmentId: EnvironmentId, limit: number) {
+  return orchestrationEnvironment.archivedShellSnapshot({ environmentId, input: { limit } });
+}
+
+// Keeps the loaded page on screen while the next, larger one loads.
+const archivedPageAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const limit = get(archivedPageLimitAtom(environmentId));
+    const result = get(archivedPageQueryAtom(environmentId, limit));
+    if (!AsyncResult.isInitial(result) || limit <= ARCHIVED_THREADS_PAGE_SIZE) return result;
+    const previous = get(archivedPageQueryAtom(environmentId, limit - ARCHIVED_THREADS_PAGE_SIZE));
+    return AsyncResult.isSuccess(previous) ? AsyncResult.waiting(previous) : result;
+  }),
+);
+
+const archivedPagesAtom = createArchivedThreadSnapshotsAtomFamily({
+  getSnapshotAtom: archivedPageAtom,
+  hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
+  hiddenThreadKeysAtom: environmentThreadShells.hiddenThreadKeysAtom,
+  liveThreadRefsAtom: environmentThreadShells.threadRefsAtom,
+  anyEnvironmentHidingAtom: environmentThreadShells.anyEnvironmentHidingAtom,
+  labelPrefix: "web:archived-thread-pages",
+});
+
+function refreshArchivedPage(environmentId: EnvironmentId): void {
+  const limit = appAtomRegistry.get(archivedPageLimitAtom(environmentId));
+  appAtomRegistry.refresh(archivedPageQueryAtom(environmentId, limit));
+}
+
 export function refreshArchivedThreadsForEnvironment(environmentId: EnvironmentId): void {
   appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
+  refreshArchivedPage(environmentId);
+}
+
+/** The most recently archived threads, a page at a time, for the archive view. */
+export function useArchivedThreadPages(environmentIds: ReadonlyArray<EnvironmentId>): {
+  readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
+  readonly error: string | null;
+  readonly isLoading: boolean;
+  readonly hasMore: boolean;
+  readonly loadMore: () => void;
+  readonly refresh: () => void;
+} {
+  const result = useAtomValue(archivedPagesAtom(makeArchivedThreadsEnvironmentKey(environmentIds)));
+  return {
+    ...result,
+    hasMore: result.snapshots.some(({ snapshot }) => snapshot.hasMore === true),
+    loadMore: () => {
+      for (const { environmentId, snapshot } of result.snapshots) {
+        if (snapshot.hasMore !== true) continue;
+        appAtomRegistry.update(
+          archivedPageLimitAtom(environmentId),
+          (limit) => limit + ARCHIVED_THREADS_PAGE_SIZE,
+        );
+      }
+    },
+    refresh: () => {
+      for (const environmentId of environmentIds) refreshArchivedPage(environmentId);
+    },
+  };
 }
 
 export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<EnvironmentId>): {

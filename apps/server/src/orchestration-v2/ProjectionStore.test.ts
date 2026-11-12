@@ -2141,6 +2141,15 @@ const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(functio
     all.archivedThreads.map((thread) => thread.id),
     [archivedThreadId],
   );
+  // Both were archived at `now`; the id breaks the tie.
+  const newestArchived = yield* projectionStore.getShellSnapshot({
+    location: "archive",
+    newestArchivedLimit: 1,
+  });
+  assert.deepEqual(
+    newestArchived.archivedThreads.map((thread) => thread.id),
+    [sourceThreadId],
+  );
   const missingThreadId = ThreadId.make(`thread:${suffix}:missing`);
   const targeted = yield* projectionStore.getShellSnapshot({
     threadIds: [forkThreadId, archivedThreadId, missingThreadId],

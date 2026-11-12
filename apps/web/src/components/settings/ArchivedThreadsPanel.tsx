@@ -12,7 +12,7 @@ import {
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { readLocalApi } from "../../localApi";
-import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import { useArchivedThreadPages } from "../../lib/archivedThreadsState";
 import { RelativeTime } from "../RelativeTime";
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -38,8 +38,10 @@ export function ArchivedThreadsPanel() {
     snapshots: archivedSnapshots,
     error: archiveError,
     isLoading: isLoadingArchive,
+    hasMore: hasMoreArchive,
+    loadMore: loadMoreArchive,
     refresh: refreshArchivedThreads,
-  } = useArchivedThreadSnapshots(scope.environmentIds);
+  } = useArchivedThreadPages(scope.environmentIds);
 
   const { groups: archivedGroups, hasMultipleEnvironments } = (() => {
     const selectedProjectKeys =
@@ -270,6 +272,20 @@ export function ArchivedThreadsPanel() {
           </SettingsSection>
         ))
       )}
+      {hasMoreArchive ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isLoadingArchive}
+            onClick={loadMoreArchive}
+          >
+            {isLoadingArchive ? <Spinner size="sm" tone="muted" /> : null}
+            Show more
+          </Button>
+        </div>
+      ) : null}
     </SettingsPageContainer>
   );
 }

@@ -427,6 +427,8 @@ export interface ShellSnapshotOptions {
   readonly familyOf?: ThreadId;
   readonly worktreePath?: string;
   readonly threadIds?: ReadonlyArray<ThreadId>;
+  /** Only this many of the most recently archived threads. */
+  readonly newestArchivedLimit?: number;
 }
 
 /** What a shell subscriber's trims read from an active thread, without building its shell. */
@@ -6514,6 +6516,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         familyOf,
         worktreePath,
         threadIds,
+        newestArchivedLimit,
         listedOnly = false,
       }: ShellSnapshotOptions & { readonly listedOnly?: boolean } = {},
     ) =>
@@ -6718,7 +6721,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               worktreePath === undefined
                 ? sql``
                 : sql` AND json_extract(t.payload_json, '$.worktreePath') = ${worktreePath}`
-            }${threadIds === undefined ? sql`` : sql` AND t.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
+            }${threadIds === undefined ? sql`` : sql` AND t.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}${
+              newestArchivedLimit === undefined
+                ? sql``
+                : sql` AND t.thread_id IN (
+                    SELECT newest.thread_id FROM orchestration_v2_projection_threads newest
+                    WHERE newest.deleted_at IS NULL
+                      AND json_extract(newest.payload_json, '$.archivedAt') IS NOT NULL
+                    ORDER BY json_extract(newest.payload_json, '$.archivedAt') DESC,
+                      newest.thread_id DESC
+                    LIMIT ${newestArchivedLimit}
+                  )`
+            }
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
 
