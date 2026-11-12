@@ -92,7 +92,6 @@ import {
   activateAppWindow,
   allocateAppWindowId,
   AppWindowContext,
-  appWindowCount,
   closeAppWindow,
   subscribeAppWindows,
   useAppWindowId,
@@ -101,7 +100,7 @@ import {
 import {
   attachRootNavigation,
   flushRootNavigationQueue,
-  isRootNavigationWindow,
+  rootNavigationWindowStatus,
   linkToRootPath,
   rootNavigationRef,
   rootNavigationRoutes,
@@ -141,10 +140,12 @@ function getAppStateFromPath(path: string, options: Parameters<typeof getStateFr
 // app remembers; Android's replacement activity still reads the link that started it.
 let launchLinkTaken = false;
 
-async function initialWindowURL() {
+async function initialWindowURL(windowId: AppWindowId) {
   const readsLaunchLink = !launchLinkTaken || Platform.OS !== "ios";
   launchLinkTaken = true;
-  return (readsLaunchLink ? await Linking.getInitialURL() : null) ?? (await launchWorkspaceURL());
+  return (
+    (readsLaunchLink ? await Linking.getInitialURL() : null) ?? (await launchWorkspaceURL(windowId))
+  );
 }
 
 const appLinking = {
@@ -157,7 +158,6 @@ const appLinking = {
   ],
   config: { initialRouteName: "Home" },
   filter: (url: string) => shouldHandleAppLink(url, hasCloudPublicConfig()),
-  getInitialURL: initialWindowURL,
   getActionFromState: (
     state: Parameters<typeof getActionFromState>[0],
     options: Parameters<typeof getActionFromState>[1],
@@ -186,9 +186,10 @@ function linkToAppPath(href: string): void {
 function windowLinking(windowId: AppWindowId) {
   return {
     ...appLinking,
+    getInitialURL: () => initialWindowURL(windowId),
     subscribe: (listener: (url: string) => void) => {
       const subscription = Linking.addEventListener("url", ({ url }) => {
-        if (isRootNavigationWindow(windowId)) listener(url);
+        if (rootNavigationWindowStatus(windowId) === "current") listener(url);
       });
       return () => subscription.remove();
     },
@@ -230,8 +231,9 @@ const nativeControls = requireOptionalNativeModule<{
 
 function hideSplashScreen(): void {
   void SplashScreen.hide();
-  // expo-splash-screen hides the launch screen of the newest window only.
-  if (appWindowCount() > 1) void nativeControls?.revealWindows?.().catch(() => undefined);
+  // expo-splash-screen hides the launch screen of the newest window only. Native code counts the
+  // windows: another one can be connected before its root has registered here.
+  void nativeControls?.revealWindows?.().catch(() => undefined);
 }
 
 declare const module: { readonly hot?: FoundationHotModule } | undefined;

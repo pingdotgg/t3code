@@ -21,20 +21,23 @@ export const NativeColumnLayoutMetricsContext = createContext<NativeLayoutMetric
 
 // Each window's latest metrics outside React, for decisions made before the first screen renders.
 const latestMetrics = new Map<AppWindowId, NativeLayoutMetrics>();
-const metricsWaiters = new Set<(metrics: NativeLayoutMetrics) => void>();
+const metricsWaiters = new Set<(windowId: AppWindowId, metrics: NativeLayoutMetrics) => void>();
 
-/** Resolves with the first native layout metrics, or null after `timeoutMs` without any. */
-export function firstNativeLayoutMetrics(timeoutMs: number) {
-  const latest = currentNativeLayoutMetrics();
+/** Resolves with a window's first native layout metrics, or null after `timeoutMs` without any. */
+export function firstNativeLayoutMetrics(windowId: AppWindowId, timeoutMs: number) {
+  const latest = latestMetrics.get(windowId);
   if (latest) return Promise.resolve(latest);
   return new Promise<NativeLayoutMetrics | null>((resolve) => {
     const settle = (metrics: NativeLayoutMetrics | null) => {
-      metricsWaiters.delete(settle);
+      metricsWaiters.delete(published);
       clearTimeout(timeout);
       resolve(metrics);
     };
+    const published = (publisher: AppWindowId, metrics: NativeLayoutMetrics) => {
+      if (publisher === windowId) settle(metrics);
+    };
     const timeout = setTimeout(() => settle(null), timeoutMs);
-    metricsWaiters.add(settle);
+    metricsWaiters.add(published);
   });
 }
 
@@ -61,7 +64,7 @@ export function NativeLayoutMetricsProvider(props: { readonly children: ReactNod
   );
   const publish = (next: NativeLayoutMetrics) => {
     latestMetrics.set(windowId, next);
-    for (const settle of metricsWaiters) settle(next);
+    for (const published of metricsWaiters) published(windowId, next);
     setMetrics(next);
   };
   const deviceType = deriveDeviceType({ isPad: IS_PAD, metrics });

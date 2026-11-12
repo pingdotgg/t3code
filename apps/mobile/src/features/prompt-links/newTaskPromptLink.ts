@@ -28,7 +28,12 @@ import {
 import { Atom, type AsyncResult } from "effect/reactivity";
 
 import { findLinkedRoute, findStackRoute, updateLinkedRoute } from "../../lib/appLinking";
-import { rootNavigationRef } from "../../lib/rootNavigation";
+import type { AppWindowId } from "../../lib/appWindows";
+import {
+  rootNavigationRef,
+  rootNavigationWindowId,
+  rootNavigationWindowStatus,
+} from "../../lib/rootNavigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentProjects, projectEnvironment } from "../../state/projects";
@@ -82,6 +87,8 @@ const shellsSettledAtom = Atom.make((get) => {
 }).pipe(Atom.withLabel("mobile:prompt-link-shells-settled"));
 
 let pendingLink: string | null = null;
+// The window that took the link: its screen lands there, and only that window's state shows it.
+let pendingWindow: AppWindowId | null = null;
 let stopWaitingForShells: (() => void) | null = null;
 
 /**
@@ -98,6 +105,7 @@ export function takeNewTaskPromptLink(
   );
   if (search === null) return state;
   pendingLink = search;
+  pendingWindow = rootNavigationWindowId();
   return updateLinkedRoute(state, NEW_TASK_ROUTES, (linked) => ({
     ...linked,
     params: withoutPromptLinkParams(linked.params),
@@ -107,6 +115,9 @@ export function takeNewTaskPromptLink(
 /** Wired to the navigation container's state changes. */
 export function resolvePendingNewTaskPromptLink(state: NavigationState | undefined): void {
   if (pendingLink === null) return;
+  const owner = rootNavigationWindowStatus(pendingWindow);
+  if (owner === "closed") dropPendingLink();
+  if (owner !== "current") return;
   const step = stepPendingPromptLink(pendingLink, {
     // A screen pushed above New task (such as Add project) drops the link, so it never lands
     // over the wrong screen.

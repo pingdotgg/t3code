@@ -210,14 +210,19 @@ public final class T3NativeControlsModule: Module {
   @JS
   @MainActor
   func revealWindows() async {
-    for case let windowScene as UIWindowScene in UIApplication.shared.connectedScenes {
-      for window in windowScene.windows {
+    let launchScreens = UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .flatMap { $0.windows }
+      .compactMap { window -> UIView? in
         guard let rootView = window.rootViewController?.view,
-          rootView.responds(to: NSSelectorFromString("loadingView")),
-          let launchScreen = rootView.value(forKey: "loadingView") as? UIView
-        else { continue }
-        launchScreen.removeFromSuperview()
+          rootView.responds(to: NSSelectorFromString("loadingView"))
+        else { return nil }
+        return rootView.value(forKey: "loadingView") as? UIView
       }
+    // A single window's launch screen is the one expo-splash-screen hides itself, with its fade.
+    guard launchScreens.count > 1 else { return }
+    for launchScreen in launchScreens {
+      launchScreen.removeFromSuperview()
     }
   }
 

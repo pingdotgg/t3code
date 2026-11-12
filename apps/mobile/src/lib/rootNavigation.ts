@@ -26,6 +26,8 @@ function retarget() {
     (active === null ? undefined : containers.get(active)) ??
     [...containers.values()].at(-1) ??
     null;
+  // Work queued for a window that was still mounting runs in the ready one that took over.
+  flushRootNavigationQueue();
 }
 subscribeAppWindows(retarget);
 
@@ -49,10 +51,25 @@ export function attachRootNavigation(
   };
 }
 
-/** Whether app-wide navigation, such as an opened link, currently goes to this window. */
-export function isRootNavigationWindow(windowId: AppWindowId): boolean {
+/** The window app-wide navigation, such as an opened link, currently goes to. */
+export function rootNavigationWindowId(): AppWindowId | null {
+  for (const [windowId, container] of containers) {
+    if (container === rootNavigationRef.current) return windowId;
+  }
+  return null;
+}
+
+/**
+ * Where work that waits on one window's navigation state stands: it proceeds while that window
+ * is the one in use, waits while another is, and is void once its window closed.
+ */
+export function rootNavigationWindowStatus(
+  windowId: AppWindowId | null,
+): "current" | "waiting" | "closed" {
+  if (windowId === null) return "current";
   const container = containers.get(windowId);
-  return container !== undefined && container === rootNavigationRef.current;
+  if (container === undefined) return "closed";
+  return container === rootNavigationRef.current ? "current" : "waiting";
 }
 
 /** The root routes of every window, for state that lives as long as any window shows it. */

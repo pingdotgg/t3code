@@ -6,7 +6,12 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
 import { findStackRoute } from "../../lib/appLinking";
-import { rootNavigationRef } from "../../lib/rootNavigation";
+import type { AppWindowId } from "../../lib/appWindows";
+import {
+  rootNavigationRef,
+  rootNavigationWindowId,
+  rootNavigationWindowStatus,
+} from "../../lib/rootNavigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells, environmentThreads } from "../../state/threads";
@@ -19,7 +24,12 @@ import {
 
 const THREAD_LINK_KEYS = ["prompt"];
 
-type PendingThreadLink = { readonly ref: ScopedThreadRef; readonly prompt: LinkedPrompt };
+type PendingThreadLink = {
+  readonly ref: ScopedThreadRef;
+  readonly prompt: LinkedPrompt;
+  // The window that took the link: its screen lands there, and only that window's state shows it.
+  readonly windowId: AppWindowId | null;
+};
 
 function firstString(value: unknown): string | null {
   const first = Array.isArray(value) ? value[0] : value;
@@ -64,6 +74,7 @@ export function takeThreadPromptLink(
     pendingLink = {
       ref: { environmentId: EnvironmentId.make(environmentId), threadId: ThreadId.make(threadId) },
       prompt: parsed.value,
+      windowId: rootNavigationWindowId(),
     };
   }
   return nextState;
@@ -72,6 +83,9 @@ export function takeThreadPromptLink(
 /** Wired to the navigation container's state changes. */
 export function resolvePendingThreadPromptLink(state: NavigationState | undefined): void {
   if (pendingLink === null) return;
+  const owner = rootNavigationWindowStatus(pendingLink.windowId);
+  if (owner === "closed") dropPendingLink();
+  if (owner !== "current") return;
   const { ref } = pendingLink;
   // A subagent thread the environment's list leaves out gets a shell once the screen mounts its
   // family. An archived thread never does; the screen shows it from its detail.

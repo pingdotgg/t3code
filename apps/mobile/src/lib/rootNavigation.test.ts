@@ -19,7 +19,8 @@ const { activateAppWindow, closeAppWindow } = await import("./appWindows");
 const {
   attachRootNavigation,
   flushRootNavigationQueue,
-  isRootNavigationWindow,
+  rootNavigationWindowId,
+  rootNavigationWindowStatus,
   linkToRootPath,
   rootNavigationRef,
   whenRootNavigationReady,
@@ -50,20 +51,41 @@ it("follows the window in use, and falls back when it closes", () => {
   activateAppWindow(1);
   const detachSecond = attachRootNavigation(2, second);
   expect(rootNavigationRef.current).toBe(first);
-  expect(isRootNavigationWindow(2)).toBe(false);
+  expect(rootNavigationWindowStatus(2)).toBe("waiting");
 
   activateAppWindow(2);
   expect(rootNavigationRef.current).toBe(second);
   activateAppWindow(1);
   expect(rootNavigationRef.current).toBe(first);
-  expect(isRootNavigationWindow(1)).toBe(true);
+  expect(rootNavigationWindowId()).toBe(1);
+  expect(rootNavigationWindowStatus(1)).toBe("current");
 
   closeAppWindow(1);
   detachFirst();
   expect(rootNavigationRef.current).toBe(second);
+  expect(rootNavigationWindowStatus(1)).toBe("closed");
   closeAppWindow(2);
   detachSecond();
   expect(rootNavigationRef.current).toBeNull();
+});
+
+it("runs queued navigation when a ready window takes over from one still mounting", () => {
+  const navigate = vi.fn();
+  const detachReady = attachRootNavigation(1, fakeContainer());
+  activateAppWindow(1);
+  const mounting = {
+    isReady: () => false,
+  } as NavigationContainerRef<ReactNavigation.RootParamList>;
+  const detachMounting = attachRootNavigation(2, mounting);
+  activateAppWindow(2);
+  whenRootNavigationReady(navigate);
+  expect(navigate).not.toHaveBeenCalled();
+
+  closeAppWindow(2);
+  detachMounting();
+  expect(navigate).toHaveBeenCalledOnce();
+  closeAppWindow(1);
+  detachReady();
 });
 
 it("holds navigation until the container is ready, then runs it once", () => {

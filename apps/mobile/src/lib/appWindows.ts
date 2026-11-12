@@ -37,10 +37,6 @@ export function activeAppWindowId(): AppWindowId | null {
   return windows.at(-1) ?? null;
 }
 
-export function appWindowCount(): number {
-  return windows.length;
-}
-
 /** Notified when a window opens, closes or becomes the active one. */
 export function subscribeAppWindows(listener: () => void): () => void {
   listeners.add(listener);

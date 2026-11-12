@@ -17,6 +17,8 @@ vi.mock("./prompt-link-actions", () => ({
 }));
 vi.mock("../../lib/rootNavigation", () => ({
   rootNavigationRef: { getRootState: () => fixture.root },
+  rootNavigationWindowId: () => null,
+  rootNavigationWindowStatus: () => "current",
 }));
 vi.mock("../../state/atom-registry", async () => {
   const { AtomRegistry } = await import("effect/reactivity");
