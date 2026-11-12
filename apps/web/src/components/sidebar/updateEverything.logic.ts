@@ -348,11 +348,12 @@ function trackSwitchMove(
 export interface UpdateEverythingSteps<Providers, Servers> {
   readonly downloadLocal?: () => Promise<boolean>;
   readonly updateProviders: () => Promise<Providers>;
+  readonly stageServers?: () => Promise<unknown>;
   readonly updateServers: () => Promise<Servers>;
 }
 
-/** Finish provider installs before server restarts. Install this app last when localReady; failed
- * downloads skip only that install. */
+/** Finish provider installs before server restarts; servers stage meanwhile. Install this app last
+ * when localReady; failed downloads skip only that install. */
 export async function runUpdateEverything<Providers, Servers>(
   steps: UpdateEverythingSteps<Providers, Servers>,
 ): Promise<{
@@ -360,11 +361,13 @@ export async function runUpdateEverything<Providers, Servers>(
   readonly providers: Providers;
   readonly servers: Servers;
 }> {
+  const staged = steps.stageServers?.().catch(() => undefined);
   const [localReady, remote] = await Promise.all([
     steps.downloadLocal?.() ?? Promise.resolve(true),
-    steps
-      .updateProviders()
-      .then(async (providers) => ({ providers, servers: await steps.updateServers() })),
+    steps.updateProviders().then(async (providers) => {
+      await staged;
+      return { providers, servers: await steps.updateServers() };
+    }),
   ]);
   return { localReady, ...remote };
 }

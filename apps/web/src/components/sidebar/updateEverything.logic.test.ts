@@ -331,6 +331,33 @@ describe("runUpdateEverything", () => {
     expect(calls).toEqual(["providers", "servers"]);
     expect(result.localReady).toBe(false);
   });
+
+  it("stages servers while providers install and updates them only after staging settles", async () => {
+    const calls: string[] = [];
+    let finishProviders = () => {};
+    let failStage = () => {};
+    const providers = new Promise<void>((resolve) => (finishProviders = resolve));
+    const run = runUpdateEverything({
+      updateProviders: () => {
+        calls.push("providers");
+        return providers;
+      },
+      stageServers: () => {
+        calls.push("stage");
+        return new Promise((_, reject) => (failStage = () => reject(new Error("stage failed"))));
+      },
+      updateServers: async () => {
+        calls.push("servers");
+      },
+    });
+    finishProviders();
+    await providers;
+    calls.push("providers done");
+    failStage();
+    await run;
+
+    expect(calls).toEqual(["stage", "providers", "providers done", "servers"]);
+  });
 });
 
 describe("describeUpdateEverything", () => {
