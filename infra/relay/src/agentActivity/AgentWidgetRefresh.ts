@@ -34,7 +34,7 @@ export const WIDGET_REVOCATION_RATE_LIMIT = { limit: 60, periodSeconds: 60 } as 
 export class WidgetRevocationRateLimiter extends Context.Service<
   WidgetRevocationRateLimiter,
   { readonly allow: Effect.Effect<boolean> }
->()("t3code-relay/agentActivity/WidgetRevocationRateLimiter") {}
+>()("t3code-relay/agentActivity/AgentWidgetRefresh/WidgetRevocationRateLimiter") {}
 
 export class WidgetRefreshRateLimited extends Schema.TaggedError<WidgetRefreshRateLimited>()(
   "WidgetRefreshRateLimited",
