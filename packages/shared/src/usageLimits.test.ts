@@ -804,6 +804,52 @@ describe("pools", () => {
     ).toEqual(["weekly", "weekly:secondary"]);
   });
 
+  it("weights pooled Codex quota and resets by each account's plan capacity", () => {
+    const [pool] = collectLimitPools(
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [],
+                usageLimitSources: [
+                  {
+                    ...source,
+                    accounts: [
+                      ["pro", "ChatGPT Pro 200 Subscription", 100],
+                      ["plus", "ChatGPT Plus Subscription", 0],
+                    ].map(([id, plan, usedPercent]) => ({
+                      id: String(id),
+                      email: `${id}@example.com`,
+                      driver: ProviderDriverKind.make("codex"),
+                      plan: String(plan),
+                      usageLimits: {
+                        checkedAt,
+                        windows: [{ ...weekly, id: "secondary", usedPercent: Number(usedPercent) }],
+                      },
+                    })),
+                  },
+                ],
+              },
+            },
+          ],
+        ]),
+      ),
+      now,
+    );
+    const [pooledWeekly] = pool?.windows ?? [];
+    // Pro 20x holds 20 of the pool's 21 capacity parts.
+    expect(pooledWeekly?.remainingPercent).toBe(5);
+    expect(
+      pooledWeekly?.resets.map(({ member, restoresPercent }) => [
+        member.account.email,
+        restoresPercent,
+      ]),
+    ).toContainEqual(["pro@example.com", 95]);
+  });
+
   it("pools windows by id across accounts and orders resets by when they land", () => {
     const input = new Map([
       [
