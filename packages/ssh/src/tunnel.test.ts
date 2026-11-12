@@ -237,9 +237,11 @@ describe("ssh tunnel scripts", () => {
       NodeFS.mkdirSync(bin);
       NodeFS.mkdirSync(NodePath.join(root, "home"));
       for (const command of ["mkdir", "mktemp", "cat", "rm", "tar", "gzip"]) {
-        if (command !== missing) {
-          NodeFS.symlinkSync(NodePath.join("/usr/bin", command), NodePath.join(bin, command));
-        }
+        if (command === missing) continue;
+        const source = ["/usr/bin", "/bin"]
+          .map((directory) => NodePath.join(directory, command))
+          .find((path) => NodeFS.existsSync(path));
+        if (source) NodeFS.symlinkSync(source, NodePath.join(bin, command));
       }
       NodeFS.writeFileSync(
         NodePath.join(bin, "uname"),
