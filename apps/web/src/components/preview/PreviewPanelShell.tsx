@@ -165,14 +165,17 @@ function PreviewPanelShellFrame(
             ? // Maximizing meets the sidebar border or window edge; omit the duplicate border.
               "flex-1"
             : cn(
-                "shrink-0 [--preview-panel-gap:1px]",
                 // Keeps the chat's scrollbar off the divider, as the window inset does when closed.
-                open && "md:ps-2 md:[--preview-panel-gap:calc(0.5rem+1px)]",
+                // The gap stays set while closed so pinned content never resizes on toggle.
+                "shrink-0 [--preview-panel-gap:1px] md:[--preview-panel-gap:calc(0.5rem+1px)]",
+                open && "md:ps-2",
               )
           : "w-full",
         collapsible &&
-          "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
-        collapsible && open && "[[data-panel-animations=true]_&]:starting:w-0!",
+          "[[data-panel-animations=true]_&]:transition-[width,padding-inline-start] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
+        collapsible &&
+          open &&
+          "[[data-panel-animations=true]_&]:starting:w-0! [[data-panel-animations=true]_&]:starting:ps-0!",
         collapsible && !open && "pointer-events-none",
       )}
       style={
