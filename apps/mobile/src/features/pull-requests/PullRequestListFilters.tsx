@@ -5,6 +5,7 @@ import { Atom } from "effect/reactivity";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
+import { THREAD_LIST_V2_SIDEBAR_ROW_STYLE } from "../threads/thread-list-v2-row-appearance";
 import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
@@ -31,7 +32,7 @@ const SORTS = {
 const ROW_STYLE =
   Platform.OS === "android"
     ? { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8, gap: 8 }
-    : { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 };
+    : { paddingTop: 16, paddingBottom: 10, gap: 8 };
 const id = (field: string, value: string) => JSON.stringify([field, value]);
 function choices(field: string, options: Readonly<Record<string, string>>, selected: string) {
   return Object.entries(options).map(([value, title]) => ({
@@ -359,11 +360,16 @@ export function PullRequestListFilters(props: {
       horizontal
       showsHorizontalScrollIndicator={false}
       style={{ overflow: "visible" }}
-      // In the Android sidebar the first pill lines up with the rows' content instead
-      // (8dp row margin + 12dp padding).
+      // The first pill lines up with the rows' content: iOS rows use `px-4` on phone and the
+      // card padding in the sidebar; Android sidebar rows sit at 8dp margin + 12dp padding.
+      contentContainerClassName={Platform.OS === "ios" && !props.sidebar ? "px-4" : undefined}
       contentContainerStyle={
-        props.sidebar && Platform.OS === "android"
-          ? { ...ROW_STYLE, paddingHorizontal: 20 }
+        props.sidebar
+          ? {
+              ...ROW_STYLE,
+              paddingHorizontal:
+                Platform.OS === "android" ? 20 : THREAD_LIST_V2_SIDEBAR_ROW_STYLE.paddingHorizontal,
+            }
           : ROW_STYLE
       }
     >

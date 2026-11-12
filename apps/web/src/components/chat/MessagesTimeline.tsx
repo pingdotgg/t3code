@@ -89,6 +89,7 @@ import {
   type MaintainScrollAtEndOptions,
 } from "@legendapp/list/react";
 import { type PendingApproval, type TimelineEntry } from "../../session-logic";
+import { TimelineGapRecorder } from "./TimelineGapRecorder";
 import { type CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 
 const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
@@ -1640,6 +1641,16 @@ const ConversationTimeline = memo(function ConversationTimeline({
   return (
     <>
       {activityAnnouncer}
+      {import.meta.env.DEV ? (
+        <TimelineGapRecorder
+          listRef={listRef}
+          threadKey={listIdentityKey}
+          dataLength={rows.length}
+          latestRunId={latestRun?.runId ?? null}
+          runStatus={latestRun?.status ?? null}
+          foldCollapsing={workingHistoryCollapsing}
+        />
+      ) : null}
       <MarkdownFindContext value={findActive}>
         <TimelineRowActivityCtx value={activityState}>
           <TooltipScrollDismissArea
