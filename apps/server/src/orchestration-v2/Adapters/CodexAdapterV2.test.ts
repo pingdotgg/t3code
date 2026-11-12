@@ -2112,6 +2112,107 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("asks T3 to record a root turn Codex starts from its own queue", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "queue-thread";
+      const nativeTurnId = "queue-first-turn";
+      const queuedTurnId = "queue-external-turn";
+      const prompt = "Reply with the word READY.";
+      const queued = (
+        label: string,
+        method: "turn/started" | "item/completed" | "turn/completed",
+        params: object,
+      ): CodexReplay.CodexAppServerReplayEntry => ({
+        type: "emit_inbound",
+        label,
+        frame: { method, params },
+      });
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-queue-turn",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+          queued("turn/completed/first", "turn/completed", {
+            threadId: nativeThreadId,
+            turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+          }),
+          queued("turn/started/queued", "turn/started", {
+            threadId: nativeThreadId,
+            turn: makeCodexReplayTurn({ id: queuedTurnId, status: "inProgress" }),
+          }),
+          queued("item/completed/queued-prompt", "item/completed", {
+            item: {
+              type: "userMessage",
+              id: "queued-prompt",
+              content: [{ type: "text", text: "Reply with the word QUEUED." }],
+            },
+            threadId: nativeThreadId,
+            turnId: queuedTurnId,
+            completedAtMs: 1782622500000,
+          }),
+          queued("item/completed/queued-answer", "item/completed", {
+            item: {
+              type: "agentMessage",
+              id: "queued-answer",
+              text: "QUEUED",
+              phase: "final_answer",
+              memoryCitation: null,
+            },
+            threadId: nativeThreadId,
+            turnId: queuedTurnId,
+            completedAtMs: 1782622501000,
+          }),
+          queued("turn/completed/queued", "turn/completed", {
+            threadId: nativeThreadId,
+            turn: makeCodexReplayTurn({ id: queuedTurnId, status: "completed" }),
+          }),
+          {
+            type: "emit_inbound",
+            label: "marker",
+            frame: { method: "thread/closed", params: { threadId: "queue-marker-thread" } },
+          },
+        ],
+      });
+      const marker = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        (method) =>
+          method === "thread/closed" ? Deferred.succeed(marker, undefined) : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("queue-first-attempt"),
+          text: prompt,
+        }),
+      );
+      yield* harness.awaitTerminal(1);
+      yield* Deferred.await(marker);
+
+      assert.isEmpty(harness.subagentUpdates());
+      assert.lengthOf(harness.continuationRequests, 1);
+      assert.equal(harness.continuationRequests[0]?.threadId, harness.threadId);
+      assert.equal(harness.continuationRequests[0]?.providerThreadId, harness.providerThread.id);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   const assistantMessages = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
     events.filter(
       (
