@@ -269,11 +269,16 @@ function claudePromptCacheTtlMs(
 // getContextUsage reports a 150,000 window as a 117,000 threshold, for every catalog model.
 const CLAUDE_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
 
-function claudeAutoCompactThreshold(autoCompactWindow: string, maxTokens: number | null) {
-  const windowTokens = Number(autoCompactWindow);
-  return windowTokens > 0 && (maxTokens === null || windowTokens < maxTokens)
-    ? { autoCompactThreshold: windowTokens - CLAUDE_AUTO_COMPACT_RESERVE_TOKENS }
-    : {};
+// Like Claude's /context, measure usage against the window when it is below the model's.
+function claudeContextLimits(autoCompactWindow: number | undefined, contextWindow: number | null) {
+  return autoCompactWindow !== undefined &&
+    autoCompactWindow > 0 &&
+    (contextWindow === null || autoCompactWindow < contextWindow)
+    ? {
+        maxTokens: autoCompactWindow,
+        autoCompactThreshold: autoCompactWindow - CLAUDE_AUTO_COMPACT_RESERVE_TOKENS,
+      }
+    : { maxTokens: contextWindow };
 }
 
 function claudeMessageInputTokens(usage: {
@@ -298,7 +303,7 @@ export function claudeProviderTurnTokenUsage(
   },
   maxTokens: number | null,
   updatedAt: string,
-  autoCompactWindow = "",
+  autoCompactWindow?: number,
   requestedAt?: DateTime.Utc,
 ) {
   const inputTokens = claudeMessageInputTokens(usage);
@@ -311,13 +316,12 @@ export function claudeProviderTurnTokenUsage(
       : DateTime.formatIso(DateTime.add(requestedAt, { milliseconds: promptCacheTtlMs }));
   return {
     usedTokens: inputTokens + outputTokens,
-    maxTokens,
+    ...claudeContextLimits(autoCompactWindow, maxTokens),
     inputTokens,
     cachedInputTokens: usage.cache_read_input_tokens ?? 0,
     outputTokens,
     reasoningOutputTokens: 0,
     ...(promptCacheTtlMs === undefined ? {} : { promptCacheTtlMs }),
-    ...claudeAutoCompactThreshold(autoCompactWindow, maxTokens),
     ...(promptCacheExpiresAt === undefined ? {} : { promptCacheExpiresAt }),
     updatedAt,
   };
@@ -3195,15 +3199,29 @@ const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
     ),
   ),
 );
-const decodeClaudeCompactSettings = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      autoCompactWindow: Schema.optionalKey(Schema.Unknown),
-      modelSettings: Schema.optionalKey(Schema.Unknown),
-    }),
-  ),
+const ClaudeAutoCompactWindow = Schema.Int.check(
+  Schema.isBetween({ minimum: 100_000, maximum: 1_000_000 }),
 );
-const decodeClaudeCompactWindow = Schema.decodeUnknownOption(Schema.Int);
+// Values are checked one at a time, so a bad entry for another model can't hide this one.
+const ClaudeAutoCompactSettings = Schema.Struct({
+  autoCompactWindow: Schema.optionalKey(Schema.Unknown),
+  modelSettings: Schema.optionalKey(Schema.Unknown),
+});
+type ClaudeAutoCompactSettings = typeof ClaudeAutoCompactSettings.Type;
+const decodeClaudeAutoCompactSettings = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ClaudeAutoCompactSettings),
+);
+const decodeClaudeLaunchAutoCompactSettings = Schema.decodeUnknownOption(ClaudeAutoCompactSettings);
+const decodeClaudeModelSettings = Schema.decodeUnknownOption(
+  Schema.Record(Schema.String, Schema.Unknown),
+);
+// Only a per-model entry may say "auto".
+const decodeClaudeModelAutoCompactSettings = Schema.decodeUnknownOption(
+  Schema.Struct({
+    autoCompactWindow: Schema.Union([ClaudeAutoCompactWindow, Schema.Literal("auto")]),
+  }),
+);
+const decodeClaudeAutoCompactWindow = Schema.decodeUnknownOption(ClaudeAutoCompactWindow);
 const decodeClaudeEnvSettings = Schema.decodeUnknownEffect(
   fromLenientJson(
     Schema.StructWithRest(
@@ -4647,7 +4665,7 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 interface ActiveClaudeTurnContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
-  readonly autoCompactWindow: string;
+  readonly autoCompactWindow: number | undefined;
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
   nativeMessageCursor: string | null;
@@ -5393,44 +5411,46 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     },
   );
 
+  // T3's setting is sent as flag settings, so it beats --settings and every settings file. In one
+  // source, modelSettings.<model>.autoCompactWindow (what /autocompact writes) replaces the
+  // top-level value; "auto" keeps Claude's tuned window.
   const resolveAutoCompactWindow = Effect.fn("ClaudeAdapterV2.resolveAutoCompactWindow")(function* (
     cwd: string | null,
     modelSelection: ModelSelection,
     launchArgSettings: ClaudeSdkSettings | undefined,
   ) {
-    if (adapterOptions.settings.autoCompactWindow !== "")
-      return adapterOptions.settings.autoCompactWindow;
+    const fromT3 = Number(adapterOptions.settings.autoCompactWindow);
+    if (fromT3 > 0) return fromT3;
     const model = compileClaudeModelSelection(modelSelection).apiModelId.replace(/\[1m\]$/i, "");
-    const windowFrom = (settings: unknown) => {
-      if (typeof settings !== "object" || settings === null) return undefined;
-      const models = Reflect.get(settings, "modelSettings");
-      const modelSetting =
-        typeof models === "object" && models !== null ? Reflect.get(models, model) : undefined;
-      const modelWindow =
-        typeof modelSetting === "object" && modelSetting !== null
-          ? Reflect.get(modelSetting, "autoCompactWindow")
-          : undefined;
-      const validWindow = (value: unknown) => {
-        const selected = Option.getOrUndefined(decodeClaudeCompactWindow(value));
-        return typeof selected === "number" && selected >= 100_000 && selected <= 1_000_000
-          ? String(selected)
-          : undefined;
-      };
-      return modelWindow === "auto"
-        ? ""
-        : (validWindow(modelWindow) ?? validWindow(Reflect.get(settings, "autoCompactWindow")));
+    const windowFrom = (settings: ClaudeAutoCompactSettings | undefined) => {
+      const models =
+        Option.getOrUndefined(decodeClaudeModelSettings(settings?.modelSettings)) ?? {};
+      const canonical = Option.getOrUndefined(decodeClaudeModelAutoCompactSettings(models[model]));
+      if (canonical !== undefined) return canonical.autoCompactWindow;
+      for (const [key, entry] of Object.entries(models)) {
+        const entryModel = compileClaudeModelSelection({
+          ...modelSelection,
+          model: key,
+        }).apiModelId.replace(/\[1m\]$/i, "");
+        if (entryModel !== model) continue;
+        const window = Option.getOrUndefined(decodeClaudeModelAutoCompactSettings(entry));
+        if (window !== undefined) return window.autoCompactWindow;
+      }
+      return Option.getOrUndefined(decodeClaudeAutoCompactWindow(settings?.autoCompactWindow));
     };
-    const launchWindow = windowFrom(launchArgSettings);
-    if (launchWindow !== undefined) return launchWindow;
+    const launchWindow = windowFrom(
+      Option.getOrUndefined(decodeClaudeLaunchAutoCompactSettings(launchArgSettings)),
+    );
+    if (launchWindow !== undefined) return launchWindow === "auto" ? undefined : launchWindow;
     for (const settingsFile of yield* settingsFilesByPrecedence(cwd)) {
       const settings = yield* fileSystem.readFileString(settingsFile).pipe(
-        Effect.flatMap(decodeClaudeCompactSettings),
+        Effect.flatMap(decodeClaudeAutoCompactSettings),
         Effect.orElseSucceed(() => undefined),
       );
       const value = windowFrom(settings);
-      if (value !== undefined) return value;
+      if (value !== undefined) return value === "auto" ? undefined : value;
     }
-    return "";
+    return undefined;
   });
 
   const userInvocableSkills = (cwd: string | null) =>
@@ -5922,8 +5942,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             typeof usage === "number"
               ? {
                   usedTokens: usage,
-                  maxTokens,
-                  ...claudeAutoCompactThreshold(context.autoCompactWindow, maxTokens),
+                  ...claudeContextLimits(context.autoCompactWindow, maxTokens),
                   updatedAt: DateTime.formatIso(now),
                 }
               : claudeProviderTurnTokenUsage(

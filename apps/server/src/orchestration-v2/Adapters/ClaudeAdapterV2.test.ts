@@ -813,7 +813,7 @@ describe("ClaudeAdapterV2 context usage", () => {
       },
       null,
       "2026-08-29T00:03:00.000Z",
-      "",
+      undefined,
       DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
     );
     assert.strictEqual(usage.promptCacheExpiresAt, "2026-08-29T00:05:00.000Z");
@@ -8992,100 +8992,151 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each([
-    { autoCompactWindow: "", model: "claude-sonnet-4-6", threshold: undefined },
-    { autoCompactWindow: "150000", model: "claude-sonnet-4-6", threshold: 117_000 },
-    { autoCompactWindow: "200000", model: "claude-sonnet-4-6", threshold: undefined },
-    { autoCompactWindow: "650000", model: "claude-sonnet-4-6", threshold: undefined },
-    { autoCompactWindow: "650000", model: "uncatalogued-model", threshold: 617_000 },
+  it.effect.each<{
+    autoCompactWindow: string;
+    model: string;
+    threshold: number | undefined;
+    maxTokens: number;
+    userSettings?: string;
+    projectSettings?: string;
+    launchArgs?: string;
+  }>([
+    { autoCompactWindow: "", model: "claude-sonnet-4-6", threshold: undefined, maxTokens: 200_000 },
+    {
+      autoCompactWindow: "150000",
+      model: "claude-sonnet-4-6",
+      threshold: 117_000,
+      maxTokens: 150_000,
+    },
+    {
+      autoCompactWindow: "200000",
+      model: "claude-sonnet-4-6",
+      threshold: undefined,
+      maxTokens: 200_000,
+    },
+    {
+      autoCompactWindow: "650000",
+      model: "claude-sonnet-4-6",
+      threshold: undefined,
+      maxTokens: 200_000,
+    },
+    {
+      autoCompactWindow: "650000",
+      model: "uncatalogued-model",
+      threshold: 617_000,
+      maxTokens: 650_000,
+    },
+    ...[1, 50_000, 1_000_001, 150_000.5, "invalid"].map((window) => ({
+      autoCompactWindow: "",
+      model: "claude-sonnet-4-6",
+      userSettings: JSON.stringify({ autoCompactWindow: window }),
+      threshold: undefined,
+      maxTokens: 200_000,
+    })),
     {
       autoCompactWindow: "",
       model: "claude-opus-5-5",
       userSettings: '{"autoCompactWindow":500000}',
       threshold: 467_000,
+      maxTokens: 500_000,
     },
     {
       autoCompactWindow: "300000",
       model: "claude-opus-5-5",
-      userSettings: '{"autoCompactWindow":500000}',
+      userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
+      launchArgs: `--settings '{"autoCompactWindow":350000}'`,
       threshold: 267_000,
+      maxTokens: 300_000,
     },
     {
       autoCompactWindow: "",
       model: "claude-opus-5-5",
-      userSettings: '{"autoCompactWindow":500000}',
-      projectSettings: '{"autoCompactWindow":400000}',
-      threshold: 367_000,
-    },
-    {
-      autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      userSettings:
-        '{"autoCompactWindow":500000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":450000}}}',
-      threshold: 417_000,
-    },
-    {
-      autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      userSettings: '{"autoCompactWindow":500000}',
-      projectSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":"auto"}}}',
-      threshold: undefined,
-    },
-    {
-      autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      userSettings: '{"autoCompactWindow":500000}',
+      userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
       launchArgs: `--settings '{"autoCompactWindow":350000}'`,
       threshold: 317_000,
+      maxTokens: 350_000,
     },
     {
       autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      userSettings: '{"autoCompactWindow":"invalid"}',
-      threshold: undefined,
+      model: "claude-sonnet-4-6",
+      userSettings: '{"modelSettings":{"claude-sonnet-4-6-20251117":{"autoCompactWindow":150000}}}',
+      threshold: 117_000,
+      maxTokens: 150_000,
     },
     {
       autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      userSettings: '{"autoCompactWindow":500000,}',
-      threshold: undefined,
+      model: "claude-sonnet-4-6",
+      userSettings:
+        '{"modelSettings":{"claude-sonnet-4-6-20251117":{"autoCompactWindow":150000},"claude-sonnet-4-6":{"autoCompactWindow":180000}}}',
+      threshold: 147_000,
+      maxTokens: 180_000,
     },
-    {
-      autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      userSettings: '{/* invalid */ "autoCompactWindow":500000}',
-      threshold: undefined,
-    },
-    {
-      autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      userSettings: '{"autoCompactWindow":500000,"modelSettings":null}',
-      threshold: 467_000,
-    },
-    {
-      autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      userSettings: '{"autoCompactWindow":500000}',
-      projectSettings: '{"autoCompactWindow":"auto"}',
-      threshold: 467_000,
-    },
-    {
-      autoCompactWindow: "",
-      model: "claude-opus-5-5",
-      userSettings: '{"autoCompactWindow":500000}',
-      projectSettings: '{"autoCompactWindow":50000}',
-      threshold: 467_000,
-    },
+    // /autocompact writes the per-model value, which beats the file's top-level one.
     {
       autoCompactWindow: "",
       model: "claude-opus-5-5",
       userSettings:
-        '{"autoCompactWindow":500000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":50000}}}',
-      threshold: 467_000,
+        '{"autoCompactWindow":300000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000},"claude-sonnet-5-5":{"autoCompactWindow":"big"}}}',
+      threshold: 367_000,
+      maxTokens: 400_000,
     },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
+      projectSettings: '{"autoCompactWindow":300000}',
+      threshold: 267_000,
+      maxTokens: 300_000,
+    },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":300000}',
+      projectSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":"auto"}}}',
+      threshold: undefined,
+      maxTokens: 1_000_000,
+    },
+    ...['{"autoCompactWindow":500000,}', '{/* invalid */ "autoCompactWindow":500000}'].map(
+      (userSettings) => ({
+        autoCompactWindow: "",
+        model: "claude-opus-5-5",
+        userSettings,
+        threshold: undefined,
+        maxTokens: 1_000_000,
+      }),
+    ),
+    ...[
+      { userSettings: '{"autoCompactWindow":500000,"modelSettings":null}' },
+      {
+        userSettings: '{"autoCompactWindow":500000}',
+        projectSettings: '{"autoCompactWindow":"auto"}',
+      },
+      {
+        userSettings: '{"autoCompactWindow":500000}',
+        projectSettings: '{"autoCompactWindow":50000}',
+      },
+      {
+        userSettings:
+          '{"autoCompactWindow":500000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":50000}}}',
+      },
+    ].map((files) => ({
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      ...files,
+      threshold: 467_000,
+      maxTokens: 500_000,
+    })),
   ])(
-    "ignores stale snapshots after compaction and reports threshold $autoCompactWindow for $model",
-    ({ autoCompactWindow, model, threshold, userSettings, projectSettings, launchArgs }) =>
+    "ignores stale snapshots after compaction and reports threshold $threshold for $model",
+    ({
+      autoCompactWindow,
+      model,
+      threshold,
+      maxTokens,
+      userSettings,
+      projectSettings,
+      launchArgs,
+    }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -9150,10 +9201,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(
           harness.events.flatMap((event) =>
             event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
-              ? [event.providerTurn.tokenUsage.autoCompactThreshold]
+              ? [
+                  [
+                    event.providerTurn.tokenUsage.maxTokens,
+                    event.providerTurn.tokenUsage.autoCompactThreshold,
+                  ],
+                ]
               : [],
           ),
-          [threshold, threshold, threshold],
+          Array.from({ length: 3 }, () => [maxTokens, threshold]),
         );
       }).pipe(
         Effect.provide(
