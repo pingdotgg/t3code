@@ -17,12 +17,14 @@ import { resolveScaledTextRole } from "../lib/appearancePreferences";
 export function ScrollComposeButton(props: {
   readonly expanded: boolean;
   readonly onPress: () => void;
+  readonly size?: number;
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
   const { appearance, themeVariables: colors } = useAppearancePreferences();
   const typography = resolveScaledTextRole("footnote", appearance.baseFontSize);
-  const { iconSize, fabSize } = useAndroidControlSizing();
+  const { iconSize, fabSize: scaledFabSize } = useAndroidControlSizing();
+  const fabSize = props.size ?? scaledFabSize;
   const nativeSize = Math.max(56, fabSize);
   const scale = fabSize / nativeSize;
   const nativeIconSize = Math.round(iconSize / scale);

@@ -8,6 +8,7 @@ import {
   type ClientSettings,
   type ReviewBranchCommitsResult,
   type ReviewDiffPreviewResult,
+  type ReviewDiffPreviewSource,
   type ScopedThreadRef,
   type VcsListRefsResult,
   type VcsStatusResult,
@@ -18,7 +19,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 import { makeThreadFixture } from "~/test-fixtures";
 
 type ResultAtom<A> = Atom.Atom<AsyncResult.AsyncResult<A, Error>>;
@@ -27,6 +28,8 @@ const state = vi.hoisted(() => ({
   thread: null as ReturnType<typeof makeThreadFixture> | null,
   threadRef: null as ScopedThreadRef | null,
   previews: new Map<string | null, ResultAtom<ReviewDiffPreviewResult>>(),
+  patch: null as unknown as ResultAtom<ReviewDiffPreviewSource>,
+  diffFilesCollapsed: false,
   config: null as unknown as Atom.Atom<null>,
   status: null as unknown as ResultAtom<VcsStatusResult>,
   localRefs: null as unknown as ResultAtom<VcsListRefsResult>,
@@ -42,6 +45,7 @@ vi.mock("~/state/review", () => ({
     diffPreview: ({ input }: { input: { baseRef?: string } }) =>
       state.previews.get(input.baseRef ?? null)!,
     branchCommits: () => state.commits,
+    diffFilePatch: () => state.patch,
     diffFileContents: {},
   },
 }));
@@ -64,20 +68,24 @@ vi.mock("~/state/filesystem", () => ({
 vi.mock("~/hooks/useThreadRouteTarget", () => ({ useThreadRouteRef: () => state.threadRef }));
 vi.mock("~/hooks/useSettings", () => ({
   useClientSettings: (select: (settings: ClientSettings) => unknown) =>
-    select(DEFAULT_CLIENT_SETTINGS),
+    select({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: state.diffFilesCollapsed }),
   updateClientSettings: async () => {},
 }));
-vi.mock("~/hooks/useTheme", () => ({ useRenderedAppearance: () => "dark" }));
+vi.mock("~/hooks/useTheme", () => ({
+  useRenderedAppearance: () => "dark",
+  getRenderedAppearance: () => "dark",
+  subscribeRenderedAppearance: () => () => {},
+}));
 vi.mock("~/state/queries", () => ({
   useCheckpointDiff: () => ({ data: null, error: null, isPending: false }),
   useTurnItemDetail: () => ({ data: null, error: null, isPending: false }),
+  useDebouncedValue: <A,>(value: A) => value,
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => {} }));
 vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => async () => {} }));
 vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => () => {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
-// The test drives comparison controls, without mounting virtualized diff viewers or their workers.
-vi.mock("./diffs/AnnotatableCodeView", () => ({ AnnotatableCodeView: () => null }));
+vi.mock("./diffs/DiffCommentAnnotation", () => ({ DiffCommentAnnotation: () => null }));
 vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
@@ -101,6 +109,8 @@ function preview(): ReviewDiffPreviewResult {
         diff: "",
         diffHash: "empty",
         truncated: false,
+        patchesDeferred: true,
+        files: [],
       },
     ],
   };
@@ -111,11 +121,15 @@ function setup(failedBaseRef: string | null) {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
-      keepSelectionOnOpenThreadKey: null,
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
   };
   reset();
+  state.diffFilesCollapsed = false;
+  const patch = Atom.make<AsyncResult.AsyncResult<ReviewDiffPreviewSource, Error>>(
+    AsyncResult.initial(),
+  );
+  state.patch = patch;
   state.threadRef = {
     environmentId: EnvironmentId.make("environment"),
     threadId: ThreadId.make("thread"),
@@ -167,6 +181,7 @@ function setup(failedBaseRef: string | null) {
   const registry = AtomRegistry.make();
   return {
     registry,
+    patch,
     threadRef: state.threadRef,
     [Symbol.dispose]() {
       registry.dispose();
@@ -210,5 +225,45 @@ it.each([
       expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({ kind: "branch", baseRef });
       expect(useDiffPanelStore.getState().branchBaseRefByThreadKey[key]).toBe(baseRef);
     });
+  },
+);
+
+it.each([false, true])(
+  "expands an unloaded file on the first click with default collapse %s",
+  async (collapsed) => {
+    using context = setup("origin/orphan");
+    state.diffFilesCollapsed = collapsed;
+    const path = `pending-${collapsed}.txt`;
+    const metadata = preview();
+    const source = {
+      ...metadata.sources[0]!,
+      files: [{ path, previousPath: null, additions: 1, deletions: 1 }],
+    };
+    state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
+    useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
+    await using screen = await render(
+      <RegistryContext.Provider value={context.registry}>
+        <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        </div>
+      </RegistryContext.Provider>,
+    );
+    const toggle = screen.getByRole("button", { name: `Expand ${path}`, exact: true });
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    await act(() =>
+      context.registry.set(
+        context.patch,
+        AsyncResult.success({
+          ...source,
+          diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-before\n+after\n`,
+        }),
+      ),
+    );
+    const loadedToggle = screen.getByRole("button", { name: `Collapse ${path}`, exact: true });
+    await expect.element(loadedToggle).toHaveAttribute("aria-expanded", "true");
+    await expect.element(screen.getByText("after", { exact: true })).toBeVisible();
+    await userEvent.click(loadedToggle);
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
