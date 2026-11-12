@@ -442,12 +442,15 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     // record or report the previous account's registration as current.
     return;
   }
-  const widgetToken =
-    Platform.OS === "ios" && supportsAgentAwarenessPush() && identity
-      ? agentWidgetToken(identity)
-      : null;
+  const widgetRefreshEnabled = Platform.OS === "ios" && supportsAgentAwarenessPush() && identity;
+  const widgetToken = widgetRefreshEnabled ? agentWidgetToken(identity, relayConfig.url) : null;
   // Persist the revocation URL before exposing this credential to the relay.
   if (widgetToken) configureAgentWidgetRefresh(relayConfig.url, widgetToken);
+  if (widgetRefreshEnabled) {
+    // Native credential rotation invalidates the stored observation's generation.
+    publishedWidgetContent = null;
+    publishReconciledWidget();
+  }
   const payload = widgetToken ? { ...body, widgetAccessToken: widgetToken } : body;
   // The relay URL participates so pointing the app at a different relay
   // invalidates the record and re-registers there.
@@ -558,6 +561,14 @@ function publishRegularWidget(props: AgentActivityProps): void {
     workingCount: props.workingCount,
     attentionCount: props.attentionCount,
     totalCount: props.totalCount,
+    observedActivities: props.observedActivities
+      ? Object.fromEntries(
+          Object.entries(props.observedActivities).map(([id, rows]) => [
+            id,
+            rows.map(({ updatedAt: _updatedAt, ...row }) => row),
+          ]),
+        )
+      : undefined,
     observedEnvironmentIds: props.observedEnvironmentIds
       ? [...props.observedEnvironmentIds].sort()
       : undefined,
@@ -593,6 +604,12 @@ function publishReconciledWidget(): void {
     attentionCount: result.attentionCount,
     totalCount: result.totalCount,
     observedEnvironmentIds: [...observedWidgetActivities.keys()],
+    observedActivities: Object.fromEntries(
+      [...observedWidgetActivities].map(([id, rows]) => [
+        id,
+        rows.map(({ threadId, phase, updatedAt }) => ({ threadId, phase, updatedAt })),
+      ]),
+    ),
     isStale: [...observedWidgetActivities.keys()].some((id) => !liveWidgetActivities.has(id)),
     expiresAt: confirmedAt + AGENT_ACTIVITY_FRESHNESS_MS,
     updatedAt: new Date().toISOString(),

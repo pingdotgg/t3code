@@ -4,11 +4,15 @@ import WidgetKit
 
 // Shared with the WidgetKit extension, which runs independently of React Native.
 enum T3AgentWidgetConfiguration {
-  static func token(identity: String) -> String? {
+  static func token(identity: String, url: String? = nil) -> String? {
     let token = AgentWidgetStorage.withLock { defaults -> String? in
+      if let url, !AgentWidgetStorage.prepareRelay(url: url, in: defaults) { return nil }
       if defaults.string(forKey: "t3_agent_widget_identity") == identity,
          let token = AgentWidgetCredential.read(),
-         !AgentWidgetCredential.pendingRevocations().contains(where: { $0.token == token }) { return token }
+         !AgentWidgetCredential.pendingRevocations().contains(where: { $0.token == token }) {
+        if let url { defaults.set(url, forKey: "t3_agent_widget_url") }
+        return token
+      }
       _ = AgentWidgetStorage.clearStoredState(in: defaults)
       // If Keychain cannot preserve revocation, keep the disabled credential for retry.
       guard AgentWidgetCredential.read() == nil else { return nil }
@@ -17,6 +21,7 @@ enum T3AgentWidgetConfiguration {
       let token = bytes.map { String(format: "%02x", $0) }.joined()
       guard AgentWidgetCredential.store(token) else { return nil }
       defaults.set(identity, forKey: "t3_agent_widget_identity")
+      if let url { defaults.set(url, forKey: "t3_agent_widget_url") }
       return token
     }.flatMap { $0 }
     AgentWidgetStorage.retryRevocations()
@@ -26,7 +31,8 @@ enum T3AgentWidgetConfiguration {
   static func configure(url: String, token: String) {
     _ = AgentWidgetStorage.withLock { defaults in
       guard defaults.string(forKey: "t3_agent_widget_identity") != nil,
-            AgentWidgetCredential.read() == token else { return }
+            AgentWidgetCredential.read() == token,
+            defaults.string(forKey: "t3_agent_widget_url") == nil || defaults.string(forKey: "t3_agent_widget_url") == url else { return }
       defaults.set(url, forKey: "t3_agent_widget_url")
     }
     AgentWidgetStorage.retryRevocations()

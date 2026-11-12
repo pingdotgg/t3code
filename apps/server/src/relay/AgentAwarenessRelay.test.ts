@@ -194,6 +194,7 @@ describe("startup agent activity", () => {
       oldFailed,
       newFailed,
       ThreadId.make("expired-snooze"),
+      ThreadId.make("active-snooze"),
     ]);
   });
 });

@@ -14,6 +14,7 @@ import type { SQL } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as SqlError from "effect/sql/SqlError";
 import { relayEnvironmentLinks, relayWidgetRevocations } from "../persistence/schema.ts";
 import * as RelayDb from "../db.ts";
 import * as RelayConfiguration from "../Config.ts";
@@ -64,6 +65,7 @@ function fixture(
   let revokedBeforeClaim = false;
   const currentDevice = { ...device };
   let revocationsAllowed = true;
+  let failCleanup = false;
   const revocations = new Set<string>();
   let activity = state;
   const queries: Array<ReadonlyArray<unknown>> = [];
@@ -122,19 +124,31 @@ function fixture(
     update: () => ({
       set: (values: Record<string, unknown>) => ({
         where: (condition: SQL) => {
-          const result = Effect.sync(() => {
-            updates.push(values);
-            const params = dialect.sqlToQuery(condition).params;
-            queries.push(params);
-            if (params.includes(tokenHash) && values.widgetAccessTokenHash === null)
-              present = false;
-            if (
-              params.includes(tokenHash) ||
-              params.includes(currentDevice.widgetPushToken ?? "")
-            ) {
-              Object.assign(currentDevice, values);
+          const result = Effect.suspend(() => {
+            if (failCleanup && values.widgetAccessTokenHash === null) {
+              failCleanup = false;
+              return Effect.fail(
+                new SqlError.SqlError({
+                  reason: new SqlError.ConnectionError({
+                    cause: new Error("cleanup write failed"),
+                  }),
+                }),
+              );
             }
-            return { rowCount: present ? 1 : 0 };
+            return Effect.sync(() => {
+              updates.push(values);
+              const params = dialect.sqlToQuery(condition).params;
+              queries.push(params);
+              if (params.includes(tokenHash) && values.widgetAccessTokenHash === null)
+                present = false;
+              if (
+                params.includes(tokenHash) ||
+                params.includes(currentDevice.widgetPushToken ?? "")
+              ) {
+                Object.assign(currentDevice, values);
+              }
+              return { rowCount: present ? 1 : 0 };
+            });
           });
           return Object.assign(result, {
             returning: () =>
@@ -226,6 +240,9 @@ function fixture(
     },
     expireBeforeClaim: () => {
       revokedBeforeClaim = true;
+    },
+    failNextCleanup: () => {
+      failCleanup = true;
     },
     allowRevocations: (allowed: boolean) => {
       revocationsAllowed = allowed;
@@ -334,7 +351,9 @@ describe("AgentWidgetRefresh", () => {
         expect((yield* widgets.refresh({ token })).aggregate?.activeCount).toBe(1);
         test.allowRevocations(false);
         yield* widgets.revoke({ token });
+        const cleanupWrites = test.updates.length;
         yield* widgets.revoke({ token });
+        expect(test.updates).toHaveLength(cleanupWrites);
         expect((yield* Effect.flip(widgets.refresh({ token })))._tag).toBe(
           "WidgetRefreshUnauthorized",
         );
@@ -345,6 +364,23 @@ describe("AgentWidgetRefresh", () => {
       }).pipe(Effect.provide(test.layer));
     },
   );
+  it.effect("retries device cleanup after persisting a revocation tombstone", () => {
+    const test = fixture();
+    return Effect.gen(function* () {
+      const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
+      test.failNextCleanup();
+      expect((yield* Effect.flip(widgets.revoke({ token })))._tag).toBe(
+        "WidgetRefreshPersistenceError",
+      );
+      test.allowRevocations(false);
+      yield* widgets.revoke({ token });
+      yield* widgets.notify({ userId: device.userId });
+      yield* widgets.process(job);
+      expect(test.queued).toEqual([]);
+      expect(test.pushes).toEqual([]);
+      expect(test.updates.at(-1)).toEqual({ widgetAccessTokenHash: null, widgetPushToken: null });
+    }).pipe(Effect.provide(test.layer));
+  });
   it.effect(
     "reads the latest owner state without app credentials and sees completion on the next read",
     () => {

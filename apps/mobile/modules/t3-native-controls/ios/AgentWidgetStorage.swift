@@ -68,6 +68,12 @@ enum AgentWidgetStorage {
     }
   }
 
+  static func prepareRelay(url: String, in defaults: UserDefaults, storeRevocation: (URLRequest) -> Bool = AgentWidgetCredential.preserveRevocation) -> Bool {
+    guard let previous = defaults.string(forKey: "t3_agent_widget_url"), previous != url else { return true }
+    clearStoredState(in: defaults, storeRevocation: storeRevocation)
+    return defaults.string(forKey: "t3_agent_widget_url") == nil && AgentWidgetCredential.read() == nil
+  }
+
   static func prepareRevocations(in defaults: UserDefaults, storeRevocation: (URLRequest) -> Bool = AgentWidgetCredential.preserveRevocation) {
     if defaults.string(forKey: "t3_agent_widget_identity") == nil, defaults.string(forKey: "t3_agent_widget_url") != nil {
       clearStoredState(in: defaults, storeRevocation: storeRevocation)

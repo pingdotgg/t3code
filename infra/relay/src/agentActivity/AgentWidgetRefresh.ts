@@ -101,15 +101,16 @@ const make = Effect.gen(function* () {
         .where(eq(relayWidgetRevocations.tokenHash, tokenHash))
         .limit(1)
         .pipe(persistenceError("revoke"));
-      if (revoked) return;
+
       const [device] = yield* db
         .select()
         .from(relayMobileDevices)
         .where(eq(relayMobileDevices.widgetAccessTokenHash, tokenHash))
         .limit(1)
         .pipe(persistenceError("revoke"));
+      if (revoked && !device) return;
       // Unknown tokens need tombstones for late registration, but cannot block a registered owner's sign-out.
-      if (!device && !(yield* revocationLimiter.allow))
+      if (!revoked && !device && !(yield* revocationLimiter.allow))
         return yield* new WidgetRefreshRateLimited();
       yield* db
         .insert(relayWidgetRevocations)

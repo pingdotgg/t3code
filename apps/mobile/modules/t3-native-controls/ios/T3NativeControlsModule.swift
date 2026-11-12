@@ -49,7 +49,7 @@ public final class T3NativeControlsModule: Module {
       Events("onMetricsChange")
     }
     Function("observeAgentWidget") { (props: String, timeline: String) in T3AgentWidgetConfiguration.observe(props: props, timeline: timeline) }
-    Function("agentWidgetToken") { (identity: String) in T3AgentWidgetConfiguration.token(identity: identity) }
+    Function("agentWidgetToken") { (identity: String, url: String?) in T3AgentWidgetConfiguration.token(identity: identity, url: url) }
     Function("configureAgentWidgetRefresh") { (url: String, token: String) in T3AgentWidgetConfiguration.configure(url: url, token: token) }
     Function("clearAgentWidgetRefresh") { T3AgentWidgetConfiguration.clear() }
 

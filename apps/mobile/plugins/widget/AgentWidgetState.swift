@@ -15,14 +15,24 @@ enum AgentWidgetState {
     base["expiresAt"] = freshnessDeadline.timeIntervalSince1970 * 1000
     let relayRows = base["activities"] as? [[String: Any]] ?? []
     let allLocalRows = localObservation?["activities"] as? [[String: Any]] ?? []
+    let observedActivities = localObservation?["observedActivities"] as? [String: [[String: Any]]]
+    let sourceRows = observedActivities.map { observations in
+      observations.flatMap { environmentId, rows in
+        rows.map { row in
+          var row = row
+          row["environmentId"] = environmentId
+          return row
+        }
+      }
+    } ?? allLocalRows
     let localTotal = localObservation?["totalCount"] as? Int
     let localCount = localObservation?["activeCount"] as? Int
-    let localComplete = localTotal == allLocalRows.count && localCount == allLocalRows.filter { isUnfinished($0) }.count
+    let localComplete = observedActivities != nil || (localTotal == allLocalRows.count && localCount == allLocalRows.filter { isUnfinished($0) }.count)
     let relayComplete = aggregate == nil || (base["totalCount"] as? Int == relayRows.count)
-    let observedScope = Set(localObservation?["observedEnvironmentIds"] as? [String] ?? [])
+    let observedScope = observedActivities.map { Set($0.keys) } ?? Set(localObservation?["observedEnvironmentIds"] as? [String] ?? [])
       .union(allLocalRows.compactMap { $0["environmentId"] as? String })
     let retainedScope = observedScope.filter { environmentId in
-      let rows = allLocalRows.filter { $0["environmentId"] as? String == environmentId }
+      let rows = sourceRows.filter { $0["environmentId"] as? String == environmentId }
       guard localComplete else { return true }
       if rows.isEmpty { return !relayComplete }
       return !rows.allSatisfy { row in
@@ -37,6 +47,7 @@ enum AgentWidgetState {
       }
     }
     let localRows = allLocalRows.filter { retainedScope.contains($0["environmentId"] as? String ?? "") }
+    let localSourceRows = sourceRows.filter { retainedScope.contains($0["environmentId"] as? String ?? "") }
     let remoteRows = relayRows.filter { !retainedScope.contains($0["environmentId"] as? String ?? "") }
     let countUnavailable = !retainedScope.isEmpty && !localComplete
     let overlappingScope = !retainedScope.isDisjoint(with: Set(environmentIds).union(relayRows.compactMap { $0["environmentId"] as? String }))
@@ -50,8 +61,11 @@ enum AgentWidgetState {
         localDeadline.map { $0 > date } == true ? row : stale(row)
       }
       props["activities"] = remoteRows + directRows
-      let unavailable = directRows.contains { $0["phase"] as? String == "stale" }
-      let directCount = directRows.filter { isUnfinished($0) }.count
+      let directSourceRows = localSourceRows.map { row in
+        localDeadline.map { $0 > date } == true ? row : stale(row)
+      }
+      let unavailable = directSourceRows.contains { $0["phase"] as? String == "stale" }
+      let directCount = directSourceRows.filter { isUnfinished($0) }.count
       props["activeCount"] = unavailable || countUnavailable || !remoteCountComplete ? -1 : (!overlappingScope ? (base["activeCount"] as? Int ?? 0) : remoteRows.filter { isUnfinished($0) }.count) + directCount
       for key in ["workingCount", "attentionCount", "totalCount"] {
         let total = base[key] as? Int
@@ -62,7 +76,7 @@ enum AgentWidgetState {
           return true
         }
         if !unavailable, !countUnavailable, let total, total >= 0, !overlappingScope || relayComplete {
-          props[key] = (!overlappingScope ? total : remoteRows.filter(matches).count) + directRows.filter(matches).count
+          props[key] = (!overlappingScope ? total : remoteRows.filter(matches).count) + directSourceRows.filter(matches).count
         } else {
           props.removeValue(forKey: key)
         }
@@ -70,7 +84,7 @@ enum AgentWidgetState {
       return props
     }
     var entries = [entry(at: now, props: merged(at: now))]
-    if let localDeadline, localDeadline > now, localDeadline < freshnessDeadline, localRows.contains(where: isUnfinished) {
+    if let localDeadline, localDeadline > now, localDeadline < freshnessDeadline, localSourceRows.contains(where: isUnfinished) {
       entries.append(entry(at: localDeadline, props: merged(at: localDeadline)))
     }
     var expired = merged(at: freshnessDeadline)

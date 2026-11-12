@@ -1060,7 +1060,17 @@ describe("makeRelayDeviceRegistrationRequest", () => {
   });
 
   it.effect("registers the APNs device when cloud auth becomes available", () => {
-    vi.mocked(agentWidgetToken).mockReturnValue("a".repeat(64));
+    addLiveEnvironment();
+    setLiveShell("running");
+    let nativeObservation: Parameters<typeof publishAgentActivityWidget>[0] | undefined;
+    vi.mocked(publishAgentActivityWidget).mockImplementation((props) => {
+      nativeObservation = props;
+      return true;
+    });
+    vi.mocked(agentWidgetToken).mockImplementation((_identity, url) => {
+      if (url) nativeObservation = undefined;
+      return "a".repeat(64);
+    });
     let recoveryAtRegistration: Parameters<typeof configureAgentWidgetRefresh> | undefined;
     const fetchMock = vi.fn((request: RequestInfo | URL) => {
       const url = request instanceof Request ? request.url : String(request);
@@ -1093,6 +1103,10 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     return Effect.gen(function* () {
       yield* runBackgroundOperations();
 
+      expect(nativeObservation?.activities).toEqual([
+        expect.objectContaining({ threadId: "local-thread", phase: "running" }),
+      ]);
+      expect(agentWidgetToken).toHaveBeenLastCalledWith("user-a", "https://relay.example.test");
       expect(recoveryAtRegistration).toEqual(["https://relay.example.test", "a".repeat(64)]);
       const deviceCall = fetchMock.mock.calls.find((call) => {
         const request = call[0];
@@ -2197,6 +2211,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           expect.objectContaining({
             activeCount: null,
             isStale: false,
+            observedActivities: {
+              [liveEnvironmentId]: [expect.objectContaining({ threadId: "local-thread" })],
+            },
             activities: [expect.objectContaining({ threadId: "local-thread", status: "Working" })],
           }),
         );
