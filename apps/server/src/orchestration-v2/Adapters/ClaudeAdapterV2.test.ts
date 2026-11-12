@@ -18160,7 +18160,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("extracts text from direct content-block subagent results", () =>
+  it.effect.each([
+    {
+      label: "extracts text from direct content-block subagent results",
+      content: [
+        { type: "text", text: "First line." },
+        { type: "text", text: "Second line." },
+      ],
+      expected: "First line.\nSecond line.",
+    },
+    {
+      label: "drops Claude Code's tools-used note from a subagent result",
+      content: [
+        {
+          type: "text",
+          text: "<tools-used-before-summary>Read</tools-used-before-summary>\n\nadd (line 1)\nmean (line 6)",
+        },
+      ],
+      expected: "add (line 1)\nmean (line 6)",
+    },
+  ])("$label", ({ content, expected }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const SUBAGENT_TASK_ID = "task-direct-content-blocks";
@@ -18214,10 +18233,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 {
                   type: "tool_result",
                   tool_use_id: SUBAGENT_TOOL_USE_ID,
-                  content: [
-                    { type: "text", text: "First line." },
-                    { type: "text", text: "Second line." },
-                  ],
+                  content,
                 },
               ],
             },
@@ -18228,7 +18244,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* harness.until(() => subagentEvents().at(-1)?.subagent.status === "completed");
 
-        assert.equal(subagentEvents().at(-1)?.subagent.result, "First line.\nSecond line.");
+        assert.equal(subagentEvents().at(-1)?.subagent.result, expected);
 
         yield* Queue.offer(
           harness.sdkMessages,

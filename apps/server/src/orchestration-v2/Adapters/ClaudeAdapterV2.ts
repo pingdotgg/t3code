@@ -3593,7 +3593,15 @@ function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   return claudeNativeToolOutputText(output);
 }
 
+// Claude Code prefixes foreground Agent results with a note for the parent model, not the report.
+const CLAUDE_TOOLS_USED_NOTE =
+  /^\s*<tools-used-before-summary>[^<]*<\/tools-used-before-summary>\s*/;
+
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
+  return claudeSubagentRawResultText(output).replace(CLAUDE_TOOLS_USED_NOTE, "");
+}
+
+function claudeSubagentRawResultText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   const content = Array.isArray(value)
     ? value
