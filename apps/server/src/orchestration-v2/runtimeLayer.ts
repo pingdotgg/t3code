@@ -386,8 +386,7 @@ export const layerProduction = Layer.mergeAll(
   WorktreeBranchSync.layer.pipe(
     Layer.provide(Layer.merge(layerThreadManagementProvided, ProjectionStore.layer)),
   ),
-  layer.pipe(Layer.provide(layerProjectService)),
-  layerProjectService,
+  layer,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
   layerScheduledTaskProvided,
@@ -412,5 +411,7 @@ export const layerProduction = Layer.mergeAll(
 ).pipe(
   Layer.provide(ResourceCleanupService.layer.pipe(Layer.provide(layerScheduledTaskProvided))),
   Layer.provide(Scheduler.layer),
+  // Below the whole group: memoized layers that read ProjectService optionally must all see it.
+  Layer.provideMerge(layerProjectService),
   Layer.provideMerge(layerEventInfrastructure),
 );
