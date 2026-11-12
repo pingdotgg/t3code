@@ -27,6 +27,13 @@ export const openRouterIcon: ProviderIcon = {
   ],
 };
 
+// ElevenLabs' two-bar logomark.
+export const elevenLabsIcon: ProviderIcon = {
+  viewBox: "0 0 24 24",
+  fill: { light: "#000000", dark: "#FFFFFF" },
+  paths: [{ d: "M7 3h3.5v18H7zM13.5 3H17v18h-3.5z" }],
+};
+
 export const providerClients = makeProviderClientRegistry([
   {
     driverKind: ProviderDriverKind.make("codex"),

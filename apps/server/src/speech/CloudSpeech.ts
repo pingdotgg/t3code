@@ -20,7 +20,13 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import {
+  FetchHttpClient,
+  Headers,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
 import * as ServerSettings from "../serverSettings.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import { applySpeechAliases } from "./customWords.ts";
@@ -31,9 +37,12 @@ const endpoints = {
   openai: { url: "https://api.openai.com/v1/audio/transcriptions", model: "gpt-transcribe" },
   xai: { url: "https://api.x.ai/v1/stt", model: "grok-voice-transcribe-2.0" },
   openrouter: { url: "https://openrouter.ai/api/v1/audio/transcriptions" },
+  elevenlabs: { url: "https://api.elevenlabs.io/v1/speech-to-text", model: "scribe_v3" },
 };
 const OPENROUTER_CATALOG_URL =
   "https://openrouter.ai/api/v1/models?output_modalities=transcription&zdr=true";
+// ElevenLabs authenticates with `xi-api-key`, which Effect's span headers don't redact by default.
+const REDACTED_HEADERS = [...Headers.CurrentRedactedNames.defaultValue(), "xi-api-key"];
 const isApiKey = Schema.is(CloudSpeechApiKey);
 const isModelId = Schema.is(CloudSpeechModelId);
 const sameCredential = Schema.toEquivalence(SettingsSecretValue);
@@ -92,6 +101,22 @@ function audioBody(
   return HttpClientRequest.bodyFormData(form);
 }
 
+function elevenLabsBody(audio: ArrayBuffer, language: string, options: SpeechTranscriptionOptions) {
+  const form = new FormData();
+  form.set("model_id", endpoints.elevenlabs.model);
+  form.set("tag_audio_events", "false");
+  form.set("timestamps_granularity", "none");
+  if (language !== "auto") form.set("language_code", language);
+  form.set("no_verbatim", String(options.speechRemoveFillerWords && !options.speechCorrectionWord));
+  for (const { term } of options.speechCustomWords) {
+    // Scribe rejects the whole request for a keyterm over five words or with these characters.
+    if (/[<>{}[\]\\]/.test(term) || term.trim().split(/\s+/).length > 5) continue;
+    form.append("keyterms", term);
+  }
+  form.set("file", new Blob([audio], { type: "audio/wav" }), "dictation.wav");
+  return HttpClientRequest.bodyFormData(form);
+}
+
 function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
   return HttpClientRequest.bodyJsonUnsafe({
     model,
@@ -130,10 +155,11 @@ export const layer = Layer.effect(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
     const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
+      Effect.map(({ openai, xai, openrouter, elevenlabs }) => ({
         openai: Boolean(openai),
         xai: Boolean(xai),
         openrouter: Boolean(openrouter),
+        elevenlabs: Boolean(elevenlabs),
       })),
     );
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -142,6 +168,7 @@ export const layer = Layer.effect(
         .pipe(
           Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
           Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+          Effect.provideService(Headers.CurrentRedactedNames, REDACTED_HEADERS),
         );
     const fetchCatalog = Effect.fn("CloudSpeech.catalog")(function* () {
       const unavailable = () =>
@@ -209,10 +236,14 @@ export const layer = Layer.effect(
         if (!isApiKey(key)) return yield* unreadable();
         const audio = wave(samples);
         const request = HttpClientRequest.post(endpoints[provider].url).pipe(
-          HttpClientRequest.bearerToken(Redacted.make(key)),
+          provider === "elevenlabs"
+            ? HttpClientRequest.setHeader("xi-api-key", key)
+            : HttpClientRequest.bearerToken(Redacted.make(key)),
           provider === "openrouter"
             ? openRouterBody(model!, audio, language)
-            : audioBody(provider, audio, language, options),
+            : provider === "elevenlabs"
+              ? elevenLabsBody(audio, language, options)
+              : audioBody(provider, audio, language, options),
         );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
         // A catalog fetch or vault lookup may have outlived the credential it started with.

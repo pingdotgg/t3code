@@ -10,8 +10,36 @@ import { expect, vi } from "vite-plus/test";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 
-it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved key", (provider) =>
+const wire = {
+  openai: {
+    url: "https://api.openai.com/v1/audio/transcriptions",
+    auth: ["authorization", "Bearer "],
+    model: ["model", "gpt-transcribe"],
+    keyterm: "keywords[]",
+    language: "languages[]",
+  },
+  xai: {
+    url: "https://api.x.ai/v1/stt",
+    auth: ["authorization", "Bearer "],
+    model: ["model", "grok-voice-transcribe-2.0"],
+    keyterm: "keyterm",
+    language: "language",
+  },
+  elevenlabs: {
+    url: "https://api.elevenlabs.io/v1/speech-to-text",
+    auth: ["xi-api-key", ""],
+    model: ["model_id", "scribe_v3"],
+    keyterm: "keyterms",
+    language: "language_code",
+  },
+} as const;
+
+const fixedProviders = Object.keys(wire) as Array<keyof typeof wire>;
+
+it.effect.each(fixedProviders)("sends only to %s using its own saved key", (provider) =>
   Effect.gen(function* () {
+    const { url: endpoint, auth, model, keyterm, language } = wire[provider];
+    const other = provider === "openai" ? "xai" : "openai";
     const reference = {
       provider: SecretProviderId.make("work"),
       reference: "op://Work/Voice/key",
@@ -43,31 +71,37 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
         .transcribe(provider, pcm, {
           ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
           speechLanguage: "en",
-          speechCustomWords: [{ term: "T3 Code", aliases: [] }],
+          speechCustomWords: [
+            { term: "T3 Code", aliases: [] },
+            { term: "{brace}", aliases: [] },
+          ],
         })
         .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
-    yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
+    yield* service.setKey(other, Redacted.make("other"));
     expect((yield* Effect.flip(transcribe()))._tag).toBe("CloudSpeechError");
     yield* service.setKey(provider, Redacted.make("chosen"));
-    expect(yield* service.configured).toEqual({ openai: true, xai: true, openrouter: false });
+    expect(yield* service.configured).toEqual({
+      openai: false,
+      xai: false,
+      openrouter: false,
+      elevenlabs: false,
+      [other]: true,
+      [provider]: true,
+    });
     yield* Effect.flip(transcribe(new Uint8Array(3)));
     expect(upstream).not.toHaveBeenCalled();
     expect(yield* transcribe()).toBe("hello");
     const [url, init] = upstream.mock.calls[0]!;
-    expect(String(url)).toBe(
-      {
-        openai: "https://api.openai.com/v1/audio/transcriptions",
-        xai: "https://api.x.ai/v1/stt",
-      }[provider],
-    );
+    expect(String(url)).toBe(endpoint);
     expect(init?.redirect).toBe("error");
-    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer chosen");
+    expect(new Headers(init?.headers).get(auth[0])).toBe(`${auth[1]}chosen`);
     const form = init?.body as FormData;
-    expect(form.get("model")).toBe(
-      provider === "openai" ? "gpt-transcribe" : "grok-voice-transcribe-2.0",
+    expect(form.get(model[0])).toBe(model[1]);
+    // Scribe fails the whole request on bracket characters, so those terms stay local.
+    expect(form.getAll(keyterm)).toEqual(
+      provider === "elevenlabs" ? ["T3 Code"] : ["T3 Code", "{brace}"],
     );
-    expect(form.getAll(provider === "openai" ? "keywords[]" : "keyterm")).toEqual(["T3 Code"]);
-    expect(form.get(provider === "openai" ? "languages[]" : "language")).toBe("en");
+    expect(form.get(language)).toBe("en");
     expect([...form.keys()].at(-1)).toBe("file");
     const wav = new DataView(yield* Effect.promise(() => (form.get("file") as Blob).arrayBuffer()));
     expect(wav.getUint32(24, true)).toBe(16_000);
@@ -84,8 +118,8 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     resolved = "resolved-fixture";
     expect(yield* transcribe()).toBe("hello");
     expect(read).toHaveBeenCalledWith([reference]);
-    expect(new Headers(upstream.mock.calls[2]?.[1]?.headers).get("authorization")).toBe(
-      "Bearer resolved-fixture",
+    expect(new Headers(upstream.mock.calls[2]?.[1]?.headers).get(auth[0])).toBe(
+      `${auth[1]}resolved-fixture`,
     );
     resolved = undefined;
     expect(yield* Effect.flip(transcribe())).toMatchObject({
