@@ -235,6 +235,32 @@ it.effect("shows a listed pull request's preview without asking the host again",
   }),
 );
 
+it.effect("a finished turn in one project keeps another project's listing cached", () =>
+  Effect.gen(function* () {
+    const reads: Array<string> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" }),
+        project({ id: "p2", title: "api", workspaceRoot: "/a", repository: "acme/api" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: (input) =>
+            Effect.sync(() => {
+              reads.push(input.repository);
+              return { items: [], truncated: false, continues: false };
+            }),
+        }),
+      ],
+    });
+    yield* service.list({ state: "open", projectId: "p2" as ProjectId });
+    assert.deepStrictEqual(reads, ["acme/api"]);
+    yield* service.refreshAfterTurn("p1" as ProjectId);
+    yield* service.list({ state: "open", projectId: "p2" as ProjectId });
+    assert.deepStrictEqual(reads, ["acme/api"]);
+  }),
+);
+
 it.effect("a list read under a pinned account leaves the shared preview to the host", () =>
   Effect.gen(function* () {
     let previewReads = 0;
