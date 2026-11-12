@@ -99,10 +99,6 @@ function isSettledSubagentStatus(status: OrchestrationV2Subagent["status"]): boo
   return !isOrchestrationV2WorkActive(status);
 }
 
-// The prompt waits on the baseline, which must precede the agent's edits, so it cannot run alongside.
-// A workspace too slow for this budget starts without one rather than stalling every turn.
-const BASELINE_CAPTURE_BUDGET = Duration.seconds(5);
-
 /** A provider-native subagent's turns arrive on its parent's run, but the parent agent started them. */
 const NATIVE_SUBAGENT_TURN_ORIGIN: ProviderUsageAnalytics.ProviderTurnOrigin = {
   createdBy: "agent",
@@ -972,7 +968,6 @@ export const layer: Layer.Layer<
                   ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
                 })
           ).pipe(
-            Effect.timeout(BASELINE_CAPTURE_BUDGET),
             Effect.catchCauseIf(
               (cause) => !Cause.hasInterruptsOnly(cause),
               (_cause) =>
