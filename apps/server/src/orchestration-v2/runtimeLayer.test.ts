@@ -3571,7 +3571,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       assert.deepEqual(yield* watchOf, started);
 
-      const recorded = { ...started, headSha: "abc123", failedChecks: ["lint"], wakes: 1 };
+      const recorded = {
+        ...started,
+        headSha: "abc123",
+        failedChecks: ["lint"],
+        reportedFailures: ['["abc123","https://github.com/o/r/actions/runs/1/job/2","failure"]'],
+        wakes: 1,
+      };
       yield* orchestrator.dispatch({
         type: "thread.pull-request-watch.sync",
         commandId: CommandId.make("pr-watch-record"),
@@ -3610,6 +3616,21 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isUndefined(yield* watchOf);
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(messages, []);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-restart-history"),
+        threadId,
+        ...key,
+        watching: true,
+      });
+      assert.deepEqual((yield* watchOf)?.reportedFailures, recorded.reportedFailures);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-restart-stop"),
+        threadId,
+        ...key,
+        watching: false,
+      });
     }),
   );
 

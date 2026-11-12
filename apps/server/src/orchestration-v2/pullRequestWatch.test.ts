@@ -234,6 +234,47 @@ describe("evaluatePullRequestWatch", () => {
       { kind: "checks-failed", failed: [check("lint", "failure")] },
       { kind: "checks-awaiting-approval", checks: [approval] },
     ]);
+
+    // A job URL identifies its run and immutable job attempt. A transient missing
+    // or pending row must not make the same consumed failure news again.
+    const job = (runId: number, jobId: number) => ({
+      ...check("lint", "failure"),
+      url: `${run(runId)}/job/${jobId}`,
+    });
+    const seen = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [job(10, 20), bot] }),
+      noRemarks,
+    );
+    const pending = evaluatePullRequestWatch(
+      seen.next,
+      detail({ checks: [check("lint", "pending"), bot] }),
+      noRemarks,
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(pending.next, detail({ checks: [job(10, 20), bot] }), noRemarks)
+        .changes,
+      [],
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        seen.next,
+        detail({
+          checks: [{ ...job(10, 20), url: `${run(10)}/job/20?check_suite_focus=true#step:1` }, bot],
+        }),
+        noRemarks,
+      ).changes,
+      [],
+    );
+    for (const fresh of [job(10, 21), job(11, 22)]) {
+      const next = evaluatePullRequestWatch(seen.next, detail({ checks: [fresh, bot] }), noRemarks);
+      assert.deepEqual(next.changes, [{ kind: "checks-failed", failed: [fresh] }]);
+      assert.deepEqual(
+        evaluatePullRequestWatch(next.next, detail({ checks: [job(10, 20), bot] }), noRemarks)
+          .changes,
+        [],
+      );
+    }
   });
 
   it("reports passed once the required checks pass, whatever the others do", () => {
