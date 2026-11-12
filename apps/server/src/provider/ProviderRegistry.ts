@@ -855,7 +855,9 @@ export const layer = Layer.effect(
     // source-control discovery refreshes the same PATH and must not consume the change.
     const hostEnvironment = yield* HostProcess.Environment;
     const checkedPathRef = yield* Ref.make(hostEnvironment.PATH);
-    const recoverMissingClis = yield* Effect.cachedWithTTL(
+    // Instances listed when PATH last gained a folder, so built from the PATH before it.
+    const stalePathInstancesRef = yield* Ref.make(new WeakSet<ProviderInstance>());
+    const refreshPath = yield* Effect.cachedWithTTL(
       Effect.gen(function* () {
         yield* refreshPathFromLoginShell().pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -867,14 +869,27 @@ export const layer = Layer.effect(
           .split(":")
           .some((entry) => entry !== "" && !checked.has(entry));
         if (!gained) return;
-        const live = yield* Ref.get(liveSubsRef);
-        const missing = (yield* Ref.get(providersRef))
-          .filter((provider) => isCliMissing(provider) && live.has(provider.instanceId))
-          .map((provider) => provider.instanceId);
-        yield* instanceRegistryMutator.rebuild(new Set(missing));
+        const instances = yield* instanceRegistry.listInstances;
+        yield* Ref.set(stalePathInstancesRef, new WeakSet(instances));
       }).pipe(Effect.ignoreCause({ log: true })),
       MISSING_CLI_PATH_REFRESH_INTERVAL,
     );
+    // Read from the registry, not liveSubsRef: an instance reports before initial sync lists it.
+    // Every report checks, as an instance still probing when PATH changed reports after it.
+    const recoverMissingClis = Effect.gen(function* () {
+      yield* refreshPath;
+      const missing = new Set(
+        (yield* Ref.get(providersRef)).filter(isCliMissing).map((provider) => provider.instanceId),
+      );
+      const candidates = (yield* instanceRegistry.listInstances).filter((instance) =>
+        missing.has(instance.instanceId),
+      );
+      const targets = yield* Ref.modify(stalePathInstancesRef, (stale) => {
+        const taken = candidates.filter((instance) => stale.delete(instance));
+        return [new Set(taken.map((instance) => instance.instanceId)), stale] as const;
+      });
+      if (targets.size > 0) yield* instanceRegistryMutator.rebuild(targets);
+    }).pipe(Effect.ignoreCause({ log: true }));
 
     const syncLiveSources = syncSemaphore.withPermits(1)(
       Effect.gen(function* () {

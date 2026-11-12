@@ -359,6 +359,113 @@ const layerTestNodeServices = Layer.mergeAll(
   ).pipe(Layer.provide(NodeServices.layer)),
 );
 
+// An instance that only reports the snapshots a test hands it.
+const makeStubInstance = (
+  provider: ServerProvider,
+  changes: Stream.Stream<ServerProvider>,
+  getSnapshot: Effect.Effect<ServerProvider> = Effect.succeed(provider),
+) =>
+  ({
+    instanceId: provider.instanceId,
+    driverKind: provider.driver,
+    continuationIdentity: {
+      driverKind: provider.driver,
+      continuationKey: `${provider.driver}:instance:${provider.instanceId}`,
+    },
+    displayName: undefined,
+    enabled: true,
+    snapshot: {
+      resolveMaintenance: () =>
+        Effect.succeed(
+          makeManualOnlyProviderMaintenanceCapabilities({
+            provider: provider.driver,
+            packageName: null,
+          }),
+        ),
+      getSnapshot,
+      refresh: Effect.succeed(provider),
+      streamChanges: changes,
+      applyUsageLimits: () => Effect.void,
+    },
+    orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+    textGeneration: {} as ProviderInstance["textGeneration"],
+  }) satisfies ProviderInstance;
+
+const installedCliProvider = {
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
+  status: "ready",
+  enabled: true,
+  installed: true,
+  auth: { status: "authenticated" },
+  checkedAt: "2026-06-10T00:00:00.000Z",
+  version: "1.0.0",
+  models: [],
+  slashCommands: [],
+  skills: [],
+} as const satisfies ServerProvider;
+
+const missingCliProvider = {
+  ...installedCliProvider,
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  status: "error",
+  installed: false,
+  auth: { status: "unknown" },
+  version: null,
+  message: "Claude Agent CLI (`claude`) was not found on PATH.",
+} as const satisfies ServerProvider;
+
+const loginShellPrinting = (shellPath: () => string) =>
+  layerMockSpawner(() => ({
+    stdout: `__T3CODE_ENV_PATH_START__\n${shellPath()}\n__T3CODE_ENV_PATH_END__\n`,
+    stderr: "",
+    code: 0,
+  }));
+
+// The registry over stub instances, recording the instances it asks to rebuild.
+const buildMissingCliRegistry = (input: {
+  readonly instances: Ref.Ref<ReadonlyArray<ProviderInstance>>;
+  readonly instanceChanges: PubSub.PubSub<void>;
+  readonly rebuilds: Queue.Queue<ReadonlyArray<ProviderInstanceId>>;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly loginShell: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
+  readonly scope: Scope.Scope;
+}) =>
+  Layer.build(
+    ProviderRegistry.layer.pipe(
+      Layer.provide(
+        Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({
+          rebuild: (instanceIds) => Queue.offer(input.rebuilds, [...instanceIds]),
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+          getInstance: (requestedId) =>
+            Ref.get(input.instances).pipe(
+              Effect.map((instances) =>
+                instances.find((instance) => instance.instanceId === requestedId),
+              ),
+            ),
+          listInstances: Ref.get(input.instances),
+          listUnavailable: Effect.succeed([]),
+          streamChanges: Stream.empty,
+          subscribeChanges: PubSub.subscribe(input.instanceChanges),
+        }),
+      ),
+      Layer.provide(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3-provider-registry-missing-cli-",
+        }),
+      ),
+      Layer.provide(Layer.merge(NodeServices.layer, input.loginShell)),
+    ),
+  ).pipe(
+    Effect.provideService(HostProcess.Platform, "darwin"),
+    Effect.provideService(HostProcess.Environment, input.environment),
+    Scope.provide(input.scope),
+  );
+
 it.layer(
   Layer.mergeAll(layerTestNodeServices, ServerSettingsModule.layerTest(), layerTestHttpClient),
 )("ProviderRegistry", (it) => {
@@ -2557,106 +2664,31 @@ it.layer(
       "rebuilds instances with a missing CLI when the login shell PATH gains a folder",
       () =>
         Effect.gen(function* () {
-          const makeInstance = (provider: ServerProvider, changes: Stream.Stream<ServerProvider>) =>
-            ({
-              instanceId: provider.instanceId,
-              driverKind: provider.driver,
-              continuationIdentity: {
-                driverKind: provider.driver,
-                continuationKey: `${provider.driver}:instance:${provider.instanceId}`,
-              },
-              displayName: undefined,
-              enabled: true,
-              snapshot: {
-                resolveMaintenance: () =>
-                  Effect.succeed(
-                    makeManualOnlyProviderMaintenanceCapabilities({
-                      provider: provider.driver,
-                      packageName: null,
-                    }),
-                  ),
-                getSnapshot: Effect.succeed(provider),
-                refresh: Effect.succeed(provider),
-                streamChanges: changes,
-                applyUsageLimits: () => Effect.void,
-              },
-              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-              textGeneration: {} as ProviderInstance["textGeneration"],
-            }) satisfies ProviderInstance;
-          const installed = {
-            instanceId: ProviderInstanceId.make("codex"),
-            driver: ProviderDriverKind.make("codex"),
-            status: "ready",
-            enabled: true,
-            installed: true,
-            auth: { status: "authenticated" },
-            checkedAt: "2026-06-10T00:00:00.000Z",
-            version: "1.0.0",
-            models: [],
-            slashCommands: [],
-            skills: [],
-          } as const satisfies ServerProvider;
-          const missing = {
-            ...installed,
-            instanceId: ProviderInstanceId.make("claudeAgent"),
-            driver: ProviderDriverKind.make("claudeAgent"),
-            status: "error",
-            installed: false,
-            auth: { status: "unknown" },
-            version: null,
-            message: "Claude Agent CLI (`claude`) was not found on PATH.",
-          } as const satisfies ServerProvider;
+          const missing = missingCliProvider;
           const probes = yield* PubSub.unbounded<ServerProvider>();
-          const instances = [
-            makeInstance(installed, Stream.empty),
-            makeInstance(missing, Stream.fromPubSub(probes)),
-          ];
+          const instances = yield* Ref.make<ReadonlyArray<ProviderInstance>>([
+            makeStubInstance(installedCliProvider, Stream.empty),
+            makeStubInstance(missing, Stream.fromPubSub(probes)),
+          ]);
           const rebuilds = yield* Queue.unbounded<ReadonlyArray<ProviderInstanceId>>();
           const environment: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
           let shellPath = "/usr/bin";
           let shellReads = 0;
-          const loginShell = layerMockSpawner(() => {
+          const loginShell = loginShellPrinting(() => {
             shellReads += 1;
-            return {
-              stdout: `__T3CODE_ENV_PATH_START__\n${shellPath}\n__T3CODE_ENV_PATH_END__\n`,
-              stderr: "",
-              code: 0,
-            };
+            return shellPath;
           });
 
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-          yield* Layer.build(
-            ProviderRegistry.layer.pipe(
-              Layer.provide(
-                Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({
-                  rebuild: (instanceIds) => Queue.offer(rebuilds, [...instanceIds]),
-                }),
-              ),
-              Layer.provide(
-                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
-                  getInstance: (requestedId) =>
-                    Effect.succeed(
-                      instances.find((instance) => instance.instanceId === requestedId),
-                    ),
-                  listInstances: Effect.succeed(instances),
-                  listUnavailable: Effect.succeed([]),
-                  streamChanges: Stream.empty,
-                  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
-                }),
-              ),
-              Layer.provide(
-                ServerConfig.layerTest(process.cwd(), {
-                  prefix: "t3-provider-registry-missing-cli-",
-                }),
-              ),
-              Layer.provide(Layer.merge(NodeServices.layer, loginShell)),
-            ),
-          ).pipe(
-            Effect.provideService(HostProcess.Platform, "darwin"),
-            Effect.provideService(HostProcess.Environment, environment),
-            Scope.provide(scope),
-          );
+          yield* buildMissingCliRegistry({
+            instances,
+            instanceChanges: yield* PubSub.unbounded<void>(),
+            rebuilds,
+            environment,
+            loginShell,
+            scope,
+          });
           const probeMissing = (checkedAt: string) =>
             PubSub.publish(probes, { ...missing, checkedAt });
 
@@ -2678,6 +2710,69 @@ it.layer(
           yield* probeMissing("2026-06-10T00:10:00.000Z");
           expect(yield* Queue.take(rebuilds)).toEqual([missing.instanceId]);
           expect(shellReads).toBe(3);
+        }),
+    );
+
+    it.effect(
+      "rebuilds an instance built before PATH gained a folder whenever it reports a missing CLI",
+      () =>
+        Effect.gen(function* () {
+          const notYetChecked = {
+            ...missingCliProvider,
+            status: "ready",
+            installed: true,
+            version: "1.0.0",
+          } as const satisfies ServerProvider;
+          const laterProbes = yield* PubSub.unbounded<ServerProvider>();
+          const instances = yield* Ref.make<ReadonlyArray<ProviderInstance>>([
+            makeStubInstance(notYetChecked, Stream.fromPubSub(laterProbes)),
+          ]);
+          const instanceChanges = yield* PubSub.unbounded<void>();
+          const rebuilds = yield* Queue.unbounded<ReadonlyArray<ProviderInstanceId>>();
+          const environment: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+          let shellPath = "/usr/bin";
+          let shellReads = 0;
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          yield* buildMissingCliRegistry({
+            instances,
+            instanceChanges,
+            rebuilds,
+            environment,
+            loginShell: loginShellPrinting(() => {
+              shellReads += 1;
+              return shellPath;
+            }),
+            scope,
+          });
+
+          // Initial sync subscribes before it reads, so an added instance can report a missing
+          // CLI before the registry counts it as live.
+          const added = {
+            ...missingCliProvider,
+            instanceId: ProviderInstanceId.make("claudeAgentAdded"),
+          } as const satisfies ServerProvider;
+          const addedRead = yield* Deferred.make<void>();
+          yield* Ref.update(instances, (current) => [
+            ...current,
+            makeStubInstance(
+              added,
+              Stream.make(added),
+              Deferred.await(addedRead).pipe(Effect.as(added)),
+            ),
+          ]);
+          shellPath = "/home/me/.local/bin:/usr/bin";
+          yield* PubSub.publish(instanceChanges, undefined);
+          expect(yield* Queue.take(rebuilds)).toEqual([added.instanceId]);
+          yield* Deferred.succeed(addedRead, undefined);
+
+          // An instance still checking when PATH changed copied the old PATH too.
+          yield* PubSub.publish(laterProbes, {
+            ...missingCliProvider,
+            checkedAt: "2026-06-10T00:05:00.000Z",
+          });
+          expect(yield* Queue.take(rebuilds)).toEqual([notYetChecked.instanceId]);
+          expect(shellReads).toBe(1);
         }),
     );
 
