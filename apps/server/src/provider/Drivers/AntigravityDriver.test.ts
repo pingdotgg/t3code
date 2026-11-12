@@ -470,14 +470,17 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         const bundled = resolveAntigravityReleaseAsset(hostPlatform, hostArch);
         if (!bundled) return;
         const h = yield* makeHarness();
-        h.controls.selected = { ...(yield* h.makeExecutable("1.3.0")), version: "1.3.0" };
-        yield* h.refresh();
-        const snapshot = yield* h.instance.snapshot.getSnapshot;
-        expect(snapshot.versionAdvisory).toMatchObject({
-          status: "behind_latest",
-          currentVersion: "1.3.0",
-          latestVersion: bundled.version,
-        });
+        // Older releases recorded the version with the executable's name prefix.
+        for (const version of ["1.3.0", "agy_acp_server_1.1.1"]) {
+          h.controls.selected = { ...(yield* h.makeExecutable(version)), version };
+          yield* h.refresh();
+          const snapshot = yield* h.instance.snapshot.getSnapshot;
+          expect(snapshot.versionAdvisory).toMatchObject({
+            status: "behind_latest",
+            currentVersion: version,
+            latestVersion: bundled.version,
+          });
+        }
         yield* h.assertClosed;
       }).pipe(Effect.scoped),
   );
