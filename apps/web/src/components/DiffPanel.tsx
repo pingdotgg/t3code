@@ -767,6 +767,8 @@ export default function DiffPanel({
   // A turn diff names repository files by their prefix; a repository's
   // Changes are relative to its worktree. Either way the file opens there.
   const repositoryFileTarget = (filePath: string) => {
+    // A tool call names files as the provider wrote them, not under the selected worktree.
+    if (toolCallSelection) return null;
     if (selectedTurn) {
       const target = resolveCheckpointFilePath(selectedTurn.repositories, filePath);
       return target === null

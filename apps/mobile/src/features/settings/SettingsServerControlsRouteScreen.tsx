@@ -493,7 +493,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     key={targetsKey}
                     enabled={uniform("repoWorktrees")}
                     instructions={uniform("repoWorktreeInstructions")}
-                    disabled={disabledFor("repoWorktrees")}
+                    disabled={{
+                      enabled: disabledFor("repoWorktrees"),
+                      instructions: disabledFor("repoWorktreeInstructions"),
+                    }}
                     projectSelected={projectSelected}
                     onChange={write}
                   />

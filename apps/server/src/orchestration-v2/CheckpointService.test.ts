@@ -295,6 +295,7 @@ it.effect(
         assert.strictEqual((yield* Ref.get(refs)).size, 1);
 
         // A repository worktree's baseline has the same budget and records the timeout.
+        const awaitRepositoryBaseline = yield* watchSnapshots;
         const repositoryBaseline = yield* checkpoints
           .captureRepositoryBaseline({
             threadId: scope.threadId,
@@ -302,6 +303,7 @@ it.effect(
             ordinalWithinScope: 0,
           })
           .pipe(Effect.forkChild);
+        yield* awaitRepositoryBaseline(1);
         yield* TestClock.adjust("5 seconds");
         assert.strictEqual(yield* Fiber.join(repositoryBaseline), "error");
 

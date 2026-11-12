@@ -223,53 +223,64 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// Turn 1 saved the service worktree but Git failed on the thread's own worktree.
-it.effect("refuses file restore when the thread worktree's snapshot failed", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-v2-restore-error-" });
-    const worktreePath = path.join(parent, "worktree");
-    const scopeId = CheckpointScopeId.make("restore-error-scope");
-    const repository = {
-      repository: "service",
-      repositoryPath: path.join(parent, "service"),
-      worktreePath: path.join(parent, "service-work"),
-      branch: "work",
-      pathPrefix: "service",
-      ref: "refs/t3/test/service",
-      status: "ready",
-    };
-    const checkpoint = (ordinal: number, workspaceStatus: "ready" | "error") =>
-      ({
-        id: CheckpointId.make(`restore-error-checkpoint-${ordinal}`),
-        scopeId,
+// The service worktree was saved at both turns; Git failed on the workspace snapshot of one.
+it.effect.each([
+  // The thread's own worktree failed at the target turn.
+  { owner: "thread worktree", target: "error", later: "ready", expected: "workspace-unavailable" },
+  // The shared project folder failed after the target, so later edits there are unknown.
+  { owner: "project folder", target: "ready", later: "error", expected: "shared-workspace" },
+] as const)(
+  "refuses file restore when the $owner snapshot failed",
+  ({ owner, target: targetStatus, later, expected }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-v2-restore-error-" });
+      const worktreePath = path.join(parent, "worktree");
+      const scopeId = CheckpointScopeId.make("restore-error-scope");
+      const repository = {
+        repository: "service",
+        repositoryPath: path.join(parent, "service"),
+        worktreePath: path.join(parent, "service-work"),
+        branch: "work",
+        pathPrefix: "service",
+        ref: "refs/t3/test/service",
         status: "ready",
-        workspaceStatus,
-        ordinalWithinScope: ordinal,
-        repositories: [repository],
-        files: [{ path: "service/index.ts", kind: "modified", additions: 1, deletions: 1 }],
-      }) as never;
-    const target = checkpoint(1, "error");
-    const plan = yield* planCheckpointRestore(
-      {
-        thread: { id: ThreadId.make("restore-error"), worktreePath, repoWorktrees: [] },
-        scope: { id: scopeId, cwd: worktreePath },
-        checkpoint: target,
-        checkpoints: [target, checkpoint(2, "ready")],
-      },
-      {
-        fileSystem,
-        path,
-        projections: {
-          getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
-          getThreadRepoWorktreePaths: () => Effect.succeed([]),
-        } as never,
-        projects: {} as never,
-      },
-    );
-    assert.equal(plan._tag, "workspace-unavailable");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      };
+      const checkpoint = (ordinal: number, workspaceStatus: "ready" | "error") =>
+        ({
+          id: CheckpointId.make(`restore-error-checkpoint-${ordinal}`),
+          scopeId,
+          status: "ready",
+          workspaceStatus,
+          ordinalWithinScope: ordinal,
+          repositories: [repository],
+          files: [{ path: "service/index.ts", kind: "modified", additions: 1, deletions: 1 }],
+        }) as never;
+      const target = checkpoint(1, targetStatus);
+      const plan = yield* planCheckpointRestore(
+        {
+          thread: {
+            id: ThreadId.make("restore-error"),
+            worktreePath: owner === "thread worktree" ? worktreePath : null,
+            repoWorktrees: [],
+          },
+          scope: { id: scopeId, cwd: worktreePath },
+          checkpoint: target,
+          checkpoints: [target, checkpoint(2, later)],
+        },
+        {
+          fileSystem,
+          path,
+          projections: {
+            getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
+            getThreadRepoWorktreePaths: () => Effect.succeed([]),
+          } as never,
+          projects: {} as never,
+        },
+      );
+      assert.equal(plan._tag, expected);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect.each([

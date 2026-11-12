@@ -257,6 +257,13 @@ export const layer: Layer.Layer<
           }),
           (repository) => checkpoints.repositoryLeaseKey(repository),
         );
+        // Another thread can attach the thread's own checkout while its files are restored.
+        const { worktreePath } = input.thread;
+        if (worktreePath != null) {
+          keys.push(
+            yield* checkpoints.repositoryLeaseKey({ repositoryPath: worktreePath, worktreePath }),
+          );
+        }
         return keys.filter((key): key is string => key !== null);
       },
     );

@@ -792,9 +792,11 @@ export const layer: Layer.Layer<
       "CheckpointService.captureBaseline",
     )(
       function* (input) {
-        const workspaceKey = yield* pathIdentity(input.scope.cwd);
+        const attached = input.repoWorktrees ?? [];
         // As in capture, the workspace snapshot covers a checkout the thread attached itself.
-        const repoWorktrees = yield* Effect.filter(input.repoWorktrees ?? [], (repoWorktree) =>
+        // Most threads attach none, so their baseline reads no real paths.
+        const workspaceKey = attached.length === 0 ? "" : yield* pathIdentity(input.scope.cwd);
+        const repoWorktrees = yield* Effect.filter(attached, (repoWorktree) =>
           pathIdentity(repoWorktree.worktreePath).pipe(Effect.map((key) => key !== workspaceKey)),
         );
         const [, workspace] = yield* Effect.all(

@@ -234,7 +234,7 @@ export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRe
     readonly checkpoints: ReadonlyArray<
       Pick<
         OrchestrationV2Checkpoint,
-        "scopeId" | "status" | "ordinalWithinScope" | "repositories" | "files"
+        "scopeId" | "status" | "workspaceStatus" | "ordinalWithinScope" | "repositories" | "files"
       >
     >;
   },
@@ -274,7 +274,9 @@ export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRe
         checkpoint.scopeId === input.scope.id &&
         checkpoint.status !== "stale" &&
         checkpoint.ordinalWithinScope > targetOrdinal &&
-        checkpointWorkspaceFiles(checkpoint).length > 0,
+        // Without a snapshot, a later turn may have changed the folder.
+        (checkpointWorkspaceStatus(checkpoint) !== "ready" ||
+          checkpointWorkspaceFiles(checkpoint).length > 0),
     );
     if (repositories.length === 0 || workspaceChangedLater) {
       return { _tag: "shared-workspace" } satisfies CheckpointRestorePlan;

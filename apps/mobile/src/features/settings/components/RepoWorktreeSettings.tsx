@@ -12,7 +12,8 @@ const GUIDANCE_HELP =
 export function RepoWorktreeSettings(props: {
   enabled: boolean | null;
   instructions: string | null;
-  disabled: boolean;
+  /** Each setting can be managed by policy on its own. */
+  disabled: { readonly enabled: boolean; readonly instructions: boolean };
   projectSelected: boolean;
   onChange: (patch: ServerSettingsPatch) => void;
 }) {
@@ -29,7 +30,7 @@ export function RepoWorktreeSettings(props: {
               : "Create or reuse separate worktrees for the Git repositories inside each project folder as needed. Projects can override it."
           }
           value={props.enabled}
-          disabled={props.disabled}
+          disabled={props.disabled.enabled}
           onValueChange={(value) => props.onChange({ repoWorktrees: value })}
         />
       </View>
@@ -56,14 +57,14 @@ export function RepoWorktreeSettings(props: {
                 ? "Mixed. Enter guidance for all selected targets."
                 : "Start api work from develop. Start shared/framework work from team-develop."
             }
-            editable={!props.disabled}
+            editable={!props.disabled.instructions}
             multiline
             autoCapitalize="sentences"
             className="min-h-24 rounded-xl px-3 py-2 text-base text-foreground"
             onEndEditing={(event) => {
               const value = event.nativeEvent.text.trim();
               if (
-                !props.disabled &&
+                !props.disabled.instructions &&
                 instructionsEdited.current &&
                 (props.instructions === null || value !== props.instructions)
               )

@@ -556,7 +556,9 @@ const make = Effect.gen(function* () {
    * when Git removes the folder.
    */
   const removeUnattached = Effect.fnUntraced(function* (input: VcsRemoveWorktreeInput) {
-    const target = yield* pathIdentity(input.path);
+    // Git resolves a relative path against cwd, so the check must too.
+    const removalPath = path.resolve(input.cwd, input.path);
+    const target = yield* pathIdentity(removalPath);
     const attachments = yield* projections
       .getThreadRepoWorktreePaths()
       .pipe(
@@ -571,7 +573,7 @@ const make = Effect.gen(function* () {
         });
       }
     }
-    yield* gitWorkflow.removeWorktree(input);
+    yield* gitWorkflow.removeWorktree({ ...input, path: removalPath });
   });
 
   const dispatchAttach = Effect.fn("RepoWorktreeService.dispatchAttach")(

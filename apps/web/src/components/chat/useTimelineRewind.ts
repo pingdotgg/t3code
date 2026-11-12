@@ -35,6 +35,8 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { rewindToMessage } from "./chatViewSend";
 import { fileRestoreRetryApplies, makeThreadErrorSetter } from "../ChatView.logic";
+
+type RevertCheckpoint = ReturnType<typeof findRevertCheckpoint>;
 interface TimelineRewindInput {
   readonly environmentId: EnvironmentId;
   readonly routeThreadRef: ScopedThreadRef;
@@ -94,6 +96,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   // The conversation already went back to `turnCount`; trying again restores its files.
   const [fileRestoreRetry, setFileRestoreRetry] = useState<{
     turnCount: number;
+    checkpoint: RevertCheckpoint;
     message: string;
     routeThreadKey: string;
   } | null>(null);
@@ -106,7 +109,9 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       ? fileRestoreRetry
       : null;
   // A retry that nothing awaits reports its failure once the server gives up.
-  const watchedRetriesRef = useRef(new Map<CommandId, { readonly turnCount: number }>());
+  const watchedRetriesRef = useRef(
+    new Map<CommandId, { readonly turnCount: number; readonly checkpoint: RevertCheckpoint }>(),
+  );
   const rollbackFailure = serverProjection?.thread.rollbackFailure ?? null;
   const onRollbackFailure = useStableCallback(
     (failure: { readonly requestId: CommandId; readonly message: string }) => {
@@ -165,6 +170,8 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
     }));
     setThreadError(activeThread.id, null);
+    // Keep the live checkpoint identity when command context refetches a bounded window.
+    const checkpoint = findRevertCheckpoint(serverProjection?.checkpoints ?? [], turnCount);
     const rewind = await rewindToMessage({
       message,
       environmentId,
@@ -172,8 +179,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       threadId: activeThread.id,
       turnCount,
       restoreFiles,
-      // Keep the live checkpoint identity when command context refetches a bounded window.
-      checkpoint: findRevertCheckpoint(serverProjection?.checkpoints ?? [], turnCount),
+      checkpoint,
       draftTarget: composerDraftTarget,
       composerHasPendingAttachments: composerRef.current?.hasPendingAttachments() === true,
       createAssetUrl: createAttachmentAssetUrl,
@@ -200,7 +206,12 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       setThreadError(activeThread.id, rewind.fileRestoreFailure);
       // Trying again restores files, which a rewind that kept them must not do.
       if (restoreFiles) {
-        setFileRestoreRetry({ turnCount, message: rewind.fileRestoreFailure, routeThreadKey });
+        setFileRestoreRetry({
+          turnCount,
+          checkpoint,
+          message: rewind.fileRestoreFailure,
+          routeThreadKey,
+        });
       }
     }
   };
@@ -219,24 +230,32 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       );
       return;
     }
-    const { turnCount } = currentFileRestoreRetry;
+    const { turnCount, checkpoint } = currentFileRestoreRetry;
     setFileRestoreRetry(null);
     setThreadError(activeThread.id, null);
     useComposerDraftStore.setState((store) => ({
       rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
     }));
     const commandId = CommandId.make(randomUUID());
-    watchedRetriesRef.current.set(commandId, { turnCount });
+    watchedRetriesRef.current.set(commandId, { turnCount, checkpoint });
     const result = await revertThreadCheckpoint({
       environmentId,
-      input: { commandId, threadId: activeThread.id, turnCount, restoreFiles: true },
+      input: {
+        commandId,
+        threadId: activeThread.id,
+        turnCount,
+        restoreFiles: true,
+        ...(checkpoint === undefined
+          ? {}
+          : { checkpointId: checkpoint.id, scopeId: checkpoint.scopeId }),
+      },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       watchedRetriesRef.current.delete(commandId);
       const error = squashAtomCommandFailure(result);
       const message = error instanceof Error ? error.message : "Failed to restore files.";
       setThreadError(activeThread.id, message);
-      setFileRestoreRetry({ turnCount, message, routeThreadKey });
+      setFileRestoreRetry({ turnCount, checkpoint, message, routeThreadKey });
     }
     useComposerDraftStore.setState((store) => {
       const remaining = new Set(store.rewindingThreadKeys);

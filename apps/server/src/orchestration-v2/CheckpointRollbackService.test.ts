@@ -553,6 +553,122 @@ it.effect("takes the lease of a repository attached while it waited before check
   }).pipe(Effect.provide(testLayer));
 });
 
+// Attaching takes the repository lease, so another thread cannot take the checkout mid-restore.
+it.effect("holds the lease of the thread's own checkout while restoring its files", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const worktreePath = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-rollback-own-lease-",
+    });
+    yield* fileSystem.makeDirectory(path.join(worktreePath, ".git"));
+    const threadId = ThreadId.make("thread:rollback-own-lease");
+    const providerThreadId = ProviderThreadId.make("provider-thread:rollback-own-lease");
+    const providerInstanceId = ProviderInstanceId.make("provider_rollback_own_lease");
+    const checkpointId = CheckpointId.make("checkpoint:rollback-own-lease");
+    const scopeId = CheckpointScopeId.make("checkpoint-scope:rollback-own-lease");
+    const thread = {
+      id: threadId,
+      worktreePath,
+      branch: "work",
+      activeProviderThreadId: providerThreadId,
+      modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+    };
+    const scope = { id: scopeId, kind: "root_run", cwd: worktreePath };
+    const askedForOwnLease = Deferred.makeUnsafe<void>();
+    const restored = Deferred.makeUnsafe<void>();
+    const ownHeld = Deferred.makeUnsafe<void>();
+    const releaseOwn = Deferred.makeUnsafe<void>();
+    let ownHeldElsewhere = false;
+    let restoredWhileHeld = false;
+    const testLayer = layerCheckpointRollbackService.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ThreadCommandExecutor.layer,
+          Layer.mock(CheckpointService.CheckpointServiceV2)({
+            repositoryLeaseKey: (target) =>
+              target.worktreePath === worktreePath
+                ? Deferred.succeed(askedForOwnLease, undefined).pipe(Effect.as("own"))
+                : Effect.succeed(null),
+            restore: () =>
+              Effect.sync(() => {
+                if (ownHeldElsewhere) restoredWhileHeld = true;
+              }).pipe(Effect.andThen(Deferred.succeed(restored, undefined)), Effect.asVoid),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({ write: () => Effect.succeed([]) }),
+          IdAllocator.layer,
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThread: () => Effect.succeed(thread as never),
+            getCheckpointRollbackContext: () =>
+              Effect.succeed({
+                thread,
+                providerThread: {
+                  id: providerThreadId,
+                  providerSessionId: ProviderSessionId.make("provider-session:own-lease"),
+                  providerInstanceId,
+                },
+                providerSession: undefined,
+                checkpoint: {
+                  id: checkpointId,
+                  scopeId,
+                  status: "ready",
+                  appRunOrdinal: 0,
+                  ordinalWithinScope: 0,
+                },
+                scope,
+                runsToRollback: [],
+                targetAttempt: undefined,
+                rolledBackAttemptIds: [],
+                staleCheckpoints: [],
+                rootNodes: [],
+                providerTurns: [],
+              } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext),
+            getCheckpointContext: () =>
+              Effect.succeed({ runs: [], checkpointScopes: [scope], checkpoints: [] } as never),
+            getThreadRepoWorktreePaths: () => Effect.succeed([]),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                schemaVersion: 1,
+                snapshotSequence: 0,
+                threads: [],
+                archivedThreads: [],
+              }),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            open: () => Effect.succeed({} as never),
+          }),
+          Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+      const holder = yield* withRepositoryLease(
+        "own",
+        Effect.gen(function* () {
+          ownHeldElsewhere = true;
+          yield* Deferred.succeed(ownHeld, undefined);
+          yield* Deferred.await(releaseOwn);
+          ownHeldElsewhere = false;
+        }),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(ownHeld);
+      const rollback = yield* service
+        .execute({ threadId, providerThreadId, checkpointId, scopeId })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      // Only one happens while the lease is held elsewhere: asking for it, or restoring.
+      yield* Effect.raceFirst(Deferred.await(askedForOwnLease), Deferred.await(restored));
+      yield* Deferred.succeed(releaseOwn, undefined);
+      yield* Fiber.join(holder);
+      yield* Fiber.join(rollback);
+
+      assert.isTrue(yield* Deferred.isDone(restored));
+      assert.isFalse(restoredWhileHeld);
+    }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 const seedRollbackHistory = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const now = yield* DateTime.now;
@@ -782,6 +898,7 @@ const seedRollbackHistory = Effect.gen(function* () {
             Effect.sync(() => {
               deletedRefs.push(...checkpoints.map((checkpoint) => checkpoint.id));
             }),
+          repositoryLeaseKey: () => Effect.succeed(null),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           write: ({ events }) =>

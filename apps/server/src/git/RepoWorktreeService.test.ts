@@ -961,6 +961,14 @@ describe("RepoWorktreeService", () => {
             .pipe(Effect.flip);
           assert.equal(refused._tag, "RepoWorktreeInUseError");
           assert.include(refused.message, '"Folder thread"');
+          const relativeRefused = yield* service
+            .removeWorktree({
+              cwd: fixture.alpha,
+              path: path.relative(fixture.alpha, worktreePath),
+              force: true,
+            })
+            .pipe(Effect.flip);
+          assert.equal(relativeRefused._tag, "RepoWorktreeInUseError");
           assert.equal(
             yield* fileSystem.readFileString(path.join(worktreePath, "draft.txt")),
             "draft\n",
