@@ -44,7 +44,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
-import { type SetStateAction, useLayoutEffect, useRef } from "react";
+import { type SetStateAction, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -62,6 +62,7 @@ import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -372,7 +373,20 @@ export function useComposerSend(input: ComposerSendInput) {
     respondingRequestIdsRef.current = respondingRequestIds;
   }, [pendingApprovals, respondingRequestIds]);
 
-  const onSend = async (
+  // Enter while this thread's previous message is still sending; it sends once that one settles.
+  const [queuedSubmit, setQueuedSubmitState] = useState<{
+    readonly routeThreadKey: string;
+    readonly dispatchMode: ComposerDispatchMode;
+    readonly submissionIntent: ComposerSubmissionIntent;
+  } | null>(null);
+  const queuedSubmitRef = useRef(queuedSubmit);
+  const setQueuedSubmit = (next: typeof queuedSubmit) => {
+    queuedSubmitRef.current = next;
+    setQueuedSubmitState(next);
+  };
+
+  // Resolves to true once the turn started; a send that stops earlier resolves otherwise.
+  const sendComposerDraft = async (
     e?: { preventDefault: () => void },
     dispatchMode: ComposerDispatchMode = "auto",
     submissionIntent: ComposerSubmissionIntent = "foreground",
@@ -429,6 +443,20 @@ export function useComposerSend(input: ComposerSendInput) {
         }),
       );
     };
+    if (sendInFlightRef.current && !directAnnotation) {
+      const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      setQueuedSubmit(
+        draft && composerDraftHasUserContent(draft)
+          ? {
+              routeThreadKey,
+              // A follow-up to the message still sending waits behind its turn, not steers it.
+              dispatchMode: dispatchMode === "auto" ? "queue" : dispatchMode,
+              submissionIntent,
+            }
+          : null,
+      );
+      return;
+    }
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       !activeThread ||
@@ -1449,7 +1477,60 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       if (!sendQueuesBehindSetup) resetLocalDispatch();
     }
+    return turnStartSucceeded;
   };
+
+  const onSend: typeof sendComposerDraft = async (
+    e,
+    dispatchMode = "auto",
+    submissionIntent = "foreground",
+    directAnnotation,
+  ) => {
+    let started: boolean | undefined = false;
+    let failure: { readonly error: unknown } | null = null;
+    try {
+      started = await sendComposerDraft(e, dispatchMode, submissionIntent, directAnnotation);
+    } catch (error) {
+      failure = { error };
+    }
+    const waiting = queuedSubmitRef.current;
+    if (waiting?.routeThreadKey === routeThreadKey && !sendInFlightRef.current) {
+      // Re-render so the effect below sends it. A message the server did not confirm may still
+      // land, so the next one stays in the composer beside that error instead of overtaking it.
+      setQueuedSubmit(started === true ? { ...waiting } : null);
+    }
+    if (failure !== null) throw failure.error;
+    return started;
+  };
+  const sendLatest = useStableCallback(onSend);
+
+  const queuedSubmitBlocked =
+    (isSendBusy && !sendQueuesBehindSetup) || isRevertingCheckpoint || threadDetailLoading;
+  const pendingRequest = pendingApprovals.length > 0 || Boolean(activePendingProgress);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- replays a deferred Enter once the previous send and the server state it waits on settle; no user action marks that moment
+  useEffect(() => {
+    const next = queuedSubmit;
+    if (next === null) return;
+    if (
+      next.routeThreadKey === routeThreadKey &&
+      (sendInFlightRef.current || queuedSubmitBlocked)
+    ) {
+      return;
+    }
+    queuedSubmitRef.current = null;
+    setQueuedSubmitState(null);
+    // Leaving the thread drops it, and a question or approval that arrived meanwhile would
+    // turn it into an answer; either way the text stays in the composer.
+    if (next.routeThreadKey !== routeThreadKey || pendingRequest) return;
+    void sendLatest(undefined, next.dispatchMode, next.submissionIntent);
+  }, [
+    pendingRequest,
+    queuedSubmit,
+    queuedSubmitBlocked,
+    routeThreadKey,
+    sendInFlightRef,
+    sendLatest,
+  ]);
 
   return { onSend };
 }
