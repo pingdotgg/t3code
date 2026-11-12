@@ -5,6 +5,7 @@ import { FormSheet } from "react-native-screens";
 import { useResolveClassNames } from "uniwind";
 
 import { PaneContext } from "../../components/ui/Pane";
+import { OverlayPortalScope } from "../../components/ui/OverlayPortal";
 import { RoutedFormSheetContext } from "../../components/ui/RoutedFormSheetContext";
 import { formSheetDetents } from "../../native/sheet-surface";
 import { InspectorPanes } from "./inspector-host";
@@ -78,13 +79,15 @@ export function WorkspaceInspectorSheet(props: {
                   Platform.OS === "android" ? "absolute inset-0 bg-header pt-3" : "flex-1 bg-sheet"
                 }
               >
-                <InspectorPanes content={props.content} onClose={() => close()} />
-                {Platform.OS === "android" ? (
-                  <View
-                    pointerEvents="none"
-                    className="absolute top-1 h-1 w-8 self-center rounded-full bg-header-foreground/40"
-                  />
-                ) : null}
+                <OverlayPortalScope>
+                  <InspectorPanes content={props.content} onClose={() => close()} />
+                  {Platform.OS === "android" ? (
+                    <View
+                      pointerEvents="none"
+                      className="absolute top-1 h-1 w-8 self-center rounded-full bg-header-foreground/40"
+                    />
+                  ) : null}
+                </OverlayPortalScope>
               </View>
             </PaneContext>
           </SafeAreaInsetsContext>
