@@ -6185,6 +6185,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assert.equal(childCommandUpdates.at(-1)?.turnItem.status, "interrupted");
         assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
+        assert.isDefined(
+          harness
+            .subagentUpdates()
+            .find((event) => event.subagent.status === "running" && event.subagent.progress),
+          "a running native subagent reports its child's current command as progress",
+        );
         assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
       }).pipe(
