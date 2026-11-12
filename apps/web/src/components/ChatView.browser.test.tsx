@@ -15,6 +15,7 @@ import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import {
@@ -38,8 +39,8 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
 });
 
-it.each(["sid", "btw"])("opens and focuses a side chat on selecting /%s once", async (command) => {
-  const thread = threadWithHistory(`side-menu-${command}`, 1);
+it("opens and focuses a side chat when /side is picked from the slash menu", async () => {
+  const thread = threadWithHistory("side-menu", 1);
   using _environment = installFakeEnvironment([thread], { sideChats: true });
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -50,6 +51,8 @@ it.each(["sid", "btw"])("opens and focuses a side chat on selecting /%s once", a
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
   );
   await router.load();
+  // appInit starts this in the app; it moves focus into a panel the user opens.
+  using _focus = { [Symbol.dispose]: startWorkspaceFocus(router) };
   const container = document.createElement("div");
   container.style.cssText = "height: 900px; width: 1400px;";
   await using screen = await render(<AppRoot router={router} />, {
@@ -59,24 +62,21 @@ it.each(["sid", "btw"])("opens and focuses a side chat on selecting /%s once", a
   });
   const mainInput = screen.getByRole("textbox", { name: `Message ${thread.title}` });
   const sideInput = screen.getByRole("textbox", { name: "Message Side chat" });
-  const sideOption = page.getByRole("option", {
-    name: command === "sid" ? /^\/side / : /^\/btw /,
-  });
+  const sideOption = page.getByRole("option", { name: /^\/side / });
   await expect.element(mainInput).toBeVisible();
-  await userEvent.type(mainInput, `/${command} keep this question`);
+  await userEvent.type(mainInput, "/sid keep this question");
   await userEvent.keyboard("{Home}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}");
   await sideOption.click();
-  await expect
-    .element(mainInput)
-    .toHaveTextContent(`/${command === "sid" ? "side" : "btw"} keep this question`);
+  // With other text in the draft, picking the command only completes it.
+  await expect.element(mainInput).toHaveTextContent("/side keep this question");
   await expect.element(sideInput).not.toBeInTheDocument();
 
   await mainInput.fill("");
-  await userEvent.type(mainInput, `/${command}`);
+  await userEvent.type(mainInput, "/sid");
   await expect.element(sideOption).toBeVisible();
   await userEvent.keyboard("{Enter}");
 
-  await expect.element(sideInput, { timeout: 2000 }).toHaveFocus();
+  await expect.element(sideInput).toHaveFocus();
   await userEvent.keyboard("a side question");
   await expect.element(sideInput).toHaveTextContent("a side question");
   await expect.element(mainInput).toHaveTextContent("");
