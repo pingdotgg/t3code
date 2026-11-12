@@ -38,6 +38,7 @@ import {
 import { useEnvironment } from "../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { useAppleSpeechAvailable } from "./appleSpeech";
+import { chooseRecordingMicrophone } from "./browserMicrophones";
 import {
   createAppleSpeechVoiceInputPlatform,
   createBrowserVoiceInputPlatform,
@@ -306,7 +307,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           speechSilenceFiltering: settings.speechSilenceFiltering,
         };
       },
-      getMicrophoneId: () => latestRef.current.clientSettings.voiceMicrophone,
+      getMicrophoneId: chooseRecordingMicrophone,
       onLevel: setLevel,
       onDurationLimit: () => void controller.stop(),
       onError: (message: string) => {
