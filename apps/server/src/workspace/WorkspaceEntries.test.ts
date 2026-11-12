@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { FileFinder } from "@ff-labs/fff-node";
 import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,6 +12,7 @@ import { vi } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { WorkspaceFinderOpener } from "./WorkspaceFinderThread.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 
@@ -793,39 +793,42 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         let scansOutlastWait = false;
         let finders = 0;
         let rescans = 0;
-        const createFinder = FileFinder.create.bind(FileFinder);
-        vi.spyOn(FileFinder, "create").mockImplementation((options) => {
-          const created = createFinder(options);
-          if (created.ok) {
-            const finder = created.value;
-            finders += 1;
-            const scanFiles = finder.scanFiles.bind(finder);
-            finder.scanFiles = () => {
-              rescans += 1;
-              return scanFiles();
-            };
-            const waitForIndexReady = finder.waitForIndexReady.bind(finder);
-            finder.waitForIndexReady = (timeoutMs) =>
-              scansOutlastWait
-                ? Promise.resolve({ ok: true, value: false })
-                : waitForIndexReady(timeoutMs);
-          }
-          return created;
-        });
-        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const searchNeedle = workspaceEntries.searchContents({
-          cwd,
-          query: "needle",
-          limit: 100,
-          caseSensitive: true,
-          wholeWord: false,
-          useRegex: false,
-        });
-        yield* searchNeedle;
+        const openFinder = yield* WorkspaceFinderOpener;
+        const countingOpener: typeof openFinder = async (options) => {
+          const opened = await openFinder(options);
+          if (!opened.ok) return opened;
+          finders += 1;
+          const call: typeof opened.value.call = (method, ...args) => {
+            if (method === "scanFiles") rescans += 1;
+            if (method === "waitForIndexReady" && scansOutlastWait) {
+              return Promise.resolve({ ok: true, value: false } as never);
+            }
+            return opened.value.call(method, ...args);
+          };
+          return { ok: true, value: { ...opened.value, call } };
+        };
+        const result = yield* Effect.gen(function* () {
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const searchNeedle = workspaceEntries.searchContents({
+            cwd,
+            query: "needle",
+            limit: 100,
+            caseSensitive: true,
+            wholeWord: false,
+            useRegex: false,
+          });
+          yield* searchNeedle;
 
-        scansOutlastWait = true;
-        yield* workspaceEntries.refresh(cwd);
-        const result = yield* searchNeedle;
+          scansOutlastWait = true;
+          yield* workspaceEntries.refresh(cwd);
+          return yield* searchNeedle;
+        }).pipe(
+          Effect.provide(
+            Layer.fresh(WorkspaceEntries.layer).pipe(
+              Layer.provide(Layer.succeed(WorkspaceFinderOpener, countingOpener)),
+            ),
+          ),
+        );
 
         expect(result.matches.map((match) => match.path)).toEqual(["src/notes.ts"]);
         // The second search ran on the rescanned live finder, not a rebuild.
