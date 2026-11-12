@@ -2154,14 +2154,14 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
                 reason: requestInput.feedback ?? "Denied in T3 Code",
               };
               approval.chosenResponse = response;
-              pendingApprovals.delete(key);
-              answeredPermissions.set(approval.nativeRequestId, response);
               for (const [respondId, awaiting] of awaitingPermissionRequests) {
                 if (awaiting.nativeRequestId === approval.nativeRequestId) {
-                  awaitingPermissionRequests.delete(respondId);
                   yield* connection.respond(respondId, response);
+                  awaitingPermissionRequests.delete(respondId);
                 }
               }
+              answeredPermissions.set(approval.nativeRequestId, response);
+              pendingApprovals.delete(key);
               yield* resolveRuntimeRequestRecords(approval, yield* DateTime.now);
               return;
             }
@@ -2182,14 +2182,14 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
               requestInput.decision === "cancel" || answered.length === 0
                 ? { cancelled: true }
                 : { answers: Object.fromEntries(answered) };
-            pendingQuestions.delete(key);
-            answeredUserInputs.set(pendingQuestion.nativeRequestId, pendingQuestion.answer);
             for (const [respondId, awaiting] of awaitingUserInputRequests) {
               if (awaiting.nativeRequestId === pendingQuestion.nativeRequestId) {
-                awaitingUserInputRequests.delete(respondId);
                 yield* connection.respond(respondId, pendingQuestion.answer);
+                awaitingUserInputRequests.delete(respondId);
               }
             }
+            answeredUserInputs.set(pendingQuestion.nativeRequestId, pendingQuestion.answer);
+            pendingQuestions.delete(key);
             yield* resolveRuntimeRequestRecords(pendingQuestion, yield* DateTime.now);
           },
           (effect, requestInput) =>
