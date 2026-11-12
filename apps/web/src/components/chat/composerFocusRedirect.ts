@@ -65,6 +65,18 @@ function isSurfaceLauncherKey(event: KeyboardEvent): boolean {
   return key !== null && (launcherKeys?.includes(key) ?? false);
 }
 
+function isKeyClaimedInPath(event: KeyboardEvent): boolean {
+  if (event.shiftKey) return false;
+  const key = event.key.toUpperCase();
+  return event
+    .composedPath()
+    .some(
+      (target) =>
+        target instanceof Element &&
+        (target.getAttribute("aria-keyshortcuts")?.split(/\s+/).includes(key) ?? false),
+    );
+}
+
 export function shouldRedirectInputToComposer(event: Event): boolean {
   if (event.defaultPrevented) return false;
   const selection = window.getSelection();
@@ -77,6 +89,7 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   if (eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
+  if (document.querySelector('[data-chat-column-maximized-away="true"]')) return false;
   if (
     Array.from(document.querySelectorAll(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)).some(
       (layer) =>
@@ -141,6 +154,7 @@ export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   }
   if (event.key.length !== 1) return false;
   if (isSurfaceLauncherKey(event)) return false;
+  if (isKeyClaimedInPath(event)) return false;
   if (citeSelectionInput(event, event.key)) return false;
 
   return true;
