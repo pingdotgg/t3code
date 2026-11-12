@@ -3584,6 +3584,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     {
                       commit: {
                         statusCheckRollup: {
+                          state: "SUCCESS",
                           contexts: {
                             nodes: [
                               checkRun({
@@ -3737,6 +3738,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                       {
                         commit: {
                           statusCheckRollup: {
+                            state: "SUCCESS",
                             contexts: {
                               nodes: [checkRun({ name: "first", conclusion: "SUCCESS" })],
                               pageInfo: { hasNextPage: true, endCursor: "c1" },
@@ -3797,6 +3799,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
               {
                 commit: {
                   statusCheckRollup: {
+                    state: "SUCCESS",
                     contexts: {
                       nodes: [],
                       pageInfo: { hasNextPage: true, endCursor: "c1" },
@@ -3822,6 +3825,118 @@ layer("GitHubPullRequestApi.layer", (it) => {
         );
         expect(error._tag).toBe("GitHubPullRequestReadError");
       }),
+  );
+
+  const refusedChecks = (suffix: ReadonlyArray<string | number> = [], message?: string) => ({
+    type: "FORBIDDEN",
+    message: message ?? "Resource not accessible by personal access token",
+    path: [
+      "repository",
+      "pullRequest",
+      "commits",
+      "nodes",
+      0,
+      "commit",
+      "statusCheckRollup",
+      "contexts",
+      ...suffix,
+    ],
+  });
+  const aggregateOnly = (state: string) =>
+    coreResponse({
+      body: "Keep the description",
+      labels: { nodes: [{ name: "bug", color: "ff0000", description: null }] },
+      commits: { nodes: [{ commit: { statusCheckRollup: { state } } }] },
+    });
+
+  it.effect.each([
+    { name: "contexts", state: "SUCCESS", status: "success", checksState: "passing" },
+    { name: "each-context", state: "FAILURE", status: "failure", checksState: "failing" },
+    { name: "with-reviewer", state: "PENDING", status: "pending", checksState: "pending" },
+    { name: "http-403", state: "SUCCESS", status: "success", checksState: "passing" },
+    { name: "later-page", state: "FAILURE", status: "failure", checksState: "failing" },
+  ])(
+    "keeps the detail when check contexts are refused: $name",
+    ({ name, state, status, checksState }) =>
+      Effect.gen(function* () {
+        const refusal = {
+          data: null,
+          errors:
+            name === "each-context"
+              ? [refusedChecks(["nodes", 0]), refusedChecks(["nodes", 1])]
+              : name === "with-reviewer"
+                ? [refusedReviewer, refusedChecks()]
+                : [refusedChecks()],
+        };
+        if (name === "later-page") {
+          const firstPage = coreResponse({
+            commits: {
+              nodes: [
+                {
+                  commit: {
+                    statusCheckRollup: {
+                      state,
+                      contexts: { nodes: [], pageInfo: { hasNextPage: true, endCursor: "c1" } },
+                    },
+                  },
+                },
+              ],
+            },
+          });
+          mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(firstPage))));
+        }
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(encodeJson(refusal), false, false, {}, name === "http-403" ? 403 : 200),
+          ),
+        );
+        if (name === "with-reviewer") mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+        mockedExecute.mockReturnValue(Effect.succeed(output(encodeJson(aggregateOnly(state)))));
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const input = { ...pullRequestInput, repository: `acme/checks-refused-${name}` };
+        const detail = yield* cli.getPullRequestDetail(input);
+        expect(detail).toMatchObject({
+          body: "Keep the description",
+          labels: [{ name: "bug", color: "ff0000" }],
+          checksState,
+          checksTruncated: false,
+          checks: [
+            {
+              name: "Overall check status",
+              status,
+              url: "https://github.com/acme/web/pull/7/checks",
+            },
+          ],
+        });
+        // The refusal is remembered, so the next read asks for the aggregate alone.
+        yield* cli.getPullRequestDetail(input);
+        expect(
+          variablesOf("PullRequestCore")
+            .map((v) => v["detailedChecks"])
+            .slice(-2),
+        ).toEqual([false, false]);
+        expect(variablesOf("PullRequestCore")[0]?.["detailedChecks"]).toBe(true);
+      }),
+  );
+
+  it.effect.each([
+    { name: "generic-forbidden", errors: [refusedChecks([], "Forbidden")] },
+    { name: "unrelated-path", errors: [refusedChecks(["totalCount"])] },
+    { name: "string-index", errors: [refusedChecks(["nodes", "0"])] },
+    {
+      name: "unrelated-error",
+      errors: [refusedChecks(), { type: "INTERNAL", message: "Internal server error" }],
+    },
+  ])("does not mask other check-context errors: $name", ({ name, errors }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson({ data: null, errors }))));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* Effect.flip(
+        cli.getPullRequestDetail({ ...pullRequestInput, repository: `acme/checks-error-${name}` }),
+      );
+      expect(error._tag).toBe("GitHubApiResponseError");
+      expect(mockedExecute).toHaveBeenCalledOnce();
+    }),
   );
 
   it.effect("preserves the reserve for automatic detail reads and allows manual checks", () =>

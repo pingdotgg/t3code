@@ -415,6 +415,7 @@ describe("pull request detail decoding", () => {
                 {
                   commit: {
                     statusCheckRollup: {
+                      state: "SUCCESS",
                       contexts: {
                         nodes: rollup,
                         pageInfo: { hasNextPage: false, endCursor: null },

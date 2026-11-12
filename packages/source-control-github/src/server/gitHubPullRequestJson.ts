@@ -70,6 +70,7 @@ import type {
   ReferenceCandidate,
   ReviewerCandidates,
   ViewerPermissions,
+  StatusCheckRollupContextConnection,
 } from "./pullRequestReads.graphql.ts";
 import type {
   ReactionGroup,
@@ -1044,7 +1045,8 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
   const repository = result.repository;
   const pr = repository?.pullRequest;
   if (repository == null || pr == null) return null;
-  const contexts = nodesOf(pr.commits)[0]?.commit.statusCheckRollup?.contexts;
+  const rollup = nodesOf(pr.commits)[0]?.commit.statusCheckRollup;
+  const contexts = rollup?.contexts;
   return {
     reviewRequestTeams: nodesOf(pr.reviewRequests).flatMap(
       ({ requestedReviewer }) => toRequestedTeam(requestedReviewer) ?? [],
@@ -1070,7 +1072,18 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
               ],
       ),
       labels: nodesOf(pr.labels),
-      statusCheckRollup: toCheckContexts(nodesOf(contexts)),
+      statusCheckRollup:
+        rollup != null && contexts === undefined
+          ? [
+              {
+                context: "Overall check status",
+                state: rollup.state,
+                description:
+                  "Individual checks are unavailable with the current GitHub credential.",
+                targetUrl: `${pr.url}/checks`,
+              },
+            ]
+          : toCheckContexts(nodesOf(contexts)),
     }),
     headRepositoryNameWithOwner: trimmed(pr.headRepository?.nameWithOwner),
     maintainerCanModify: pr.maintainerCanModify,
@@ -1234,14 +1247,20 @@ function toCheckContexts(nodes: ReadonlyArray<CheckContext>): ReadonlyArray<GitH
   );
 }
 
-export function toPullRequestCheckContextsPage(result: PullRequestCheckContexts.Result): {
+export function toPullRequestCheckContextsPage(
+  result: PullRequestCheckContexts.Result | PullRequestCore.Result,
+): {
   readonly headSha: string;
   readonly contexts: ReadonlyArray<GitHubCheckContext>;
   readonly nextCursor: string | null;
 } | null {
   const pr = result.repository?.pullRequest;
   if (pr == null) return null;
-  const contexts = nodesOf(pr.commits)[0]?.commit.statusCheckRollup?.contexts;
+  const contexts = nodesOf<{
+    readonly commit: {
+      readonly statusCheckRollup: { readonly contexts?: StatusCheckRollupContextConnection } | null;
+    };
+  }>(pr.commits)[0]?.commit.statusCheckRollup?.contexts;
   return {
     headSha: pr.headRefOid,
     contexts: toCheckContexts(nodesOf(contexts)),
