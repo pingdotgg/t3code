@@ -6,7 +6,6 @@ import {
   isRuntimeModeAbove,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
-  AgentSessionImportSource,
   AgentSessionScanError,
   AgentSessionSource,
   EventId,
@@ -49,12 +48,6 @@ const IMPORT_PROGRESS_INTERVAL_MS = 250;
 const IMPORT_EVENT_PREFIX = "agent-session-import:v2";
 const CLAUDE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const decodeImportedTranscriptPayload = Schema.decodeUnknownOption(
-  Schema.Struct({
-    cwd: Schema.optional(Schema.String),
-    importedTranscripts: Schema.optional(Schema.Array(AgentSessionImportSource)),
-  }),
-);
 
 class AgentSessionUnresumableSessionError extends Schema.TaggedError<AgentSessionUnresumableSessionError>()(
   "AgentSessionUnresumableSessionError",
@@ -257,7 +250,7 @@ const make = Effect.gen(function* () {
         ),
       );
     const completedSources = runtimeRows.flatMap((runtime) => {
-      const payload = decodeImportedTranscriptPayload(runtime.runtimePayload);
+      const payload = AgentSessionScanner.decodeImportedTranscriptPayload(runtime.runtimePayload);
       if (
         Option.isNone(payload) ||
         payload.value.cwd === undefined ||
