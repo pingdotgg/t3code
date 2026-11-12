@@ -1939,6 +1939,8 @@ const subagentDeviceInstructions: HookCallback = () =>
     },
   });
 
+const CLAUDE_CODE_MODEL_ALIASES = new Set(["opus", "sonnet", "haiku", "fable"]);
+
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly modelCatalog?: ClaudeModelCatalog;
@@ -2014,13 +2016,28 @@ export function makeClaudeQueryOptions(input: {
           ...(typeof querySettings === "object" && querySettings !== null ? querySettings : {}),
           autoCompactWindow: Number(input.settings.autoCompactWindow),
         } as ClaudeSdkSettings);
+  // Claude Code expands a bare alias to its own model, so a custom model with an alias's name
+  // pins the alias to itself.
+  const aliasOverrideEnv = CLAUDE_CODE_MODEL_ALIASES.has(compiledSelection.apiModelId)
+    ? {
+        [`ANTHROPIC_DEFAULT_${compiledSelection.apiModelId.toUpperCase()}_MODEL`]:
+          compiledSelection.apiModelId,
+      }
+    : undefined;
   // A settings file path cannot take extra keys, so it goes through unchanged.
   const effectiveQuerySettings =
-    input.toolSearchOverride === undefined || typeof compactQuerySettings === "string"
+    (input.toolSearchOverride === undefined && aliasOverrideEnv === undefined) ||
+    typeof compactQuerySettings === "string"
       ? compactQuerySettings
       : ({
           ...compactQuerySettings,
-          env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
+          env: {
+            ...compactQuerySettings?.env,
+            ...aliasOverrideEnv,
+            ...(input.toolSearchOverride === undefined
+              ? {}
+              : { ENABLE_TOOL_SEARCH: input.toolSearchOverride }),
+          },
         } as ClaudeSdkSettings);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
   const options: ClaudeAgentSdkQueryOptions = {
