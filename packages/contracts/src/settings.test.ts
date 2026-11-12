@@ -530,3 +530,18 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("visual delivery settings", () => {
+  it("distinguishes default, omitted, and custom guidance and bounds Codex context size", () => {
+    expect(decodeServerSettings({}).visualInstructions).toBeNull();
+    for (const visualInstructions of [
+      null,
+      "",
+      "Use the requested publishing destination.",
+      "界".repeat(1_000),
+    ]) {
+      expect(decodeServerSettingsPatch({ visualInstructions })).toEqual({ visualInstructions });
+    }
+    expect(() => decodeServerSettingsPatch({ visualInstructions: "x".repeat(1_001) })).toThrow();
+  });
+});

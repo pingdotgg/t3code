@@ -10,6 +10,24 @@ Before publishing, agents check their work with screenshots from a small headles
 
 Previews can load public resources such as CDN scripts, but nothing on your local network. The machine running the environment looks up each name, and previews block names that resolve to private or reserved addresses. Clash or Mihomo in fake-IP DNS mode can return these addresses, so external resources can fail there. The preview's console messages can identify affected hostnames. Inline the resource, add its host to `fake-ip-filter`, or switch that machine's proxy DNS to `redir-host`.
 
+## Customize visual delivery
+
+To use your own publishing workflow, set `visualInstructions` in the environment's
+`settings.json` under its userdata directory. This setting survives app updates and
+replaces T3's visual-delivery guidance for every provider receiving it. Start a new
+thread after changing it; existing threads may retain earlier instructions.
+
+```json
+{
+  "visualInstructions": "Use html_render only to display HTML inside the chat. For standalone reports, follow my publishing skill and return its link."
+}
+```
+
+The limit is 1,000 characters. An empty string omits the visual-delivery guidance;
+`null` or removing the setting restores the shipped default. Browser-use guidance
+and tool permissions remain in effect. For a remote environment, change the file
+on the machine running that environment.
+
 ## MCP apps
 
 Some MCP servers return an interactive app with their tool results, following the [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) standard. When an agent calls one of those tools, the app appears in the thread in place of the tool call, on web, desktop, and mobile. Codex and Claude support this today, for any MCP server you have configured for them. Claude needs Claude Code 2.1.301 or newer; older versions and other providers show these calls as ordinary tool calls.

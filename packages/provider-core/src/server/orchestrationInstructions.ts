@@ -1,7 +1,11 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 
+const DEFAULT_VISUAL_INSTRUCTIONS = `- Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.`;
+
+const T3_CODE_PREVIEW_INSTRUCTIONS = `- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`;
+
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
-export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
+const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
   `## T3 Code orchestration
 
 Ordinary coding tasks need no T3 tools.
@@ -20,14 +24,28 @@ Ordinary coding tasks need no T3 tools.
 - T3 tools may load late. Try the name once before you call it absent.`,
   `### Visuals and preview
 
-- Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
-- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+${DEFAULT_VISUAL_INSTRUCTIONS}
+${T3_CODE_PREVIEW_INSTRUCTIONS}`,
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 
 ${T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n")}
 `;
+
+/** Replace only visual delivery guidance; browser restrictions and orchestration stay in place. */
+export function t3OrchestrationSections(visualInstructions?: string | null): ReadonlyArray<string> {
+  return visualInstructions == null
+    ? T3_CODE_ORCHESTRATION_SECTIONS
+    : [
+        ...T3_CODE_ORCHESTRATION_SECTIONS.slice(0, -1),
+        `### Visuals and preview\n\n${visualInstructions}\n${T3_CODE_PREVIEW_INSTRUCTIONS}`,
+      ];
+}
+
+export function t3OrchestrationInstructions(visualInstructions?: string | null): string {
+  return `\n\n${t3OrchestrationSections(visualInstructions).join("\n\n")}\n`;
+}
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
@@ -76,6 +94,7 @@ export interface T3AcpInstructionState {
 /** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
 export function t3AcpPromptWithInstructions(input: {
   readonly prompt: string;
+  readonly visualInstructions?: string | null;
   readonly state: T3AcpInstructionState;
   readonly previousState?: T3AcpInstructionState;
 }): string {
@@ -96,7 +115,7 @@ export function t3AcpPromptWithInstructions(input: {
       ? [
           T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
           ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
-          T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
+          t3OrchestrationInstructions(input.visualInstructions).trim(),
           T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
         ]
       : []),
@@ -104,10 +123,10 @@ export function t3AcpPromptWithInstructions(input: {
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
 
-const orchestrationInstructions = (hasDeviceTools: boolean) =>
+const orchestrationInstructions = (hasDeviceTools: boolean, visualInstructions?: string | null) =>
   hasDeviceTools
-    ? `${T3_CODE_ORCHESTRATION_INSTRUCTIONS}\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS}\n`
-    : T3_CODE_ORCHESTRATION_INSTRUCTIONS;
+    ? `${t3OrchestrationInstructions(visualInstructions)}\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS}\n`
+    : t3OrchestrationInstructions(visualInstructions);
 
 function prependT3OrchestrationInstructions(prompt: string, instructions: string): string {
   return `<t3_code_orchestration_instructions>${instructions.trim()}</t3_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
@@ -116,6 +135,7 @@ function prependT3OrchestrationInstructions(prompt: string, instructions: string
 /** For providers whose instructions ride on the prompt, so a compacted conversation loses them. */
 export function t3OrchestrationPrompt(input: {
   readonly prompt: string;
+  readonly visualInstructions?: string | null;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
   readonly orchestrationDelivered: boolean;
@@ -125,7 +145,7 @@ export function t3OrchestrationPrompt(input: {
   if (!input.orchestrationDelivered) {
     return prependT3OrchestrationInstructions(
       input.prompt,
-      orchestrationInstructions(input.hasDeviceTools),
+      orchestrationInstructions(input.hasDeviceTools, input.visualInstructions),
     );
   }
   return input.hasDeviceTools && !input.deviceInstructionsDelivered
@@ -136,6 +156,7 @@ export function t3OrchestrationPrompt(input: {
 export function t3OrchestrationSystemPrompt(
   hasT3Mcp: boolean,
   hasDeviceTools: boolean,
+  visualInstructions?: string | null,
 ): string | undefined {
-  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools) : undefined;
+  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools, visualInstructions) : undefined;
 }

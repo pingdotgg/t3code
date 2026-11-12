@@ -1517,6 +1517,10 @@ export const ServerSettings = Schema.Struct({
       }),
     ),
   ),
+  // Leaves room for browser guidance inside Codex's 4,000-byte context entry.
+  visualInstructions: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1_000))).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   threadTitleInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   branchNamingMode: BranchNamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("static" as const)),
@@ -1904,6 +1908,9 @@ export const ServerSettingsPatch = Schema.Struct({
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   ghqCloneLayout: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  visualInstructions: Schema.optionalKey(
+    Schema.NullOr(Schema.String.check(Schema.isMaxLength(1_000))),
+  ),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),

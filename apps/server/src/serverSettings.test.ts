@@ -3086,3 +3086,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
     );
   },
 );
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("visual delivery settings", (it) => {
+  it.effect(
+    "persists visual delivery replacements, empty guidance, and restoration of defaults",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        assert.isNull((yield* service.getSettings).visualInstructions);
+        for (const visualInstructions of ["Use html_render only for inline delivery.", "", null]) {
+          yield* service.updateSettings({ visualInstructions });
+          const saved = yield* decodeServerSettingsJson(
+            yield* fs.readFileString(config.settingsPath),
+          );
+          assert.equal(saved.visualInstructions, visualInstructions);
+          assert.equal((yield* service.getSettings).visualInstructions, visualInstructions);
+        }
+      }).pipe(Effect.provide(layerServerSettings())),
+  );
+});
