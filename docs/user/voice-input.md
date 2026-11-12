@@ -31,7 +31,7 @@ recording in a language can take longer while macOS downloads its speech model.
 filler-word removal are not available; the dictionary applies only when transcript
 cleanup is on.
 
-For cloud dictation, choose **OpenAI** or **Grok Voice Transcribe** via the environment
+For cloud dictation, choose **OpenAI**, **Grok Voice Transcribe**, or **Meta Voice Transcribe** via the environment
 you want to use. If it needs a key, enter one and choose **Save and enable**.
 You can also choose a [secret provider](secrets.md) instead of **Value** and enter a
 reference. Unlock the vault on that environment before dictating. Anyone with
@@ -42,6 +42,11 @@ the selected provider, which bills its API account. No local model download or c
 subscription is needed. Switch back to **This device** on mobile or **Off** on
 web and desktop to stop sharing. Removing the key stops that provider for everyone
 on the environment.
+
+**Meta Voice Transcribe** uses a Meta Model API key and the
+`muse-voice-transcribe-1.0` model. It transcribes after you stop recording, with
+language and dictionary hints sent alongside the audio. Unsupported language
+hints are omitted so Meta can detect the language.
 
 **OpenRouter** works the same way but has no default model: pick one from its live
 speech-to-text catalog when you enable it, or later under **Manage OpenRouter**.

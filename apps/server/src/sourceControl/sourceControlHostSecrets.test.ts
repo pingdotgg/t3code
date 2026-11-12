@@ -176,7 +176,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
       resolver,
       Effect.succeed({
         sourceControlHosts: hosts,
-        cloudSpeechCredentials: { openai: source("voice#key"), xai: "", openrouter: "" },
+        cloudSpeechCredentials: { openai: source("voice#key"), xai: "", openrouter: "", meta: "" },
         usageLimitSources,
         textGenerators: {},
         easDeviceHosts,
