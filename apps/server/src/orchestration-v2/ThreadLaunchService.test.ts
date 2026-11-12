@@ -25,6 +25,7 @@ import {
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
+  TextGenerationError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -241,6 +242,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerExternalServices,
         layerThreadManagement,
         layerReceipts,
+        layerOrchestrator,
         IdAllocator.layer,
       ),
     ),
@@ -2415,6 +2417,44 @@ it.effect("starts the agent of a new worktree thread only after its branch is re
       assert.isFalse(
         yield* Deferred.await(releasedAtRename),
         "the agent's run was released while its branch still had the temporary name",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("tells the thread when its worktree branch could not be renamed", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      generateBranchName: () =>
+        Effect.fail(
+          new TextGenerationError({
+            operation: "generateBranchName",
+            detail: "Failed to spawn Codex CLI process",
+          }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "launch:rename-fails",
+          thread: "thread:rename-fails",
+          message: "Start",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* tracker.stream(launched.threadId).pipe(
+        Stream.filter((snapshot) => snapshot?.phase === "done"),
+        Stream.runHead,
+      );
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      const notice = projection.turnItems.find((item) => item.type === "system_notice");
+      assert.equal(notice?.type === "system_notice" ? notice.runId : null, projection.runs[0]?.id);
+      assert.include(
+        notice?.type === "system_notice" ? notice.message : "",
+        `stays ${projection.thread.branch}. Text generation failed in generateBranchName: Failed to spawn Codex CLI process`,
       );
     }).pipe(Effect.provide(harness.layer));
   }),
