@@ -178,6 +178,11 @@ export function SecretProviderDialog({
                             <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                               {item.description}
                             </span>
+                            {item.value !== item.label ? (
+                              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                                {item.value}
+                              </span>
+                            ) : null}
                           </AutocompleteItem>
                         ))}
                       </AutocompleteList>
