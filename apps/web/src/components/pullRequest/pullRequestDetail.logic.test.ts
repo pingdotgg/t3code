@@ -1640,6 +1640,14 @@ describe("the compact row's single action slot", () => {
     ).toBe("fix");
   });
 
+  it("lets a Forgejo optional failure through when its required checks pass", () => {
+    const checks = [{ ...check("success"), required: true }, check("failure")];
+    expect(resolveThreadPanelPullRequestAction(openDetail({ checks, provider: "forgejo" }))).toBe(
+      "merge",
+    );
+    expect(resolveThreadPanelPullRequestAction(openDetail({ checks }))).toBe("fix");
+  });
+
   it("offers nothing the viewer may not do, and nothing on settled pull requests", () => {
     expect(
       resolveThreadPanelPullRequestAction(

@@ -28,7 +28,7 @@ import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
+import { gatingPullRequestChecks, type PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
 import {
   PULL_REQUEST_STATE_PRESENTATION,
@@ -277,14 +277,12 @@ export function pullRequestChecksStatePresentation(state: PullRequestChecksState
   return CHECKS_STATE_PRESENTATION[state];
 }
 
-// Forgejo summaries gate on required checks the way its branch protection does; keep both in step.
 export function pullRequestChecksState(
   checks: ReadonlyArray<PullRequestCheck>,
   provider?: string,
 ): PullRequestChecksState | null {
   if (checks.length === 0) return null;
-  const required = provider === "forgejo" ? checks.filter((check) => check.required === true) : [];
-  const statuses = new Set((required.length > 0 ? required : checks).map((check) => check.status));
+  const statuses = new Set(gatingPullRequestChecks(checks, provider).map((check) => check.status));
   if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
   if (statuses.has("pending") || statuses.has("action-required")) return "pending";
   return statuses.has("success") ? "passing" : null;
