@@ -42,6 +42,10 @@ export function pullRequestDescriptionContent(
       segment.rows.flat().forEach((cell) => cell.segments.forEach(collect));
       return;
     }
+    if (segment.kind === "details") {
+      segment.segments.forEach(collect);
+      return;
+    }
     if (segment.kind === "attachment" && !attachments.has(segment.url)) {
       const name = new URL(segment.url).pathname.split("/").pop();
       attachments.set(segment.url, {

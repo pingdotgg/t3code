@@ -19,6 +19,14 @@ export type PullRequestBodySegment =
       readonly id: string;
       readonly kind: "table";
       readonly rows: ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>>;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "details";
+      readonly open: boolean;
+      /** The `<summary>` contents as written, empty when the fold has none. */
+      readonly summary: string;
+      readonly segments: ReadonlyArray<PullRequestBodySegment>;
     };
 
 type PullRequestBodyTableCell = {
@@ -58,6 +66,13 @@ const TABLE_CLOSE_PATTERN = /<\/table\s*>/giu;
  */
 const TABLE_STRUCTURE_TAG_PATTERN =
   /<(\/?)(table|thead|tbody|tfoot|tr|td|th)\b((?:[^<>"']|"[^"]*"|'[^']*')*)>/giu;
+const DETAILS_START_PATTERN = /^\s*<details\b/iu;
+const DETAILS_END_PATTERN = /<\/details\s*>\s*$/iu;
+const DETAILS_OPEN_PATTERN = /<details\b/giu;
+const DETAILS_CLOSE_PATTERN = /<\/details\s*>/giu;
+const DETAILS_OPEN_TAG_PATTERN = /^\s*<details\b([^>]*)>/iu;
+const SUMMARY_PATTERN = /^\s*<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/iu;
+
 /** Rows are laid out independently, so a spanning cell would shift the cells after it. */
 const CELL_SPAN_PATTERN = /\b(?:col|row)span\b/iu;
 
@@ -157,9 +172,54 @@ function mediaTableAt(
   // Lifting attachment links out of a table's cells would tear the table apart.
   const rows = tableRows(lines.slice(start, end + 1).join("\n"), startOffset);
   const hasMedia = rows?.some((cells) =>
-    cells.some((cell) => cell.segments.some((segment) => segment.kind === "attachment")),
+    cells.some((cell) => cell.segments.some((segment) => segment.kind !== "markdown")),
   );
   return { end, rows: hasMedia ? rows : null };
+}
+
+/**
+ * The fold opening at `start`, through its matching close, when lifting media out of it left
+ * something besides markdown: a renderer draws each segment on its own, so a fold split around
+ * a video would close before it. `end` is the last line looked at, as for `mediaTableAt`.
+ */
+function mediaDetailsAt(
+  lines: ReadonlyArray<string>,
+  start: number,
+  startOffset: number,
+): {
+  end: number;
+  segment: Omit<Extract<PullRequestBodySegment, { kind: "details" }>, "id"> | null;
+} {
+  let depth = 0;
+  let end = start;
+  for (; end < lines.length; end += 1) {
+    const line = lines[end]!;
+    depth +=
+      (line.match(DETAILS_OPEN_PATTERN)?.length ?? 0) -
+      (line.match(DETAILS_CLOSE_PATTERN)?.length ?? 0);
+    if (depth <= 0) break;
+  }
+  end = Math.min(end, lines.length - 1);
+  if (depth !== 0 || !DETAILS_END_PATTERN.test(lines[end]!)) return { end, segment: null };
+  const html = lines.slice(start, end + 1).join("\n");
+  const openTag = DETAILS_OPEN_TAG_PATTERN.exec(html)!;
+  let bodyStart = openTag[0].length;
+  const summary = SUMMARY_PATTERN.exec(html.slice(bodyStart));
+  if (summary !== null) bodyStart += summary[0].length;
+  const bodyEnd = html.search(DETAILS_END_PATTERN);
+  if (bodyEnd < bodyStart) return { end, segment: null };
+  const segments = splitBodyAt(html.slice(bodyStart, bodyEnd), startOffset + bodyStart);
+  if (segments.every((segment) => segment.kind === "markdown")) return { end, segment: null };
+  return {
+    end,
+    segment: {
+      kind: "details",
+      // Quoted values are blanked so `title="is open"` does not count as the attribute.
+      open: /\sopen\b/iu.test(openTag[1]!.replace(/"[^"]*"|'[^']*'/gu, '""')),
+      summary: summary?.[1]!.trim() ?? "",
+      segments,
+    },
+  };
 }
 
 export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
@@ -192,6 +252,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
 
   const lines = body.split("\n");
   let tableScannedThrough = -1;
+  let detailsScannedThrough = -1;
   let lineStart = baseOffset;
   for (let index = 0; index < lines.length; lineStart += lines[index]!.length + 1, index += 1) {
     const line = lines[index]!;
@@ -227,6 +288,17 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
         flushMarkdown();
         segments.push({ id: `table:${segments.length}`, kind: "table", rows: table.rows });
         for (; index < table.end; index += 1) lineStart += lines[index]!.length + 1;
+        continue;
+      }
+    }
+
+    if (index > detailsScannedThrough && DETAILS_START_PATTERN.test(line)) {
+      const details = mediaDetailsAt(lines, index, lineStart);
+      detailsScannedThrough = details.end;
+      if (details.segment !== null) {
+        flushMarkdown();
+        segments.push({ id: `details:${segments.length}`, ...details.segment });
+        for (; index < details.end; index += 1) lineStart += lines[index]!.length + 1;
         continue;
       }
     }

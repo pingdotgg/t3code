@@ -150,6 +150,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { splitMarkdownDetails } from "../../lib/markdownDetails";
+import { MarkdownDetailsFold } from "./MarkdownDetailsFold";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
   SelectableMarkdownText,
@@ -1220,41 +1221,6 @@ function AssistantMarkdownBlocks(props: {
       );
     });
   });
-}
-
-function MarkdownDetailsFold(props: {
-  readonly summary: string;
-  readonly initiallyOpen: boolean;
-  readonly children: ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(props.initiallyOpen);
-  const iconSubtleColor = useUniwindTheme()["--color-icon-subtle"];
-  return (
-    <View className="my-2 border-y border-border">
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={props.summary}
-        accessibilityState={{ expanded }}
-        hitSlop={4}
-        className="min-h-10 flex-row items-center gap-2 py-2"
-        onPress={() => {
-          void Haptics.selectionAsync();
-          setExpanded((value) => !value);
-        }}
-      >
-        <ThreadDisclosureChevron
-          expanded={expanded}
-          collapsedDirection="right"
-          size={12}
-          tintColor={iconSubtleColor}
-        />
-        <Text className="min-w-0 shrink font-t3-medium text-sm text-foreground">
-          {props.summary}
-        </Text>
-      </Pressable>
-      {expanded ? <View className="pb-3 pl-5">{props.children}</View> : null}
-    </View>
-  );
 }
 
 function useMarkdownStyles(): MarkdownStyleSets {

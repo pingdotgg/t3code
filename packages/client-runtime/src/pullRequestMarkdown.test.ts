@@ -164,7 +164,21 @@ describe("pull request body segmentation", () => {
       "</details>",
     ].join("\n");
     const count = (text: string, pattern: RegExp) => text.match(pattern)?.length ?? 0;
-    for (const segment of splitPullRequestBody(body)) {
+    const segments = splitPullRequestBody(body);
+    expect(segments).toMatchObject([
+      {
+        kind: "details",
+        open: true,
+        summary: "Videos",
+        segments: [
+          { kind: "markdown", text: "Caption one" },
+          { kind: "attachment", media: "video" },
+          { kind: "markdown", text: "Caption two" },
+          { kind: "attachment", url: "https://example.com/b.mp4" },
+        ],
+      },
+    ]);
+    for (const segment of segments) {
       if (segment.kind !== "markdown") continue;
       expect(count(segment.text, /<details\b/giu)).toBe(count(segment.text, /<\/details\s*>/giu));
     }

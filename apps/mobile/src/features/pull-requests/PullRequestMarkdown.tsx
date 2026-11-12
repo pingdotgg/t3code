@@ -36,6 +36,8 @@ import {
   type FilePreviewItem,
 } from "../../components/ui/FilePreviewModal";
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
+import { MarkdownDetailsFold } from "../threads/MarkdownDetailsFold";
+import { decodeHtmlEntities } from "../../lib/markdownDocument";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";
 
@@ -191,6 +193,18 @@ function PullRequestBodySegmentView(props: {
   }
   if (segment.kind === "attachment") {
     return <PullRequestMedia url={segment.url} kind={segment.media} />;
+  }
+  if (segment.kind === "details") {
+    const summary = decodeHtmlEntities(segment.summary.replace(/<[^>]*>/g, "")).trim();
+    return (
+      <MarkdownDetailsFold summary={summary || "Details"} initiallyOpen={segment.open}>
+        <View style={{ gap: 12 }}>
+          {segment.segments.map((child) => (
+            <PullRequestBodySegmentView key={child.id} {...props} segment={child} />
+          ))}
+        </View>
+      </MarkdownDetailsFold>
+    );
   }
   return (
     <View style={{ gap: 12 }}>
