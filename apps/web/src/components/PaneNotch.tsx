@@ -3,6 +3,7 @@ import { useRender } from "@base-ui/react/use-render";
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useTheme } from "../hooks/useTheme";
 import { useLayoutPane } from "../layout/layoutPaneContext";
 import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
@@ -17,7 +18,9 @@ export const PANE_TAB_CLASS =
   "inline-flex h-7 min-w-0 max-w-80 items-center gap-1.75 rounded-control surface-pane-tab px-2.5 text-control text-strong-foreground outline-none [-webkit-app-region:no-drag] focus-visible:inset-ring-2 focus-visible:inset-ring-ring";
 
 export const PANE_TAB_TITLE_CLASS = "max-w-68 truncate";
-export const PANE_INACTIVE_TAB_TITLE_CLASS = "max-w-40 truncate";
+/** The connected pane tabs widen it to the active title's, so activating a tab moves nothing. */
+export const PANE_INACTIVE_TAB_TITLE_CLASS =
+  "max-w-[var(--pane-inactive-tab-title-max,10rem)] truncate";
 /** A ghost tab's title (`LayoutTab.ghostOf`): italic until the tab is kept, as preview tabs are. */
 export const PANE_GHOST_TAB_TITLE_CLASS = "italic";
 
@@ -70,6 +73,9 @@ function markNotchHost(host: Element | null, side: "left" | "right"): () => void
   };
 }
 
+/* ── The notch: light, black chrome only. Elsewhere the row is a bar and the
+   tabs join the pane there (index.css, connected pane tabs). Close notches of
+   one header merge into one chrome row. ── */
 const PANE_NOTCH_MERGE_MARGIN_PX = 4;
 const notchHeaders = new WeakMap<
   HTMLElement,
@@ -131,6 +137,17 @@ function observeNotchGap(notch: HTMLDivElement, side: "left" | "right"): () => v
   };
 }
 
+/**
+ * Whether pane tabs sit on a bar and the active one joins its pane (index.css,
+ * connected pane tabs): from md up, except under light, black chrome, which
+ * keeps the notch.
+ */
+export function useConnectedPaneTabs(): boolean {
+  const isMobile = useMediaQuery("max-md");
+  const { blackChrome, resolvedTheme } = useTheme();
+  return !isMobile && !(blackChrome && resolvedTheme === "light");
+}
+
 /** Render first inside a positioned pane header starting at the pane edge. Keep the plus last so the
  * notch includes its trailing padding. */
 export function PaneNotch({
@@ -148,6 +165,8 @@ export function PaneNotch({
   // The tab sits on the window chrome where the notch shows, so light, black
   // chrome gives it the dark tokens there (index.css).
   const isMobile = useMediaQuery("max-md");
+  // Only the notch has two ends that may merge; the bar spans the row.
+  const connected = useConnectedPaneTabs();
   const notchRef = useRef<HTMLDivElement>(null);
   const { split, focused, visible } = useLayoutPane();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Mark the mounted notch ancestors and remove those external DOM markers on cleanup.
@@ -169,9 +188,9 @@ export function PaneNotch({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe the notch DOM gap before paint and stop observing when its host changes.
   useLayoutEffect(() => {
     const notch = notchRef.current;
-    if (!notch || !marksHost || isMobile) return;
+    if (!notch || !marksHost || isMobile || connected) return;
     return observeNotchGap(notch, side);
-  }, [isMobile, marksHost, side]);
+  }, [connected, isMobile, marksHost, side]);
   return (
     <>
       <span
@@ -179,6 +198,12 @@ export function PaneNotch({
         data-pane-notch-corner={side === "left" ? "" : side}
         data-sidebar-slide-stay={side === "left" ? "" : undefined}
       />
+      {side === "left" ? (
+        <>
+          <span aria-hidden data-pane-bar-corner="start" data-sidebar-slide-stay="" />
+          <span aria-hidden data-pane-bar-corner="end" />
+        </>
+      ) : null}
       <div
         ref={notchRef}
         data-pane-notch={side === "left" ? "" : side}
