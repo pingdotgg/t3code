@@ -415,15 +415,17 @@ describe("ConnectReachability DNS failures", () => {
   it.effect("says whether the name exists in public DNS", () =>
     Effect.gen(function* () {
       using _connect = mockEdgeConnect();
-      for (const [dnsStatus, reason] of [
-        [0, "old cached answer"],
-        [3, "missing from public DNS"],
+      for (const [lookupCode, dnsStatus, reason] of [
+        ["ENOTFOUND", 0, "old cached answer"],
+        ["ENOTFOUND", 3, "missing from public DNS"],
+        // The local resolver did not answer, so nothing it cached is to blame.
+        ["EAI_AGAIN", 0, "does not resolve from this machine"],
       ] as const) {
         const layer = reachabilityLayer(
           (request) =>
             request.url.startsWith("https://1.1.1.1/dns-query")
               ? Effect.succeed({ status: 200, body: JSON.stringify({ Status: dnsStatus }) })
-              : lookupFailed("ENOTFOUND"),
+              : lookupFailed(lookupCode),
           () => Effect.succeed(false),
         );
         const result = yield* ConnectReachability.ConnectReachability.use(

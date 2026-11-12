@@ -203,22 +203,23 @@ export function formatReachabilityFailure(result: Unreachable): string {
   ].join("\n");
 }
 
-/** Any failed name lookup. getaddrinfo reports more than the DNS codes, such as EBUSY. */
-function isDnsLookupError(error: unknown): boolean {
+/** The code of a failed name lookup, or null. getaddrinfo reports more than the DNS codes, such as EBUSY. */
+function dnsLookupErrorCode(error: unknown): string | null {
   let current = error;
   for (let depth = 0; depth < 6 && typeof current === "object" && current !== null; depth++) {
-    if (
-      ("syscall" in current && current.syscall === "getaddrinfo") ||
-      ("code" in current && typeof current.code === "string" && DNS_ERROR_CODES.has(current.code))
-    ) {
-      return true;
+    const code = "code" in current && typeof current.code === "string" ? current.code : "";
+    if (("syscall" in current && current.syscall === "getaddrinfo") || DNS_ERROR_CODES.has(code)) {
+      return code;
     }
     current = "cause" in current ? current.cause : undefined;
   }
-  return false;
+  return null;
 }
 
 const DNS_ERROR_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "EAI_NONAME"]);
+// Answers that the name does not exist, which a resolver may have cached. EAI_AGAIN means
+// the resolver did not answer. glibc behind systemd-resolved can report NXDOMAIN as EBUSY.
+const NOT_FOUND_CODES = new Set(["ENOTFOUND", "EAI_NONAME", "EBUSY"]);
 
 const DnsJsonAnswer = Schema.Struct({ Status: Schema.Number });
 
@@ -316,17 +317,19 @@ const make = Effect.gen(function* () {
     Effect.scoped,
     (effect, hostname) =>
       effect.pipe(
-        Effect.catch((error) =>
-          isDnsLookupError(error)
-            ? existsInPublicDns(hostname).pipe(
-                Effect.map((existsPublicly): EndpointProbe =>
-                  existsPublicly === null
-                    ? { kind: "dns_failed" }
-                    : { kind: "dns_failed", existsPublicly },
-                ),
-              )
-            : Effect.succeed<EndpointProbe>({ kind: "network_error" }),
-        ),
+        Effect.catch((error) => {
+          const code = dnsLookupErrorCode(error);
+          if (code === null) return Effect.succeed<EndpointProbe>({ kind: "network_error" });
+          if (!NOT_FOUND_CODES.has(code))
+            return Effect.succeed<EndpointProbe>({ kind: "dns_failed" });
+          return existsInPublicDns(hostname).pipe(
+            Effect.map((existsPublicly): EndpointProbe =>
+              existsPublicly === null
+                ? { kind: "dns_failed" }
+                : { kind: "dns_failed", existsPublicly },
+            ),
+          );
+        }),
       ),
   );
 
