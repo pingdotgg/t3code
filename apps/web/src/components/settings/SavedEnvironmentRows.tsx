@@ -770,10 +770,6 @@ export function CloudLinkRow({
   return <ConfiguredCloudLinkRow environmentId={environmentId} canManageRelay={canManageRelay} />;
 }
 
-/**
- * A desktop-local backend (WSL) is its own environment, so T3 Connect needs its own link for it.
- * Shown on the host's page so linking the host does not silently leave the backend behind.
- */
 export function LocalBackendConnectRow({
   environmentId,
   label,

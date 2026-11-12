@@ -5,8 +5,9 @@ import { resolveAccessEnvironmentId } from "./ConnectionsSettings.logic";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 
 /**
- * The environments Sharing & access manages and the one `requested` resolves to. Desktop-local
- * backends stay listed because a Windows app runs its WSL backend as its own environment.
+ * The environments Sharing & access manages, the one `requested` resolves to, and its name.
+ * The MCP wizard uses the same, so both name an environment alike. A desktop-local WSL backend
+ * is its own environment with its own access, so it is listed too.
  */
 export function useAccessEnvironment(requested: EnvironmentId | null) {
   const { environments } = useEnvironments();

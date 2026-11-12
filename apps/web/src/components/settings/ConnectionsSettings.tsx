@@ -273,8 +273,7 @@ function ConnectionsSettingsContent({
   const listedEnvironments = savedEnvironments.filter(
     (environment) => !isDesktopLocalConnectionTarget(environment.entry.target),
   );
-  // Desktop-local backends (WSL) run their own server, so T3 Connect reaches them only through
-  // their own link. Offer that on the host's page once the host itself is on T3 Connect.
+  // A WSL backend runs its own server and needs its own T3 Connect link; point to it from the host.
   const accessLinkState = useCloudLinkState(accessEnvironmentId).data;
   const desktopLocalBackends =
     isPrimaryAccess &&

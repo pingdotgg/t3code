@@ -146,15 +146,11 @@ there. Install the provider CLIs inside that distro. T3 Code installs its own
 server runtime there automatically; the first launch after an app update can
 take longer.
 
-The WSL environment is separate from the Windows one. To reach it from your phone
-or another device, open **Settings → Sharing & access**. If **Showing access for**
-appears, choose **WSL (distro)** there. That only shows the WSL environment's
-access settings; sign in and turn on **T3 Connect** on that page, since T3 Connect
-links one environment at a time.
-
-The Windows view also offers a row for WSL before it is on T3 Connect. The row
-appears only after Windows is linked, so switch **Showing access for** back to
-Windows to find it.
+The WSL environment is separate from the Windows one and has its own access
+settings. To reach it from your phone or another device, open **Settings →
+Sharing & access**, choose **WSL (distro)** under **Showing access for**, and
+turn on **T3 Connect** there. Once Windows is on T3 Connect, its page also
+points to a WSL environment that is not.
 
 ### Open a project from a terminal
 
