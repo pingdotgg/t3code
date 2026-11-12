@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Pure synchronous hashing keeps page matching bounded without a runtime dependency.
 import * as NodeCrypto from "node:crypto";
-import type { ThreadId } from "@t3tools/contracts";
+import type { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -32,8 +32,11 @@ export class McpProviderSessions extends Context.Service<
   McpProviderSessions,
   {
     readonly set: (config: McpProviderSessionConfig) => Effect.Effect<void>;
-    readonly read: (threadId: ThreadId) => Effect.Effect<McpProviderSessionConfig | undefined>;
-    readonly clear: (threadId: ThreadId) => Effect.Effect<void>;
+    readonly read: (
+      threadId: ThreadId,
+      providerInstanceId: ProviderInstanceId,
+    ) => Effect.Effect<McpProviderSessionConfig | undefined>;
+    readonly clear: (threadId: ThreadId, providerSessionId?: string) => Effect.Effect<void>;
     readonly recordHtmlRender: (
       threadId: ThreadId,
       input: {
@@ -100,37 +103,57 @@ const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput
 };
 
 const make = Effect.gen(function* () {
-  const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
+  const sessions = yield* Ref.make(
+    new Map<ThreadId, ReadonlyMap<ProviderInstanceId, McpProviderSessionConfig>>(),
+  );
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
   return McpProviderSessions.of({
     set: Effect.fn("McpProviderSessions.set")(function* (config) {
       const current = yield* Ref.get(sessions);
-      if (current.get(config.threadId)?.providerSessionId !== config.providerSessionId) {
+      const previous = current.get(config.threadId)?.get(config.providerInstanceId);
+      if (previous?.providerSessionId !== config.providerSessionId) {
         yield* Ref.update(htmlRenders, (kept) => {
           const next = new Map(kept);
           next.delete(config.threadId);
           return next;
         });
       }
-      yield* Ref.update(sessions, (current) => new Map(current).set(config.threadId, config));
+      yield* Ref.update(sessions, (current) =>
+        new Map(current).set(
+          config.threadId,
+          new Map(current.get(config.threadId)).set(config.providerInstanceId, config),
+        ),
+      );
     }),
-    read: Effect.fn("McpProviderSessions.read")(function (threadId) {
-      return Ref.get(sessions).pipe(Effect.map((current) => current.get(threadId)));
+    read: Effect.fn("McpProviderSessions.read")(function (threadId, providerInstanceId) {
+      return Ref.get(sessions).pipe(
+        Effect.map((current) => current.get(threadId)?.get(providerInstanceId)),
+      );
     }),
-    clear: Effect.fn("McpProviderSessions.clear")(function (threadId) {
-      return Ref.update(sessions, (current) => {
+    clear: Effect.fn("McpProviderSessions.clear")(function* (threadId, providerSessionId) {
+      const threadCleared = yield* Ref.modify(sessions, (current) => {
+        const next = new Map(current);
+        const byInstance = current.get(threadId);
+        if (providerSessionId === undefined || byInstance === undefined) {
+          next.delete(threadId);
+          return [true, next] as const;
+        }
+        const remaining = new Map(
+          Array.from(byInstance).filter(
+            ([, config]) => config.providerSessionId !== providerSessionId,
+          ),
+        );
+        if (remaining.size === 0) next.delete(threadId);
+        else next.set(threadId, remaining);
+        return [remaining.size === 0, next] as const;
+      });
+      // Kept renders belong to the thread, so another instance's live credential keeps them.
+      if (!threadCleared) return;
+      yield* Ref.update(htmlRenders, (current) => {
         const next = new Map(current);
         next.delete(threadId);
         return next;
-      }).pipe(
-        Effect.andThen(
-          Ref.update(htmlRenders, (current) => {
-            const next = new Map(current);
-            next.delete(threadId);
-            return next;
-          }),
-        ),
-      );
+      });
     }),
     recordHtmlRender: Effect.fn("McpProviderSessions.recordHtmlRender")(
       function (threadId, input, reference) {

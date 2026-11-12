@@ -2280,7 +2280,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             runtimePolicy: openInput.runtimePolicy,
             platform,
             threadId: openInput.threadId,
-            mcpSession: yield* mcpSessions.read(openInput.threadId),
+            mcpSession: yield* mcpSessions.read(openInput.threadId, adapterOptions.instanceId),
           });
           if (
             platform === "win32" &&
@@ -2435,7 +2435,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               modelSelection: turnInput.modelSelection,
               runtimePolicy: turnInput.runtimePolicy,
             });
-            const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            const mcpSession = yield* mcpSessions.read(
+              turnInput.threadId,
+              adapterOptions.instanceId,
+            );
             const mcpServers = cursorMcpServers(mcpSession);
             const hasDeviceTools =
               mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;

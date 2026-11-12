@@ -1754,7 +1754,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const readMcpSession = (threadId: ThreadId | null) =>
-    threadId === null ? Effect.undefined : mcpSessions.read(threadId);
+    threadId === null ? Effect.undefined : mcpSessions.read(threadId, adapterOptions.instanceId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
 
@@ -6284,7 +6284,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               event.status === "completed" &&
               nativeThreadId != null
             ) {
-              const hasPendingWake = (yield* mcpSessions.read(input.context.input.threadId))
+              const hasPendingWake = (yield* readMcpSession(input.context.input.threadId))
                 ?.hasPendingWake;
               // Decided under the permit before the hold exists, so no continuation can adopt it first.
               const waitsForWake = hasPendingWake === undefined ? false : yield* hasPendingWake;
@@ -7239,7 +7239,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>,
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
-            const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            const mcpSession = yield* readMcpSession(turnInput.threadId);
             const configuredReasoningSummary = yield* client
               .request("config/read", { cwd: turnInput.runtimePolicy.cwd, includeLayers: false })
               .pipe(
@@ -7573,7 +7573,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
-              Effect.andThen(mcpSessions.read(threadInput.threadId)),
+              Effect.andThen(readMcpSession(threadInput.threadId)),
               Effect.flatMap((mcpSession) =>
                 client.request(
                   "thread/start",
@@ -8455,7 +8455,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ...(boundary.lastTurnId === undefined ? {} : { lastTurnId: boundary.lastTurnId }),
                 ...codexThreadRuntimeParams({
                   threadId: threadInput.targetThreadId,
-                  mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
+                  mcpSession: yield* readMcpSession(threadInput.targetThreadId),
                   ...(threadInput.modelSelection === undefined
                     ? {}
                     : { modelSelection: threadInput.modelSelection }),
