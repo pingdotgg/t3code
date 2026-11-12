@@ -215,15 +215,10 @@ export function persistState(state: UiState): void {
     return;
   }
   try {
-    const projectExpandedById = Object.fromEntries(
-      Object.entries(state.projectExpandedById).filter(
-        ([key]) => key !== LEGACY_PROJECT_EXPANSION_DEFAULT_KEY,
-      ),
-    );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
-        projectExpandedById,
+        projectExpandedById: state.projectExpandedById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
