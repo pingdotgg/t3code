@@ -17,6 +17,7 @@ import {
   TurnItemId,
   WS_METHODS,
   WsRpcGroup,
+  type ServerConfigStreamEvent,
   type VcsStatusStreamEvent,
   type OrchestrationProjectShell,
   type OrchestrationV2Command,
@@ -198,6 +199,7 @@ export interface FakeThread {
   readonly olderSettled?: true;
   readonly id: ThreadId;
   readonly title: string;
+  readonly worktreePath?: string;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
 }
@@ -236,7 +238,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: "main",
-    worktreePath: null,
+    worktreePath: thread.worktreePath ?? null,
     activeProviderThreadId: null,
     lineage: {
       rootThreadId: thread.sideChatOf ?? thread.id,
@@ -332,7 +334,8 @@ let threads: ReadonlyArray<FakeThread> = [];
 let dispatched: OrchestrationV2Command[] = [];
 let acceptCommands = false;
 let sequence = 1;
-let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
+const vcsStatusSubscribers = new Map<string, Queue.Queue<VcsStatusStreamEvent>>();
+let serverConfigSubscriber: Queue.Queue<ServerConfigStreamEvent> | null = null;
 
 const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>) => () => void) =>
   Stream.unwrap(
@@ -345,6 +348,17 @@ const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>
       }
       return Stream.fromQueue(queue);
     }),
+  );
+
+const subscribeServerConfig = () =>
+  subscribe<ServerConfigStreamEvent>(
+    [{ version: 1, type: "snapshot", config: serverConfig() }],
+    (queue) => {
+      serverConfigSubscriber = queue;
+      return () => {
+        if (serverConfigSubscriber === queue) serverConfigSubscriber = null;
+      };
+    },
   );
 
 const handlers: Record<string, (input: never) => unknown> = {
@@ -404,15 +418,15 @@ const handlers: Record<string, (input: never) => unknown> = {
         : [],
     });
   },
-  [WS_METHODS.subscribeVcsStatus]: () =>
+  [WS_METHODS.subscribeVcsStatus]: ({ cwd }: { readonly cwd: string }) =>
     subscribe<VcsStatusStreamEvent>([], (queue) => {
-      vcsStatusSubscriber = queue;
+      vcsStatusSubscribers.delete(cwd);
+      vcsStatusSubscribers.set(cwd, queue);
       return () => {
-        if (vcsStatusSubscriber === queue) vcsStatusSubscriber = null;
+        if (vcsStatusSubscribers.get(cwd) === queue) vcsStatusSubscribers.delete(cwd);
       };
     }),
-  [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig() }]),
+  [WS_METHODS.subscribeServerConfig]: () => subscribeServerConfig(),
 };
 
 // Unanswered calls stay pending, like a server that has not replied yet.
@@ -428,8 +442,7 @@ const client = new Proxy(handlers, {
 const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
   initialConfig: Effect.sync(serverConfig),
-  subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig() }]),
+  subscribeServerConfig: () => subscribeServerConfig(),
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -541,7 +554,23 @@ export function runningRun(threadId: ThreadId, id: string, ordinal: number, user
 
 export { userItem };
 
-export async function emitVcsStatus(event: VcsStatusStreamEvent): Promise<void> {
-  if (vcsStatusSubscriber === null) throw new Error("No VCS status subscription");
-  await Effect.runPromise(Queue.offer(vcsStatusSubscriber, event));
+/** Replaces the server config the app holds; `undefined` restores the default. */
+export async function emitServerConfig(overrides?: Partial<ServerConfig>): Promise<void> {
+  if (serverConfigSubscriber === null) throw new Error("No server config subscription");
+  await Effect.runPromise(
+    Queue.offer(serverConfigSubscriber, {
+      version: 1,
+      type: "snapshot",
+      config: { ...serverConfig(), ...overrides },
+    }),
+  );
+}
+
+/** Sends to the subscription for `cwd`, or to the most recent one. */
+export async function emitVcsStatus(event: VcsStatusStreamEvent, cwd?: string): Promise<void> {
+  const subscriber =
+    cwd === undefined ? [...vcsStatusSubscribers.values()].at(-1) : vcsStatusSubscribers.get(cwd);
+  if (subscriber === undefined)
+    throw new Error(`No VCS status subscription for ${cwd ?? "any cwd"}`);
+  await Effect.runPromise(Queue.offer(subscriber, event));
 }
