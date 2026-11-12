@@ -195,11 +195,17 @@ it.each([
     await using screen = await mountEditor("ship it **now** done");
     const { editor } = screen;
     const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
-    await act(async () => {
-      if (typeof caret === "number") editor.commands.focus(caret);
-      else editor.commands.focus("end");
-    });
-    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    // ProseMirror rewrites the DOM caret 20ms after focus. Run that now, or it
+    // can undo the first arrow key before ProseMirror reads the native move.
+    {
+      using _timers = fakeTimers();
+      await act(async () => {
+        if (typeof caret === "number") editor.commands.focus(caret);
+        else editor.commands.focus("end");
+      });
+      await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+      vi.runOnlyPendingTimers();
+    }
     if (typeof caret === "string") await userEvent.keyboard(caret);
     await userEvent.keyboard(`{${mod}>}${key}{/${mod}}`);
     await userEvent.keyboard("X");
