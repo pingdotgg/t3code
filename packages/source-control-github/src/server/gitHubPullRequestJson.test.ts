@@ -1076,6 +1076,18 @@ describe("repository access decoding", () => {
     }
   });
 
+  it("grants triage without write to the roles that can label but not push", () => {
+    // MODERATE is GitHub's current name for TRIAGE_PLUS, which it deprecates.
+    for (const permission of ["TRIAGE", "MODERATE", "TRIAGE_PLUS"]) {
+      const access = expectSuccess(decodeViewerPermissionsJson(repositoryJson(permission)));
+      expect({ permission, canWrite: access.canWrite, canTriage: access.canTriage }).toEqual({
+        permission,
+        canWrite: false,
+        canTriage: true,
+      });
+    }
+  });
+
   it("withholds write where gh names no permission, which is not a standing it gave", () => {
     expect(toCanWrite(undefined)).toBe(false);
   });
