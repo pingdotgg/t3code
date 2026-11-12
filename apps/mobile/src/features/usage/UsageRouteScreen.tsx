@@ -4,6 +4,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { EnvironmentId, USAGE_CONTRACT_VERSION, type UsageProviderKind } from "@t3tools/contracts";
 import { type RouteProp, useIsFocused, useRoute } from "@react-navigation/native";
 import {
+  emptyUsageReason,
   updatingProvidersLabel,
   usageEnvironmentProgress,
   usageProgress,
@@ -13,7 +14,6 @@ import {
   isModelCostUnknown,
   type DailyTotals,
   type MergedUsage,
-  usageEmptyState,
 } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -103,7 +103,7 @@ function UsageScreen(props: {
   const isPast24Hours = windowDays === 1;
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
-  const { merged, environments, selectedEnvironments, refresh } = useUsage(
+  const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
     window,
     selectedEnvironmentIds,
   );
@@ -115,6 +115,7 @@ function UsageScreen(props: {
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
   );
+  const emptyReason = merged.models.length === 0 ? emptyUsageReason(selectedEnvironments) : null;
 
   const days = enumerateDays(window.sinceDay, window.untilDay);
   const chartDays =
@@ -137,12 +138,6 @@ function UsageScreen(props: {
   const progress = usageProgress(selectedEnvironments, {
     refreshing: refreshingUsage,
     providerLabel,
-  });
-  const emptyState = usageEmptyState({
-    environments: selectedEnvironments,
-    hasUsage: merged.models.length > 0,
-    loading: refreshingUsage || selectedEnvironments.some((environment) => environment.isPending),
-    allProvidersHidden: false,
   });
   const selectWindow = (days: number) => {
     setWindowSelection({
@@ -296,7 +291,7 @@ function UsageScreen(props: {
                     {merged.duplicateSources.join(", ")}
                   </Text>
                 ) : null}
-                {emptyState === "pending" ? (
+                {isPending || emptyReason === "pending" ? (
                   <Text className="py-16 text-center text-base text-foreground-muted">
                     Scanning provider transcripts…
                   </Text>
@@ -306,7 +301,7 @@ function UsageScreen(props: {
                       ? "Connect an environment to see usage."
                       : "Select an environment to see usage."}
                   </Text>
-                ) : !canReadDiagnostics ? (
+                ) : !canReadDiagnostics || emptyReason === "failed" ? (
                   <View className="gap-2 py-16">
                     {selectedEnvironments.map((environment) => (
                       <Text
@@ -318,10 +313,6 @@ function UsageScreen(props: {
                       </Text>
                     ))}
                   </View>
-                ) : emptyState === "unavailable" ? (
-                  <Text className="py-16 text-center text-base text-foreground-muted">
-                    Usage is unavailable.
-                  </Text>
                 ) : (
                   <>
                     {sourceMessages.map((message) => (

@@ -16,6 +16,7 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import {
+  emptyUsageReason,
   updatingProvidersLabel,
   usageEnvironmentProgress,
   usageLoadingState,
@@ -27,7 +28,6 @@ import {
   type DailyTotals,
   type HourlyTotals,
   type MergedUsage,
-  usageEmptyState,
 } from "@t3tools/shared/usageMerge";
 
 import { cn } from "../../lib/utils";
@@ -230,6 +230,7 @@ export function UsagePage() {
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
   );
+  const emptyReason = merged.models.length === 0 ? emptyUsageReason(selectedEnvironments) : null;
 
   const updatePreferences = (patch: Partial<UsagePagePreferences>) => {
     const nextPreferences = { ...preferences, ...patch };
@@ -523,9 +524,9 @@ export function UsagePage() {
                 hiddenProviders={hiddenProviders}
                 now={limitsNow}
               />
-            ) : shown === null ? (
+            ) : shown === null || emptyReason === "pending" ? (
               <UsageSkeleton />
-            ) : !canReadDiagnostics ? (
+            ) : !canReadDiagnostics || emptyReason === "failed" ? (
               <div className="space-y-2 py-12 text-center text-sm text-muted-foreground">
                 {selectedEnvironments.map((environment) => (
                   <p key={environment.environmentId}>
@@ -616,23 +617,6 @@ function UsageOverview({
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
   // scope.
   const loadingPartial = loading.partial === true;
-  const emptyState = usageEmptyState({
-    environments: selectedEnvironments,
-    hasUsage: merged.models.length > 0,
-    loading: loadingPartial,
-    allProvidersHidden: PROVIDER_ORDER.every((provider) => hiddenProviders.has(provider)),
-  });
-  if (emptyState !== null && emptyState !== "empty") {
-    return (
-      <p className="py-12 text-center text-sm text-muted-foreground">
-        {emptyState === "hidden"
-          ? "All providers are hidden."
-          : emptyState === "pending"
-            ? "Waiting for usage."
-            : "Usage is unavailable."}
-      </p>
-    );
-  }
   const loadingProviders = new Set(
     PROVIDER_ORDER.filter((provider) => loading.everyProvider || loading.providers.has(provider)),
   );

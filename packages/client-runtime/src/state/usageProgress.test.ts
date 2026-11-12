@@ -6,7 +6,12 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { usageEnvironmentProgress, usageLoadingState, usageProgress } from "./usageProgress.ts";
+import {
+  emptyUsageReason,
+  usageEnvironmentProgress,
+  usageLoadingState,
+  usageProgress,
+} from "./usageProgress.ts";
 
 function summary(refreshing: readonly UsageProviderKind[] = []): UsageSummary {
   return {
@@ -117,4 +122,14 @@ describe("usageLoadingState", () => {
     ]);
     expect(state).toEqual({ partial: false, everyProvider: false, providers: new Set() });
   });
+});
+
+it("does not call an unfinished or failed read empty", () => {
+  const answered = { summary: summary(), error: null };
+  const reconnecting = { summary: null, error: null };
+  const failed = { summary: null, error: "This environment could not report usage." };
+
+  expect(emptyUsageReason([answered, reconnecting])).toBe("pending");
+  expect(emptyUsageReason([failed, failed])).toBe("failed");
+  expect(emptyUsageReason([answered, failed])).toBeNull();
 });
