@@ -6462,7 +6462,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["add", "."]);
           yield* git(cwd, ["commit", "-m", "Main"]);
           const mainHead = yield* git(cwd, ["rev-parse", "HEAD"]);
-          yield* git(cwd, ["branch", "MERGE_HEAD"]);
           if (location === "worktree") {
             const worktree = path.join(yield* makeTmpDir(), "linked");
             yield* git(cwd, ["worktree", "add", "-b", "linked", worktree]);
@@ -6536,12 +6535,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
 
     it.effect.each([
-      { operation: "cherry-pick", head: "CHERRY_PICK_HEAD" },
-      { operation: "revert", head: "REVERT_HEAD" },
-    ])("rejects selected-file commits during a $operation", ({ operation, head }) =>
+      { operation: "cherry-pick", head: "CHERRY_PICK_HEAD", refs: "files" },
+      { operation: "revert", head: "REVERT_HEAD", refs: "files" },
+      // Reftable keeps CHERRY_PICK_HEAD and REVERT_HEAD as refs with no file under .git.
+      { operation: "cherry-pick", head: "CHERRY_PICK_HEAD", refs: "reftable" },
+      { operation: "revert", head: "REVERT_HEAD", refs: "reftable" },
+    ])("rejects selected-file commits during a $operation ($refs)", ({ operation, head, refs }) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
+        if (refs === "reftable") yield* git(cwd, ["refs", "migrate", "--ref-format=reftable"]);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* git(cwd, ["checkout", "-b", "other"]);
         yield* writeTextFile(cwd, "README.md", "other version\n");
@@ -6552,6 +6555,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "README.md", "main version\n");
         yield* git(cwd, ["commit", "-am", "Main"]);
         const originalHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["branch", head]);
         const result = yield* driver.execute({
           operation: `test.${operation}`,
           cwd,
@@ -6561,7 +6565,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(result.exitCode, 1);
         yield* writeTextFile(cwd, "README.md", "resolved version\n");
         yield* git(cwd, ["add", "README.md"]);
-        const gitDir = yield* git(cwd, ["rev-parse", "--absolute-git-dir"]);
         const selected = operation === "cherry-pick" ? "picked.txt" : "README.md";
 
         const commit = yield* driver
@@ -6570,7 +6573,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.isTrue(Result.isFailure(commit), `Selected-file ${operation} commit succeeded`);
         assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), originalHead);
-        assert.isTrue(NodeFS.existsSync(`${gitDir}/${head}`));
+        assert.equal(
+          yield* git(cwd, [
+            "-c",
+            "core.warnAmbiguousRefs=false",
+            "rev-parse",
+            "--verify",
+            "--symbolic-full-name",
+            head,
+          ]),
+          head,
+        );
       }),
     );
 
