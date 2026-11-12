@@ -977,12 +977,12 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             threadCount: 1,
           },
           {
-            threadCount: 1,
             path: submodule,
             git: {
               remoteKey: "gitlab.com/pingdotgg/libs/vendor",
               repository: "pingdotgg/libs/vendor",
             },
+            threadCount: 1,
           },
           { path: noRemote, git: { remoteKey: null, repository: null }, threadCount: 1 },
           { path: plain, git: null, threadCount: 1 },

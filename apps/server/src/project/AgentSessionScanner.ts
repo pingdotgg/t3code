@@ -876,6 +876,20 @@ export const make = Effect.gen(function* () {
     return `path:${normalizeProjectPathForComparison(realPath)}`;
   });
 
+  /** Stats a directory that may be offered as a project, or none when it is missing or excluded. */
+  const projectDirectoryStats = Effect.fn("AgentSessionScanner.projectDirectoryStats")(function* (
+    directory: string,
+  ) {
+    if (isExcludedProjectPath(directory)) return Option.none<FileSystem.File.Info>();
+    const stats = yield* statOption(directory);
+    if (Option.isNone(stats) || stats.value.type !== "Directory") return Option.none();
+    const realPath = yield* fileSystem
+      .realPath(directory)
+      .pipe(Effect.orElseSucceed(() => directory));
+    // Symlinks can disguise excluded worktree paths; re-check their targets.
+    return isExcludedProjectPath(realPath) ? Option.none() : stats;
+  });
+
   // Paths whose own read outlived the deadline, mapped to when they may be read
   // again. Without this every later scan would wait out the deadline again for
   // each phase that touches them.
@@ -1711,17 +1725,8 @@ export const make = Effect.gen(function* () {
       const expanded = expandHomePath(candidate.cwd.trim(), homeDir);
       if (!path.isAbsolute(expanded)) continue;
       const resolved = path.resolve(expanded);
-      if (directories.has(resolved) || isExcludedProjectPath(resolved)) continue;
-      const stats = yield* statOption(resolved);
-      if (Option.isNone(stats) || stats.value.type !== "Directory") {
-        directories.set(resolved, Option.none());
-        continue;
-      }
-      const realPath = yield* fileSystem
-        .realPath(resolved)
-        .pipe(Effect.orElseSucceed(() => resolved));
-      // Symlinks can disguise excluded worktree paths; re-check their targets.
-      directories.set(resolved, isExcludedProjectPath(realPath) ? Option.none() : stats);
+      if (directories.has(resolved)) continue;
+      directories.set(resolved, yield* projectDirectoryStats(resolved));
     }
     const directoryGitIdentities = yield* readGitIdentities(
       Array.from(directories).flatMap(([directory, stats]) =>
@@ -1752,21 +1757,10 @@ export const make = Effect.gen(function* () {
         } else if (gitIdentity._tag === "Worktree") {
           // A linked worktree's sessions count toward its main checkout's project.
           const { mainCheckout } = gitIdentity;
-          // Symlinks can disguise excluded paths here too; re-check the target.
           const mainStats =
-            mainCheckout === null ||
-            isExcludedProjectPath(mainCheckout) ||
-            isExcludedProjectPath(
-              yield* fileSystem
-                .realPath(mainCheckout)
-                .pipe(Effect.orElseSucceed(() => mainCheckout)),
-            )
-              ? Option.none()
-              : yield* statOption(mainCheckout);
+            mainCheckout === null ? Option.none() : yield* projectDirectoryStats(mainCheckout);
           project =
-            mainCheckout !== null &&
-            Option.isSome(mainStats) &&
-            mainStats.value.type === "Directory"
+            mainCheckout !== null && Option.isSome(mainStats)
               ? {
                   key: yield* directoryIdentity(mainCheckout, mainStats.value),
                   path: mainCheckout,
