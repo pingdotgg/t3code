@@ -52,3 +52,19 @@ export function remapFileCommentAnnotations(
     },
   }));
 }
+
+/** Keeps drafts and the comments still in the prompt; returns the same array when nothing left. */
+export function retainPromptFileComments(
+  annotations: FileCommentLineAnnotation[],
+  promptCommentIds: ReadonlySet<string>,
+): FileCommentLineAnnotation[] {
+  const isRetained = (entry: FileCommentAnnotationEntry) =>
+    entry.kind === "draft" || promptCommentIds.has(entry.id);
+  if (annotations.every((annotation) => annotation.metadata.entries.every(isRetained))) {
+    return annotations;
+  }
+  return annotations.flatMap((annotation) => {
+    const entries = annotation.metadata.entries.filter(isRetained);
+    return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
+  });
+}
