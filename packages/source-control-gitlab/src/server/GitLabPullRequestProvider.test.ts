@@ -139,6 +139,7 @@ describe("gitLabViewerPermissions", () => {
         "update-branch",
         "enable-auto-merge",
         "disable-auto-merge",
+        "revert",
         "delete-branch",
       ],
       comment: true,
@@ -604,35 +605,51 @@ describe("optional activity reads", () => {
       }),
   );
 
-  it.effect("turns the first note of an open overview discussion into a review finding", () =>
-    Effect.gen(function* () {
-      const finding = { ...comment, id: "10", body: "Mention the flag in the README" };
-      const reply = { ...comment, id: "11", body: "Will do" };
-      const provider = yield* make.pipe(
-        Effect.provide(
-          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
-            ...reads,
-            listNotes: () =>
-              Effect.succeed({ comments: [comment, finding, reply], truncated: false }),
-            listDiscussions: () =>
-              Effect.succeed({
-                threads: [],
-                diffRefsByThreadId: new Map(),
-                overviewFindingIds: ["10"],
-                truncated: false,
-              }),
-          }),
-        ),
-      );
+  it.effect(
+    "turns an open overview discussion into a finding and a thread apart from file threads",
+    () =>
+      Effect.gen(function* () {
+        const finding = { ...comment, id: "10", body: "Mention the flag in the README" };
+        const reply = { ...comment, id: "11", body: "Will do" };
+        const thread = {
+          side: "right",
+          isResolved: false,
+          isOutdated: false,
+          comments: [],
+        } as const;
+        const provider = yield* make.pipe(
+          Effect.provide(
+            Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+              ...reads,
+              listNotes: () =>
+                Effect.succeed({ comments: [comment, finding, reply], truncated: false }),
+              listDiscussions: () =>
+                Effect.succeed({
+                  threads: [
+                    { ...thread, id: "overview", path: null, line: null },
+                    { ...thread, id: "file", path: "src/a.ts", line: 3 },
+                  ],
+                  diffRefsByThreadId: new Map(),
+                  overviewFindingIds: ["10"],
+                  truncated: false,
+                }),
+            }),
+          ),
+        );
 
-      const { comments } = yield* provider.getChangeRequestActivity(reference);
+        const { comments, reviewThreads, overviewThreads } =
+          yield* provider.getChangeRequestActivity(reference);
 
-      expect(comments.map((item) => [item.id, item.kind])).toEqual([
-        ["42", "issue-comment"],
-        ["10", "review-comment"],
-        ["11", "issue-comment"],
-      ]);
-    }),
+        // Clients that require a thread path must never receive one without it.
+        expect(reviewThreads.map(({ id }) => id)).toEqual(["file"]);
+        expect(overviewThreads?.map(({ id }) => id)).toEqual(["overview"]);
+
+        expect(comments.map((item) => [item.id, item.kind])).toEqual([
+          ["42", "issue-comment"],
+          ["10", "review-comment"],
+          ["11", "issue-comment"],
+        ]);
+      }),
   );
 
   it.effect("dates edited comments in the conversation and in threads", () =>
@@ -784,6 +801,7 @@ describe("optional activity reads", () => {
         commentCount: 1,
         commentsTruncated: true,
         reviewThreads: [],
+        overviewThreads: [],
         reactions: [],
         commits: [commit],
       });

@@ -26,8 +26,9 @@ function windowsForegroundFocusTarget(window: Electron.BrowserWindow) {
     windowId: window.id,
     processId: process.pid,
     title: window.getTitle(),
-    bounds: window.getBounds(),
-    contentBounds: window.getContentBounds(),
+    // xa11y reports physical desktop pixels on Windows; Electron bounds are DIPs.
+    bounds: Electron.screen.dipToScreenRect(window, window.getBounds()),
+    contentBounds: Electron.screen.dipToScreenRect(window, window.getContentBounds()),
   };
 }
 

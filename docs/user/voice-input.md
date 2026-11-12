@@ -54,6 +54,16 @@ isn’t already selected. **Test model** lets you try it without sending a messa
 If you use the composer microphone before a model is installed, it offers to download one.
 The recommendation uses your Voice language, or your system’s preferred languages with **Auto-detect**.
 
+If another app already downloaded one of these models, you don’t need a second copy.
+**Download** first looks in Handy’s model folder and the Hugging Face cache on that
+environment and uses a copy it finds there instead of downloading. For a copy anywhere
+else, on web or desktop, paste the path of the model file or its folder under the model
+list and choose **Use existing**. The path is on the environment
+that transcribes, not on the device you are using. T3 Code checks that the file is exactly a
+model from its list and then uses it in place. Removing the model in T3 Code leaves your file
+alone; if the other app deletes it, download or link the model again. Files in another
+format, such as Core ML, ONNX, or MLX builds of the same model, can’t be used.
+
 Select the languages you dictate in to compare models that support all of them.
 Accuracy shows how often the model got words or characters wrong in each
 language; speed is the time to transcribe 30 seconds on a reference GPU. Choose
@@ -109,20 +119,21 @@ are down, and **Toggle** always needs a second press. Change the chord itself in
 Language and these preferences travel with each recording to the chosen
 environment; nothing else about the project is sent.
 
-## Clean up transcripts with a provider
+## Clean up transcripts
 
 **Transcript cleanup** is a separate choice and is off by default. When on, the
 finished transcript and up to 1,024 characters each from before, inside, and
-after your selection are sent to the
-text generation provider configured on the draft's environment, which fixes
-punctuation, numbers, and spoken corrections such as "make it 42, sorry, 24".
-Depending on the provider, that can involve an external service. Audio is never
+after your selection are sent to the cleanup model on the draft's environment,
+which fixes punctuation, numbers, and spoken corrections such as "make it 42,
+sorry, 24". Depending on the model, that can involve an external service. Audio is never
 sent to it. Use the built-in instructions or write your own, press **Skip**
 while cleanup runs to insert the raw transcript, and if cleanup fails the raw
 transcript is inserted.
 
 Cleanup uses the environment's text generation model unless you pick a
 **Cleanup model** for that environment, for example a cheaper or faster one.
+It can be a text generator instead of a coding agent; see
+[text generation models](./text-generation.md).
 
 If cleanup misses the way you correct yourself, set a **Correction cue**: the
 word or phrase you say to flag a correction, such as "scratch that". Cleanup
@@ -131,12 +142,15 @@ the model hears the cue as a dictionary hint.
 
 ## Test and troubleshoot
 
-In **Settings → Voice**, **Test microphone** beside the microphone selector
-records up to ten seconds and plays it back in your browser;
-the audio stays on this device and is never transcribed, so silent playback
+In **Settings → Voice**, voice input uses the first connected microphone in the
+**Microphone** list. A microphone joins the list below System default the first
+time it is seen, so nothing changes until you move it up. If a preferred
+microphone is unplugged, the next connected one is used.
+
+**Test microphone** records from that microphone for up to ten seconds and
+plays it back in your browser; the audio stays on this device and is never transcribed, so silent playback
 points at the microphone. **Test model** on the selected model shows a transcript using the
 same environment, language, and dictionary as the composer, but skips transcript
 cleanup even when it is on, so you see what the model heard. Browser recording
 needs HTTPS or localhost and microphone permission; for a remote server over
-plain HTTP, use the desktop app. If the selected microphone is missing, choose
-another or the system default.
+plain HTTP, use the desktop app.
