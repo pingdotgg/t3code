@@ -6400,7 +6400,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), mainHead);
           assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
 
-          if (conflict) yield* writeTextFile(cwd, "README.md", "resolved version\n");
+          if (conflict) {
+            const unresolved = yield* driver
+              .commit(commitCwd, "Unresolved merge", "", { stage: {} })
+              .pipe(Effect.result);
+            assert.isTrue(Result.isFailure(unresolved), "committed an unresolved conflict");
+            assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), mainHead);
+            assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
+            yield* writeTextFile(cwd, "README.md", "resolved version\n");
+          }
           yield* driver.commit(commitCwd, "Finish merge", "", { stage: {} });
           assert.equal(
             yield* git(cwd, ["show", "-s", "--format=%P", "HEAD"]),
