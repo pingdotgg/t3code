@@ -1196,11 +1196,11 @@ describe("pullCurrentBranch", () => {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
 
-        const moving = yield* (
+        const move =
           subcommand === "pull"
-            ? driver.pullCurrentBranch(cwd)
-            : driver.refreshCheckedOutBranch({ cwd, targetCommit: remoteHead })
-        ).pipe(Effect.forkChild({ startImmediately: true }));
+            ? Effect.asVoid(driver.pullCurrentBranch(cwd))
+            : Effect.asVoid(driver.refreshCheckedOutBranch({ cwd, targetCommit: remoteHead }));
+        const moving = yield* move.pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(checkoutStarted);
         yield* TestClock.adjust("60 seconds");
         yield* Deferred.succeed(releaseCheckout, undefined);
