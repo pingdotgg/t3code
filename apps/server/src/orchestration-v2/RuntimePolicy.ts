@@ -10,8 +10,10 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
@@ -143,11 +145,41 @@ export const layerFromProjectStore: Layer.Layer<
   | ProjectStore.ProjectStoreV2
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ServerSettings.ServerSettingsService
+  | FileSystem.FileSystem
+  | Path.Path
 > = Layer.effect(
   RuntimePolicyV2,
   Effect.gen(function* () {
     const projects = yield* ProjectStore.ProjectStoreV2;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const isDirectory = (candidate: string) =>
+      fileSystem.stat(candidate).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      );
+    // A project below its repository's root runs in the same subdirectory of the thread's
+    // worktree, or at the worktree's root when that branch lacks the subdirectory.
+    const worktreeCwd = Effect.fn("RuntimePolicyV2.worktreeCwd")(function* (
+      worktreePath: string,
+      workspaceRoot: string,
+    ) {
+      const projectRoot = path.resolve(workspaceRoot);
+      let repositoryRoot = projectRoot;
+      while (
+        !(yield* fileSystem
+          .exists(path.join(repositoryRoot, ".git"))
+          .pipe(Effect.orElseSucceed(() => false)))
+      ) {
+        const parent = path.dirname(repositoryRoot);
+        if (parent === repositoryRoot) return worktreePath;
+        repositoryRoot = parent;
+      }
+      if (repositoryRoot === projectRoot) return worktreePath;
+      const candidate = path.join(worktreePath, path.relative(repositoryRoot, projectRoot));
+      return (yield* isDirectory(candidate)) ? candidate : worktreePath;
+    });
     // The same ceiling the orchestrator enforces, fixed for the server's life.
     const { managedPolicy } = yield* ServerSettings.ServerSettingsService;
     const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
@@ -159,31 +191,41 @@ export const layerFromProjectStore: Layer.Layer<
           instance === undefined
             ? undefined
             : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
+        const worktreePath = input.thread.worktreePath;
         const cwd =
-          input.thread.worktreePath ??
-          (yield* projects.get(input.thread.projectId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new RuntimePolicyResolveError({
-                  projectId: input.thread.projectId,
-                  providerInstanceId: input.modelSelection.instanceId,
-                  cause,
-                }),
-            ),
-            Effect.flatMap(
-              Option.match({
-                onNone: () =>
-                  Effect.fail(
+          worktreePath !== null
+            ? yield* projects.get(input.thread.projectId).pipe(
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () => Effect.succeed(worktreePath),
+                    onSome: (project) => worktreeCwd(worktreePath, project.workspaceRoot),
+                  }),
+                ),
+                Effect.orElseSucceed(() => worktreePath),
+              )
+            : yield* projects.get(input.thread.projectId).pipe(
+                Effect.mapError(
+                  (cause) =>
                     new RuntimePolicyResolveError({
                       projectId: input.thread.projectId,
                       providerInstanceId: input.modelSelection.instanceId,
-                      cause: "Project not found.",
+                      cause,
                     }),
-                  ),
-                onSome: (project) => Effect.succeed(project.workspaceRoot),
-              }),
-            ),
-          ));
+                ),
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () =>
+                      Effect.fail(
+                        new RuntimePolicyResolveError({
+                          projectId: input.thread.projectId,
+                          providerInstanceId: input.modelSelection.instanceId,
+                          cause: "Project not found.",
+                        }),
+                      ),
+                    onSome: (project) => Effect.succeed(project.workspaceRoot),
+                  }),
+                ),
+              );
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,

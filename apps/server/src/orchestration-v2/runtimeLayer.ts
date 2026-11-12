@@ -125,7 +125,12 @@ const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
 );
 
 const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
-  Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+  Layer.provide(
+    Layer.merge(
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
+      layerRuntimePolicyProvided,
+    ),
+  ),
 );
 
 const layerCommandOutputHubProvided = CommandOutputHub.layer.pipe(

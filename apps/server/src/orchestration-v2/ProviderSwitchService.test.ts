@@ -15,6 +15,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { acpSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
@@ -101,7 +102,7 @@ function layerTest(
           });
     },
   });
-  return ProviderSwitch.layer.pipe(Layer.provide(layerRegistry));
+  return ProviderSwitch.layer.pipe(Layer.provide(Layer.merge(layerRegistry, RuntimePolicy.layer)));
 }
 
 it.effect("releases the newest live session, not the newest record overall", () =>
