@@ -5486,6 +5486,22 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         assert.equal(yield* fileSystem.exists(created.worktree.path), true);
 
+        yield* git(cwd, ["worktree", "remove", "--force", created.worktree.path]);
+        yield* git(cwd, ["branch", "-D", "feature/custom-dir"]);
+        yield* fileSystem.makeDirectory(created.worktree.path);
+        const leftover = pathService.join(created.worktree.path, "notes.txt");
+        yield* fileSystem.writeFileString(leftover, "my notes");
+        const recreated = yield* driver.createWorktree(
+          { cwd, path: null, refName: initialBranch, newRefName: "feature/custom-dir" },
+          { worktreesDirectory },
+        );
+        assert.notEqual(recreated.worktree.path, created.worktree.path);
+        assert.equal(
+          yield* git(recreated.worktree.path, ["branch", "--show-current"]),
+          "feature/custom-dir",
+        );
+        assert.deepEqual(yield* fileSystem.readDirectory(created.worktree.path), ["notes.txt"]);
+
         const error = yield* driver
           .createWorktree(
             { cwd, path: null, refName: initialBranch, newRefName: "feature/relative-dir" },

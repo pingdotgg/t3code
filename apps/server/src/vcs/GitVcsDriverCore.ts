@@ -4474,8 +4474,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (Buffer.byteLength(prefix + character) > 23) break;
         prefix += character;
       }
-      const directoryName = `${prefix}-${Hex.encode(hash).slice(0, 16)}`;
-      worktreePath = path.join(parentDir, repoName, directoryName);
+      const basePath = path.join(parentDir, repoName, `${prefix}-${Hex.encode(hash).slice(0, 16)}`);
+      // The name is stable per branch, so a folder left by an earlier worktree must not block it.
+      worktreePath = basePath;
+      for (
+        let suffix = 2;
+        yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false));
+        suffix++
+      ) {
+        worktreePath = `${basePath}-${suffix}`;
+      }
     }
     const newRefName = input.newRefName;
     if (newRefName) {
