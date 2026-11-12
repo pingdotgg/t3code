@@ -153,6 +153,8 @@ interface AttachedTab {
    * turn's start can reach us after its first command, so this holds focus once it does.
    */
   agentUsed: boolean;
+  /** Whether the agent owns this tab, so a turn paints it before that turn's first command. */
+  agentOwned: boolean;
   focusReleasing: boolean;
   /** The sessions sharing the guest's one Chromium screencast; it stops with the last of them. */
   readonly screencasts: Map<string | undefined, { started: boolean; pending: number }>;
@@ -316,9 +318,10 @@ export const make = Effect.gen(function* () {
   };
 
   /**
-   * Electron composites no offscreen guest, so a screenshot, screencast or stalled command waits for a frame
-   * that never comes. The client paints the guest behind the app while one is pending; the
-   * capture then finishes on its own, and the guest goes back offscreen once none is.
+   * Electron composites no offscreen guest, so its screenshot or screencast waits for a frame
+   * that never comes, and an agent command reaches a hidden page that drops its input. The
+   * client paints the guest behind the app while one is pending or while the agent owns the
+   * tab and its thread runs; the guest goes back offscreen once nothing needs it.
    */
   const syncPainting = (tab: AttachedTab) => {
     const active =
@@ -327,7 +330,7 @@ export const make = Effect.gen(function* () {
         tab.capturing.size > 0 ||
         tab.frameStalled ||
         tab.waitingScreenshots.some((waiting) => waiting.live()) ||
-        (tab.agentUsed && agentTurns.has(tab.key.threadId)));
+        (tab.agentOwned && agentTurns.has(tab.key.threadId)));
     if (tab.painting === active) return;
     tab.painting = active;
     runFork(PubSub.publish(painting, { key: tab.key, active }));
@@ -552,6 +555,7 @@ export const make = Effect.gen(function* () {
           if (AGENT_INPUT_METHOD.test(method)) {
             if (owner === undefined || !streamingOwners.has(owner)) {
               tab.agentUsed = true;
+              tab.agentOwned = true;
               tab.agentLedAt = performance.now();
               syncPainting(tab);
             } else if (method.startsWith("Input.") && !POINTER_TRAVEL.has(params["type"])) {
@@ -717,6 +721,8 @@ export const make = Effect.gen(function* () {
       frameStalled: false,
       painting: false,
       agentUsed: false,
+      // A tab that appears while the thread's agent runs is the agent's own.
+      agentOwned: agentTurns.has(key.threadId),
       focusReleasing: false,
       screencasts: new Map(),
       onMessage: (_event, method, params, sessionId) => {
@@ -738,6 +744,8 @@ export const make = Effect.gen(function* () {
       stopWaiting: null,
     };
     tabs.set(id, tab);
+    // A tab the agent opened during its turn paints from the start, before its first command.
+    syncPainting(tab);
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
     const announce = () => {
