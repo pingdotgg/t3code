@@ -33,14 +33,19 @@ vi.mock("../connection/catalog", async () => {
 
 vi.mock("../state/presentation", async () => {
   const { Atom } = await import("effect/reactivity");
-  return {
-    environmentPresentations: { presentationsAtom: Atom.make(new Map<string, unknown>()) },
-  };
+  return { connectedEnvironmentIdsAtom: Atom.make<ReadonlyArray<string>>([]) };
 });
 
 vi.mock("../state/server", () => ({
   serverEnvironment: { refreshProviders: { label: "Refresh providers" } },
 }));
+
+vi.mock("../state/shell", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    environmentShell: { statusAtom: Atom.family((_id: string) => Atom.make("synchronizing")) },
+  };
+});
 
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   runAtomCommand: (
@@ -55,32 +60,30 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 
 import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../state/atom-registry";
-import { environmentPresentations } from "../state/presentation";
+import { connectedEnvironmentIdsAtom } from "../state/presentation";
+import { environmentShell } from "../state/shell";
 import { installSubscriptionUsageRefresh } from "./useSubscriptionUsage";
 
 const registry = appAtomRegistry as AtomRegistry.AtomRegistry;
 const catalogAtom = environmentCatalog.catalogValueAtom as unknown as Atom.Writable<{
   isReady: boolean;
 }>;
-const presentationsAtom = environmentPresentations.presentationsAtom as unknown as Atom.Writable<
-  Map<string, { connection: { phase: string } }>
+const connectedIdsAtom = connectedEnvironmentIdsAtom as unknown as Atom.Writable<
+  ReadonlyArray<EnvironmentId>
 >;
 
+const statusAtom = (id: EnvironmentId) =>
+  environmentShell.statusAtom(id) as unknown as Atom.Writable<string>;
+
 const connected = EnvironmentId.make("env-connected");
-const connecting = EnvironmentId.make("env-connecting");
 
 describe("installSubscriptionUsageRefresh", () => {
-  it("refreshes connected environments once the catalog is ready and the app is active", () => {
+  it("refreshes synced environments once the catalog is ready and the app is active", () => {
     fixture.appState = "background";
     fixture.refreshed = [];
     registry.set(catalogAtom, { isReady: false });
-    registry.set(
-      presentationsAtom,
-      new Map([
-        [connected, { connection: { phase: "connected" } }],
-        [connecting, { connection: { phase: "connecting" } }],
-      ]),
-    );
+    registry.set(connectedIdsAtom, [connected]);
+    registry.set(statusAtom(connected), "live");
 
     const dispose = installSubscriptionUsageRefresh();
     registry.set(catalogAtom, { isReady: true });
@@ -93,5 +96,22 @@ describe("installSubscriptionUsageRefresh", () => {
 
     dispose();
     expect(fixture.appStateListeners.size).toBe(0);
+  });
+
+  it("waits for the shell to sync before refreshing a reconnected environment", () => {
+    const resumed = EnvironmentId.make("env-resumed");
+    fixture.appState = "active";
+    fixture.refreshed = [];
+    registry.set(catalogAtom, { isReady: true });
+    registry.set(connectedIdsAtom, [resumed]);
+
+    const dispose = installSubscriptionUsageRefresh();
+    // Connected but still loading the shell snapshot: the provider probe must not compete with it.
+    expect(fixture.refreshed).toEqual([]);
+
+    registry.set(statusAtom(resumed), "live");
+    expect(fixture.refreshed).toEqual([resumed]);
+
+    dispose();
   });
 });
