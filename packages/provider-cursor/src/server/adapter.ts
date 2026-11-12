@@ -1689,7 +1689,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             });
           const childThreadId =
             existing?.childThreadId ??
-            idAllocator.derive.threadFromProviderThread({
+            idAllocator.derive.subagentThread({
               driver: CursorAgentSdk.CURSOR_PROVIDER,
               nativeThreadId: `${input.context.run.runId}:task:${input.callId}`,
             });
@@ -1998,15 +1998,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         });
 
         const shellOutputText = (event: Record<string, unknown>): string => {
-          const candidates = [
-            event.text,
-            event.output,
-            event.data,
-            event.stdout,
-            event.stderr,
-            event.chunk,
-          ];
-          return candidates.filter((value): value is string => typeof value === "string").join("");
+          if (event.case !== "stdout" && event.case !== "stderr") return "";
+          const value = event.value;
+          if (typeof value !== "object" || value === null || !("data" in value)) return "";
+          return typeof value.data === "string" ? value.data : "";
         };
 
         const handleInteractionUpdate = Effect.fnUntraced(function* (
@@ -2071,10 +2066,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               yield* completeReasoning(context);
               return;
             case "shell-output-delta": {
-              const shell = Array.from(context.tools.values())
-                .toReversed()
-                .find((candidate) => candidate.toolCall.type === "shell");
-              if (shell === undefined) {
+              const toolCallId = update.event.toolCallId;
+              const shell =
+                typeof toolCallId === "string"
+                  ? context.tools.get(toolCallId)
+                  : Array.from(context.tools.values())
+                      .toReversed()
+                      .find((candidate) => candidate.toolCall.type === "shell");
+              if (shell?.toolCall.type !== "shell") {
                 return;
               }
               const chunk = shellOutputText(update.event);

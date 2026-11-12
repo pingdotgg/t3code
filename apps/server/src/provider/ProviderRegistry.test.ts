@@ -62,6 +62,7 @@ import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHy
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
@@ -3343,7 +3344,13 @@ it.layer(
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(
             ProviderInstanceRegistryHydration.layer.pipe(
-              Layer.provide(Layer.mergeAll(PortScanner.layerTest, ProviderInstallationGate.layer)),
+              Layer.provide(
+                Layer.mergeAll(
+                  PortScanner.layerTest,
+                  ProviderInstallationGate.layer,
+                  SqlitePersistence.layerMemory,
+                ),
+              ),
             ),
           ),
           Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
@@ -3463,7 +3470,13 @@ it.layer(
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(
             ProviderInstanceRegistryHydration.layer.pipe(
-              Layer.provide(Layer.mergeAll(PortScanner.layerTest, ProviderInstallationGate.layer)),
+              Layer.provide(
+                Layer.mergeAll(
+                  PortScanner.layerTest,
+                  ProviderInstallationGate.layer,
+                  SqlitePersistence.layerMemory,
+                ),
+              ),
             ),
           ),
           Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
@@ -3600,7 +3613,13 @@ it.layer(
       readSeed = false;
       const services = yield* Layer.build(
         ProviderInstanceRegistryHydration.layer.pipe(
-          Layer.provide(Layer.mergeAll(PortScanner.layerTest, ProviderInstallationGate.layer)),
+          Layer.provide(
+            Layer.mergeAll(
+              PortScanner.layerTest,
+              ProviderInstallationGate.layer,
+              SqlitePersistence.layerMemory,
+            ),
+          ),
         ),
       ).pipe(Effect.provide(dependencies));
       failCurrentRead = input.failCurrentRead ?? false;
