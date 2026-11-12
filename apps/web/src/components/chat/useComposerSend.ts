@@ -81,10 +81,15 @@ import {
   filterTerminalContextsWithText,
   type TerminalContextDraft,
 } from "../../lib/terminalContext";
-import { ensureInlineContextReferences } from "../../lib/composerContextReferences";
+import {
+  collectInlineContextIds,
+  ensureInlineContextReferences,
+  formatInlineContextReference,
+} from "../../lib/composerContextReferences";
 import {
   buildMessageContext,
   previewAnnotationContextReference,
+  responseContextReference,
 } from "../../lib/composerContextRecords";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
@@ -491,7 +496,8 @@ export function useComposerSend(input: ComposerSendInput) {
         sendCtx.previewAnnotations.length > 0 ||
         sendCtx.reviewComments.length > 0 ||
         sendCtx.threadContexts.length > 0 ||
-        sendCtx.environmentContexts.length > 0
+        sendCtx.environmentContexts.length > 0 ||
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo
       ) {
         toastManager.add(
           stackedThreadToast({
@@ -582,11 +588,19 @@ export function useComposerSend(input: ComposerSendInput) {
       });
     // A direct "send annotation" writes the draft and sends in the same tick; the reference
     // must be in the text now, not after the next render.
-    const promptForSend = directAnnotation
+    const serializedPrompt = directAnnotation
       ? ensureInlineContextReferences(sendCtx.prompt, [
           previewAnnotationContextReference(directAnnotation.annotation),
         ])
       : sendCtx.prompt;
+    const replyTo =
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
+    // The reply leads the message, so its card sits above the text it is about. Text that
+    // already points at that response, from a pasted card, keeps its one reference.
+    const promptForSend =
+      replyTo && !collectInlineContextIds(serializedPrompt).includes(replyTo.contextId)
+        ? `${formatInlineContextReference(responseContextReference(replyTo))} ${serializedPrompt}`
+        : serializedPrompt;
     const strandedThread = threadContextsOutsideEnvironment({
       text: promptForSend,
       records: composerThreadContexts,
@@ -619,6 +633,7 @@ export function useComposerSend(input: ComposerSendInput) {
           previewAnnotations: composerPreviewAnnotations,
           threadContexts: composerThreadContexts,
           environmentContexts: composerEnvironmentContexts,
+          replyTo,
         },
         setThreadError,
       );
@@ -659,6 +674,7 @@ export function useComposerSend(input: ComposerSendInput) {
     const feedbackCommand =
       ctxSelectedProvider === "codex" &&
       trayCitations.length === 0 &&
+      replyTo === null &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
@@ -722,7 +738,8 @@ export function useComposerSend(input: ComposerSendInput) {
       composerPreviewAnnotations.length === 0 &&
       composerReviewComments.length === 0 &&
       composerThreadContexts.length === 0 &&
-      composerEnvironmentContexts.length === 0;
+      composerEnvironmentContexts.length === 0 &&
+      replyTo === null;
     if (freshSessionAvailable && composerHoldsOnlyText && isClearComposerCommand(commandText)) {
       armFreshSession(routeThreadKey);
       promptRef.current = "";
@@ -775,6 +792,7 @@ export function useComposerSend(input: ComposerSendInput) {
       reviewComments: composerReviewComments,
       threadContexts: composerThreadContexts,
       environmentContexts: composerEnvironmentContexts,
+      replyTo,
     });
     const {
       files: composerFilesSnapshot,
@@ -820,6 +838,7 @@ export function useComposerSend(input: ComposerSendInput) {
         previewAnnotations: composerPreviewAnnotationsSnapshot,
         threadContexts: composerThreadContextsSnapshot,
         environmentContexts: composerEnvironmentContextsSnapshot,
+        replyTo,
         attachments: composerAttachmentsSnapshot.map((attachment, index) => ({
           attachment,
           attachmentId: attachmentIds[index] ?? attachment.id,
@@ -984,6 +1003,9 @@ export function useComposerSend(input: ComposerSendInput) {
         attachmentIdsBeforeAnnotation,
         annotationImageId,
         trayCitations,
+        replyTo,
+        liveReplyTo:
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null,
         liveTrayCitations:
           useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.trayCitations ??
           [],
@@ -1369,22 +1391,20 @@ export function useComposerSend(input: ComposerSendInput) {
         }
         if (backgroundThreadRef) {
           if (backgroundDraftOpened) {
-            toastManager.add(
-              stackedThreadToast({
-                type: "success",
-                title: "Started in background",
-                timeout: 5_000,
-                actionProps: {
-                  children: "Open",
-                  onClick: () => {
-                    void navigate({
-                      to: "/$environmentId/$threadId",
-                      params: buildThreadRouteParams(backgroundThreadRef),
-                    });
-                  },
+            toastManager.add({
+              type: "success",
+              title: "Started in background",
+              timeout: 5_000,
+              actionProps: {
+                children: "Open",
+                onClick: () => {
+                  void navigate({
+                    to: "/$environmentId/$threadId",
+                    params: buildThreadRouteParams(backgroundThreadRef),
+                  });
                 },
-              }),
-            );
+              },
+            });
           }
         } else if (
           submissionIntent === "background" &&

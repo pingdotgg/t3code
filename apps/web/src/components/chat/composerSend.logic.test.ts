@@ -1,8 +1,8 @@
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
-import { threadContextReference } from "../../lib/composerContextRecords";
+import { responseContextRecord, threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   composerDraftChangedSinceSend,
@@ -148,8 +148,16 @@ it("detects tray edits while uploads are pending", () => {
     annotationImageId: undefined,
     trayCitations: [citation],
     liveTrayCitations: [citation],
+    replyTo: null,
+    liveReplyTo: null,
   };
   expect(composerDraftChangedSinceSend(input)).toBe(false);
+  expect(
+    composerDraftChangedSinceSend({
+      ...input,
+      replyTo: responseContextRecord({ citation, itemId: TurnItemId.make("item"), subagents: [] }),
+    }),
+  ).toBe(true);
   expect(
     composerDraftChangedSinceSend({
       ...input,

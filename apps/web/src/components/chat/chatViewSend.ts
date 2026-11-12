@@ -262,6 +262,7 @@ export function restoreComposerDraft(
   const images = snapshot.images.map(cloneComposerImageForRetry);
   store.setPrompt(draftTarget, snapshot.draftPrompt);
   store.setTrayCitations(draftTarget, snapshot.trayCitations);
+  store.setReplyTo(draftTarget, snapshot.replyTo);
   store.addImages(draftTarget, images);
   store.addFiles(draftTarget, snapshot.files);
   store.setTerminalContexts(draftTarget, snapshot.terminalContexts);

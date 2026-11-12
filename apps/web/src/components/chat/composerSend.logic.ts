@@ -1,4 +1,9 @@
-import type { AssistantCitation, EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type {
+  AssistantCitation,
+  EnvironmentId,
+  ResponseContextRecord,
+  ThreadContextRecord,
+} from "@t3tools/contracts";
 import { serializeComposerTray } from "./composerSubmission";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 
@@ -91,6 +96,8 @@ export function composerDraftChangedSinceSend(input: {
   annotationImageId: string | undefined;
   trayCitations: ReadonlyArray<AssistantCitation>;
   liveTrayCitations: ReadonlyArray<AssistantCitation>;
+  replyTo: ResponseContextRecord | null;
+  liveReplyTo: ResponseContextRecord | null;
 }) {
   const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
     left.length === right.length && left.every((id, index) => id === right[index]);
@@ -103,6 +110,7 @@ export function composerDraftChangedSinceSend(input: {
   return (
     !promptUnchanged ||
     !attachmentsUnchanged ||
+    input.liveReplyTo !== input.replyTo ||
     serializeComposerTray("", input.trayCitations) !==
       serializeComposerTray("", input.liveTrayCitations)
   );
