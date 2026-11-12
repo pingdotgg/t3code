@@ -175,6 +175,7 @@ it.effect.each([
   { order: "rollback-first", restoreFiles: true },
   { order: "cleanup-first", restoreFiles: false, unmanaged: true },
   { order: "cleanup-first", restoreFiles: true, leavesFolder: true },
+  { order: "cleanup-first", restoreFiles: false, leavesFolder: true },
 ])("locks rollback with %s", ({ order, restoreFiles, unmanaged = false, leavesFolder = false }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -312,7 +313,10 @@ it.effect.each([
           if (order === "cleanup-first") yield* Deferred.await(release);
           yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
           // A failed `git worktree remove` can leave the folder without its checkout.
-          if (leavesFolder) yield* fileSystem.makeDirectory(worktreePath);
+          if (leavesFolder) {
+            yield* fileSystem.makeDirectory(worktreePath);
+            yield* fileSystem.writeFileString(path.join(worktreePath, "unsaved.txt"), "keep");
+          }
           calls.push("cleanup");
         }),
       );
@@ -343,12 +347,16 @@ it.effect.each([
       const rollbackCalls = restoreFiles
         ? ["session", "files", "projection"]
         : ["session", "projection"];
+      const recreates = !leavesFolder || restoreFiles;
       assert.deepEqual(
         calls,
         order === "cleanup-first"
-          ? ["cleanup", "prune", "create", ...rollbackCalls]
+          ? ["cleanup", ...(recreates ? ["prune", "create"] : []), ...rollbackCalls]
           : [...rollbackCalls, "cleanup"],
       );
+      if (!recreates) {
+        assert.isTrue(yield* fileSystem.exists(path.join(worktreePath, "unsaved.txt")));
+      }
     }).pipe(Effect.provide(testLayer));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

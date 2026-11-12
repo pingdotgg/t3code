@@ -219,11 +219,13 @@ export const layer: Layer.Layer<
 
       const { worktreePath, branch } = context.thread;
       // Recreated only where the server would have made it, as turn start does.
-      // A failed removal can leave the folder behind without its checkout.
+      // A failed removal can leave the folder without its checkout; only a file restore replaces it.
       if (
         worktreePath != null &&
         branch != null &&
-        !(yield* fileSystem.exists(path.join(worktreePath, ".git"))) &&
+        !(yield* fileSystem.exists(
+          input.restoreFiles === false ? worktreePath : path.join(worktreePath, ".git"),
+        )) &&
         (yield* isManagedWorktreePath(worktreePath))
       ) {
         const project = yield* projects.get(context.thread.projectId);
