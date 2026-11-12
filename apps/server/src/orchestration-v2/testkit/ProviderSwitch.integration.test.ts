@@ -1,5 +1,8 @@
 import { vi } from "vite-plus/test";
-import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+import {
+  historyResponseItems,
+  latestNativeContextUsage,
+} from "@t3tools/provider-core/server/handoffBudget";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
@@ -1794,6 +1797,139 @@ describe("orchestration v2 provider switching", () => {
         );
       }),
     ),
+  );
+
+  it.live.each(["unstarted-interrupt", "control"] as const)(
+    "starts a near-full same-thread Codex turn after %s",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace(`handoff-near-full-${scenario}`);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          // Above 75% of the window, so the handoff reserve leaves no budget.
+          const usage = { usedTokens: 196_345, maxTokens: 258_400 };
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CODEX_MODEL_SELECTION.instanceId,
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
+              modelSelection: CODEX_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              injectedHistory,
+              canReuseContextUsage: canReuseCodexContextUsage,
+              tokenUsageByRunOrdinal: { 1: usage },
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const dispatch = (
+              key: string,
+              text: string,
+              dispatchMode: { readonly type: "start_immediately" | "defer_start" },
+            ) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`command:near-full:${key}`),
+                threadId,
+                messageId: MessageId.make(`message:near-full:${key}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection: CODEX_MODEL_SELECTION,
+                dispatchMode,
+              });
+            const waitForTerminal = (ordinal: number) =>
+              orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.threadId === threadId &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+                Effect.andThen(worker.drain()),
+              );
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("command:near-full:create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Near-full Codex thread",
+              modelSelection: CODEX_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* dispatch("first", "Earlier completed request.", { type: "start_immediately" });
+            yield* waitForTerminal(1);
+            const afterFirst = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(
+              latestNativeContextUsage(afterFirst, afterFirst.providerThreads[0]!)?.usage,
+              usage,
+            );
+
+            if (scenario === "unstarted-interrupt") {
+              yield* dispatch("deferred", "Never sent to Codex.", { type: "defer_start" });
+              const deferred = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+              assert.equal(deferred.status, "preparing");
+              yield* orchestrator.dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make("command:near-full:interrupt"),
+                threadId,
+                runId: deferred.id,
+              });
+              yield* worker.drain();
+              const interrupted = yield* orchestrator.getThreadProjection(threadId);
+              const interruptedRun = interrupted.runs.at(-1)!;
+              assert.equal(interruptedRun.status, "interrupted");
+              assert.isFalse(
+                interrupted.providerTurns.some(
+                  (turn) => turn.runAttemptId === interruptedRun.activeAttemptId,
+                ),
+              );
+            }
+
+            const targetOrdinal = scenario === "unstarted-interrupt" ? 3 : 2;
+            yield* dispatch("target", "Continue", { type: "start_immediately" });
+            yield* waitForTerminal(targetOrdinal);
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const target = projection.runs.at(-1)!;
+            const failure = projection.turnItems.find(
+              (item) => item.type === "error" && item.runId === target.id,
+            );
+            assert.deepEqual(
+              {
+                status: target.status,
+                failure: failure?.type === "error" ? failure.failure.message : null,
+              },
+              { status: "completed", failure: null },
+            );
+            assert.equal((yield* Ref.get(capturedTurns)).at(-1)?.text, "Continue");
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: `handoff-near-full-${scenario}`,
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: { type: "readOnly" },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
   );
 
   it.live("checks the queued provider's capability while the current provider stays running", () =>
