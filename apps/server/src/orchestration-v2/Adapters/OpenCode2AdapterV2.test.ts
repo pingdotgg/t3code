@@ -4427,7 +4427,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             event("session.execution.succeeded", { sessionID: SESSION }),
             { type: "runtime_exit", status: "success" },
           ],
-          { borrowers, external: true },
+          { borrowers },
         );
         const events = yield* runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
         yield* runtime.startTurn(withLineage(thread));

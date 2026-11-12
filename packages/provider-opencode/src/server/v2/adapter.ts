@@ -3667,8 +3667,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       for (const state of threads.values()) {
         yield* recoverShells(state).pipe(Effect.ignore({ log: true }));
       }
-      // An owned process's exit, rather than a read deadline, bounds recovery; the retry then
-      // borrows a restarted server. HTTP waits stay outside the event lock so Stop can still settle.
+      // An owned process's exit, rather than a read deadline, bounds recovery; the bounded retry
+      // below then borrows a restarted server. HTTP waits stay outside the event lock so Stop can still settle.
       const exited = next.processExit;
       yield* exited === undefined
         ? reconcile().pipe(Effect.timeout(RECONCILE_TIMEOUT))
@@ -3680,11 +3680,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
       return stream;
     }).pipe(
-      Effect.retry(
-        connection.processExit === undefined
-          ? { times: RECONNECT_ATTEMPTS - 1, schedule: Schedule.spaced(RECONNECT_DELAY) }
-          : OWNED_RECOVERY_RETRY,
-      ),
+      // Borrows and process exits stay bounded; only a live owned process is waited on above.
+      Effect.retry({
+        times: RECONNECT_ATTEMPTS - 1,
+        schedule: Schedule.spaced(RECONNECT_DELAY),
+        ...(connection.processExit === undefined
+          ? {}
+          : { while: (error: unknown) => !isPermanentRecoveryError(error) }),
+      }),
     );
 
     let currentScope = initial.scope;
