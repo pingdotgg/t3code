@@ -4094,6 +4094,81 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("wakes a thread once for a pass that changed several of its pull requests", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-pass");
+      const projectId = ProjectId.make("pr-watch-pass-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch pass",
+        workspaceRoot: "/workspace/watch-pass",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-pass-create"),
+        threadId,
+        projectId,
+        title: "Watch pass",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const numbers = [12, 13, 14];
+      for (const number of numbers) {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-pass-start-${number}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number,
+          watching: true,
+          link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
+        });
+      }
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          detail: (input) =>
+            Effect.succeed({
+              ...watchedPullRequestDetail({
+                projectId,
+                number: input.number,
+                at: "2026-10-02T12:00:00.000Z",
+              }),
+              headSha: `head${input.number}`,
+              checks: [
+                { name: "test", status: "failure", description: null, url: null, required: true },
+              ],
+            }),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      const wakes = messages.filter((message) => message.notification !== undefined);
+      assert.equal(wakes.length, 1);
+      for (const number of numbers) assert.include(wakes[0]!.text, `#${number}`);
+    }),
+  );
+
   it.effect.each(["pending", "action-required"] as const)("recovers %s watches", (initialStatus) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
