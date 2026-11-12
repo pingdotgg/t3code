@@ -396,6 +396,20 @@ describe("chain selection and badge state", () => {
       state: "open",
     });
     expect(resolveThreadPullRequestBadge([link(3, { source: "stack-dismissed" })])).toBeNull();
+    const mixed = [1, 2, 3, 4, 5, 6].map((number) =>
+      link(number, {
+        snapshot: snapshot({
+          state: number <= 3 ? "closed" : "open",
+          headBranch: `unrelated-${number}`,
+        }),
+      }),
+    );
+    // Three closed and three open must not read as six open pull requests.
+    expect(resolveThreadPullRequestBadge(mixed)).not.toEqual({
+      kind: "pull-request",
+      others: 5,
+      state: "open",
+    });
   });
 
   it("keeps branch matching case-sensitive while ignoring repository case", () => {
