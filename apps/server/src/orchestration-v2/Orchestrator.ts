@@ -6187,6 +6187,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.createdBy === "user" &&
       command.scheduledTaskId === undefined &&
       command.guestMessageId === undefined &&
+      projection.providerThreads.length === 0 &&
       projection.thread.lineage.parentThreadId === null &&
       projection.messages.length === 0 &&
       (command.attachments.length > 0 || !command.text.trimStart().startsWith("/"))

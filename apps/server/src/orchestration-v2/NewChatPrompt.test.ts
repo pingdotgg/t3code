@@ -38,6 +38,7 @@ const cases: ReadonlyArray<{
   text?: string;
   createdBy?: "user" | "agent";
   fork?: boolean;
+  imported?: boolean;
   scheduled?: boolean;
   attachments?: ReadonlyArray<ChatAttachment>;
 }> = [
@@ -119,6 +120,12 @@ const cases: ReadonlyArray<{
     suffix: "\n\nRun relevant tests.",
   },
   {
+    name: "imported native conversation",
+    settings: { newChatPromptEnabled: true, newChatPrompt: "Run relevant tests." },
+    imported: true,
+    suffix: "",
+  },
+  {
     name: "agent message",
     settings: { newChatPromptEnabled: true, newChatPrompt: "Run relevant tests." },
     createdBy: "agent",
@@ -138,7 +145,10 @@ const cases: ReadonlyArray<{
   },
 ];
 
-const createThread = Effect.fn("test.createNewChatPromptThread")(function* (threadId: ThreadId) {
+const createThread = Effect.fn("test.createNewChatPromptThread")(function* (
+  threadId: ThreadId,
+  imported = false,
+) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   yield* orchestrator.dispatch({
     type: "thread.create",
@@ -146,6 +156,17 @@ const createThread = Effect.fn("test.createNewChatPromptThread")(function* (thre
     threadId,
     projectId,
     title: "New chat",
+    ...(imported
+      ? {
+          importedNativeThread: {
+            ref: {
+              driver: adapter.driver,
+              nativeId: "native-imported",
+              strength: "strong" as const,
+            },
+          },
+        }
+      : {}),
     modelSelection: { instanceId, model: "gpt-5" },
     runtimeMode: "approval-required",
     interactionMode: "default",
@@ -160,7 +181,7 @@ it.effect.each(cases)("applies the new chat prompt once ($name)", (testCase) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     let threadId = ThreadId.make("thread:new-chat-prompt");
-    yield* createThread(threadId);
+    yield* createThread(threadId, testCase.imported);
     if (testCase.fork) {
       const targetThreadId = ThreadId.make("thread:fork");
       yield* orchestrator.dispatch({

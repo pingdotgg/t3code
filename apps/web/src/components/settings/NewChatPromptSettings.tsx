@@ -1,4 +1,4 @@
-import { useId, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { isManagedSettingPath } from "@t3tools/contracts";
 
 import { Textarea } from "../ui/textarea";
@@ -30,6 +30,22 @@ export function NewChatPromptSettings() {
     .map((environment) => environment.serverConfig?.managedPolicy)
     .find((policy) => isManagedSettingPath(policy, "newChatPrompt"));
   const policyDescriptionId = useId();
+  const promptManaged = promptPolicy !== undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs saved settings into the uncontrolled textarea while preserving newer edits
+  useEffect(() => {
+    const input = inputRef.current;
+    if (input === null) return;
+    const pending = draft.current;
+    if (
+      !promptManaged &&
+      pending?.scopeKey === scopeKey &&
+      pending.value !== settings.newChatPrompt
+    )
+      return;
+    draft.current = null;
+    edited.current = false;
+    input.value = mixed ? "" : settings.newChatPrompt;
+  }, [mixed, promptManaged, scopeKey, settings.newChatPrompt]);
   const pendingPromptPatch = () => {
     const pending = draft.current;
     return promptPolicy === undefined &&
@@ -74,19 +90,28 @@ export function NewChatPromptSettings() {
       <SettingsRow
         serverScoped
         settingKeys={["newChatPrompt"]}
+        onResetOverride={() => {
+          draft.current = null;
+          edited.current = false;
+          clearSettings(["newChatPrompt"]);
+        }}
         title="Saved instructions"
         resetAction={
           mixed || settings.newChatPrompt !== "" ? (
             <SettingResetButton
               label="saved instructions"
-              onClick={() => updateSettings({ newChatPrompt: "" })}
+              onClick={() => {
+                draft.current = null;
+                edited.current = false;
+                updateSettings({ newChatPrompt: "" });
+              }}
             />
           ) : null
         }
       >
         <div className="mt-3 max-w-2xl pb-3.5">
           <Textarea
-            key={`${scopeKey}:${mixed}:${settings.newChatPrompt}`}
+            key={scopeKey}
             ref={inputRef}
             aria-label="New chat prompt"
             aria-describedby={promptPolicy === undefined ? undefined : policyDescriptionId}

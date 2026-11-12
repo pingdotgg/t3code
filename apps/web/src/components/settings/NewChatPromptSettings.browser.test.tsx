@@ -105,6 +105,23 @@ it("applies the prompt and enable policy locks independently across selected env
     newChatPrompt: "Saved instructions updated",
   });
 
+  await userEvent.click(input);
+  await userEvent.keyboard("{End} newer");
+  mocks.settings.mockReturnValue({
+    ...DEFAULT_UNIFIED_SETTINGS,
+    newChatPrompt: "Saved instructions updated",
+  });
+  await screen.rerender(ui());
+  await expect.element(input).toHaveValue("Saved instructions updated newer");
+  await expect.element(input).toHaveFocus();
+
+  await userEvent.click(
+    screen.getByRole("button", { name: "Reset saved instructions to default" }),
+  );
+  mocks.update.mockClear();
+  await userEvent.click(screen.getByRole("switch", { name: "Enable new chat prompt" }));
+  expect(mocks.update).toHaveBeenCalledExactlyOnceWith({ newChatPromptEnabled: true });
+
   mocks.update.mockClear();
   mocks.settings.mockReturnValue({
     ...DEFAULT_UNIFIED_SETTINGS,
