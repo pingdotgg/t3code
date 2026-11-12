@@ -519,7 +519,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ),
   ),
-  /** The title when generation last finished. Once `title` differs, someone renamed the thread. */
+  /** The title T3 last chose: the seed or a generated one. Once `title` differs, someone renamed the thread. */
   automaticTitle: Schema.optional(TrimmedNonEmptyString),
   rollbackRequestId: Schema.optional(CommandId),
   rollbackFailure: Schema.optional(

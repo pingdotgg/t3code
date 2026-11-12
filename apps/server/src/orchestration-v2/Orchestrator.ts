@@ -4768,9 +4768,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return thread.titleRegeneration?.requestId === command.requestId
             ? {
                 ...thread,
-                title: command.title ?? thread.title,
-                // A finished generation owns the title even when it kept the text.
-                automaticTitle: command.title ?? thread.title,
+                // No title means generation failed or declined; ownership stays as it was.
+                ...(command.title === undefined
+                  ? {}
+                  : { title: command.title, automaticTitle: command.title }),
                 titleRegeneration: null,
                 updatedAt: now,
               }
@@ -6648,9 +6649,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
-        title: startsTitle
-          ? (command.titleSeed ?? projection.thread.title)
-          : projection.thread.title,
+        // The seed is T3's own first title, so a later regeneration may replace it.
+        ...(startsTitle && command.titleSeed !== undefined
+          ? { title: command.titleSeed, automaticTitle: command.titleSeed }
+          : {}),
         titleRegeneration: { requestId: command.commandId, startedAt: now },
         updatedAt: now,
       };

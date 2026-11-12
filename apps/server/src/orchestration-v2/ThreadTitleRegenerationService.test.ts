@@ -553,6 +553,8 @@ describe("ThreadTitleRegenerationService", () => {
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Seed title");
         assert.isNotOk(projection.thread.titleRegeneration);
+        // A failure must not hand a title someone chose to automatic regeneration.
+        assert.isUndefined(projection.thread.automaticTitle);
       }).pipe(Effect.provide(harness.layer));
     }),
   );
@@ -562,11 +564,13 @@ describe("ThreadTitleRegenerationService", () => {
       let generated = 0;
       const harness = makeHarness({
         regenerationInterval: 2,
-        // The fourth request is the manual one below; the model keeps the title it finds.
+        // Request 1 declines to title the seed; request 4 is the manual one and keeps what it finds.
         generateTitle: () =>
-          Effect.sync(() => ({
-            title: ++generated === 4 ? "Manual title" : `Generated ${generated}`,
-          })),
+          Effect.sync(() => {
+            generated += 1;
+            if (generated === 1) return { title: "New thread" };
+            return { title: generated === 4 ? "Manual title" : `Generated ${generated}` };
+          }),
       });
       yield* Effect.gen(function* () {
         const threads = yield* ThreadManagement.ThreadManagementService;
@@ -596,6 +600,8 @@ describe("ThreadTitleRegenerationService", () => {
         });
 
         assert.deepEqual(yield* send("1", { titleSeed: "First ask" }), ["initial"]);
+        // The seed stays T3's title, so the next due message retries it.
+        assert.equal(yield* title, "First ask");
         assert.deepEqual(yield* send("2"), ["regenerate"]);
         assert.equal(yield* title, "Generated 2");
         assert.deepEqual(yield* send("3"), []);
