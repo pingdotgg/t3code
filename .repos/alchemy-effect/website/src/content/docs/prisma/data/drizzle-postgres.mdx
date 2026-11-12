@@ -8,8 +8,8 @@ Prisma here means Alchemy's Prisma hosting and database provider, not Prisma ORM
 ## Install the database dependencies
 
 ```sh
-pnpm add drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-pg pg
-pnpm add -D drizzle-kit@1.0.0-rc.5-ab785fc
+pnpm add @alchemy.run/drizzle drizzle-orm@1.0.0-rc.5 @effect/sql-pg
+pnpm add -D drizzle-kit@1.0.0-rc.5
 ```
 
 The Drizzle versions match the repository's Effect integration.
@@ -115,13 +115,13 @@ Supply the connection resource's `directConnectionString` output as the migratio
 
 ```diff lang="typescript"
  // src/Api.ts
-+import * as Drizzle from "alchemy/Drizzle/Postgres";
++import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 
  const db = yield* Prisma.Connect(Connection);
 +const database = yield* Drizzle.Postgres(db.databaseUrl);
 ```
 
-`databaseUrl` prefers pooled Postgres and then direct Postgres; use a connection that actually has one of those URLs, since Drizzle's `pg` driver cannot use an Accelerate-only fallback.
+`databaseUrl` prefers pooled Postgres and then direct Postgres; use a connection that actually has one of those URLs, since Drizzle's Postgres driver cannot use an Accelerate-only fallback.
 
 ## Query from Compute
 

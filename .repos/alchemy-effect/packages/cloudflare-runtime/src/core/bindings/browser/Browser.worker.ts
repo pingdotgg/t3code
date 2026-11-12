@@ -20,10 +20,7 @@
  */
 import { assert, HttpError } from "../../internal/shared.worker.ts";
 import type { SessionInfo } from "./BrowserOptions.shared.ts";
-import {
-  BINDING_BROWSER_LOOPBACK,
-  BINDING_BROWSER_SESSION,
-} from "./BrowserOptions.shared.ts";
+import { BINDING_BROWSER_LOOPBACK, BINDING_BROWSER_SESSION } from "./BrowserOptions.shared.ts";
 
 interface Env {
   [BINDING_BROWSER_LOOPBACK]: Fetcher;
@@ -61,9 +58,7 @@ function isRetryableFetchError(error: unknown): boolean {
     return false;
   }
   const lower = message.toLowerCase();
-  return RETRYABLE_FETCH_ERROR_SUBSTRINGS.some((needle) =>
-    lower.includes(needle),
-  );
+  return RETRYABLE_FETCH_ERROR_SUBSTRINGS.some((needle) => lower.includes(needle));
 }
 
 const MAX_BODY_PREVIEW = 2000;
@@ -82,10 +77,7 @@ function truncateBody(text: string): string {
  * `/browser/launch` handler when Chrome fails to start); this includes the
  * status and (truncated) body text in the thrown error instead.
  */
-async function parseJsonResponse<T = unknown>(
-  resp: Response,
-  context: string,
-): Promise<T> {
+async function parseJsonResponse<T = unknown>(resp: Response, context: string): Promise<T> {
   const text = await resp.text();
   if (!resp.ok) {
     throw new Error(
@@ -175,36 +167,23 @@ export class BrowserSession implements DurableObject {
       let match: RegExpExecArray | null;
       if (
         req.method === "GET" &&
-        (match =
-          /^\/v1\/devtools\/browser\/[^/]+\/json\/(version|list|protocol)$/.exec(
-            path,
-          ))
+        (match = /^\/v1\/devtools\/browser\/[^/]+\/json\/(version|list|protocol)$/.exec(path))
       ) {
-        const chromePath =
-          match[1] === "list" ? "/json/list" : `/json/${match[1]}`;
+        const chromePath = match[1] === "list" ? "/json/list" : `/json/${match[1]}`;
         return await this.#proxyJsonRequest(chromePath);
       }
-      if (
-        req.method === "GET" &&
-        /^\/v1\/devtools\/browser\/[^/]+\/json$/.test(path)
-      ) {
+      if (req.method === "GET" && /^\/v1\/devtools\/browser\/[^/]+\/json$/.test(path)) {
         return await this.#proxyJsonRequest("/json/list");
       }
-      if (
-        req.method === "PUT" &&
-        /^\/v1\/devtools\/browser\/[^/]+\/json\/new$/.test(path)
-      ) {
+      if (req.method === "PUT" && /^\/v1\/devtools\/browser\/[^/]+\/json\/new$/.test(path)) {
         return await this.#proxyJsonRequest(
-          `/json/new?${new URLSearchParams({ url: url.searchParams.get("url") ?? "" })}`,
+          `/json/new?${new URLSearchParams({ url: url.searchParams.get("url") ?? "" }).toString()}`,
           "PUT",
         );
       }
       if (
         req.method === "GET" &&
-        (match =
-          /^\/v1\/devtools\/browser\/[^/]+\/json\/(activate|close)\/([^/]+)$/.exec(
-            path,
-          ))
+        (match = /^\/v1\/devtools\/browser\/[^/]+\/json\/(activate|close)\/([^/]+)$/.exec(path))
       ) {
         return await this.#proxyJsonRequest(`/json/${match[1]}/${match[2]}`);
       }
@@ -219,22 +198,13 @@ export class BrowserSession implements DurableObject {
           `${chromeBaseUrl(this.sessionInfo.wsEndpoint).replace("http://", "ws://")}/devtools/page/${match[1]}`,
         );
       }
-      if (
-        req.method === "DELETE" &&
-        /^\/v1\/devtools\/browser\/[^/]+$/.test(path)
-      ) {
+      if (req.method === "DELETE" && /^\/v1\/devtools\/browser\/[^/]+$/.test(path)) {
         return this.#closeBrowser();
       }
-      if (
-        req.method === "GET" &&
-        /^\/v1\/devtools\/session\/[^/]+$/.test(path)
-      ) {
+      if (req.method === "GET" && /^\/v1\/devtools\/session\/[^/]+$/.test(path)) {
         return this.#sessionDetail();
       }
-      if (
-        req.method === "GET" &&
-        /^\/v1\/devtools\/browser\/[^/]+$/.test(path)
-      ) {
+      if (req.method === "GET" && /^\/v1\/devtools\/browser\/[^/]+$/.test(path)) {
         return await this.#connect();
       }
       return new Response("Not Found", { status: 404 });
@@ -278,6 +248,11 @@ export class BrowserSession implements DurableObject {
     this.chromeWs.addEventListener("close", (e) => {
       this.closeSession(e);
     });
+    // A killed Chrome can drop the socket without a close frame (Windows
+    // aborts it), which workerd reports as `error` with no `close` event.
+    this.chromeWs.addEventListener("error", () => {
+      this.closeSession();
+    });
     this.#scheduleStatusCheck();
     return new Response(null, { status: 204 });
   }
@@ -294,14 +269,8 @@ export class BrowserSession implements DurableObject {
 
   /** Legacy chunked-framing DevTools connection (`@cloudflare/puppeteer`). */
   #connectDevtools(): Response {
-    assert(
-      this.sessionInfo !== undefined,
-      "sessionInfo must be set before connecting",
-    );
-    assert(
-      this.chromeWs !== undefined,
-      "chromeWs must be established before connecting",
-    );
+    assert(this.sessionInfo !== undefined, "sessionInfo must be set before connecting");
+    assert(this.chromeWs !== undefined, "chromeWs must be established before connecting");
     if (this.legacyServerWs !== undefined) {
       throw new HttpError(409, "WebSocket already initialized");
     }
@@ -315,9 +284,7 @@ export class BrowserSession implements DurableObject {
       if (m.data === "ping") {
         return;
       }
-      this.chromeWs?.send(
-        new TextDecoder().decode((m.data as ArrayBuffer).slice(4)),
-      );
+      this.chromeWs?.send(new TextDecoder().decode((m.data as ArrayBuffer).slice(4)));
     });
     server.addEventListener("close", (e) => {
       this.closeWebSockets(e);
@@ -335,10 +302,7 @@ export class BrowserSession implements DurableObject {
 
   /** Raw (unchunked) WebSocket connection to Chrome's browser endpoint. */
   async #connect(): Promise<Response> {
-    assert(
-      this.sessionInfo !== undefined,
-      "sessionInfo must be set before connecting",
-    );
+    assert(this.sessionInfo !== undefined, "sessionInfo must be set before connecting");
 
     const wsUrl = this.sessionInfo.wsEndpoint.replace("ws://", "http://");
     const resp = await this.#proxyRawWebSocket(wsUrl);
@@ -361,12 +325,10 @@ export class BrowserSession implements DurableObject {
       const closeUrl = new URL("http://localhost/browser/close");
       closeUrl.searchParams.set("sessionId", this.sessionInfo.sessionId);
       this.state.waitUntil(
-        this.env[BINDING_BROWSER_LOOPBACK]
-          .fetch(closeUrl, { method: "POST" })
-          .then(
-            () => {},
-            () => {},
-          ),
+        this.env[BINDING_BROWSER_LOOPBACK].fetch(closeUrl, { method: "POST" }).then(
+          () => {},
+          () => {},
+        ),
       );
     }
     return Response.json({ status: "closed" });
@@ -410,12 +372,9 @@ export class BrowserSession implements DurableObject {
   }
 
   async #proxyRawWebSocket(targetWsUrl: string): Promise<Response> {
-    const response = await fetchWithConnectRetry(
-      targetWsUrl.replace("ws://", "http://"),
-      {
-        headers: { Upgrade: "websocket" },
-      },
-    );
+    const response = await fetchWithConnectRetry(targetWsUrl.replace("ws://", "http://"), {
+      headers: { Upgrade: "websocket" },
+    });
 
     assert(response.webSocket !== null, "Expected a WebSocket response");
     const chrome = response.webSocket;
@@ -440,14 +399,15 @@ export class BrowserSession implements DurableObject {
       forwardClose(chrome, e);
       this.wss = this.wss.filter((p) => p !== pair);
     });
+    chrome.addEventListener("error", () => {
+      forwardClose(server);
+      this.wss = this.wss.filter((p) => p !== pair);
+    });
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  async #proxyJsonRequest(
-    chromePath: string,
-    method = "GET",
-  ): Promise<Response> {
+  async #proxyJsonRequest(chromePath: string, method = "GET"): Promise<Response> {
     if (!this.sessionInfo) {
       return Response.json({ error: "Browser not found" }, { status: 404 });
     }
@@ -498,19 +458,13 @@ class BrowserRenderingRouter {
     return stub.fetch(request);
   }
 
-  #fetchSession(
-    sessionId: string,
-    path: string,
-    init?: RequestInit,
-  ): Promise<Response> {
+  #fetchSession(sessionId: string, path: string, init?: RequestInit): Promise<Response> {
     const stub = this.env[BINDING_BROWSER_SESSION].getByName(sessionId);
     return stub.fetch(`http://placeholder${path}`, init);
   }
 
   async #acquireSession(): Promise<SessionInfo> {
-    const resp = await this.env[BINDING_BROWSER_LOOPBACK].fetch(
-      "http://localhost/browser/launch",
-    );
+    const resp = await this.env[BINDING_BROWSER_LOOPBACK].fetch("http://localhost/browser/launch");
     const sessionInfo = await parseJsonResponse<SessionInfo>(
       resp,
       "Failed to launch local browser via the loopback (/browser/launch)",
@@ -605,16 +559,10 @@ class BrowserRenderingRouter {
       );
     }
     let match: RegExpExecArray | null;
-    if (
-      req.method === "GET" &&
-      (match = /^\/v1\/devtools\/session\/([^/]+)$/.exec(path))
-    ) {
+    if (req.method === "GET" && (match = /^\/v1\/devtools\/session\/([^/]+)$/.exec(path))) {
       return this.#callSession(match[1], req);
     }
-    if (
-      req.method === "DELETE" &&
-      (match = /^\/v1\/devtools\/browser\/([^/]+)$/.exec(path))
-    ) {
+    if (req.method === "DELETE" && (match = /^\/v1\/devtools\/browser\/([^/]+)$/.exec(path))) {
       const sessionId = match[1];
       // The DO sends the kill signal and returns immediately, keeping it
       // idle so WebSocket close events can propagate to the user.
@@ -626,8 +574,7 @@ class BrowserRenderingRouter {
       for (let i = 0; i < 50; i++) {
         const statusUrl = new URL("http://localhost/browser/status");
         statusUrl.searchParams.set("sessionId", sessionId);
-        const statusResp =
-          await this.env[BINDING_BROWSER_LOOPBACK].fetch(statusUrl);
+        const statusResp = await this.env[BINDING_BROWSER_LOOPBACK].fetch(statusUrl);
         if (statusResp.status === 410) {
           break;
         }
