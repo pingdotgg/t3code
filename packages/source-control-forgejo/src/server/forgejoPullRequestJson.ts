@@ -128,9 +128,11 @@ export function forgejoActor(
     : null;
 }
 
-// Matches the web client's rollup of `detail.checks`, which it compares with this value.
+// Branch protection gates merges on required checks only; the web client's
+// `pullRequestChecksState` applies the same rule to Forgejo and compares with this value.
 function checksStateOf(checks: ReadonlyArray<PullRequestCheck>): PullRequestChecksState | null {
-  const statuses = new Set(checks.map((check) => check.status));
+  const required = checks.filter((check) => check.required === true);
+  const statuses = new Set((required.length > 0 ? required : checks).map((check) => check.status));
   if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
   if (statuses.has("pending") || statuses.has("action-required")) return "pending";
   return statuses.has("success") ? "passing" : null;

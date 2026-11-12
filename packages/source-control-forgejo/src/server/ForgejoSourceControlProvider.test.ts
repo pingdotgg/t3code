@@ -172,9 +172,9 @@ it.effect.each([
     const summary = yield* readChecks(requiredChecksInput);
     const detail = yield* provider.getChangeRequest(requiredChecksInput);
     const snapshot = yield* provider.getChangeRequestSummary!(requiredChecksInput);
-    // Matches the client's all-checks rollup: an optional failure outranks passing required checks.
-    assert.strictEqual(snapshot.checksState, supported ? "failing" : "pending");
-    assert.strictEqual(detail.checksState, supported ? "failing" : "pending");
+    // The optional failure does not gate; the missing required check keeps the rollup pending.
+    assert.strictEqual(snapshot.checksState, "pending");
+    assert.strictEqual(detail.checksState, "pending");
     for (const checks of [summary.checks, detail.checks]) {
       assert.deepStrictEqual(
         checks.map((check) => [check.name, check.status, check.required]),
@@ -219,6 +219,7 @@ it.effect(
   () => {
     const cases = [
       ["success", "release/1.x", "passing"],
+      ["optional-failure", "release/1.x", "passing"],
       ["failure", "release/1.x", "failing"],
       ["pending", "release/1.x", "pending"],
       ["missing", "release/1.x", "pending"],
@@ -320,8 +321,16 @@ it.effect(
                   : [
                       ...(state === "missing"
                         ? []
-                        : [{ ...requiredChecksStatuses[0], status: state }]),
-                      { ...requiredChecksStatuses[1], status: "success" },
+                        : [
+                            {
+                              ...requiredChecksStatuses[0],
+                              status: state === "optional-failure" ? "success" : state,
+                            },
+                          ]),
+                      {
+                        ...requiredChecksStatuses[1],
+                        status: state === "optional-failure" ? "failure" : "success",
+                      },
                     ];
             } else return Effect.die(`Unexpected Forgejo request: ${input.path}`);
             return encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));

@@ -189,7 +189,8 @@ export function ThreadDetailsPrRow({
   }
   const conflicting = isPullRequestConflicting(detail);
   const checksState = detail === null ? "none" : classifyPullRequestChecks(detail.checks);
-  const checksRollup = detail === null ? null : pullRequestChecksState(detail.checks);
+  const checksRollup =
+    detail === null ? null : pullRequestChecksState(detail.checks, detail.provider);
   const selectedMergeMethod = resolvePullRequestMergeMethod(
     allowedPullRequestMergeMethods(detail),
     null,
