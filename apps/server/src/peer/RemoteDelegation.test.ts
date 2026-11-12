@@ -15,6 +15,7 @@ import {
   type Project,
   type RepositoryIdentity,
   RunId,
+  type ServerProvider,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -561,9 +562,15 @@ const boxToolkitLayer = (thread: BoxThread) => {
       ),
     ),
     Layer.provide(
-      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([boxClaude]),
+      }),
     ),
-    Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+    Layer.provide(
+      Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+        list: () => Effect.succeed([boxClaude.instanceId]),
+      }),
+    ),
     Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
     Layer.provide(
       Layer.mock(ProjectService.ProjectService)({
@@ -596,6 +603,23 @@ const mcpClient = McpSchema.McpServerClient.of({
   },
   getClient: Effect.die("unused"),
 });
+
+/** The box's only provider: a Claude instance, under its own id. */
+const boxClaude: ServerProvider = {
+  instanceId: ProviderInstanceId.make("claude-box"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  enabled: true,
+  installed: true,
+  version: "test",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-09-13T00:00:00.000Z",
+  models: [
+    { slug: "claude-sonnet-4-6", name: "Claude Sonnet", isCustom: false, capabilities: null },
+  ],
+  slashCommands: [],
+  skills: [],
+};
 
 const adapter = {
   instanceId,
@@ -1214,12 +1238,10 @@ it.effect("a task naming another driver there never runs its model on the parent
           model: "claude-sonnet-4-6",
         },
       });
-      // Either it resolves to a Claude instance there or it is refused; never Codex.
-      if (!result.isError) {
-        expect((yield* Ref.get(thread.launchedWith))?.modelSelection.instanceId).not.toBe(
-          instanceId,
-        );
-      }
+      expect(result.isError).toBe(false);
+      expect((yield* Ref.get(thread.launchedWith))?.modelSelection.instanceId).toBe(
+        boxClaude.instanceId,
+      );
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
