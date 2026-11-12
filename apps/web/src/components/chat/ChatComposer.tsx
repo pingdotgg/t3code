@@ -1810,7 +1810,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectId: activeProjectId,
     projectName,
     ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
-    draftText: prompt,
     disabled: dictationDisabled,
     readDraft: () => {
       const snapshot = readComposerSnapshot();
@@ -2143,6 +2142,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         description: "Send again once its chip resolves.",
       });
       return false;
+    }
+    // An empty draft has nothing to send; Enter does what the Resume thread button does.
+    if (showResumeAction && !activePendingProgress) {
+      event?.preventDefault();
+      if (isSendBusy || environmentUnavailable !== null) return false;
+      onResume();
+      return true;
     }
     const submission = submitComposerDraft({
       prompt: promptRef.current,

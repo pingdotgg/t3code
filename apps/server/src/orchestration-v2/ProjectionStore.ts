@@ -1234,7 +1234,7 @@ const encodeMessagePayload = Schema.encodeEffect(
 const encodePlanPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2PlanArtifactSchema),
 );
-const encodeTurnItemPayload = Schema.encodeEffect(
+export const encodeTurnItemPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
 );
 // The codec every *Json payload schema uses for timestamps, so index columns match payload_json.
@@ -1837,6 +1837,7 @@ export function threadShellFromProjection(
     lastVisitedAt: projection.thread.lastVisitedAt,
     opens: projection.thread.opens ?? null,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
+    lastTitleRegeneration: projection.thread.lastTitleRegeneration ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
     deletedAt: projection.thread.deletedAt,
   };
@@ -2133,6 +2134,7 @@ function shellFromState(input: {
     lastVisitedAt: input.state.thread.lastVisitedAt,
     opens: input.state.thread.opens ?? null,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
+    lastTitleRegeneration: input.state.thread.lastTitleRegeneration ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
     deletedAt: input.state.thread.deletedAt,
   };
@@ -6987,6 +6989,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   const historyItems =
                     workMode === "deferred" ? deferWorkHistoryRows(indexed) : indexed;
                   const policy = olderHistoryPagePolicy({ items: indexed, cursor, throughEntryId });
+                  // Folding can hide the cursor's row: a snapshot folds no work in a thread with no
+                  // user turn. The page then ends at the first row kept from the cursor on.
+                  const cursorRow =
+                    indexed[findCursorEndIndex(indexed, decodeThreadHistoryCursor(cursor))];
+                  const end =
+                    cursorRow === undefined
+                      ? -1
+                      : historyItems.findIndex(
+                          (row) => row.canonicalPosition >= cursorRow.canonicalPosition,
+                        );
                   const page =
                     workMode === "work"
                       ? selectDeferredWorkPage({
@@ -6999,6 +7011,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       : selectHistoryPageFromCursor({
                           items: historyItems,
                           cursor,
+                          exclusiveEndIndex: end === -1 ? historyItems.length : end,
                           snapshotSequence,
                           rowEncodedBytes: () => 0,
                           policy,
