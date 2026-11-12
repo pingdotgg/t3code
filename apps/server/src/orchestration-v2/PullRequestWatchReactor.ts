@@ -464,6 +464,11 @@ export const make = Effect.gen(function* () {
       wake: {
         ...combinePullRequestWatchWakes([first.wake, ...rest.map((item) => item.wake)]),
         ...(first.wake.includesRemarks === true ? { includesRemarks: true } : {}),
+        sections: items.map(({ wake }) => ({
+          text: wake.text,
+          outcome: wake.notification.outcome,
+          summary: wake.notification.summary,
+        })),
         messageId: MessageId.make(`message:pr-watch:${uuid}`),
       },
     });

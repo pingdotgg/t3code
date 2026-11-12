@@ -284,7 +284,7 @@ const WATCHING_CLOSING =
 const WATCHING_CLOSING_PLURAL =
   "Look into each item and act on it as your task requires. Each PR T3 Code still watches stays linked and watched, so do not link, watch, or list them again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request for each first so the thread returns to their inbox.";
 
-interface PullRequestWatchWake {
+export interface PullRequestWatchWake {
   readonly text: string;
   readonly notification: OrchestrationV2Notification;
 }

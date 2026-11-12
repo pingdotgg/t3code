@@ -81,6 +81,7 @@ import {
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
+import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   backgroundWorkHoldsCompletion,
@@ -1019,6 +1020,46 @@ function isStalePullRequestWatchWake(
   return (
     stamps.length > 0 && stamps.every((stamp) => isStalePullRequestWatchStamp(projection, stamp))
   );
+}
+
+/**
+ * A queued wake covering several pull requests, rebuilt from the ones still current, or
+ * undefined when it needs no change.
+ */
+function currentPullRequestWatchWake(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
+  run: OrchestrationV2Run,
+): OrchestrationV2ConversationMessage | undefined {
+  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  const stamps = monitorPullRequestStamps(message?.notification?.source);
+  if (message === undefined || stamps.length < 2) return undefined;
+  const current = stamps.filter((stamp) => !isStalePullRequestWatchStamp(projection, stamp));
+  const [first, ...rest] = current;
+  if (first === undefined || rest.length === stamps.length - 1) return undefined;
+  const sections = current.flatMap(({ section }) => (section === undefined ? [] : [section]));
+  if (sections.length !== current.length) return undefined;
+  const wake = combinePullRequestWatchWakes(
+    sections.map(({ text, outcome, summary }) => ({
+      text,
+      notification: { source: { kind: "monitor" }, outcome, summary },
+    })) as [PullRequestWatchWake, ...Array<PullRequestWatchWake>],
+  );
+  return {
+    ...message,
+    text: wake.text,
+    notification: {
+      ...wake.notification,
+      source: {
+        kind: "monitor",
+        pullRequest: rest.length === 0 ? withoutSection(first) : first,
+        ...(rest.length === 0 ? {} : { otherPullRequests: rest }),
+      },
+    },
+  };
+}
+
+function withoutSection({ section: _, ...stamp }: MonitorPullRequestStamp) {
+  return stamp;
 }
 
 function queuedRunCancellationEvents(
@@ -2129,6 +2170,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         projection = yield* readCommandProjection(threadId);
         storedQueuedRun = nextQueuedRun(projection);
+      }
+      // A wake that outlived some of its pull requests tells only the current ones.
+      const currentWake =
+        storedQueuedRun === undefined
+          ? undefined
+          : currentPullRequestWatchWake(projection, storedQueuedRun);
+      if (storedQueuedRun !== undefined && currentWake !== undefined) {
+        const now = yield* DateTime.now;
+        yield* writeSystemEvents([
+          {
+            type: "message.updated",
+            threadId,
+            runId: storedQueuedRun.id,
+            ...(storedQueuedRun.rootNodeId === null ? {} : { nodeId: storedQueuedRun.rootNodeId }),
+            providerInstanceId: storedQueuedRun.providerInstanceId,
+            occurredAt: now,
+            payload: { ...currentWake, updatedAt: now },
+          },
+        ]);
+        const runId = storedQueuedRun.id;
+        projection = yield* readCommandProjection(threadId);
+        storedQueuedRun = projection.runs.find((run) => run.id === runId);
       }
       if (storedQueuedRun === undefined) {
         return;
@@ -3596,28 +3659,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           entry.watch !== null &&
           pullRequestSnapshotEndsWatch(link?.snapshot ?? null, entry.startedAt),
       );
-      // A queued wake is dropped whole once outdated, so one covering several pull requests
-      // must start now; otherwise the sender splits it into one wake per pull request.
-      const queues =
-        entries.length > 1 &&
-        (yield* projectionStore.getThreadRecords(command.threadId, ["runs"]).pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-          ),
-          Effect.map(({ runs }) => {
-            const latest = latestExecutedRun(runs);
-            return (
-              runs.some(isActiveRun) ||
-              ((latest?.status === "failed" || latest?.status === "interrupted") &&
-                latest.workspacePreparation?.type === "worktree" &&
-                thread.worktreePath === null)
-            );
-          }),
-        ));
       if (
         entries.some(({ entry, link }) => link?.watch?.startedAt !== entry.startedAt) ||
         (wake && inactive) ||
-        queues ||
+        // One wake cannot drop the news of just some of its pull requests; the sender splits it.
         (entries.length > 1 && outdated.some(Boolean))
       ) {
         return yield* new OrchestratorDispatchError({
@@ -3631,21 +3676,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchThreadMutation(mutation, events, effects);
       }
       if (wake === undefined || outdated[0]) return;
-      const stamps = entries.map(({ entry, key }) => ({
+      const { sections, ...wakeMessage } = wake;
+      const stamps = entries.map(({ entry, key }, index) => ({
         ...key,
         watchStartedAt: entry.startedAt,
         headSha: entry.includesRemarks === true ? null : (entry.watch?.headSha ?? null),
         ...(entry.watch === null ? { watchEnded: true } : {}),
+        ...(entries.length > 1 && sections?.[index] !== undefined
+          ? { section: sections[index] }
+          : {}),
       }));
       yield* dispatchMessage(
         {
           type: "message.dispatch",
           commandId: command.commandId,
           threadId: command.threadId,
-          messageId: wake.messageId,
-          text: wake.text,
+          messageId: wakeMessage.messageId,
+          text: wakeMessage.text,
           notification: {
-            ...wake.notification,
+            ...wakeMessage.notification,
             source:
               wake.notification.source.kind === "monitor"
                 ? {
