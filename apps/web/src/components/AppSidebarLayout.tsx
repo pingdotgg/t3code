@@ -42,6 +42,7 @@ import {
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
+import { SidebarFolderDrop } from "./sidebar/SidebarFolderDrop";
 import { PluginPart } from "../plugins/PluginPart";
 import {
   SidebarBrandWidthProbe,
@@ -458,25 +459,27 @@ function AppSidebarContent({ routeReveal }: { routeReveal: SidebarRouteReveal })
   const threads = <ThreadSidebar routeReveal={routeReveal} />;
   const footer = <SidebarChromeFooter />;
   return (
-    <PluginPart
-      part="app.sidebar"
-      pieces={{
-        original: (
-          <>
-            {header}
-            {threads}
-            {footer}
-          </>
-        ),
-        header,
-        threads,
-        footer,
-        back: <SidebarChromeFooter utility="back" />,
-        update: <SidebarChromeFooter utility="none" />,
-        nav: page === "settings" ? <SidebarSettingsNav /> : null,
-        page,
-      }}
-    />
+    <SidebarFolderDrop>
+      <PluginPart
+        part="app.sidebar"
+        pieces={{
+          original: (
+            <>
+              {header}
+              {threads}
+              {footer}
+            </>
+          ),
+          header,
+          threads,
+          footer,
+          back: <SidebarChromeFooter utility="back" />,
+          update: <SidebarChromeFooter utility="none" />,
+          nav: page === "settings" ? <SidebarSettingsNav /> : null,
+          page,
+        }}
+      />
+    </SidebarFolderDrop>
   );
 }
 
