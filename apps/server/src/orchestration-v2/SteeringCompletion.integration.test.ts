@@ -29,6 +29,10 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -342,7 +346,7 @@ it.effect.each(
         }
         if (timing === "after delivery") yield* worker.drain();
         const delivery =
-          timing === "during delivery" ? yield* worker.runOnce.pipe(Effect.forkScoped) : null;
+          timing === "during delivery" ? yield* worker.runOnce().pipe(Effect.forkScoped) : null;
         if (delivery !== null) yield* Deferred.await(steerEntered);
         const completed = yield* watch(
           (event) =>
@@ -495,6 +499,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
   const steered: string[] = [];
+  const steeredSelections: Array<ModelSelection | undefined> = [];
   const interrupted: ProviderTurnId[] = [];
   const capabilities = {
     ...CodexProviderCapabilitiesV2,
@@ -583,6 +588,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
           steerTurn: (turn) =>
             Effect.sync(() => {
               steered.push(turn.message.text);
+              steeredSelections.push(turn.modelSelection);
             }),
           interruptTurn: ({ providerTurnId }) =>
             Effect.sync(() => {
@@ -654,7 +660,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     yield* Fiber.join(running);
     return threadId;
   });
-  return { cwd, events, started, steered, interrupted, layer, startFirstTurn };
+  return { cwd, events, started, steered, steeredSelections, interrupted, layer, startFirstTurn };
 });
 
 it.effect.each([
@@ -843,6 +849,230 @@ it.effect("sends a selected held message once and preserves the remaining queue 
   ),
 );
 
+it.effect.each(
+  (["preparing", "starting", "running"] as const).flatMap((status) =>
+    [false, true].map((direct) => ({ status, direct })),
+  ),
+)("delivers a deferred steer for a $status run (direct: $direct)", ({ status, direct }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const restarting = status === "starting" && !direct;
+      const { started, steered, layer, startFirstTurn, events } = yield* nextTurnSelectionHarness(
+        `deferred-steer-${status}-${direct}`,
+        restarting,
+        !restarting,
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const run = before.runs[0]!;
+        const turn = before.providerTurns[0]!;
+        const now = yield* DateTime.now;
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("setup-run"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...run, status },
+            },
+            {
+              id: EventId.make("setup-turn"),
+              type: "provider-turn.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...turn, status: "pending" },
+            },
+          ],
+        });
+        if (status === "preparing" && !direct) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("edited-steer"),
+            threadId,
+            messageId: MessageId.make("message:edited-steer"),
+            text: "edit this steer",
+            attachments: [],
+            deliveryIntent: "steer",
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const edited = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (candidate) => candidate.userMessageId === MessageId.make("message:edited-steer"),
+          )!;
+          yield* orchestrator.dispatch({
+            type: "queued-run.edit",
+            commandId: CommandId.make("edit-steer-to-compact"),
+            threadId,
+            runId: edited.id,
+            text: "/compact",
+          });
+        }
+        if (direct) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("earlier-queue"),
+            threadId,
+            messageId: MessageId.make("message:earlier-queue"),
+            text: "earlier queued selection",
+            modelSelection: composerSelection,
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("queue"),
+          threadId,
+          messageId: MessageId.make("message:steer-after-setup"),
+          text: "steer after setup",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          ...(direct ? { deliveryIntent: "steer" as const } : {}),
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (candidate) => candidate.userMessageId === MessageId.make("message:steer-after-setup"),
+        )!;
+        assert.deepEqual(queued.modelSelection, runSelection);
+        for (const text of ["/compact", "/logout"]) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`queue-${text}`),
+            threadId,
+            messageId: MessageId.make(`message:${text}`),
+            text,
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const maintenance = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (candidate) => candidate.userMessageId === MessageId.make(`message:${text}`),
+          )!;
+          const error = yield* orchestrator
+            .dispatch({
+              type: "queued-message.promote-to-steer",
+              commandId: CommandId.make(`promote-${text}`),
+              threadId,
+              queuedRunId: maintenance.id,
+              targetRunId: run.id,
+            })
+            .pipe(Effect.flip);
+          assert.equal(error._tag, "OrchestratorDispatchError");
+        }
+        const command = {
+          type: "queued-message.promote-to-steer" as const,
+          commandId: CommandId.make("promote"),
+          threadId,
+          queuedRunId: queued.id,
+          targetRunId: run.id,
+        };
+        if (!direct) {
+          yield* orchestrator.dispatch(command);
+          yield* orchestrator.dispatch(command);
+        }
+        let secondQueuedId: typeof queued.id | undefined;
+        if (restarting) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("second"),
+            threadId,
+            messageId: MessageId.make("message:second"),
+            text: "second steer",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          secondQueuedId = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (candidate) => candidate.userMessageId === MessageId.make("message:second"),
+          )!.id;
+          yield* orchestrator.dispatch({
+            ...command,
+            commandId: CommandId.make("promote-second"),
+            queuedRunId: secondQueuedId,
+          });
+        }
+        const secondReDeferred = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === secondQueuedId &&
+              event.payload.status === "queued",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        const secondPromoted = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === secondQueuedId &&
+              event.payload.status === "cancelled",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* worker.drain();
+        assert.deepEqual(steered, []);
+        const promoted = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === queued.id &&
+              event.payload.status === "cancelled",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("ready-run"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: run,
+            },
+          ],
+        });
+        yield* Queue.offer(events, { type: "provider_turn.updated", driver, providerTurn: turn });
+        yield* Fiber.join(promoted);
+        if (restarting) yield* Fiber.join(secondReDeferred);
+        yield* worker.drain();
+        if (restarting) {
+          yield* Fiber.join(secondPromoted);
+          yield* worker.drain();
+          assert.deepEqual(
+            started.map((turn) => turn.message.text),
+            ["first", "steer after setup", "second steer"],
+          );
+        } else {
+          assert.deepEqual(steered, ["steer after setup"]);
+          assert.lengthOf(started, 1);
+        }
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          after.messages.find((message) => message.id === queued.userMessageId)?.runId,
+          run.id,
+        );
+        assert.equal(after.runs.find((candidate) => candidate.id === run.id)?.status, "running");
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 it.effect("force sends multiple queued messages and can force send a requeued message again", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -961,10 +1191,8 @@ it.effect(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-          "steering-selection-change",
-          true,
-        );
+        const { started, steered, steeredSelections, layer, startFirstTurn } =
+          yield* nextTurnSelectionHarness("steering-selection-change", true);
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -1024,6 +1252,8 @@ it.effect(
           yield* steer("steer-back", runSelection);
           const back = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(steered, ["steer-changed", "steer-reverted", "steer-back"]);
+          // The adapter gets each steer's selection so it can switch the live turn, and back.
+          assert.deepEqual(steeredSelections, [composerSelection, runSelection, runSelection]);
           assert.equal(back.thread.providerInstanceId, instanceId);
           assert.deepEqual(back.thread.modelSelection, runSelection);
         }).pipe(Effect.provide(layer));
@@ -1777,61 +2007,90 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
 );
 
 // regression: #32891 a restart that Stop already reached is lost
-it.effect("refuses a steer but starts a restart sent into a run that Stop reached", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { started, steered, layer, startFirstTurn } =
-        yield* nextTurnSelectionHarness("restart-after-stop");
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const threadId = yield* startFirstTurn;
-        const first = started[0]!;
-        // The worker has not delivered the interrupt yet, so the run still reads as running.
-        yield* orchestrator.dispatch({
-          type: "run.interrupt",
-          commandId: CommandId.make("stop"),
-          threadId,
-          runId: first.runId,
-        });
-        const steerError = yield* orchestrator
-          .dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make("steer"),
+it.effect.each([false, true])(
+  "refuses a steer after Stop (provider turn ready: %s)",
+  (providerTurnReady) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { started, steered, layer, startFirstTurn } =
+          yield* nextTurnSelectionHarness("restart-after-stop");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = yield* startFirstTurn;
+          const first = started[0]!;
+          // The worker has not delivered the interrupt yet, so the run still reads as running.
+          yield* orchestrator.dispatch({
+            type: "run.interrupt",
+            commandId: CommandId.make("stop"),
             threadId,
-            messageId: MessageId.make("message:steer"),
-            text: "steer",
+            runId: first.runId,
+          });
+          const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+          if (!providerTurnReady) {
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("turn-not-ready"),
+                  type: "provider-turn.updated",
+                  threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: { ...turn, status: "pending" },
+                },
+              ],
+            });
+          }
+          const steerError = yield* orchestrator
+            .dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("steer"),
+              threadId,
+              messageId: MessageId.make("message:steer"),
+              text: "steer",
+              attachments: [],
+              modelSelection: runSelection,
+              dispatchMode: { type: "steer_active", targetRunId: first.runId },
+              createdBy: "user",
+              creationSource: "web",
+            })
+            .pipe(Effect.flip);
+          assert.equal(steerError._tag, "OrchestratorDispatchError");
+          assert.include(String(steerError.cause), "is stopping and cannot be steered");
+          if (!providerTurnReady) {
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("restore-ready-turn"),
+                  type: "provider-turn.updated",
+                  threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: turn,
+                },
+              ],
+            });
+          }
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("restart"),
+            threadId,
+            messageId: MessageId.make("message:restart"),
+            text: "restart",
             attachments: [],
             modelSelection: runSelection,
-            dispatchMode: { type: "steer_active", targetRunId: first.runId },
+            dispatchMode: { type: "restart_active", targetRunId: first.runId },
             createdBy: "user",
             creationSource: "web",
-          })
-          .pipe(Effect.flip);
-        assert.equal(steerError._tag, "OrchestratorDispatchError");
-        assert.include(String(steerError.cause), "is stopping and cannot be steered");
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("restart"),
-          threadId,
-          messageId: MessageId.make("message:restart"),
-          text: "restart",
-          attachments: [],
-          modelSelection: runSelection,
-          dispatchMode: { type: "restart_active", targetRunId: first.runId },
-          createdBy: "user",
-          creationSource: "web",
-        });
-        yield* worker.drain();
+          });
+          yield* worker.drain();
 
-        assert.deepEqual(steered, []);
-        assert.deepEqual(
-          started.map((turn) => turn.message.text),
-          ["first", "restart"],
-        );
-      }).pipe(Effect.provide(layer));
-    }),
-  ),
+          assert.deepEqual(steered, []);
+          assert.deepEqual(
+            started.map((turn) => turn.message.text),
+            ["first", "restart"],
+          );
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
 );
 
 // regression: #32891 a restart that arrives after the turn ended is lost
@@ -2177,6 +2436,147 @@ it.effect("starts a goal that names no model on the thread's model ahead of a qu
         });
         assert.deepEqual(started[1]?.modelSelection, runSelection);
       }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("restarts by stopping the running turn when the provider cannot interrupt-restart", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn, send, read } = yield* goalHarness(
+        "restart-without-interrupt-restart",
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        yield* send("queued", "queued", "queue");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("restart"),
+          threadId,
+          messageId: MessageId.make("message:restart"),
+          text: "do this instead",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "restart_active", targetRunId: started[0]!.runId },
+          createdBy: "agent",
+          creationSource: "server",
+        });
+        yield* worker.drain();
+
+        assert.deepEqual(steered, []);
+        assert.deepEqual(yield* read(threadId), {
+          queue: ["queued"],
+          started: ["first", "do this instead"],
+          stopRequested: true,
+        });
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("starts a restart that stops the running turn ahead of an older held queue", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn, send, read } =
+        yield* goalHarness("restart-past-held-queue");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        yield* send("queued", "queued", "queue");
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop"),
+          threadId,
+        });
+        yield* worker.drain();
+        const secondRunning = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("second"),
+          threadId,
+          messageId: MessageId.make("message:second"),
+          text: "second",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(secondRunning);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("restart"),
+          threadId,
+          messageId: MessageId.make("message:restart"),
+          text: "do this instead",
+          attachments: [],
+          dispatchMode: { type: "restart_active", targetRunId: started[1]!.runId },
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* worker.drain();
+
+        const { queue, started: startedTexts } = yield* read(threadId);
+        assert.deepEqual(
+          { queue, started: startedTexts },
+          { queue: ["queued"], started: ["first", "second", "do this instead"] },
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("reports a restart that stops the running turn as restarted", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn } = yield* goalHarness("restart-send-delivery");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+        const threadId = yield* startFirstTurn;
+        const input = {
+          projectId: ProjectId.make("project:restart-send-delivery"),
+          commandId: CommandId.make("restart"),
+          threadId,
+          messageId: MessageId.make("message:restart"),
+          text: "do this instead",
+          attachments: [],
+          mode: "restart",
+          createdBy: "agent",
+          creationSource: "mcp",
+        } as const;
+        const sent = yield* threadManagement.sendToThread(input);
+        // Stop holds the replacement before it starts; a replay must still report the restart.
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-after-restart"),
+          threadId,
+        });
+        const replayed = yield* threadManagement.sendToThread(input);
+
+        assert.equal(started.length, 1);
+        assert.deepEqual([sent.delivery, replayed.delivery], ["restarted", "restarted"]);
+      }).pipe(
+        Effect.provide(
+          ThreadManagementService.layer.pipe(
+            Layer.provideMerge(layer),
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(
+              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+            ),
+          ),
+        ),
+      );
     }),
   ),
 );

@@ -54,6 +54,16 @@ isn’t already selected. **Test model** lets you try it without sending a messa
 If you use the composer microphone before a model is installed, it offers to download one.
 The recommendation uses your Voice language, or your system’s preferred languages with **Auto-detect**.
 
+If another app already downloaded one of these models, you don’t need a second copy.
+**Download** first looks in Handy’s model folder and the Hugging Face cache on that
+environment and uses a copy it finds there instead of downloading. For a copy anywhere
+else, on web or desktop, paste the path of the model file or its folder under the model
+list and choose **Use existing**. The path is on the environment
+that transcribes, not on the device you are using. T3 Code checks that the file is exactly a
+model from its list and then uses it in place. Removing the model in T3 Code leaves your file
+alone; if the other app deletes it, download or link the model again. Files in another
+format, such as Core ML, ONNX, or MLX builds of the same model, can’t be used.
+
 Select the languages you dictate in to compare models that support all of them.
 Accuracy shows how often the model got words or characters wrong in each
 language; speed is the time to transcribe 30 seconds on a reference GPU. Choose

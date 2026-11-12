@@ -1335,6 +1335,20 @@ describe("orchestration v2 provider switching", () => {
             assert.isFalse(turns[1]?.nativeThreadHasTurns);
             assert.equal(turns[2]?.nativeThreadId, turns[1]?.nativeThreadId);
             assert.isTrue(turns[2]?.nativeThreadHasTurns);
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const run2 = projection.runs[1]!;
+            const handoff = projection.contextHandoffs.find(
+              (candidate) => candidate.targetRunId === run2.id,
+            );
+            assert.deepEqual(
+              projection.turnItems
+                .filter((item) => item.runId === run2.id)
+                .toSorted((left, right) => left.ordinal - right.ordinal)
+                .slice(0, 2)
+                .map((item) => (item.type === "handoff" ? item.contextHandoffId : item.type)),
+              [handoff?.id, "user_message"],
+            );
           }).pipe(
             Effect.provide(
               ProviderReplayHarness.layerWithRegistry(

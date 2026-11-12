@@ -95,6 +95,7 @@ await Effect.runPromise(
         const generated = yield* generation.generateThreadTitle({
           cwd,
           message,
+          ...("projectTitle" in fixture ? { projectTitle: fixture.projectTitle } : {}),
           previousTitle: values.initial ? undefined : fixture.previousTitle,
           attachments,
           linkedContext,

@@ -2,6 +2,7 @@ import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
+  DesktopPreviewFindResultEvent,
   DesktopPreviewRecordingInputEvent,
   PreviewAnnotationPayload,
   PreviewAnnotationRect,
@@ -615,6 +616,7 @@ describe("PreviewManager", () => {
                 attach: () => {},
                 detach: () => {},
                 setShown: () => {},
+                loadFailed: () => {},
                 humanStartedDownload: () => true,
                 placeDownload: () => true,
               }),
@@ -808,6 +810,135 @@ describe("PreviewManager", () => {
         );
         expect(agentPreventDefault).not.toHaveBeenCalled();
         expect(send).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect.each([
+    ["darwin", true],
+    ["linux", false],
+    ["win32", false],
+  ] as const)(
+    "lets the page and its iframes claim the find shortcut before the host opens find on %s",
+    ([platform, usesMeta]) =>
+      withManager(
+        (manager) =>
+          Effect.gen(function* () {
+            const preview = makeFaviconWebContents();
+            const send = vi.fn();
+            const mainFrame = { processId: 1, routingId: 1 };
+            Object.assign(preview.webContents, {
+              hostWebContents: { isDestroyed: () => false, send },
+              mainFrame,
+              focusedFrame: mainFrame,
+            });
+            fromId.mockReturnValue(preview.webContents);
+            yield* manager.createTab("tab_page_find");
+            yield* manager.registerWebview("tab_page_find", 42);
+            yield* manager.setForwardedShortcuts([
+              { command: "preview.find", shortcut: parseKeybindingShortcut("mod+f")! },
+            ]);
+            const beforeInput = preview.listeners.get("before-input-event")!;
+            const findKey = {
+              type: "keyDown",
+              key: "f",
+              code: "KeyF",
+              meta: usesMeta,
+              control: !usesMeta,
+            };
+            const preventDefault = vi.fn();
+
+            beforeInput(
+              { preventDefault } as never,
+              { ...findKey, shift: false, alt: false } as never,
+            );
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(send).not.toHaveBeenCalled();
+
+            const ipcOn = (preview.webContents as Electron.WebContents).ipc.on as ReturnType<
+              typeof vi.fn
+            >;
+            const pageUnhandledShortcut = ipcOn.mock.calls.find(
+              ([channel]) => channel === "preview:page-unhandled-shortcut",
+            )![1];
+            pageUnhandledShortcut(
+              {},
+              {
+                key: "f",
+                code: "KeyF",
+                metaKey: usesMeta,
+                ctrlKey: !usesMeta,
+                shiftKey: false,
+                altKey: false,
+              },
+            );
+            expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", "preview.find");
+
+            Object.assign(preview.webContents, { focusedFrame: { processId: 1, routingId: 2 } });
+            beforeInput(
+              { preventDefault } as never,
+              { ...findKey, shift: false, alt: false } as never,
+            );
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(send).toHaveBeenCalledOnce();
+
+            Object.assign(preview.webContents, { focusedFrame: mainFrame });
+            yield* manager.setForwardedShortcuts([
+              { command: "preview.find", shortcut: parseKeybindingShortcut("ctrl+alt+8")! },
+            ]);
+            pageUnhandledShortcut(
+              {},
+              {
+                key: "[",
+                code: "Digit8",
+                metaKey: false,
+                ctrlKey: true,
+                shiftKey: false,
+                altKey: true,
+              },
+            );
+            expect(send).toHaveBeenCalledTimes(usesMeta ? 2 : 1);
+          }),
+        platform,
+      ),
+  );
+
+  effectIt.effect("searches the guest page and reports its match counts", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        const findInPage = vi.fn();
+        const stopFindInPage = vi.fn();
+        Object.assign(preview.webContents, { findInPage, stopFindInPage });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_find");
+        yield* manager.registerWebview("tab_find", 42);
+        const reported = yield* Deferred.make<DesktopPreviewFindResultEvent>();
+        yield* manager.subscribeFindResults((event) => Deferred.succeed(reported, event));
+
+        yield* manager.findInPage("tab_find", "needle", { forward: true, newSession: true });
+        expect(findInPage).toHaveBeenCalledExactlyOnceWith("needle", {
+          forward: true,
+          findNext: true,
+        });
+
+        preview.listeners.get("found-in-page")!(
+          {} as never,
+          {
+            requestId: 1,
+            activeMatchOrdinal: 2,
+            matches: 5,
+            finalUpdate: true,
+          } as never,
+        );
+        expect(yield* Deferred.await(reported)).toEqual({
+          tabId: "tab_find",
+          activeMatchOrdinal: 2,
+          matches: 5,
+        });
+
+        yield* manager.stopFindInPage("tab_find");
+        expect(stopFindInPage).toHaveBeenCalledExactlyOnceWith("clearSelection");
       }),
     ),
   );
@@ -1984,6 +2115,97 @@ describe("PreviewManager", () => {
         screenshot.resolve({ data: "" });
         expect(yield* Queue.take(capturing)).toBe(false);
       }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
+  effectIt.effect("reports early and subsequent load failures for the current guest", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+      const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+      const lines = yield* Queue.unbounded<string>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) => Queue.offer(lines, new TextDecoder().decode(line))),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const makeGuest = (id: number) => {
+        const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+        const wc = Object.assign(
+          makeTestPreviewWebContents(
+            async () => ({
+              toJPEG: () => Buffer.from("jpeg"),
+              getSize: () => ({ width: 100, height: 80 }),
+            }),
+            id,
+          ),
+          {
+            isDevToolsOpened: () => false,
+            getUserAgent: () => "Electron",
+            once: vi.fn(),
+            on: (event: string, listener: (...args: unknown[]) => void) => {
+              listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+            },
+          },
+        );
+        const emit = (event: string, ...args: unknown[]) => {
+          for (const listener of listeners.get(event) ?? []) listener(...args);
+        };
+        return {
+          wc,
+          emit,
+          fail: (url: string) =>
+            emit("did-fail-load", {}, -202, "ERR_CERT_AUTHORITY_INVALID", url, true),
+        };
+      };
+      const initial = makeGuest(42);
+      const replacement = makeGuest(43);
+      const manager = yield* PreviewManager.PreviewManager;
+      const statuses: PreviewManager.PreviewNavStatus[] = [];
+      yield* manager.subscribeStateChanges((_tabId, state) =>
+        Effect.sync(() => {
+          statuses.push(state.navStatus);
+        }),
+      );
+      yield* manager.createTab("tab_1", { serverTab });
+      yield* manager.prepareWebview(initial.wc);
+      yield* manager.prepareWebview(replacement.wc);
+      initial.fail("https://first.local/");
+      initial.emit("did-start-navigation", { isMainFrame: false, isSameDocument: false });
+      initial.emit("did-start-loading");
+      replacement.fail("https://second.local/");
+      const failure = (url: string) => ({
+        type: "loadFailed",
+        ...serverTab,
+        url,
+        code: -202,
+        description: "ERR_CERT_AUTHORITY_INVALID",
+      });
+
+      fromId.mockReturnValue(initial.wc);
+      yield* manager.registerWebview("tab_1", 42);
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "attached", ...serverTab });
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual(failure("https://first.local/"));
+
+      fromId.mockReturnValue(replacement.wc);
+      yield* manager.registerWebview("tab_1", 43);
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "detached", ...serverTab });
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "attached", ...serverTab });
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual(failure("https://second.local/"));
+
+      // A callback queued by the old guest must not report a failure for its replacement.
+      initial.fail("https://stale.local/");
+      replacement.fail("https://current.local/");
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual(failure("https://current.local/"));
+      expect(statuses).not.toContainEqual(expect.objectContaining({ url: "https://stale.local/" }));
+
+      const retried = makeGuest(44);
+      yield* manager.prepareWebview(retried.wc);
+      retried.fail("https://retry.local/");
+      retried.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+      fromId.mockReturnValue(retried.wc);
+      yield* manager.registerWebview("tab_1", 44);
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "detached", ...serverTab });
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "attached", ...serverTab });
+      expect(statuses.at(-1)?.kind).toBe("Success");
+    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 
   effectIt.effect("discards a screenshot that resolves after its guest is replaced", () =>
