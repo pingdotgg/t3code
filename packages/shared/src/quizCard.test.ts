@@ -34,6 +34,36 @@ const card: QuizCard = {
 };
 
 describe("quiz cards", () => {
+  it("closes an unanswered card when a later card is posted after a user exchange", () => {
+    expect(
+      answeredCardAnswers([
+        { role: "assistant", id: "old:reply", text: "old", createdAt: "2026-01-01T00:00:00Z" },
+        { role: "user", text: "next", createdAt: "2026-01-01T00:01:00Z" },
+        { role: "assistant", id: "new:reply", text: "new", createdAt: "2026-01-01T00:02:00Z" },
+      ]).get("old"),
+    ).toBe("Skipped.");
+  });
+
+  it("keeps cards posted together open", () => {
+    const replies = answeredCardAnswers([
+      { role: "assistant", id: "old:reply", text: "old", createdAt: "2026-01-01T00:00:00Z" },
+      { role: "assistant", id: "new:reply", text: "new", createdAt: "2026-01-01T00:00:00Z" },
+      { role: "user", text: "next", createdAt: "2026-01-01T00:01:00Z" },
+    ]);
+    expect(replies.has("old")).toBe(false);
+    expect(replies.has("new")).toBe(false);
+  });
+
+  it("orders out-of-order projection replies by creation time", () => {
+    const replies = answeredCardAnswers([
+      { role: "assistant", id: "new:reply", text: "new", createdAt: "2026-01-01T00:02:00Z" },
+      { role: "user", text: "next", createdAt: "2026-01-01T00:01:00Z" },
+      { role: "assistant", id: "old:reply", text: "old", createdAt: "2026-01-01T00:00:00Z" },
+    ]);
+    expect(replies.get("old")).toBe("Skipped.");
+    expect(replies.has("new")).toBe(false);
+  });
+
   it("requires teaching in the visible reply unless a purpose permits framing", () => {
     expect(MIN_CARD_REPLY_CHARS).toBe(250);
     expect(cardReplyProblem({ reply: "Short.", shownBefore: 0 })).toBeDefined();

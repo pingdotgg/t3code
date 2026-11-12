@@ -74,9 +74,22 @@ describe("CourseService", () => {
         const before = yield* service.problems({ courseId: course.id, pset: 1 });
         assert.strictEqual(before.problemSets[0]?.text, "Problem");
         assert.isUndefined(before.problemSets[0]?.solution);
+        const reference = {
+          label: "Posted solution",
+          url: "https://example.com/solution",
+          answers: "answer",
+        };
+        yield* service.update({ courseId: course.id, pset: 1, references: [reference] });
+        const plain = yield* service.problems({ courseId: course.id, pset: 1 });
+        assert.deepStrictEqual(plain.problemSets[0]?.references, [reference]);
+        assert.include(plain.problemSets[0]?.note ?? "", "A reference is a check, not the truth");
         const revealed = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
         assert.strictEqual(revealed.problemSets[0]?.solution, "Solution");
         assert.strictEqual(revealed.attribution, "MIT OpenCourseWare, Mechanics, CC BY-NC-SA 4.0");
+        const skipped = yield* service.problems({ courseId: course.id, pset: 1, skip: true });
+        assert.strictEqual(skipped.problemSets[0]?.solution, "Solution");
+        assert.deepStrictEqual(skipped.problemSets[0]?.references, [reference]);
+        assert.include(skipped.problemSets[0]?.note ?? "", "**Skipped, not graded.**");
       }),
     ),
   );

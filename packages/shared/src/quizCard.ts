@@ -402,14 +402,54 @@ export function withoutCardAnswerTag(text: string) {
 }
 
 export function answeredCardAnswers(
-  messages: Iterable<{ readonly role: string; readonly text: string }>,
+  messages: Iterable<{
+    readonly role: string;
+    readonly text: string;
+    readonly id?: string;
+    readonly createdAt?: unknown;
+  }>,
 ): ReadonlyMap<string, string> {
+  const ordered = [...messages].map((message, index) => ({ message, index }));
+  ordered.sort((left, right) => {
+    const leftTime =
+      left.message.createdAt instanceof Date
+        ? left.message.createdAt.getTime()
+        : typeof left.message.createdAt === "string"
+          ? Date.parse(left.message.createdAt)
+          : Number.NaN;
+    const rightTime =
+      right.message.createdAt instanceof Date
+        ? right.message.createdAt.getTime()
+        : typeof right.message.createdAt === "string"
+          ? Date.parse(right.message.createdAt)
+          : Number.NaN;
+    if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) {
+      return left.index - right.index;
+    }
+    return leftTime - rightTime || left.index - right.index;
+  });
   const answers = new Map<string, string>();
-  for (const message of messages) {
+  const chronological = ordered.map(({ message }) => message);
+  const cards = chronological.flatMap((message, index) =>
+    message.role === "assistant" && message.id?.endsWith(":reply")
+      ? [{ id: message.id.slice(0, -":reply".length), index }]
+      : [],
+  );
+  for (const message of chronological) {
     if (message.role !== "user") continue;
     const match = CARD_ANSWER_TAG.exec(message.text);
     if (match === null) continue;
     answers.set(match[1]!, message.text.slice(0, match.index));
+  }
+  for (const card of cards) {
+    if (answers.has(card.id)) continue;
+    const superseded = chronological.some(
+      (laterMessage, laterIndex) =>
+        laterIndex > card.index &&
+        laterMessage.role === "user" &&
+        cards.some((newerCard) => newerCard.index > laterIndex && newerCard.index > card.index),
+    );
+    if (superseded) answers.set(card.id, "Skipped.");
   }
   return answers;
 }
