@@ -568,6 +568,19 @@ function QueuedMessage(props: {
         : null;
   const bodyVisible = fold === null || expanded;
   const thumbnail = props.thumbnails[0];
+  const automationLink = scheduledTaskId ? (
+    <InlineButton
+      tone="muted"
+      render={
+        <Link
+          to="/settings/scheduled-tasks"
+          search={{ environmentId: props.environmentId, taskId: scheduledTaskId }}
+        />
+      }
+    >
+      Open automation
+    </InlineButton>
+  ) : null;
 
   return (
     <>
@@ -592,6 +605,7 @@ function QueuedMessage(props: {
       >
         {fold ? (
           <FoldedMessageHeader
+            queued
             icon={fold.icon}
             label={fold.label}
             summary={fold.summary}
@@ -603,7 +617,7 @@ function QueuedMessage(props: {
           <div
             className={cn(
               "flex min-w-0 items-center gap-2",
-              fold !== null && "max-h-96 overflow-auto px-3 pb-2",
+              fold !== null && "max-h-96 overflow-auto px-3 pb-2 max-sm:block",
             )}
           >
             {thumbnail ? (
@@ -640,6 +654,9 @@ function QueuedMessage(props: {
                 {props.previewText}
               </p>
             ) : null}
+            {automationLink ? (
+              <span className="mt-2 block text-meta sm:hidden">{automationLink}</span>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -657,19 +674,7 @@ function QueuedMessage(props: {
                 Open thread
               </InlineButton>
             ) : null}
-            {scheduledTaskId ? (
-              <InlineButton
-                tone="muted"
-                render={
-                  <Link
-                    to="/settings/scheduled-tasks"
-                    search={{ environmentId: props.environmentId, taskId: scheduledTaskId }}
-                  />
-                }
-              >
-                Open automation
-              </InlineButton>
-            ) : null}
+            {automationLink ? <span className="max-sm:hidden">{automationLink}</span> : null}
             <span className="sr-only">
               <TimelineRowTimestamp
                 createdAt={DateTime.formatIso(props.message.createdAt)}
