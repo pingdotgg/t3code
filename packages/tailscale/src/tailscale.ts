@@ -405,8 +405,13 @@ const runTailscaleCommand = Effect.fn("tailscale.runTailscaleCommand")(function*
           Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
         ),
       );
-    const [stderr, exitCode] = yield* Effect.all(
-      [collectStderr(child.stderr), child.exitCode.pipe(Effect.map(Number))],
+    // An unread stdout pipe fills on a long success summary and blocks the child before it exits.
+    const [, stderr, exitCode] = yield* Effect.all(
+      [
+        Stream.runDrain(child.stdout),
+        collectStderr(child.stderr),
+        child.exitCode.pipe(Effect.map(Number)),
+      ],
       { concurrency: "unbounded" },
     ).pipe(
       Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
