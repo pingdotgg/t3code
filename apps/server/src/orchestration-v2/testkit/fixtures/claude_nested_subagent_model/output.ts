@@ -56,6 +56,11 @@ export function assertClaudeNestedSubagentModelOutput(
   const nestedChild = result.projections.get(nested.childThreadId);
   assert.isDefined(nestedChild);
   assert.equal(nestedChild.thread.modelSelection.model, SUBAGENT_MODEL);
+  assert.equal(
+    nestedChild.thread.lineage.parentThreadId,
+    outer.childThreadId,
+    "a nested subagent's thread is parented to the subagent that spawned it",
+  );
 
   // The result counts only the root; the process ledger adds both subagents' work once.
   assert.lengthOf(projection.providerTurns, 1);
