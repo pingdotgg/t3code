@@ -42,6 +42,14 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           `claude:home:${inherited}`,
         );
 
+        expect(
+          yield* resolveClaudeHomePath(
+            { homePath: "" },
+            { CLAUDE_CONFIG_DIR: ".claude-rel" },
+            "/repo",
+          ),
+        ).toBe(path.resolve("/repo", ".claude-rel"));
+
         const explicit = path.resolve(NodeOS.homedir(), ".claude-work");
         expect(yield* resolveClaudeHomePath({ homePath: "~/.claude-work" }, environment)).toBe(
           explicit,
