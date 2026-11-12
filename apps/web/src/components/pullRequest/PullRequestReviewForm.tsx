@@ -144,7 +144,7 @@ export function PullRequestReviewForm({
         completionScope={completionScope}
         rows={3}
         readOnly={speech.freezesEditor}
-        value={body}
+        value={speech.displayText}
         placeholder={placeholder}
         aria-label="Review summary"
         onValueChange={(next) => setSummary(reviewKey, next)}

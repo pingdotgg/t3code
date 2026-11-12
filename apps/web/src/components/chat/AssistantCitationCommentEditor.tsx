@@ -90,7 +90,7 @@ export function AssistantCitationCommentEditor({
         rows={2}
         dir={textDirection(comment)}
         className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-body outline-none text-foreground placeholder:text-muted-foreground max-sm:text-base"
-        value={comment}
+        value={speech.displayText}
         onChange={(event) => updateComment(event.currentTarget.value)}
         onKeyDown={(event) => {
           if (
