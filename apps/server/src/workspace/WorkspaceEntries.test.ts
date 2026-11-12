@@ -513,6 +513,45 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("searchContents", () => {
+    it.effect("preserves literal queries that look like filename constraints", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-literal-" });
+        const queries = ["needle *.ts", "needle [ab]", "  needle  ", "needle\tvalue"];
+        yield* writeTextFile(cwd, "words.txt", `${queries.join("\n")}\nNEEDLE *.ts\n`);
+        yield* writeTextFile(cwd, "code.ts", "needle\nneedle value\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        for (const query of queries) {
+          for (const caseSensitive of [false, true]) {
+            const result = yield* workspaceEntries.searchContents({
+              cwd,
+              query,
+              limit: 100,
+              caseSensitive,
+              wholeWord: false,
+              useRegex: false,
+            });
+
+            const lines =
+              query === "needle *.ts" && !caseSensitive ? [1, 5] : [queries.indexOf(query) + 1];
+            expect(
+              result.matches.map((match) => [match.path, match.lineNumber, match.matchRanges]),
+            ).toEqual(lines.map((line) => ["words.txt", line, [{ start: 0, end: query.length }]]));
+            expect(result.truncated).toBe(false);
+          }
+        }
+        const multiline = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "needle\nvalue",
+          limit: 100,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        });
+        expect(multiline.matches).toEqual([]);
+      }),
+    );
+
     it.effect("returns content matches with file paths, line numbers, and ranges", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-search-" });
@@ -686,29 +725,34 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("searches an invalid regex literally without matching case", () =>
+    it.effect("searches an invalid regex literally with the requested case sensitivity", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-invalid-regex-" });
-        yield* writeTextFile(cwd, "src/calls.ts", "call(Foo(bar));\n");
+        yield* writeTextFile(cwd, "words.txt", "call(foo(bar));\ncall(Foo(bar));\n");
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const result = yield* workspaceEntries.searchContents({
-          cwd,
-          query: "foo(",
-          limit: 100,
-          caseSensitive: false,
-          wholeWord: false,
-          useRegex: true,
-        });
+        const query = "foo(";
+        for (const caseSensitive of [false, true]) {
+          const result = yield* workspaceEntries.searchContents({
+            cwd,
+            query,
+            limit: 100,
+            caseSensitive,
+            wholeWord: false,
+            useRegex: true,
+          });
 
-        expect(result.regexFallbackError).toBeDefined();
-        expect(result.matches).toEqual([
-          expect.objectContaining({
-            path: "src/calls.ts",
-            lineNumber: 1,
-            matchRanges: [{ start: 5, end: 9 }],
-          }),
-        ]);
+          expect(result.regexFallbackError).toBeDefined();
+          expect(result.matches).toEqual(
+            (caseSensitive ? [1] : [1, 2]).map((lineNumber) =>
+              expect.objectContaining({
+                path: "words.txt",
+                lineNumber,
+                matchRanges: [{ start: 5, end: 5 + query.length }],
+              }),
+            ),
+          );
+        }
       }),
     );
 

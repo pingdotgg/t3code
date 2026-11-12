@@ -2,7 +2,7 @@ import {
   FileFinder,
   type FileItem,
   type GrepCursor,
-  type GrepOptions,
+  type MultiGrepOptions,
   type GrepResult,
 } from "@ff-labs/fff-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -103,8 +103,8 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         filteredFileCount: 1,
         nextCursor: cursor,
       });
-      const grep = vi.fn((_query: string, options?: GrepOptions) =>
-        options?.cursor
+      const multiGrep = vi.fn((options: MultiGrepOptions) =>
+        options.cursor
           ? { ok: true as const, value: grepResult("needle", [[0, 6]], null) }
           : {
               ok: true as const,
@@ -114,7 +114,7 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        grep,
+        multiGrep,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
@@ -138,8 +138,8 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         ],
         truncated: false,
       });
-      expect(grep).toHaveBeenCalledTimes(2);
-      expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
+      expect(multiGrep).toHaveBeenCalledTimes(2);
+      expect(multiGrep.mock.calls[1]?.[0]?.cursor).toBe(nextCursor);
     }),
   ),
 );

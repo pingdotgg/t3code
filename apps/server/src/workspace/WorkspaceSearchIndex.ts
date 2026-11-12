@@ -6,6 +6,7 @@ import type {
   FileItem,
   FileFinder as FileFinderType,
   GrepCursor,
+  GrepOptions,
   MixedItem,
   MixedSearchResult,
   Result,
@@ -371,7 +372,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
     pageSize: number,
-    operation: "directorySearch" | "fileSearch" | "grep" | "mixedSearch",
+    operation: "directorySearch" | "fileSearch" | "grep" | "multiGrep" | "mixedSearch",
     execute: () => Result<A>,
   ): Effect.fn.Return<A, WorkspaceSearchIndexSearchFailed> {
     const result = yield* Effect.try({
@@ -491,19 +492,28 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     let retryLiterally = false;
 
     do {
+      // multiGrep separates patterns on newlines; a literal newline cannot match a single line.
+      if (!regexMode && searchQuery.includes("\n")) break;
       const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
-      const result = yield* runSearch(input.query, input.limit, "grep", () =>
-        finder.grep(searchQuery, {
-          mode: regexMode ? "regex" : "plain",
-          smartCase: !input.caseSensitive && !regexMode,
-          maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
-          pageSize: rawPageSize,
-          cursor: nextCursor,
-          timeBudgetMs: remainingTimeBudgetMs,
-        }),
+      const options: GrepOptions = {
+        smartCase: !input.caseSensitive && !regexMode,
+        maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
+        pageSize: rawPageSize,
+        cursor: nextCursor,
+        timeBudgetMs: remainingTimeBudgetMs,
+      };
+      const result = yield* runSearch(
+        input.query,
+        input.limit,
+        regexMode ? "grep" : "multiGrep",
+        // grep parses filename constraints out of the query; multiGrep keeps patterns literal.
+        () =>
+          regexMode
+            ? finder.grep(searchQuery, { ...options, mode: "regex" })
+            : finder.multiGrep({ ...options, patterns: [searchQuery] }),
       );
-      // fff searches an invalid pattern as a literal, which would keep the `(?i)` prefix.
-      retryLiterally = regexMode && !input.caseSensitive && result.regexFallbackError !== undefined;
+      // Retry invalid regexes through the literal path, without the `(?i)` prefix or constraints.
+      retryLiterally = regexMode && result.regexFallbackError !== undefined;
       if (retryLiterally) {
         regexFallbackError = result.regexFallbackError;
         ({ searchQuery, regexMode } = buildContentSearchQuery({ ...input, useRegex: false }));
