@@ -1,3 +1,4 @@
+import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -17,11 +18,7 @@ import {
   PendingReviewCommentCard,
   ReviewThreadCard,
 } from "./PullRequestReviewAnnotation";
-import {
-  pullRequestReviewKey,
-  usePendingReviewComments,
-  type PendingReviewComment,
-} from "./pullRequestReviewStore";
+import { usePendingReviewComments, type PendingReviewComment } from "./pullRequestReviewStore";
 import { useReviewThreadActions } from "./useReviewThreadActions";
 
 type CommentLocation = {
@@ -71,10 +68,8 @@ export function PullRequestCommentsPopover({
   const [selectedStatus, setSelectedStatus] = useState<"resolved" | "unresolved" | "pending">(
     "unresolved",
   );
-  const pending = usePendingReviewComments(
-    pullRequestReviewKey(reference, { environmentId, viewer: detail.viewer }),
-    detail.reviewThreads,
-  );
+  const reviewKey = usePullRequestReviewKey(environmentId, reference);
+  const pending = usePendingReviewComments(reviewKey, detail.reviewThreads);
   const actions = useReviewThreadActions(environmentId, reference, detail, onRefresh);
   // Hosted drafts are represented by the merged pending list, so they get one checklist entry.
   const threads = detail.reviewThreads.flatMap((thread) => {
