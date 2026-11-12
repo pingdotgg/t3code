@@ -16,6 +16,7 @@ import * as ServerConfig from "../config.ts";
 import * as DocumentText from "./DocumentText.ts";
 import { extractDocumentText } from "./documentTextWorker.ts";
 import * as Cleanup from "../orchestration-v2/ResourceCleanupService.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -182,6 +183,7 @@ describe("question answer paths", () => {
     ],
     ["hyphen symbol fallback", String.raw`{\rtf1\ansi\uc3\u945\~\_\-Z}`, "αZ"],
     ["control word", String.raw`{\rtf1\ansi A\u9\tab X}`, "A\tX"],
+    ["line break paragraphs", "{\\rtf1\\ansi First\\\nSecond\\\r\nThird}", "First\nSecond\nThird"],
     ["group close", String.raw`{\rtf1\ansi{\u945}Z}`, "αZ"],
     ["group open", String.raw`{\rtf1\ansi\u945{Z}}`, "αZ"],
     ["hex byte", String.raw`{\rtf1\ansi\u945\'3fZ}`, "αZ"],
@@ -293,7 +295,7 @@ describe("question answer paths", () => {
         attachmentsDir: config.attachmentsDir,
         attachmentsByQuestionId: { q: [file] },
       });
-      expect(answers.q).toContain(`text extracted to: "${path}.txt"`);
+      expect(answers.q).toContain(`text extracted to: ${JSON.stringify(path + ".txt")}`);
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Vessel: Larkspur");
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("301");
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("42");
@@ -327,6 +329,7 @@ describe("question answer paths", () => {
               Layer.mergeAll(
                 Layer.mock(TerminalManager.TerminalManager)({}),
                 Layer.mock(PreviewManager.PreviewManager)({}),
+                Layer.mock(DeviceService.DeviceService)({}),
                 Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
               ),
             ),
@@ -354,7 +357,7 @@ describe("question answer paths", () => {
             attachmentsDir: config.attachmentsDir,
             attachmentsByQuestionId: { q: [file] },
           });
-          expect(answers.q).toContain(path);
+          expect(answers.q).toContain(JSON.stringify(path));
           expect(answers.q).not.toContain("text extracted");
           expect(NodeFS.existsSync(`${path}.txt`)).toBe(false);
           expect(NodeFS.readFileSync(path, "utf8")).toBe("invalid document");
@@ -1146,7 +1149,7 @@ describe("question answer paths", () => {
       expect(answers.q).toEqual([
         "First",
         "Second",
-        `Attached file "spec \\"final\\".txt": "${path}"`,
+        `Attached file "spec \\"final\\".txt": ${JSON.stringify(path)}`,
       ]);
       expect(answers.other).toBe("No file");
       expect(original.q).toEqual(["First", "Second"]);
@@ -1157,7 +1160,7 @@ describe("question answer paths", () => {
         attachmentsByQuestionId: { ["__proto__"]: [attachment] },
       });
       expect(Object.keys(specialKey)).toEqual(["__proto__"]);
-      expect(specialKey["__proto__"]).toContain(path);
+      expect(specialKey["__proto__"]).toContain(JSON.stringify(path));
     }).pipe(Effect.provide(layer)),
   );
   it.effect("does not send an unavailable attachment path", () =>

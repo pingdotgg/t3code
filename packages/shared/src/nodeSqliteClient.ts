@@ -443,8 +443,7 @@ const makeReader = Effect.fnUntraced(function* (
         if (current === reader) current = undefined;
         void reader.worker.terminate();
       }
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-      if (pool.unavailable) return Effect.succeed(undefined);
+      if (pool.unavailable) return Effect.undefined;
       pool.unavailable = true;
       return Effect.logWarning("SQLite reader worker unavailable; reads use the main connection", {
         reason,
@@ -452,8 +451,7 @@ const makeReader = Effect.fnUntraced(function* (
     });
 
   return Effect.suspend((): Effect.Effect<Connection | undefined> => {
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-    if (pool.unavailable) return Effect.succeed(undefined);
+    if (pool.unavailable) return Effect.undefined;
     let reader: NonNullable<typeof current>;
     try {
       reader = current ?? start();
@@ -473,8 +471,7 @@ const makeReader = Effect.fnUntraced(function* (
       (startup): Effect.Effect<Connection | undefined> =>
         // A late ready event must not hand out a worker retired by another acquire timeout.
         pool.unavailable || current !== reader
-          ? // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-            Effect.succeed(undefined)
+          ? Effect.undefined
           : Option.isSome(startup) && startup.value.type === "ready"
             ? Effect.succeed(reader.connection)
             : turnOff(
@@ -489,7 +486,7 @@ const makeReader = Effect.fnUntraced(function* (
 
 const CHECKPOINT_FRAMES = 1000;
 const CHECKPOINT_IDLE_MS = 100;
-const CHECKPOINT_BACKPRESSURE_FRAMES = 10 * CHECKPOINT_FRAMES;
+const CHECKPOINT_BACKPRESSURE_FRAMES = 32_768;
 
 const readSafeSqliteInteger = (value: unknown) => {
   const number = typeof value === "bigint" ? Number(value) : value;
@@ -527,8 +524,9 @@ const initialize = () => {
 const atCeiling = (state) => state.log >= workerData.backpressureFrames;
 const exceedsSizeLimit = () =>
   journalSizeLimit >= 0 && statSync(workerData.filename + "-wal").size > journalSizeLimit;
-const schedule = (state, blocked) => {
-  if (blocked || state.log - state.checkpointed >= workerData.frames) {
+// Retry a WAL past its limits even with admission open, so it resets once a pinning reader closes.
+const schedule = (state, retry) => {
+  if (retry || state.log - state.checkpointed >= workerData.frames) {
     idle = setTimeout(() => check(undefined, undefined, true), workerData.idleMs);
   }
 };
@@ -538,8 +536,11 @@ const check = (id, nextJournalSizeLimit, force, nextGeneration = generation) => 
   if (Number.isSafeInteger(nextJournalSizeLimit)) journalSizeLimit = nextJournalSizeLimit;
   let state = frames.get();
   const oversized = exceedsSizeLimit();
+  let pinned = false;
   if (force || state.log - state.checkpointed >= workerData.frames || oversized) {
-    checkpoint.get();
+    const result = checkpoint.get();
+    // A reader's snapshot stopped the backfill; holding writes cannot let it catch up.
+    pinned = result.checkpointed < result.log;
     state = frames.get();
   }
   if (state.checkpointed === state.log && (atCeiling(state) || oversized)) {
@@ -553,24 +554,22 @@ const check = (id, nextJournalSizeLimit, force, nextGeneration = generation) => 
     });
     return;
   }
-  const blocked = (atCeiling(state) || oversized) && state.checkpointed < state.log;
+  const blocked = !pinned && (atCeiling(state) || oversized) && state.checkpointed < state.log;
   parentPort.postMessage({ type: "checkpoint", id, generation, ...state, blocked });
-  schedule(state, blocked);
+  schedule(state, atCeiling(state) || oversized);
 };
 const finishTruncate = (truncateId) => {
   if (pendingTruncate === undefined || pendingTruncate.truncateId !== truncateId) return;
   const pending = pendingTruncate;
   parentPort.postMessage({ type: "truncate-start", truncateId });
-  let busy;
   // Admission is paused here; a pinned reader must not make truncation wait.
   db.exec("PRAGMA busy_timeout = 0;");
   try {
-    busy = truncate.get().busy !== 0;
+    truncate.get();
   } finally {
     db.exec("PRAGMA busy_timeout = 5000;");
   }
   const state = frames.get();
-  const blocked = (atCeiling(state) && (busy || state.checkpointed < state.log)) || exceedsSizeLimit();
   pendingTruncate = undefined;
   parentPort.postMessage({
     type: "checkpoint",
@@ -578,13 +577,15 @@ const finishTruncate = (truncateId) => {
     generation: pending.generation,
     truncateId,
     ...state,
-    blocked,
+    // With writes held, only a reader can stop the reset, and holding them longer would not
+    // release it.
+    blocked: false,
   });
   while (pendingBarriers > 0) {
     pendingBarriers--;
     parentPort.postMessage("barrier");
   }
-  schedule(state, blocked);
+  schedule(state, atCeiling(state) || exceedsSizeLimit());
 };
 parentPort.on("message", (request) => {
   clearTimeout(idle);
@@ -640,7 +641,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   }
   const frames = writer.prepare("PRAGMA wal_checkpoint(NOOP)");
   const sizeLimit = writer.prepare("PRAGMA journal_size_limit");
-  const started = yield* Effect.try(
+  const started = Result.try(
     () =>
       new NodeWorkerThreads.Worker(checkpointWorkerSource, {
         eval: true,
@@ -651,9 +652,9 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
           idleMs: CHECKPOINT_IDLE_MS,
         },
       }),
-  ).pipe(Effect.result);
+  );
   if (Result.isFailure(started)) {
-    yield* warn(String(started.failure.cause));
+    yield* warn(String(started.failure));
     return undefined;
   }
   const worker = started.success;
@@ -672,9 +673,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   const waiters: Array<Waiter> = [];
   let elected: Waiter | undefined;
   const gated = () =>
-    !stopped &&
-    !writer.isTransaction &&
-    (unknown || blocked || truncate !== undefined || log >= CHECKPOINT_BACKPRESSURE_FRAMES);
+    !stopped && !writer.isTransaction && (unknown || blocked || truncate !== undefined);
   const wake = () => {
     if (!gated() && elected === undefined) {
       elected = waiters.shift();
@@ -722,6 +721,8 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       log = nextLog;
       checkpointed = nextCheckpointed;
       unknown = false;
+      // Past the ceiling, hold writes until the worker judges this WAL; a reader can pin it there.
+      if (log >= CHECKPOINT_BACKPRESSURE_FRAMES) blocked = true;
     } catch {
       unknown = true;
     }
