@@ -1,4 +1,4 @@
-import { formatModelSlugName } from "@t3tools/shared/model";
+import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { resolveThreadOpenRoute } from "../../lib/sideChatPane";
 import { runInNewLayoutTab } from "../../layout/layoutStore";
 import { useAtomValue } from "@effect/atom-react";
@@ -981,7 +981,10 @@ export function ThreadRelationshipsPanel(props: {
       />
     );
     const relationshipSelection = node?.thread?.modelSelection ?? agent?.modelSelection;
-    const relationshipModel = relationshipSelection?.model ?? agent?.model;
+    const savedModel = relationshipSelection?.model ?? agent?.model;
+    const relationshipModel = provider
+      ? (resolveSelectableModel(provider.driver, savedModel, provider.models) ?? savedModel)
+      : savedModel;
     const relationshipEffort = relationshipModel
       ? formatSubagentEffort({
           modelSlug: relationshipModel,
