@@ -1,3 +1,4 @@
+import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -14,7 +15,7 @@ import { canOpenLinksInApp } from "../browser/browserLinkTarget";
 import { useOpenLink } from "../browser/useOpenLink";
 import { useClientSettings } from "../hooks/useSettings";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
-import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import { useRightPanelStore } from "../rightPanelStore";
 import {
   selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
@@ -89,6 +90,7 @@ export function useOpenChangeRequestLink(
       });
       if (target === null) return false;
       const { project, repository, number, host } = target;
+      const revealUrl = parsePullRequestAnchor(targetUrl) === null ? undefined : targetUrl;
       const pullRequestsSearch = {
         repository,
         number,
@@ -106,6 +108,7 @@ export function useOpenChangeRequestLink(
           ...(host === undefined ? {} : { host }),
           repository,
           url: targetUrl,
+          ...(revealUrl === undefined ? {} : { revealUrl }),
           number,
         });
         if (!resolvedThreadRef) {
@@ -124,7 +127,12 @@ export function useOpenChangeRequestLink(
       }
       void navigate({
         to: "/pull-requests",
-        search: { involvement: "all", state: "all", ...pullRequestsSearch },
+        search: {
+          involvement: "all",
+          state: "all",
+          ...pullRequestsSearch,
+          ...(revealUrl === undefined ? {} : { selectedUrl: revealUrl }),
+        },
       });
       return true;
     };
@@ -140,6 +148,14 @@ export function useOpenChangeRequestLink(
     const parsedCommit = sourceControlClients.parseCommitUrl(targetUrl, identity?.provider);
     // Shift and Alt keep their browser meaning (new window, download) on commit links.
     if (parsedCommit !== null && (event.shiftKey || event.altKey)) return false;
+    // A plain commit link stays a workspace commit; one naming a file or line opens the PR's diff.
+    const anchor = parsePullRequestAnchor(targetUrl);
+    if (anchor !== null && anchor.kind !== "code" && openPullRequest()) {
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    }
+
     if (
       parsedCommit !== null &&
       commitThread &&
@@ -183,12 +199,7 @@ export function useOpenChangeRequestLink(
               (source) => source.kind === "commit" && source.headRef === commit.sha,
             )
           ) {
-            const diffOpen =
-              selectActiveRightPanel(
-                useRightPanelStore.getState().byThreadKey,
-                resolvedThreadRef,
-              ) === "diff";
-            useDiffPanelStore.getState().selectCommit(resolvedThreadRef, commit.sha, !diffOpen);
+            useDiffPanelStore.getState().selectCommit(resolvedThreadRef, commit.sha);
             useRightPanelStore.getState().open(resolvedThreadRef, "diff");
             return;
           }
