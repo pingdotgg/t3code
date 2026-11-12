@@ -194,6 +194,72 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  // The MagicDNS probe fails whenever the host cannot reach its own *.ts.net name,
+  // so it cannot be what decides that the port is free.
+  it.effect(
+    "leaves another app's Serve route alone when the host cannot reach its MagicDNS URL",
+    () =>
+      withDescriptorServer((origin) =>
+        Effect.gen(function* () {
+          const fetch = yield* FetchHttpClient.Fetch;
+          const tailscaleCalls: Array<ReadonlyArray<string>> = [];
+          const spawner = ChildProcessSpawner.make((command) => {
+            const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+            tailscaleCalls.push(args);
+            const stdout =
+              args[0] === "status"
+                ? '{"BackendState":"Running","Self":{"DNSName":"host-a.tail.ts.net.","TailscaleIPs":["100.64.0.1"],"CapMap":{"https":null}}}'
+                : args[0] === "serve" && args[1] === "status"
+                  ? '{"TCP":{"443":{"HTTPS":true}},"Web":{"host-a.tail.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8080"}}}}}'
+                  : "";
+            return Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1),
+                // A recorded takeover fails fast instead of waiting out the HTTPS retries.
+                exitCode: Effect.succeed(
+                  ChildProcessSpawner.ExitCode(args[0] === "serve" && args[1] !== "status" ? 1 : 0),
+                ),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.make(new TextEncoder().encode(stdout)),
+                stderr: Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            );
+          });
+
+          const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-ts-held-"));
+          yield* persistServerRuntimeState({
+            path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: Number(new URL(origin).port),
+            }),
+          });
+
+          const exit = yield* runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
+              if (String(input).startsWith(origin)) return fetch(input, init);
+              throw new TypeError("getaddrinfo ENOTFOUND host-a.tail.ts.net");
+            }),
+            Effect.exit,
+          );
+
+          assert.deepEqual(
+            tailscaleCalls.filter((args) => args[0] === "serve" && args[1] !== "status"),
+            [],
+          );
+          assert.isTrue(Exit.isFailure(exit));
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
