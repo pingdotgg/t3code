@@ -141,6 +141,12 @@ vi.mock("expo-crypto", () => ({
   },
 }));
 
+vi.mock("expo", async () => {
+  const { createNodeDpopKeysModule } = await import("../cloud/dpop.testing");
+  const dpopKeys = createNodeDpopKeysModule();
+  return { requireNativeModule: () => dpopKeys };
+});
+
 vi.mock("expo-secure-store", () => ({
   getItemAsync: (key: string) => Promise.resolve(secureStore.get(key) ?? null),
   setItemAsync: (key: string, value: string) => {

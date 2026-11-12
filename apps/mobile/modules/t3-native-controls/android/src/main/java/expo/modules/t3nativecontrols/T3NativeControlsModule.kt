@@ -39,6 +39,14 @@ class T3NativeControlsModule : Module() {
       DateFormat.is24HourFormat(context)
     }
 
+    AsyncFunction("generateDpopKey") { T3DpopKeys.generate() }
+
+    AsyncFunction("dpopKeyMatches") { privateKey: ByteArray, publicKey: ByteArray ->
+      T3DpopKeys.matches(privateKey, publicKey)
+    }
+
+    AsyncFunction("signDpop") { key: ByteArray, input: ByteArray -> T3DpopKeys.sign(key, input) }
+
     AsyncFunction("openFile") { uri: String, mimeType: String, promise: Promise ->
       check(filePreviewPromise == null) { "A document viewer is already open." }
       val activity = appContext.currentActivity ?: error("The app is not active.")
