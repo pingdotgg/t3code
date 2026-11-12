@@ -5,6 +5,9 @@ import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { attachTimelineViewport } from "./timelineViewport";
 
+// A list that never adjusts its own scroll.
+const list = { getState: () => ({ listen: () => () => {} }) } as unknown as LegendListRef;
+
 describe("attachTimelineViewport", () => {
   it("reports an upward scroll only while input is on an embedded frame", async () => {
     // A plain scroller; the viewport needs no routes.
@@ -33,8 +36,6 @@ describe("attachTimelineViewport", () => {
     let scroll = scrolled();
     timeline.scrollTop = 1500;
     await scroll;
-    // A list that never adjusts its own scroll.
-    const list = { getState: () => ({ listen: () => () => {} }) } as unknown as LegendListRef;
     const viewport = attachTimelineViewport(timeline, list);
     const sources: string[] = [];
     viewport.subscribe((navigation) => sources.push(navigation.source));
@@ -94,7 +95,7 @@ describe("attachTimelineViewport", () => {
       { router: false },
     );
     const timeline = screen.getByTestId("timeline").element() as HTMLElement;
-    const viewport = attachTimelineViewport(timeline);
+    const viewport = attachTimelineViewport(timeline, list);
     const navigations: unknown[] = [];
     viewport.subscribe((navigation) => navigations.push(navigation));
 
