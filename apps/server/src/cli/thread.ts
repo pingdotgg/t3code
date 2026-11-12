@@ -499,11 +499,28 @@ type WaitOutcome =
   | { readonly type: "needs_input" };
 
 /**
- * Whether a run after `runId` holds a message someone sent. Background work
- * wakes a run with a notification, never a user message, so such a run is
- * another request and its reply is not this one's.
+ * Whether the thread has nothing left to do: no active run and no delegated
+ * or background work. Only then is the work a later wait settles on this
+ * send's own.
  */
-const sentRunAfter = Effect.fn("cli.thread.sentRunAfter")(function* (
+const threadIsIdle = Effect.fn("cli.thread.threadIsIdle")(function* (
+  tools: ThreadTools,
+  threadId: ThreadId,
+) {
+  const waited = yield* tools.call(
+    "t3_thread_wait",
+    { threadId, timeoutMs: 1, untilDelegatedWorkSettled: true },
+    OrchestratorMcpThreadWaitResult,
+  );
+  return !waited.timedOut;
+});
+
+/**
+ * The runs after `runId`, and whether one holds a message someone sent.
+ * Background work wakes a run with a notification, never a user message, so
+ * such a run is another request and its reply is not this one's.
+ */
+const runsAfter = Effect.fn("cli.thread.runsAfter")(function* (
   tools: ThreadTools,
   threadId: ThreadId,
   runId: RunId,
@@ -514,81 +531,83 @@ const sentRunAfter = Effect.fn("cli.thread.sentRunAfter")(function* (
     OrchestratorMcpThreadReadResult,
   );
   const own = recentRuns.find((run) => run.runId === runId);
-  if (own === undefined) return true;
+  if (own === undefined) return { later: new Set<RunId>(), sent: true };
   const later = new Set(
     recentRuns.filter((run) => run.ordinal > own.ordinal).map((run) => run.runId),
   );
-  if (later.size === 0) return false;
+  if (later.size === 0) return { later, sent: false };
   const { items } = yield* readTimeline(tools, threadId, "messages");
-  return items.some(
+  const sent = items.some(
     (item) => item.type === "user_message" && item.runId !== null && later.has(item.runId),
   );
+  return { later, sent };
 });
 
-const TERMINAL_STATUSES: ReadonlyArray<OrchestratorMcpThreadStatus> = [
-  "completed",
-  "failed",
-  "cancelled",
-  "interrupted",
-  "rolled_back",
-];
-
 /**
- * Waits for this exact run, following a restart to its continuation and the
- * runs its background work wakes, so a message another client sends meanwhile
- * cannot stand in for its result.
+ * Waits for this exact run, following a restart to its continuation, so a
+ * message another client sends meanwhile cannot stand in for its result.
+ * With `followWakes`, a completed run is followed further to the runs its
+ * background work wakes, as long as no one else sends to the thread.
  */
 export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
   tools: ThreadTools,
   threadId: ThreadId,
   runId: RunId,
+  followWakes = false,
 ) {
-  const waitSlice = (timeoutMs: number) =>
+  const waitSlice = (timeoutMs: number, untilDelegatedWorkSettled?: true) =>
     tools.call(
       "t3_thread_wait",
-      { threadId, runId, timeoutMs, untilDelegatedWorkSettled: true },
+      {
+        threadId,
+        runId,
+        timeoutMs,
+        ...(untilDelegatedWorkSettled ? { untilDelegatedWorkSettled } : {}),
+      },
       OrchestratorMcpThreadWaitResult,
     );
-  const own = (waited: OrchestratorMcpThreadWaitResult) =>
+  const ended = (waited: OrchestratorMcpThreadWaitResult) =>
     ({ type: "ended", runId: waited.runId, status: waited.status }) satisfies WaitOutcome;
-  // `resultRun` is the thread's latest finished run, whoever sent it.
-  const ended = Effect.fnUntraced(function* (waited: OrchestratorMcpThreadWaitResult) {
-    const result = waited.resultRun;
-    if (
-      result === undefined ||
-      waited.runId === null ||
-      result.runId === waited.runId ||
-      (yield* sentRunAfter(tools, threadId, waited.runId))
-    ) {
-      return own(waited);
+  const ownRun = Effect.gen(function* () {
+    while (true) {
+      const waited = yield* waitSlice(WAIT_SLICE_MS);
+      if (!waited.timedOut) return ended(waited);
+      // A pending request on this run, or on an earlier run this one is queued
+      // behind, blocks it until someone answers.
+      const { thread } = yield* tools.call(
+        "t3_thread_read",
+        { threadId, limit: 1, runLimit: 1 },
+        OrchestratorMcpThreadReadResult,
+      );
+      if (thread.pendingRequestCount > 0) {
+        // The count is thread-wide: if this run ended since the slice, the
+        // request belongs to a later run.
+        const recheck = yield* waitSlice(1);
+        return recheck.timedOut ? ({ type: "needs_input" } satisfies WaitOutcome) : ended(recheck);
+      }
     }
-    return { type: "ended", runId: result.runId, status: result.status } satisfies WaitOutcome;
   });
-  // The thread-wide wait also outlasts runs other clients sent after this one.
-  const othersHoldThread = (waited: OrchestratorMcpThreadWaitResult) =>
-    waited.runId !== null && TERMINAL_STATUSES.includes(waited.status)
-      ? sentRunAfter(tools, threadId, waited.runId)
-      : Effect.succeed(false);
+  const outcome = yield* ownRun;
+  if (!followWakes || outcome.type !== "ended" || outcome.status !== "completed") return outcome;
+  const finalRunId = outcome.runId ?? runId;
   while (true) {
-    const waited = yield* waitSlice(WAIT_SLICE_MS);
-    if (!waited.timedOut) return yield* ended(waited);
-    if (yield* othersHoldThread(waited)) return own(waited);
-    // A pending request on this run, or on an earlier run this one is queued
-    // behind, blocks it until someone answers.
+    const waited = yield* waitSlice(WAIT_SLICE_MS, true);
+    // `resultRun` is the thread's latest finished run, whoever sent it.
+    const result = waited.timedOut ? undefined : waited.resultRun;
+    const after = yield* runsAfter(tools, threadId, finalRunId);
+    if (after.sent) return outcome;
+    if (!waited.timedOut) {
+      return result !== undefined && after.later.has(result.runId)
+        ? ({ type: "ended", runId: result.runId, status: result.status } satisfies WaitOutcome)
+        : outcome;
+    }
     const { thread } = yield* tools.call(
       "t3_thread_read",
       { threadId, limit: 1, runLimit: 1 },
       OrchestratorMcpThreadReadResult,
     );
-    if (thread.pendingRequestCount > 0) {
-      // The count is thread-wide: if this run ended since the slice, the
-      // request belongs to a later run.
-      const recheck = yield* waitSlice(1);
-      if (!recheck.timedOut) return yield* ended(recheck);
-      return (yield* othersHoldThread(recheck))
-        ? own(recheck)
-        : ({ type: "needs_input" } satisfies WaitOutcome);
-    }
+    // Earlier runs have ended, so the request is on a run this one's work woke.
+    if (thread.pendingRequestCount > 0) return { type: "needs_input" } satisfies WaitOutcome;
   }
 });
 
@@ -602,9 +621,10 @@ const finishRun = Effect.fn("cli.thread.finishRun")(function* (
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly json: boolean;
+    readonly followWakes: boolean;
   },
 ) {
-  const outcome = yield* waitForRun(tools, input.threadId, input.runId);
+  const outcome = yield* waitForRun(tools, input.threadId, input.runId, input.followWakes);
   const runId = outcome.type === "ended" ? (outcome.runId ?? input.runId) : input.runId;
   const status = outcome.type === "ended" ? outcome.status : "waiting";
   const reply =
@@ -789,6 +809,7 @@ const threadStartCommand = Command.make("start", {
               threadId: launched.threadId,
               runId: launched.runId,
               json: flags.json,
+              followWakes: true,
             });
           }
           yield* flags.json ? printJson(launched) : Console.log(launched.threadId);
@@ -815,13 +836,20 @@ const threadSendCommand = Command.make("send", {
       yield* withThreadTools(
         flags,
         Effect.fn("cli.thread.send")(function* (tools) {
+          // Work already running when this is sent is not this message's to wait for.
+          const followWakes = flags.wait ? yield* threadIsIdle(tools, threadId) : false;
           const sent = yield* tools.call(
             "t3_thread_send",
             { threadId, message, mode: "queue" },
             OrchestratorMcpThreadSendResult,
           );
           if (flags.wait) {
-            return yield* finishRun(tools, { threadId, runId: sent.runId, json: flags.json });
+            return yield* finishRun(tools, {
+              threadId,
+              runId: sent.runId,
+              json: flags.json,
+              followWakes,
+            });
           }
           yield* flags.json
             ? printJson(sent)
