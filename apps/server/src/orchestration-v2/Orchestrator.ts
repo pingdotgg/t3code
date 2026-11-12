@@ -13489,7 +13489,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ["runs", "messages", "subagents", "providerThreads", "providerSessions"],
             { messageRoles: ["user"] },
           );
-          if (delegatedTaskProgress(child).state !== "result_available") return;
+          // Unawaited background tasks still allow a result but die with the process; the idle
+          // timer keeps their process pinned.
+          if (
+            delegatedTaskProgress(child).state !== "result_available" ||
+            child.providerThreads.some((thread) => (thread.pendingBackgroundTasks ?? []).length > 0)
+          )
+            return;
           for (const session of child.providerSessions) {
             // Shared processes unload their threads themselves; only a per-thread process lingers.
             if (
