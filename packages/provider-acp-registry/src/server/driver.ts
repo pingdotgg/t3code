@@ -249,11 +249,16 @@ function baseSnapshot(
 
 export function applyAcpRegistryAvailableCommands(
   provider: ServerProvider,
-  commands: Option.Option<AcpRegistryAvailableCommands>,
+  commands: Option.Option<AcpRegistryAvailableCommands & { readonly revision?: number }>,
 ): ServerProvider {
   return Option.match(commands, {
     onNone: () => provider,
-    onSome: ({ slashCommands, skills }) => ({ ...provider, slashCommands, skills }),
+    onSome: ({ slashCommands, skills, revision }) => ({
+      ...provider,
+      slashCommands,
+      skills,
+      ...(revision === undefined ? {} : { workspaceSnapshotsRevision: revision }),
+    }),
   });
 }
 
@@ -691,15 +696,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
 
         const publishLiveCommands = runtimeCoordinator.value.watchAvailableCommands(
           instanceId,
-          ({ slashCommands, skills }) =>
+          (commands) =>
             liveSnapshotSemaphore.withPermit(
               getSnapshot.pipe(
                 Effect.flatMap((current) =>
-                  publishSnapshot({
-                    ...current,
-                    slashCommands,
-                    skills,
-                  }),
+                  publishSnapshot(
+                    applyAcpRegistryAvailableCommands(current, Option.some(commands)),
+                  ),
                 ),
               ),
             ),
@@ -828,30 +831,32 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       snapshotForCwd: Effect.fn("AcpRegistryDriver.snapshotForCwd")(function* (cwd: string) {
         const machineSnapshot = yield* snapshot.getSnapshot;
         if (!effectiveConfig.enabled) return machineSnapshot;
-        // Agents advertise project-scoped commands for a session's cwd; a live session there wins.
+        // Agents advertise project-scoped commands for a session's cwd; a live session there wins,
+        // even with an empty list.
         const live = Option.isSome(runtimeCoordinator)
           ? yield* runtimeCoordinator.value.getAvailableCommandsForCwd(instanceId, cwd)
           : Option.none();
-        const { slashCommands, skills } = Option.isSome(live)
-          ? live.value
-          : yield* provideAcpManagementServices(
-              probeAcpRegistryConfiguration({
+        if (Option.isSome(live)) {
+          return { ...machineSnapshot, ...live.value, slashCommandsPending: false };
+        }
+        const { slashCommands, skills } = yield* provideAcpManagementServices(
+          probeAcpRegistryConfiguration({
+            instanceId,
+            settings: effectiveConfig,
+            cwd,
+            environment: providerProbeEnvironment(processEnvironment),
+          }),
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
                 instanceId,
-                settings: effectiveConfig,
-                cwd,
-                environment: providerProbeEnvironment(processEnvironment),
+                detail: `Failed to discover ACP Registry commands for '${cwd}'.`,
+                cause,
               }),
-            ).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderDriverError({
-                    driver: DRIVER_KIND,
-                    instanceId,
-                    detail: `Failed to discover ACP Registry commands for '${cwd}'.`,
-                    cause,
-                  }),
-              ),
-            );
+          ),
+        );
         // Agents may advertise after the probe's grace period; keep what live sessions published.
         if (slashCommands.length === 0 && skills.length === 0) return machineSnapshot;
         return { ...machineSnapshot, slashCommands, skills, slashCommandsPending: false };

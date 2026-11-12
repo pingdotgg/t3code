@@ -683,6 +683,7 @@ const snapshotBasis = (provider: ServerProviderEntry | undefined) =>
     models: provider.models,
     slashCommands: provider.slashCommands,
     skills: provider.skills,
+    workspaceSnapshotsRevision: provider.workspaceSnapshotsRevision,
   };
 
 interface FetchedWorkspaceSnapshot {

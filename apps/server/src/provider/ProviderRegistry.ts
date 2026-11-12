@@ -312,11 +312,13 @@ export const mergeProviderSnapshot = (
         skills: nextProvider.skills.length === 0 ? previousProvider.skills : nextProvider.skills,
       }
     : { slashCommands: nextProvider.slashCommands, skills: nextProvider.skills };
-  // Folder snapshots were taken against the old machine snapshot. Changed commands (e.g. a live
-  // session advertising) drop them so clients rescan at once; changed models mark them pending.
+  // Folder snapshots were taken against the old machine snapshot. Changed commands, or a new
+  // workspace revision (a live session in some cwd), drop them so clients rescan at once;
+  // changed models mark them pending.
   const previousWorkspaceSnapshots =
     !Equal.equals(inventory.slashCommands, previousProvider.slashCommands) ||
-    !Equal.equals(inventory.skills, previousProvider.skills)
+    !Equal.equals(inventory.skills, previousProvider.skills) ||
+    nextProvider.workspaceSnapshotsRevision !== previousProvider.workspaceSnapshotsRevision
       ? undefined
       : Equal.equals(models, previousProvider.models)
         ? previousProvider.workspaceSnapshots

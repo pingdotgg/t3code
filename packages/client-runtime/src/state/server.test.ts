@@ -1197,6 +1197,13 @@ describe("server state projection", () => {
         fetched,
       ).providers[0]?.workspaceSnapshots,
     ).toBeUndefined();
+    // So does a new workspace revision, even when the machine commands repeat.
+    expect(
+      withFetchedWorkspaceSnapshots(
+        configWith(true, [{ ...provider(claude), workspaceSnapshotsRevision: 2 }]),
+        fetched,
+      ).providers[0]?.workspaceSnapshots,
+    ).toBeUndefined();
 
     // Older servers send every snapshot and every drop; their config stands.
     const legacy = configWith(false, [provider(claude)]);

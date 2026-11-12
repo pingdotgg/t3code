@@ -672,6 +672,11 @@ it.layer(
         slashCommands: [{ name: "new-live-command" }],
       });
       assert.strictEqual(liveCommands.workspaceSnapshots, undefined);
+      const liveRevision = ProviderRegistry.mergeProviderSnapshot(withCatalog, {
+        ...provider,
+        workspaceSnapshotsRevision: 1,
+      });
+      assert.strictEqual(liveRevision.workspaceSnapshots, undefined);
     });
 
     it("stores workspace skills, commands and options without changing machine metadata", () => {

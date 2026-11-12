@@ -649,6 +649,26 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* instance.snapshot.refresh;
       const silent = yield* snapshotForCwd(silentPath);
       expect(silent.slashCommands).toEqual(liveCommands);
+
+      // A project whose session advertised nothing keeps its empty list.
+      const emptyPath = path.join(directory, "empty");
+      yield* coordinator.publishAvailableCommands(
+        identity.instanceId,
+        { slashCommands: [], skills: [] },
+        emptyPath,
+      );
+      const before = (yield* instance.snapshot.getSnapshot).workspaceSnapshotsRevision;
+      yield* coordinator.publishAvailableCommands(
+        identity.instanceId,
+        { slashCommands: liveCommands, skills: [] },
+        silentPath,
+      );
+      yield* instance.snapshot.refresh;
+      const empty = yield* snapshotForCwd(emptyPath);
+      expect(empty.slashCommands).toEqual([]);
+      expect(empty.skills).toEqual([]);
+      // Repeating the machine list still tells clients that a cwd changed.
+      expect((yield* instance.snapshot.getSnapshot).workspaceSnapshotsRevision).not.toBe(before);
     }),
   );
 });
