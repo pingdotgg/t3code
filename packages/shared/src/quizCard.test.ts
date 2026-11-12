@@ -57,7 +57,14 @@ describe("quiz cards", () => {
     ],
     [
       "quiz",
-      cardAnswerMessage(quizAnswerMessage({ answer: 'the "best" one', correct: true }), "quiz-1"),
+      cardAnswerMessage(
+        quizAnswerMessage({
+          answer: 'the "best" one',
+          correct: true,
+          shownOptions: ["Low", 'the "best" one', "Medium"],
+        }),
+        "quiz-1",
+      ),
       { kind: "quiz", answer: 'the "best" one', grade: "right" },
     ],
     [
@@ -232,14 +239,57 @@ describe("quiz cards", () => {
   });
   it("formats answer messages", () => {
     expect(
-      quizAnswerMessage({ answer: "High", correct: true, confidence: 80, thinking: "x" }),
-    ).toBe('Quiz answer: "High", right. Confidence: 80%. My thinking: x');
-    expect(quizAnswerMessage({ answer: "Low", correct: false, confidence: 20 })).toBe(
-      'Quiz answer: "Low", wrong. Confidence: 20%.',
+      quizAnswerMessage({
+        answer: "High",
+        correct: true,
+        confidence: 80,
+        shownOptions: ["Low", "High", "Medium"],
+        thinking: "x",
+      }),
+    ).toBe(
+      'Quiz answer: "High", right. Confidence: 80%. Options as shown: 1. "Low"; 2. "High"; 3. "Medium". My thinking: x',
     );
-    expect(quizAnswerMessage({ answer: null, correct: false, thinking: "unsure" })).toBe(
-      "Quiz answer: I don't know. My thinking: unsure",
+    expect(
+      quizAnswerMessage({
+        answer: "Low",
+        correct: false,
+        shownOptions: ["Medium", "High", "Low"],
+      }),
+    ).toBe('Quiz answer: "Low", wrong. Options as shown: 1. "Medium"; 2. "High"; 3. "Low".');
+    expect(
+      quizAnswerMessage({
+        answer: null,
+        correct: false,
+        shownOptions: ["Medium", "High", "Low"],
+        thinking: "unsure",
+      }),
+    ).toBe(
+      `Quiz answer: I don't know. Options as shown: 1. "Medium"; 2. "High"; 3. "Low". My thinking: unsure`,
     );
+    expect(
+      quizAnswerMessage({ answer: "High", correct: true, shownOptions: ["Low", "High"] }),
+    ).toBe('Quiz answer: "High", right. Options as shown: 1. "Low"; 2. "High".');
+    expect(
+      quizAnswerMessage({ answer: "High", correct: true, shownOptions: ["Low", "High"] }),
+    ).not.toContain("Confidence:");
+    expect(
+      parseCardAnswer(
+        quizAnswerMessage({ answer: "High", correct: true, shownOptions: ["Low", "High"] }),
+      ),
+    ).toEqual({
+      kind: "quiz",
+      answer: "High",
+      grade: "right",
+    });
+    expect(
+      parseCardAnswer(
+        quizAnswerMessage({
+          answer: null,
+          correct: false,
+          shownOptions: ["Medium", "High", "Low"],
+        }),
+      ),
+    ).toEqual({ kind: "quiz", answer: null, grade: "unknown" });
     const question = {
       question: "___ + ___",
       blanks: [{ answers: ["m"] }, { answers: ["g"] }],
@@ -255,12 +305,26 @@ describe("quiz cards", () => {
       'Number answer: "9.8 m/s²", right.',
     );
   });
-  it("reads the grade back from an answer message", () => {
-    expect(quizAnswerGrade(quizAnswerMessage({ answer: "High", correct: true }))).toBe("right");
+
+  it("keeps analytics grading stable with shown options", () => {
     expect(
-      quizAnswerGrade(quizAnswerMessage({ answer: "Low", correct: false, thinking: '", right.' })),
+      quizAnswerGrade(
+        quizAnswerMessage({ answer: "High", correct: true, shownOptions: ["Low", "High"] }),
+      ),
+    ).toBe("right");
+    expect(
+      quizAnswerGrade(
+        quizAnswerMessage({
+          answer: "Low",
+          correct: false,
+          shownOptions: ["Low", "High"],
+          thinking: '", right.',
+        }),
+      ),
     ).toBe("wrong");
-    expect(quizAnswerGrade(quizAnswerMessage({ answer: null, correct: false }))).toBe("unknown");
+    expect(
+      quizAnswerGrade(quizAnswerMessage({ answer: null, correct: false, shownOptions: ["Low"] })),
+    ).toBe("unknown");
     expect(quizAnswerGrade("Is the answer right?")).toBe(undefined);
   });
 });
