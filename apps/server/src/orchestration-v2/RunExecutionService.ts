@@ -1726,16 +1726,6 @@ export const layer: Layer.Layer<
           yield* Ref.set(interruptionMessage, "Run interrupted because the workspace changed");
           const routing = yield* Ref.get(eventRouting);
           const providerTurn = yield* Ref.get(latestRootProviderTurn);
-          if (
-            !rootFinalized &&
-            providerTurn !== null &&
-            isOrchestrationV2WorkActive(providerTurn.status)
-          ) {
-            yield* input.session.interruptTurn({
-              providerThread: yield* Ref.get(latestProviderThread),
-              providerTurnId: providerTurn.id,
-            });
-          }
           const completedAt = yield* DateTime.now;
           const terminal = {
             type: "turn.terminal",

@@ -2896,7 +2896,7 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
 );
 
 it.effect.each(["pending", "running"] as const)(
-  "interrupts open tools and the buffered %s native turn before detach settles",
+  "settles open tools after the session manager interrupts the buffered %s native turn",
   (status) =>
     Effect.gen(function* () {
       const key = "workspace-detach-open-tools";
@@ -2931,7 +2931,18 @@ it.effect.each(["pending", "running"] as const)(
         shouldFinalizeRun: () => Effect.succeed(true),
         readAhead: true,
         interruptTurn: ({ providerTurnId }) =>
-          Ref.update(interrupted, (current) => [...current, providerTurnId]),
+          Ref.update(interrupted, (current) => [...current, providerTurnId]).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ProviderAdapter.ProviderAdapterInterruptError({
+                  driver,
+                  providerThreadId: ids.providerThreadId,
+                  providerTurnId,
+                  cause: "native turn is already inactive after session-manager detach",
+                }),
+              ),
+            ),
+          ),
         beforeTerminalWrite: () =>
           Ref.update(interrupted, (current) => [...current, "terminal" as const]).pipe(
             Effect.as(true),
@@ -2972,13 +2983,22 @@ it.effect.each(["pending", "running"] as const)(
               node(completedId, "completed"),
               backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 3, completedId),
             ]),
-            Stream.fail(
-              new ProviderAdapter.ProviderAdapterSessionDetached({
-                driver,
-                providerSessionId: ProviderSessionId.make(`session:${key}`),
-                threadId: ids.threadId,
-                reason: "workspace_changed",
-              }),
+            Stream.unwrap(
+              Ref.update(interrupted, (current) => [
+                ...current,
+                ProviderTurnId.make(`${ids.rootProviderTurnId}:continuation`),
+              ]).pipe(
+                Effect.as(
+                  Stream.fail(
+                    new ProviderAdapter.ProviderAdapterSessionDetached({
+                      driver,
+                      providerSessionId: ProviderSessionId.make(`session:${key}`),
+                      threadId: ids.threadId,
+                      reason: "workspace_changed",
+                    }),
+                  ),
+                ),
+              ),
             ),
           ),
       });
@@ -3154,13 +3174,7 @@ it.effect("tells the user why /compact failed on a provider without compaction",
   }),
 );
 
-it.effect.each([
-  "failure",
-  "defect",
-  "interrupt-failure",
-  "ownership-lost",
-  "detach-interrupt-failure",
-] as const)(
+it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as const)(
   "stops the live provider and background work before settling an ingestion %s",
   (failureMode) =>
     Effect.gen(function* () {
@@ -3201,19 +3215,6 @@ it.effect.each([
                 }),
               ),
             ),
-          ).pipe(
-            Stream.concat(
-              failureMode === "detach-interrupt-failure"
-                ? Stream.fail(
-                    new ProviderAdapter.ProviderAdapterSessionDetached({
-                      driver,
-                      providerSessionId: ProviderSessionId.make(`session:ingestion:${failureMode}`),
-                      threadId: ids.threadId,
-                      reason: "workspace_changed",
-                    }),
-                  )
-                : Stream.empty,
-            ),
           ),
         ingestNormalized: () => {
           const error = new ProviderEventIngestor.ProviderEventPublishError({
@@ -3227,24 +3228,18 @@ it.effect.each([
               }),
             ),
           });
-          return failureMode === "detach-interrupt-failure"
-            ? Effect.succeed([])
-            : failureMode === "defect"
-              ? Effect.die(error)
-              : Effect.fail(error);
+          return failureMode === "defect" ? Effect.die(error) : Effect.fail(error);
         },
         interruptTurn: (input) =>
           Ref.update(interrupts, (current) => [...current, input]).pipe(
             Effect.andThen(
-              input.requestRuntimeRestart === true &&
-                failureMode !== "interrupt-failure" &&
-                failureMode !== "detach-interrupt-failure"
+              input.requestRuntimeRestart === true && failureMode !== "interrupt-failure"
                 ? Ref.set(backgroundWorkRunning, false)
                 : Effect.void,
             ),
             Effect.andThen(Deferred.succeed(stopped, undefined)),
             Effect.andThen(
-              failureMode === "interrupt-failure" || failureMode === "detach-interrupt-failure"
+              failureMode === "interrupt-failure"
                 ? Effect.fail(
                     new ProviderAdapter.ProviderAdapterInterruptError({
                       driver,
@@ -3268,18 +3263,17 @@ it.effect.each([
       } else {
         assert.equal(
           yield* Ref.get(backgroundWorkAtFinalization),
-          failureMode === "interrupt-failure" || failureMode === "detach-interrupt-failure",
+          failureMode === "interrupt-failure",
         );
         assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
         const error = written.find((item) => item.type === "error");
-        if (failureMode !== "detach-interrupt-failure")
-          assert.include(error?.failure.message ?? "", "(SQLITE_CANTOPEN)");
+        assert.include(error?.failure.message ?? "", "(SQLITE_CANTOPEN)");
         const calls = yield* Ref.get(interrupts);
-        assert.equal(calls.length, failureMode === "detach-interrupt-failure" ? 2 : 1);
+        assert.equal(calls.length, 1);
         assert.equal(calls.at(-1)?.providerTurnId, ids.rootProviderTurnId);
         assert.isTrue(calls.at(-1)?.requestRuntimeRestart);
         const repaired = finalEvents.find((event) => event.type === "provider-turn.updated");
-        if (failureMode === "interrupt-failure" || failureMode === "detach-interrupt-failure") {
+        if (failureMode === "interrupt-failure") {
           assert.isUndefined(repaired);
         } else {
           assert.equal(repaired?.payload.id, ids.rootProviderTurnId);
