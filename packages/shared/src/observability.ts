@@ -414,6 +414,17 @@ const URL_CREDENTIAL_PARAMS = /(^|[?&"\s])(wsTicket|dpop)=[^&#"\\\s]*/g;
 const redactUrlCredentials = (text: string) =>
   text.replace(URL_CREDENTIAL_PARAMS, "$1$2=<redacted>");
 
+// Fast successful spans were most of the trace file and rotated its history out within minutes.
+// Exporters still receive them; the file keeps spans that are slow, failed, or carry events.
+const TRACE_FILE_MIN_SPAN_MS = 10;
+
+export const isRoutineTraceRecord = (record: TraceRecord) =>
+  record.durationMs < TRACE_FILE_MIN_SPAN_MS &&
+  record.events.length === 0 &&
+  (record.type === "effect-span"
+    ? record.exit._tag === "Success"
+    : record.status?.code !== "2" && record.status?.code !== "STATUS_CODE_ERROR");
+
 export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: TraceSinkOptions) {
   const sink = yield* makeAsyncRotatingFileSink({
     filePath: options.filePath,
@@ -581,21 +592,6 @@ function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unk
   return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
 }
 
-// Fast successful SQL statement and transaction spans were most of the trace file and rotated
-// history out within minutes. Exporters still receive them; slow or failed ones stay in the file.
-const LOCAL_TRACE_SQL_SPAN_MIN_MS = 10;
-
-const isRoutineSqliteSpan = (
-  span: LocalFileSpan,
-  exit: Exit.Exit<unknown, unknown>,
-  endTime: bigint,
-) =>
-  ExitRuntime.isSuccess(exit) &&
-  span.events.length === 0 &&
-  span.attributes.get("db.system.name") === "sqlite" &&
-  span.status._tag === "Ended" &&
-  Number(endTime - span.status.startTime) / 1_000_000 < LOCAL_TRACE_SQL_SPAN_MIN_MS;
-
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
   readonly name: string;
@@ -647,8 +643,9 @@ class LocalFileSpan implements Tracer.Span {
     };
     this.delegate.end(endTime, redactExitCredentials(traceExit));
 
-    if (this.sampled && !isRoutineSqliteSpan(this, traceExit, endTime)) {
-      this.push(spanToTraceRecord(this));
+    if (this.sampled) {
+      const record = spanToTraceRecord(this);
+      if (!isRoutineTraceRecord(record)) this.push(record);
     }
   }
 

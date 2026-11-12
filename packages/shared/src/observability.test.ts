@@ -22,6 +22,7 @@ import {
   compactTraceAttributes,
   decodeOtlpTraceRecords,
   errorTag,
+  isRoutineTraceRecord,
   makeLocalFileTracer,
   makeTraceSink,
   type EffectTraceRecord,
@@ -174,6 +175,7 @@ describe("observability", () => {
           let span: Tracer.Span | undefined;
           const result = yield* Effect.gen(function* () {
             span = yield* Effect.currentSpan;
+            yield* TestClock.adjust("10 millis");
             return payload;
           }).pipe(
             Effect.withSpan("read-thread-projection"),
@@ -195,7 +197,7 @@ describe("observability", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("writes only slow or failed SQL spans to the file but exports every one", () =>
+  it.effect("writes only slow, failed, or eventful spans to the file but exports every one", () =>
     Effect.gen(function* () {
       const exported: Array<string> = [];
       const written: Array<string> = [];
@@ -218,15 +220,43 @@ describe("observability", () => {
           },
         }),
       });
-      const sqlite = { attributes: { "db.system.name": "sqlite" } };
       yield* Effect.gen(function* () {
-        yield* Effect.void.pipe(Effect.withSpan("fast-sql", sqlite));
-        yield* TestClock.adjust("10 millis").pipe(Effect.withSpan("slow-sql", sqlite));
-        yield* Effect.fail("busy").pipe(Effect.withSpan("failed-sql", sqlite), Effect.exit);
-        yield* Effect.void.pipe(Effect.withSpan("fast-other"));
+        yield* Effect.void.pipe(Effect.withSpan("fast"));
+        yield* TestClock.adjust("10 millis").pipe(Effect.withSpan("slow"));
+        yield* Effect.fail("busy").pipe(Effect.withSpan("failed"), Effect.exit);
+        yield* Effect.currentSpan.pipe(
+          Effect.tap((span) => Effect.sync(() => span.event("note", 0n))),
+          Effect.withSpan("eventful"),
+        );
       }).pipe(Effect.provideService(Tracer.Tracer, tracer));
-      assert.deepStrictEqual(written, ["slow-sql", "failed-sql", "fast-other"]);
-      assert.deepStrictEqual(exported, ["fast-sql", "slow-sql", "failed-sql", "fast-other"]);
+      assert.deepStrictEqual(written, ["slow", "failed", "eventful"]);
+      assert.deepStrictEqual(exported, ["fast", "slow", "failed", "eventful"]);
+
+      const forwarded = decodeOtlpTraceRecords(
+        cast({
+          resourceSpans: [
+            {
+              scopeSpans: [
+                {
+                  spans: [
+                    { name: "ok", startTimeUnixNano: "0", endTimeUnixNano: "0" },
+                    {
+                      name: "error",
+                      startTimeUnixNano: "0",
+                      endTimeUnixNano: "0",
+                      status: { code: 2 },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      );
+      assert.deepStrictEqual(
+        forwarded.filter((record) => !isRoutineTraceRecord(record)).map((record) => record.name),
+        ["error"],
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

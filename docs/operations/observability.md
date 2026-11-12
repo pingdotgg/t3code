@@ -50,6 +50,11 @@ Important fields common to both record types:
 - `attributes`: structured context
 - `events`: embedded logs and custom events
 
+The file keeps a span only when it failed, recorded an event, or took at least 10 ms; this applies
+to spans forwarded from clients too. Fast successful spans, mostly SQL statements and periodic git
+and polling work, would otherwise fill the rotation within minutes. An OTLP traces endpoint still
+receives every span.
+
 `effect-span` records also contain `exit` with `Success`, `Failure`, or `Interrupted`. `otlp-span`
 records instead carry OTLP resource, scope, and optional status fields.
 
@@ -62,10 +67,6 @@ or `reader` for the read-only connection in a worker thread. `db.lock_wait_ms` i
 span spent waiting for that connection, behind other SQL. That wait does not block the event loop,
 so subtract it before you blame a slow span on the query. Statements inside a transaction use its
 connection and do not carry these attributes.
-
-The trace file keeps a SQL span only when it failed, recorded an event, or took at least 10 ms. Fast
-successful statements and transactions would otherwise fill the file's rotation within minutes. An
-OTLP traces endpoint still receives every SQL span.
 
 An MCP request over HTTP has a `McpHttpServer.authenticateRequest` span that covers only admitting
 it: the credential check, the mode limit, and the Linked environments gate. The request runs after
@@ -693,7 +694,7 @@ Current high-value span and metric boundaries include:
 - git command execution and git hook events
 - terminal session lifecycle
 - sqlite query execution, except the statements inside `orchestrationV2.EventSink.write`, which
-  its `sql.transaction` span times as one (the trace file keeps only slow or failed SQL spans)
+  its `sql.transaction` span times as one
 - event loop stalls (`server.eventLoop.stall`)
 
 ### Current Constraints
