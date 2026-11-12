@@ -4703,10 +4703,22 @@ describe("live subagents after their parent turn settles", () => {
       supportsConversationRollback: false,
     });
 
-  it("does not show Thinking while the open turn only waits on a running foreground child", () => {
-    const rows = openTurnRows([]);
+  const assistant = (streaming: boolean): OrchestrationV2TurnItem => ({
+    ...base("assistant", 4),
+    status: streaming ? "running" : "completed",
+    type: "assistant_message",
+    messageId: MessageId.make("assistant"),
+    text: "Started three subagents; waiting for their results.",
+    streaming,
+  });
+
+  it.each([
+    { name: "nothing", after: [] },
+    { name: "the parent's finished launch message", after: [assistant(false)] },
+  ])("shows a waiting row when $name follows the running child", ({ after }) => {
+    const rows = openTurnRows(after);
     expect(rows.find((row) => row.id === "child")).toBeDefined();
-    expect(rows.filter((row) => row.kind === "thinking")).toEqual([]);
+    expect(rows.at(-1)).toMatchObject({ kind: "thinking", waitingOnSubagents: 1 });
   });
 
   it.each([
@@ -4724,21 +4736,13 @@ describe("live subagents after their parent turn settles", () => {
         attachments: [],
       },
     },
-    {
-      name: "more parent output",
-      item: {
-        ...base("assistant", 4),
-        status: "completed",
-        type: "assistant_message",
-        messageId: MessageId.make("assistant"),
-        text: "Children started; continuing.",
-        streaming: false,
-      },
-    },
+    { name: "a streaming parent reply", item: assistant(true) },
   ] satisfies ReadonlyArray<{ name: string; item: OrchestrationV2TurnItem }>)(
     "still shows Thinking when $name follows the running child",
     ({ item }) => {
-      expect(openTurnRows([item]).at(-1)?.kind).toBe("thinking");
+      const last = openTurnRows([item]).at(-1);
+      expect(last?.kind).toBe("thinking");
+      expect(last).not.toHaveProperty("waitingOnSubagents");
     },
   );
 });

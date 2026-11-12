@@ -377,10 +377,15 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
+  const waiting = row.waitingOnSubagents;
   const activity = (
     <LiveActivityRow
-      label={liveAnswerPreview ?? "Thinking"}
-      iconName="brain"
+      label={
+        waiting === undefined
+          ? (liveAnswerPreview ?? "Thinking")
+          : `Waiting on ${waiting === 1 ? "a subagent" : `${waiting} subagents`}`
+      }
+      iconName={waiting === undefined ? "brain" : "bot"}
       active={live}
       shimmer={live}
     />

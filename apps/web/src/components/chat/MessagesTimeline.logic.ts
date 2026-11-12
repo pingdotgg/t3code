@@ -531,6 +531,7 @@ type MessagesTimelineRowContent =
       createdAt: string | null;
       groupId?: string;
       expanded?: boolean;
+      waitingOnSubagents?: number;
     }
   | {
       kind: "work-toggle";
@@ -2267,9 +2268,19 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
-  // The open run is only waiting when its subagent group is the newest work in the timeline.
+  // The open run is only waiting when its subagent group is its newest work; finished text the
+  // parent wrote after launching them does not count as work.
+  let waitingOnSubagents = 0;
   for (let index = timelineEntries.length - 1; input.isWorking && index >= 0; index -= 1) {
     const entry = timelineEntries[index]!;
+    if (
+      entry.kind === "message" &&
+      entry.message.role === "assistant" &&
+      !entry.message.streaming &&
+      entry.message.runId === unsettledRunId
+    ) {
+      continue;
+    }
     if (
       entry.kind !== "event" ||
       entry.projectedItem.item.type !== "subagent" ||
@@ -2278,7 +2289,7 @@ export function deriveMessagesTimelineRows(input: {
     ) {
       break;
     }
-    hasActivityRow ||= isLiveSubagentTurnItem(entry.projectedItem.item);
+    if (isLiveSubagentTurnItem(entry.projectedItem.item)) waitingOnSubagents += 1;
   }
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
@@ -2313,6 +2324,7 @@ export function deriveMessagesTimelineRows(input: {
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: input.activeTurnStartedAt ?? null,
+        ...(waitingOnSubagents > 0 ? { waitingOnSubagents } : {}),
       });
     }
   }
