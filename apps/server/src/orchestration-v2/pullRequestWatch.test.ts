@@ -236,6 +236,44 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  it("reports a rerun that fails again between two reads", () => {
+    const run = (job: number): PullRequestCheck => ({
+      ...check("lint", "failure"),
+      url: `https://ci.example/lint/job/${job}`,
+      required: true,
+    });
+    const first = evaluatePullRequestWatch(watch(), detail({ checks: [run(1)] }), noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-failed", failed: [run(1)] }]);
+    const again = evaluatePullRequestWatch(first.next, detail({ checks: [run(2)] }), noRemarks);
+    assert.deepEqual(again.changes, [{ kind: "checks-failed", failed: [run(2)] }]);
+    // A status can link a build shared with another check; it is that check's run, not lint's.
+    const shared = { ...check("test", "failure"), url: "https://ci.example/lint/job/3" };
+    const both = evaluatePullRequestWatch(
+      again.next,
+      detail({ checks: [run(2), shared] }),
+      noRemarks,
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(both.next, detail({ checks: [run(3), shared] }), noRemarks).changes,
+      [{ kind: "checks-failed", failed: [run(3)] }],
+    );
+    // Neither the same run nor one told earlier on this head is news again.
+    for (const job of [2, 1]) {
+      assert.deepEqual(
+        evaluatePullRequestWatch(again.next, detail({ checks: [run(job)] }), noRemarks).changes,
+        [],
+      );
+    }
+  });
+
+  it("does not repeat a failure an older watch told by name", () => {
+    const older = watch({ headSha: "aaaaaaaaaa", failedChecks: ["lint"] });
+    const failed = detail({ checks: [check("lint", "failure")] });
+    const report = evaluatePullRequestWatch(older, failed, noRemarks);
+    assert.deepEqual(report.changes, []);
+    assert.deepEqual(report.next.failedRuns, [JSON.stringify(["lint", "https://ci.example/lint"])]);
+  });
+
   it("reports passed once the required checks pass, whatever the others do", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
       ...check(name, status),
