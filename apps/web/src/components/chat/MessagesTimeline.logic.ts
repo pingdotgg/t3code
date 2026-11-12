@@ -2267,6 +2267,14 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
+  const tailRow = nextRows.at(-1);
+  const waitingOnSubagents =
+    tailRow?.kind === "event" &&
+    (tailRow.subagents ?? [tailRow.projectedItem]).some((item) =>
+      isLiveSubagentTurnItem(item.item),
+    );
+  hasActivityRow ||= waitingOnSubagents;
+
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
