@@ -206,34 +206,55 @@ function runGit(
   });
 }
 
+/** A committed repository and an empty bare remote, built once and copied into each test. */
+class GitFixtureTemplates extends Context.Service<
+  GitFixtureTemplates,
+  { readonly repo: string; readonly bareRemote: string }
+>()("t3/git/GitManager.test/GitFixtureTemplates") {}
+
+const layerGitFixtureTemplates = Layer.effect(
+  GitFixtureTemplates,
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const repo = yield* makeTempDir("t3code-git-template-");
+    // An empty template skips copying git's sample hooks into every test repository.
+    yield* runGit(repo, ["init", "--initial-branch=main", "--template="]);
+    yield* runGit(repo, ["config", "user.email", "test@example.com"]);
+    yield* runGit(repo, ["config", "user.name", "Test User"]);
+    // Override global autocrlf on Windows for LF assertions, including linked worktrees.
+    yield* runGit(repo, ["config", "core.autocrlf", "false"]);
+    yield* fs.writeFileString(NodePath.join(repo, "README.md"), "hello\n");
+    yield* runGit(repo, ["add", "README.md"]);
+    yield* runGit(repo, ["commit", "-m", "Initial commit"]);
+    const bareRemote = yield* makeTempDir("t3code-git-remote-template-");
+    yield* runGit(bareRemote, ["init", "--bare", "--template="]);
+    yield* fs.makeDirectory(NodePath.join(bareRemote, "hooks"), { recursive: true });
+    return { repo, bareRemote };
+  }),
+);
+
 function initRepo(
   cwd: string,
-): Effect.Effect<
-  void,
-  PlatformError.PlatformError | GitCommandError,
-  FileSystem.FileSystem | Scope.Scope | GitVcsDriver.GitVcsDriver
-> {
+): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem | GitFixtureTemplates> {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    yield* runGit(cwd, ["init", "--initial-branch=main"]);
-    yield* runGit(cwd, ["config", "user.email", "test@example.com"]);
-    yield* runGit(cwd, ["config", "user.name", "Test User"]);
-    // Override global autocrlf on Windows for LF assertions, including linked worktrees.
-    yield* runGit(cwd, ["config", "core.autocrlf", "false"]);
-    yield* fs.writeFileString(NodePath.join(cwd, "README.md"), "hello\n");
-    yield* runGit(cwd, ["add", "README.md"]);
-    yield* runGit(cwd, ["commit", "-m", "Initial commit"]);
+    const templates = yield* GitFixtureTemplates;
+    for (const entry of [".git", "README.md"]) {
+      yield* fs.copy(NodePath.join(templates.repo, entry), NodePath.join(cwd, entry));
+    }
   });
 }
 
 function createBareRemote(): Effect.Effect<
   string,
-  PlatformError.PlatformError | GitCommandError,
-  FileSystem.FileSystem | Scope.Scope | GitVcsDriver.GitVcsDriver
+  PlatformError.PlatformError,
+  FileSystem.FileSystem | Scope.Scope | GitFixtureTemplates
 > {
   return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const templates = yield* GitFixtureTemplates;
     const remoteDir = yield* makeTempDir("t3code-git-remote-");
-    yield* runGit(remoteDir, ["init", "--bare"]);
+    yield* fs.copy(templates.bareRemote, remoteDir, { overwrite: true });
     return remoteDir;
   });
 }
@@ -743,7 +764,8 @@ function makeManager(input?: {
 
 const asThreadId = (threadId: string) => threadId as ThreadId;
 
-const layerGitManagerTest = GitVcsDriver.layer.pipe(
+const layerGitManagerTest = layerGitFixtureTemplates.pipe(
+  Layer.provideMerge(GitVcsDriver.layer),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" })),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
