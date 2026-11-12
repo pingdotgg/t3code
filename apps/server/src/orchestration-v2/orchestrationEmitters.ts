@@ -13,7 +13,10 @@ import type {
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
-import type { IdAllocatorV2Allocate } from "@t3tools/provider-core/server/IdAllocator";
+import type {
+  IdAllocatorV2Allocate,
+  IdAllocatorV2Derive,
+} from "@t3tools/provider-core/server/IdAllocator";
 
 import { OrchestratorDispatchError } from "./orchestrationErrors.ts";
 
@@ -22,6 +25,7 @@ import { OrchestratorDispatchError } from "./orchestrationErrors.ts";
 /** The allocation surface the emitter needs — narrow on purpose. */
 export interface EventIdAllocator {
   readonly allocate: IdAllocatorV2Allocate;
+  readonly derive: IdAllocatorV2Derive;
 }
 
 /** Wrap any failure as a dispatch error carrying the command that caused it. */
