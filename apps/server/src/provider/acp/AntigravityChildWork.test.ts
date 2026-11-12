@@ -47,6 +47,16 @@ const read = (
   });
 
 it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
+  it("reads the flat single-subagent input invoke_subagent sends", () => {
+    expect(
+      antigravitySubagentLaunches({
+        TypeName: "research",
+        Role: "Standards Code Reviewer",
+        Prompt: "Review the diff.",
+      }),
+    ).toEqual([{ role: "Standards Code Reviewer", prompt: "Review the diff." }]);
+  });
+
   it.effect("follows an auto-approved call id through its planner step to the record", () =>
     Effect.gen(function* () {
       const { profile } = yield* makeProfile({ steps: autoApproved });
