@@ -1,9 +1,9 @@
+import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import {
   boundAttachmentIds,
   buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
   planComposerTurn,
-  restorePlanFollowUpComposer,
   snapshotComposerSend,
   withMessageContext,
   deriveAvailableRevertTurnCounts,
@@ -1127,6 +1127,12 @@ describe("planComposerTurn", () => {
       shouldQueueBehindActiveRun: false,
       baseBranchForWorktree: null,
     });
+    expect(
+      planComposerTurn({ ...running, sendQueuesBehindSetup: true, dispatchMode: "steer" }),
+    ).toMatchObject({
+      turnDispatchMode: "steer",
+      shouldQueueBehindActiveRun: true,
+    });
     // A fresh session cannot join the running turn, and a stale one is not compacted first.
     expect(
       planComposerTurn({
@@ -1140,61 +1146,6 @@ describe("planComposerTurn", () => {
       turnDispatchMode: "queue",
       shouldQueueBehindActiveRun: true,
     });
-  });
-});
-
-describe("restorePlanFollowUpComposer", () => {
-  // The draft is the failed follow-up's thread; the refs and cursor are whatever thread is on
-  // screen.
-  it.each([
-    {
-      name: "puts the follow-up back while its thread is open",
-      before: { draft: "", refs: "", cursor: null },
-      routeIsCurrent: true,
-      after: { draft: "Tighten step 2", refs: "Tighten step 2", cursor: "Tighten step 2" },
-    },
-    {
-      name: "keeps a draft typed while the follow-up was in flight",
-      before: { draft: "Next idea", refs: "Next idea", cursor: null },
-      routeIsCurrent: true,
-      after: { draft: "Next idea", refs: "Next idea", cursor: null },
-    },
-    {
-      name: "leaves another thread's composer alone after navigating away",
-      before: { draft: "", refs: "Other thread", cursor: null },
-      routeIsCurrent: false,
-      after: { draft: "Tighten step 2", refs: "Other thread", cursor: null },
-    },
-  ])("$name", ({ before, routeIsCurrent, after }) => {
-    const composer: { draft: string; refs: string; cursor: string | null } = { ...before };
-    restorePlanFollowUpComposer({
-      snapshot: {
-        prompt: "Tighten step 2",
-        environmentContexts: [],
-        terminalContexts: [],
-        reviewComments: [],
-        previewAnnotations: [],
-        threadContexts: [],
-      },
-      draftHasUserContent: composer.draft.trim().length > 0,
-      routeIsCurrent,
-      writeComposerRefs: (snapshot) => {
-        composer.refs = snapshot.prompt;
-      },
-      writePrompt: (prompt) => {
-        composer.draft = prompt;
-      },
-      writeTerminalContexts: () => undefined,
-      writeReviewComments: () => undefined,
-      writePreviewAnnotations: () => undefined,
-      writeThreadContexts: () => undefined,
-      writeEnvironmentContexts: () => undefined,
-      resetCursor: ({ prompt }) => {
-        composer.cursor = prompt;
-      },
-    });
-
-    expect(composer).toEqual(after);
   });
 });
 
@@ -1270,5 +1221,27 @@ describe("deriveAvailableRevertTurnCounts", () => {
   it("offers nothing without a provider session to rewind", () => {
     expect(deriveAvailableRevertTurnCounts(projection({ providerSessionId: null })).size).toBe(0);
     expect(deriveAvailableRevertTurnCounts(null).size).toBe(0);
+  });
+});
+
+describe("Open in for the host environment", () => {
+  it("shows both local environments when the primary has a separate WSL home", () => {
+    const primaryEnvironmentId = EnvironmentId.make("wsl");
+    const hostEnvironmentId = EnvironmentId.make("host");
+    for (const [activeThreadEnvironmentId, visible] of [
+      [primaryEnvironmentId, true],
+      [hostEnvironmentId, true],
+      [EnvironmentId.make("other"), false],
+    ] as const) {
+      expect(
+        shouldShowOpenInPicker({
+          activeProjectName: "Project",
+          activeThreadEnvironmentId,
+          primaryEnvironmentId,
+          hostEnvironmentId,
+          remoteOpenMode: "local-exec",
+        }),
+      ).toBe(visible);
+    }
   });
 });

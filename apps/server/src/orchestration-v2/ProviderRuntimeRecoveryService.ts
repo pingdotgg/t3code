@@ -451,6 +451,64 @@ export const make = Effect.gen(function* () {
           },
         });
       }
+      const unsentResumeRunIds = runs.flatMap((run) =>
+        run.startedAt === null && run.usageLimitContinuationOfRunId !== undefined ? [run.id] : [],
+      );
+      const limitRecovery = projection.thread.limitRecovery;
+      // The unsent resume spent the worker's request id, so a fresh one lets it send again. An
+      // untagged resume from an older server stays cancelled: its copy couldn't be hidden.
+      if (limitRecovery?.autoResume === true && unsentResumeRunIds.length > 0) {
+        events.push({
+          id: yield* allocateEventId(),
+          type: "thread.metadata-updated",
+          threadId: projection.thread.id,
+          occurredAt: now,
+          payload: {
+            ...projection.thread,
+            limitRecovery: { ...limitRecovery, requestId: commandId },
+            updatedAt: now,
+          },
+        });
+      }
+      // The worker sends the auto-resume again, so the unsent copy leaves the transcript the way
+      // cancelled queued input does.
+      const unsentResumePrompts =
+        unsentResumeRunIds.length === 0
+          ? []
+          : (yield* projections
+              .getThreadRecords(projection.thread.id, ["turnItems"], {
+                turnItemTypes: ["user_message"],
+                turnItemRunIds: unsentResumeRunIds,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderRuntimeRecoveryError({
+                      operation: "read-projections",
+                      threadId: projection.thread.id,
+                      cause,
+                    }),
+                ),
+              )).turnItems;
+      const unsentResumePromptIds = new Set(unsentResumePrompts.map((item) => item.id));
+      for (const item of unsentResumePrompts) {
+        if (item.type !== "user_message") continue;
+        const active =
+          item.status === "pending" || item.status === "running" || item.status === "waiting";
+        events.push({
+          id: yield* allocateEventId(),
+          type: "turn-item.updated",
+          threadId: projection.thread.id,
+          ...(item.runId === null ? {} : { runId: item.runId }),
+          occurredAt: now,
+          payload: {
+            ...item,
+            ...(active ? { status: "cancelled", completedAt: now } : {}),
+            inputIntent: "queued_turn",
+            updatedAt: now,
+          },
+        });
+      }
       for (const question of questions) {
         events.push({
           id: yield* allocateEventId(),
@@ -561,6 +619,7 @@ export const make = Effect.gen(function* () {
         for (const item of projection.turnItems.filter(
           (candidate) =>
             candidate.runId === run.id &&
+            !unsentResumePromptIds.has(candidate.id) &&
             (candidate.nodeId === null || !messageRequestNodeIds.has(candidate.nodeId)) &&
             !isAppOwnedDelegationItem(candidate) &&
             // A link card waits on the user, not the run, and answers by message.
@@ -588,6 +647,36 @@ export const make = Effect.gen(function* () {
             payload: cancelledItem(item, now),
           });
         }
+        // Queued runs and unsent resumes leave no visible turn behind, so there is nothing to explain.
+        if (run.status === "queued" || unsentResumeRunIds.includes(run.id)) continue;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "turn-item.updated",
+          threadId: projection.thread.id,
+          runId: run.id,
+          ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: ids.derive.runSignalTurnItem({ runId: run.id, signal: "server-recovery" }),
+            threadId: projection.thread.id,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            providerThreadId: run.providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            // EventSink allocates the real position, after the run's existing items.
+            ordinal: 0,
+            status: "completed",
+            title: trigger === "startup" ? "Server restarted" : "Server shut down",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "system_notice",
+            message: detail,
+          },
+        });
       }
       // Blocking waits die with their turn; let child results wake the parent continuation as async tasks.
       const cutRunIds = new Set(runs.map((run) => run.id));
