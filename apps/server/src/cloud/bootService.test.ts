@@ -598,12 +598,28 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         );
         expect((yield* service.status).current).toBe(true);
 
-        const ordinaryCli = yield* makeService("", "1.2.3", undefined, false, undefined, false, null);
+        const ordinaryCli = yield* makeService(
+          "",
+          "1.2.3",
+          undefined,
+          false,
+          undefined,
+          false,
+          null,
+        );
         expect((yield* ordinaryCli.status).current).toBe(true);
         expect((yield* ordinaryCli.install()).installBinDir).toBe(installBinDir);
         expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
 
-        const updatedCli = yield* makeService("", "1.2.4", undefined, false, undefined, false, null);
+        const updatedCli = yield* makeService(
+          "",
+          "1.2.4",
+          undefined,
+          false,
+          undefined,
+          false,
+          null,
+        );
         expect((yield* updatedCli.install({ start: false })).installBinDir).toBe(installBinDir);
         expect(yield* fs.readFileString(plan.unitPath)).toBe(unit.replaceAll("1.2.3", "1.2.4"));
 
