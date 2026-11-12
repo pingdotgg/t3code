@@ -48,9 +48,11 @@ jobs:
   # triggering commit. Manual stable releases build the commit of the latest
   # published nightly, so stable only ever ships a build that nightly users
   # have already run. Scheduled runs also decide here whether a nightly is due.
+  # The PAUSE_NIGHTLY repository variable skips scheduled runs only; every later
+  # job needs this one, so a skip here skips the whole run.
   resolve_commit:
     name: Resolve release commit
-    if: github.repository == 'pingdotgg/t3code'
+    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'schedule' || vars.PAUSE_NIGHTLY != 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
@@ -300,11 +302,15 @@ jobs:
   # Web browser tests time out when they share a runner with the other package
   # suites: Chromium gets too little CPU and diff workers miss their 10s start budget.
   test_web:
-    name: Release web tests
+    name: Release web tests ${{ matrix.shard }}
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -344,10 +350,11 @@ jobs:
           fi
 
       - name: Test
-        run: vp run --filter @t3tools/web test
+        run: vp run --filter @t3tools/web test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
       # Browser tests run source modules; this boots the production chunk graph.
       - name: Boot the built web client
+        if: matrix.shard == 1
         run: |
           vp run --filter @t3tools/web build
           node apps/web/scripts/verify-built-boot.ts
