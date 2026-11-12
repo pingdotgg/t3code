@@ -6528,7 +6528,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       item,
     });
 
-
     /**
      * Reads parts of a thread's own timeline without indexing all of it. Null when callers read
      * the full index instead: the thread shows fork ancestry, so its rows come from other threads,
@@ -6540,7 +6539,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     ) {
       // A read that only the full index can answer left it cached, and it answers faster than
       // a window. The key is the one `readSnapshotTimelineIndex` uses.
-      const cached = timelineIndexes.get(`${includePersistentOutput ? "work" : "plain"}:${threadId}`);
+      const cached = timelineIndexes.get(
+        `${includePersistentOutput ? "work" : "plain"}:${threadId}`,
+      );
       if (
         cached !== undefined &&
         (yield* latestThreadEventSequence(threadId, cached.index.threadIds)) === cached.sequence
@@ -6733,11 +6734,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     });
 
     /**
-     * Selects an older history page from the rows near its cursor instead of the whole thread.
-     * `select` must give the same page as it does on the full index, so the window grows until
-     * the page ends inside rows whose inputs are all known. Null when only the full index can
-     * answer: a cursor that names no visible row of this thread. With `workMode` "work" the
-     * caller passes the group's first row as `throughEntryId`, and without it passes none.
+     * Selects an older history page from the rows near its cursor. The window grows until the
+     * page ends inside rows whose inputs are all known, so `select` gives the page it gives on
+     * the full index. Null when the cursor names no visible row, which needs the full index.
      */
     const selectHistoryPageInWindow = Effect.fn("ProjectionStore.selectHistoryPageInWindow")(
       function* <
@@ -7010,8 +7009,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ).flatMap(({ sourceThreadId, item }) =>
                     (workMode === "work" ||
                       (item.runId !== null &&
-                        (item.runStatus === "completed" ||
-                          item.attemptStatus === "superseded"))) &&
+                        (item.runStatus === "completed" || item.attemptStatus === "superseded"))) &&
                     !scannedRuns.has(`${sourceThreadId}:${item.runId}`)
                       ? [
                           [

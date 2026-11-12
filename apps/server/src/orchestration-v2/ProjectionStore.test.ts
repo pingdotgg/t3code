@@ -5857,7 +5857,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               attachments: [],
             });
           const notification = () =>
-            add("notification", { source: { kind: "system" }, outcome: "completed", summary: "Wake" });
+            add("notification", {
+              source: { kind: "system" },
+              outcome: "completed",
+              summary: "Wake",
+            });
           const wakes =
             kind === "one row"
               ? run % 10 !== 0
@@ -5871,7 +5875,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               : kind === "stopped"
                 ? 320 + Math.floor(random() * 60)
                 : kind === "folds work"
-                ? 155 + Math.floor(random() * 60)
+                  ? 155 + Math.floor(random() * 60)
                   : kind === "one row"
                     ? 0
                     : Math.floor(random() * 30);
@@ -5881,7 +5885,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             // A reply deep in a stopped run: a page that ends on it has enough work below it
             // to fold, and only the stop request above it says that it does not.
             const reply = kind === "stopped" && row === 200;
-            if (reply) repliesInStoppedRuns.push(`turn-item:window-equivalence:${round}:${items.length}`);
+            if (reply)
+              repliesInStoppedRuns.push(`turn-item:window-equivalence:${round}:${items.length}`);
             if (reply || chance(0.02))
               add("assistant_message", {
                 messageId: `message:window-equivalence:${round}:${items.length}`,
@@ -5975,7 +5980,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           [false, undefined],
           [true, undefined],
         ] as const) {
-          for (let cursor: string | null = firstCursor; cursor !== null; ) {
+          for (let cursor: string | null = firstCursor; cursor !== null;) {
             const page: OrchestrationV2ThreadHistoryPage = yield* windowed(
               history(cursor, undefined, conversationOnly, workMode),
             );
@@ -5995,7 +6000,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         }
         foldedGroups += groups.size;
         for (const [anchorId, groupCursor] of groups) {
-          for (let cursor: string | null = groupCursor; cursor !== null; )
+          for (let cursor: string | null = groupCursor; cursor !== null;)
             cursor = (yield* windowed(history(cursor, anchorId, false, "work"))).nextCursor;
         }
         for (const view of ["messages", "activity"] as const) {
