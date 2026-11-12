@@ -331,6 +331,18 @@ assert(AgentWidgetStorage.commit([["timestamp": 0, "props": ["activeCount": 0, "
 assert(AgentWidgetStorage.observe(json(observation), entries: observationEntries, in: defaults))
 print("Foreground observations repair a changed native background timeline")
 
+observation["expiresAt"] = 1_620_000
+observationEntries = [["timestamp": 0, "props": observation], ["timestamp": 1_620_000, "props": ["isStale": true]]]
+assert(AgentWidgetStorage.observe(json(observation), entries: observationEntries, in: defaults))
+observation["expiresAt"] = 1_650_000
+observationEntries[0]["props"] = observation
+observationEntries[1]["timestamp"] = 1_650_000
+assert(AgentWidgetStorage.observe(json(observation), entries: observationEntries, in: defaults))
+assert((defaults.array(forKey: AgentWidgetStorage.timelineKey) as! [[String: Any]])[1]["timestamp"] as? Int == 1_650_000)
+observationEntries[0]["timestamp"] = 10
+assert(!AgentWidgetStorage.observe(json(observation), entries: observationEntries, in: defaults))
+print("Future expiration shifts persist within a display minute; unchanged deadlines stay deduplicated")
+
 defaults.set("https://retry-relay.test/v1/widget/agent-activity", forKey: "t3_agent_widget_url")
 _ = AgentWidgetStorage.clearStoredState(in: defaults, readCredential: { .unavailable })
 let signedOutGeneration = AgentWidgetStorage.generation(in: defaults)

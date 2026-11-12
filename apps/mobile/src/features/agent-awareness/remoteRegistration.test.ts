@@ -1058,6 +1058,13 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     );
     widgetMocks.dismissEnded.mockReset();
     expect(appStateMock.listeners).toHaveLength(0);
+    vi.mocked(publishAgentActivityWidget).mockClear();
+    vi.mocked(clearAgentWidgetRefresh).mockClear();
+    setAgentAwarenessRelayTokenProvider(null);
+    expect(clearAgentWidgetRefresh).toHaveBeenCalledOnce();
+    expect(publishAgentActivityWidget).toHaveBeenCalledWith(
+      expect.objectContaining({ isSignedOut: true, subtitle: "Sign in to see agent activity" }),
+    );
   });
 
   it.effect("registers the APNs device when cloud auth becomes available", () => {

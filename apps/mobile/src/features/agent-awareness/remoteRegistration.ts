@@ -233,6 +233,7 @@ export function setAgentAwarenessRelayTokenProvider(
   if (!provider) {
     clearAndroidAgentNotifications();
     clearAgentWidgetRefresh();
+    publishedWidgetContent = null;
     pushTokenSubscription?.remove();
     pushTokenSubscription = null;
     appStateSubscription?.remove();
