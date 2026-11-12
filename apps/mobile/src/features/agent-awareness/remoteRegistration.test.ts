@@ -1148,11 +1148,29 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           ? yield* Effect.promise(() => request.json())
           : JSON.parse(String(init?.body));
       expect(payload.widgetAccessToken).toBe("a".repeat(64));
+      expect(registrationRecordStore.current?.signature).not.toContain(payload.widgetAccessToken);
+      expect(registrationRecordStore.current?.signature).toContain(
+        NodeCrypto.createHash("sha256").update(payload.widgetAccessToken).digest("base64url"),
+      );
       expect(configureAgentWidgetRefresh).toHaveBeenLastCalledWith(
         "https://relay.example.test",
         "a".repeat(64),
       );
       expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+      const originalSignature = registrationRecordStore.current?.signature;
+      const registrationRequests = () =>
+        fetchMock.mock.calls.filter(([request]) =>
+          (request instanceof Request ? request.url : String(request)).endsWith(
+            "/v1/mobile/devices",
+          ),
+        ).length;
+      yield* refreshAgentAwarenessRegistration();
+      expect(registrationRequests()).toBe(1);
+      vi.mocked(agentWidgetToken).mockReturnValue("b".repeat(64));
+      yield* refreshAgentAwarenessRegistration();
+      expect(registrationRequests()).toBe(2);
+      expect(registrationRecordStore.current?.signature).not.toBe(originalSignature);
+      expect(registrationRecordStore.current?.signature).not.toContain("b".repeat(64));
       releaseAgentAwarenessRelayTokenProvider();
       expect(clearAgentWidgetRefresh).not.toHaveBeenCalled();
       setAgentAwarenessRelayTokenProvider(null);
@@ -2664,14 +2682,14 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       const layer = snapshotRelayLayer();
       yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
       const original = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
-      expect(original.expiresAt).toBe(now + AGENT_ACTIVITY_FRESHNESS_MS);
+      expect(original.expiresAt).toBe(now + 60 * 60_000);
 
       clock.mockReturnValue(now + 60_000);
       yield* TestClock.setTime(now + 60_000);
       yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
       const renewed = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
       expect(renewed.activities).toEqual(original.activities);
-      expect(renewed.expiresAt).toBe(now + 60_000 + AGENT_ACTIVITY_FRESHNESS_MS);
+      expect(renewed.expiresAt).toBe(now + 60_000 + 60 * 60_000);
       const publications = vi.mocked(publishAgentActivityWidget).mock.calls.length;
 
       clock.mockReturnValue(now + 120_000);
@@ -2729,7 +2747,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* Fiber.join(older);
       expect(publishAgentActivityWidget).toHaveBeenCalledTimes(publications);
       expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0].expiresAt).toBe(
-        now + 60_000 + AGENT_ACTIVITY_FRESHNESS_MS,
+        now + 60_000 + 60 * 60_000,
       );
     }).pipe(Effect.scoped),
   );
@@ -2755,13 +2773,13 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         Effect.forkChild,
       );
       yield* Deferred.await(started);
-      const arrivedAt = now + AGENT_ACTIVITY_FRESHNESS_MS + 1;
+      const arrivedAt = now + 60 * 60_000 + 1;
       clock.mockReturnValue(arrivedAt);
       yield* TestClock.setTime(arrivedAt);
       yield* Deferred.succeed(finish, undefined);
       yield* Fiber.join(refresh);
       const publication = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
-      expect(publication.expiresAt).toBe(now + AGENT_ACTIVITY_FRESHNESS_MS);
+      expect(publication.expiresAt).toBe(now + 60 * 60_000);
       expect(agentActivityTimeline(publication, arrivedAt)).toEqual([
         {
           date: DateTime.toDateUtc(DateTime.makeUnsafe(arrivedAt)),
