@@ -1,5 +1,5 @@
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
-import { withProviderMessageOrigin } from "./providerMessageOrigin.ts";
+import { isCrossThreadAgentMessage, withProviderMessageOrigin } from "./providerMessageOrigin.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
@@ -190,6 +190,16 @@ function childTurnsContinue(terminal: ProviderTerminalEvent): boolean {
 }
 
 /** Launching runs still ingest running subagents; taking them over would duplicate events. */
+export function acceptsNativeGoalCommands(
+  session: Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "driver" | "providerSession">,
+): boolean {
+  return (
+    session.driver === "codex" ||
+    session.driver === "claudeAgent" ||
+    session.providerSession.capabilities.turns.supportsNativeGoals === true
+  );
+}
+
 export function canRouteRelatedSubagent(status: OrchestrationV2Subagent["status"]): boolean {
   return status === "completed";
 }
@@ -1899,12 +1909,19 @@ export const layer: Layer.Layer<
         const compact =
           input.message.attachments.length === 0 &&
           input.message.text.trim().toLowerCase() === "/compact";
-        const goalDriver =
-          input.session.driver === "codex" ||
-          input.session.driver === "claudeAgent" ||
-          (input.session.driver === "opencode" &&
-            input.session.providerSession.capabilities.turns.supportsNativeGoals === true);
-        const goalCommand = goalDriver ? parseGoalCommand(input.message) : null;
+        const goalCommand =
+          isCrossThreadAgentMessage(turnInput.message) && acceptsNativeGoalCommands(input.session)
+            ? parseGoalCommand(input.message)
+            : null;
+        const markOrigin = (text: string) =>
+          withProviderMessageOrigin(turnInput.message, text, input.session.driver);
+        // The native goal command must stay first, so the origin marks its objective.
+        const providerText =
+          goalCommand === null
+            ? markOrigin(turnInput.message.text)
+            : goalCommand.type === "set"
+              ? `/goal ${markOrigin(goalCommand.objective)}`
+              : turnInput.message.text;
         const startTurn = compact
           ? (input.session.compactThread?.(turnInput) ??
             Effect.fail(
@@ -1921,25 +1938,7 @@ export const layer: Layer.Layer<
             ))
           : input.session.startTurn({
               ...turnInput,
-              message: {
-                ...turnInput.message,
-                text:
-                  goalCommand?.type === "set" &&
-                  turnInput.message.createdBy === "agent" &&
-                  turnInput.message.senderThreadId !== undefined
-                    ? `/goal ${withProviderMessageOrigin(
-                        turnInput.message,
-                        goalCommand.objective,
-                        input.session.driver,
-                      )}`
-                    : goalCommand !== null
-                      ? turnInput.message.text
-                      : withProviderMessageOrigin(
-                          turnInput.message,
-                          turnInput.message.text,
-                          input.session.driver,
-                        ),
-              },
+              message: { ...turnInput.message, text: providerText },
             });
         yield* Effect.andThen(shouldStart, startTurn).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher

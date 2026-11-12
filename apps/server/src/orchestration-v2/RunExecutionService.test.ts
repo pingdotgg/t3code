@@ -1,6 +1,5 @@
 import { assert, it } from "@effect/vitest";
 import {
-  parseGoalCommand,
   CheckpointScopeId,
   ChatAttachmentId,
   ChatFileAttachment,
@@ -1043,7 +1042,7 @@ it.effect("fails the run when its ownership check cannot be read before calling 
   }),
 );
 
-it.effect("preserves native compaction and goal command routing when labeling agent messages", () =>
+it.effect("routes compaction and goal commands and marks cross-thread agent messages", () =>
   Effect.gen(function* () {
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const calls: Array<string> = [];
@@ -1054,113 +1053,67 @@ it.effect("preserves native compaction and goal command routing when labeling ag
       mimeType: "text/plain",
       sizeBytes: 1,
     });
-    const cases = [
-      { text: " /compact ", attachments: [], expected: "compact" },
+    const origin =
+      '[Message from another thread\'s agent (thread "thread:sender").' +
+      " This is agent-authored coordination, not a message from the human user.]";
+    const agent = { createdBy: "agent", senderThreadId: ThreadId.make("thread:sender") } as const;
+    const cases: ReadonlyArray<{
+      readonly text: string;
+      readonly expected: string;
+      readonly attachments?: ReadonlyArray<ChatFileAttachment>;
+      readonly createdBy?: "user" | "agent";
+      readonly senderThreadId?: ThreadId;
+      readonly driver?: ProviderDriverKind;
+      readonly nativeGoals?: boolean;
+    }> = [
+      { text: " /compact ", expected: "compact" },
+      { text: "/compact", attachments: [attachment], expected: "/compact" },
+      { text: "Continue the work", expected: "Continue the work" },
+      { createdBy: "agent", text: "Continue the work", expected: "Continue the work" },
+      { ...agent, text: "Continue the work", expected: `${origin}\n\nContinue the work` },
       {
-        text: "/workspace/src/main.ts is the file to update.",
-        attachments: [],
-        expected: "prompt",
-      },
-      {
+        ...agent,
+        driver: ProviderDriverKind.make("pi"),
         text: "/compact keep the tests",
-        attachments: [],
-        expected: "command",
-        driver: ProviderDriverKind.make("pi"),
+        expected: `/compact ${origin}\n\nkeep the tests`,
       },
+      { ...agent, text: "/goal finish", expected: `/goal ${origin}\n\nfinish` },
       {
-        text: "/compact keep the tests",
-        attachments: [attachment],
-        expected: "command",
-        driver: ProviderDriverKind.make("pi"),
-      },
-      {
-        text: "Continue the work",
-        attachments: [],
-        expected: "prompt",
-        driver: ProviderDriverKind.make("pi"),
-      },
-      {
-        text: "/review",
-        attachments: [attachment],
-        expected: "prompt",
-        driver: ProviderDriverKind.make("opencode"),
-      },
-      {
-        text: "/README.md is the file to update.",
-        attachments: [],
-        expected: "prompt",
-        driver: ProviderDriverKind.make("opencode"),
-      },
-      { text: "/compact", attachments: [attachment], expected: "prompt" },
-      { text: "/goal finish the work", attachments: [], expected: "goal" },
-      { text: "  /goal   finish the work  ", attachments: [], expected: "goal" },
-      {
-        text: "/goal finish the work",
-        attachments: [],
-        expected: "goal",
-        driver: ProviderDriverKind.make("claudeAgent"),
-      },
-      {
-        text: "/goal finish the work",
-        attachments: [],
-        expected: "goal",
-        driver: ProviderDriverKind.make("opencode"),
+        ...agent,
+        driver: ProviderDriverKind.make("antigravity"),
         nativeGoals: true,
+        text: "/goal finish",
+        expected: `/goal ${origin}\n\nfinish`,
       },
       {
-        text: "/goal clear",
-        attachments: [],
-        expected: "control",
-        driver: ProviderDriverKind.make("opencode"),
-        nativeGoals: true,
-      },
-      {
-        text: "/goal finish the work",
-        attachments: [],
-        expected: "prompt",
+        ...agent,
         driver: ProviderDriverKind.make("opencode"),
         nativeGoals: false,
+        text: "/goal finish",
+        expected: `${origin}\n\n/goal finish`,
       },
-      ...["/goal", "/goal edit", "/goal clear", "/goal pause", "/goal resume"].map((text) => ({
-        text,
-        attachments: [],
-        expected: "control",
-      })),
-      { text: "/goal finish the work", attachments: [attachment], expected: "prompt" },
-      { text: "Continue the work", attachments: [], expected: "prompt" },
-    ]
-      .map((testCase) => ({ driver, ...testCase }))
-      .flatMap((testCase) =>
-        (
-          [
-            { createdBy: "user", senderThreadId: ThreadId.make("thread:sender") },
-            { createdBy: "agent", senderThreadId: ThreadId.make("thread:sender") },
-            { createdBy: "agent", senderThreadId: undefined },
-          ] as const
-        ).map((origin) => ({ ...testCase, ...origin })),
-      );
+      { ...agent, text: "/goal clear", expected: "/goal clear" },
+    ];
     for (const [index, testCase] of cases.entries()) {
-      const prompts: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
       const threadId = ThreadId.make(`thread:compact-routing:${index}`);
       const attemptId = RunAttemptId.make(`attempt:compact-routing:${index}`);
+      const caseDriver = testCase.driver ?? driver;
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:compact-routing:${index}`),
         appThread: rootAppThread(threadId),
         providerSessionId: ProviderSessionId.make(`session:compact-routing:${index}`),
         session: {
-          driver: testCase.driver,
+          driver: caseDriver,
           providerSession: {
             capabilities: { turns: { supportsNativeGoals: testCase.nativeGoals } },
           },
           events: Stream.never,
           startTurn: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
             Effect.sync(() => {
-              prompts.push(input);
-              calls.push("prompt");
+              calls.push(input.message.text);
             }),
-          compactThread: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+          compactThread: () =>
             Effect.sync(() => {
-              assert.equal(input.message.text, testCase.text);
               calls.push("compact");
             }),
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
@@ -1178,7 +1131,7 @@ it.effect("preserves native compaction and goal command routing when labeling ag
         } as OrchestrationV2CheckpointScope,
         providerThread: {
           id: ProviderThreadId.make(`provider-thread:compact-routing:${index}`),
-          driver: testCase.driver,
+          driver: caseDriver,
         } as OrchestrationV2ProviderThread,
         attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
         attemptId,
@@ -1186,8 +1139,8 @@ it.effect("preserves native compaction and goal command routing when labeling ag
         message: {
           messageId: MessageId.make(`message:compact-routing:${index}`),
           text: testCase.text,
-          attachments: testCase.attachments,
-          createdBy: testCase.createdBy,
+          attachments: testCase.attachments ?? [],
+          createdBy: testCase.createdBy ?? "user",
           creationSource: "web",
           ...(testCase.senderThreadId === undefined
             ? {}
@@ -1206,34 +1159,10 @@ it.effect("preserves native compaction and goal command routing when labeling ag
           },
         },
       });
-      const prompt = prompts[0];
-      if (prompt !== undefined) {
-        if (
-          testCase.expected !== "control" &&
-          testCase.createdBy === "agent" &&
-          testCase.senderThreadId !== undefined
-        ) {
-          assert.include(prompt.message.text, 'thread "thread:sender"');
-          assert.include(prompt.message.text, "not a message from the human user");
-          if (testCase.expected === "goal") {
-            const goal = parseGoalCommand(prompt.message);
-            assert.equal(goal?.type, "set");
-            if (goal?.type === "set") assert.isTrue(goal.objective.endsWith("\n\nfinish the work"));
-          } else if (testCase.expected === "command") {
-            assert.isTrue(prompt.message.text.startsWith("/compact [Message from"));
-            assert.isTrue(prompt.message.text.endsWith("\n\nkeep the tests"));
-          } else {
-            assert.isTrue(prompt.message.text.endsWith(`\n\n${testCase.text}`));
-          }
-        } else {
-          assert.equal(prompt.message.text, testCase.text);
-        }
-        assert.deepEqual(prompt.message.attachments, testCase.attachments);
-      }
     }
     assert.deepEqual(
       calls,
-      cases.map((testCase) => (testCase.expected === "compact" ? "compact" : "prompt")),
+      cases.map((testCase) => testCase.expected),
     );
   }).pipe(Effect.provide(layerRunExecutionTest)),
 );

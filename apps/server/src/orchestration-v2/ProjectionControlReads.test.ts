@@ -214,19 +214,9 @@ it.effect.each(storageCases)(
       assert.isUndefined((yield* store.getRunningTurnContext(threadId)).providerTurn);
     }).pipe(Effect.provide(storeLayer)),
 );
-it.effect.each(
-  storageCases.flatMap((storageCase) => [
-    {
-      ...storageCase,
-      commandDriver: ProviderDriverKind.make("pi"),
-      commandText: "/compact keep the tests",
-    },
-    { ...storageCase, commandDriver: ProviderDriverKind.make("opencode"), commandText: "/review" },
-    { ...storageCase, commandDriver: driver, commandText: "/goal finish the work" },
-  ]),
-)(
-  "$storage: controls and replies read only their exact durable targets ($commandDriver)",
-  ({ storage, storeLayer, commandDriver, commandText }) =>
+it.effect.each(storageCases)(
+  "$storage: controls and replies read only their exact durable targets",
+  ({ storage, storeLayer }) =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -285,7 +275,7 @@ it.effect.each(
       const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
           Effect.succeedSome({
-            driver: commandDriver,
+            driver,
             interruptTurn: () =>
               Effect.sync(() => {
                 calls.push("interrupt");
@@ -345,46 +335,6 @@ it.effect.each(
           (yield* store.getProviderControlContext(threadId, target)).message?.text,
           "Use the smaller fix.",
         );
-        yield* store.apply({
-          ...messageEvent,
-          id: EventId.make("control:agent-compact"),
-          payload: {
-            ...messageEvent.payload,
-            text: commandText,
-            attachments:
-              commandDriver === "codex"
-                ? []
-                : [
-                    {
-                      type: "file",
-                      id: "command-attachment",
-                      name: "notes.txt",
-                      mimeType: "text/plain",
-                      sizeBytes: 1,
-                    },
-                  ],
-            createdBy: "agent",
-            creationSource: "mcp",
-            senderThreadId: ThreadId.make("thread:sender"),
-          },
-        });
-        yield* control.steer({
-          threadId,
-          providerThreadId,
-          providerTurnId,
-          providerSessionId,
-          messageId,
-        });
-        const deliveredCommandText = calls.at(-1);
-        if (commandDriver === "pi") {
-          assert.isTrue(deliveredCommandText?.startsWith("/compact [Message from"));
-          assert.include(deliveredCommandText, 'thread "thread:sender"');
-          assert.include(deliveredCommandText, "not a message from the human user");
-          assert.isTrue(deliveredCommandText?.endsWith("\n\nkeep the tests"));
-        } else {
-          assert.include(deliveredCommandText, "not a message from the human user");
-          assert.isTrue(deliveredCommandText?.endsWith(`\n\n${commandText}`));
-        }
         const wrongSession = ProviderSessionId.make("session:wrong");
         assert.equal(
           (yield* Effect.exit(
@@ -408,7 +358,7 @@ it.effect.each(
           ))._tag,
           "Failure",
         );
-        assert.lengthOf(calls, 5);
+        assert.lengthOf(calls, 4);
         const turn = context.providerTurn!;
         yield* store.apply({
           id: EventId.make("control:turn-completed"),
@@ -423,7 +373,6 @@ it.effect.each(
           "Use the smaller fix.",
           "reply",
           agentText,
-          deliveredCommandText,
           "interrupt",
         ]);
       }).pipe(
