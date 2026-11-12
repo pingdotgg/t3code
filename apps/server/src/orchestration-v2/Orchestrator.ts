@@ -1400,14 +1400,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const adapter = yield* providerAdapters.get(providerInstanceId).pipe(mapDispatchError(command));
     const { driver } = adapter;
-    if (driver === "opencode") {
+    if (driver === "opencode" || driver === "antigravity") {
       const capabilities = yield* adapter.getCapabilities().pipe(mapDispatchError(command));
       return capabilities.turns.supportsNativeGoals === true ? driver : undefined;
     }
     return driver === "codex" || driver === "claudeAgent" ? driver : undefined;
   });
 
-  /** Claude Code reads `/goal pause` and `/goal resume` as new goals named "pause" and "resume". */
+  /** Unsupported goal controls can become new objectives in native providers. */
   const ensureGoalCommandSupported = Effect.fn("Orchestrator.ensureGoalCommandSupported")(
     function* (
       command: OrchestrationV2ServerCommand,
@@ -1415,8 +1415,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerInstanceId: ProviderInstanceId,
     ) {
       const goalCommand = parseGoalCommand(message);
-      if (goalCommand?.type !== "pause" && goalCommand?.type !== "resume") return;
-      if ((yield* goalDriverFor(command, providerInstanceId)) !== "claudeAgent") return;
+      if (goalCommand === null || goalCommand.type === "set") return;
+      const driver = yield* goalDriverFor(command, providerInstanceId);
+      if (driver === "antigravity") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "Antigravity accepts /goal followed by an objective. Interrupt the running turn, then ask Antigravity to stop the current goal.",
+        });
+      }
+      if (goalCommand.type !== "pause" && goalCommand.type !== "resume") return;
+      if (driver !== "claudeAgent") return;
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -1528,7 +1538,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
-  const readCommandProjection = (threadId: ThreadId) =>
+  const readCommandProjection = (
+    threadId: ThreadId,
+    recent?: ProjectionRecordFilter["sinceLastCompaction"],
+  ) =>
     projectionStore
       .getThreadRecords(
         threadId,
@@ -1553,8 +1566,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // Commands here read only undelivered or active tasks; a dispatcher thread keeps
           // thousands of delivered ones, each carrying its full prompt.
           omitSettledSubagents: true,
+          // No command reads a settled task's node or its child's provider thread.
+          omitSettledSubagentRecords: true,
           // Commands act on pending forks and merge-backs only; consumed ones stay unread.
           contextTransferStatuses: ["pending"],
+          ...(recent === undefined ? {} : { sinceLastCompaction: recent }),
         },
       )
       .pipe(
@@ -1643,9 +1659,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.fnUntraced(function* (
       threadId: ThreadId,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      recent?: ProjectionRecordFilter["sinceLastCompaction"],
     ) {
       const pending = (yield* Ref.get(events)).filter((event) => event.threadId === threadId);
-      const stored = yield* Effect.option(readCommandProjection(threadId));
+      const stored = yield* Effect.option(readCommandProjection(threadId, recent));
       let projection: OrchestrationV2ThreadProjection;
       if (Option.isSome(stored)) {
         projection = stored.value;
@@ -1956,13 +1973,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
       ["runs", "nodes", "attempts", "providerThreads", "turnItems", "messages"],
-      { turnItemTypes: [], messageRoles: ["user"] },
+      { turnItemTypes: ["user_message"], messageRoles: ["user"] },
     );
     const queuedRun =
       queuedRunId === undefined
         ? nextQueuedRun(projection)
         : projection.runs.find((run) => run.id === queuedRunId && run.status === "queued");
     if (queuedRun === undefined) return;
+    // A steer that fell back to the queue keeps its user item, hidden while the
+    // run is queued. Republish it before the failure so clients whose bounded
+    // snapshot omitted it can show the prompt beside the error.
+    const retainedUserItems = projection.turnItems.filter(
+      (item) => item.type === "user_message" && item.runId === queuedRun.id,
+    );
     const now = yield* DateTime.now;
     const rootNode = projection.nodes.find((node) => node.id === queuedRun.rootNodeId);
     const attempt = projection.attempts.find((entry) => entry.id === queuedRun.activeAttemptId);
@@ -1988,6 +2011,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       class: handoffUnsupported ? "validation_error" : "unknown",
     });
     yield* writeSystemEvents([
+      ...retainedUserItems.map((item) => ({
+        type: "turn-item.updated" as const,
+        threadId,
+        runId: queuedRun.id,
+        ...(rootNode === undefined ? {} : { nodeId: rootNode.id }),
+        providerInstanceId: queuedRun.providerInstanceId,
+        occurredAt: now,
+        payload: { ...item, status: "failed" as const, completedAt: now, updatedAt: now },
+      })),
       ...(attempt !== undefined && rootNode !== undefined
         ? [
             {
@@ -4692,6 +4724,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       passedChecks: existing.endedWatch.passedChecks,
                       conflicting: existing.endedWatch.conflicting,
                     }),
+                    awaitingBaseline: existing.endedWatch
+                      ? existing.endedWatch.awaitingBaseline
+                      : "all",
                     ...(existing.endedWatch?.owedChecks !== undefined && {
                       owedChecks: existing.endedWatch.owedChecks,
                     }),
@@ -4761,6 +4796,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? {
                 ...thread,
                 ...(command.title === undefined ? {} : { title: command.title }),
+                ...(command.outcome === undefined
+                  ? {}
+                  : {
+                      lastTitleRegeneration: {
+                        ...command.outcome,
+                        requestId: command.requestId,
+                        completedAt: now,
+                      },
+                    }),
                 titleRegeneration: null,
                 updatedAt: now,
               }
@@ -6305,7 +6349,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
-    let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    // A compacted thread reads every run and turn item, but attempts, nodes, messages and provider
+    // turns only for its recent runs and the runs this command names. An idle compaction reads
+    // in full: its busy check below looks for a delegated result's message under any old run.
+    let projection = yield* getProjectionWithPendingEvents(
+      command.threadId,
+      events,
+      command.idleCompaction === undefined
+        ? {
+            keepRunIds: [
+              command.manualContinuationOfRunId,
+              command.restartContinuationOfRunId,
+              command.usageLimitContinuationOfRunId,
+              command.steerFollowUpOfRunId,
+              ...(command.dispatchMode.type === "steer_active" ||
+              command.dispatchMode.type === "restart_active"
+                ? [command.dispatchMode.targetRunId]
+                : []),
+            ].flatMap((runId) => (runId === undefined ? [] : [runId])),
+            keepMessageId: command.messageId,
+          }
+        : undefined,
+    );
     if (command.steerFollowUpOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
       if (
@@ -6341,6 +6406,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: projection.thread,
       });
       return;
+    }
+    const activeProviderInstanceId = projection.providerThreads.find(
+      (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+    )?.providerInstanceId;
+    // Another provider is handed what ran since it last saw the thread, which can be older than
+    // the compaction, so a provider switch reads the whole history.
+    if (
+      activeProviderInstanceId !== undefined &&
+      activeProviderInstanceId !==
+        (command.modelSelection ?? projection.thread.modelSelection).instanceId
+    ) {
+      projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
@@ -6545,15 +6622,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
     const userMessages = projection.messages.filter((message) => message.role === "user");
-    const onlyMaintenanceHistory =
-      userMessages.length > 0 && userMessages.every(isNativeMaintenanceCommand);
+    // The recent runs of a compacted thread can hold only a `/compact` while an older prompt
+    // exists. Every prompt's turn item is loaded; without one, every user message is checked.
+    const onlyMaintenanceHistory = [
+      ...userMessages,
+      ...projection.turnItems.flatMap((item) => (item.type === "user_message" ? [item] : [])),
+    ].every(isNativeMaintenanceCommand)
+      ? projectionStore
+          .getThreadRecords(command.threadId, ["messages"], { messageRoles: ["user"] })
+          .pipe(
+            Effect.map(({ messages }) => [...messages, ...userMessages]),
+            Effect.map((all) => all.length > 0 && all.every(isNativeMaintenanceCommand)),
+            mapDispatchError(command),
+          )
+      : Effect.succeed(false);
     if (
       !isNativeMaintenanceCommand(command) &&
       ((command.titleSeed !== undefined &&
         (yield* projectionStore
           .getMessageCount(command.threadId)
           .pipe(mapDispatchError(command))) === 0) ||
-        (command.createdBy === "user" && onlyMaintenanceHistory))
+        (command.createdBy === "user" && (yield* onlyMaintenanceHistory)))
     ) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {

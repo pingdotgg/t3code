@@ -213,6 +213,7 @@ export function PreviewView({
   const isServerTab = snapshot?.runtime === "server" && !nativeServerTab;
   const serverOwnsRendering = snapshot?.runtime === "server";
   const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
+  const serverSurfaceBoxRef = useRef<HTMLDivElement | null>(null);
   const [serverAspectRatioLocked, setServerAspectRatioLocked] = useState(false);
   const [serverToolbarWidth, setServerToolbarWidth] = useState(0);
   const serverToolbarShown =
@@ -414,7 +415,10 @@ export function PreviewView({
       target,
       browserResponsiveViewportForToggle({
         defaults: browserDefaults,
-        panelRect,
+        // Only BrowserSurfaceSlot publishes a store rect; streamed tabs measure their own box.
+        panelRect: isServerTab
+          ? (serverSurfaceBoxRef.current?.getBoundingClientRect() ?? null)
+          : panelRect,
         zoomFactor: isServerTab ? serverZoomFactor : layoutZoomFactor,
       }),
     ).catch(() => undefined);
@@ -1056,6 +1060,7 @@ export function PreviewView({
               </div>
             ) : null}
             <div
+              ref={serverSurfaceBoxRef}
               className={cn(
                 "absolute inset-x-0 bottom-0",
                 (showEmptyState || isUnreachable) && "invisible",

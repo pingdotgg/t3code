@@ -65,7 +65,8 @@ describe("V2 preview upgrade", () => {
         [83, "CommandReadIndexes"],
         [84, "LastExecutedRunIndex"],
         [85, "TurnItemCounts"],
-        [86, "TurnItemMessageOrdinalIndex"],
+        [86, "QueuedTurnInputIndex"],
+        [87, "TurnItemMessageOrdinalIndex"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -174,7 +175,8 @@ describe("V2 preview upgrade", () => {
         [83, "CommandReadIndexes"],
         [84, "LastExecutedRunIndex"],
         [85, "TurnItemCounts"],
-        [86, "TurnItemMessageOrdinalIndex"],
+        [86, "QueuedTurnInputIndex"],
+        [87, "TurnItemMessageOrdinalIndex"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
