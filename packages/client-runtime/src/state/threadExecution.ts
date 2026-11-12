@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
+  isPullRequestWatchTask,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
@@ -569,7 +570,8 @@ export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
 ): PendingBackgroundWorkPresentation | null {
   if (tasks.length === 0) return null;
-  const waiting = backgroundWorkHoldsCompletion(tasks);
+  // A watch waits on its host even once it stops holding the thread; nothing of it runs.
+  const waiting = backgroundWorkHoldsCompletion(tasks) || tasks.every(isPullRequestWatchTask);
   const items = tasks
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
