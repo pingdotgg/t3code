@@ -4222,6 +4222,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           NodeFS.existsSync(path.join(status.workingTree.rootPath!, "nested", "new.txt")),
           true,
         );
+        // Git prints index and object paths relative to its physical cwd, not this alias.
+        const aliasCwd = path.join(yield* makeTmpDir(), "alias");
+        NodeFS.symlinkSync(nestedCwd, aliasCwd, "junction");
+        const prepared = yield* driver.prepareCommitContext(aliasCwd, ["nested/new.txt"]);
+        assert.include(prepared?.stagedSummary ?? "", "nested/new.txt");
         yield* driver.commit(nestedCwd, "Commit nested selection", "", {
           stage: { filePaths: ["nested/new.txt", "nested/tracked.txt"] },
         });
