@@ -4213,7 +4213,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     if (command.type !== "thread.archive" && command.type !== "thread.settle") {
       for (const session of liveSessions) {
-        if (yield* sessionHasBackgroundWork(session, providerContext!.providerThreads)) {
+        if (
+          (yield* sessionHasBackgroundWork(session, providerContext!.providerThreads)) &&
+          !(yield* stopReleasedBackgroundWork(command, command.threadId))
+        ) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
@@ -7484,7 +7487,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
     const sessionsToDetach: Array<OrchestrationV2ProviderSession> = [];
     for (const detaching of releasableSessions) {
-      if (yield* sessionHasBackgroundWork(detaching, projection.providerThreads)) {
+      if (
+        (yield* sessionHasBackgroundWork(detaching, projection.providerThreads)) &&
+        !(yield* stopReleasedBackgroundWork(command, command.threadId))
+      ) {
         // A schedule has nobody to wait or press Stop; like a queued fresh start, leave it running.
         if (freshContext && command.scheduledTaskId !== undefined) continue;
         return yield* new OrchestratorDispatchError({
@@ -11999,6 +12005,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.map(({ turnItems }) => turnItems.length > 0),
         mapDispatchError(command),
       );
+
+  // The background-work refusal tells the user to press Stop, so a Stop since the last executed
+  // run is consent to end that work, even when the adapter still reports some.
+  const stopReleasedBackgroundWork = Effect.fn("Orchestrator.stopReleasedBackgroundWork")(
+    function* (command: OrchestrationV2ServerCommand, threadId: ThreadId) {
+      const { runs } = yield* projectionStore
+        .getThreadRecords(threadId, ["runs"])
+        .pipe(mapDispatchError(command));
+      const latest = latestExecutedRun(runs);
+      return latest !== null && (yield* stopReachedRun(command, threadId, latest.id));
+    },
+  );
 
   const markStoppedRun = Effect.fnUntraced(function* (input: {
     readonly command: Extract<
