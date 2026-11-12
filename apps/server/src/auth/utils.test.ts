@@ -24,6 +24,21 @@ describe("deriveAuthClientMetadata", () => {
     });
   });
 
+  it("records the forwarded client address of a request proxied by Tailscale Serve", () => {
+    const metadata = deriveAuthClientMetadata({
+      request: {
+        headers: {
+          "x-forwarded-for": "100.64.0.2",
+          "x-forwarded-host": "host-a.tailnet-name.ts.net",
+          "x-forwarded-proto": "https",
+        },
+        source: { remoteAddress: "127.0.0.1" },
+      } as never,
+    });
+
+    expect(metadata.ipAddress).toBe("100.64.0.2");
+  });
+
   it.each([
     [
       "Edge on Android",
