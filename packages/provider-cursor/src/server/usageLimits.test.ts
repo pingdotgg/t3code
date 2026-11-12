@@ -76,6 +76,20 @@ describe("Cursor usage limits", () => {
     }
   });
 
+  it("retains unified totals for account aggregation", () => {
+    const windows = cursorUsageResponseToLimits(
+      { planUsage: { totalPercentUsed: 1.77, autoPercentUsed: 1.77 } },
+      checkedAt,
+    ).windows;
+    expect(windows.map((window) => window.id)).toEqual(["autoPercentUsed", "totalPercentUsed"]);
+    expect(
+      cursorUsageResponseToLimits(
+        { planUsage: { totalPercentUsed: 100, apiPercentUsed: 100 } },
+        checkedAt,
+      ).windows.map((window) => window.id),
+    ).toEqual(["apiPercentUsed", "totalPercentUsed"]);
+  });
+
   it("does not invent unused allowance for absent buckets", () => {
     expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt).unavailable?.reason).toBe(
       "unsupported",
