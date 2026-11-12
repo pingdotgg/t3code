@@ -79,7 +79,7 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..c414a49e866ecab1393645101fb67d55
    const state = ctx.state;
    const { idsInView, positions, props } = state;
 diff --git a/react.js b/react.js
-index 515545471e08426fc90856256db9491db0ca4b92..3165b5112af97212b16177640db2108945edb770 100644
+index 515545471e08426fc90856256db9491db0ca4b92..0c301c50cf4aeb73e734f986f07a8ae9a8f47e1c 100644
 --- a/react.js
 +++ b/react.js
 @@ -6921,8 +6921,8 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
@@ -145,7 +145,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..3165b5112af97212b16177640db21089
          contentNodeRef.current = contentNode;
 -        if (shouldScroll && contentNode) {
 +        if (shouldScroll && contentNode && (touchScrollHold == null ? void 0 : touchScrollHold.active)) {
-+          touchScrollHold.held += scrollDelta;
++          touchScrollHold.held += signalScrollDelta;
 +          contentNode.style.transform = `translateY(${-touchScrollHold.held}px)`;
 +          touchScrollHold.settleAtEdge();
 +        } else if (shouldScroll && contentNode) {
@@ -256,7 +256,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..3165b5112af97212b16177640db21089
    useValueListener$("scrollAdjustUserOffset", callback);
    React3__namespace.useLayoutEffect(() => {
 diff --git a/react.mjs b/react.mjs
-index ce08abe7ee62e8940f9c6ff169829244bd6bb736..18fa1392d00c395008d4243d43c31b8a7c2c3e50 100644
+index ce08abe7ee62e8940f9c6ff169829244bd6bb736..de2c6e9a8d9d0b20d02b3f8d9581219ccdfb26bb 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -6900,8 +6900,8 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
@@ -322,7 +322,7 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..18fa1392d00c395008d4243d43c31b8a
          contentNodeRef.current = contentNode;
 -        if (shouldScroll && contentNode) {
 +        if (shouldScroll && contentNode && (touchScrollHold == null ? void 0 : touchScrollHold.active)) {
-+          touchScrollHold.held += scrollDelta;
++          touchScrollHold.held += signalScrollDelta;
 +          contentNode.style.transform = `translateY(${-touchScrollHold.held}px)`;
 +          touchScrollHold.settleAtEdge();
 +        } else if (shouldScroll && contentNode) {
