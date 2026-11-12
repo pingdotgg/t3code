@@ -19,6 +19,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentSubscriptionAtomFamily,
+  isAtomCommandInterrupted,
   runAtomCommand,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -268,11 +269,17 @@ export function createTerminalSession(
   let loggedFirstOutput = false;
   let resizeRegistry: AtomRegistry.AtomRegistry | null = null;
 
-  const sendResize = () => {
+  const sendResize = (retry = false) => {
     if (generation === null || resizeRegistry === null || !options.canOperate()) return;
     void runAtomCommand(resizeRegistry, atoms.resize, {
       environmentId,
       input: { threadId, terminalId, cols: gridSize.cols, rows: gridSize.rows },
+    }).then((result) => {
+      // Only a new grid or generation sends again, so retry a failure once. Resend the current
+      // grid, not this one: a newer resize may already be queued behind it.
+      if (!retry && result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        sendResize(true);
+      }
     });
   };
 
