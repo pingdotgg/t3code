@@ -34,7 +34,7 @@ delete globalThis.__filename;
 const { parentPort, workerData } = require("node:worker_threads");
 const { FileFinder } = require(workerData.fffEntryPath);
 const created = FileFinder.create(workerData.options);
-parentPort.postMessage(created.ok ? { ok: true } : created);
+parentPort.postMessage({ created: created.ok ? { ok: true } : created });
 if (created.ok) {
   const finder = created.value;
   parentPort.on("message", async ({ id, method, args }) => {
@@ -47,7 +47,9 @@ if (created.ok) {
 }
 `;
 
-type WorkerReply =
+// Node's watch mode posts its own `watch:require` messages on the same port, so every reply is tagged.
+type WorkerMessage =
+  | { readonly created: Result<undefined> }
   | { readonly id: number; readonly value: unknown }
   | { readonly id: number; readonly failed: true; readonly cause: unknown };
 
@@ -90,22 +92,20 @@ const openWorkerFinder: OpenFinder = (options) =>
         worker.postMessage({ id, method, args });
       });
 
-    worker.once("message", (created: Result<undefined>) => {
-      if (!created.ok) {
-        resolve(created);
+    worker.on("message", (message: WorkerMessage) => {
+      if ("created" in message) {
+        resolve(
+          message.created.ok
+            ? { ok: true, value: { call, close: () => worker.terminate().then(() => undefined) } }
+            : message.created,
+        );
         return;
       }
-      worker.on("message", (reply: WorkerReply) => {
-        const request = pending.get(reply.id);
-        if (!request) return;
-        pending.delete(reply.id);
-        if ("failed" in reply) request.reject(reply.cause);
-        else request.resolve(reply.value as never);
-      });
-      resolve({
-        ok: true,
-        value: { call, close: () => worker.terminate().then(() => undefined) },
-      });
+      const request = pending.get(message.id);
+      if (!request) return;
+      pending.delete(message.id);
+      if ("failed" in message) request.reject(message.cause);
+      else request.resolve(message.value as never);
     });
   });
 
